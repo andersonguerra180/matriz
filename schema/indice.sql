@@ -38,6 +38,41 @@ CREATE INDEX IF NOT EXISTS idx_fila_status ON fila_processamento(status);
 CREATE INDEX IF NOT EXISTS idx_fila_item ON fila_processamento(item_id);
 
 -- ---------------------------------------------------------------------------
+-- Miniatura e keyframe — miniatura de imagem/vídeo e faixa de keyframes do
+-- vídeo na tira de diagnóstico (§7.2 estágio 1, §11.3). caminho_relativo é
+-- relativo à pasta do projeto, dentro de .indice-cache/ — puro cache visual,
+-- reconstruível a qualquer momento a partir do arquivo original.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS miniatura (
+    id                  TEXT PRIMARY KEY,
+    item_id             TEXT NOT NULL,
+    arquivo_id          TEXT NOT NULL,
+    tipo                TEXT NOT NULL CHECK (tipo IN ('miniatura', 'keyframe')),
+    tempo_ref           REAL,           -- instante do frame; só para tipo='keyframe'
+    caminho_relativo    TEXT NOT NULL,
+    largura             INTEGER,
+    altura              INTEGER,
+    gerado_em           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_miniatura_arquivo ON miniatura(arquivo_id);
+
+-- ---------------------------------------------------------------------------
+-- Forma de onda — peaks pré-calculados pra faixa "Nível" da tira de
+-- diagnóstico (§11.3). Downmix mono (a fase L/R é QC de captura, Etapa 5 —
+-- escopo diferente). peaks é BLOB de pares float32 [min,max] por bucket.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS forma_onda (
+    id                  TEXT PRIMARY KEY,
+    item_id             TEXT NOT NULL,
+    arquivo_id          TEXT NOT NULL UNIQUE,
+    duracao_segundos    REAL NOT NULL,
+    buckets_por_segundo REAL NOT NULL,
+    peaks               BLOB NOT NULL,
+    gerado_em           TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
 -- Embeddings — CLIP de imagem/keyframe e de texto, espaço único de busca (§9.1)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS embedding (
