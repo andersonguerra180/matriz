@@ -1,0 +1,34 @@
+tipo: sample
+rotulo: Sample
+grupos:
+  - rotulo: Classificação
+    campos:
+      - id: categoria
+        rotulo: Categoria
+        tipo: opcao
+        opcoes: [kick, snare, hat, perc, bass, lead, pad, vocal, fx, loop, one-shot]
+        sugerido_por: clip_audio
+      - id: bpm
+        rotulo: BPM
+        tipo: numero
+        preenchido_por: detector_bpm
+      - id: tonalidade
+        rotulo: Tonalidade
+        tipo: opcao
+        opcoes: [C, "C#", D, "D#", E, F, "F#", G, "G#", A, "A#", B]
+        preenchido_por: detector_tonalidade
+      - id: tipo_temporal
+        rotulo: Tipo temporal
+        tipo: opcao
+        opcoes: [one-shot, loop]
+        preenchido_por: leitura_tecnica
+  - rotulo: Direitos e origem
+    campos:
+      - id: licenca
+        rotulo: Licença
+        tipo: opcao
+        opcoes: ["royalty-free", exclusiva, "sample clearance pendente", "uso interno"]
+        obrigatorio: true
+      - id: origem
+        rotulo: Origem
+        tipo: texto

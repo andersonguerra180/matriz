@@ -1,0 +1,48 @@
+tipo: slide
+rotulo: Slide / diapositivo
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: formato
+        rotulo: Formato
+        tipo: opcao
+        opcoes: ["35 mm montado", "120 montado", outro]
+        obrigatorio: true
+      - id: moldura
+        rotulo: Moldura
+        tipo: opcao
+        opcoes: [papelão, plástico, vidro]
+  - rotulo: Digitalização
+    campos:
+      - id: dimensoes_scan
+        rotulo: Dimensões do escaneamento
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: resolucao_scan
+        rotulo: Resolução do escaneamento
+        tipo: texto
+        preenchido_por: leitura_tecnica
+  - rotulo: Estado físico
+    campos:
+      - id: fungo
+        rotulo: Sinais de fungo
+        tipo: booleano
+      - id: desvanecimento
+        rotulo: Desvanecimento de cor
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: data_foto
+        rotulo: Data da foto
+        tipo: data
+      - id: local
+        rotulo: Local
+        tipo: opcao_livre
+      - id: pessoas_identificadas
+        rotulo: Pessoas identificadas
+        tipo: lista_pessoas
+        sugerido_por: reconhecimento_facial

@@ -1,0 +1,38 @@
+tipo: documento
+rotulo: Documento
+grupos:
+  - rotulo: Identificação
+    campos:
+      - id: tipo_documento
+        rotulo: Tipo de documento
+        tipo: opcao
+        opcoes: [contrato, carta, recibo, "ficha técnica", release de imprensa, outro]
+        obrigatorio: true
+      - id: data_documento
+        rotulo: Data do documento
+        tipo: data
+      - id: autor_documento
+        rotulo: Autor / emissor
+        tipo: texto
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+  - rotulo: Leitura técnica
+    campos:
+      - id: numero_paginas
+        rotulo: Número de páginas
+        tipo: inteiro
+        preenchido_por: leitura_tecnica
+      - id: texto_pesquisavel
+        rotulo: Texto pesquisável no PDF
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+  - rotulo: Estado
+    campos:
+      - id: assinado
+        rotulo: Assinado
+        tipo: booleano
+      - id: estado_fisico
+        rotulo: Estado físico (se digitalizado de papel)
+        tipo: opcao
+        opcoes: [bom, regular, "danificado"]

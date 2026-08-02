@@ -1,0 +1,76 @@
+tipo: fita_rolo
+rotulo: Fita de rolo
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: largura
+        rotulo: Largura
+        tipo: opcao
+        opcoes: ["1/4 pol", "1/2 pol", "1 pol", "2 pol"]
+        obrigatorio: true
+      - id: marca
+        rotulo: Marca
+        tipo: opcao_livre
+        opcoes: [Ampex, Scotch/3M, BASF, Agfa, Maxell, TDK, Sony, Quantegy, RMGI, ATR]
+      - id: formulacao
+        rotulo: Formulação
+        tipo: opcao_livre
+        opcoes: ["456", "406", "911", "900", "LPR35", "GP9", "ATR Master", "206", "207"]
+      - id: espessura
+        rotulo: Espessura
+        tipo: opcao
+        opcoes: ["1.0 mil", "1.5 mil", "0.5 mil"]
+  - rotulo: Reprodução
+    campos:
+      - id: velocidade
+        rotulo: Velocidade
+        tipo: opcao
+        opcoes: ["4,75 cm/s", "9,5 cm/s", "19 cm/s", "38 cm/s", "76 cm/s"]
+        obrigatorio: true
+      - id: curva
+        rotulo: Curva de equalização
+        tipo: opcao
+        opcoes: [NAB, IEC1, IEC2, AES, CCIR]
+        obrigatorio: true
+      - id: pistas
+        rotulo: Configuração de pistas
+        tipo: opcao
+        opcoes: [full-track, half-track, quarter-track, 8, 16, 24]
+      - id: direcao
+        rotulo: Sentido
+        tipo: opcao
+        opcoes: [unidirecional, bidirecional, invertida]
+      - id: maquina
+        rotulo: Máquina de reprodução
+        tipo: texto
+      - id: alinhamento
+        rotulo: Fita de alinhamento usada
+        tipo: texto
+  - rotulo: Estado físico
+    campos:
+      - id: sticky_shed
+        rotulo: Sinais de sticky shed
+        tipo: booleano
+        alerta_se_true: "Requer tratamento térmico antes da reprodução"
+      - id: emendas
+        rotulo: Emendas visíveis
+        tipo: inteiro
+      - id: print_through
+        rotulo: Print-through audível
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

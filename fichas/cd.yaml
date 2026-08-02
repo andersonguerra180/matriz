@@ -1,0 +1,50 @@
+tipo: cd
+rotulo: CD
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: tipo_disco
+        rotulo: Tipo de disco
+        tipo: opcao
+        opcoes: ["CD-DA (prensado)", "CD-R", "CD-ROM com faixas de áudio"]
+        obrigatorio: true
+      - id: marca_midia
+        rotulo: Marca da mídia (se CD-R)
+        tipo: opcao_livre
+        visivel_se: "tipo_disco == CD-R"
+      - id: numero_faixas
+        rotulo: Número de faixas
+        tipo: inteiro
+        preenchido_por: leitura_tecnica
+      - id: toc
+        rotulo: TOC / duração total
+        tipo: texto
+        preenchido_por: leitura_tecnica
+  - rotulo: Captura
+    campos:
+      - id: ripagem_bit_exata_confirmada
+        rotulo: Ripagem bit-exata confirmada
+        tipo: booleano
+        obrigatorio: true
+  - rotulo: Estado físico
+    campos:
+      - id: estado_fisico
+        rotulo: Estado físico do disco
+        tipo: opcao
+        opcoes: [bom, regular, "arranhado", "ilegível em trechos"]
+        obrigatorio: true
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, misto]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"
+arquivos_esperados:
+  - papel: capa_frente
+  - papel: capa_verso

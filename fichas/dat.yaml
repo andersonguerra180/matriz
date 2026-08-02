@@ -1,0 +1,52 @@
+tipo: dat
+rotulo: DAT
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: marca
+        rotulo: Marca da fita
+        tipo: opcao_livre
+        opcoes: [Sony, TDK, Maxell, Fuji, HHB]
+      - id: duracao_fita
+        rotulo: Duração nominal
+        tipo: opcao
+        opcoes: ["46 min", "60 min", "90 min", "120 min"]
+  - rotulo: Reprodução
+    campos:
+      - id: sample_rate_original
+        rotulo: Sample rate original
+        tipo: opcao
+        opcoes: ["32 kHz", "44.1 kHz", "48 kHz"]
+        obrigatorio: true
+      - id: deck
+        rotulo: Deck de reprodução
+        tipo: texto
+      - id: caminho_captura
+        rotulo: Caminho de captura
+        tipo: opcao
+        opcoes: ["S/PDIF", analógico]
+        obrigatorio: true
+      - id: subcode_disponivel
+        rotulo: Subcode (start ID/programa) disponível
+        tipo: booleano
+  - rotulo: Estado físico
+    campos:
+      - id: erros_leitura
+        rotulo: Erros de leitura durante a captura
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

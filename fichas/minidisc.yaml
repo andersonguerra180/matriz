@@ -1,0 +1,54 @@
+tipo: minidisc
+rotulo: MiniDisc
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: tipo_disco
+        rotulo: Tipo de disco
+        tipo: opcao
+        opcoes: ["MD padrão", "Hi-MD"]
+        obrigatorio: true
+      - id: marca
+        rotulo: Marca
+        tipo: opcao_livre
+        opcoes: [Sony, TDK, Maxell, Sharp]
+  - rotulo: Reprodução
+    campos:
+      - id: modo_gravacao
+        rotulo: Modo de gravação
+        tipo: opcao
+        opcoes: [SP, LP2, LP4, "PCM (Hi-MD)"]
+        obrigatorio: true
+      - id: atrac_lossy
+        rotulo: Origem em ATRAC (lossy)
+        tipo: booleano
+        alerta_se_true: "Fonte já é lossy — a digitalização não recupera qualidade perdida na gravação original"
+      - id: caminho_captura
+        rotulo: Caminho de captura
+        tipo: opcao
+        opcoes: [analógico, "NetMD (só Hi-MD)"]
+        obrigatorio: true
+      - id: deck
+        rotulo: Deck de reprodução
+        tipo: texto
+  - rotulo: Estado físico
+    campos:
+      - id: erros_leitura
+        rotulo: Erros de leitura durante a captura
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

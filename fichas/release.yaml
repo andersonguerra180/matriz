@@ -1,0 +1,85 @@
+tipo: release
+rotulo: Release fonográfico
+niveis: [release, faixa]
+release:
+  campos:
+    - id: titulo
+      rotulo: Título
+      tipo: texto
+      obrigatorio: true
+    - id: artista_principal
+      rotulo: Artista principal
+      tipo: texto
+      obrigatorio: true
+    - id: selo
+      rotulo: Selo
+      tipo: texto
+      herda_do_projeto: true
+    - id: numero_catalogo
+      rotulo: Número de catálogo
+      tipo: texto
+    - id: upc_ean
+      rotulo: UPC/EAN
+      tipo: texto
+      validacao: ean13
+    - id: ano
+      rotulo: Ano
+      tipo: inteiro
+    - id: data_lancamento
+      rotulo: Data de lançamento
+      tipo: data
+    - id: formato
+      rotulo: Formato
+      tipo: opcao
+      opcoes: [álbum, EP, single, compilação, trilha]
+    - id: genero
+      rotulo: Gênero
+      tipo: opcao_livre
+faixa:
+  campos:
+    - id: numero
+      rotulo: Número
+      tipo: inteiro
+      obrigatorio: true
+    - id: titulo
+      rotulo: Título
+      tipo: texto
+      obrigatorio: true
+    - id: isrc
+      rotulo: ISRC
+      tipo: texto
+      validacao: isrc
+      gerar_em_sequencia: true
+    - id: duracao
+      rotulo: Duração
+      tipo: texto
+      preenchido_por: leitura_tecnica
+    - id: compositores
+      rotulo: Compositores
+      tipo: lista_pessoas
+    - id: editora
+      rotulo: Editora
+      tipo: texto
+    - id: participacao
+      rotulo: Participação
+      tipo: lista_pessoas
+    - id: explicito
+      rotulo: Conteúdo explícito
+      tipo: booleano
+    - id: idioma
+      rotulo: Idioma
+      tipo: opcao_livre
+    - id: splits
+      rotulo: Splits
+      tipo: tabela
+      colunas: [pessoa, papel, percentual]
+      validacao: soma_100
+arquivos_esperados:
+  - papel: master
+    obrigatorio: true
+    por: faixa
+  - papel: capa_frente
+    obrigatorio: true
+    minimo: 3000x3000
+  - papel: capa_verso
+  - papel: encarte

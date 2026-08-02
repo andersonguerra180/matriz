@@ -1,0 +1,58 @@
+tipo: cassete
+rotulo: Cassete
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: tipo_fita
+        rotulo: Tipo de fita
+        tipo: opcao
+        opcoes: ["I (normal/ferro)", "II (cromo)", "III (ferrocromo)", "IV (metal)"]
+        obrigatorio: true
+      - id: marca
+        rotulo: Marca
+        tipo: opcao_livre
+        opcoes: [Maxell, TDK, Sony, BASF, Memorex, Denon, Fuji, Scotch/3M]
+      - id: duracao_nominal
+        rotulo: Duração nominal
+        tipo: opcao
+        opcoes: [C46, C60, C90, C120]
+  - rotulo: Reprodução
+    campos:
+      - id: dolby
+        rotulo: Redução de ruído
+        tipo: opcao
+        opcoes: [nenhum, "Dolby B", "Dolby C", "Dolby S"]
+        obrigatorio: true
+      - id: direcao
+        rotulo: Sentido capturado
+        tipo: opcao
+        opcoes: ["lado A", "lado B", "autoreverse (A+B)"]
+        obrigatorio: true
+      - id: deck
+        rotulo: Deck de reprodução
+        tipo: texto
+  - rotulo: Estado físico
+    campos:
+      - id: sticky_shed
+        rotulo: Sinais de sticky shed
+        tipo: booleano
+        alerta_se_true: "Requer tratamento térmico antes da reprodução"
+      - id: fita_solta_enroscada
+        rotulo: Fita solta ou enroscada no mecanismo
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

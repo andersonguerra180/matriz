@@ -1,0 +1,62 @@
+tipo: filme
+rotulo: Filme (16 mm / Super 8 / 8 mm)
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: bitola
+        rotulo: Bitola
+        tipo: opcao
+        opcoes: ["16 mm", "Super 8", "8 mm"]
+        obrigatorio: true
+      - id: cor_pb
+        rotulo: Cor ou preto e branco
+        tipo: opcao
+        opcoes: [cor, "preto e branco"]
+      - id: som_optico
+        rotulo: Possui trilha sonora óptica
+        tipo: booleano
+  - rotulo: Digitalização (proveniência técnica, §11.5)
+    campos:
+      - id: fps_captura
+        rotulo: FPS do arquivo capturado
+        tipo: numero
+        preenchido_por: leitura_tecnica
+      - id: fps_original_declarado
+        rotulo: FPS original declarado
+        tipo: opcao
+        opcoes: ["16", "18", "24"]
+        obrigatorio: true
+      - id: pulldown_detectado
+        rotulo: Pulldown 3:2 detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+      - id: quadro_duplicado_detectado
+        rotulo: Quadro duplicado detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+      - id: campo_entrelacado_detectado
+        rotulo: Campo entrelaçado detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+  - rotulo: Estado físico
+    campos:
+      - id: encolhimento
+        rotulo: Encolhimento da base
+        tipo: opcao
+        opcoes: [nenhum, leve, moderado, severo]
+      - id: quebradico
+        rotulo: Material quebradiço (base de nitrato/acetato degradado)
+        tipo: booleano
+        alerta_se_true: "Manuseio requer cuidado especial — risco de quebra ou combustão em nitrato"
+      - id: mofo
+        rotulo: Sinais de mofo
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: descricao_conteudo
+        rotulo: Descrição do conteúdo
+        tipo: texto

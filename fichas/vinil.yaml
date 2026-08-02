@@ -1,0 +1,70 @@
+tipo: vinil
+rotulo: Vinil
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: formato
+        rotulo: Formato
+        tipo: opcao
+        opcoes: ["7\"", "10\"", "12\""]
+        obrigatorio: true
+      - id: velocidade
+        rotulo: Velocidade
+        tipo: opcao
+        opcoes: ["33 1/3 rpm", "45 rpm", "78 rpm"]
+        obrigatorio: true
+      - id: peso_gramatura
+        rotulo: Gramatura
+        tipo: opcao
+        opcoes: ["120g", "140g", "180g", "200g"]
+      - id: selo
+        rotulo: Selo/gravadora original
+        tipo: opcao_livre
+      - id: numero_catalogo
+        rotulo: Número de catálogo
+        tipo: texto
+  - rotulo: Reprodução
+    campos:
+      - id: curva
+        rotulo: Curva de equalização
+        tipo: opcao
+        opcoes: [RIAA, Columbia, Decca, "78 acústico (variável)"]
+        obrigatorio: true
+      - id: cartucho
+        rotulo: Cartucho usado
+        tipo: texto
+      - id: toca_discos
+        rotulo: Toca-discos
+        tipo: texto
+  - rotulo: Estado físico
+    campos:
+      - id: estado_disco
+        rotulo: Estado do disco (Goldmine)
+        tipo: opcao
+        opcoes: [M, "NM", "VG+", VG, G, F, P]
+        obrigatorio: true
+      - id: empenado
+        rotulo: Empenado
+        tipo: booleano
+      - id: riscos_audiveis
+        rotulo: Riscos audíveis
+        tipo: booleano
+      - id: estado_capa
+        rotulo: Estado da capa
+        tipo: opcao
+        opcoes: [M, "NM", "VG+", VG, G, F, P]
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, misto]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"
+arquivos_esperados:
+  - papel: capa_frente
+  - papel: capa_verso

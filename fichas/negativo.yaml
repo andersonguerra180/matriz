@@ -1,0 +1,52 @@
+tipo: negativo
+rotulo: Negativo fotográfico
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: formato
+        rotulo: Formato
+        tipo: opcao
+        opcoes: ["35 mm", "120 (médio formato)", "4x5 pol", outro]
+        obrigatorio: true
+      - id: cor_pb
+        rotulo: Cor ou preto e branco
+        tipo: opcao
+        opcoes: [cor, "preto e branco"]
+        obrigatorio: true
+  - rotulo: Digitalização
+    campos:
+      - id: dimensoes_scan
+        rotulo: Dimensões do escaneamento
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: resolucao_scan
+        rotulo: Resolução do escaneamento
+        tipo: texto
+        preenchido_por: leitura_tecnica
+  - rotulo: Estado físico
+    campos:
+      - id: riscos
+        rotulo: Riscos visíveis
+        tipo: booleano
+      - id: mofo
+        rotulo: Sinais de mofo
+        tipo: booleano
+      - id: desvanecimento
+        rotulo: Desvanecimento de cor
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: data_foto
+        rotulo: Data da foto
+        tipo: data
+      - id: local
+        rotulo: Local
+        tipo: opcao_livre
+      - id: pessoas_identificadas
+        rotulo: Pessoas identificadas
+        tipo: lista_pessoas
+        sugerido_por: reconhecimento_facial

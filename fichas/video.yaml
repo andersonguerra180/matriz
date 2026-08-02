@@ -1,0 +1,57 @@
+tipo: video
+rotulo: Vídeo analógico digitalizado
+grupos:
+  - rotulo: Suporte
+    campos:
+      - id: formato_original
+        rotulo: Formato original
+        tipo: opcao
+        opcoes: [VHS, "U-matic", "Betacam SP", "Betacam Digital", Hi8, MiniDV]
+        obrigatorio: true
+      - id: sistema
+        rotulo: Sistema de cor
+        tipo: opcao
+        opcoes: [NTSC, PAL, SECAM]
+        obrigatorio: true
+      - id: tbc_usado
+        rotulo: TBC usado na digitalização
+        tipo: booleano
+  - rotulo: Digitalização (proveniência técnica, §11.5)
+    campos:
+      - id: fps_captura
+        rotulo: FPS do arquivo capturado
+        tipo: numero
+        preenchido_por: leitura_tecnica
+      - id: pulldown_detectado
+        rotulo: Pulldown 3:2 detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+      - id: quadro_duplicado_detectado
+        rotulo: Quadro duplicado detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+      - id: campo_entrelacado_detectado
+        rotulo: Campo entrelaçado detectado
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+  - rotulo: Estado físico
+    campos:
+      - id: dropout_frequente
+        rotulo: Dropout frequente
+        tipo: booleano
+      - id: fita_solta_enroscada
+        rotulo: Fita solta ou enroscada no mecanismo
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+  - rotulo: Conteúdo
+    campos:
+      - id: descricao_conteudo
+        rotulo: Descrição do conteúdo
+        tipo: texto
+      - id: cortes_cena_detectados
+        rotulo: Cortes de cena detectados
+        tipo: inteiro
+        preenchido_por: leitura_tecnica

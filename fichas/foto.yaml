@@ -1,0 +1,62 @@
+tipo: foto
+rotulo: Foto
+grupos:
+  - rotulo: Captura
+    campos:
+      - id: suporte
+        rotulo: Suporte
+        tipo: opcao
+        opcoes: [impressa, digital]
+        obrigatorio: true
+      - id: data_foto
+        rotulo: Data da foto
+        tipo: data
+        preenchido_por: leitura_tecnica
+      - id: camera
+        rotulo: Câmera / modelo
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: dimensoes
+        rotulo: Dimensões
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: fotografo
+        rotulo: Fotógrafo
+        tipo: opcao_livre
+
+  - rotulo: Conteúdo
+    campos:
+      - id: local
+        rotulo: Local
+        tipo: opcao_livre
+      - id: evento
+        rotulo: Evento
+        tipo: opcao_livre
+      - id: pessoas_identificadas
+        rotulo: Pessoas identificadas
+        tipo: lista_pessoas
+        sugerido_por: reconhecimento_facial
+
+  - rotulo: Estado físico
+    campos:
+      - id: estado_fisico
+        rotulo: Estado geral
+        tipo: opcao
+        opcoes: [bom, regular, frágil, crítico]
+        visivel_se: "suporte == impressa"
+      - id: danos
+        rotulo: Danos visíveis
+        tipo: opcao_livre
+        opcoes: [mancha, rasgo, dobra, desbotamento, fungo]
+        visivel_se: "suporte == impressa"
+
+  - rotulo: Direitos
+    campos:
+      - id: licenca
+        rotulo: Licença / uso
+        tipo: opcao
+        opcoes: ["uso livre", "direitos reservados", "autorização pendente", "domínio público"]
+
+arquivos_esperados:
+  - papel: imagem_principal
+    obrigatorio: true
