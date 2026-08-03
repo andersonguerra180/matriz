@@ -115,6 +115,17 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     if (aoSelecionar) aoSelecionar(selecionadoId_);
 }
 
+bool MosaicoComponent::isInterestedInFileDrag(const juce::StringArray&) { return true; }
+
+void MosaicoComponent::filesDropped(const juce::StringArray& files, int, int) {
+    arrastandoArquivo_ = false;
+    repaint();
+    if (!aoArquivosSoltos) return;
+    juce::Array<juce::File> arquivos;
+    for (auto& caminho : files) arquivos.add(juce::File(caminho));
+    aoArquivosSoltos(arquivos);
+}
+
 const juce::Image* MosaicoComponent::miniaturaCache(const std::string& itemId) {
     const juce::ScopedLock sl(cacheLock_);
     auto it = cacheMiniaturas_.find(itemId);
@@ -167,10 +178,18 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     const auto& tk = matriz::ui::tema();
     g.fillAll(tk.fundo);
 
+    if (arrastandoArquivo_) {
+        g.setColour(tk.acento.withAlpha(0.12f));
+        g.fillRect(g.getClipBounds());
+        g.setColour(tk.acento);
+        g.drawRect(getLocalBounds(), 2);
+    }
+
     if (itensFiltrados_.empty()) {
         g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        g.drawText(matriz::i18n::t("mosaico.vazio"), getLocalBounds(), juce::Justification::centred, true);
+        g.drawText(matriz::i18n::t(arrastandoArquivo_ ? "mosaico.solte_para_ingerir" : "mosaico.vazio"),
+                   getLocalBounds(), juce::Justification::centred, true);
         return;
     }
 

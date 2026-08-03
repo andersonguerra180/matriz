@@ -9,7 +9,7 @@ namespace matriz::ui {
 
 namespace {
 enum MenuIndices { kMenuArquivo = 0, kMenuProjeto = 1, kMenuAjuda = 2 };
-enum ComandoMenu { kCmdNovoProjeto = 1, kCmdAbrirProjeto, kCmdFecharProjeto, kCmdSair, kCmdConfiguracoes };
+enum ComandoMenu { kCmdNovoProjeto = 1, kCmdAbrirProjeto, kCmdFecharProjeto, kCmdSair, kCmdConfiguracoes, kCmdIngerirArquivos };
 } // namespace
 
 MainWindow::MainWindow(const juce::String& nome)
@@ -54,6 +54,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdAbrirProjeto, matriz::i18n::t("menu.arquivo_abrir_projeto"));
         menu.addItem(kCmdFecharProjeto, matriz::i18n::t("menu.arquivo_fechar_projeto"), conteudo_->temProjetoAberto());
         menu.addSeparator();
+        menu.addItem(kCmdIngerirArquivos, matriz::i18n::t("menu.arquivo_ingerir_arquivos"), conteudo_->temProjetoAberto());
+        menu.addSeparator();
         menu.addItem(kCmdSair, matriz::i18n::t("menu.arquivo_sair"));
     } else if (topLevelMenuIndex == kMenuProjeto) {
         menu.addItem(kCmdConfiguracoes, matriz::i18n::t("menu.projeto_configuracoes"), conteudo_->temProjetoAberto());
@@ -68,6 +70,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdFecharProjeto: conteudo_->fecharProjeto(); break;
         case kCmdSair: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
+        case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
         default: break;
     }
 }
@@ -113,6 +116,18 @@ void MainWindow::pedirAbrirProjeto() {
 void MainWindow::pedirConfiguracoesProjeto() {
     if (!conteudo_->temProjetoAberto()) return;
     mostrarDialogoConfiguracoesProjeto(*conteudo_->projetoAberto(), [] {});
+}
+
+void MainWindow::pedirIngerirArquivos() {
+    if (!conteudo_->temProjetoAberto()) return;
+    auto chooser = std::make_shared<juce::FileChooser>(matriz::i18n::t("menu.arquivo_ingerir_arquivos"));
+    chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
+                              juce::FileBrowserComponent::canSelectMultipleItems,
+                          [this, chooser](const juce::FileChooser& fc) {
+                              auto resultados = fc.getResults();
+                              if (resultados.isEmpty()) return;
+                              conteudo_->ingerirArquivos(resultados);
+                          });
 }
 
 } // namespace matriz::ui

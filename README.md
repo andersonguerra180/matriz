@@ -86,8 +86,18 @@ mídia sintética com ffmpeg e roda o pipeline completo: leitura técnica, check
 miniatura/forma de onda, pHash, fingerprint de áudio, corte de banda, classificador
 fala x música, EXIF real via Exiv2, inferência de pasta, ingest real de arquivo em
 disco, fluxo de ficha em lote e painel de inconsistências. O app principal (`matriz`)
-tem um modo oculto `--selftest-mosaico-10k` que roda um benchmark headless da
-virtualização do mosaico contra 10 mil itens sintéticos (ver `Source/Ui/MosaicoStressTest.cpp`).
+tem dois modos ocultos de verificação headless: `--selftest-mosaico-10k` (benchmark de
+virtualização do mosaico contra 10 mil itens sintéticos, `Source/Ui/MosaicoStressTest.cpp`)
+e `--selftest-ingerir-arquivos` (ingere mídia sintética via `MainComponent` de verdade —
+não um atalho — e confere item/arquivo/checksum/leitura técnica no banco,
+`Source/Ui/IngerirArquivosTest.cpp`).
+
+**Ingerir material real:** com um projeto aberto, `Arquivo > Ingerir arquivos…` ou
+arrastar arquivos direto no mosaico. Cada arquivo entra como um item novo (tipo de
+mídia inferido pela extensão — áudio vira `fita_rolo`, imagem vira `foto`, etc.; troque
+na ficha se não for o tipo certo), com checksum e leitura técnica automáticos (§7.2
+estágio 1). Ingest de pasta inteira com inferência de estrutura (§7.3) ainda não existe
+nesta tela — por arquivo, um por um, por agora.
 
 **Build/testes verificados em:** macOS (Intel, macOS 13), arquitetura x86_64. **Não
 verificado nesta máquina:** Windows — o projeto foi desenhado pra ser multiplataforma

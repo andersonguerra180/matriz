@@ -1,6 +1,7 @@
 #include <JuceHeader.h>
 
 #include "I18n/Strings.h"
+#include "Ui/IngerirArquivosTest.h"
 #include "Ui/MainWindow.h"
 #include "Ui/MosaicoStressTest.h"
 
@@ -20,6 +21,11 @@ public:
         // mosaico e sai, sem abrir janela nenhuma.
         if (commandLine.contains("--selftest-mosaico-10k")) {
             setApplicationReturnValue(matriz::ui::rodarStressTestMosaico10k());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-ingerir-arquivos")) {
+            setApplicationReturnValue(matriz::ui::rodarTestIngerirArquivos());
             quit();
             return;
         }

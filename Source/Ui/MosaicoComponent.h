@@ -20,7 +20,7 @@ namespace matriz::ui {
 
 enum class Ordenacao { Codigo, Titulo, Estado, Atualizado };
 
-class MosaicoComponent : public juce::Component {
+class MosaicoComponent : public juce::Component, public juce::FileDragAndDropTarget {
 public:
     explicit MosaicoComponent(ProjetoAberto& projeto);
     ~MosaicoComponent() override;
@@ -43,7 +43,16 @@ public:
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
 
+    // juce::FileDragAndDropTarget — arrastar arquivos do Finder direto pro
+    // mosaico ingere cada um como item novo (§7.1: não trava esperando ficha
+    // completa, o arquivo entra e a leitura técnica roda na hora).
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
+    void fileDragEnter(const juce::StringArray&, int, int) override { arrastandoArquivo_ = true; repaint(); }
+    void fileDragExit(const juce::StringArray&) override { arrastandoArquivo_ = false; repaint(); }
+
     std::function<void(const std::string& itemId)> aoSelecionar;
+    std::function<void(const juce::Array<juce::File>&)> aoArquivosSoltos;
 
     static constexpr int kCelulaLargura = 168;
     static constexpr int kCelulaAltura = 148;
@@ -65,6 +74,7 @@ private:
 
     int colunas_ = 1;
     std::string selecionadoId_;
+    bool arrastandoArquivo_ = false;
 
     juce::ThreadPool poolMiniaturas_{2};
     std::unordered_map<std::string, juce::Image> cacheMiniaturas_;

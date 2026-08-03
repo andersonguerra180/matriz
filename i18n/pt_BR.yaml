@@ -14,6 +14,7 @@ menu:
   arquivo_abrir_projeto: "Abrir projeto…"
   arquivo_fechar_projeto: Fechar projeto
   arquivo_sair: Sair
+  arquivo_ingerir_arquivos: "Ingerir arquivos…"
   projeto: Projeto
   projeto_configuracoes: "Configurações do projeto…"
   exibir: Exibir
@@ -52,7 +53,8 @@ dialogo_abrir_projeto:
   erro_titulo: "Não foi possível abrir o projeto"
 
 mosaico:
-  vazio: "Nenhum item neste projeto ainda."
+  vazio: "Nenhum item neste projeto ainda. Arraste arquivos aqui ou use Arquivo > Ingerir arquivos…"
+  solte_para_ingerir: "Solte para ingerir"
   buscar_placeholder: Buscar
   ordenar: Ordenar por
   ordenar_codigo: "Código"
@@ -111,3 +113,9 @@ comum:
   sim: Sim
   nao: "Não"
   erro: Erro
+
+ingest:
+  titulo: "Ingestão"
+  resumo: "{n} arquivo(s) ingerido(s) com sucesso."
+  resumo_erros: "Não foi possível ingerir:"
+  erro_extensao_desconhecida: "extensão não reconhecida (tipo de mídia não pôde ser inferido)"

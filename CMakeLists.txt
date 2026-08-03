@@ -138,12 +138,17 @@ target_sources(matriz PRIVATE
     Source/Ui/ProjetoAberto.cpp
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/MosaicoStressTest.cpp
+    Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp
     Source/Ui/ConfiguracoesProjetoDialogo.cpp
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
     Source/Ingest/FluxoLote.cpp
+    Source/Ingest/IngestArquivo.cpp
+    Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/Checksum.cpp
+    Source/Ingest/ProcessoExterno.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp)
@@ -166,7 +171,9 @@ target_link_libraries(matriz PRIVATE
     MatrizI18nAssets
     matriz_sqlite3
     yaml-cpp::yaml-cpp
+    Exiv2::exiv2lib
     juce::juce_core
+    juce::juce_cryptography
     juce::juce_gui_basics
     juce::juce_gui_extra
     PUBLIC

@@ -22,6 +22,7 @@ private:
     void pedirNovoProjeto();
     void pedirAbrirProjeto();
     void pedirConfiguracoesProjeto();
+    void pedirIngerirArquivos();
 
     std::unique_ptr<MainComponent> conteudo_;
 

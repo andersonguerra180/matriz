@@ -26,6 +26,12 @@ public:
     bool temProjetoAberto() const { return projetoAberto_ != nullptr; }
     ProjetoAberto* projetoAberto() { return projetoAberto_.get(); }
 
+    // Ingere cada arquivo como um item novo (§7 estágio 1: checksum + leitura
+    // técnica automáticos). Ponte entre o motor de ingestão (Etapa 2,
+    // headless) e a UI — chamada tanto pelo menu "Ingerir arquivos..." quanto
+    // por arrastar arquivos do Finder direto no mosaico.
+    void ingerirArquivos(const juce::Array<juce::File>& arquivos);
+
     void paint(juce::Graphics&) override;
     void resized() override;
 

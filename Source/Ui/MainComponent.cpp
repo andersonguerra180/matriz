@@ -1,11 +1,39 @@
 #include "MainComponent.h"
 
 #include "../I18n/Strings.h"
+#include "../Ingest/IngestArquivo.h"
+#include "../Ingest/LeituraTecnica.h"
 #include "FichaPanelComponent.h"
 #include "MosaicoComponent.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
+
+namespace {
+
+// Tipo de mídia padrão por categoria de arquivo — o operador troca depois
+// direto na ficha se o ingest de pasta (§7.3, com inferência real) ainda não
+// existir pra esse fluxo. Papel do arquivo segue o mesmo raciocínio: só o
+// necessário pra o item nascer catalogável, não uma tentativa de adivinhar
+// o release/faixa/capa que só a inferência de estrutura resolve de verdade.
+struct MapeamentoIngest {
+    std::string tipoMidia;
+    std::string papel;
+    bool ehMaster;
+};
+
+std::optional<MapeamentoIngest> mapearCategoria(matriz::ingest::CategoriaMidia categoria) {
+    switch (categoria) {
+        case matriz::ingest::CategoriaMidia::Audio: return MapeamentoIngest{"fita_rolo", "preservation_master", true};
+        case matriz::ingest::CategoriaMidia::Video: return MapeamentoIngest{"video", "preservation_master", true};
+        case matriz::ingest::CategoriaMidia::Imagem: return MapeamentoIngest{"foto", "foto_suporte", false};
+        case matriz::ingest::CategoriaMidia::Documento: return MapeamentoIngest{"documento", "documento", false};
+        case matriz::ingest::CategoriaMidia::Desconhecida: return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+} // namespace
 
 MainComponent::MainComponent() { reconstruirTelaInicial(); }
 
@@ -51,6 +79,7 @@ void MainComponent::reconstruirLayoutProjeto() {
 
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
+    mosaico_->aoArquivosSoltos = [this](const juce::Array<juce::File>& arquivos) { ingerirArquivos(arquivos); };
 
     mosaicoViewport_ = std::make_unique<juce::Viewport>();
     mosaicoViewport_->setViewedComponent(mosaico_.get(), false);
@@ -83,6 +112,68 @@ void MainComponent::fecharProjeto() {
 
 void MainComponent::selecionarItem(const std::string& itemId) {
     if (fichaPanel_) fichaPanel_->mostrarItem(itemId);
+}
+
+void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivos) {
+    if (!projetoAberto_) return;
+    auto& registro = projetoAberto_->projeto().registro();
+
+    auto stmtProjeto = registro.prepare("SELECT id, prefixo_nomenclatura FROM projeto LIMIT 1");
+    if (!stmtProjeto.step()) return;
+    std::string projetoId = stmtProjeto.columnText(0);
+    juce::String prefixo = stmtProjeto.columnText(1);
+
+    auto stmtContagem = registro.prepare("SELECT COUNT(*) FROM item");
+    stmtContagem.step();
+    int proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+
+    int ingeridos = 0;
+    juce::StringArray erros;
+
+    for (auto& arquivo : arquivos) {
+        if (arquivo.isDirectory()) continue; // ingest de pasta (§7.3, inferência de estrutura) fica pra depois
+
+        auto categoria = matriz::ingest::categoriaPorExtensao(arquivo);
+        auto mapeamento = mapearCategoria(categoria);
+        if (!mapeamento) {
+            erros.add(arquivo.getFileName() + ": " + matriz::i18n::t("ingest.erro_extensao_desconhecida"));
+            continue;
+        }
+
+        try {
+            std::string itemId = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+            juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 4);
+            ++proximoNumero;
+
+            registro.run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, ?, 'capturado', ?, ?)",
+                {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId), matriz::db::Value::of(codigo.toStdString()),
+                 matriz::db::Value::of(arquivo.getFileNameWithoutExtension().toStdString()),
+                 matriz::db::Value::of(mapeamento->tipoMidia), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            matriz::ingest::ingerirArquivo(registro, projetoAberto_->projeto().pasta(), itemId, arquivo, mapeamento->papel,
+                                            mapeamento->ehMaster);
+            ++ingeridos;
+        } catch (const std::exception& e) {
+            erros.add(arquivo.getFileName() + ": " + juce::String(e.what()));
+        }
+    }
+
+    if (mosaico_) mosaico_->recarregar();
+
+    juce::String resumo = matriz::i18n::t("ingest.resumo").replace("{n}", juce::String(ingeridos));
+    if (!erros.isEmpty())
+        resumo += "\n\n" + matriz::i18n::t("ingest.resumo_erros") + "\n" + erros.joinIntoString("\n");
+
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                      .withIconType(erros.isEmpty() ? juce::MessageBoxIconType::InfoIcon
+                                                                     : juce::MessageBoxIconType::WarningIcon)
+                                      .withTitle(matriz::i18n::t("ingest.titulo"))
+                                      .withMessage(resumo)
+                                      .withButton(matriz::i18n::t("comum.ok")),
+                                  static_cast<juce::ModalComponentManager::Callback*>(nullptr));
 }
 
 void MainComponent::paint(juce::Graphics& g) { g.fillAll(tema().fundo); }
