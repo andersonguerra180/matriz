@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS miniatura (
 );
 
 CREATE INDEX IF NOT EXISTS idx_miniatura_arquivo ON miniatura(arquivo_id);
+CREATE INDEX IF NOT EXISTS idx_miniatura_item ON miniatura(item_id, tipo);
 
 -- ---------------------------------------------------------------------------
 -- Forma de onda — peaks pré-calculados pra faixa "Nível" da tira de

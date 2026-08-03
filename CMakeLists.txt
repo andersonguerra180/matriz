@@ -31,6 +31,17 @@ juce_add_binary_data(MatrizSchemaAssets SOURCES
     schema/indice.sql)
 
 # ------------------------------------------------------------------------------
+# Strings de interface (i18n/pt_BR.yaml) embutidas no binário — B.5, §0.6.
+# NAMESPACE/HEADER_NAME próprios: o alvo `matriz` linka isto junto com
+# MatrizSchemaAssets, e os dois gerariam "BinaryData.h"/BinaryData:: por
+# padrão — colisão de nome de arquivo gerado entre os dois alvos.
+# ------------------------------------------------------------------------------
+juce_add_binary_data(MatrizI18nAssets
+    NAMESPACE I18nBinaryData
+    HEADER_NAME I18nBinaryData.h
+    SOURCES i18n/pt_BR.yaml)
+
+# ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
 # de projeto portátil. "Nenhuma UI além do mínimo para testar" (§16).
 # ------------------------------------------------------------------------------
@@ -108,5 +119,55 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_core
     juce::juce_cryptography
     juce::juce_dsp
+    PUBLIC
+    juce::juce_recommended_config_flags)
+
+# ------------------------------------------------------------------------------
+# Etapa 3 — app principal (B.1.1-B.1.3, B.4, B.5): janela, criação/abertura de
+# projeto, layout de três painéis, mosaico virtualizado, ficha lateral
+# genérica, configurações do projeto, i18n. Tira de diagnóstico, transporte,
+# marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
+# ------------------------------------------------------------------------------
+juce_add_gui_app(matriz PRODUCT_NAME "MATRIZ" VERSION 0.1.0)
+juce_generate_juce_header(matriz)
+
+target_sources(matriz PRIVATE
+    Source/Main.cpp
+    Source/I18n/Strings.cpp
+    Source/Ui/Tokens.h
+    Source/Ui/ProjetoAberto.cpp
+    Source/Ui/MosaicoComponent.cpp
+    Source/Ui/MosaicoStressTest.cpp
+    Source/Ui/FichaPanelComponent.cpp
+    Source/Ui/NovoProjetoDialogo.cpp
+    Source/Ui/ConfiguracoesProjetoDialogo.cpp
+    Source/Ui/MainComponent.cpp
+    Source/Ui/MainWindow.cpp
+    Source/Ingest/FluxoLote.cpp
+    Source/Ficha/FichaDefinition.cpp
+    Source/Db/Database.cpp
+    Source/Model/Project.cpp)
+
+target_include_directories(matriz PRIVATE Source)
+
+target_compile_definitions(matriz PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_APPLICATION_NAME_STRING="MATRIZ"
+    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+    MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
+    # Ver nota em matriz_ingest_selftest — a build empacotada (Etapa 10) não
+    # deve definir isto; até lá, o app de desenvolvimento cai pro PATH se não
+    # achar ffmpeg/ffprobe ao lado do executável.
+    MATRIZ_DEV_BUILD=1)
+
+target_link_libraries(matriz PRIVATE
+    MatrizSchemaAssets
+    MatrizI18nAssets
+    matriz_sqlite3
+    yaml-cpp::yaml-cpp
+    juce::juce_core
+    juce::juce_gui_basics
+    juce::juce_gui_extra
     PUBLIC
     juce::juce_recommended_config_flags)

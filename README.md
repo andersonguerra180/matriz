@@ -50,6 +50,11 @@ Source/Ingest/          motor de ingestão: checksum, leitura técnica (ffprobe 
                         de onda, duplicata (pHash/fingerprint), corte de banda, classificador fala x
                         música, inferência de estrutura de pasta, fluxo de ficha em lote, painel de
                         inconsistências, resolução de binário externo (ProcessoExterno.h)
+Source/I18n/            strings de interface (Strings.h/.cpp sobre i18n/pt_BR.yaml, embutido no binário)
+Source/Ui/              app principal: MainWindow/MainComponent (layout de 3 painéis), MosaicoComponent
+                        (virtualizado), FichaPanelComponent (ficha genérica sobre FichaDefinition),
+                        diálogos de novo/abrir projeto e configurações, design tokens (Tokens.h)
+i18n/                   pt_BR.yaml — strings de interface (§0.6)
 tools/selftest/         self-test headless da fundação (Etapa 1)
 tools/ingest_selftest/  self-test headless do motor de ingestão (Etapa 2), sobre mídia sintética via ffmpeg
 ```
@@ -68,9 +73,10 @@ precisa estar instalado e no PATH pra rodar os self-tests localmente.
 
 ```bash
 cmake -S . -B build -DCMAKE_OSX_ARCHITECTURES=x86_64   # ou arm64, conforme a máquina
-cmake --build build --target matriz_selftest matriz_ingest_selftest -j 8
+cmake --build build --target matriz_selftest matriz_ingest_selftest matriz -j 8
 ./build/matriz_selftest_artefacts/matriz_selftest
 ./build/matriz_ingest_selftest_artefacts/matriz_ingest_selftest
+open "build/matriz_artefacts/MATRIZ.app"
 ```
 
 O self-test da fundação carrega e valida as 14 definições de ficha, cria um projeto de
@@ -79,12 +85,20 @@ dados persistem ao reabrir o projeto do zero (P5). O self-test de ingestão gera
 mídia sintética com ffmpeg e roda o pipeline completo: leitura técnica, checksum,
 miniatura/forma de onda, pHash, fingerprint de áudio, corte de banda, classificador
 fala x música, EXIF real via Exiv2, inferência de pasta, ingest real de arquivo em
-disco, fluxo de ficha em lote e painel de inconsistências.
+disco, fluxo de ficha em lote e painel de inconsistências. O app principal (`matriz`)
+tem um modo oculto `--selftest-mosaico-10k` que roda um benchmark headless da
+virtualização do mosaico contra 10 mil itens sintéticos (ver `Source/Ui/MosaicoStressTest.cpp`).
 
 **Build/testes verificados em:** macOS (Intel, macOS 13), arquitetura x86_64. **Não
 verificado nesta máquina:** Windows — o projeto foi desenhado pra ser multiplataforma
 (FetchContent em vez de gerenciador de pacote, sem `#ifdef __APPLE__` fora da resolução
 de caminho de binário) mas não há como compilar/rodar num Windows real a partir daqui.
+**Também não verificado nesta máquina:** a aparência visual pixel a pixel do app —
+o ambiente de desenvolvimento não tem permissão de Gravação de Tela (TCC) concedida,
+então `screencapture` só captura o papel de parede, nunca o conteúdo de nenhuma janela
+de nenhum app (confirmado testando contra um app BKR já publicado, que mostra o mesmo
+comportamento). O app builda, abre, e a barra de menu nativa aparece com as strings
+traduzidas corretas — verificado — mas o layout interno da janela não foi visto.
 
 ## Estado da implementação
 
@@ -110,7 +124,19 @@ nada vai ao usuário antes do conjunto inteiro estar pronto).
       ffmpeg/ffprobe resolvidos por caminho relativo ao executável, com
       fallback a PATH só em build de desenvolvimento. Build/testes verificados
       em macOS x86_64; Windows não verificado nesta máquina.
-- [ ] Etapa 3 — Interface principal
+- [~] **Etapa 3 — Interface principal (em andamento — checkpoint B.1.1-B.1.3).**
+      Janela principal com menu nativo, criação/abertura de projeto, layout de
+      três painéis (§11.1), mosaico virtualizado (miniatura sob demanda em
+      thread separada, cor de estado, halo de sincronizado, seleção/busca/
+      ordenação/filtro, testado com 10 mil itens sintéticos), ficha lateral
+      genérica (uma tela só, consome FichaDefinition em runtime — todos os
+      tipos de campo, visivel_se reativo, herança, leitura técnica, sugestão
+      de IA com confirmação explícita P3, níveis aninhados, arquivos
+      esperados), aviso único de sobrescrita de master (P1), i18n desde a
+      primeira tela. Visualizador, transporte/jog/shuttle, tira de
+      diagnóstico, marcadores/vocabulário e tema System CRT ficam para depois
+      do retorno do usuário (B.1.4 em diante) — parado aqui de propósito, por
+      pedido explícito.
 - [ ] Etapa 4 — Índice e IA leve
 - [ ] Etapa 5 — Captura de áudio
 - [ ] Etapa 6 — Vídeo e imagem

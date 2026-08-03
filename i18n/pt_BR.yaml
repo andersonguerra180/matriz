@@ -1,0 +1,113 @@
+# MATRIZ — strings de interface, português do Brasil (§0.6).
+# Chaves organizadas por tela/componente. Achatadas em runtime pra
+# "secao.subsecao.chave" por Source/I18n/Strings.cpp.
+
+app:
+  nome: MATRIZ
+
+janela_principal:
+  titulo: MATRIZ
+
+menu:
+  arquivo: Arquivo
+  arquivo_novo_projeto: "Novo projeto…"
+  arquivo_abrir_projeto: "Abrir projeto…"
+  arquivo_fechar_projeto: Fechar projeto
+  arquivo_sair: Sair
+  projeto: Projeto
+  projeto_configuracoes: "Configurações do projeto…"
+  exibir: Exibir
+  exibir_tema_bkr_dark: BKR Dark
+  exibir_tema_system_crt: System CRT
+  ajuda: Ajuda
+
+tela_inicial:
+  titulo: Nenhum projeto aberto
+  subtitulo: "Crie um projeto novo ou abra um existente pra começar."
+  botao_novo: Novo projeto
+  botao_abrir: Abrir projeto
+
+dialogo_novo_projeto:
+  titulo: Novo projeto
+  campo_nome: Nome do projeto
+  campo_modo: Modo
+  campo_modo_preservacao: "Preservação — guardar fiel, provar integridade"
+  campo_modo_catalogo: "Catálogo — organizar, corrigir, exportar"
+  campo_prefixo: Prefixo de nomenclatura
+  campo_instituicao: "Instituição ou selo"
+  campo_responsavel: "Responsável"
+  campo_isrc: "Registrante ISRC (uso catálogo)"
+  campo_pasta: Pasta do projeto
+  botao_escolher_pasta: "Escolher pasta…"
+  botao_criar: Criar projeto
+  botao_cancelar: Cancelar
+  erro_nome_vazio: "O nome do projeto é obrigatório."
+  erro_prefixo_vazio: "O prefixo de nomenclatura é obrigatório."
+  erro_pasta_vazia: "Escolha uma pasta para o projeto."
+  erro_titulo: "Não foi possível criar o projeto"
+
+dialogo_abrir_projeto:
+  titulo: "Abrir projeto"
+  botao_escolher: "Escolher pasta do projeto…"
+  erro_titulo: "Não foi possível abrir o projeto"
+
+mosaico:
+  vazio: "Nenhum item neste projeto ainda."
+  buscar_placeholder: Buscar
+  ordenar: Ordenar por
+  ordenar_codigo: "Código"
+  ordenar_titulo: Título
+  ordenar_estado: Estado
+  ordenar_atualizado: "Atualizado recentemente"
+  filtrar_estado: Estado
+  filtrar_tipo: "Tipo de mídia"
+  todos: Todos
+  estado_nao_digitalizado: "Não digitalizado"
+  estado_capturado: Capturado
+  estado_qc_ok: "QC ok"
+  estado_alerta: Alerta
+  estado_publicado: Publicado
+  contagem_itens: "{n} itens"
+
+ficha:
+  vazia: "Selecione um item para ver a ficha."
+  cabecalho_sem_titulo: "(sem título)"
+  secao_arquivos_esperados: "Arquivos esperados"
+  arquivo_presente: presente
+  arquivo_ausente: ausente
+  arquivo_obrigatorio: obrigatório
+  sugestao_rotulo: sugestão
+  sugestao_confirmar: Confirmar
+  sugestao_confianca: "confiança {p}%"
+  sugestao_modelo: "modelo: {modelo} {versao}"
+  alerta_rotulo: "Atenção"
+  tabela_adicionar_linha: "Adicionar linha"
+  tabela_remover_linha: Remover
+  opcao_livre_criar: "Criar \"{texto}\""
+  nivel_faixa_adicionar: "Adicionar faixa"
+  nivel_faixa_numero: "Faixa {n}"
+  nivel_faixa_remover: "Remover faixa"
+  herdado_do_projeto: "herdado do projeto"
+  preenchido_por_leitura_tecnica: "leitura técnica"
+  campo_booleano_sim: Sim
+  campo_booleano_nao: "Não"
+
+configuracoes_projeto:
+  titulo: "Configurações do projeto"
+  secao_geral: Geral
+  secao_master: Master
+  campo_nome: "Nome do projeto"
+  campo_modo: Modo
+  campo_permitir_sobrescrever: "Permitir sobrescrever master"
+  aviso_sobrescrever_titulo: "Atenção: sobrescrita de master"
+  aviso_sobrescrever_corpo: "Ligar esta opção permite que o master original seja sobrescrito diretamente, sem passar por uma derivada. Isso desliga a garantia padrão de preservação (dois arquivos por padrão, P1) — o arquivo original deixa de estar protegido contra sobrescrita acidental. É uma decisão do responsável pelo projeto: o software avisa uma única vez, aqui, e não pergunta de novo depois de confirmada."
+  aviso_sobrescrever_confirmar: "Entendi, permitir mesmo assim"
+  aviso_sobrescrever_cancelar: Cancelar
+  botao_fechar: Fechar
+
+comum:
+  ok: OK
+  cancelar: Cancelar
+  sim: Sim
+  nao: "Não"
+  erro: Erro
