@@ -55,7 +55,9 @@ Source/App/             preferências de nível de aplicativo (idioma, projetos 
 Source/I18n/            strings de interface (Strings.h/.cpp sobre i18n/en.yaml e i18n/pt_BR.yaml,
                         embutidos no binário; carregar() pode trocar de locale em tempo real)
 Source/Ui/              app principal: MainWindow/MainComponent (layout de 3 painéis), MosaicoComponent
-                        (virtualizado), FichaPanelComponent (ficha genérica sobre FichaDefinition),
+                        (virtualizado, agrupado por modo — tipo de mídia no Archive, artista/lançamento
+                        no Catalog), FichaPanelComponent (ficha genérica sobre FichaDefinition),
+                        PainelInconsistenciasComponent (posição fixa na área central no modo Catalog),
                         diálogos de novo/abrir projeto e configurações, design tokens (Tokens.h)
 i18n/                   en.yaml (padrão) e pt_BR.yaml (trocável em Preferências) — strings de
                         interface (§0.6, Parte 2 da correção de fluxo)
@@ -179,17 +181,36 @@ nada vai ao usuário antes do conjunto inteiro estar pronto).
       não existe um `retranslateUi()` por Component, então é assim que toda
       string em tela reflete o idioma novo sem reiniciar o processo).
       Preferência de idioma persiste em `~/Library/Application Support/MATRIZ`
-      (nível de app, fora de qualquer pasta de projeto — P5). Ainda faltam:
-      **Parte 1** (tela Archive/Catalog como primeira tela, tipos de mídia
-      restritos por modo, mosaico agrupado por modo, painel de
-      inconsistências fixo no Catalog), **Parte 3** (onboarding com "New
-      Archive/New Catalog/Open" + recentes, diálogo de tipo em grade de
-      ícones com sugestão automática, pasta vira material com opção
-      copiar/mover e organização automática em disco) e **Parte 4** (captura
-      de áudio ao vivo — depende de tira de diagnóstico, transporte/jog/
-      shuttle e marcadores existirem primeiro; domínio de tempo real
-      diferente do resto do app, verificação completa exige hardware de
-      áudio real).
+      (nível de app, fora de qualquer pasta de projeto — P5).
+      **Parte 1 — modos Archive/Catalog.** A tela inicial virou a escolha de
+      modo (§1.1): dois cartões grandes (Archive/Catalog) com a descrição de
+      público de cada um, "Open…" e lista de projetos recentes (nome + selo
+      de modo, persistida junto com o idioma). O modo escolhido restringe os
+      tipos de mídia oferecidos no ingest (Archive: os 14; Catalog: release,
+      sample, fita de rolo, vinil — "faixa" é nível dentro de release.yaml,
+      não tipo à parte; "master"/"stems" são papéis de arquivo, não têm ficha
+      própria e não foram inventados aqui). O mosaico agora tem cabeçalho de
+      seção — por tipo de mídia no Archive, por artista/lançamento no Catalog
+      (lido de `release.artista_principal`/`titulo`, nível raiz — nunca de
+      `item.titulo`); os grupos são sempre um intervalo contíguo, então
+      `paint()`/`boundsDaCelula()`/`indiceNaPosicao()` continuam O(células
+      visíveis) + O(grupos), nunca O(total de itens) — confirmado de novo no
+      stress test de 10 mil itens. O painel de inconsistências
+      (`Source/Ingest/PainelInconsistencias.h`, Etapa 2) ganha uma UI própria
+      (`PainelInconsistenciasComponent`) com posição fixa na área central só
+      no modo Catalog — no Archive essa área continua o placeholder vazio de
+      B.1.4. **Gap conhecido, não escondido:** as descrições de inconsistência
+      (`Inconsistencia::descricao`) são strings em português escritas na
+      Etapa 2, antes da externalização de UI (§0.6/B.5) — ainda não passam
+      por `i18n::t()`; corrigir exige estruturar cada tipo por parâmetros
+      (tarefa em aberto, ver task tracker). Ainda faltam: **Parte 3**
+      (onboarding com "New Archive/New Catalog/Open" já fluido, diálogo de
+      tipo em grade de ícones com sugestão automática por conteúdo, pasta
+      vira material com opção copiar/mover e organização automática em
+      disco) e **Parte 4** (captura de áudio ao vivo — depende de tira de
+      diagnóstico, transporte/jog/shuttle e marcadores existirem primeiro;
+      domínio de tempo real diferente do resto do app, verificação completa
+      exige hardware de áudio real).
 - [ ] Etapa 4 — Índice e IA leve
 - [ ] Etapa 5 — Captura de áudio
 - [ ] Etapa 6 — Vídeo e imagem

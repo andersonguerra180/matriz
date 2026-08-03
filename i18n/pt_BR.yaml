@@ -132,3 +132,7 @@ ingest:
   selecionar_tipo_titulo: "Tipo de mídia"
   selecionar_tipo_corpo: "{n} arquivo(s) selecionado(s). Qual o tipo de mídia de origem deste lote?"
   selecionar_tipo_confirmar: Ingerir
+
+painel_inconsistencias:
+  titulo: Inconsistências
+  vazio: "Nenhuma inconsistência encontrada."

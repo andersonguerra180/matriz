@@ -6,6 +6,7 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "FichaPanelComponent.h"
 #include "MosaicoComponent.h"
+#include "PainelInconsistenciasComponent.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 
@@ -142,6 +143,8 @@ void MainComponent::reconstruirTelaInicial() {
     mosaicoViewport_.reset();
     mosaico_.reset();
     visualizadorPlaceholder_.reset();
+    painelInconsistenciasViewport_.reset();
+    painelInconsistencias_.reset();
     fichaPanel_.reset();
 
     telaInicialSubtitulo_ = std::make_unique<juce::Label>();
@@ -218,10 +221,19 @@ void MainComponent::reconstruirLayoutProjeto() {
     addAndMakeVisible(*mosaicoViewport_);
 
     // Visualizador (vídeo/imagem/vazio) + transporte + tira de diagnóstico
-    // são B.1.4/B.1.5 — fronteira de etapa. Por enquanto, área reservada e
-    // vazia no layout (§11.1 já define o espaço; o conteúdo vem depois).
-    visualizadorPlaceholder_ = std::make_unique<juce::Component>();
-    addAndMakeVisible(*visualizadorPlaceholder_);
+    // são B.1.4/B.1.5 — fronteira de etapa, ainda um placeholder vazio.
+    // No Catalog, a mesma área central tem posição fixa reservada pro
+    // painel de inconsistências (§1.3/§3.5) — nunca escondido em menu.
+    if (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) {
+        painelInconsistencias_ = std::make_unique<PainelInconsistenciasComponent>(*projetoAberto_);
+        painelInconsistenciasViewport_ = std::make_unique<juce::Viewport>();
+        painelInconsistenciasViewport_->setViewedComponent(painelInconsistencias_.get(), false);
+        addAndMakeVisible(*painelInconsistenciasViewport_);
+        painelInconsistencias_->recarregar();
+    } else {
+        visualizadorPlaceholder_ = std::make_unique<juce::Component>();
+        addAndMakeVisible(*visualizadorPlaceholder_);
+    }
 
     fichaPanel_ = std::make_unique<FichaPanelComponent>(*projetoAberto_);
     addAndMakeVisible(*fichaPanel_);
@@ -246,6 +258,12 @@ void MainComponent::fecharProjeto() {
     if (ingestEmAndamento()) return;
     projetoAberto_.reset();
     reconstruirTelaInicial();
+}
+
+bool MainComponent::temPainelInconsistencias() const { return painelInconsistencias_ != nullptr; }
+
+int MainComponent::totalInconsistencias() const {
+    return painelInconsistencias_ ? painelInconsistencias_->totalInconsistencias() : -1;
 }
 
 std::unique_ptr<matriz::model::Project> MainComponent::destacarProjeto() {
@@ -384,6 +402,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos, 
 
                 // Lote inteiro terminou.
                 if (self->mosaico_) self->mosaico_->recarregar();
+                if (self->painelInconsistencias_) self->painelInconsistencias_->recarregar();
 
                 int sucessos;
                 juce::StringArray erros;
@@ -481,7 +500,16 @@ void MainComponent::resized() {
 
     mosaicoViewport_->setBounds(area.removeFromLeft(kLarguraMosaico));
     fichaPanel_->setBounds(area.removeFromRight(kLarguraFicha));
-    visualizadorPlaceholder_->setBounds(area);
+
+    if (visualizadorPlaceholder_) visualizadorPlaceholder_->setBounds(area);
+    if (painelInconsistenciasViewport_) {
+        painelInconsistenciasViewport_->setBounds(area);
+        if (painelInconsistencias_) {
+            painelInconsistencias_->setSize(
+                painelInconsistenciasViewport_->getWidth() - painelInconsistenciasViewport_->getScrollBarThickness(),
+                painelInconsistencias_->getHeight());
+        }
+    }
 
     if (mosaico_) {
         mosaico_->setSize(mosaicoViewport_->getWidth() - mosaicoViewport_->getScrollBarThickness(), mosaico_->getHeight());

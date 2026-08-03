@@ -134,3 +134,7 @@ ingest:
   selecionar_tipo_titulo: "Media type"
   selecionar_tipo_corpo: "{n} file(s) selected. What's the source media type for this batch?"
   selecionar_tipo_confirmar: Add
+
+painel_inconsistencias:
+  titulo: Inconsistencies
+  vazio: "No inconsistencies found."

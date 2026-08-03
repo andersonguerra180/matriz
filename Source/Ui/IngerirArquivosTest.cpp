@@ -152,6 +152,37 @@ int rodarTestIngerirArquivos() {
         checar(!temTipo(tiposCatalog, "documento") && !temTipo(tiposCatalog, "cd") && !temTipo(tiposCatalog, "foto"),
                "modo catálogo NÃO oferece tipos irrelevantes (documento/cd/foto)");
 
+        // Painel de inconsistências com posição fixa no modo Catalog (§1.3):
+        // ingere um release sem capa e confirma que o painel existe e já
+        // detectou a falta (release_sem_capa) assim que o projeto abre —
+        // "nunca escondido em menu".
+        matriz::model::NovoProjetoParams paramsPainel;
+        paramsPainel.nome = "Teste painel";
+        paramsPainel.modo = matriz::model::Modo::Catalogo;
+        paramsPainel.prefixoNomenclatura = "PNL";
+        auto projetoPainel = matriz::model::Project::criar(tmpRoot.getChildFile("projeto_painel"), paramsPainel);
+        MainComponent mainComponentCatalog;
+        mainComponentCatalog.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
+        mainComponentCatalog.abrirProjeto(std::move(projetoPainel));
+        checar(mainComponentCatalog.temPainelInconsistencias(),
+               "modo catálogo mostra o painel de inconsistências na área central");
+        mainComponentCatalog.ingerirArquivosComTipoConhecido({audio}, "release");
+        esperarIngestTerminar(mainComponentCatalog);
+        checar(mainComponentCatalog.totalInconsistencias() > 0,
+               "release sem capa é detectado assim que o item entra (" +
+                   std::to_string(mainComponentCatalog.totalInconsistencias()) + " inconsistência(s))");
+
+        matriz::model::NovoProjetoParams paramsPainelArchive;
+        paramsPainelArchive.nome = "Teste painel archive";
+        paramsPainelArchive.modo = matriz::model::Modo::Preservacao;
+        paramsPainelArchive.prefixoNomenclatura = "PLA";
+        auto projetoPainelArchive =
+            matriz::model::Project::criar(tmpRoot.getChildFile("projeto_painel_archive"), paramsPainelArchive);
+        MainComponent mainComponentArchive;
+        mainComponentArchive.abrirProjeto(std::move(projetoPainelArchive));
+        checar(!mainComponentArchive.temPainelInconsistencias(),
+               "modo acervo não tem posição fixa pro painel de inconsistências nesta etapa");
+
         matriz::model::NovoProjetoParams paramsArchive;
         paramsArchive.nome = "Teste acervo";
         paramsArchive.modo = matriz::model::Modo::Preservacao;

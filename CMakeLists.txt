@@ -145,6 +145,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/FichaPanelComponent.cpp
+    Source/Ui/PainelInconsistenciasComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp
     Source/Ui/ConfiguracoesProjetoDialogo.cpp
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
@@ -155,6 +156,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Checksum.cpp
     Source/Ingest/ProcessoExterno.cpp
+    Source/Ingest/PainelInconsistencias.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp)

@@ -16,6 +16,7 @@ namespace matriz::ui {
 
 class MosaicoComponent;
 class FichaPanelComponent;
+class PainelInconsistenciasComponent;
 class CartaoModo;
 class LinhaProjetoRecente;
 
@@ -35,6 +36,12 @@ public:
     std::unique_ptr<matriz::model::Project> destacarProjeto();
     bool temProjetoAberto() const { return projetoAberto_ != nullptr; }
     ProjetoAberto* projetoAberto() { return projetoAberto_.get(); }
+
+    // Introspecção pra teste (Parte 1 — painel de inconsistências fixo no
+    // Catalog, §1.3/§3.5): definido em .cpp porque PainelInconsistenciasComponent
+    // só está forward-declarado aqui.
+    bool temPainelInconsistencias() const;
+    int totalInconsistencias() const;
 
     // Ingere arquivos (ou pastas, expandidas recursivamente) como itens
     // novos. Pergunta o tipo de mídia do lote antes de processar — nunca
@@ -80,7 +87,13 @@ private:
     // Layout de projeto aberto
     std::unique_ptr<juce::Viewport> mosaicoViewport_;
     std::unique_ptr<MosaicoComponent> mosaico_;
+    // Área central: visualizador (vídeo/imagem) é B.1.4+, ainda um
+    // placeholder vazio no Archive. No Catalog, essa mesma área tem posição
+    // fixa reservada pro painel de inconsistências (§1.3/§3.5 — "nunca
+    // escondido em menu") — só um dos dois existe por vez.
     std::unique_ptr<juce::Component> visualizadorPlaceholder_;
+    std::unique_ptr<juce::Viewport> painelInconsistenciasViewport_;
+    std::unique_ptr<PainelInconsistenciasComponent> painelInconsistencias_;
     std::unique_ptr<FichaPanelComponent> fichaPanel_;
 
     // Ingest em background (corrige o travamento reportado: cópia + checksum
