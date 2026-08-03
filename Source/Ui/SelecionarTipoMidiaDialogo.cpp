@@ -9,10 +9,26 @@ namespace {
 
 // Ordem de exibição segue §6.6. Nomes internos (id) nunca mudam — são a
 // chave pro arquivo fichas/<id>.yaml e pro item_midia.tipo_midia no banco.
-const std::vector<std::string>& idsTiposMidiaConhecidos() {
+//
+// Restrito por modo (Parte 1 da correção de fluxo — §1.2/§1.3): Archive é
+// multiformato, os 14 tipos valem; Catalog é sobre a obra musical, não o
+// suporte físico, então só oferece o que é musicalmente relevante —
+// release e sample têm ficha própria; "faixa" é um nível dentro de
+// release (não um tipo_midia à parte, já existente em release.yaml), e
+// "master"/"stems" são papéis de arquivo (§5.4: preservation_master,
+// stem), não tipos de mídia novos — nenhum dos dois tem ficha própria e o
+// spec não define uma, então não inventamos aqui (§0). Os únicos suportes
+// físicos de origem que o Catalog precisa são fita de rolo e vinil,
+// citados explicitamente no documento.
+const std::vector<std::string>& idsTiposMidiaArchive() {
     static const std::vector<std::string> ids = {"fita_rolo", "cassete", "vinil", "dat", "minidisc", "cd",
                                                    "filme", "video", "foto", "negativo", "slide",
                                                    "documento", "release", "sample"};
+    return ids;
+}
+
+const std::vector<std::string>& idsTiposMidiaCatalog() {
+    static const std::vector<std::string> ids = {"release", "sample", "fita_rolo", "vinil"};
     return ids;
 }
 
@@ -20,7 +36,9 @@ const std::vector<std::string>& idsTiposMidiaConhecidos() {
 
 std::vector<TipoMidiaOpcao> listarTiposMidiaDisponiveis(ProjetoAberto& projeto) {
     std::vector<TipoMidiaOpcao> out;
-    for (auto& id : idsTiposMidiaConhecidos()) {
+    const auto& ids = projeto.projeto().modo() == matriz::model::Modo::Catalogo ? idsTiposMidiaCatalog()
+                                                                                  : idsTiposMidiaArchive();
+    for (auto& id : ids) {
         try {
             const auto& def = projeto.definicaoPara(id);
             out.push_back({id, def.rotulo.empty() ? juce::String(id) : juce::String(def.rotulo)});

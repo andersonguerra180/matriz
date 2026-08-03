@@ -2,9 +2,12 @@
 
 #include "../Model/Project.h"
 #include "MainComponent.h"
+#include "ProjetoAberto.h"
+#include "SelecionarTipoMidiaDialogo.h"
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <iostream>
 
 namespace matriz::ui {
@@ -127,6 +130,37 @@ int rodarTestIngerirArquivos() {
 
         mainComponent.fecharProjeto();
         checar(!mainComponent.temProjetoAberto(), "fecharProjeto() limpa o estado corretamente");
+
+        // Restrição de tipos de mídia por modo (Parte 1 da correção de
+        // fluxo, §1.2/§1.3): Archive oferece os 14 tipos, Catalog só o
+        // musicalmente relevante — nunca fita_rolo aparecendo como se
+        // fosse o único tipo de áudio possível (era exatamente o bug #4
+        // original, só que agora do lado da restrição por modo).
+        matriz::model::NovoProjetoParams paramsCatalog;
+        paramsCatalog.nome = "Teste catálogo";
+        paramsCatalog.modo = matriz::model::Modo::Catalogo;
+        paramsCatalog.prefixoNomenclatura = "CAT";
+        auto projetoCatalog = matriz::model::Project::criar(tmpRoot.getChildFile("projeto_catalog"), paramsCatalog);
+        ProjetoAberto abertoCatalog(std::move(projetoCatalog));
+        auto tiposCatalog = listarTiposMidiaDisponiveis(abertoCatalog);
+        auto temTipo = [&](const std::vector<TipoMidiaOpcao>& tipos, const std::string& id) {
+            return std::any_of(tipos.begin(), tipos.end(), [&](const TipoMidiaOpcao& o) { return o.id == id; });
+        };
+        checar(temTipo(tiposCatalog, "release") && temTipo(tiposCatalog, "sample") &&
+                   temTipo(tiposCatalog, "fita_rolo") && temTipo(tiposCatalog, "vinil"),
+               "modo catálogo oferece release/sample/fita_rolo/vinil");
+        checar(!temTipo(tiposCatalog, "documento") && !temTipo(tiposCatalog, "cd") && !temTipo(tiposCatalog, "foto"),
+               "modo catálogo NÃO oferece tipos irrelevantes (documento/cd/foto)");
+
+        matriz::model::NovoProjetoParams paramsArchive;
+        paramsArchive.nome = "Teste acervo";
+        paramsArchive.modo = matriz::model::Modo::Preservacao;
+        paramsArchive.prefixoNomenclatura = "ARC";
+        auto projetoArchive = matriz::model::Project::criar(tmpRoot.getChildFile("projeto_archive"), paramsArchive);
+        ProjetoAberto abertoArchive(std::move(projetoArchive));
+        auto tiposArchive = listarTiposMidiaDisponiveis(abertoArchive);
+        checar(tiposArchive.size() == 14, "modo acervo continua oferecendo os 14 tipos (" +
+                                                juce::String(static_cast<int>(tiposArchive.size())).toStdString() + ")");
 
     } catch (const std::exception& e) {
         checar(false, juce::String("teste da ponte de ingest: ") + e.what());
