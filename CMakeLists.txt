@@ -142,6 +142,7 @@ target_sources(matriz PRIVATE
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp
     Source/Ui/ConfiguracoesProjetoDialogo.cpp
+    Source/Ui/SelecionarTipoMidiaDialogo.cpp
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
     Source/Ingest/FluxoLote.cpp
@@ -164,7 +165,11 @@ target_compile_definitions(matriz PRIVATE
     # Ver nota em matriz_ingest_selftest — a build empacotada (Etapa 10) não
     # deve definir isto; até lá, o app de desenvolvimento cai pro PATH se não
     # achar ffmpeg/ffprobe ao lado do executável.
-    MATRIZ_DEV_BUILD=1)
+    MATRIZ_DEV_BUILD=1
+    # Necessário pra MessageManager::runDispatchLoopUntil, usado só pelo
+    # selftest headless de ingest (Source/Ui/IngerirArquivosTest.cpp) pra
+    # bombear os callbacks assíncronos do ingest em background.
+    JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(matriz PRIVATE
     MatrizSchemaAssets

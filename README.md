@@ -93,11 +93,16 @@ não um atalho — e confere item/arquivo/checksum/leitura técnica no banco,
 `Source/Ui/IngerirArquivosTest.cpp`).
 
 **Ingerir material real:** com um projeto aberto, `Arquivo > Ingerir arquivos…` ou
-arrastar arquivos direto no mosaico. Cada arquivo entra como um item novo (tipo de
-mídia inferido pela extensão — áudio vira `fita_rolo`, imagem vira `foto`, etc.; troque
-na ficha se não for o tipo certo), com checksum e leitura técnica automáticos (§7.2
-estágio 1). Ingest de pasta inteira com inferência de estrutura (§7.3) ainda não existe
-nesta tela — por arquivo, um por um, por agora.
+arrastar arquivos (ou pastas inteiras — expandidas recursivamente) direto no mosaico.
+Antes de processar, o software pergunta o tipo de mídia do lote (nunca mais adivinha
+pela extensão — cada tipo tem sua própria ficha, e assumir errado forçava o operador a
+responder campos que não fazem sentido pro formato real). Cada arquivo vira um item
+novo, com checksum e leitura técnica automáticos (§7.2 estágio 1), rodando em background
+(`juce::ThreadPool`) — a janela não trava durante o lote, e um rótulo mostra o progresso.
+Fechar/trocar de projeto fica desabilitado no menu enquanto um lote está em andamento.
+Ingest de pasta com inferência de estrutura completa (§7.3 — release/faixa/capa por
+convenção de nome) ainda não existe; por ora cada arquivo dentro da pasta vira um item
+independente do mesmo tipo escolhido.
 
 **Build/testes verificados em:** macOS (Intel, macOS 13), arquitetura x86_64. **Não
 verificado nesta máquina:** Windows — o projeto foi desenhado pra ser multiplataforma

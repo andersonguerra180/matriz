@@ -32,7 +32,7 @@ dialogo_novo_projeto:
   titulo: Novo projeto
   campo_nome: Nome do projeto
   campo_modo: Modo
-  campo_modo_preservacao: "Preservação — guardar fiel, provar integridade"
+  campo_modo_preservacao: "Acervo — guardar fiel, provar integridade"
   campo_modo_catalogo: "Catálogo — organizar, corrigir, exportar"
   campo_prefixo: Prefixo de nomenclatura
   campo_instituicao: "Instituição ou selo"
@@ -119,3 +119,8 @@ ingest:
   resumo: "{n} arquivo(s) ingerido(s) com sucesso."
   resumo_erros: "Não foi possível ingerir:"
   erro_extensao_desconhecida: "extensão não reconhecida (tipo de mídia não pôde ser inferido)"
+  ja_em_andamento: "Já existe um lote sendo ingerido. Aguarde terminar antes de iniciar outro."
+  progresso: "Ingerindo… {feito}/{total}"
+  selecionar_tipo_titulo: "Tipo de mídia"
+  selecionar_tipo_corpo: "{n} arquivo(s) selecionado(s). Qual o tipo de mídia de origem deste lote?"
+  selecionar_tipo_confirmar: Ingerir

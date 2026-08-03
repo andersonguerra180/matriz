@@ -50,9 +50,16 @@ juce::StringArray MainWindow::getMenuBarNames() {
 juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
     juce::PopupMenu menu;
     if (topLevelMenuIndex == kMenuArquivo) {
-        menu.addItem(kCmdNovoProjeto, matriz::i18n::t("menu.arquivo_novo_projeto"));
-        menu.addItem(kCmdAbrirProjeto, matriz::i18n::t("menu.arquivo_abrir_projeto"));
-        menu.addItem(kCmdFecharProjeto, matriz::i18n::t("menu.arquivo_fechar_projeto"), conteudo_->temProjetoAberto());
+        // Um lote de ingest em background segura uma referência ao registro
+        // do projeto atual — trocar/fechar o projeto nesse meio tempo
+        // deixaria o job com uma referência pendurada (§ver MainComponent::
+        // fecharProjeto). Trocar de projeto é só uma reabertura disfarçada
+        // de "novo"/"abrir", então as três ficam desabilitadas juntas.
+        bool podeTrocarProjeto = !conteudo_->ingestEmAndamento();
+        menu.addItem(kCmdNovoProjeto, matriz::i18n::t("menu.arquivo_novo_projeto"), podeTrocarProjeto);
+        menu.addItem(kCmdAbrirProjeto, matriz::i18n::t("menu.arquivo_abrir_projeto"), podeTrocarProjeto);
+        menu.addItem(kCmdFecharProjeto, matriz::i18n::t("menu.arquivo_fechar_projeto"),
+                     conteudo_->temProjetoAberto() && podeTrocarProjeto);
         menu.addSeparator();
         menu.addItem(kCmdIngerirArquivos, matriz::i18n::t("menu.arquivo_ingerir_arquivos"), conteudo_->temProjetoAberto());
         menu.addSeparator();

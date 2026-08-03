@@ -20,6 +20,21 @@ void gerarComFfmpeg(const juce::StringArray& args) {
     if (proc.getExitCode() != 0) throw std::runtime_error("ffmpeg terminou com erro ao gerar mídia de teste");
 }
 
+// Ingest agora roda em background (ThreadPool + callAsync) — o teste precisa
+// bombear o loop de mensagens pra que os callbacks assíncronos rodem, já que
+// não há ninguém chamando runDispatchLoop de fora neste modo headless.
+void esperarIngestTerminar(MainComponent& mainComponent) {
+    auto inicio = juce::Time::getMillisecondCounter();
+    while (mainComponent.ingestEmAndamento()) {
+        if (juce::Time::getMillisecondCounter() - inicio > 30000)
+            throw std::runtime_error("timeout esperando o lote de ingest terminar");
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+    }
+    // Mais uma passada pra garantir que o callAsync final (recarregar
+    // mosaico + resumo) já foi processado antes de conferir o banco.
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+}
+
 } // namespace
 
 int rodarTestIngerirArquivos() {
@@ -49,10 +64,14 @@ int rodarTestIngerirArquivos() {
         matriz::db::Database& registro = projeto->registro();
 
         MainComponent mainComponent;
+        mainComponent.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
         mainComponent.abrirProjeto(std::move(projeto));
         checar(mainComponent.temProjetoAberto(), "MainComponent abriu o projeto de teste");
 
-        mainComponent.ingerirArquivos({audio, imagem});
+        mainComponent.ingerirArquivosComTipoConhecido({audio}, "fita_rolo");
+        esperarIngestTerminar(mainComponent);
+        mainComponent.ingerirArquivosComTipoConhecido({imagem}, "foto");
+        esperarIngestTerminar(mainComponent);
 
         auto stmtContagem = registro.prepare("SELECT COUNT(*) FROM item");
         stmtContagem.step();
@@ -83,10 +102,28 @@ int rodarTestIngerirArquivos() {
         // Ingerir de novo não deve duplicar itens indefinidamente nem quebrar
         // (cada chamada cria itens novos por design atual — confirma que ao
         // menos não lança e o mosaico continua consistente).
-        mainComponent.ingerirArquivos({audio});
+        mainComponent.ingerirArquivosComTipoConhecido({audio}, "fita_rolo");
+        esperarIngestTerminar(mainComponent);
         auto stmtContagem2 = registro.prepare("SELECT COUNT(*) FROM item");
         stmtContagem2.step();
         checar(stmtContagem2.columnInt(0) == 3, "ingerir de novo soma mais um item (3 no total), sem travar");
+
+        // Ingest de pasta: arrasta a pasta, não os arquivos dentro dela —
+        // tem que expandir recursivamente (era o bug #2 reportado: pasta
+        // inteira era ignorada silenciosamente).
+        juce::File pastaFotos = tmpRoot.getChildFile("fotos_da_caixa");
+        pastaFotos.createDirectory();
+        juce::File subpasta = pastaFotos.getChildFile("lote_1");
+        subpasta.createDirectory();
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "color=c=blue:s=320x240", "-frames:v", "1", subpasta.getChildFile("capa.jpg").getFullPathName()});
+
+        mainComponent.ingerirArquivosComTipoConhecido({pastaFotos}, "foto");
+        esperarIngestTerminar(mainComponent);
+        auto stmtContagem3 = registro.prepare("SELECT COUNT(*) FROM item");
+        stmtContagem3.step();
+        checar(stmtContagem3.columnInt(0) == 4,
+               "ingerir uma pasta expande recursivamente e ingere o arquivo de dentro (4 no total)");
 
         mainComponent.fecharProjeto();
         checar(!mainComponent.temProjetoAberto(), "fecharProjeto() limpa o estado corretamente");
