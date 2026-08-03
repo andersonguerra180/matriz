@@ -19,11 +19,18 @@ public:
     void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
 
 private:
-    void pedirNovoProjeto();
+    // Chamado pelos cartões da tela inicial — o modo já foi escolhido lá.
+    void pedirNovoProjeto(matriz::model::Modo modo);
+    // Chamado pelo menu Arquivo > Novo projeto, que pode ser acionado com um
+    // projeto já aberto (não existe tela de cartões nesse momento) — pergunta
+    // o modo com um diálogo mínimo antes de seguir pro fluxo de sempre.
+    void pedirNovoProjetoViaMenu();
     void pedirAbrirProjeto();
+    void abrirPasta(const juce::File& pasta);
     void pedirConfiguracoesProjeto();
     void pedirIngerirArquivos();
     void trocarIdioma(const juce::String& locale);
+    void conectarConteudo();
 
     std::unique_ptr<MainComponent> conteudo_;
 

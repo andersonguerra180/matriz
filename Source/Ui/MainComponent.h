@@ -16,6 +16,8 @@ namespace matriz::ui {
 
 class MosaicoComponent;
 class FichaPanelComponent;
+class CartaoModo;
+class LinhaProjetoRecente;
 
 class MainComponent : public juce::Component {
 public:
@@ -65,11 +67,15 @@ private:
 
     std::unique_ptr<ProjetoAberto> projetoAberto_;
 
-    // Tela inicial (nenhum projeto aberto)
-    std::unique_ptr<juce::Label> telaInicialTitulo_;
+    // Tela inicial (nenhum projeto aberto) — Parte 1 da correção de fluxo:
+    // a primeira decisão é o modo (dois cartões grandes, §1.1), nunca uma
+    // configuração escondida atrás de um botão genérico "Novo projeto".
     std::unique_ptr<juce::Label> telaInicialSubtitulo_;
-    std::unique_ptr<juce::TextButton> telaInicialBotaoNovo_;
+    std::unique_ptr<CartaoModo> telaInicialCartaoArchive_;
+    std::unique_ptr<CartaoModo> telaInicialCartaoCatalog_;
     std::unique_ptr<juce::TextButton> telaInicialBotaoAbrir_;
+    std::unique_ptr<juce::Label> telaInicialRecentesTitulo_;
+    std::vector<std::unique_ptr<LinhaProjetoRecente>> telaInicialLinhasRecentes_;
 
     // Layout de projeto aberto
     std::unique_ptr<juce::Viewport> mosaicoViewport_;
@@ -86,8 +92,14 @@ private:
     std::atomic<int> ingestsErrosLote_{0};
 
 public:
-    std::function<void()> aoPedirNovoProjeto;
+    // Modo já decidido (o cartão clicado) — o diálogo de novo projeto só
+    // pergunta o que é comum aos dois modos (nome, pasta...).
+    std::function<void(matriz::model::Modo)> aoPedirNovoProjeto;
     std::function<void()> aoPedirAbrirProjeto;
+
+    // Abre diretamente uma pasta de projeto já conhecida (clique num item
+    // da lista de recentes), sem passar pelo FileChooser.
+    std::function<void(juce::File)> aoAbrirRecente;
 
     // Se definido, substitui o AlertWindow padrão de resumo ao final de um
     // lote de ingest — único jeito de rodar o fluxo real em

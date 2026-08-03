@@ -27,8 +27,7 @@ MainWindow::MainWindow(const juce::String& nome)
     setUsingNativeTitleBar(true);
 
     conteudo_ = std::make_unique<MainComponent>();
-    conteudo_->aoPedirNovoProjeto = [this] { pedirNovoProjeto(); };
-    conteudo_->aoPedirAbrirProjeto = [this] { pedirAbrirProjeto(); };
+    conectarConteudo();
     setContentNonOwned(conteudo_.get(), true);
 
 #if JUCE_MAC
@@ -90,7 +89,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
 void MainWindow::menuItemSelected(int menuItemID, int) {
     switch (menuItemID) {
-        case kCmdNovoProjeto: pedirNovoProjeto(); break;
+        case kCmdNovoProjeto: pedirNovoProjetoViaMenu(); break;
         case kCmdAbrirProjeto: pedirAbrirProjeto(); break;
         case kCmdFecharProjeto: conteudo_->fecharProjeto(); break;
         case kCmdSair: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
@@ -115,19 +114,38 @@ void MainWindow::trocarIdioma(const juce::String& locale) {
     // precisar de um retranslateUi() em cada Component existente.
     auto projetoAberto = conteudo_->destacarProjeto();
     conteudo_ = std::make_unique<MainComponent>();
-    conteudo_->aoPedirNovoProjeto = [this] { pedirNovoProjeto(); };
-    conteudo_->aoPedirAbrirProjeto = [this] { pedirAbrirProjeto(); };
+    conectarConteudo();
     setContentNonOwned(conteudo_.get(), true);
     if (projetoAberto) conteudo_->abrirProjeto(std::move(projetoAberto));
 
     menuItemsChanged();
 }
 
-void MainWindow::pedirNovoProjeto() {
-    mostrarDialogoNovoProjeto([this](std::optional<NovoProjetoResultado> resultado) {
+void MainWindow::conectarConteudo() {
+    conteudo_->aoPedirNovoProjeto = [this](matriz::model::Modo modo) { pedirNovoProjeto(modo); };
+    conteudo_->aoPedirAbrirProjeto = [this] { pedirAbrirProjeto(); };
+    conteudo_->aoAbrirRecente = [this](juce::File pasta) { abrirPasta(pasta); };
+}
+
+void MainWindow::pedirNovoProjetoViaMenu() {
+    auto janela = std::make_shared<juce::AlertWindow>(matriz::i18n::t("menu.arquivo_novo_projeto"), juce::String(),
+                                                        juce::MessageBoxIconType::QuestionIcon);
+    janela->addButton(matriz::i18n::t("tela_inicial.cartao_archive_titulo"), 1);
+    janela->addButton(matriz::i18n::t("tela_inicial.cartao_catalog_titulo"), 2);
+    janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([this, janela](int resultado) {
+                                 if (resultado == 1) pedirNovoProjeto(matriz::model::Modo::Preservacao);
+                                 else if (resultado == 2) pedirNovoProjeto(matriz::model::Modo::Catalogo);
+                             }));
+}
+
+void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
+    mostrarDialogoNovoProjeto(modo, [this](std::optional<NovoProjetoResultado> resultado) {
         if (!resultado) return;
         try {
             auto projeto = matriz::model::Project::criar(resultado->pasta, resultado->params);
+            matriz::app::registrarRecente(projeto->pasta().getFullPathName(), projeto->nome(),
+                                            matriz::model::modoToString(projeto->modo()));
             conteudo_->abrirProjeto(std::move(projeto));
         } catch (const std::exception& e) {
             juce::AlertWindow::showAsync(juce::MessageBoxOptions()
@@ -140,24 +158,29 @@ void MainWindow::pedirNovoProjeto() {
     });
 }
 
+void MainWindow::abrirPasta(const juce::File& pasta) {
+    try {
+        auto projeto = matriz::model::Project::abrir(pasta);
+        matriz::app::registrarRecente(projeto->pasta().getFullPathName(), projeto->nome(),
+                                        matriz::model::modoToString(projeto->modo()));
+        conteudo_->abrirProjeto(std::move(projeto));
+    } catch (const std::exception& e) {
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                          .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                          .withTitle(matriz::i18n::t("dialogo_abrir_projeto.erro_titulo"))
+                                          .withMessage(juce::String(e.what()))
+                                          .withButton(matriz::i18n::t("comum.ok")),
+                                      static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+    }
+}
+
 void MainWindow::pedirAbrirProjeto() {
     auto chooser = std::make_shared<juce::FileChooser>(matriz::i18n::t("dialogo_abrir_projeto.titulo"));
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                           [this, chooser](const juce::FileChooser& fc) {
                               juce::File pasta = fc.getResult();
                               if (pasta == juce::File()) return;
-                              try {
-                                  auto projeto = matriz::model::Project::abrir(pasta);
-                                  conteudo_->abrirProjeto(std::move(projeto));
-                              } catch (const std::exception& e) {
-                                  juce::AlertWindow::showAsync(
-                                      juce::MessageBoxOptions()
-                                          .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle(matriz::i18n::t("dialogo_abrir_projeto.erro_titulo"))
-                                          .withMessage(juce::String(e.what()))
-                                          .withButton(matriz::i18n::t("comum.ok")),
-                                      static_cast<juce::ModalComponentManager::Callback*>(nullptr));
-                              }
+                              abrirPasta(pasta);
                           });
 }
 

@@ -53,7 +53,8 @@ target_sources(matriz_selftest PRIVATE
     Source/Ficha/FichaDefinition.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp
-    Source/I18n/Strings.cpp)
+    Source/I18n/Strings.cpp
+    Source/App/Preferencias.cpp)
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -71,6 +72,7 @@ target_link_libraries(matriz_selftest PRIVATE
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     juce::juce_core
+    juce::juce_data_structures
     PUBLIC
     juce::juce_recommended_config_flags)
 

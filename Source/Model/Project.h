@@ -53,6 +53,14 @@ public:
 
     std::string projetoId() const { return projetoId_; }
 
+    // Lidos direto de `projeto` (linha única) — nunca cacheados, pra nunca
+    // divergir do banco. `modo` não muda depois de criado (decisão de
+    // produto, Parte 1 da correção de fluxo); `nome` hoje também não é
+    // editável em nenhuma tela, mas ler ao vivo custa uma linha e evita
+    // qualquer dúvida sobre staleness se isso mudar no futuro.
+    std::string nome();
+    Modo modo();
+
 private:
     Project(juce::File pastaProjeto, std::unique_ptr<matriz::db::Database> registro,
             std::unique_ptr<matriz::db::Database> indice, std::string projetoId);

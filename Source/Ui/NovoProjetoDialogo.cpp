@@ -35,20 +35,16 @@ private:
 
 } // namespace
 
-void mostrarDialogoNovoProjeto(std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir) {
-    auto janela = std::make_shared<juce::AlertWindow>(matriz::i18n::t("dialogo_novo_projeto.titulo"), juce::String(),
-                                                        juce::MessageBoxIconType::NoIcon);
+void mostrarDialogoNovoProjeto(matriz::model::Modo modo,
+                                std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir) {
+    juce::String tituloModo = modo == matriz::model::Modo::Catalogo
+                                   ? matriz::i18n::t("dialogo_novo_projeto.campo_modo_catalogo")
+                                   : matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao");
+    auto janela = std::make_shared<juce::AlertWindow>(tituloModo, juce::String(), juce::MessageBoxIconType::NoIcon);
 
     auto nomeEditor = std::make_unique<juce::TextEditor>();
     auto* nomeEditorPtr = nomeEditor.get();
     auto linhaNome = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_nome"), std::move(nomeEditor));
-
-    auto modoCombo = std::make_unique<juce::ComboBox>();
-    modoCombo->addItem(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao"), 1);
-    modoCombo->addItem(matriz::i18n::t("dialogo_novo_projeto.campo_modo_catalogo"), 2);
-    modoCombo->setSelectedId(1, juce::dontSendNotification);
-    auto* modoComboPtr = modoCombo.get();
-    auto linhaModo = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_modo"), std::move(modoCombo));
 
     auto prefixoEditor = std::make_unique<juce::TextEditor>();
     auto* prefixoEditorPtr = prefixoEditor.get();
@@ -92,7 +88,7 @@ void mostrarDialogoNovoProjeto(std::function<void(std::optional<NovoProjetoResul
     pastaLabel->setBounds(0, 34, 420, 16);
     linhaPasta->setSize(420, 54);
 
-    for (auto* linha : {linhaNome.get(), linhaModo.get(), linhaPrefixo.get(), linhaInstituicao.get(), linhaResponsavel.get(),
+    for (auto* linha : {linhaNome.get(), linhaPrefixo.get(), linhaInstituicao.get(), linhaResponsavel.get(),
                          linhaIsrc.get(), linhaPasta.get()})
         janela->addCustomComponent(linha);
 
@@ -103,12 +99,11 @@ void mostrarDialogoNovoProjeto(std::function<void(std::optional<NovoProjetoResul
     // AlertWindow não assume posse dos componentes que recebe.
     struct EstadoVivo {
         std::shared_ptr<juce::AlertWindow> janela;
-        std::unique_ptr<LinhaFormulario> nome, modo, prefixo, instituicao, responsavel, isrc, pasta;
+        std::unique_ptr<LinhaFormulario> nome, prefixo, instituicao, responsavel, isrc, pasta;
     };
     auto estado = std::make_shared<EstadoVivo>();
     estado->janela = janela;
     estado->nome = std::move(linhaNome);
-    estado->modo = std::move(linhaModo);
     estado->prefixo = std::move(linhaPrefixo);
     estado->instituicao = std::move(linhaInstituicao);
     estado->responsavel = std::move(linhaResponsavel);
@@ -117,7 +112,7 @@ void mostrarDialogoNovoProjeto(std::function<void(std::optional<NovoProjetoResul
 
     janela->enterModalState(
         true,
-        juce::ModalCallbackFunction::create([estado, aoConcluir, nomeEditorPtr, modoComboPtr, prefixoEditorPtr,
+        juce::ModalCallbackFunction::create([estado, aoConcluir, modo, nomeEditorPtr, prefixoEditorPtr,
                                               instituicaoEditorPtr, responsavelEditorPtr, isrcEditorPtr, pastaEscolhida,
                                               seletorPasta](int resultadoBotao) {
             if (resultadoBotao != 1) {
@@ -145,7 +140,7 @@ void mostrarDialogoNovoProjeto(std::function<void(std::optional<NovoProjetoResul
             NovoProjetoResultado r;
             r.pasta = *pastaEscolhida;
             r.params.nome = nome.toStdString();
-            r.params.modo = modoComboPtr->getSelectedId() == 2 ? matriz::model::Modo::Catalogo : matriz::model::Modo::Preservacao;
+            r.params.modo = modo;
             r.params.prefixoNomenclatura = prefixo.toStdString();
             r.params.instituicaoOuSelo = instituicaoEditorPtr->getText().trim().toStdString();
             r.params.responsavel = responsavelEditorPtr->getText().trim().toStdString();

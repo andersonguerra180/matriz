@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 
+#include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -9,6 +10,87 @@
 #include "Tokens.h"
 
 namespace matriz::ui {
+
+// Cartão grande e clicável de escolha de modo (§1.1) — a primeira decisão
+// do operador, nunca uma opção escondida atrás de "Novo projeto". Cada
+// cartão já entrega o texto certo pro público daquele modo (§1.2/§1.3).
+class CartaoModo : public juce::Component {
+public:
+    CartaoModo(juce::String titulo, juce::String descricao, juce::String publico)
+        : titulo_(std::move(titulo)), descricao_(std::move(descricao)), publico_(std::move(publico)) {
+        setInterceptsMouseClicks(true, false);
+    }
+
+    std::function<void()> aoClicar;
+
+    void paint(juce::Graphics& g) override {
+        auto area = getLocalBounds().toFloat();
+        g.setColour(emHover_ ? tema().painelAlt : tema().painel);
+        g.fillRoundedRectangle(area, tema().raioMedio);
+        g.setColour(emHover_ ? tema().bordaFoco : tema().borda);
+        g.drawRoundedRectangle(area.reduced(1.0f), tema().raioMedio, emHover_ ? 2.0f : 1.0f);
+
+        auto miolo = getLocalBounds().reduced(static_cast<int>(tema().espacoGrande));
+        g.setColour(tema().textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
+        g.drawText(titulo_, miolo.removeFromTop(32), juce::Justification::centredLeft);
+
+        miolo.removeFromTop(tema().espacoGrande);
+        g.setColour(tema().textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
+        g.drawFittedText(descricao_, miolo.removeFromTop(40), juce::Justification::topLeft, 2);
+
+        g.setColour(tema().textoTerciario);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+        g.drawText(publico_, miolo.removeFromBottom(20), juce::Justification::bottomLeft);
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { emHover_ = false; repaint(); }
+    void mouseUp(const juce::MouseEvent& e) override {
+        if (getLocalBounds().contains(e.getPosition()) && aoClicar) aoClicar();
+    }
+
+private:
+    juce::String titulo_, descricao_, publico_;
+    bool emHover_ = false;
+};
+
+// Uma linha clicável na lista de "Recentes" — nome + selo de modo.
+class LinhaProjetoRecente : public juce::Component {
+public:
+    LinhaProjetoRecente(juce::String nome, juce::String seloModo) : nome_(std::move(nome)), selo_(std::move(seloModo)) {
+        setInterceptsMouseClicks(true, false);
+    }
+
+    std::function<void()> aoClicar;
+
+    void paint(juce::Graphics& g) override {
+        auto area = getLocalBounds();
+        if (emHover_) {
+            g.setColour(tema().painelAlt);
+            g.fillRoundedRectangle(area.toFloat(), tema().raioPequeno);
+        }
+        auto miolo = area.reduced(tema().espacoMedio, 0);
+        g.setColour(tema().textoTerciario);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+        auto areaSelo = miolo.removeFromRight(90);
+        g.drawText(selo_, areaSelo, juce::Justification::centredRight);
+        g.setColour(tema().textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
+        g.drawText(nome_, miolo, juce::Justification::centredLeft);
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { emHover_ = false; repaint(); }
+    void mouseUp(const juce::MouseEvent& e) override {
+        if (getLocalBounds().contains(e.getPosition()) && aoClicar) aoClicar();
+    }
+
+private:
+    juce::String nome_, selo_;
+    bool emHover_ = false;
+};
 
 namespace {
 
@@ -62,13 +144,6 @@ void MainComponent::reconstruirTelaInicial() {
     visualizadorPlaceholder_.reset();
     fichaPanel_.reset();
 
-    telaInicialTitulo_ = std::make_unique<juce::Label>();
-    telaInicialTitulo_->setText(matriz::i18n::t("tela_inicial.titulo"), juce::dontSendNotification);
-    telaInicialTitulo_->setJustificationType(juce::Justification::centred);
-    telaInicialTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
-    telaInicialTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
-    addAndMakeVisible(*telaInicialTitulo_);
-
     telaInicialSubtitulo_ = std::make_unique<juce::Label>();
     telaInicialSubtitulo_->setText(matriz::i18n::t("tela_inicial.subtitulo"), juce::dontSendNotification);
     telaInicialSubtitulo_->setJustificationType(juce::Justification::centred);
@@ -76,23 +151,63 @@ void MainComponent::reconstruirTelaInicial() {
     telaInicialSubtitulo_->setColour(juce::Label::textColourId, tema().textoSecundario);
     addAndMakeVisible(*telaInicialSubtitulo_);
 
-    telaInicialBotaoNovo_ = std::make_unique<juce::TextButton>(matriz::i18n::t("tela_inicial.botao_novo"));
-    telaInicialBotaoNovo_->onClick = [this] { if (aoPedirNovoProjeto) aoPedirNovoProjeto(); };
-    addAndMakeVisible(*telaInicialBotaoNovo_);
+    telaInicialCartaoArchive_ =
+        std::make_unique<CartaoModo>(matriz::i18n::t("tela_inicial.cartao_archive_titulo"),
+                                      matriz::i18n::t("tela_inicial.cartao_archive_descricao"),
+                                      matriz::i18n::t("tela_inicial.cartao_archive_publico"));
+    telaInicialCartaoArchive_->aoClicar = [this] {
+        if (aoPedirNovoProjeto) aoPedirNovoProjeto(matriz::model::Modo::Preservacao);
+    };
+    addAndMakeVisible(*telaInicialCartaoArchive_);
+
+    telaInicialCartaoCatalog_ =
+        std::make_unique<CartaoModo>(matriz::i18n::t("tela_inicial.cartao_catalog_titulo"),
+                                      matriz::i18n::t("tela_inicial.cartao_catalog_descricao"),
+                                      matriz::i18n::t("tela_inicial.cartao_catalog_publico"));
+    telaInicialCartaoCatalog_->aoClicar = [this] {
+        if (aoPedirNovoProjeto) aoPedirNovoProjeto(matriz::model::Modo::Catalogo);
+    };
+    addAndMakeVisible(*telaInicialCartaoCatalog_);
 
     telaInicialBotaoAbrir_ = std::make_unique<juce::TextButton>(matriz::i18n::t("tela_inicial.botao_abrir"));
     telaInicialBotaoAbrir_->onClick = [this] { if (aoPedirAbrirProjeto) aoPedirAbrirProjeto(); };
     addAndMakeVisible(*telaInicialBotaoAbrir_);
+
+    telaInicialLinhasRecentes_.clear();
+    auto recentes = matriz::app::lerRecentes();
+    if (!recentes.empty()) {
+        telaInicialRecentesTitulo_ = std::make_unique<juce::Label>();
+        telaInicialRecentesTitulo_->setText(matriz::i18n::t("tela_inicial.recentes_titulo"), juce::dontSendNotification);
+        telaInicialRecentesTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+        telaInicialRecentesTitulo_->setColour(juce::Label::textColourId, tema().textoTerciario);
+        addAndMakeVisible(*telaInicialRecentesTitulo_);
+
+        constexpr size_t kMaxRecentesExibidos = 5;
+        if (recentes.size() > kMaxRecentesExibidos) recentes.resize(kMaxRecentesExibidos);
+        for (auto& r : recentes) {
+            juce::String selo = r.modo == "catalogo" ? matriz::i18n::t("tela_inicial.recente_modo_catalog")
+                                                       : matriz::i18n::t("tela_inicial.recente_modo_archive");
+            auto linha = std::make_unique<LinhaProjetoRecente>(r.nome, selo);
+            juce::File pasta(r.pasta);
+            linha->aoClicar = [this, pasta] { if (aoAbrirRecente) aoAbrirRecente(pasta); };
+            addAndMakeVisible(*linha);
+            telaInicialLinhasRecentes_.push_back(std::move(linha));
+        }
+    } else {
+        telaInicialRecentesTitulo_.reset();
+    }
 
     resized();
     repaint();
 }
 
 void MainComponent::reconstruirLayoutProjeto() {
-    telaInicialTitulo_.reset();
     telaInicialSubtitulo_.reset();
-    telaInicialBotaoNovo_.reset();
+    telaInicialCartaoArchive_.reset();
+    telaInicialCartaoCatalog_.reset();
     telaInicialBotaoAbrir_.reset();
+    telaInicialRecentesTitulo_.reset();
+    telaInicialLinhasRecentes_.clear();
 
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
@@ -331,15 +446,33 @@ void MainComponent::resized() {
     auto area = getLocalBounds();
 
     if (!temProjetoAberto()) {
-        auto centro = area.withSizeKeepingCentre(360, 180);
-        telaInicialTitulo_->setBounds(centro.removeFromTop(32));
-        centro.removeFromTop(tema().espacoMedio);
-        telaInicialSubtitulo_->setBounds(centro.removeFromTop(40));
-        centro.removeFromTop(tema().espacoGrande);
-        auto botoes = centro.removeFromTop(32);
-        telaInicialBotaoNovo_->setBounds(botoes.removeFromLeft(170));
-        botoes.removeFromLeft(tema().espacoMedio);
-        telaInicialBotaoAbrir_->setBounds(botoes.removeFromLeft(170));
+        constexpr int kLarguraCartao = 320;
+        constexpr int kAlturaCartao = 220;
+        constexpr int kLarguraColuna = kLarguraCartao * 2 + 24; // dois cartões + espaço entre eles
+
+        int alturaRecentes = telaInicialRecentesTitulo_ ? (24 + static_cast<int>(telaInicialLinhasRecentes_.size()) * 30) : 0;
+        int alturaTotal = 24 /*subtitulo*/ + tema().espacoGrande + kAlturaCartao + tema().espacoGrande + 32 /*abrir*/ +
+                           (alturaRecentes > 0 ? tema().espacoGrande + alturaRecentes : 0);
+
+        auto coluna = area.withSizeKeepingCentre(kLarguraColuna, alturaTotal);
+
+        telaInicialSubtitulo_->setBounds(coluna.removeFromTop(24));
+        coluna.removeFromTop(tema().espacoGrande);
+
+        auto linhaCartoes = coluna.removeFromTop(kAlturaCartao);
+        telaInicialCartaoArchive_->setBounds(linhaCartoes.removeFromLeft(kLarguraCartao));
+        linhaCartoes.removeFromLeft(24);
+        telaInicialCartaoCatalog_->setBounds(linhaCartoes.removeFromLeft(kLarguraCartao));
+        coluna.removeFromTop(tema().espacoGrande);
+
+        auto linhaAbrir = coluna.removeFromTop(32);
+        telaInicialBotaoAbrir_->setBounds(linhaAbrir.withSizeKeepingCentre(160, 32));
+
+        if (telaInicialRecentesTitulo_) {
+            coluna.removeFromTop(tema().espacoGrande);
+            telaInicialRecentesTitulo_->setBounds(coluna.removeFromTop(20));
+            for (auto& linha : telaInicialLinhasRecentes_) linha->setBounds(coluna.removeFromTop(28));
+        }
         return;
     }
 

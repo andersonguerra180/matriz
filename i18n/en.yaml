@@ -28,15 +28,21 @@ menu:
   ajuda: Help
 
 tela_inicial:
-  titulo: No project open
-  subtitulo: "Create a new project or open an existing one to get started."
-  botao_novo: New project
-  botao_abrir: Open project
+  subtitulo: "Choose how you want to work."
+  botao_abrir: "Open…"
+  cartao_archive_titulo: ARCHIVE
+  cartao_archive_descricao: "Tape, video, photos, documents, film"
+  cartao_archive_publico: "For artists, institutions, estates"
+  cartao_catalog_titulo: CATALOG
+  cartao_catalog_descricao: "Releases, tracks, masters, samples"
+  cartao_catalog_publico: "For labels, producers, musicians"
+  recentes_titulo: Recent
+  recente_modo_archive: Archive
+  recente_modo_catalog: Catalog
 
 dialogo_novo_projeto:
   titulo: New project
   campo_nome: Project name
-  campo_modo: Mode
   campo_modo_preservacao: "Archive — keep it faithful, prove its integrity"
   campo_modo_catalogo: "Catalog — organize, correct, export"
   campo_prefixo: Naming prefix
@@ -104,7 +110,6 @@ configuracoes_projeto:
   secao_geral: General
   secao_master: Master
   campo_nome: "Project name"
-  campo_modo: Mode
   campo_permitir_sobrescrever: "Allow overwriting master"
   aviso_sobrescrever_titulo: "Warning: master overwrite"
   aviso_sobrescrever_corpo: "Turning this on allows the original master to be overwritten directly, without going through a derivative. This turns off the default preservation guarantee (two files by default, P1) — the original file is no longer protected against accidental overwrite. This is a decision for the person responsible for the project: the software warns once, here, and won't ask again after it's confirmed."

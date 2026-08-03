@@ -44,13 +44,18 @@ std::vector<ProjetoRecente> lerRecentes() {
     return out;
 }
 
+std::vector<ProjetoRecente> comRecenteNoTopo(std::vector<ProjetoRecente> lista, const ProjetoRecente& novo,
+                                              size_t maximo) {
+    lista.erase(std::remove_if(lista.begin(), lista.end(),
+                                [&](const ProjetoRecente& r) { return r.pasta == novo.pasta; }),
+                lista.end());
+    lista.insert(lista.begin(), novo);
+    if (lista.size() > maximo) lista.resize(maximo);
+    return lista;
+}
+
 void registrarRecente(const juce::String& pasta, const juce::String& nome, const juce::String& modo) {
-    auto recentes = lerRecentes();
-    recentes.erase(std::remove_if(recentes.begin(), recentes.end(),
-                                   [&](const ProjetoRecente& r) { return r.pasta == pasta; }),
-                   recentes.end());
-    recentes.insert(recentes.begin(), {pasta, nome, modo});
-    if (recentes.size() > static_cast<size_t>(kMaxRecentes)) recentes.resize(static_cast<size_t>(kMaxRecentes));
+    auto recentes = comRecenteNoTopo(lerRecentes(), {pasta, nome, modo}, static_cast<size_t>(kMaxRecentes));
 
     juce::XmlElement raiz("recentes");
     for (auto& r : recentes) {

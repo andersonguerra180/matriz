@@ -114,4 +114,16 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
     return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));
 }
 
+std::string Project::nome() {
+    auto stmt = registro_->prepare("SELECT nome FROM projeto LIMIT 1");
+    stmt.step();
+    return stmt.columnText(0);
+}
+
+Modo Project::modo() {
+    auto stmt = registro_->prepare("SELECT modo FROM projeto LIMIT 1");
+    stmt.step();
+    return modoFromString(stmt.columnText(0));
+}
+
 } // namespace matriz::model

@@ -26,15 +26,21 @@ menu:
   ajuda: Ajuda
 
 tela_inicial:
-  titulo: Nenhum projeto aberto
-  subtitulo: "Crie um projeto novo ou abra um existente pra começar."
-  botao_novo: Novo projeto
-  botao_abrir: Abrir projeto
+  subtitulo: "Escolha como você quer trabalhar."
+  botao_abrir: "Abrir…"
+  cartao_archive_titulo: ACERVO
+  cartao_archive_descricao: "Fita, vídeo, fotos, documentos, filme"
+  cartao_archive_publico: "Pra artistas, instituições, espólios"
+  cartao_catalog_titulo: CATÁLOGO
+  cartao_catalog_descricao: "Lançamentos, faixas, masters, samples"
+  cartao_catalog_publico: "Pra selos, produtores, músicos"
+  recentes_titulo: Recentes
+  recente_modo_archive: Acervo
+  recente_modo_catalog: Catálogo
 
 dialogo_novo_projeto:
   titulo: Novo projeto
   campo_nome: Nome do projeto
-  campo_modo: Modo
   campo_modo_preservacao: "Acervo — guardar fiel, provar integridade"
   campo_modo_catalogo: "Catálogo — organizar, corrigir, exportar"
   campo_prefixo: Prefixo de nomenclatura
@@ -102,7 +108,6 @@ configuracoes_projeto:
   secao_geral: Geral
   secao_master: Master
   campo_nome: "Nome do projeto"
-  campo_modo: Modo
   campo_permitir_sobrescrever: "Permitir sobrescrever master"
   aviso_sobrescrever_titulo: "Atenção: sobrescrita de master"
   aviso_sobrescrever_corpo: "Ligar esta opção permite que o master original seja sobrescrito diretamente, sem passar por uma derivada. Isso desliga a garantia padrão de preservação (dois arquivos por padrão, P1) — o arquivo original deixa de estar protegido contra sobrescrita acidental. É uma decisão do responsável pelo projeto: o software avisa uma única vez, aqui, e não pergunta de novo depois de confirmada."

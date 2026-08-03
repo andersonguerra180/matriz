@@ -8,6 +8,7 @@
 #include <functional>
 #include <iostream>
 
+#include "App/Preferencias.h"
 #include "Ficha/FichaDefinition.h"
 #include "I18n/Strings.h"
 #include "Model/Project.h"
@@ -251,12 +252,38 @@ void testarI18n() {
     check(matriz::i18n::t("menu.arquivo") == "File", "troca de volta pra en funciona (não é só a primeira carga)");
 }
 
+// Lista de projetos recentes (Parte 1 da correção de fluxo — tela inicial
+// com Archive/Catalog/Open + recentes). Testa só a lógica pura de
+// dedup+topo+limite (matriz::app::comRecenteNoTopo), sem tocar no arquivo
+// real de preferências do usuário.
+void testarRecentes() {
+    std::cout << "== Projetos recentes (lógica pura, sem tocar no arquivo real) ==\n";
+    using matriz::app::comRecenteNoTopo;
+    using matriz::app::ProjetoRecente;
+
+    std::vector<ProjetoRecente> lista;
+    lista = comRecenteNoTopo(lista, {"/a", "Projeto A", "preservacao"});
+    lista = comRecenteNoTopo(lista, {"/b", "Projeto B", "catalogo"});
+    check(lista.size() == 2 && lista[0].pasta == "/b" && lista[1].pasta == "/a",
+          "mais recente entra no topo");
+
+    lista = comRecenteNoTopo(lista, {"/a", "Projeto A (renomeado)", "preservacao"});
+    check(lista.size() == 2 && lista[0].pasta == "/a" && lista[0].nome == "Projeto A (renomeado)",
+          "reabrir um projeto já na lista move pro topo em vez de duplicar");
+
+    std::vector<ProjetoRecente> cheia;
+    for (int i = 0; i < 5; ++i) cheia = comRecenteNoTopo(cheia, {"/p" + std::to_string(i), "P", "catalogo"}, 3);
+    check(cheia.size() == 3 && cheia[0].pasta == "/p4" && cheia[2].pasta == "/p2",
+          "limite de tamanho descarta os mais antigos (3 mais recentes de 5 inserções)");
+}
+
 } // namespace
 
 int main() {
     testarDefinicoesDeFicha();
     testarProjetoPortavel();
     testarI18n();
+    testarRecentes();
 
     std::cout << "\n" << (failures == 0 ? "TODOS OS TESTES PASSARAM" : std::to_string(failures) + " FALHA(S)") << "\n";
     return failures == 0 ? 0 : 1;
