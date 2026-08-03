@@ -2,20 +2,57 @@
 
 namespace matriz::ingest {
 
-std::string capturarSaidaTexto(const juce::StringArray& argumentos, const std::string& nomeFerramenta, int timeoutMs) {
+juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta) {
+#if JUCE_WINDOWS
+    juce::String nomeArquivo = juce::String(nomeFerramenta) + ".exe";
+#else
+    juce::String nomeArquivo = juce::String(nomeFerramenta);
+#endif
+
+    juce::File execDir = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
+
+    juce::File candidatoAoLado = execDir.getChildFile(nomeArquivo);
+    if (candidatoAoLado.existsAsFile()) return candidatoAoLado.getFullPathName();
+
+#if JUCE_MAC
+    // Dentro de um .app bundle, o binário auxiliar convencionalmente fica em
+    // Contents/Resources, um nível acima de Contents/MacOS (onde vive o executável).
+    juce::File candidatoResources =
+        execDir.getParentDirectory().getChildFile("Resources").getChildFile(nomeArquivo);
+    if (candidatoResources.existsAsFile()) return candidatoResources.getFullPathName();
+#endif
+
+#ifdef MATRIZ_DEV_BUILD
+    return juce::String(nomeFerramenta); // build de desenvolvimento: deixa o SO resolver via PATH
+#else
+    throw ProcessoExternoError(nomeFerramenta +
+                                " não encontrado ao lado do executável (" + execDir.getFullPathName().toStdString() +
+                                ") — build de produção não depende do PATH");
+#endif
+}
+
+std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
+    juce::StringArray argv;
+    argv.add(resolverCaminhoExecutavel(nomeFerramenta));
+    argv.addArray(argumentos);
+
     juce::ChildProcess proc;
-    if (!proc.start(argumentos, juce::ChildProcess::wantStdOut))
-        throw ProcessoExternoError(nomeFerramenta + " não encontrado ou não pôde ser iniciado (esperado no PATH)");
+    if (!proc.start(argv, juce::ChildProcess::wantStdOut))
+        throw ProcessoExternoError(nomeFerramenta + " não pôde ser iniciado: " + argv[0].toStdString());
 
     juce::String output = proc.readAllProcessOutput();
     proc.waitForProcessToFinish(timeoutMs);
     return output.toStdString();
 }
 
-void rodarEsperandoSucesso(const juce::StringArray& argumentos, const std::string& nomeFerramenta, int timeoutMs) {
+void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
+    juce::StringArray argv;
+    argv.add(resolverCaminhoExecutavel(nomeFerramenta));
+    argv.addArray(argumentos);
+
     juce::ChildProcess proc;
-    if (!proc.start(argumentos, juce::ChildProcess::wantStdOut))
-        throw ProcessoExternoError(nomeFerramenta + " não encontrado ou não pôde ser iniciado (esperado no PATH)");
+    if (!proc.start(argv, juce::ChildProcess::wantStdOut))
+        throw ProcessoExternoError(nomeFerramenta + " não pôde ser iniciado: " + argv[0].toStdString());
 
     proc.readAllProcessOutput();
     proc.waitForProcessToFinish(timeoutMs);

@@ -63,7 +63,7 @@ void testarDefinicoesDeFicha() {
 
     // Definição inválida deliberada: grupos E niveis juntos devem ser rejeitados.
     expectThrow("definição com grupos+niveis é rejeitada", [] {
-        matriz::ficha_yaml::Node root = matriz::ficha_yaml::parse(
+        matriz::ficha::loadFromString(
             "tipo: invalido\n"
             "rotulo: Inválido\n"
             "niveis: [raiz]\n"
@@ -72,12 +72,11 @@ void testarDefinicoesDeFicha() {
             "grupos:\n"
             "  - rotulo: X\n"
             "    campos: []\n");
-        matriz::ficha::load(root);
     });
 
     // Campo tipo "opcao" sem opcoes deve ser rejeitado.
     expectThrow("campo opcao sem opcoes é rejeitado", [] {
-        matriz::ficha_yaml::Node root = matriz::ficha_yaml::parse(
+        matriz::ficha::loadFromString(
             "tipo: invalido2\n"
             "rotulo: Inválido 2\n"
             "grupos:\n"
@@ -86,12 +85,11 @@ void testarDefinicoesDeFicha() {
             "      - id: c1\n"
             "        rotulo: C1\n"
             "        tipo: opcao\n");
-        matriz::ficha::load(root);
     });
 
     // sugerido_por e herda_do_projeto juntos no mesmo campo devem ser rejeitados.
     expectThrow("origens mutuamente exclusivas são impostas", [] {
-        matriz::ficha_yaml::Node root = matriz::ficha_yaml::parse(
+        matriz::ficha::loadFromString(
             "tipo: invalido3\n"
             "rotulo: Inválido 3\n"
             "grupos:\n"
@@ -102,8 +100,40 @@ void testarDefinicoesDeFicha() {
             "        tipo: texto\n"
             "        herda_do_projeto: true\n"
             "        sugerido_por: algum_modelo\n");
-        matriz::ficha::load(root);
     });
+
+    // YAML genuinamente inválido (âncora indefinida) — confirma que o erro do
+    // yaml-cpp chega como FichaDefinitionError, não como exceção crua.
+    expectThrow("YAML malformado (âncora indefinida) é rejeitado com mensagem do parser real", [] {
+        matriz::ficha::loadFromString(
+            "tipo: invalido4\n"
+            "rotulo: Inválido 4\n"
+            "grupos: *ancora_que_nao_existe\n");
+    });
+
+    // Recurso de YAML "de verdade" que o parser artesanal antigo não suportava:
+    // âncora e referência reaproveitando um bloco de opções.
+    try {
+        auto def = matriz::ficha::loadFromString(
+            "tipo: teste_ancora\n"
+            "rotulo: Teste âncora\n"
+            "grupos:\n"
+            "  - rotulo: G\n"
+            "    campos:\n"
+            "      - id: c1\n"
+            "        rotulo: C1\n"
+            "        tipo: opcao\n"
+            "        opcoes: &opcoes_sim_nao [sim, não]\n"
+            "      - id: c2\n"
+            "        rotulo: C2\n"
+            "        tipo: opcao\n"
+            "        opcoes: *opcoes_sim_nao\n");
+        check(def.todosCampos().size() == 2 &&
+                  def.todosCampos()[0]->opcoes == def.todosCampos()[1]->opcoes,
+              "âncora/referência YAML (recurso real, não suportado pelo parser artesanal antigo) funciona via yaml-cpp");
+    } catch (const std::exception& e) {
+        check(false, std::string("âncora/referência YAML: ") + e.what());
+    }
 }
 
 void testarProjetoPortavel() {

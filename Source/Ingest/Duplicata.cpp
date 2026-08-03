@@ -50,11 +50,11 @@ uint64_t calcularPHashImagem(const juce::File& imagem, const juce::File& dirTemp
     dirTemporario.createDirectory();
     juce::File tmp = dirTemporario.getChildFile("matriz_phash_" + juce::Uuid().toDashedString() + ".raw");
 
-    rodarEsperandoSucesso({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", imagem.getFullPathName(),
-                            "-vf", "scale=" + juce::String(kLadoPHash) + ":" + juce::String(kLadoPHash) +
-                                       ":flags=lanczos,format=gray",
-                            "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", tmp.getFullPathName()},
-                           "ffmpeg");
+    rodarEsperandoSucesso("ffmpeg",
+                          {"-y", "-hide_banner", "-loglevel", "error", "-i", imagem.getFullPathName(),
+                           "-vf", "scale=" + juce::String(kLadoPHash) + ":" + juce::String(kLadoPHash) +
+                                      ":flags=lanczos,format=gray",
+                           "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", tmp.getFullPathName()});
 
     if (!tmp.existsAsFile())
         throw DuplicataError("ffmpeg não gerou a matriz de pixels para pHash: " + imagem.getFullPathName().toStdString());

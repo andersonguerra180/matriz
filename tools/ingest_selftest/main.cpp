@@ -4,7 +4,10 @@
 
 #include <JuceHeader.h>
 
+#include <exiv2/exiv2.hpp>
+
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <iostream>
 
@@ -104,7 +107,7 @@ void testarLeituraTecnicaAudio(const juce::File& dir) {
 }
 
 void testarLeituraTecnicaImagem(const juce::File& dir) {
-    std::cout << "== Leitura técnica — imagem (sips) ==\n";
+    std::cout << "== Leitura técnica — imagem (ffprobe) ==\n";
 
     juce::File jpg = dir.getChildFile("teste.jpg");
     gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
@@ -120,27 +123,55 @@ void testarLeituraTecnicaImagem(const juce::File& dir) {
     }
 }
 
-void testarLeituraTecnicaPdf(const juce::File& dir) {
-    std::cout << "== Leitura técnica — PDF (contagem de páginas por varredura) ==\n";
+bool comandoDisponivel(const std::string& nome) {
+    juce::ChildProcess proc;
+    if (!proc.start(juce::StringArray{"/usr/bin/which", nome}, juce::ChildProcess::wantStdOut)) return false;
+    juce::String saida = proc.readAllProcessOutput();
+    proc.waitForProcessToFinish(5000);
+    return saida.trim().isNotEmpty();
+}
 
-    juce::File pdf = dir.getChildFile("teste_2paginas.pdf");
-    juce::String conteudo =
-        "%PDF-1.4\n"
-        "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
-        "2 0 obj\n<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>\nendobj\n"
-        "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n"
-        "4 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>\nendobj\n"
-        "trailer\n<< /Size 5 /Root 1 0 R >>\n%%EOF\n";
-    pdf.replaceWithText(conteudo);
+void testarLeituraTecnicaPdf(const juce::File& dir) {
+    std::cout << "== Leitura técnica — PDF ==\n";
+
+    // §A.3: PDFium e MuPDF não têm caminho FetchContent+CMake viável (ver a
+    // nota longa em LeituraTecnica.cpp) — o parser artesanal de contagem de
+    // páginas saiu, e não foi substituído por nenhuma biblioteca. Este teste
+    // usa um PDF de verdade (gerado pelo filtro texto->PDF do CUPS, não
+    // construído à mão) só pra confirmar que a ausência de contagem de
+    // páginas é honesta — nunca um número adivinhado — mesmo sobre um
+    // arquivo real com a estrutura interna que quiser.
+    if (!comandoDisponivel("cupsfilter")) {
+        check(true, "cupsfilter indisponível neste ambiente — teste de PDF real pulado, não é uma falha");
+        return;
+    }
+
+    juce::File txt = dir.getChildFile("origem_pdf_real.txt");
+    juce::String conteudo;
+    for (int pagina = 0; pagina < 2; ++pagina) {
+        for (int linha = 0; linha < 70; ++linha) conteudo += "Linha de teste do MATRIZ.\n";
+        if (pagina == 0) conteudo += "\f"; // form feed força quebra de página no filtro texto->PostScript->PDF do CUPS
+    }
+    txt.replaceWithText(conteudo);
+
+    juce::File pdf = dir.getChildFile("real_gerado_por_cups.pdf");
+    juce::ChildProcess proc;
+    juce::String comando = "/usr/sbin/cupsfilter \"" + txt.getFullPathName() + "\" > \"" + pdf.getFullPathName() + "\"";
+    system(comando.toRawUTF8());
+
+    if (!pdf.existsAsFile() || pdf.getSize() < 100) {
+        check(true, "cupsfilter não gerou PDF neste ambiente — teste pulado, não é uma falha");
+        return;
+    }
 
     try {
         auto r = matriz::ingest::lerTecnica(pdf);
         std::string json = matriz::ingest::paraJson(r);
-        check(json.find("\"pageCountEstimado\": 2") != std::string::npos ||
-                  json.find("\"pageCountEstimado\":2") != std::string::npos,
-              "2 páginas contadas corretamente (não conta o nó /Pages pai): " + json);
+        check(json.find("fileSizeBytes") != std::string::npos, "fileSizeBytes presente pro PDF real: " + json);
+        check(json.find("pageCountEstimado") == std::string::npos,
+              "pageCountEstimado ausente (honesto — sem parser artesanal chutando número): " + json);
     } catch (const std::exception& e) {
-        check(false, std::string("leitura técnica de PDF: ") + e.what());
+        check(false, std::string("leitura técnica de PDF real: ") + e.what());
     }
 }
 
@@ -548,6 +579,62 @@ void testarPipelineCompletoDeIngest(const juce::File& dirTemp) {
     pastaProjeto.deleteRecursively();
 }
 
+void testarExifReal(const juce::File& dir) {
+    std::cout << "== EXIF real via Exiv2 ==\n";
+
+    juce::File jpg = dir.getChildFile("com_exif.jpg");
+    gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "color=c=gray:s=320x240", "-frames:v", "1", jpg.getFullPathName()});
+
+    // Escreve EXIF de verdade com o próprio Exiv2 (mais confiável que montar
+    // o binário JPEG+EXIF na mão) — prova que a leitura em LeituraTecnica.cpp
+    // funciona sobre um arquivo com metadado real, não só a ausência dele.
+    try {
+        auto image = Exiv2::ImageFactory::open(jpg.getFullPathName().toStdString());
+        image->readMetadata();
+        Exiv2::ExifData exifData;
+        exifData["Exif.Image.Make"] = "MatrizTeste";
+        exifData["Exif.Image.Model"] = "Camera XPTO";
+        exifData["Exif.Photo.LensModel"] = "Lente 50mm";
+        exifData["Exif.Photo.DateTimeOriginal"] = "2024:05:01 12:00:00";
+        exifData["Exif.Image.Orientation"] = uint16_t(6);
+        image->setExifData(exifData);
+        image->writeMetadata();
+    } catch (const std::exception& e) {
+        check(false, std::string("escrever EXIF de teste via Exiv2: ") + e.what());
+        return;
+    }
+
+    try {
+        auto r = matriz::ingest::lerTecnica(jpg);
+        check(r.exifCamera.has_value() && r.exifCamera->find("MatrizTeste") != std::string::npos &&
+                  r.exifCamera->find("Camera XPTO") != std::string::npos,
+              "câmera lida do EXIF real: " + r.exifCamera.value_or("(nenhuma)"));
+        check(r.exifLente.has_value() && *r.exifLente == "Lente 50mm", "lente lida do EXIF real: " + r.exifLente.value_or("(nenhuma)"));
+        check(r.exifDataOriginal.has_value() && r.exifDataOriginal->find("2024") != std::string::npos,
+              "data original lida do EXIF real: " + r.exifDataOriginal.value_or("(nenhuma)"));
+        check(r.exifOrientacao.has_value() && *r.exifOrientacao == 6,
+              "orientação lida do EXIF real: " + std::to_string(r.exifOrientacao.value_or(-1)));
+        check(matriz::ingest::paraJson(r).find("MatrizTeste") != std::string::npos,
+              "EXIF entra no JSON serializado (caracteristicas_tecnicas_json)");
+    } catch (const std::exception& e) {
+        check(false, std::string("ler EXIF real: ") + e.what());
+    }
+
+    // Imagem sem EXIF nenhum (todas as outras geradas por ffmpeg nesta suite)
+    // não deve lançar — ausência de EXIF é normal, não erro.
+    juce::File semExif = dir.getChildFile("sem_exif.jpg");
+    gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+                    "-i", "color=c=blue:s=100x100", "-frames:v", "1", semExif.getFullPathName()});
+    try {
+        auto r = matriz::ingest::lerTecnica(semExif);
+        check(!r.exifCamera.has_value() && !r.exifDataOriginal.has_value(),
+              "imagem sem EXIF não lança e fica com campos EXIF vazios");
+    } catch (const std::exception& e) {
+        check(false, std::string("imagem sem EXIF não deveria lançar: ") + e.what());
+    }
+}
+
 void testarCategoriaPorExtensao() {
     std::cout << "== Categoria por extensão ==\n";
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.wav")) == matriz::ingest::CategoriaMidia::Audio, "wav -> Audio");
@@ -573,6 +660,7 @@ int main() {
     testarChecksum(tmpDir);
     testarLeituraTecnicaAudio(tmpDir);
     testarLeituraTecnicaImagem(tmpDir);
+    testarExifReal(tmpDir);
     testarLeituraTecnicaPdf(tmpDir);
     testarMiniaturas(tmpDir);
     testarDuplicataPHash(tmpDir);

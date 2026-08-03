@@ -11,7 +11,7 @@ std::vector<float> decodificarExcertoPcmMono(const juce::File& audio, const juce
     dirTemporario.createDirectory();
     juce::File tmp = dirTemporario.getChildFile("matriz_excerto_" + juce::Uuid().toDashedString() + ".f32le");
 
-    juce::StringArray args{"ffmpeg", "-y", "-hide_banner", "-loglevel", "error"};
+    juce::StringArray args{"-y", "-hide_banner", "-loglevel", "error"};
     if (offsetSegundos > 0.0) {
         args.add("-ss");
         args.add(juce::String(offsetSegundos));
@@ -28,7 +28,7 @@ std::vector<float> decodificarExcertoPcmMono(const juce::File& audio, const juce
     args.add(juce::String(sampleRate));
     args.add(tmp.getFullPathName());
 
-    rodarEsperandoSucesso(args, "ffmpeg");
+    rodarEsperandoSucesso("ffmpeg", args);
 
     std::vector<float> amostras;
     if (tmp.existsAsFile()) {

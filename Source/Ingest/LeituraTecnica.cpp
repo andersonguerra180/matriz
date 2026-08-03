@@ -2,9 +2,10 @@
 
 #include "ProcessoExterno.h"
 
+#include <exiv2/exiv2.hpp>
+
 #include <memory>
 #include <set>
-#include <string_view>
 
 namespace matriz::ingest {
 
@@ -34,9 +35,9 @@ const std::set<juce::String>& codecsAudioLossy() {
     return s;
 }
 
-std::string runProcess(const juce::StringArray& args, const std::string& nomeFerramenta) {
+std::string runProcess(const std::string& nomeFerramenta, const juce::StringArray& argumentos) {
     try {
-        return capturarSaidaTexto(args, nomeFerramenta);
+        return capturarSaidaTexto(nomeFerramenta, argumentos);
     } catch (const ProcessoExternoError& e) {
         throw LeituraTecnicaError(e.what());
     }
@@ -52,9 +53,9 @@ std::optional<double> parseFraction(const juce::String& s) {
 }
 
 LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
-    juce::StringArray args{"ffprobe", "-v", "quiet", "-print_format", "json",
+    juce::StringArray args{"-v", "quiet", "-print_format", "json",
                             "-show_format", "-show_streams", arquivo.getFullPathName()};
-    std::string output = runProcess(args, "ffprobe");
+    std::string output = runProcess("ffprobe", args);
     if (output.empty())
         throw LeituraTecnicaError("ffprobe não retornou dados para: " + arquivo.getFullPathName().toStdString());
 
@@ -99,77 +100,100 @@ LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
     return r;
 }
 
-// `sips -g all <arquivo>` imprime uma linha de caminho seguida de
-// "  chave: valor" por linha. Sem JSON — parseamos o texto na mão.
-juce::var parseSaidaSips(const std::string& output) {
-    auto obj = std::make_unique<juce::DynamicObject>();
-    juce::StringArray linhas;
-    linhas.addLines(juce::String(output));
-    for (auto& linha : linhas) {
-        int doisPontos = linha.indexOfChar(':');
-        if (doisPontos < 0) continue; // primeira linha é o caminho do arquivo, sem ':'
-        juce::String chave = linha.substring(0, doisPontos).trim();
-        juce::String valor = linha.substring(doisPontos + 1).trim();
-        if (chave.isEmpty()) continue;
-        if (valor.containsOnly("0123456789.-"))
-            obj->setProperty(chave, valor.getDoubleValue());
-        else
-            obj->setProperty(chave, valor);
+// Converte um valor GPS EXIF (3 racionais: graus, minutos, segundos + uma
+// referência N/S/E/W) pra grau decimal com sinal.
+std::optional<double> gpsGrauDecimal(const Exiv2::ExifData& exifData, const char* chaveCoordenada,
+                                      const char* chaveReferencia) {
+    auto posCoord = exifData.findKey(Exiv2::ExifKey(chaveCoordenada));
+    if (posCoord == exifData.end() || posCoord->count() < 3) return std::nullopt;
+
+    double graus = posCoord->toFloat(0);
+    double minutos = posCoord->toFloat(1);
+    double segundos = posCoord->toFloat(2);
+    double decimal = graus + minutos / 60.0 + segundos / 3600.0;
+
+    auto posRef = exifData.findKey(Exiv2::ExifKey(chaveReferencia));
+    if (posRef != exifData.end()) {
+        std::string ref = posRef->toString();
+        if (ref == "S" || ref == "W") decimal = -decimal;
     }
-    return juce::var(obj.release());
+    return decimal;
 }
 
-LeituraTecnicaResultado lerViaSips(const juce::File& arquivo) {
-    juce::StringArray args{"sips", "-g", "all", arquivo.getFullPathName()};
-    std::string output = runProcess(args, "sips");
-    if (output.empty())
-        throw LeituraTecnicaError("sips não retornou dados para: " + arquivo.getFullPathName().toStdString());
+// EXIF completo via Exiv2 (§A.2 — substitui exiftool/sips). Ausência de
+// EXIF é normal (screenshot, imagem gerada, scan sem câmera) e não lança —
+// só uma falha real de leitura do arquivo (corrompido, formato não
+// suportado pela build do Exiv2 — ver nota sobre HEIC/BMFF em
+// cmake/Dependencies.cmake) é silenciosamente ignorada aqui: a leitura
+// técnica de base (ffprobe) já rodou e não depende disto.
+void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
+    try {
+        auto image = Exiv2::ImageFactory::open(arquivo.getFullPathName().toStdString());
+        image->readMetadata();
+        const Exiv2::ExifData& exifData = image->exifData();
+        if (exifData.empty()) return;
 
-    LeituraTecnicaResultado r;
-    r.bruto = parseSaidaSips(output);
+        auto obterString = [&](const char* chave) -> std::optional<std::string> {
+            auto pos = exifData.findKey(Exiv2::ExifKey(chave));
+            if (pos == exifData.end()) return std::nullopt;
+            std::string v = pos->toString();
+            return v.empty() ? std::nullopt : std::optional<std::string>(v);
+        };
 
-    if (r.bruto.hasProperty("pixelWidth")) r.larguraPx = static_cast<int>(static_cast<double>(r.bruto["pixelWidth"]));
-    if (r.bruto.hasProperty("pixelHeight")) r.alturaPx = static_cast<int>(static_cast<double>(r.bruto["pixelHeight"]));
-    if (r.bruto.hasProperty("format")) r.codec = r.bruto["format"].toString().toStdString();
-    if (r.bruto.hasProperty("bitsPerSample")) r.bitDepth = static_cast<int>(static_cast<double>(r.bruto["bitsPerSample"]));
+        r.exifDataOriginal = obterString("Exif.Photo.DateTimeOriginal");
+        r.exifLente = obterString("Exif.Photo.LensModel");
 
-    return r;
-}
+        auto marca = obterString("Exif.Image.Make");
+        auto modelo = obterString("Exif.Image.Model");
+        if (marca || modelo)
+            r.exifCamera = (marca ? *marca : "") + ((marca && modelo) ? " " : "") + (modelo ? *modelo : "");
 
-// Contagem de páginas de PDF por varredura do arquivo bruto: conta
-// ocorrências de "/Type /Page" que não são "/Type /Pages" (o nó pai da
-// árvore). Cobre o caso comum (PDF sem cross-reference stream comprimido).
-// PDFs com árvore de páginas dentro de object streams comprimidos (comuns em
-// exportações mais recentes) não são cobertos por este método — nesse caso o
-// resultado fica ausente (nulo), nunca um número inventado.
-std::optional<int> contarPaginasPdf(const juce::File& arquivo) {
-    juce::MemoryBlock bloco;
-    if (!arquivo.loadFileAsData(bloco) || bloco.getSize() == 0)
-        return std::nullopt;
+        auto posOrientacao = exifData.findKey(Exiv2::ExifKey("Exif.Image.Orientation"));
+        if (posOrientacao != exifData.end()) r.exifOrientacao = static_cast<int>(posOrientacao->toInt64());
 
-    std::string_view texto(static_cast<const char*>(bloco.getData()), bloco.getSize());
-    int contagem = 0;
-    size_t pos = 0;
-    const std::string_view alvo = "/Type";
-    while ((pos = texto.find(alvo, pos)) != std::string_view::npos) {
-        size_t depoisTipo = pos + alvo.size();
-        size_t inicioValor = texto.find_first_not_of(" \t\r\n", depoisTipo);
-        if (inicioValor != std::string_view::npos && texto.compare(inicioValor, 6, "/Pages") != 0 &&
-            texto.compare(inicioValor, 5, "/Page") == 0) {
-            ++contagem;
-        }
-        pos = depoisTipo;
+        r.exifGpsLatitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLatitude", "Exif.GPSInfo.GPSLatitudeRef");
+        r.exifGpsLongitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLongitude", "Exif.GPSInfo.GPSLongitudeRef");
+
+        auto exifObj = std::make_unique<juce::DynamicObject>();
+        for (auto& datum : exifData)
+            exifObj->setProperty(juce::String(datum.key()), juce::String(datum.toString()));
+
+        if (auto* raizObj = r.bruto.getDynamicObject())
+            raizObj->setProperty("exif", juce::var(exifObj.release()));
+    } catch (const Exiv2::Error&) {
+        // Formato sem suporte na build atual (ex.: HEIC sem BMFF) ou
+        // metadado corrompido — leitura técnica de base já é suficiente.
     }
-    return contagem > 0 ? std::optional<int>(contagem) : std::nullopt;
 }
 
+// Contagem de páginas de PDF (§A.3): avaliamos PDFium e MuPDF, as duas
+// opções nomeadas. Nenhuma serve para "FetchContent + CMake, compila em
+// macOS e Windows" sem um projeto de engenharia à parte:
+//   - PDFium: build oficial é GN + Ninja + depot_tools, amarrado à
+//     infraestrutura do Chromium. Não existe CMakeLists no repositório
+//     oficial. Os wrappers CMake de terceiros encontrados têm no máximo
+//     ~24 estrelas no GitHub, não são mantidos de forma confiável, e
+//     apostar a portabilidade do build nisso seria trocar um problema
+//     conhecido (parser artesanal) por um pior (dependência de terceiro
+//     não confiável).
+//   - MuPDF: build oficial é GNU Make, com ~14 submódulos git de terceiros
+//     vendorizados (freetype, harfbuzz, jbig2dec, openjpeg, mujs, zlib,
+//     libjpeg, lcms2, tesseract, leptonica...). Não há CMakeLists.txt na
+//     raiz do repositório. O suporte a Windows do build oficial é
+//     NMake/Visual Studio, uma árvore de build totalmente diferente da
+//     Make usada em Unix — ou seja, nem o build oficial resolve os dois
+//     sistemas operacionais com o mesmo mecanismo.
+// Isso configura exatamente a cláusula de escape do §A.3: "se a biblioteca
+// escolhida inflar demais o build, é aceitável que a contagem de páginas
+// vire campo opcional que falha de forma explícita". O parser artesanal sai
+// (o problema original: silenciosamente errado em PDF com xref comprimido,
+// que é a maioria dos PDFs modernos). Fica só o que já é honesto: tamanho
+// do arquivo. pageCountEstimado nunca é escrito — ausência explícita, nunca
+// um número adivinhado.
 LeituraTecnicaResultado lerDocumentoPdf(const juce::File& arquivo) {
     LeituraTecnicaResultado r;
     auto obj = std::make_unique<juce::DynamicObject>();
     obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
-
-    std::optional<int> paginas = contarPaginasPdf(arquivo);
-    if (paginas) obj->setProperty("pageCountEstimado", *paginas);
 
     r.bruto = juce::var(obj.release());
     return r;
@@ -194,8 +218,11 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
         case CategoriaMidia::Audio:
         case CategoriaMidia::Video:
             return lerViaFfprobe(arquivo);
-        case CategoriaMidia::Imagem:
-            return lerViaSips(arquivo);
+        case CategoriaMidia::Imagem: {
+            LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
+            enriquecerComExif(r, arquivo);
+            return r;
+        }
         case CategoriaMidia::Documento:
             return lerDocumentoPdf(arquivo);
         case CategoriaMidia::Desconhecida:

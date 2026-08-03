@@ -6,37 +6,36 @@
 
 namespace matriz::ingest {
 
-namespace {
-
-int extrairInteiroAposChave(const std::string& texto, const std::string& chave) {
-    size_t pos = texto.find(chave + ":");
-    if (pos == std::string::npos) return 0;
-    pos += chave.size() + 1;
-    size_t fimLinha = texto.find('\n', pos);
-    std::string valor = texto.substr(pos, fimLinha == std::string::npos ? std::string::npos : fimLinha - pos);
-    return juce::String(valor).trim().getIntValue();
-}
-
-} // namespace
-
 DimensaoImagem dimensoesImagem(const juce::File& imagem) {
-    std::string saida = capturarSaidaTexto({"sips", "-g", "pixelWidth", "-g", "pixelHeight", imagem.getFullPathName()},
-                                            "sips");
+    std::string saida = capturarSaidaTexto(
+        "ffprobe", {"-v", "quiet", "-print_format", "json", "-show_streams", imagem.getFullPathName()});
+    juce::var root = juce::JSON::parse(juce::String(saida));
     DimensaoImagem d;
-    d.largura = extrairInteiroAposChave(saida, "pixelWidth");
-    d.altura = extrairInteiroAposChave(saida, "pixelHeight");
+    if (root.isObject()) {
+        juce::var streams = root["streams"];
+        if (streams.isArray() && streams.getArray()->size() > 0) {
+            juce::var primeiro = (*streams.getArray())[0];
+            d.largura = primeiro["width"].toString().getIntValue();
+            d.altura = primeiro["height"].toString().getIntValue();
+        }
+    }
     if (d.largura == 0 || d.altura == 0)
-        throw MiniaturaError("sips não retornou dimensões válidas para: " + imagem.getFullPathName().toStdString());
+        throw MiniaturaError("ffprobe não retornou dimensões válidas para: " + imagem.getFullPathName().toStdString());
     return d;
 }
 
 DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& destino, int ladoMaximoPx) {
     destino.getParentDirectory().createDirectory();
-    rodarEsperandoSucesso({"sips", "-Z", juce::String(ladoMaximoPx), origem.getFullPathName(), "--out",
-                            destino.getFullPathName()},
-                           "sips");
+    // scale com -1/-2 preserva proporção pelo lado que sobra; aqui limitamos
+    // o maior lado com force_original_aspect_ratio=decrease, que funciona
+    // tanto pra imagem paisagem quanto retrato sem precisar saber qual é.
+    rodarEsperandoSucesso("ffmpeg",
+                          {"-y", "-hide_banner", "-loglevel", "error", "-i", origem.getFullPathName(), "-vf",
+                           "scale=" + juce::String(ladoMaximoPx) + ":" + juce::String(ladoMaximoPx) +
+                               ":force_original_aspect_ratio=decrease",
+                           destino.getFullPathName()});
     if (!destino.existsAsFile())
-        throw MiniaturaError("sips não gerou a miniatura esperada: " + destino.getFullPathName().toStdString());
+        throw MiniaturaError("ffmpeg não gerou a miniatura esperada: " + destino.getFullPathName().toStdString());
     return dimensoesImagem(destino);
 }
 
@@ -56,10 +55,10 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
         double tempo = duracaoSegundos * (i + 0.5) / quantidade;
         juce::File destino = dirDestino.getChildFile(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
 
-        rodarEsperandoSucesso({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", juce::String(tempo),
-                                "-i", origem.getFullPathName(), "-frames:v", "1", "-vf",
-                                "scale=" + juce::String(larguraPx) + ":-2", destino.getFullPathName()},
-                               "ffmpeg");
+        rodarEsperandoSucesso("ffmpeg",
+                              {"-y", "-hide_banner", "-loglevel", "error", "-ss", juce::String(tempo),
+                               "-i", origem.getFullPathName(), "-frames:v", "1", "-vf",
+                               "scale=" + juce::String(larguraPx) + ":-2", destino.getFullPathName()});
         if (!destino.existsAsFile())
             throw MiniaturaError("ffmpeg não gerou o keyframe esperado em t=" + std::to_string(tempo) + "s: " +
                                   origem.getFullPathName().toStdString());
@@ -90,10 +89,10 @@ FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File&
     dirTemporario.createDirectory();
     juce::File pcmTemp = dirTemporario.getChildFile("matriz_pcm_" + juce::Uuid().toDashedString() + ".f32le");
 
-    rodarEsperandoSucesso({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", origemAudio.getFullPathName(),
-                            "-f", "f32le", "-ac", "1", "-ar", juce::String(sampleRatePcm),
-                            pcmTemp.getFullPathName()},
-                           "ffmpeg");
+    rodarEsperandoSucesso("ffmpeg",
+                          {"-y", "-hide_banner", "-loglevel", "error", "-i", origemAudio.getFullPathName(),
+                           "-f", "f32le", "-ac", "1", "-ar", juce::String(sampleRatePcm),
+                           pcmTemp.getFullPathName()});
 
     if (!pcmTemp.existsAsFile()) {
         throw MiniaturaError("ffmpeg não gerou o PCM temporário para forma de onda: " +

@@ -1,5 +1,7 @@
 #include "FichaDefinition.h"
 
+#include <yaml-cpp/yaml.h>
+
 #include <algorithm>
 #include <fstream>
 #include <set>
@@ -7,10 +9,41 @@
 
 namespace matriz::ficha {
 
-using matriz::ficha_yaml::Node;
-using matriz::ficha_yaml::NodeType;
-
 namespace {
+
+// --- Wrappers finos sobre yaml-cpp -----------------------------------------
+// Isolam o resto do arquivo da API do yaml-cpp e preservam o comportamento
+// "ausente vira vazio/false, nunca exceção" que o resto da validação espera.
+
+bool has(const YAML::Node& parent, const char* key) {
+    return parent.IsDefined() && parent.IsMap() && parent[key].IsDefined();
+}
+
+YAML::Node get(const YAML::Node& parent, const char* key) {
+    if (!parent.IsDefined() || !parent.IsMap()) return YAML::Node();
+    return parent[key];
+}
+
+std::string asString(const YAML::Node& n, const std::string& fallback = "") {
+    if (!n.IsDefined() || !n.IsScalar()) return fallback;
+    return n.as<std::string>();
+}
+
+bool asBool(const YAML::Node& n, bool fallback = false) {
+    if (!n.IsDefined() || !n.IsScalar()) return fallback;
+    try {
+        return n.as<bool>();
+    } catch (const YAML::BadConversion&) {
+        return fallback;
+    }
+}
+
+std::vector<std::string> asStringList(const YAML::Node& n) {
+    std::vector<std::string> out;
+    if (n.IsDefined() && n.IsSequence())
+        for (const auto& item : n) out.push_back(asString(item));
+    return out;
+}
 
 std::string trim(const std::string& s) {
     size_t b = s.find_first_not_of(" \t");
@@ -88,19 +121,19 @@ void checkIdsUnicos(const std::vector<Campo>& campos, const std::string& context
     }
 }
 
-std::vector<Campo> parseCampos(const Node& camposNode, const std::string& contexto) {
-    if (!camposNode.isSequence())
+std::vector<Campo> parseCampos(const YAML::Node& camposNode, const std::string& contexto) {
+    if (!camposNode.IsDefined() || !camposNode.IsSequence())
         throw FichaDefinitionError("\"campos\" deve ser uma sequência em " + contexto);
 
     std::vector<Campo> campos;
-    for (auto& item : camposNode.sequence) {
-        if (!item.isMap())
+    for (const auto& item : camposNode) {
+        if (!item.IsMap())
             throw FichaDefinitionError("cada campo deve ser um mapa em " + contexto);
 
         Campo c;
-        c.id = item.get("id").asString();
-        c.rotulo = item.get("rotulo").asString();
-        std::string tipoStr = item.get("tipo").asString();
+        c.id = asString(get(item, "id"));
+        c.rotulo = asString(get(item, "rotulo"));
+        std::string tipoStr = asString(get(item, "tipo"));
 
         if (c.id.empty())
             throw FichaDefinitionError("campo sem \"id\" em " + contexto);
@@ -110,56 +143,56 @@ std::vector<Campo> parseCampos(const Node& camposNode, const std::string& contex
             throw FichaDefinitionError("campo \"" + c.id + "\" sem \"tipo\" em " + contexto);
         c.tipo = campoTipoFromString(tipoStr);
 
-        c.obrigatorio = item.get("obrigatorio").asBool(false);
+        c.obrigatorio = asBool(get(item, "obrigatorio"), false);
 
-        if (item.has("opcoes")) {
-            if (!item.get("opcoes").isSequence())
+        if (has(item, "opcoes")) {
+            if (!get(item, "opcoes").IsSequence())
                 throw FichaDefinitionError("campo \"" + c.id + "\": \"opcoes\" deve ser uma lista");
-            c.opcoes = item.get("opcoes").asStringList();
+            c.opcoes = asStringList(get(item, "opcoes"));
         }
         if (c.tipo == CampoTipo::Opcao && c.opcoes.empty())
             throw FichaDefinitionError("campo \"" + c.id + "\": tipo \"opcao\" requer \"opcoes\"");
 
-        if (item.has("colunas")) {
-            if (!item.get("colunas").isSequence())
+        if (has(item, "colunas")) {
+            if (!get(item, "colunas").IsSequence())
                 throw FichaDefinitionError("campo \"" + c.id + "\": \"colunas\" deve ser uma lista");
-            c.colunas = item.get("colunas").asStringList();
+            c.colunas = asStringList(get(item, "colunas"));
         }
         if (c.tipo == CampoTipo::Tabela && c.colunas.empty())
             throw FichaDefinitionError("campo \"" + c.id + "\": tipo \"tabela\" requer \"colunas\"");
 
-        c.validacao = item.get("validacao").asString();
+        c.validacao = asString(get(item, "validacao"));
         if (!c.validacao.empty() && !isValidacaoConhecida(c.validacao))
             throw FichaDefinitionError("campo \"" + c.id + "\": validação desconhecida \"" + c.validacao + "\"");
         if (c.validacao == "soma_100" && c.tipo != CampoTipo::Tabela)
             throw FichaDefinitionError("campo \"" + c.id + "\": validação \"soma_100\" só se aplica a tipo \"tabela\"");
 
-        std::string visivelSeStr = item.get("visivel_se").asString();
+        std::string visivelSeStr = asString(get(item, "visivel_se"));
         if (!visivelSeStr.empty())
             c.visivelSe = parseVisivelSe(visivelSeStr);
 
-        c.herdaDoProjeto = item.get("herda_do_projeto").asBool(false);
-        c.preenchidoPor = item.get("preenchido_por").asString();
-        c.sugeridoPor = item.get("sugerido_por").asString();
+        c.herdaDoProjeto = asBool(get(item, "herda_do_projeto"), false);
+        c.preenchidoPor = asString(get(item, "preenchido_por"));
+        c.sugeridoPor = asString(get(item, "sugerido_por"));
 
         int origens = (c.herdaDoProjeto ? 1 : 0) + (!c.preenchidoPor.empty() ? 1 : 0) + (!c.sugeridoPor.empty() ? 1 : 0);
         if (origens > 1)
             throw FichaDefinitionError("campo \"" + c.id + "\": herda_do_projeto, preenchido_por e sugerido_por são mutuamente exclusivos");
 
-        if (item.has("afeta")) {
-            if (!item.get("afeta").isSequence())
+        if (has(item, "afeta")) {
+            if (!get(item, "afeta").IsSequence())
                 throw FichaDefinitionError("campo \"" + c.id + "\": \"afeta\" deve ser uma lista");
-            c.afeta = item.get("afeta").asStringList();
+            c.afeta = asStringList(get(item, "afeta"));
             for (auto& efeito : c.afeta)
                 if (!isEfeitoConhecido(efeito))
                     throw FichaDefinitionError("campo \"" + c.id + "\": efeito desconhecido em \"afeta\": \"" + efeito + "\"");
         }
 
-        c.alertaSeTrue = item.get("alerta_se_true").asString();
+        c.alertaSeTrue = asString(get(item, "alerta_se_true"));
         if (!c.alertaSeTrue.empty() && c.tipo != CampoTipo::Booleano)
             throw FichaDefinitionError("campo \"" + c.id + "\": \"alerta_se_true\" só se aplica a tipo \"booleano\"");
 
-        c.gerarEmSequencia = item.get("gerar_em_sequencia").asBool(false);
+        c.gerarEmSequencia = asBool(get(item, "gerar_em_sequencia"), false);
 
         campos.push_back(std::move(c));
     }
@@ -236,88 +269,99 @@ const std::vector<Campo>* FichaDefinition::camposDoNivel(const std::string& nive
     return nullptr;
 }
 
-FichaDefinition load(const Node& root) {
-    if (!root.isMap())
-        throw FichaDefinitionError("a definição de ficha deve ser um mapa no nível raiz");
-
-    FichaDefinition def;
-    def.tipo = root.get("tipo").asString();
-    def.rotulo = root.get("rotulo").asString();
-    if (def.tipo.empty())
-        throw FichaDefinitionError("\"tipo\" é obrigatório no nível raiz");
-    if (def.rotulo.empty())
-        throw FichaDefinitionError("\"rotulo\" é obrigatório no nível raiz");
-
-    bool hasGrupos = root.has("grupos");
-    bool hasNiveis = root.has("niveis");
-    if (hasGrupos == hasNiveis)
-        throw FichaDefinitionError("tipo \"" + def.tipo + "\": definição deve ter \"grupos\" OU \"niveis\", nunca os dois nem nenhum");
-
-    if (hasNiveis) {
-        const Node& niveisNode = root.get("niveis");
-        if (!niveisNode.isSequence())
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"niveis\" deve ser uma lista");
-        def.niveis = niveisNode.asStringList();
-        if (def.niveis.empty())
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"niveis\" não pode ser vazio");
-        if (def.niveis.size() > 2)
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": este formato suporta no máximo dois níveis (raiz + um repetido)");
-
-        for (auto& nivel : def.niveis) {
-            const Node& bloco = root.get(nivel);
-            if (!bloco.isMap())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": bloco do nível \"" + nivel + "\" ausente ou inválido");
-            const Node& camposNode = bloco.get("campos");
-            std::string contexto = "nível \"" + nivel + "\" do tipo \"" + def.tipo + "\"";
-            std::vector<Campo> campos = parseCampos(camposNode, contexto);
-            checkVisivelSeReferences(campos, contexto);
-            def.camposPorNivel.emplace_back(nivel, std::move(campos));
-        }
-    } else {
-        const Node& gruposNode = root.get("grupos");
-        if (!gruposNode.isSequence())
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"grupos\" deve ser uma lista");
-        if (gruposNode.sequence.empty())
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"grupos\" não pode ser vazio");
-
-        std::vector<Campo> todosOsCamposDaRaiz; // para checar unicidade de id entre grupos
-        for (auto& g : gruposNode.sequence) {
-            if (!g.isMap())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": cada grupo deve ser um mapa");
-            Grupo grupo;
-            grupo.rotulo = g.get("rotulo").asString();
-            if (grupo.rotulo.empty())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": grupo sem \"rotulo\"");
-            grupo.campos = parseCampos(g.get("campos"), "grupo \"" + grupo.rotulo + "\" do tipo \"" + def.tipo + "\"");
-            for (auto& c : grupo.campos)
-                todosOsCamposDaRaiz.push_back(c);
-            def.grupos.push_back(std::move(grupo));
-        }
-        checkIdsUnicos(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (ids devem ser únicos entre todos os grupos)");
-        checkVisivelSeReferences(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (todos os grupos)");
+FichaDefinition loadFromString(const std::string& yamlText, const std::string& origemParaErro) {
+    YAML::Node root;
+    try {
+        root = YAML::Load(yamlText);
+    } catch (const YAML::Exception& e) {
+        throw FichaDefinitionError(origemParaErro + ": erro de YAML: " + e.what());
     }
 
-    if (root.has("arquivos_esperados")) {
-        const Node& arqNode = root.get("arquivos_esperados");
-        if (!arqNode.isSequence())
-            throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"arquivos_esperados\" deve ser uma lista");
-        for (auto& item : arqNode.sequence) {
-            if (!item.isMap())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": cada entrada de \"arquivos_esperados\" deve ser um mapa");
-            ArquivoEsperado ae;
-            ae.papel = item.get("papel").asString();
-            if (ae.papel.empty())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": entrada de \"arquivos_esperados\" sem \"papel\"");
-            ae.obrigatorio = item.get("obrigatorio").asBool(false);
-            ae.por = item.get("por").asString();
-            if (!ae.por.empty() && std::find(def.niveis.begin(), def.niveis.end(), ae.por) == def.niveis.end())
-                throw FichaDefinitionError("tipo \"" + def.tipo + "\": arquivos_esperados[" + ae.papel + "].por = \"" + ae.por + "\" não é um nível declarado em \"niveis\"");
-            ae.minimo = item.get("minimo").asString();
-            def.arquivosEsperados.push_back(std::move(ae));
-        }
-    }
+    try {
+        if (!root.IsMap())
+            throw FichaDefinitionError("a definição de ficha deve ser um mapa no nível raiz");
 
-    return def;
+        FichaDefinition def;
+        def.tipo = asString(get(root, "tipo"));
+        def.rotulo = asString(get(root, "rotulo"));
+        if (def.tipo.empty())
+            throw FichaDefinitionError("\"tipo\" é obrigatório no nível raiz");
+        if (def.rotulo.empty())
+            throw FichaDefinitionError("\"rotulo\" é obrigatório no nível raiz");
+
+        bool hasGrupos = has(root, "grupos");
+        bool hasNiveis = has(root, "niveis");
+        if (hasGrupos == hasNiveis)
+            throw FichaDefinitionError("tipo \"" + def.tipo + "\": definição deve ter \"grupos\" OU \"niveis\", nunca os dois nem nenhum");
+
+        if (hasNiveis) {
+            YAML::Node niveisNode = get(root, "niveis");
+            if (!niveisNode.IsSequence())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"niveis\" deve ser uma lista");
+            def.niveis = asStringList(niveisNode);
+            if (def.niveis.empty())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"niveis\" não pode ser vazio");
+            if (def.niveis.size() > 2)
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": este formato suporta no máximo dois níveis (raiz + um repetido)");
+
+            for (auto& nivel : def.niveis) {
+                YAML::Node bloco = get(root, nivel.c_str());
+                if (!bloco.IsMap())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": bloco do nível \"" + nivel + "\" ausente ou inválido");
+                YAML::Node camposNode = get(bloco, "campos");
+                std::string contexto = "nível \"" + nivel + "\" do tipo \"" + def.tipo + "\"";
+                std::vector<Campo> campos = parseCampos(camposNode, contexto);
+                checkVisivelSeReferences(campos, contexto);
+                def.camposPorNivel.emplace_back(nivel, std::move(campos));
+            }
+        } else {
+            YAML::Node gruposNode = get(root, "grupos");
+            if (!gruposNode.IsSequence())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"grupos\" deve ser uma lista");
+            if (gruposNode.size() == 0)
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"grupos\" não pode ser vazio");
+
+            std::vector<Campo> todosOsCamposDaRaiz; // para checar unicidade de id entre grupos
+            for (const auto& g : gruposNode) {
+                if (!g.IsMap())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": cada grupo deve ser um mapa");
+                Grupo grupo;
+                grupo.rotulo = asString(get(g, "rotulo"));
+                if (grupo.rotulo.empty())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": grupo sem \"rotulo\"");
+                grupo.campos = parseCampos(get(g, "campos"), "grupo \"" + grupo.rotulo + "\" do tipo \"" + def.tipo + "\"");
+                for (auto& c : grupo.campos)
+                    todosOsCamposDaRaiz.push_back(c);
+                def.grupos.push_back(std::move(grupo));
+            }
+            checkIdsUnicos(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (ids devem ser únicos entre todos os grupos)");
+            checkVisivelSeReferences(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (todos os grupos)");
+        }
+
+        if (has(root, "arquivos_esperados")) {
+            YAML::Node arqNode = get(root, "arquivos_esperados");
+            if (!arqNode.IsSequence())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"arquivos_esperados\" deve ser uma lista");
+            for (const auto& item : arqNode) {
+                if (!item.IsMap())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": cada entrada de \"arquivos_esperados\" deve ser um mapa");
+                ArquivoEsperado ae;
+                ae.papel = asString(get(item, "papel"));
+                if (ae.papel.empty())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": entrada de \"arquivos_esperados\" sem \"papel\"");
+                ae.obrigatorio = asBool(get(item, "obrigatorio"), false);
+                ae.por = asString(get(item, "por"));
+                if (!ae.por.empty() && std::find(def.niveis.begin(), def.niveis.end(), ae.por) == def.niveis.end())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": arquivos_esperados[" + ae.papel + "].por = \"" + ae.por + "\" não é um nível declarado em \"niveis\"");
+                ae.minimo = asString(get(item, "minimo"));
+                def.arquivosEsperados.push_back(std::move(ae));
+            }
+        }
+
+        return def;
+    } catch (const FichaDefinitionError& e) {
+        throw FichaDefinitionError(origemParaErro + ": " + e.what());
+    }
 }
 
 FichaDefinition loadFromFile(const std::string& path) {
@@ -326,15 +370,7 @@ FichaDefinition loadFromFile(const std::string& path) {
         throw FichaDefinitionError("não foi possível abrir o arquivo: " + path);
     std::ostringstream buffer;
     buffer << file.rdbuf();
-
-    try {
-        matriz::ficha_yaml::Node root = matriz::ficha_yaml::parse(buffer.str());
-        return load(root);
-    } catch (const matriz::ficha_yaml::YamlError& e) {
-        throw FichaDefinitionError(path + ": erro de YAML: " + e.what());
-    } catch (const FichaDefinitionError& e) {
-        throw FichaDefinitionError(path + ": " + e.what());
-    }
+    return loadFromString(buffer.str(), path);
 }
 
 } // namespace matriz::ficha

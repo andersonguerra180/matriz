@@ -5,12 +5,12 @@
 #include <string>
 #include <vector>
 
-#include "FichaYaml.h"
-
 // Modelo tipado de uma definição de ficha (§6 da especificação) e o
-// carregador que valida um Node de FichaYaml contra o formato descrito em
-// docs/formato-ficha.md. Uma definição que viole o formato nunca produz um
-// FichaDefinition parcial — o carregamento lança FichaDefinitionError.
+// carregador que valida um documento YAML (parseado com yaml-cpp) contra o
+// formato descrito em docs/formato-ficha.md. Uma definição que viole o
+// formato nunca produz um FichaDefinition parcial — o carregamento lança
+// FichaDefinitionError. yaml-cpp fica encapsulado em FichaDefinition.cpp —
+// este header não expõe nenhum tipo dele.
 
 namespace matriz::ficha {
 
@@ -92,7 +92,7 @@ struct FichaDefinition {
 bool isValidacaoConhecida(const std::string& nome);
 bool isEfeitoConhecido(const std::string& nome);
 
-FichaDefinition load(const matriz::ficha_yaml::Node& root);
+FichaDefinition loadFromString(const std::string& yamlText, const std::string& origemParaErro = "<memória>");
 FichaDefinition loadFromFile(const std::string& path);
 
 } // namespace matriz::ficha
