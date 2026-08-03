@@ -22,7 +22,10 @@ struct NovoProjetoResultado {
     matriz::model::NovoProjetoParams params;
 };
 
-void mostrarDialogoNovoProjeto(matriz::model::Modo modo,
-                                std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir);
+// Devolve o AlertWindow construído — produção ignora o retorno, o harness
+// de UI (Source/Ui/UiSelfTest.cpp) usa pra tirar um snapshot e dirigir
+// eventos sintéticos sem duplicar a construção do diálogo.
+std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
+    matriz::model::Modo modo, std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir);
 
 } // namespace matriz::ui

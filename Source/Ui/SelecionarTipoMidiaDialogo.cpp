@@ -50,8 +50,9 @@ std::vector<TipoMidiaOpcao> listarTiposMidiaDisponiveis(ProjetoAberto& projeto) 
     return out;
 }
 
-void mostrarDialogoSelecionarTipoMidia(std::vector<TipoMidiaOpcao> opcoes, int quantidadeArquivos,
-                                        std::function<void(std::optional<std::string> tipoEscolhido)> aoConcluir) {
+std::shared_ptr<juce::AlertWindow> mostrarDialogoSelecionarTipoMidia(
+    std::vector<TipoMidiaOpcao> opcoes, int quantidadeArquivos,
+    std::function<void(std::optional<std::string> tipoEscolhido)> aoConcluir) {
     auto janela = std::make_shared<juce::AlertWindow>(
         matriz::i18n::t("ingest.selecionar_tipo_titulo"),
         matriz::i18n::t("ingest.selecionar_tipo_corpo").replace("{n}", juce::String(quantidadeArquivos)),
@@ -78,6 +79,8 @@ void mostrarDialogoSelecionarTipoMidia(std::vector<TipoMidiaOpcao> opcoes, int q
                                  }
                                  aoConcluir(opcoes[static_cast<size_t>(indice)].id);
                              }));
+
+    return janela;
 }
 
 } // namespace matriz::ui

@@ -214,7 +214,6 @@ void MainComponent::reconstruirLayoutProjeto() {
 
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
-    mosaico_->aoArquivosSoltos = [this](const juce::Array<juce::File>& arquivos) { ingerirArquivos(arquivos); };
 
     mosaicoViewport_ = std::make_unique<juce::Viewport>();
     mosaicoViewport_->setViewedComponent(mosaico_.get(), false);
@@ -306,6 +305,28 @@ void MainComponent::ingerirArquivosComTipoConhecido(const juce::Array<juce::File
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
     processarLoteEmBackground(arquivos, std::move(tipoMidia));
+}
+
+void MainComponent::filesDropped(const juce::StringArray& files, int, int) {
+    arrastandoArquivo_ = false;
+    if (mosaico_) mosaico_->definirArrastandoArquivo(false);
+    repaint();
+    if (!temProjetoAberto()) return;
+    juce::Array<juce::File> arquivos;
+    for (auto& caminho : files) arquivos.add(juce::File(caminho));
+    ingerirArquivos(arquivos);
+}
+
+void MainComponent::fileDragEnter(const juce::StringArray&, int, int) {
+    arrastandoArquivo_ = true;
+    if (mosaico_) mosaico_->definirArrastandoArquivo(true);
+    repaint();
+}
+
+void MainComponent::fileDragExit(const juce::StringArray&) {
+    arrastandoArquivo_ = false;
+    if (mosaico_) mosaico_->definirArrastandoArquivo(false);
+    repaint();
 }
 
 std::vector<juce::File> MainComponent::expandirArquivos(const juce::Array<juce::File>& arquivosOuPastas) const {
@@ -459,7 +480,17 @@ void MainComponent::atualizarLabelProgresso() {
         juce::dontSendNotification);
 }
 
-void MainComponent::paint(juce::Graphics& g) { g.fillAll(tema().fundo); }
+void MainComponent::paint(juce::Graphics& g) {
+    g.fillAll(tema().fundo);
+    if (!arrastandoArquivo_) return;
+
+    // Feedback visual da janela inteira como alvo de drop (Parte 3.2 da
+    // correção crítica) — sem isso o operador não sabe se pode soltar ali.
+    g.setColour(tema().acento.withAlpha(0.10f));
+    g.fillRect(getLocalBounds());
+    g.setColour(tema().acento);
+    g.drawRect(getLocalBounds(), 3);
+}
 
 void MainComponent::resized() {
     auto area = getLocalBounds();

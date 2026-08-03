@@ -152,6 +152,17 @@ public:
     explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
 
     void limpar() {
+        // Nada que o operador digitou é descartado, nunca, por nenhum
+        // motivo (Parte 2 da correção crítica). Isto rodava só no blur de
+        // cada editor (onFocusLost/onChange/onReturnKey) — se o operador
+        // trocasse de item, ou qualquer outra coisa reconstruísse a ficha,
+        // ENQUANTO um campo ainda tinha o texto digitado mas nunca perdeu
+        // o foco, o valor morria junto com o widget, sem nunca chegar ao
+        // banco. Commitar tudo aqui, incondicional a estado de foco,
+        // fecha esse buraco de vez — troca de item, fechar o projeto,
+        // reconstrução após confirmar sugestão, todos passam por aqui.
+        for (auto* linha : linhas_) salvarValorSemEfeitosColaterais(*linha);
+
         linhas_.clear();
         secoes_.clear();
         cabecalho_.reset();
@@ -267,6 +278,18 @@ public:
     }
 
     std::function<void()> aoRelayoutNecessario;
+
+    // Introspecção pra teste (Parte 2 da correção crítica — perda de
+    // dado): acesso direto ao editor de um campo específico, pra simular
+    // digitação sem depender de foco/blur real. nullptr se não encontrado.
+    juce::Component* editorDoCampoParaTeste(const std::string& nivel, int nivelIndice, const std::string& campoId) {
+        for (auto* linha : linhas_) {
+            if (linha->nivel == nivel && linha->nivelIndice == nivelIndice && linha->campo->id == campoId)
+                return linha->editorTabela ? static_cast<juce::Component*>(linha->editorTabela.get())
+                                            : linha->editorSimples.get();
+        }
+        return nullptr;
+    }
 
 private:
     struct LinhaCampo {
@@ -530,9 +553,28 @@ private:
         return {};
     }
 
-    void commitLinha(LinhaCampo& linha) {
+    // Só a escrita no banco + cache local de valores_ — sem tocar em cor de
+    // validação, visibilidade ou relayout. Usado tanto pelo commit normal
+    // (blur/Enter/onChange) quanto pelo commit forçado em limpar(), onde os
+    // widgets estão prestes a ser destruídos e mexer neles seria inútil ou
+    // perigoso (relayoutEExibir() dispararia sobre uma árvore que já não
+    // existe mais logo em seguida).
+    void salvarValorSemEfeitosColaterais(LinhaCampo& linha) {
+        if (!linha.editorSimples && !linha.editorTabela) return; // linha nunca teve editor construído
         juce::String valor = lerValorEditor(linha);
+        matriz::ingest::aplicarFichaEmLote(projeto_.projeto().registro(), {itemId_}, linha.nivel, linha.nivelIndice,
+                                            {{linha.campo->id, valor.toStdString()}}, autorAtual());
+        valores_[chaveValor(linha.nivel, linha.nivelIndice, linha.campo->id)] = valor;
+    }
 
+    void commitLinha(LinhaCampo& linha) {
+        salvarValorSemEfeitosColaterais(linha);
+        juce::String valor = valores_[chaveValor(linha.nivel, linha.nivelIndice, linha.campo->id)];
+
+        // Validação é só um aviso visual — nunca apaga nem impede o campo
+        // inválido de ser salvo (Parte 2.1 da correção crítica): o texto
+        // digitado já foi gravado acima, exatamente como o operador
+        // escreveu, mesmo se a validação falhar.
         bool valido = true;
         if (linha.campo->validacao == "isrc") valido = valor.isEmpty() || validarIsrc(valor);
         else if (linha.campo->validacao == "ean13") valido = valor.isEmpty() || validarEan13(valor);
@@ -541,11 +583,6 @@ private:
 
         auto corBase = valido ? matriz::ui::tema().textoSecundario : matriz::ui::tema().perigo;
         linha.rotulo->setColour(juce::Label::textColourId, corBase);
-
-        matriz::ingest::aplicarFichaEmLote(projeto_.projeto().registro(), {itemId_}, linha.nivel, linha.nivelIndice,
-                                            {{linha.campo->id, valor.toStdString()}}, autorAtual());
-
-        valores_[chaveValor(linha.nivel, linha.nivelIndice, linha.campo->id)] = valor;
 
         if (!linha.campo->afeta.empty()) recomputarEfeitosAtivos();
 
@@ -619,6 +656,11 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
 }
 
 FichaPanelComponent::~FichaPanelComponent() = default;
+
+juce::Component* FichaPanelComponent::editorDoCampoParaTeste(const std::string& nivel, int nivelIndice,
+                                                               const std::string& campoId) {
+    return conteudo_->editorDoCampoParaTeste(nivel, nivelIndice, campoId);
+}
 
 void FichaPanelComponent::mostrarItem(const std::string& itemId) {
     itemIdAtual_ = itemId;

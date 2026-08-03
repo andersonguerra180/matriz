@@ -35,8 +35,8 @@ private:
 
 } // namespace
 
-void mostrarDialogoNovoProjeto(matriz::model::Modo modo,
-                                std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir) {
+std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
+    matriz::model::Modo modo, std::function<void(std::optional<NovoProjetoResultado>)> aoConcluir) {
     juce::String tituloModo = modo == matriz::model::Modo::Catalogo
                                    ? matriz::i18n::t("dialogo_novo_projeto.campo_modo_catalogo")
                                    : matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao");
@@ -148,6 +148,8 @@ void mostrarDialogoNovoProjeto(matriz::model::Modo modo,
 
             aoConcluir(r);
         }));
+
+    return janela;
 }
 
 } // namespace matriz::ui

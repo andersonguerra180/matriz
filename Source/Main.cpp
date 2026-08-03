@@ -5,6 +5,7 @@
 #include "Ui/IngerirArquivosTest.h"
 #include "Ui/MainWindow.h"
 #include "Ui/MosaicoStressTest.h"
+#include "Ui/UiSelfTest.h"
 
 namespace {
 
@@ -27,6 +28,14 @@ public:
         }
         if (commandLine.contains("--selftest-ingerir-arquivos")) {
             setApplicationReturnValue(matriz::ui::rodarTestIngerirArquivos());
+            quit();
+            return;
+        }
+        // Harness de UI headless (correção crítica, Parte 1): renderiza
+        // telas pra PNG em test-output/ e dirige interação sintética real
+        // (foco de teclado, drop de arquivo) via peer off-screen.
+        if (commandLine.contains("--selftest-uitest")) {
+            setApplicationReturnValue(matriz::ui::rodarUiSelfTest());
             quit();
             return;
         }

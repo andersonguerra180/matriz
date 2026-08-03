@@ -92,11 +92,37 @@ mídia sintética com ffmpeg e roda o pipeline completo: leitura técnica, check
 miniatura/forma de onda, pHash, fingerprint de áudio, corte de banda, classificador
 fala x música, EXIF real via Exiv2, inferência de pasta, ingest real de arquivo em
 disco, fluxo de ficha em lote e painel de inconsistências. O app principal (`matriz`)
-tem dois modos ocultos de verificação headless: `--selftest-mosaico-10k` (benchmark de
-virtualização do mosaico contra 10 mil itens sintéticos, `Source/Ui/MosaicoStressTest.cpp`)
-e `--selftest-ingerir-arquivos` (ingere mídia sintética via `MainComponent` de verdade —
+tem três modos ocultos de verificação headless: `--selftest-mosaico-10k` (benchmark de
+virtualização do mosaico contra 10 mil itens sintéticos, `Source/Ui/MosaicoStressTest.cpp`),
+`--selftest-ingerir-arquivos` (ingere mídia sintética via `MainComponent` de verdade —
 não um atalho — e confere item/arquivo/checksum/leitura técnica no banco,
-`Source/Ui/IngerirArquivosTest.cpp`).
+`Source/Ui/IngerirArquivosTest.cpp`) e `--selftest-uitest` (harness de UI headless,
+`Source/Ui/UiSelfTest.cpp` — ver seção própria abaixo).
+
+### Harness de UI headless (`--selftest-uitest`)
+
+`juce::Component::createComponentSnapshot()` renderiza qualquer tela pra uma imagem em
+memória sem passar pelo compositor do sistema — não depende de permissão de Gravação de
+Tela (essa permissão só falta pro `screencapture`, não pro JUCE). `MATRIZ --selftest-uitest`
+usa isso pra renderizar a tela inicial (nos dois idiomas), os diálogos de criação e de
+escolha de tipo de mídia, a janela principal nos dois modos, o mosaico com e sem itens, as
+14 fichas (uma por tipo de mídia) e o painel de inconsistências — tudo em
+`test-output/*.png` — e verifica automaticamente que nenhum componente tem tamanho zero ou
+sai dos limites do pai (exceto conteúdo rolável dentro de `Viewport`, que legitimamente
+extrapola). Interação real (foco de teclado, `filesDropped`) usa uma janela real fora da
+tela (`Component::addToDesktop`, posicionada fora do monitor) — é uma janela do próprio
+processo MATRIZ, não inspeciona nem controla outro app, então também não precisa de
+permissão de Acessibilidade.
+
+**Achado real durante a construção do harness** (não uma limitação do harness, um bug do
+próprio JUCE/AlertWindow nesta configuração): deixar o `MessageManager` bombear o loop de
+mensagens enquanto um `AlertWindow` modal aberto por dentro de uma `MainComponent` fora do
+Desktop ainda está vivo — mesmo bem depois de `exitModalState()` — faz o macOS
+eventualmente tentar compor essa janela de verdade (NSView/CoreAnimation reais) e crasha
+dentro de `juce::AlertWindow::paint()` -> `Component::getName()`. O contorno usado no
+harness é chamar `removeFromDesktop()` explicitamente logo depois de `exitModalState()`,
+antes de qualquer novo bombeamento do loop de mensagens; a causa raiz não foi isolada a
+tempo desta correção.
 
 **Ingerir material real:** com um projeto aberto, `Arquivo > Ingerir arquivos…` ou
 arrastar arquivos (ou pastas inteiras — expandidas recursivamente) direto no mosaico.
@@ -114,12 +140,14 @@ independente do mesmo tipo escolhido.
 verificado nesta máquina:** Windows — o projeto foi desenhado pra ser multiplataforma
 (FetchContent em vez de gerenciador de pacote, sem `#ifdef __APPLE__` fora da resolução
 de caminho de binário) mas não há como compilar/rodar num Windows real a partir daqui.
-**Também não verificado nesta máquina:** a aparência visual pixel a pixel do app —
-o ambiente de desenvolvimento não tem permissão de Gravação de Tela (TCC) concedida,
-então `screencapture` só captura o papel de parede, nunca o conteúdo de nenhuma janela
-de nenhum app (confirmado testando contra um app BKR já publicado, que mostra o mesmo
-comportamento). O app builda, abre, e a barra de menu nativa aparece com as strings
-traduzidas corretas — verificado — mas o layout interno da janela não foi visto.
+**Aparência visual:** `screencapture` continua sem funcionar nesta máquina (sem permissão
+de Gravação de Tela) e System Events/AppleScript também não (sem permissão de Automação) —
+mas isso só limita ferramentas de captura de tela do sistema, não o JUCE. O harness de UI
+(`--selftest-uitest`, seção acima) renderiza as telas de verdade via
+`createComponentSnapshot()` e o layout interno FOI visto — 23 PNGs inspecionados
+diretamente, não só testados por invariante automática. Isso revelou um gap real (ver
+"Estado da implementação"): os rótulos das 14 fichas (`fichas/*.yaml`) nunca passaram pelo
+sistema de i18n — mesmo com locale=en, seção/campo/tipo de mídia aparecem em português.
 **Também não verificado nesta máquina:** o efeito visual real da troca de idioma em
 Preferências (menu Preferências > English/Português) — tentei confirmar via
 automação de UI (System Events/AppleScript), mas esta sessão também não tem permissão
@@ -211,6 +239,36 @@ nada vai ao usuário antes do conjunto inteiro estar pronto).
       diagnóstico, transporte/jog/shuttle e marcadores existirem primeiro;
       domínio de tempo real diferente do resto do app, verificação completa
       exige hardware de áudio real).
+- [x] **Correção crítica (pós-teste real do usuário #2).** O checkpoint acima nunca tinha
+      sido de fato testado como interface — só compilado. Uso real revelou dois bugs
+      graves: drag-and-drop não funcionava em lugar nenhum da janela, e a ficha descartava
+      o que o operador tinha digitado. Nenhum dos dois aparecia em teste automatizado
+      porque nenhum teste até então exercitava a UI de verdade, só lógica por trás dela.
+      **Parte 1 — harness de UI headless** (`--selftest-uitest`,
+      `Source/Ui/UiSelfTest.cpp`): renderiza telas de verdade pra PNG via
+      `createComponentSnapshot()` (não depende de Gravação de Tela) e dirige interação real
+      — foco de teclado, `filesDropped` — via janela off-screen própria do processo (não
+      depende de Acessibilidade). 216 verificações, incluindo invariantes automáticas de
+      layout em cada tela. Ver seção própria acima. **Parte 2 — ficha nunca descarta dado
+      digitado.** Causa raiz real: `FichaConteudo::limpar()` destruía os widgets da ficha
+      sem commitar o que estava neles — um campo em edição que nunca perdeu o foco (ex.:
+      operador clica direto noutro item do mosaico) tinha o valor perdido pra sempre, nunca
+      chegava ao banco. Corrigido commitando todos os campos visíveis antes de destruí-los,
+      incondicional a estado de foco. Reproduzido e confirmado corrigido pelo harness
+      (digita sem dar blur, troca de item, reabre — valor sobrevive). Validação de campo
+      continua só um aviso visual, nunca apaga o texto digitado. **Parte 3 — drag-and-drop
+      cobria só o mosaico.** Causa raiz real: só `MosaicoComponent` implementava
+      `FileDragAndDropTarget`, cobrindo uma coluna de 320px — soltar em qualquer outro
+      lugar da janela (a maior parte dela) não fazia nada. Corrigido movendo o alvo pra
+      `MainComponent`, cobrindo a janela inteira; o mosaico só recebe o estado visual
+      (`definirArrastandoArquivo`). O gesto do sistema operacional em si não dá pra simular
+      nesta máquina (mesma limitação de Acessibilidade de sempre) — testado chamando
+      `isInterestedInFileDrag`/o resto do pipeline direto. **Achado novo, não escondido,
+      fora do escopo desta correção:** inspecionar os PNGs revelou que os rótulos das 14
+      fichas (`fichas/*.yaml` — seções, campos, tipos de mídia) nunca passaram pelo sistema
+      de i18n — aparecem em português mesmo com locale=en. Registrado como tarefa própria,
+      não corrigido aqui (escopo grande, toca as 14 definições). Selftests existentes
+      (fundação, ingest, mosaico 10k, ponte de ingest) continuam passando sem regressão.
 - [ ] Etapa 4 — Índice e IA leve
 - [ ] Etapa 5 — Captura de áudio
 - [ ] Etapa 6 — Vídeo e imagem

@@ -35,7 +35,7 @@ struct GrupoMosaico {
     int linhas = 0;
 };
 
-class MosaicoComponent : public juce::Component, public juce::FileDragAndDropTarget {
+class MosaicoComponent : public juce::Component {
 public:
     explicit MosaicoComponent(ProjetoAberto& projeto);
     ~MosaicoComponent() override;
@@ -66,16 +66,19 @@ public:
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
 
-    // juce::FileDragAndDropTarget — arrastar arquivos do Finder direto pro
-    // mosaico ingere cada um como item novo (§7.1: não trava esperando ficha
-    // completa, o arquivo entra e a leitura técnica roda na hora).
-    bool isInterestedInFileDrag(const juce::StringArray& files) override;
-    void filesDropped(const juce::StringArray& files, int x, int y) override;
-    void fileDragEnter(const juce::StringArray&, int, int) override { arrastandoArquivo_ = true; repaint(); }
-    void fileDragExit(const juce::StringArray&) override { arrastandoArquivo_ = false; repaint(); }
+    // O alvo real de arrastar-e-soltar é a janela inteira (MainComponent,
+    // Parte 3 da correção crítica) — antes era só o mosaico, que cobre uma
+    // coluna estreita da janela; soltar em qualquer outro lugar não fazia
+    // nada. O mosaico só recebe o estado (pra mostrar "solte para ingerir"
+    // no lugar de "nenhum item ainda") — quem decide se está interessado e
+    // quem processa o drop é o MainComponent.
+    void definirArrastandoArquivo(bool arrastando) {
+        if (arrastandoArquivo_ == arrastando) return;
+        arrastandoArquivo_ = arrastando;
+        repaint();
+    }
 
     std::function<void(const std::string& itemId)> aoSelecionar;
-    std::function<void(const juce::Array<juce::File>&)> aoArquivosSoltos;
 
     static constexpr int kCelulaLargura = 168;
     static constexpr int kCelulaAltura = 148;

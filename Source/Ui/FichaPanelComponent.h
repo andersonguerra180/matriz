@@ -24,6 +24,12 @@ public:
     // "" = nenhum item selecionado (estado vazio).
     void mostrarItem(const std::string& itemId);
 
+    // Introspecção pra teste (Parte 2 da correção crítica — perda de
+    // dado): acesso ao editor de um campo específico pra simular digitação
+    // sem depender de foco/blur real. nullptr se o campo não está visível
+    // na ficha atual.
+    juce::Component* editorDoCampoParaTeste(const std::string& nivel, int nivelIndice, const std::string& campoId);
+
     void paint(juce::Graphics&) override;
     void resized() override;
 

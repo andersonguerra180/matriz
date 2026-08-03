@@ -144,6 +144,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
+    Source/Ui/UiSelfTest.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/PainelInconsistenciasComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp

@@ -185,17 +185,6 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     if (aoSelecionar) aoSelecionar(selecionadoId_);
 }
 
-bool MosaicoComponent::isInterestedInFileDrag(const juce::StringArray&) { return true; }
-
-void MosaicoComponent::filesDropped(const juce::StringArray& files, int, int) {
-    arrastandoArquivo_ = false;
-    repaint();
-    if (!aoArquivosSoltos) return;
-    juce::Array<juce::File> arquivos;
-    for (auto& caminho : files) arquivos.add(juce::File(caminho));
-    aoArquivosSoltos(arquivos);
-}
-
 const juce::Image* MosaicoComponent::miniaturaCache(const std::string& itemId) {
     const juce::ScopedLock sl(cacheLock_);
     auto it = cacheMiniaturas_.find(itemId);

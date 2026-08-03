@@ -20,7 +20,7 @@ class PainelInconsistenciasComponent;
 class CartaoModo;
 class LinhaProjetoRecente;
 
-class MainComponent : public juce::Component {
+class MainComponent : public juce::Component, public juce::FileDragAndDropTarget {
 public:
     MainComponent();
     ~MainComponent() override;
@@ -64,6 +64,14 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // juce::FileDragAndDropTarget — a janela inteira é o alvo (Parte 3 da
+    // correção crítica: antes só o mosaico, uma coluna estreita, aceitava
+    // drop; soltar em qualquer outro lugar da janela não fazia nada).
+    bool isInterestedInFileDrag(const juce::StringArray&) override { return temProjetoAberto(); }
+    void filesDropped(const juce::StringArray& files, int, int) override;
+    void fileDragEnter(const juce::StringArray&, int, int) override;
+    void fileDragExit(const juce::StringArray&) override;
+
 private:
     void selecionarItem(const std::string& itemId);
     void reconstruirTelaInicial();
@@ -73,6 +81,7 @@ private:
     void atualizarLabelProgresso();
 
     std::unique_ptr<ProjetoAberto> projetoAberto_;
+    bool arrastandoArquivo_ = false; // feedback visual da janela inteira como alvo de drop (Parte 3.2)
 
     // Tela inicial (nenhum projeto aberto) — Parte 1 da correção de fluxo:
     // a primeira decisão é o modo (dois cartões grandes, §1.1), nunca uma

@@ -26,8 +26,10 @@ struct TipoMidiaOpcao {
 // divergir do YAML.
 std::vector<TipoMidiaOpcao> listarTiposMidiaDisponiveis(ProjetoAberto& projeto);
 
-// nullopt se o operador cancelou.
-void mostrarDialogoSelecionarTipoMidia(std::vector<TipoMidiaOpcao> opcoes, int quantidadeArquivos,
-                                        std::function<void(std::optional<std::string> tipoEscolhido)> aoConcluir);
+// nullopt se o operador cancelou. Devolve o AlertWindow — produção ignora,
+// o harness de UI usa pra snapshot e para dirigir eventos sintéticos.
+std::shared_ptr<juce::AlertWindow> mostrarDialogoSelecionarTipoMidia(
+    std::vector<TipoMidiaOpcao> opcoes, int quantidadeArquivos,
+    std::function<void(std::optional<std::string> tipoEscolhido)> aoConcluir);
 
 } // namespace matriz::ui
