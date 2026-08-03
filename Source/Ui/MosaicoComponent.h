@@ -20,6 +20,21 @@ namespace matriz::ui {
 
 enum class Ordenacao { Codigo, Titulo, Estado, Atualizado };
 
+// Um cabeçalho de seção do mosaico (Parte 1 da correção de fluxo, §3.5):
+// Archive agrupa por tipo de mídia, Catalog por artista/lançamento. Um
+// grupo é sempre um intervalo CONTÍGUO de itensFiltrados_ — nunca precisa
+// tocar os itens de dentro pra desenhar o cabeçalho ou localizar uma
+// célula, o que mantém paint() em O(células visíveis), não O(total de
+// itens), mesmo com muitos grupos.
+struct GrupoMosaico {
+    juce::String rotulo; // já inclui a contagem, ex.: "Reel tapes — 12"
+    int indiceInicio = 0;
+    int quantidade = 0;
+    int yTopo = 0;  // topo do cabeçalho
+    int yItens = 0; // topo da primeira linha de células
+    int linhas = 0;
+};
+
 class MosaicoComponent : public juce::Component, public juce::FileDragAndDropTarget {
 public:
     explicit MosaicoComponent(ProjetoAberto& projeto);
@@ -39,6 +54,14 @@ public:
     int totalItensCarregados() const { return static_cast<int>(itensTodos_.size()); }
     int totalItensVisiveis() const { return static_cast<int>(itensFiltrados_.size()); }
 
+    // Introspecção pra teste (Parte 1 — agrupamento por modo, §3.5): os
+    // rótulos de grupo já visíveis na tela, na ordem em que aparecem.
+    std::vector<juce::String> rotulosDeGrupo() const {
+        std::vector<juce::String> out;
+        for (auto& g : grupos_) out.push_back(g.rotulo);
+        return out;
+    }
+
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -56,19 +79,24 @@ public:
 
     static constexpr int kCelulaLargura = 168;
     static constexpr int kCelulaAltura = 148;
+    static constexpr int kAlturaCabecalhoGrupo = 26;
+    static constexpr int kEspacoEntreGrupos = 6;
 
 private:
     void aplicarFiltrosEOrdenacao();
+    juce::String rotuloGrupoArchive(const ItemResumo& item) const;
     void recalcularLayout();
     juce::Rectangle<int> boundsDaCelula(int indice) const;
     int indiceNaPosicao(juce::Point<int> pos) const;
+    const GrupoMosaico* grupoNaPosicaoY(int y) const;
     juce::Colour corDoEstado(const std::string& estado) const;
     const juce::Image* miniaturaCache(const std::string& itemId);
     void pedirCarregamentoMiniatura(const std::string& itemId);
 
     ProjetoAberto& projeto_;
     std::vector<ItemResumo> itensTodos_;
-    std::vector<ItemResumo> itensFiltrados_;
+    std::vector<ItemResumo> itensFiltrados_; // agrupado — itens do mesmo grupo sempre contíguos
+    std::vector<GrupoMosaico> grupos_;
     juce::String filtroEstado_, filtroTipo_, buscaTexto_;
     Ordenacao ordenacao_ = Ordenacao::Codigo;
 

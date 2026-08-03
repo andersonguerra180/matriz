@@ -26,6 +26,14 @@ struct ItemResumo {
     std::string estado; // nao_digitalizado | capturado | qc_ok | alerta | publicado
     std::string atualizadoEm;
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
+
+    // Só preenchido pra tipo_midia="release" (campos release.artista_principal
+    // e release.titulo, nível raiz) — usado pra agrupar o mosaico por
+    // artista/lançamento no modo Catalog (Parte 1 da correção de fluxo).
+    // Vem de `item_campo`, não de `item.titulo` (que é só o nome herdado do
+    // arquivo original no ingest, nunca atualizado pela ficha).
+    std::optional<std::string> artistaLancamento;
+    std::optional<std::string> tituloLancamento;
 };
 
 class ProjetoAbertoError : public std::runtime_error {

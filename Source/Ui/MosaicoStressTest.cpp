@@ -35,6 +35,31 @@ void inserirItensSinteticos(matriz::db::Database& registro, const std::string& p
     registro.exec("COMMIT");
 }
 
+// Item avulso de um tipo_midia específico, opcionalmente com um campo de
+// ficha (nível raiz) — usado pra testar o agrupamento do mosaico por modo
+// (§3.5), não pelo volume do stress test de virtualização.
+std::string inserirItemTipado(matriz::db::Database& registro, const std::string& projetoId,
+                                const std::string& codigo, const std::string& tipoMidia) {
+    std::string id = matriz::model::novoUuid();
+    std::string agora = matriz::model::agoraIso8601();
+    registro.run(
+        "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+        "VALUES (?, ?, ?, ?, ?, 'capturado', ?, ?)",
+        {matriz::db::Value::of(id), matriz::db::Value::of(projetoId), matriz::db::Value::of(codigo),
+         matriz::db::Value::of(codigo), matriz::db::Value::of(tipoMidia), matriz::db::Value::of(agora),
+         matriz::db::Value::of(agora)});
+    return id;
+}
+
+void gravarCampoRaiz(matriz::db::Database& registro, const std::string& itemId, const std::string& campoId,
+                      const std::string& valor) {
+    registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                  "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?)",
+                  {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                   matriz::db::Value::of(campoId), matriz::db::Value::of(valor),
+                   matriz::db::Value::of(matriz::model::agoraIso8601())});
+}
+
 double medirMs(const std::function<void()>& fn) {
     double inicio = juce::Time::getMillisecondCounterHiRes();
     fn();
@@ -154,6 +179,61 @@ int rodarStressTestMosaico10k() {
                "paint() do topo não escala com o total de itens (10 mil não é >5x mais lento que 100)");
         checar(tPaintGrandeFundo < tPaintPequenoTopo * 5.0 + 30.0,
                "paint() do fundo não escala com o total de itens (10 mil não é >5x mais lento que 100)");
+
+        // --- Agrupamento por modo (Parte 1 da correção de fluxo, §3.5) ---
+        // Archive agrupa por tipo de mídia; Catalog por artista/lançamento
+        // (lido da ficha, não de item.titulo — ver ProjetoAberto::listarItens).
+        matriz::model::NovoProjetoParams paramsArchive;
+        paramsArchive.nome = "Grupos archive";
+        paramsArchive.modo = matriz::model::Modo::Preservacao;
+        paramsArchive.prefixoNomenclatura = "GRA";
+        auto projetoArchive = matriz::model::Project::criar(tmpRoot.getChildFile("grupos_archive"), paramsArchive);
+        inserirItemTipado(projetoArchive->registro(), projetoArchive->projetoId(), "A-01", "fita_rolo");
+        inserirItemTipado(projetoArchive->registro(), projetoArchive->projetoId(), "A-02", "fita_rolo");
+        inserirItemTipado(projetoArchive->registro(), projetoArchive->projetoId(), "A-03", "foto");
+        ProjetoAberto abertoArchive(std::move(projetoArchive));
+        MosaicoComponent mosaicoArchive(abertoArchive);
+        mosaicoArchive.setBounds(0, 0, kLarguraViewport, kAlturaViewport);
+        mosaicoArchive.recarregar();
+        auto gruposArchive = mosaicoArchive.rotulosDeGrupo();
+        checar(gruposArchive.size() == 2, "archive com fita_rolo+foto rende 2 grupos (" +
+                                               juce::String(static_cast<int>(gruposArchive.size())) + ")");
+        checar(std::any_of(gruposArchive.begin(), gruposArchive.end(),
+                            [](const juce::String& s) { return s == "Fita de rolo — 2"; }),
+               "grupo \"Fita de rolo — 2\" presente");
+        checar(std::any_of(gruposArchive.begin(), gruposArchive.end(),
+                            [](const juce::String& s) { return s == "Foto — 1"; }),
+               "grupo \"Foto — 1\" presente");
+
+        matriz::model::NovoProjetoParams paramsCatalog;
+        paramsCatalog.nome = "Grupos catalog";
+        paramsCatalog.modo = matriz::model::Modo::Catalogo;
+        paramsCatalog.prefixoNomenclatura = "GRC";
+        auto projetoCatalog = matriz::model::Project::criar(tmpRoot.getChildFile("grupos_catalog"), paramsCatalog);
+        std::string idRelease1 = inserirItemTipado(projetoCatalog->registro(), projetoCatalog->projetoId(), "C-01", "release");
+        gravarCampoRaiz(projetoCatalog->registro(), idRelease1, "artista_principal", "Banda X");
+        gravarCampoRaiz(projetoCatalog->registro(), idRelease1, "titulo", "Álbum 1");
+        std::string idRelease2 = inserirItemTipado(projetoCatalog->registro(), projetoCatalog->projetoId(), "C-02", "release");
+        gravarCampoRaiz(projetoCatalog->registro(), idRelease2, "artista_principal", "Banda Y");
+        gravarCampoRaiz(projetoCatalog->registro(), idRelease2, "titulo", "Álbum 2");
+        inserirItemTipado(projetoCatalog->registro(), projetoCatalog->projetoId(), "C-03", "sample");
+        ProjetoAberto abertoCatalog(std::move(projetoCatalog));
+        MosaicoComponent mosaicoCatalog(abertoCatalog);
+        mosaicoCatalog.setBounds(0, 0, kLarguraViewport, kAlturaViewport);
+        mosaicoCatalog.recarregar();
+        auto gruposCatalog = mosaicoCatalog.rotulosDeGrupo();
+        checar(gruposCatalog.size() == 3,
+               "catalog com 2 releases (artistas diferentes) + 1 sample rende 3 grupos (" +
+                   juce::String(static_cast<int>(gruposCatalog.size())) + ")");
+        checar(std::any_of(gruposCatalog.begin(), gruposCatalog.end(),
+                            [](const juce::String& s) { return s == "Banda X — Álbum 1 — 1"; }),
+               "grupo agrupado por artista/lançamento (\"Banda X — Álbum 1 — 1\") presente");
+        checar(std::any_of(gruposCatalog.begin(), gruposCatalog.end(),
+                            [](const juce::String& s) { return s == "Banda Y — Álbum 2 — 1"; }),
+               "segundo lançamento (\"Banda Y — Álbum 2 — 1\") em grupo separado");
+        checar(std::any_of(gruposCatalog.begin(), gruposCatalog.end(),
+                            [](const juce::String& s) { return s == "Sample — 1"; }),
+               "sample sem lançamento cai no bucket pelo próprio tipo (\"Sample — 1\")");
 
     } catch (const std::exception& e) {
         checar(false, juce::String("stress test do mosaico: ") + e.what());

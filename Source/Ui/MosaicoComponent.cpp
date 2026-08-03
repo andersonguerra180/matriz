@@ -4,6 +4,7 @@
 #include "Tokens.h"
 
 #include <algorithm>
+#include <map>
 
 namespace matriz::ui {
 
@@ -54,7 +55,7 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         itensFiltrados_.push_back(item);
     }
 
-    std::sort(itensFiltrados_.begin(), itensFiltrados_.end(), [this](const ItemResumo& a, const ItemResumo& b) {
+    auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
         switch (ordenacao_) {
             case Ordenacao::Titulo: return a.titulo < b.titulo;
             case Ordenacao::Estado: return a.estado < b.estado;
@@ -62,10 +63,52 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
             case Ordenacao::Codigo:
             default: return a.codigoAcervo < b.codigoAcervo;
         }
-    });
+    };
+
+    // Mosaico agrupado (Parte 1 da correção de fluxo, §3.5): por tipo de
+    // mídia no Archive, por artista/lançamento no Catalog. A ordenação
+    // escolhida pelo operador vale DENTRO de cada grupo, não entre grupos.
+    bool catalog = projeto_.projeto().modo() == matriz::model::Modo::Catalogo;
+    std::map<juce::String, std::vector<ItemResumo>> baldes;
+    for (auto& item : itensFiltrados_) {
+        juce::String chave;
+        if (catalog && item.artistaLancamento && item.tituloLancamento) {
+            chave = "0:" + *item.artistaLancamento + " — " + *item.tituloLancamento;
+        } else if (catalog) {
+            chave = "1:" + rotuloGrupoArchive(item); // sample/suporte sem lançamento — bucket pelo próprio tipo
+        } else {
+            chave = "0:" + rotuloGrupoArchive(item);
+        }
+        baldes[chave].push_back(item);
+    }
+
+    itensFiltrados_.clear();
+    grupos_.clear();
+    for (auto& [chave, itensDoGrupo] : baldes) {
+        std::vector<ItemResumo> ordenados = itensDoGrupo;
+        std::sort(ordenados.begin(), ordenados.end(), comparador);
+
+        GrupoMosaico g;
+        g.rotulo = chave.fromFirstOccurrenceOf(":", false, false) + " — " +
+                   juce::String(static_cast<int>(ordenados.size()));
+        g.indiceInicio = static_cast<int>(itensFiltrados_.size());
+        g.quantidade = static_cast<int>(ordenados.size());
+        grupos_.push_back(g);
+
+        for (auto& item : ordenados) itensFiltrados_.push_back(std::move(item));
+    }
 
     recalcularLayout();
     repaint();
+}
+
+juce::String MosaicoComponent::rotuloGrupoArchive(const ItemResumo& item) const {
+    try {
+        const auto& def = projeto_.definicaoPara(item.tipoMidia);
+        return def.rotulo.empty() ? juce::String(item.tipoMidia) : juce::String(def.rotulo);
+    } catch (const std::exception&) {
+        return juce::String(item.tipoMidia);
+    }
 }
 
 void MosaicoComponent::selecionarItem(const std::string& itemId) {
@@ -76,26 +119,53 @@ void MosaicoComponent::selecionarItem(const std::string& itemId) {
 void MosaicoComponent::recalcularLayout() {
     int larguraDisponivel = getWidth();
     colunas_ = juce::jmax(1, larguraDisponivel / kCelulaLargura);
-    int linhas = (static_cast<int>(itensFiltrados_.size()) + colunas_ - 1) / colunas_;
-    setSize(getWidth(), juce::jmax(getParentHeight(), linhas * kCelulaAltura + matriz::ui::tema().espacoPainel));
+
+    // Grupos são O(quantidade de grupos), não O(total de itens) — mesmo
+    // com 10 mil itens num único grupo (ver stress test B.2), este laço
+    // roda uma vez só por grupo, cada um O(1).
+    int cursor = matriz::ui::tema().espacoPainel;
+    for (auto& g : grupos_) {
+        g.yTopo = cursor;
+        g.yItens = cursor + kAlturaCabecalhoGrupo;
+        g.linhas = (g.quantidade + colunas_ - 1) / colunas_;
+        cursor = g.yItens + g.linhas * kCelulaAltura + kEspacoEntreGrupos;
+    }
+
+    setSize(getWidth(), juce::jmax(getParentHeight(), cursor));
 }
 
 void MosaicoComponent::resized() { recalcularLayout(); }
 
+const GrupoMosaico* MosaicoComponent::grupoNaPosicaoY(int y) const {
+    for (auto& g : grupos_) {
+        int yFim = g.yItens + g.linhas * kCelulaAltura;
+        if (y >= g.yTopo && y < yFim) return &g;
+    }
+    return nullptr;
+}
+
 juce::Rectangle<int> MosaicoComponent::boundsDaCelula(int indice) const {
-    int coluna = indice % colunas_;
-    int linha = indice / colunas_;
-    return {coluna * kCelulaLargura, linha * kCelulaAltura, kCelulaLargura, kCelulaAltura};
+    for (auto& g : grupos_) {
+        if (indice < g.indiceInicio || indice >= g.indiceInicio + g.quantidade) continue;
+        int localIndice = indice - g.indiceInicio;
+        int coluna = localIndice % colunas_;
+        int linha = localIndice / colunas_;
+        return {coluna * kCelulaLargura, g.yItens + linha * kCelulaAltura, kCelulaLargura, kCelulaAltura};
+    }
+    return {};
 }
 
 int MosaicoComponent::indiceNaPosicao(juce::Point<int> pos) const {
     if (colunas_ <= 0) return -1;
+    const GrupoMosaico* g = grupoNaPosicaoY(pos.y);
+    if (!g || pos.y < g->yItens) return -1; // fora de um grupo, ou em cima do cabeçalho (não clicável)
+
     int coluna = pos.x / kCelulaLargura;
-    int linha = pos.y / kCelulaAltura;
     if (coluna < 0 || coluna >= colunas_) return -1;
-    int indice = linha * colunas_ + coluna;
-    if (indice < 0 || indice >= static_cast<int>(itensFiltrados_.size())) return -1;
-    return indice;
+    int linha = (pos.y - g->yItens) / kCelulaAltura;
+    int localIndice = linha * colunas_ + coluna;
+    if (localIndice < 0 || localIndice >= g->quantidade) return -1;
+    return g->indiceInicio + localIndice;
 }
 
 juce::Colour MosaicoComponent::corDoEstado(const std::string& estado) const {
@@ -196,13 +266,30 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     juce::Rectangle<int> clip = g.getClipBounds();
     if (colunas_ <= 0) return;
 
-    int primeiraLinha = juce::jmax(0, clip.getY() / kCelulaAltura);
-    int ultimaLinha = clip.getBottom() / kCelulaAltura + 1;
-    int primeiroIndice = primeiraLinha * colunas_;
-    int ultimoIndice = juce::jmin(static_cast<int>(itensFiltrados_.size()), (ultimaLinha + 1) * colunas_);
+    // Só os grupos cujo intervalo vertical cruza o clip entram no laço —
+    // O(grupos), nunca O(total de itens). Dentro de cada grupo, só as
+    // linhas visíveis (mesma lógica de antes, agora relativa a g.yItens).
+    for (auto& grupo : grupos_) {
+        int yFimGrupo = grupo.yItens + grupo.linhas * kCelulaAltura;
+        if (yFimGrupo < clip.getY() || grupo.yTopo > clip.getBottom()) continue;
 
-    for (int i = primeiroIndice; i < ultimoIndice; ++i) {
-        const ItemResumo& item = itensFiltrados_[static_cast<size_t>(i)];
+        if (grupo.yTopo < clip.getBottom() && yFimGrupo > clip.getY()) {
+            juce::Rectangle<int> areaCabecalho(0, grupo.yTopo, getWidth(), kAlturaCabecalhoGrupo);
+            g.setColour(tk.painelAlt);
+            g.fillRect(areaCabecalho);
+            g.setColour(tk.textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            g.drawText(grupo.rotulo, areaCabecalho.reduced(tema().espacoMedio, 0), juce::Justification::centredLeft);
+        }
+
+        int primeiraLinha = juce::jmax(0, (clip.getY() - grupo.yItens) / kCelulaAltura);
+        int ultimaLinha = juce::jmax(0, (clip.getBottom() - grupo.yItens) / kCelulaAltura + 1);
+        int primeiroLocal = juce::jmax(0, primeiraLinha * colunas_);
+        int ultimoLocal = juce::jmin(grupo.quantidade, (ultimaLinha + 1) * colunas_);
+
+        for (int local = primeiroLocal; local < ultimoLocal; ++local) {
+            int i = grupo.indiceInicio + local;
+            const ItemResumo& item = itensFiltrados_[static_cast<size_t>(i)];
         juce::Rectangle<int> bounds = boundsDaCelula(i).reduced(4);
 
         juce::Colour corEstado = corDoEstado(item.estado);
@@ -244,6 +331,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         g.drawText(item.titulo, areaTexto, juce::Justification::centredLeft, true);
+        }
     }
 }
 

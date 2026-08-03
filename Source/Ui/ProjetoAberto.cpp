@@ -7,11 +7,18 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
 std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     std::vector<ItemResumo> out;
 
-    // Uma consulta só (EXISTS correlacionado em vez de N+1 — importante com
-    // milhares de itens no mosaico, ver B.2).
+    // Uma consulta só (EXISTS/subquery correlacionados em vez de N+1 —
+    // importante com milhares de itens no mosaico, ver B.2). As duas últimas
+    // colunas só existem de fato pra tipo_midia="release" (nível raiz,
+    // campos artista_principal/titulo de release.yaml) — usadas pra
+    // agrupar o mosaico por artista/lançamento no modo Catalog.
     auto stmt = projeto_->registro().prepare(
         "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
-        "EXISTS(SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.estado_sincronizacao = 'sincronizado') "
+        "EXISTS(SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.estado_sincronizacao = 'sincronizado'), "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+        " AND c.campo_id = 'artista_principal'), "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+        " AND c.campo_id = 'titulo') "
         "FROM item i ORDER BY i.codigo_acervo");
     while (stmt.step()) {
         ItemResumo r;
@@ -22,6 +29,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         r.estado = stmt.columnText(4);
         r.atualizadoEm = stmt.columnText(5);
         r.sincronizado = stmt.columnInt(6) != 0;
+        if (!stmt.columnIsNull(7)) r.artistaLancamento = stmt.columnText(7);
+        if (!stmt.columnIsNull(8)) r.tituloLancamento = stmt.columnText(8);
 
         out.push_back(std::move(r));
     }
