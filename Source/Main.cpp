@@ -1,5 +1,6 @@
 #include <JuceHeader.h>
 
+#include "App/Preferencias.h"
 #include "I18n/Strings.h"
 #include "Ui/IngerirArquivosTest.h"
 #include "Ui/MainWindow.h"
@@ -14,7 +15,7 @@ public:
     bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise(const juce::String& commandLine) override {
-        matriz::i18n::carregar("pt_BR");
+        matriz::i18n::carregar(matriz::app::lerLocale());
 
         // Modo oculto de verificação headless (B.2): `MATRIZ
         // --selftest-mosaico-10k` roda o benchmark de virtualização do

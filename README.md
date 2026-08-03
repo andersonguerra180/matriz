@@ -50,11 +50,15 @@ Source/Ingest/          motor de ingestão: checksum, leitura técnica (ffprobe 
                         de onda, duplicata (pHash/fingerprint), corte de banda, classificador fala x
                         música, inferência de estrutura de pasta, fluxo de ficha em lote, painel de
                         inconsistências, resolução de binário externo (ProcessoExterno.h)
-Source/I18n/            strings de interface (Strings.h/.cpp sobre i18n/pt_BR.yaml, embutido no binário)
+Source/App/             preferências de nível de aplicativo (idioma, projetos recentes) — fora de
+                        qualquer pasta de projeto, em ~/Library/Application Support/MATRIZ
+Source/I18n/            strings de interface (Strings.h/.cpp sobre i18n/en.yaml e i18n/pt_BR.yaml,
+                        embutidos no binário; carregar() pode trocar de locale em tempo real)
 Source/Ui/              app principal: MainWindow/MainComponent (layout de 3 painéis), MosaicoComponent
                         (virtualizado), FichaPanelComponent (ficha genérica sobre FichaDefinition),
                         diálogos de novo/abrir projeto e configurações, design tokens (Tokens.h)
-i18n/                   pt_BR.yaml — strings de interface (§0.6)
+i18n/                   en.yaml (padrão) e pt_BR.yaml (trocável em Preferências) — strings de
+                        interface (§0.6, Parte 2 da correção de fluxo)
 tools/selftest/         self-test headless da fundação (Etapa 1)
 tools/ingest_selftest/  self-test headless do motor de ingestão (Etapa 2), sobre mídia sintética via ffmpeg
 ```
@@ -114,6 +118,16 @@ então `screencapture` só captura o papel de parede, nunca o conteúdo de nenhu
 de nenhum app (confirmado testando contra um app BKR já publicado, que mostra o mesmo
 comportamento). O app builda, abre, e a barra de menu nativa aparece com as strings
 traduzidas corretas — verificado — mas o layout interno da janela não foi visto.
+**Também não verificado nesta máquina:** o efeito visual real da troca de idioma em
+Preferências (menu Preferências > English/Português) — tentei confirmar via
+automação de UI (System Events/AppleScript), mas esta sessão também não tem permissão
+de Automação/Acessibilidade concedida (`osascript`: "Not authorized to send Apple
+events to System Events"). O que foi verificado de outro jeito, com certeza: um
+self-test novo (`tools/selftest/main.cpp`, seção "i18n") carrega os dois locales de
+verdade via `matriz::i18n::carregar()`/`t()` — o mesmo código que a UI chama — e
+confirma que os valores mudam corretamente entre inglês e português, inclusive
+trocando de volta (não é só a primeira carga). O que não está coberto: se
+`MainWindow::trocarIdioma` de fato reconstrói a janela na tela sem artefato visual.
 
 ## Estado da implementação
 
@@ -152,6 +166,30 @@ nada vai ao usuário antes do conjunto inteiro estar pronto).
       diagnóstico, marcadores/vocabulário e tema System CRT ficam para depois
       do retorno do usuário (B.1.4 em diante) — parado aqui de propósito, por
       pedido explícito.
+- [~] **Correção de fluxo (pós-teste real do usuário, em andamento).** Depois
+      do checkpoint acima, o uso real do app revelou: ingest travava a janela,
+      pasta solta era ignorada, tipo de mídia era adivinhado pela extensão
+      (corrigidos — ver commit anterior), e um pedido maior de reorganização
+      do fluxo (modos Archive/Catalog separados desde a primeira tela, inglês
+      como idioma padrão, captura de áudio ao vivo). Concluído até agora:
+      **Parte 2 — idioma.** `i18n/en.yaml` é o padrão na primeira execução
+      (era `pt_BR`); português disponível no novo menu Preferências, trocado
+      em tempo real (`matriz::i18n::carregar()` recarrega a tabela inteira, e
+      `MainWindow` reconstrói o `MainComponent` preservando o projeto aberto —
+      não existe um `retranslateUi()` por Component, então é assim que toda
+      string em tela reflete o idioma novo sem reiniciar o processo).
+      Preferência de idioma persiste em `~/Library/Application Support/MATRIZ`
+      (nível de app, fora de qualquer pasta de projeto — P5). Ainda faltam:
+      **Parte 1** (tela Archive/Catalog como primeira tela, tipos de mídia
+      restritos por modo, mosaico agrupado por modo, painel de
+      inconsistências fixo no Catalog), **Parte 3** (onboarding com "New
+      Archive/New Catalog/Open" + recentes, diálogo de tipo em grade de
+      ícones com sugestão automática, pasta vira material com opção
+      copiar/mover e organização automática em disco) e **Parte 4** (captura
+      de áudio ao vivo — depende de tira de diagnóstico, transporte/jog/
+      shuttle e marcadores existirem primeiro; domínio de tempo real
+      diferente do resto do app, verificação completa exige hardware de
+      áudio real).
 - [ ] Etapa 4 — Índice e IA leve
 - [ ] Etapa 5 — Captura de áudio
 - [ ] Etapa 6 — Vídeo e imagem

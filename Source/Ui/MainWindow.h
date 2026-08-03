@@ -23,6 +23,7 @@ private:
     void pedirAbrirProjeto();
     void pedirConfiguracoesProjeto();
     void pedirIngerirArquivos();
+    void trocarIdioma(const juce::String& locale);
 
     std::unique_ptr<MainComponent> conteudo_;
 

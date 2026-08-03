@@ -30,6 +30,10 @@ void achatar(const YAML::Node& node, const std::string& prefixo, std::unordered_
 }
 
 const char* dadosParaLocale(const juce::String& locale, int& tamanho) {
+    if (locale == "en") {
+        tamanho = I18nBinaryData::en_yamlSize;
+        return I18nBinaryData::en_yaml;
+    }
     if (locale == "pt_BR") {
         tamanho = I18nBinaryData::pt_BR_yamlSize;
         return I18nBinaryData::pt_BR_yaml;

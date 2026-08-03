@@ -24,6 +24,13 @@ public:
 
     void abrirProjeto(std::unique_ptr<matriz::model::Project> projeto);
     void fecharProjeto();
+
+    // Move o projeto atualmente aberto (se houver) pra fora deste
+    // MainComponent — usado só pela troca de idioma em Preferences, que
+    // destrói e recria o MainComponent inteiro pra retraduzir toda a UI, e
+    // precisa entregar o projeto aberto pro substituto. nullptr se nenhum
+    // projeto estava aberto. Nunca chamar com ingest em andamento.
+    std::unique_ptr<matriz::model::Project> destacarProjeto();
     bool temProjetoAberto() const { return projetoAberto_ != nullptr; }
     ProjetoAberto* projetoAberto() { return projetoAberto_.get(); }
 

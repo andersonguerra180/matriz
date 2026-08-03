@@ -133,6 +133,12 @@ void MainComponent::fecharProjeto() {
     reconstruirTelaInicial();
 }
 
+std::unique_ptr<matriz::model::Project> MainComponent::destacarProjeto() {
+    if (!projetoAberto_) return nullptr;
+    jassert(!ingestEmAndamento());
+    return projetoAberto_->destacarProjeto();
+}
+
 void MainComponent::selecionarItem(const std::string& itemId) {
     if (fichaPanel_) fichaPanel_->mostrarItem(itemId);
 }

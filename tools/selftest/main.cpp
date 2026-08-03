@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "Ficha/FichaDefinition.h"
+#include "I18n/Strings.h"
 #include "Model/Project.h"
 
 namespace {
@@ -225,11 +226,37 @@ void testarProjetoPortavel() {
     tmpRoot.deleteRecursively();
 }
 
+// i18n (Parte 2 da correção de fluxo): inglês é o padrão, português troca
+// em tempo real — carregar() pode ser chamado de novo a qualquer momento,
+// sem reiniciar. Confirma que os dois locales têm conteúdo real e que a
+// troca de fato muda o valor devolvido por t(), não só que não lança.
+void testarI18n() {
+    std::cout << "== i18n (inglês padrão, troca em tempo real pra português) ==\n";
+
+    matriz::i18n::carregar("en");
+    check(matriz::i18n::t("menu.arquivo") == "File", "locale en: menu.arquivo = \"File\"");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").isNotEmpty() &&
+              matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").startsWith("Archive"),
+          "locale en: modo preservação chama \"Archive\"");
+    check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
+          "chave ausente devolve [chave], nunca lança nem trava");
+
+    matriz::i18n::carregar("pt_BR");
+    check(matriz::i18n::t("menu.arquivo") == "Arquivo",
+          "carregar() de novo troca o locale em tempo real: menu.arquivo = \"Arquivo\"");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").startsWith("Acervo"),
+          "locale pt_BR: modo preservação chama \"Acervo\"");
+
+    matriz::i18n::carregar("en");
+    check(matriz::i18n::t("menu.arquivo") == "File", "troca de volta pra en funciona (não é só a primeira carga)");
+}
+
 } // namespace
 
 int main() {
     testarDefinicoesDeFicha();
     testarProjetoPortavel();
+    testarI18n();
 
     std::cout << "\n" << (failures == 0 ? "TODOS OS TESTES PASSARAM" : std::to_string(failures) + " FALHA(S)") << "\n";
     return failures == 0 ? 0 : 1;

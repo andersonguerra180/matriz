@@ -39,6 +39,13 @@ public:
 
     matriz::model::Project& projeto() { return *projeto_; }
 
+    // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
+    // que reconstrói a árvore de Component inteira do zero (é o jeito mais
+    // simples de garantir que toda string em tela é retraduzida sem exigir
+    // um retranslateUi() em cada Component). O objeto que chamou isto fica
+    // inutilizável depois — só existe pra sobreviver à troca.
+    std::unique_ptr<matriz::model::Project> destacarProjeto() { return std::move(projeto_); }
+
     std::vector<ItemResumo> listarItens() const;
 
     // Carrega (e cacheia) a definição de ficha para `tipoMidia` a partir de

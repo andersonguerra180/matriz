@@ -1,0 +1,131 @@
+# MATRIZ — interface strings, English (§0.6 / Parte 2 da correção de fluxo).
+# English is the default locale; Portuguese is available in Preferences.
+# Keys are flattened at runtime to "section.subsection.key" by
+# Source/I18n/Strings.cpp. Keep this file's key set identical to
+# i18n/pt_BR.yaml — same keys, both languages.
+
+app:
+  nome: MATRIZ
+
+janela_principal:
+  titulo: MATRIZ
+
+menu:
+  arquivo: File
+  arquivo_novo_projeto: "New project…"
+  arquivo_abrir_projeto: "Open project…"
+  arquivo_fechar_projeto: Close project
+  arquivo_sair: Quit
+  arquivo_ingerir_arquivos: "Add material…"
+  projeto: Project
+  projeto_configuracoes: "Project settings…"
+  exibir: View
+  exibir_tema_bkr_dark: BKR Dark
+  exibir_tema_system_crt: System CRT
+  preferencias: Preferences
+  preferencias_idioma_ingles: English
+  preferencias_idioma_portugues: "Português"
+  ajuda: Help
+
+tela_inicial:
+  titulo: No project open
+  subtitulo: "Create a new project or open an existing one to get started."
+  botao_novo: New project
+  botao_abrir: Open project
+
+dialogo_novo_projeto:
+  titulo: New project
+  campo_nome: Project name
+  campo_modo: Mode
+  campo_modo_preservacao: "Archive — keep it faithful, prove its integrity"
+  campo_modo_catalogo: "Catalog — organize, correct, export"
+  campo_prefixo: Naming prefix
+  campo_instituicao: "Institution or label"
+  campo_responsavel: "Responsible party"
+  campo_isrc: "ISRC registrant (catalog use)"
+  campo_pasta: Project folder
+  botao_escolher_pasta: "Choose folder…"
+  botao_criar: Create project
+  botao_cancelar: Cancel
+  erro_nome_vazio: "The project name is required."
+  erro_prefixo_vazio: "The naming prefix is required."
+  erro_pasta_vazia: "Choose a folder for the project."
+  erro_titulo: "Could not create the project"
+
+dialogo_abrir_projeto:
+  titulo: "Open project"
+  botao_escolher: "Choose project folder…"
+  erro_titulo: "Could not open the project"
+
+mosaico:
+  vazio: "No items in this project yet. Drag files here or use File > Add material…"
+  solte_para_ingerir: "Drop to add"
+  buscar_placeholder: Search
+  ordenar: Sort by
+  ordenar_codigo: Code
+  ordenar_titulo: Title
+  ordenar_estado: Status
+  ordenar_atualizado: "Recently updated"
+  filtrar_estado: Status
+  filtrar_tipo: "Media type"
+  todos: All
+  estado_nao_digitalizado: "Not digitized"
+  estado_capturado: Captured
+  estado_qc_ok: "QC ok"
+  estado_alerta: Alert
+  estado_publicado: Published
+  contagem_itens: "{n} items"
+
+ficha:
+  vazia: "Select an item to see its record sheet."
+  cabecalho_sem_titulo: "(untitled)"
+  secao_arquivos_esperados: "Expected files"
+  arquivo_presente: present
+  arquivo_ausente: missing
+  arquivo_obrigatorio: required
+  sugestao_rotulo: suggestion
+  sugestao_confirmar: Confirm
+  sugestao_confianca: "confidence {p}%"
+  sugestao_modelo: "model: {modelo} {versao}"
+  alerta_rotulo: "Attention"
+  tabela_adicionar_linha: "Add row"
+  tabela_remover_linha: Remove
+  opcao_livre_criar: "Create \"{texto}\""
+  nivel_faixa_adicionar: "Add track"
+  nivel_faixa_numero: "Track {n}"
+  nivel_faixa_remover: "Remove track"
+  herdado_do_projeto: "inherited from project"
+  preenchido_por_leitura_tecnica: "technical reading"
+  campo_booleano_sim: Yes
+  campo_booleano_nao: "No"
+
+configuracoes_projeto:
+  titulo: "Project settings"
+  secao_geral: General
+  secao_master: Master
+  campo_nome: "Project name"
+  campo_modo: Mode
+  campo_permitir_sobrescrever: "Allow overwriting master"
+  aviso_sobrescrever_titulo: "Warning: master overwrite"
+  aviso_sobrescrever_corpo: "Turning this on allows the original master to be overwritten directly, without going through a derivative. This turns off the default preservation guarantee (two files by default, P1) — the original file is no longer protected against accidental overwrite. This is a decision for the person responsible for the project: the software warns once, here, and won't ask again after it's confirmed."
+  aviso_sobrescrever_confirmar: "I understand, allow it anyway"
+  aviso_sobrescrever_cancelar: Cancel
+  botao_fechar: Close
+
+comum:
+  ok: OK
+  cancelar: Cancel
+  sim: Yes
+  nao: "No"
+  erro: Error
+
+ingest:
+  titulo: "Ingest"
+  resumo: "{n} file(s) added successfully."
+  resumo_erros: "Could not add:"
+  erro_extensao_desconhecida: "unrecognized extension (media type could not be inferred)"
+  ja_em_andamento: "A batch is already being added. Wait for it to finish before starting another."
+  progresso: "Adding… {feito}/{total}"
+  selecionar_tipo_titulo: "Media type"
+  selecionar_tipo_corpo: "{n} file(s) selected. What's the source media type for this batch?"
+  selecionar_tipo_confirmar: Add

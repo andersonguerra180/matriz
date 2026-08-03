@@ -20,6 +20,9 @@ menu:
   exibir: Exibir
   exibir_tema_bkr_dark: BKR Dark
   exibir_tema_system_crt: System CRT
+  preferencias: Preferências
+  preferencias_idioma_ingles: English
+  preferencias_idioma_portugues: "Português"
   ajuda: Ajuda
 
 tela_inicial:

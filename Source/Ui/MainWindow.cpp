@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "NovoProjetoDialogo.h"
@@ -8,8 +9,17 @@
 namespace matriz::ui {
 
 namespace {
-enum MenuIndices { kMenuArquivo = 0, kMenuProjeto = 1, kMenuAjuda = 2 };
-enum ComandoMenu { kCmdNovoProjeto = 1, kCmdAbrirProjeto, kCmdFecharProjeto, kCmdSair, kCmdConfiguracoes, kCmdIngerirArquivos };
+enum MenuIndices { kMenuArquivo = 0, kMenuProjeto = 1, kMenuPreferencias = 2, kMenuAjuda = 3 };
+enum ComandoMenu {
+    kCmdNovoProjeto = 1,
+    kCmdAbrirProjeto,
+    kCmdFecharProjeto,
+    kCmdSair,
+    kCmdConfiguracoes,
+    kCmdIngerirArquivos,
+    kCmdIdiomaIngles,
+    kCmdIdiomaPortugues
+};
 } // namespace
 
 MainWindow::MainWindow(const juce::String& nome)
@@ -44,7 +54,8 @@ MainWindow::~MainWindow() {
 void MainWindow::closeButtonPressed() { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
 juce::StringArray MainWindow::getMenuBarNames() {
-    return {matriz::i18n::t("menu.arquivo"), matriz::i18n::t("menu.projeto"), matriz::i18n::t("menu.ajuda")};
+    return {matriz::i18n::t("menu.arquivo"), matriz::i18n::t("menu.projeto"),
+            matriz::i18n::t("menu.preferencias"), matriz::i18n::t("menu.ajuda")};
 }
 
 juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
@@ -66,6 +77,13 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdSair, matriz::i18n::t("menu.arquivo_sair"));
     } else if (topLevelMenuIndex == kMenuProjeto) {
         menu.addItem(kCmdConfiguracoes, matriz::i18n::t("menu.projeto_configuracoes"), conteudo_->temProjetoAberto());
+    } else if (topLevelMenuIndex == kMenuPreferencias) {
+        // Troca aplicada na hora (Parte 2): reconstrói toda a UI com o
+        // idioma novo, sem reiniciar o aplicativo.
+        juce::String localeAtual = matriz::app::lerLocale();
+        menu.addItem(kCmdIdiomaIngles, matriz::i18n::t("menu.preferencias_idioma_ingles"), true, localeAtual == "en");
+        menu.addItem(kCmdIdiomaPortugues, matriz::i18n::t("menu.preferencias_idioma_portugues"), true,
+                     localeAtual == "pt_BR");
     }
     return menu;
 }
@@ -78,8 +96,31 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdSair: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
+        case kCmdIdiomaIngles: trocarIdioma("en"); break;
+        case kCmdIdiomaPortugues: trocarIdioma("pt_BR"); break;
         default: break;
     }
+}
+
+void MainWindow::trocarIdioma(const juce::String& locale) {
+    if (locale == matriz::app::lerLocale()) return;
+    if (conteudo_->ingestEmAndamento()) return; // menu já trava as outras trocas de estado nesse caso
+
+    matriz::app::gravarLocale(locale);
+    matriz::i18n::carregar(locale);
+
+    // Reconstrói o MainComponent inteiro: é o único jeito de garantir que
+    // toda string em tela (não só o menu, que já retraduz sozinho porque
+    // consulta t() de novo a cada vez que abre) reflete o idioma novo sem
+    // precisar de um retranslateUi() em cada Component existente.
+    auto projetoAberto = conteudo_->destacarProjeto();
+    conteudo_ = std::make_unique<MainComponent>();
+    conteudo_->aoPedirNovoProjeto = [this] { pedirNovoProjeto(); };
+    conteudo_->aoPedirAbrirProjeto = [this] { pedirAbrirProjeto(); };
+    setContentNonOwned(conteudo_.get(), true);
+    if (projetoAberto) conteudo_->abrirProjeto(std::move(projetoAberto));
+
+    menuItemsChanged();
 }
 
 void MainWindow::pedirNovoProjeto() {

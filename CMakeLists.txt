@@ -39,7 +39,7 @@ juce_add_binary_data(MatrizSchemaAssets SOURCES
 juce_add_binary_data(MatrizI18nAssets
     NAMESPACE I18nBinaryData
     HEADER_NAME I18nBinaryData.h
-    SOURCES i18n/pt_BR.yaml)
+    SOURCES i18n/en.yaml i18n/pt_BR.yaml)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
@@ -52,7 +52,8 @@ target_sources(matriz_selftest PRIVATE
     tools/selftest/main.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Db/Database.cpp
-    Source/Model/Project.cpp)
+    Source/Model/Project.cpp
+    Source/I18n/Strings.cpp)
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -66,6 +67,7 @@ target_compile_definitions(matriz_selftest PRIVATE
 
 target_link_libraries(matriz_selftest PRIVATE
     MatrizSchemaAssets
+    MatrizI18nAssets
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     juce::juce_core
@@ -133,6 +135,7 @@ juce_generate_juce_header(matriz)
 
 target_sources(matriz PRIVATE
     Source/Main.cpp
+    Source/App/Preferencias.cpp
     Source/I18n/Strings.cpp
     Source/Ui/Tokens.h
     Source/Ui/ProjetoAberto.cpp
