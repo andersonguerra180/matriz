@@ -61,6 +61,7 @@ struct Campo {
 
 struct Grupo {
     std::string rotulo;
+    std::string chave;   // slug estável derivado de `rotulo` — base de "ficha_grupos.<tipo>.<chave>" em i18n
     std::vector<Campo> campos;
 };
 
@@ -78,6 +79,9 @@ struct FichaDefinition {
     std::vector<Grupo> grupos;                              // usado quando niveis está vazio
     std::vector<std::pair<std::string, std::vector<Campo>>> camposPorNivel; // usado quando niveis não está vazio, na ordem de niveis
     std::vector<ArquivoEsperado> arquivosEsperados;
+    std::vector<std::string> modos;                         // "archive" e/ou "catalog"; vazio = disponível nos dois modos
+    int ordem = 0;                                           // posição no diálogo de seleção de tipo; empate por `tipo` alfabético
+    std::string icone;                                       // categoria de ícone sugerida; "" = nenhuma
 
     bool usaNiveis() const { return !niveis.empty(); }
 

@@ -11,6 +11,10 @@
 #include <functional>
 #include <iostream>
 
+#include "Catalogo/CatalogoProxies.h"
+#include "Consolidacao/Consolidacao.h"
+#include "Consolidacao/MetadadoEmbutido.h"
+#include "Consolidacao/Mascara.h"
 #include "Ficha/FichaDefinition.h"
 #include "Ingest/Checksum.h"
 #include "Ingest/ClassificadorFalaMusica.h"
@@ -19,6 +23,7 @@
 #include "Ingest/InferenciaEstrutura.h"
 #include "Ingest/IngestArquivo.h"
 #include "Ingest/LeituraTecnica.h"
+#include "Ingest/Loudness.h"
 #include "Ingest/Miniaturas.h"
 #include "Ingest/PainelInconsistencias.h"
 #include "Model/Project.h"
@@ -34,6 +39,15 @@ void check(bool condition, const std::string& description) {
         std::cout << "  FAIL " << description << "\n";
         ++failures;
     }
+}
+
+// Hierarquia de backup usada pelos testes escritos ANTES do item 5 (estrutura
+// de pastas automática): só a árvore que o operador montou à mão, que era o
+// único comportamento possível então. A estrutura automática padrão
+// (Projeto→Ano→Tipo de Mídia→Tipo de Arquivo) tem cobertura própria em
+// testarHierarquiaBackup().
+matriz::consolidacao::HierarquiaBackup soPastaManual() {
+    return {matriz::consolidacao::NivelHierarquia::PastaManual};
 }
 
 bool ffmpegDisponivel() {
@@ -644,6 +658,810 @@ void testarCategoriaPorExtensao() {
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.xyz")) == matriz::ingest::CategoriaMidia::Desconhecida, "xyz -> Desconhecida");
 }
 
+void testarMascaraDeNomenclatura() {
+    std::cout << "== Máscara de nomenclatura (item 10, §11.6) ==\n";
+
+    matriz::consolidacao::ContextoMascara ctx;
+    ctx.codigoAcervo = "ACR2026-007";
+    ctx.titulo = "ensaio-berlim";
+    ctx.tipoMidia = "fita_rolo";
+    ctx.nomeOriginalSemExtensao = "IMG_0001";
+    ctx.nomeAcervo = "Acervo do Anderson";
+    ctx.nomePasta = "Turne Europa";
+    ctx.seq = 7;
+    ctx.camposFicha["artista_principal"] = "Banda Teste";
+
+    check(matriz::consolidacao::resolverMascara("{codigo}-{seq:03}-{titulo}", ctx) == "ACR2026-007-007-ensaio-berlim",
+          "exemplo do próprio spec (§11.6) resolve exatamente como documentado");
+    check(matriz::consolidacao::resolverMascara("{original}", ctx) == "IMG_0001",
+          "{original} resolve pro nome original sem extensão");
+    check(matriz::consolidacao::resolverMascara("{acervo}-{pasta}-{codigo}", ctx) ==
+              "Acervo do Anderson-Turne Europa-ACR2026-007",
+          "{acervo} e {pasta} resolvem");
+    check(matriz::consolidacao::resolverMascara("{artista_principal} - {titulo}", ctx) == "Banda Teste - ensaio-berlim",
+          "campo de ficha arbitrário (não um token embutido) resolve pelo próprio id");
+
+    std::vector<std::string> naoResolvidos;
+    std::string resultado = matriz::consolidacao::resolverMascara("{codigo}-{campo_inexistente}", ctx, &naoResolvidos);
+    check(resultado == "ACR2026-007-", "token desconhecido vira \"\", nunca lança nem trava a prévia");
+    check(naoResolvidos.size() == 1 && naoResolvidos[0] == "campo_inexistente",
+          "token desconhecido é reportado (pra virar aviso na prévia)");
+
+    check(matriz::consolidacao::resolverMascara("A/B:C", ctx) == "A_B_C",
+          "caracteres inválidos pra nome de arquivo são sanitizados (/ e : viram _)");
+
+    check(matriz::consolidacao::resolverMascara("sem token nenhum", ctx) == "sem token nenhum",
+          "texto sem token nenhum passa direto");
+}
+
+// Item 5 — estrutura de pastas do backup: padrão Projeto→Ano→Tipo de
+// Mídia→Tipo de Arquivo, reordenável, e "sem ano" pra material sem o campo.
+void testarHierarquiaBackup(const juce::File& dirTemp) {
+    std::cout << "== Estrutura de pastas do backup (item 5) ==\n";
+    using namespace matriz::consolidacao;
+
+    check(hierarquiaParaCsv(hierarquiaPadrao()) == "projeto,ano,tipo_midia,tipo_arquivo",
+          "padrão é Projeto → Ano → Tipo de Mídia → Tipo de Arquivo (§5.1)");
+    check(hierarquiaDeCsv(hierarquiaParaCsv(hierarquiaPadrao())) == hierarquiaPadrao(),
+          "CSV de hierarquia sobrevive ida e volta");
+    check(hierarquiaDeCsv("lixo_que_nao_existe") == hierarquiaPadrao(),
+          "valor corrompido cai no padrão em vez de lançar (não impede abrir o projeto)");
+    check(hierarquiaDeCsv("") == hierarquiaPadrao(), "CSV vazio cai no padrão");
+
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_hierarquia_" + juce::Uuid().toDashedString());
+    juce::File destino = dirTemp.getChildFile("destino_hierarquia_" + juce::Uuid().toDashedString());
+    destino.createDirectory();
+
+    matriz::model::NovoProjetoParams params;
+    params.nome = "Acervo do Anderson";
+    params.modo = matriz::model::Modo::Preservacao;
+    params.prefixoNomenclatura = "HIE";
+
+    try {
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        std::string agora = matriz::model::agoraIso8601();
+        std::string projetoId = projeto->projetoId();
+
+        // Um item COM ano (1978) e um SEM ano — o §5.2 exige que o sem ano
+        // vá pra uma pasta "sem ano" em vez de desaparecer ou travar.
+        auto criarItem = [&](const char* codigo, const char* titulo, const char* tipo,
+                              std::optional<std::string> ano) -> std::string {
+            std::string id = matriz::model::novoUuid();
+            projeto->registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                {matriz::db::Value::of(id), matriz::db::Value::of(projetoId), matriz::db::Value::of(std::string(codigo)),
+                 matriz::db::Value::of(std::string(titulo)), matriz::db::Value::of(std::string(tipo)),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            if (ano)
+                projeto->registro().run(
+                    "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'ano', ?, 'humano', ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                     matriz::db::Value::of(*ano), matriz::db::Value::of(agora)});
+            return id;
+        };
+
+        juce::File masterOrigem = dirTemp.getChildFile("hierarquia_master.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=330:duration=1", masterOrigem.getFullPathName()});
+
+        std::string pasta = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+            "VALUES (?, ?, NULL, 'Tudo', 0, ?, ?)",
+            {matriz::db::Value::of(pasta), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+
+        std::string comAno = criarItem("HIE-001", "Com Ano", "fita_rolo", std::string("1978"));
+        std::string semAno = criarItem("HIE-002", "Sem Ano", "fita_rolo", std::nullopt);
+        for (auto& id : {comAno, semAno}) {
+            matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, id, masterOrigem, "preservation_master", true);
+            projeto->registro().run(
+                "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                 matriz::db::Value::of(pasta), matriz::db::Value::of(agora)});
+        }
+
+        auto caminhoDe = [](const PlanoConsolidacao& p, const std::string& codigo) -> juce::String {
+            for (auto& i : p.itens)
+                if (i.codigoAcervo == codigo) return i.caminhoRelativoDestino;
+            return {};
+        };
+
+        auto planoPadrao = planejarConsolidacao(projeto->registro(), pastaProjeto, destino, hierarquiaPadrao());
+        check(caminhoDe(planoPadrao, "HIE-001") == "Acervo do Anderson/1978/fita_rolo/WAV/HIE-001-001-Com Ano.wav",
+              "estrutura padrão gera Projeto/Ano/Tipo de Mídia/Tipo de Arquivo (achou: \"" +
+                  caminhoDe(planoPadrao, "HIE-001").toStdString() + "\")");
+        check(caminhoDe(planoPadrao, "HIE-002").contains("/No year/"),
+              "material sem ano vai pra \"No year\", nunca desaparece (§5.2) (achou: \"" +
+                  caminhoDe(planoPadrao, "HIE-002").toStdString() + "\")");
+
+        // Reordenar os níveis muda a árvore resultante NA HORA, sem copiar
+        // nada — é o que a prévia do diálogo mostra (§5.2, item 12).
+        auto planoInvertido = planejarConsolidacao(
+            projeto->registro(), pastaProjeto, destino,
+            {NivelHierarquia::TipoArquivo, NivelHierarquia::Ano, NivelHierarquia::Projeto});
+        check(caminhoDe(planoInvertido, "HIE-001") == "WAV/1978/Acervo do Anderson/HIE-001-001-Com Ano.wav",
+              "reordenar os níveis reordena as pastas (achou: \"" +
+                  caminhoDe(planoInvertido, "HIE-001").toStdString() + "\")");
+
+        auto planoOrigem = planejarConsolidacao(projeto->registro(), pastaProjeto, destino, {NivelHierarquia::Origem});
+        check(caminhoDe(planoOrigem, "HIE-001").startsWith("No origin/"),
+              "nível de origem sem valor preenchido vira \"No origin\" (achou: \"" +
+                  caminhoDe(planoOrigem, "HIE-001").toStdString() + "\")");
+
+        // A hierarquia é do projeto, não da sessão do diálogo.
+        gravarHierarquiaDoProjeto(projeto->registro(), {NivelHierarquia::Ano, NivelHierarquia::TipoMidia});
+        check(hierarquiaDoProjeto(projeto->registro()) ==
+                  HierarquiaBackup{NivelHierarquia::Ano, NivelHierarquia::TipoMidia},
+              "hierarquia escolhida persiste no projeto");
+        auto planoGravado = planejarConsolidacao(projeto->registro(), pastaProjeto, destino);
+        check(caminhoDe(planoGravado, "HIE-001") == "1978/fita_rolo/HIE-001-001-Com Ano.wav",
+              "planejar sem hierarquia explícita usa a gravada no projeto (achou: \"" +
+                  caminhoDe(planoGravado, "HIE-001").toStdString() + "\")");
+
+        // Executar de verdade: as pastas automáticas têm que existir em disco.
+        auto resultado = executarConsolidacao(projeto->registro(), pastaProjeto, destino, planoGravado);
+        check(resultado.consolidados == 2 && resultado.falhas.empty(), "consolidação com hierarquia automática grava os 2 itens");
+        check(destino.getChildFile("1978/fita_rolo/HIE-001-001-Com Ano.wav").existsAsFile(),
+              "a pasta automática foi criada em disco e o arquivo está dentro dela");
+    } catch (const std::exception& e) {
+        check(false, std::string("hierarquia de backup: ") + e.what());
+    }
+
+    pastaProjeto.deleteRecursively();
+    destino.deleteRecursively();
+}
+
+// Itens 6.1 e 8.3 — loudness EBU R128 pré-calculado, e marcador que vira
+// metadado embutido NA CÓPIA sem nunca tocar no original.
+void testarLoudnessEMarcadores(const juce::File& dirTemp) {
+    std::cout << "== Loudness (item 6.1) e marcador embutido na cópia (item 8.3) ==\n";
+
+    // --- Loudness contra referência da própria norma ---
+    // Referência de BS.1770-4: um seno de 1 kHz a -20 dBFS RMS em UM canal
+    // mede -20 LUFS (o offset de -0,691 e o ganho do filtro K a 1 kHz se
+    // cancelam quase exatamente nessa frequência — é por isso que 1 kHz é a
+    // frequência de calibração da norma). O MESMO sinal duplicado em estéreo
+    // mede 3 dB MAIS ALTO, porque a norma SOMA a potência ponderada dos
+    // canais (L_K = -0,691 + 10log10(Σ G_i·z_i)) em vez de fazer média — é o
+    // comportamento que distingue uma implementação correta de uma que só
+    // devolve "um número plausível".
+    {
+        const double sr = 48000.0;
+        const int amostras = static_cast<int>(sr * 10.0);
+        const float amplitude = std::pow(10.0f, -20.0f / 20.0f) * std::sqrt(2.0f); // pico -> -20 dBFS RMS
+        auto gerarSeno = [&](int canais) {
+            juce::AudioBuffer<float> b(canais, amostras);
+            for (int i = 0; i < amostras; ++i) {
+                float v = amplitude * std::sin(2.0f * juce::MathConstants<float>::pi * 1000.0f *
+                                                static_cast<float>(i) / static_cast<float>(sr));
+                for (int c = 0; c < canais; ++c) b.setSample(c, i, v);
+            }
+            return b;
+        };
+
+        auto mono = gerarSeno(1);
+        auto medidaMono = matriz::ingest::medirLoudness(mono, sr);
+        check(std::abs(medidaMono.lufsIntegrado - (-20.0)) < 0.2,
+              "seno 1 kHz a -20 dBFS RMS mono mede -20 LUFS (achou " + std::to_string(medidaMono.lufsIntegrado) + ")");
+
+        auto estereo = gerarSeno(2);
+        auto medidaEstereo = matriz::ingest::medirLoudness(estereo, sr);
+        check(std::abs((medidaEstereo.lufsIntegrado - medidaMono.lufsIntegrado) - 3.01) < 0.2,
+              "o mesmo sinal em estéreo mede +3 dB (soma de potência de BS.1770, não média) (achou +" +
+                  std::to_string(medidaEstereo.lufsIntegrado - medidaMono.lufsIntegrado) + " dB)");
+        check(std::abs(medidaMono.truePeakDbfs - (-17.0)) < 0.2,
+              "pico de amostra do seno bate com a amplitude gerada (achou " +
+                  std::to_string(medidaMono.truePeakDbfs) + " dBFS)");
+        check(medidaMono.lra < 1.0, "sinal constante tem LRA próximo de zero (achou " + std::to_string(medidaMono.lra) + ")");
+
+        juce::AudioBuffer<float> silencio(2, amostras);
+        silencio.clear();
+        auto medidaSilencio = matriz::ingest::medirLoudness(silencio, sr);
+        check(medidaSilencio.lufsIntegrado <= -70.0, "silêncio absoluto fica no piso de -70 LUFS, não em -inf nem 0");
+
+        // Gating relativo: um trecho alto seguido de um trecho muito baixo —
+        // o baixo tem que ser DESCARTADO pelo gate, então o integrado fica
+        // perto do trecho alto, não na média dos dois.
+        juce::AudioBuffer<float> comGate(1, amostras);
+        comGate.clear();
+        for (int i = 0; i < amostras; ++i) {
+            float v = std::sin(2.0f * juce::MathConstants<float>::pi * 1000.0f * static_cast<float>(i) /
+                                static_cast<float>(sr));
+            comGate.setSample(0, i, i < amostras / 2 ? amplitude * v : amplitude * v * 0.001f); // 2ª metade -60 dB
+        }
+        auto medidaGate = matriz::ingest::medirLoudness(comGate, sr);
+        check(std::abs(medidaGate.lufsIntegrado - medidaMono.lufsIntegrado) < 0.5,
+              "gating relativo descarta o trecho 60 dB abaixo em vez de puxar a média (achou " +
+                  std::to_string(medidaGate.lufsIntegrado) + ", esperado perto de " +
+                  std::to_string(medidaMono.lufsIntegrado) + ")");
+    }
+
+    // --- Marcador embutido na cópia, original intacto ---
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_marcador_" + juce::Uuid().toDashedString());
+    juce::File destino = dirTemp.getChildFile("destino_marcador_" + juce::Uuid().toDashedString());
+    destino.createDirectory();
+
+    matriz::model::NovoProjetoParams params;
+    params.nome = "Marcadores";
+    params.modo = matriz::model::Modo::Preservacao;
+    params.prefixoNomenclatura = "MRC";
+
+    try {
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        std::string agora = matriz::model::agoraIso8601();
+        std::string projetoId = projeto->projetoId();
+
+        std::string itemId = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'MRC-001', 'Com marcadores', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+
+        juce::File masterOrigem = dirTemp.getChildFile("marcador_master.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=440:duration=5", masterOrigem.getFullPathName()});
+
+        // Hash do ORIGINAL antes de tudo — é o que prova o item 8.3.
+        juce::MD5 hashAntes(masterOrigem);
+        juce::int64 tamanhoAntes = masterOrigem.getSize();
+
+        auto ing = matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, itemId, masterOrigem,
+                                                   "preservation_master", true);
+        // A leitura técnica do ingest já mediu o loudness (item 6.1).
+        check(ing.leitura.lufsIntegrado.has_value(),
+              "ingest de áudio já traz LUFS-I pré-calculado na leitura técnica (item 6.1)");
+        check(ing.leitura.lra.has_value(), "ingest de áudio já traz LRA pré-calculado");
+
+        std::string pasta = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+            "VALUES (?, ?, NULL, 'Tudo', 0, ?, ?)",
+            {matriz::db::Value::of(pasta), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+             matriz::db::Value::of(pasta), matriz::db::Value::of(agora)});
+
+        // Dois marcadores, como a timeline gravaria (item 8.2/9.2 — a mesma
+        // tabela item_observacao que a ficha lê).
+        auto inserirMarcador = [&](int64_t ms, const char* texto) {
+            projeto->registro().run(
+                "INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms) "
+                "VALUES (?, ?, ?, 'selftest', ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(std::string(texto)), matriz::db::Value::of(agora),
+                 matriz::db::Value::of(static_cast<long long>(ms))});
+        };
+        inserirMarcador(1500, "entrada da voz");
+        inserirMarcador(3200, "emenda");
+
+        auto marcadores = matriz::consolidacao::marcadoresDoItem(projeto->registro(), itemId);
+        check(marcadores.size() == 2, "os 2 marcadores são lidos de item_observacao (a mesma lista da ficha)");
+
+        auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino,
+                                                                 soPastaManual());
+        auto resultado = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano);
+        check(resultado.consolidados == 1, "cópia consolidada");
+        check(resultado.arquivosComMarcadorEmbutido == 1,
+              "os marcadores foram embutidos em 1 arquivo de backup (achou " +
+                  std::to_string(resultado.arquivosComMarcadorEmbutido) + ")");
+
+        // O ORIGINAL permanece byte a byte idêntico (item 8.3).
+        check(juce::MD5(masterOrigem).toHexString() == hashAntes.toHexString(),
+              "o arquivo ORIGINAL permanece byte a byte idêntico depois de inserir marcadores (item 8.3)");
+        check(masterOrigem.getSize() == tamanhoAntes, "o original também não mudou de tamanho");
+
+        // A CÓPIA cresceu e ganhou os chunks de marcador.
+        juce::File copia;
+        if (!plano.itens.empty()) copia = destino.getChildFile(plano.itens[0].caminhoRelativoDestino);
+        check(copia.existsAsFile(), "a cópia existe no destino");
+        if (copia.existsAsFile()) {
+            check(copia.getSize() > tamanhoAntes, "a cópia é MAIOR que o original — ganhou os chunks de marcador");
+            juce::MemoryBlock conteudo;
+            copia.loadFileAsData(conteudo);
+            // Busca nos BYTES, não via juce::String: WAV é binário e cheio de
+            // \0, e String truncaria no primeiro deles (foi o que fez este
+            // teste falhar na primeira tentativa, escondendo que os chunks
+            // estavam lá).
+            auto contemBytes = [&conteudo](const char* agulha) {
+                size_t n = std::strlen(agulha);
+                const char* dados = static_cast<const char*>(conteudo.getData());
+                if (conteudo.getSize() < n) return false;
+                for (size_t i = 0; i + n <= conteudo.getSize(); ++i)
+                    if (std::memcmp(dados + i, agulha, n) == 0) return true;
+                return false;
+            };
+            check(contemBytes("cue "), "a cópia tem o chunk \"cue \" (marcador legível por DAW)");
+            check(contemBytes("iXML"), "a cópia tem o chunk iXML (BWF/iXML, item 8.3)");
+            check(contemBytes("labl"), "a cópia tem os chunks \"labl\" (o texto de cada marcador)");
+            check(contemBytes("entrada da voz") && contemBytes("emenda"),
+                  "o TEXTO de cada marcador está embutido na cópia, não só a posição");
+            // O áudio da cópia continua tocável: o RIFF novo tem que ser
+            // válido, senão o backup seria um arquivo quebrado.
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> leitor(fm.createReaderFor(copia));
+            check(leitor != nullptr, "a cópia com marcadores continua sendo um WAV válido e legível");
+            if (leitor != nullptr)
+                check(leitor->lengthInSamples > 0, "o áudio da cópia continua lá (" +
+                                                        std::to_string(leitor->lengthInSamples) + " amostras)");
+        }
+    } catch (const std::exception& e) {
+        check(false, std::string("marcador embutido: ") + e.what());
+    }
+
+    pastaProjeto.deleteRecursively();
+    destino.deleteRecursively();
+}
+
+void testarConsolidacao(const juce::File& dirTemp) {
+    std::cout << "== Consolidação: planejamento e execução (item 10, §11.7) ==\n";
+
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_consolidacao_" + juce::Uuid().toDashedString());
+    juce::File destino = dirTemp.getChildFile("destino_consolidacao_" + juce::Uuid().toDashedString());
+    destino.createDirectory();
+
+    matriz::model::NovoProjetoParams params;
+    params.nome = "Acervo Consolidacao Teste";
+    params.modo = matriz::model::Modo::Preservacao;
+    params.prefixoNomenclatura = "CNS";
+
+    try {
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        std::string agora = matriz::model::agoraIso8601();
+        std::string projetoId = projeto->projetoId();
+
+        // --- Item 1: organizado em "01 Fitas/Estudio" (com máscara própria) ---
+        std::string item1 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'CNS-001', 'Ensaio Berlim', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item1), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+
+        juce::File masterOrigem = dirTemp.getChildFile("consolidacao_master.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=440:duration=1", masterOrigem.getFullPathName()});
+        auto ing1 = matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, item1, masterOrigem,
+                                                     "preservation_master", true);
+
+        std::string pastaTopo = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+            "VALUES (?, ?, NULL, '01 Fitas', 0, ?, ?)",
+            {matriz::db::Value::of(pastaTopo), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+        std::string pastaFilha = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, "
+            "atualizado_em) VALUES (?, ?, ?, 'Estudio', 0, '{codigo}-{seq:03}-{titulo}', ?, ?)",
+            {matriz::db::Value::of(pastaFilha), matriz::db::Value::of(projetoId), matriz::db::Value::of(pastaTopo),
+             matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1),
+             matriz::db::Value::of(pastaFilha), matriz::db::Value::of(agora)});
+
+        // --- Item 2: fica de fora, nunca organizado — só pra provar "não organizados" ---
+        std::string item2 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'CNS-002', 'Sem Pasta', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item2), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+
+        auto plano1 = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino, soPastaManual());
+        check(plano1.itens.size() == 1, "plano tem 1 item organizado (o item2, fora de qualquer pasta, não entra)");
+        check(plano1.itensNaoOrganizados == 1, "\"não organizados\" conta o item2 (§5.5)");
+        check(plano1.podeConsolidar(), "sem conflito, plano pode ser executado");
+        if (!plano1.itens.empty()) {
+            check(plano1.itens[0].caminhoRelativoDestino == "01 Fitas/Estudio/CNS-001-001-Ensaio Berlim.wav",
+                  "caminho final combina hierarquia de pastas + máscara da pasta filha (achou: \"" +
+                      plano1.itens[0].caminhoRelativoDestino.toStdString() + "\")");
+            check(!plano1.itens[0].jaConsolidado, "primeira vez — ainda não foi consolidado");
+        }
+        check(plano1.espacoNecessarioBytes > 0, "espaço necessário calculado (> 0 bytes)");
+
+        auto resultado1 = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano1);
+        check(resultado1.consolidados == 1 && resultado1.falhas.empty(), "execução consolida 1 item, sem falhas");
+
+        juce::File copiaFinal = destino.getChildFile("01 Fitas/Estudio/CNS-001-001-Ensaio Berlim.wav");
+        check(copiaFinal.existsAsFile(), "a cópia consolidada existe de verdade em disco");
+        check(copiaFinal.getSize() == ing1.arquivoNoProjeto.getSize(), "tamanho da cópia bate com o master");
+        check(ing1.arquivoNoProjeto.existsAsFile(),
+              "o master já dentro do projeto continua intocado (original, fora do projeto, nunca foi reaberto)");
+
+        // --- Incremental: rodar de novo sem mudar nada não deve recopiar ---
+        auto plano2 = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino, soPastaManual());
+        check(!plano2.itens.empty() && plano2.itens[0].jaConsolidado,
+              "segunda vez: item já consolidado é reconhecido (incremental)");
+        check(plano2.espacoNecessarioBytes == 0, "nada novo pra copiar — espaço necessário some");
+        auto resultado2 = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano2);
+        check(resultado2.consolidados == 0 && resultado2.pulados == 1,
+              "segunda execução pula o item já consolidado, não recopia");
+
+        // --- Conflito: um segundo item na MESMA pasta com máscara sem {seq}/{codigo} único ---
+        std::string item3 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'CNS-003', 'Outro', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item3), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+        juce::File masterOrigem3 = dirTemp.getChildFile("consolidacao_master3.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=220:duration=1", masterOrigem3.getFullPathName()});
+        matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, item3, masterOrigem3, "preservation_master", true);
+
+        std::string pastaConflito = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, "
+            "atualizado_em) VALUES (?, ?, NULL, 'Conflito', 0, '{tipo}', ?, ?)", // mesma máscara pros dois -> mesmo nome final
+            {matriz::db::Value::of(pastaConflito), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1),
+             matriz::db::Value::of(pastaConflito), matriz::db::Value::of(agora)});
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item3),
+             matriz::db::Value::of(pastaConflito), matriz::db::Value::of(agora)});
+
+        auto plano3 = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino, soPastaManual());
+        check(!plano3.nomesEmConflito.empty(), "dois itens do mesmo tipo na pasta \"Conflito\" (máscara \"{tipo}\") colidem");
+        check(!plano3.podeConsolidar(), "plano com conflito não pode ser executado até resolver (§11.6)");
+
+        auto resultado3 = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano3);
+        int consolidadosNaPastaConflito = 0;
+        for (auto& ip : plano3.itens)
+            if (ip.pastaId == pastaConflito && !ip.emConflito) ++consolidadosNaPastaConflito;
+        check(consolidadosNaPastaConflito == 0, "executarConsolidacao nunca copia um item marcado em conflito");
+        juce::ignoreUnused(resultado3);
+
+        // --- Item 9: capa vai junto da cópia no backup ---
+        //
+        // Embutir no arquivo (ID3/FLAC/MP4) não existe — sem escritor de
+        // metadado por formato, ver cabeçalho de Consolidacao.h. A metade
+        // que dá pra garantir hoje é "copiada junto quando não".
+        {
+            juce::File pastaProjetoCapa = dirTemp.getChildFile("projeto_capa_backup");
+            juce::File destinoCapa = dirTemp.getChildFile("destino_capa_backup");
+            destinoCapa.createDirectory();
+
+            matriz::model::NovoProjetoParams paramsCapa;
+            paramsCapa.nome = "Capa no backup";
+            paramsCapa.modo = matriz::model::Modo::Preservacao;
+            paramsCapa.prefixoNomenclatura = "CPB";
+            auto projetoCapa = matriz::model::Project::criar(pastaProjetoCapa, paramsCapa);
+            std::string projetoCapaId = projetoCapa->projetoId();
+            std::string agoraCapa = matriz::model::agoraIso8601();
+
+            std::string pastaCapaId = matriz::model::novoUuid();
+            projetoCapa->registro().run(
+                "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, "
+                "atualizado_em) VALUES (?, ?, NULL, 'Discos', 0, '{codigo}-{titulo}', ?, ?)",
+                {matriz::db::Value::of(pastaCapaId), matriz::db::Value::of(projetoCapaId),
+                 matriz::db::Value::of(agoraCapa), matriz::db::Value::of(agoraCapa)});
+
+            std::string itemCapa = matriz::model::novoUuid();
+            projetoCapa->registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'CPB-001', 'Disco', 'fita_rolo', ?, ?)",
+                {matriz::db::Value::of(itemCapa), matriz::db::Value::of(projetoCapaId),
+                 matriz::db::Value::of(agoraCapa), matriz::db::Value::of(agoraCapa)});
+
+            juce::File masterCapa = dirTemp.getChildFile("capa_backup_master.wav");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=550:duration=1", masterCapa.getFullPathName()});
+            matriz::ingest::ingerirArquivo(projetoCapa->registro(), pastaProjetoCapa, itemCapa, masterCapa,
+                                            "preservation_master", true);
+
+            // A capa: um arquivo de papel 'capa_frente' do mesmo item.
+            juce::File imagemCapa = dirTemp.getChildFile("arte.jpg");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "color=c=purple:s=64x64", "-frames:v", "1", imagemCapa.getFullPathName()});
+            matriz::ingest::ingerirArquivo(projetoCapa->registro(), pastaProjetoCapa, itemCapa, imagemCapa,
+                                            "capa_frente", false);
+
+            projetoCapa->registro().run(
+                "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemCapa),
+                 matriz::db::Value::of(pastaCapaId), matriz::db::Value::of(agoraCapa)});
+
+            auto planoCapa = matriz::consolidacao::planejarConsolidacao(projetoCapa->registro(), pastaProjetoCapa, destinoCapa, soPastaManual());
+            auto resCapa = matriz::consolidacao::executarConsolidacao(projetoCapa->registro(), pastaProjetoCapa,
+                                                                       destinoCapa, planoCapa);
+            check(resCapa.consolidados == 1, "backup gravou o item com capa");
+
+            juce::File masterNoBackup = destinoCapa.getChildFile("Discos/CPB-001-Disco.wav");
+            juce::File capaNoBackup = destinoCapa.getChildFile("Discos/CPB-001-Disco.jpg");
+            check(masterNoBackup.existsAsFile(), "o master está no backup");
+            check(capaNoBackup.existsAsFile(),
+                  "a capa foi copiada JUNTO, ao lado do master e com o mesmo nome base");
+            check(capaNoBackup.getSize() == imagemCapa.getSize(), "a capa copiada é idêntica à original");
+        }
+
+        // --- Item 10: cancelar a gravação do backup ---
+        //
+        // Projeto PRÓPRIO, não o compartilhado acima: os testes anteriores
+        // deixam itens em conflito e já consolidados espalhados, e um plano
+        // contaminado por eles não deixa afirmar "processou exatamente 1".
+        //
+        // O que precisa valer: o que já foi copiado E VERIFICADO continua
+        // válido e registrado, e retomar reconhece isso em vez de recopiar.
+        // Cancelar não é rollback.
+        {
+            juce::File pastaProjetoC = dirTemp.getChildFile("projeto_cancelamento");
+            juce::File destinoC = dirTemp.getChildFile("destino_cancelamento");
+            destinoC.createDirectory();
+
+            matriz::model::NovoProjetoParams paramsC;
+            paramsC.nome = "Cancelamento backup";
+            paramsC.modo = matriz::model::Modo::Preservacao;
+            paramsC.prefixoNomenclatura = "CAN";
+            auto projetoC = matriz::model::Project::criar(pastaProjetoC, paramsC);
+            std::string projetoCId = projetoC->projetoId();
+            std::string agoraC = matriz::model::agoraIso8601();
+
+            std::string pastaAlvo = matriz::model::novoUuid();
+            projetoC->registro().run(
+                "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, "
+                "atualizado_em) VALUES (?, ?, NULL, 'Tudo', 0, '{codigo}-{titulo}', ?, ?)",
+                {matriz::db::Value::of(pastaAlvo), matriz::db::Value::of(projetoCId), matriz::db::Value::of(agoraC),
+                 matriz::db::Value::of(agoraC)});
+
+            // Três itens, conteúdos diferentes (frequências distintas) pra
+            // nenhum virar duplicata do outro.
+            for (int i = 0; i < 3; ++i) {
+                std::string itemId = matriz::model::novoUuid();
+                juce::String codigo = "CAN-" + juce::String(i + 1).paddedLeft('0', 3);
+                projetoC->registro().run(
+                    "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, ?, 'fita_rolo', ?, ?)",
+                    {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoCId),
+                     matriz::db::Value::of(codigo.toStdString()),
+                     matriz::db::Value::of("Faixa " + std::to_string(i + 1)), matriz::db::Value::of(agoraC),
+                     matriz::db::Value::of(agoraC)});
+
+                juce::File master = dirTemp.getChildFile("cancel_master_" + juce::String(i) + ".wav");
+                gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                 "sine=frequency=" + juce::String(200 + i * 100) + ":duration=1",
+                                 master.getFullPathName()});
+                matriz::ingest::ingerirArquivo(projetoC->registro(), pastaProjetoC, itemId, master,
+                                                "preservation_master", true);
+
+                projetoC->registro().run(
+                    "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                     matriz::db::Value::of(pastaAlvo), matriz::db::Value::of(agoraC)});
+            }
+
+            auto planoC = matriz::consolidacao::planejarConsolidacao(projetoC->registro(), pastaProjetoC, destinoC, soPastaManual());
+            check(planoC.itens.size() == 3, "plano isolado tem os 3 itens, sem conflito nem já-consolidado");
+
+            // Cancela DEPOIS do primeiro arquivo — o caso real (parou no
+            // meio), não o de cancelar antes de começar.
+            int chamadas = 0;
+            auto resultadoC = matriz::consolidacao::executarConsolidacao(
+                projetoC->registro(), pastaProjetoC, destinoC, planoC,
+                [&chamadas](int, int) { return ++chamadas <= 1; });
+
+            check(resultadoC.cancelado, "consolidação reporta que foi cancelada");
+            check(resultadoC.consolidados == 1,
+                  "cancelar depois do 1º arquivo grava exatamente 1, não o plano inteiro (" +
+                      std::to_string(resultadoC.consolidados) + ")");
+            check(resultadoC.totalPlanejado == 3, "resultado carrega o total planejado pro resumo \"X de Y\"");
+
+            // O que foi gravado continua em disco — cancelar não é rollback.
+            int arquivosNoDestino = 0;
+            for (auto& f : juce::RangedDirectoryIterator(destinoC, true, "*", juce::File::findFiles))
+                { juce::ignoreUnused(f); ++arquivosNoDestino; }
+            check(arquivosNoDestino == 1, "o arquivo já gravado continua no destino depois do cancelamento");
+
+            // Retomar reconhece o que já foi e termina o resto, sem refazer.
+            auto planoRetomada = matriz::consolidacao::planejarConsolidacao(projetoC->registro(), pastaProjetoC, destinoC, soPastaManual());
+            int jaFeitos = 0;
+            for (auto& ip : planoRetomada.itens)
+                if (ip.jaConsolidado) ++jaFeitos;
+            check(jaFeitos == 1, "retomar reconhece o arquivo já gravado antes do cancelamento (não recopia)");
+
+            auto resultadoRetomada = matriz::consolidacao::executarConsolidacao(projetoC->registro(), pastaProjetoC,
+                                                                                 destinoC, planoRetomada);
+            check(!resultadoRetomada.cancelado && resultadoRetomada.consolidados == 2 && resultadoRetomada.pulados == 1,
+                  "retomada grava os 2 que faltavam e pula o que já estava pronto");
+        }
+
+    } catch (const std::exception& e) {
+        check(false, std::string("consolidação: ") + e.what());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Item 11 — catálogo de proxies. A propriedade que justifica o subsistema:
+// o catálogo é AUTÔNOMO. Abre sem o projeto que o gerou e sem o material
+// original conectado, e ainda assim diz onde cada arquivo está.
+// ---------------------------------------------------------------------------
+void testarCatalogoProxies(const juce::File& dirTemp) {
+    std::cout << "== Catálogo de proxies (item 11) ==\n";
+
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_catalogo");
+    juce::File destino = dirTemp.getChildFile("backup_catalogo");
+    destino.createDirectory();
+
+    // Simula um volume externo: o arquivo "vem" daqui, e depois somem os
+    // dois (projeto e volume) pra provar que o catálogo se vira sozinho.
+    juce::File volumeFalso = dirTemp.getChildFile("VolumeExterno").getChildFile("2003").getChildFile("Berlim");
+    volumeFalso.createDirectory();
+
+    matriz::model::NovoProjetoParams params;
+    params.nome = "Catalogo Teste";
+    params.modo = matriz::model::Modo::Preservacao;
+    params.prefixoNomenclatura = "CAT";
+
+    try {
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        std::string projetoId = projeto->projetoId();
+        std::string agora = matriz::model::agoraIso8601();
+
+        juce::File pastaAcervo;
+        std::string pastaId = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, "
+            "atualizado_em) VALUES (?, ?, NULL, 'Tudo', 0, '{codigo}-{titulo}', ?, ?)",
+            {matriz::db::Value::of(pastaId), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+
+        // Uma imagem (gera miniatura de verdade) e um áudio (gera forma de onda).
+        struct Fonte { const char* nome; const char* filtro; const char* extra; };
+        std::vector<std::string> itemIds;
+        for (int i = 0; i < 2; ++i) {
+            std::string itemId = matriz::model::novoUuid();
+            juce::String codigo = "CAT-" + juce::String(i + 1).paddedLeft('0', 3);
+            projeto->registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, 'foto', ?, ?)",
+                {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId),
+                 matriz::db::Value::of(codigo.toStdString()),
+                 matriz::db::Value::of(i == 0 ? "Foto do palco" : "Registro sonoro"),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            juce::File fonte = volumeFalso.getChildFile(i == 0 ? "palco.jpg" : "som.wav");
+            if (i == 0)
+                gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                 "color=c=green:s=320x240", "-frames:v", "1", fonte.getFullPathName()});
+            else
+                gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                                 "sine=frequency=440:duration=1", fonte.getFullPathName()});
+
+            auto ing = matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, itemId, fonte,
+                                                       "preservation_master", true);
+            matriz::ingest::gerarEGravarMiniaturaPrincipal(
+                projeto->indice(), pastaProjeto, itemId, ing.arquivoId, ing.arquivoNoProjeto,
+                matriz::ingest::categoriaPorExtensao(fonte), ing.leitura.duracaoSegundos);
+
+            projeto->registro().run(
+                "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+
+            // Um valor de ficha, pra provar que o catálogo carrega o que o
+            // operador preencheu, não só o técnico.
+            projeto->registro().run(
+                "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                "VALUES (?, ?, 'raiz', 0, 'local', ?, 'humano', ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of("Berlim"), matriz::db::Value::of(agora)});
+
+            itemIds.push_back(itemId);
+        }
+
+        // Grava o backup primeiro — é ele que dá o caminho_no_backup.
+        auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino, soPastaManual());
+        auto resConsolidacao = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano);
+        check(resConsolidacao.consolidados == 2, "backup gravou os 2 itens antes do catálogo");
+
+        // --- Estimativa antes de gerar ---
+        auto estimativa = matriz::catalogo::estimar(projeto->registro(), projeto->indice(), pastaProjeto);
+        check(estimativa.itens == 2, "estimativa conta os 2 itens");
+        check(estimativa.tamanhoBytes > 0, "estimativa devolve tamanho real dos proxies (> 0 bytes)");
+
+        // --- Geração ---
+        auto res = matriz::catalogo::gerar(projeto->registro(), projeto->indice(), pastaProjeto, destino);
+        check(res.gravados == 2 && !res.cancelado, "catálogo gravou os 2 itens");
+        check(matriz::catalogo::ehPastaDeCatalogo(destino),
+              "a raiz do backup é reconhecida como contendo catálogo");
+
+        // --- Cancelamento, igual às outras operações longas (item 10) ---
+        {
+            int chamadas = 0;
+            auto resCancel = matriz::catalogo::gerar(projeto->registro(), projeto->indice(), pastaProjeto, destino,
+                                                      [&chamadas](int, int) { return ++chamadas <= 1; });
+            check(resCancel.cancelado && resCancel.gravados == 1,
+                  "geração do catálogo também é cancelável, e o que gravou fica");
+            // Regenera inteiro pro resto do teste.
+            matriz::catalogo::gerar(projeto->registro(), projeto->indice(), pastaProjeto, destino);
+        }
+
+        // =================================================================
+        // O teste que importa: some com o projeto E com o volume de origem.
+        // O catálogo tem que continuar respondendo.
+        // =================================================================
+        pastaProjeto.deleteRecursively();
+        dirTemp.getChildFile("VolumeExterno").deleteRecursively();
+        check(!pastaProjeto.exists(), "projeto original apagado");
+        check(!volumeFalso.exists(), "volume de origem desconectado (apagado)");
+
+        auto entradas = matriz::catalogo::abrir(destino);
+        check(entradas.size() == 2, "catálogo abre sem o projeto original (" +
+                                         std::to_string(entradas.size()) + " entradas)");
+
+        bool achouTitulo = false, achouFicha = false, achouMiniatura = false, achouVolume = false;
+        juce::File pastaCatalogo = matriz::catalogo::resolverPastaCatalogo(destino);
+        for (auto& e : entradas) {
+            if (e.titulo == "Foto do palco") achouTitulo = true;
+            if (e.fichaJson.contains("Berlim")) achouFicha = true;
+            if (e.miniaturaRelativa.isNotEmpty() &&
+                pastaCatalogo.getChildFile(e.miniaturaRelativa).existsAsFile())
+                achouMiniatura = true;
+            if (e.volumeOrigem.isNotEmpty()) achouVolume = true;
+        }
+        check(achouTitulo, "o catálogo carrega o título do material");
+        check(achouFicha, "o catálogo carrega a ficha preenchida pelo operador");
+        check(achouMiniatura, "a miniatura foi copiada pro catálogo e existe em disco lá");
+        check(achouVolume, "o catálogo sabe de qual volume o material veio");
+
+        // descreverLocalizacao é função pura — dá pra testar com o caminho
+        // do exemplo do spec, sem depender de onde o teste roda. O pipeline
+        // acima roda em /var/folders/... (temp do macOS), que não é um
+        // caminho representativo de disco de acervo.
+        {
+            juce::String descrito = matriz::catalogo::descreverLocalizacao(
+                "/Volumes/HD Samsung T7/2003/Turne Europa/Berlim/faixa.wav");
+            check(descrito == "HD Samsung T7 / 2003 / Turne Europa / Berlim",
+                  "caminho de disco externo vira descrição legível: \"" + descrito.toStdString() + "\"");
+
+            juce::String fundo = matriz::catalogo::descreverLocalizacao(
+                "/Volumes/HD/a/b/c/d/e/f/g/Berlim/faixa.wav");
+            check(fundo.startsWith("HD /") && fundo.endsWith("Berlim") && fundo.length() < 40,
+                  "caminho muito fundo é resumido em vez de virar uma parede de pastas: \"" +
+                      fundo.toStdString() + "\"");
+        }
+
+        // --- Localizar: a cópia do backup ainda está montada ---
+        auto loc = matriz::catalogo::localizar(entradas.front(), pastaCatalogo);
+        check(loc.fonteConectada && loc.arquivoReal.existsAsFile(),
+              "com o backup montado, o catálogo resolve pro arquivo real e ele abre");
+
+        // --- Localizar com NADA montado ---
+        juce::File copiaBackupTudo = destino.getChildFile("Tudo");
+        copiaBackupTudo.deleteRecursively();
+        auto locSemFonte = matriz::catalogo::localizar(entradas.front(), pastaCatalogo);
+        check(!locSemFonte.fonteConectada, "sem backup nem origem, o catálogo não finge que o arquivo está lá");
+        check(locSemFonte.descricaoHumana.contains("Berlim"),
+              "com a fonte ausente, diz onde procurar: \"" + locSemFonte.descricaoHumana.toStdString() + "\"");
+
+        // --- Portabilidade: mover a pasta inteira não quebra nada ---
+        juce::File outroLugar = dirTemp.getChildFile("catalogo_movido");
+        check(destino.moveFileTo(outroLugar), "pasta do backup movida pra outro caminho");
+        auto entradasMovidas = matriz::catalogo::abrir(outroLugar);
+        check(entradasMovidas.size() == 2, "catálogo abre igual depois de mudar de lugar (caminhos são relativos)");
+        juce::File catalogoMovido = matriz::catalogo::resolverPastaCatalogo(outroLugar);
+        bool miniaturaAindaResolve = false;
+        for (auto& e : entradasMovidas)
+            if (e.miniaturaRelativa.isNotEmpty() && catalogoMovido.getChildFile(e.miniaturaRelativa).existsAsFile())
+                miniaturaAindaResolve = true;
+        check(miniaturaAindaResolve, "as miniaturas continuam resolvendo depois da mudança de lugar");
+
+    } catch (const std::exception& e) {
+        check(false, std::string("catálogo de proxies: ") + e.what());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -669,6 +1487,11 @@ int main() {
     testarClassificadorFalaMusica(tmpDir);
     testarInferenciaEstrutura(tmpDir);
     testarPipelineCompletoDeIngest(tmpDir);
+    testarMascaraDeNomenclatura();
+    testarHierarquiaBackup(tmpDir);
+    testarLoudnessEMarcadores(tmpDir);
+    testarConsolidacao(tmpDir);
+    testarCatalogoProxies(tmpDir);
 
     tmpDir.deleteRecursively();
 

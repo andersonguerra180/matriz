@@ -1,8 +1,20 @@
 tipo: fita_rolo
 rotulo: Fita de rolo
+modos: [archive, catalog]
+ordem: 0
+icone: audio
 grupos:
   - rotulo: Suporte
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: largura
         rotulo: Largura
         tipo: opcao
@@ -11,7 +23,10 @@ grupos:
       - id: marca
         rotulo: Marca
         tipo: opcao_livre
-        opcoes: [Ampex, Scotch/3M, BASF, Agfa, Maxell, TDK, Sony, Quantegy, RMGI, ATR]
+        # opcao_livre JÁ aceita texto digitado — "Other" está na lista pra
+        # tornar essa saída descoberta, não só possível. O que for digitado
+        # entra no vocabulário do projeto (ProjetoAberto::valoresUsadosNoCampo).
+        opcoes: [Ampex, BASF, Scotch, Quantegy, ATR, Other]
       - id: formulacao
         rotulo: Formulação
         tipo: opcao_livre
@@ -20,6 +35,21 @@ grupos:
         rotulo: Espessura
         tipo: opcao
         opcoes: ["1.0 mil", "1.5 mil", "0.5 mil"]
+  - rotulo: Abrangência
+    campos:
+      - id: abrangencia
+        rotulo: Abrangência da gravação
+        tipo: opcao
+        opcoes: ["fita inteira", "trecho da fita"]
+        obrigatorio: true
+      - id: trecho_posicao
+        rotulo: Posição do trecho
+        tipo: texto
+        visivel_se: "abrangencia == trecho da fita"
+      - id: trecho_observacao
+        rotulo: Observação sobre o trecho
+        tipo: texto
+        visivel_se: "abrangencia == trecho da fita"
   - rotulo: Reprodução
     campos:
       - id: velocidade

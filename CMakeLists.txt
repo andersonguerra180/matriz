@@ -51,6 +51,7 @@ juce_generate_juce_header(matriz_selftest)
 target_sources(matriz_selftest PRIVATE
     tools/selftest/main.cpp
     Source/Ficha/FichaDefinition.cpp
+    Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp
     Source/I18n/Strings.cpp
@@ -89,6 +90,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/Checksum.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/Loudness.cpp
     Source/Ingest/Miniaturas.cpp
     Source/Ingest/Duplicata.cpp
     Source/Ingest/Pcm.cpp
@@ -97,7 +99,12 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/PainelInconsistencias.cpp
+    Source/Consolidacao/Mascara.cpp
+    Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
+    Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp)
 
@@ -123,6 +130,10 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_core
     juce::juce_cryptography
     juce::juce_dsp
+    juce::juce_graphics
+    # Loudness EBU R128 (item 6.1) decodifica o arquivo com os formatos do
+    # JUCE pra medir LUFS-I/LRA na leitura técnica.
+    juce::juce_audio_formats
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -132,7 +143,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
 # genérica, configurações do projeto, i18n. Tira de diagnóstico, transporte,
 # marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
 # ------------------------------------------------------------------------------
-juce_add_gui_app(matriz PRODUCT_NAME "MATRIZ" VERSION 0.1.0)
+juce_add_gui_app(matriz PRODUCT_NAME "BKR Matriz" VERSION 0.1.0)
 juce_generate_juce_header(matriz)
 
 target_sources(matriz PRIVATE
@@ -141,24 +152,48 @@ target_sources(matriz PRIVATE
     Source/I18n/Strings.cpp
     Source/Ui/Tokens.h
     Source/Ui/ProjetoAberto.cpp
+    Source/Ui/AcoesItem.cpp
+    Source/Ui/ArvoreComponent.cpp
+    Source/Ui/BarraFerramentasComponent.cpp
+    Source/Ui/BarraGuiaComponent.cpp
+    Source/Ui/BarraSelecaoComponent.cpp
+    Source/Ui/FiltrosComponent.cpp
+    Source/Ui/MetadadosOriginaisComponent.cpp
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/PainelInconsistenciasComponent.cpp
+    Source/Ui/PreviewComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp
+    Source/Ui/BarraMetricasComponent.cpp
+    Source/Ui/TimelineComponent.cpp
+    Source/Ui/NavegadorArquivosComponent.cpp
+    Source/Ui/NavegadorArquivosDialogo.cpp
+    Source/Ui/FormatoTempo.cpp
     Source/Ui/ConfiguracoesProjetoDialogo.cpp
+    Source/Ui/CatalogoComponent.cpp
+    Source/Ui/ConsolidacaoDialogo.cpp
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/Loudness.cpp
     Source/Ingest/Checksum.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/PainelInconsistencias.cpp
+    Source/Ingest/Miniaturas.cpp
+    Source/Consolidacao/Mascara.cpp
+    Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
+    Source/Ficha/CatalogoDeFichas.cpp
+    Source/Ficha/FichaI18n.cpp
+    Source/Ficha/OrigemPadrao.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp)
 
@@ -167,7 +202,7 @@ target_include_directories(matriz PRIVATE Source)
 target_compile_definitions(matriz PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    JUCE_APPLICATION_NAME_STRING="MATRIZ"
+    JUCE_APPLICATION_NAME_STRING="BKR Matriz"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
     MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
     # Ver nota em matriz_ingest_selftest — a build empacotada (Etapa 10) não
@@ -189,5 +224,10 @@ target_link_libraries(matriz PRIVATE
     juce::juce_cryptography
     juce::juce_gui_basics
     juce::juce_gui_extra
+    juce::juce_audio_basics
+    juce::juce_audio_devices
+    juce::juce_audio_formats
+    # AudioThumbnail/AudioThumbnailCache: forma de onda da timeline (item 8).
+    juce::juce_audio_utils
     PUBLIC
     juce::juce_recommended_config_flags)

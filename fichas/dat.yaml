@@ -1,8 +1,20 @@
 tipo: dat
 rotulo: DAT
+modos: [archive]
+ordem: 30
+icone: audio
 grupos:
   - rotulo: Suporte
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: marca
         rotulo: Marca da fita
         tipo: opcao_livre

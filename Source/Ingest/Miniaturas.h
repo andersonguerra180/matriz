@@ -8,10 +8,12 @@
 #include <string>
 #include <vector>
 
+#include "../Db/Database.h"
+#include "LeituraTecnica.h"
+
 // Miniaturas, keyframes e forma de onda (§7.2 estágio 1, §11.3). Gera os
 // arquivos de cache visual — a leitura/renderização propriamente dita (tira
-// de diagnóstico) é Etapa 3. Imagem via `sips` nativo, vídeo/áudio via
-// ffmpeg.
+// de diagnóstico) é Etapa 3. Imagem e vídeo via ffmpeg.
 
 namespace matriz::ingest {
 
@@ -61,5 +63,18 @@ struct FormaDeOnda {
 // `dirTemporario`, apagado ao final) e calcula peaks min/max por bucket.
 FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File& dirTemporario,
                                  double bucketsPorSegundo = 20.0);
+
+// Gera a miniatura principal de um arquivo recém-ingerido e grava no
+// índice (tabela `miniatura`, e `forma_onda` também para áudio) — nunca
+// lança: falha em gerar miniatura não é falha de ingest (P2, índice é
+// descartável/reconstruível a qualquer momento a partir do original).
+// Sem efeito para Documento/Desconhecida nesta etapa — o mosaico mostra
+// um ícone por categoria nesses casos (Reorientação completa, §3.3: nunca
+// bloco cinza vazio, mas ícone é aceitável quando não há como gerar uma
+// prévia real — ver nota sobre PDFium/MuPDF em LeituraTecnica.cpp).
+void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
+                                     const std::string& itemId, const std::string& arquivoId,
+                                     const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
+                                     std::optional<double> duracaoSegundosConhecida);
 
 } // namespace matriz::ingest

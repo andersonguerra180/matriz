@@ -1,0 +1,37 @@
+tipo: 3d_file
+rotulo: Arquivo 3D
+modos: [archive]
+ordem: 180
+icone: desconhecida
+grupos:
+  - rotulo: Arquivo
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: formato
+        rotulo: Formato
+        tipo: opcao
+        opcoes: [OBJ, FBX, "glTF", USDZ, STL, Other]
+        obrigatorio: true
+      - id: software_origem
+        rotulo: Software de origem
+        tipo: opcao_livre
+        opcoes: [Blender, Maya, "Cinema 4D", ZBrush, Other]
+  - rotulo: Especificações
+    campos:
+      - id: contagem_poligonos
+        rotulo: Contagem de polígonos
+        tipo: inteiro
+      - id: possui_texturas
+        rotulo: Possui texturas
+        tipo: booleano
+      - id: possui_rig
+        rotulo: Possui rig
+        tipo: booleano

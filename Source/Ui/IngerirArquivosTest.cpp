@@ -2,6 +2,7 @@
 
 #include "../Model/Project.h"
 #include "MainComponent.h"
+#include "PainelInconsistenciasComponent.h"
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 
@@ -71,20 +72,23 @@ int rodarTestIngerirArquivos() {
         mainComponent.abrirProjeto(std::move(projeto));
         checar(mainComponent.temProjetoAberto(), "MainComponent abriu o projeto de teste");
 
-        mainComponent.ingerirArquivosComTipoConhecido({audio}, "fita_rolo");
+        mainComponent.ingerirArquivos({audio});
         esperarIngestTerminar(mainComponent);
-        mainComponent.ingerirArquivosComTipoConhecido({imagem}, "foto");
+        mainComponent.ingerirArquivos({imagem});
         esperarIngestTerminar(mainComponent);
 
         auto stmtContagem = registro.prepare("SELECT COUNT(*) FROM item");
         stmtContagem.step();
         checar(stmtContagem.columnInt(0) == 2, "2 itens foram criados (áudio + imagem)");
 
+        // Nenhum tipo de mídia escolhido no ingest (Reorientação completa
+        // §2.1/§7.1): o item aparece com tipo_midia NULL — classificar é
+        // trabalho de depois, por cima do que já está na grade.
         auto stmtAudio = registro.prepare(
             "SELECT tipo_midia, estado FROM item WHERE titulo = 'tom'");
         bool achouAudio = stmtAudio.step();
-        checar(achouAudio && stmtAudio.columnText(0) == "fita_rolo" && stmtAudio.columnText(1) == "capturado",
-               "item de áudio recebeu tipo_midia=fita_rolo e estado=capturado");
+        checar(achouAudio && stmtAudio.columnIsNull(0) && stmtAudio.columnText(1) == "capturado",
+               "item de áudio entra com tipo_midia=NULL (ainda não classificado) e estado=capturado");
 
         auto stmtArquivoAudio = registro.prepare(
             "SELECT a.papel, a.eh_master, a.checksum_sha256, a.caracteristicas_tecnicas_json "
@@ -100,12 +104,12 @@ int rodarTestIngerirArquivos() {
 
         auto stmtImagem = registro.prepare("SELECT tipo_midia FROM item WHERE titulo = 'foto'");
         bool achouImagem = stmtImagem.step();
-        checar(achouImagem && stmtImagem.columnText(0) == "foto", "item de imagem recebeu tipo_midia=foto");
+        checar(achouImagem && stmtImagem.columnIsNull(0), "item de imagem também entra com tipo_midia=NULL");
 
         // Ingerir de novo não deve duplicar itens indefinidamente nem quebrar
         // (cada chamada cria itens novos por design atual — confirma que ao
         // menos não lança e o mosaico continua consistente).
-        mainComponent.ingerirArquivosComTipoConhecido({audio}, "fita_rolo");
+        mainComponent.ingerirArquivos({audio});
         esperarIngestTerminar(mainComponent);
         auto stmtContagem2 = registro.prepare("SELECT COUNT(*) FROM item");
         stmtContagem2.step();
@@ -121,12 +125,73 @@ int rodarTestIngerirArquivos() {
         gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
                          "color=c=blue:s=320x240", "-frames:v", "1", subpasta.getChildFile("capa.jpg").getFullPathName()});
 
-        mainComponent.ingerirArquivosComTipoConhecido({pastaFotos}, "foto");
+        mainComponent.ingerirArquivos({pastaFotos});
         esperarIngestTerminar(mainComponent);
         auto stmtContagem3 = registro.prepare("SELECT COUNT(*) FROM item");
         stmtContagem3.step();
         checar(stmtContagem3.columnInt(0) == 4,
                "ingerir uma pasta expande recursivamente e ingere o arquivo de dentro (4 no total)");
+
+        // ===============================================================
+        // Item 10 — cancelar operação longa.
+        //
+        // O que precisa valer, independente de QUANTOS arquivos deram
+        // tempo de ser processados antes do clique (o teste não controla o
+        // escalonador): o lote termina de verdade, o que foi processado
+        // continua válido, e não sobra item-fantasma — a fase 1 insere
+        // TODOS os itens antes de processar, então cancelar sem limpar
+        // deixaria linhas com código de acervo e nenhum arquivo atrás.
+        // ===============================================================
+        {
+            juce::File pastaLote = tmpRoot.getChildFile("lote_grande");
+            pastaLote.createDirectory();
+            constexpr int kQuantidade = 40;
+            juce::Array<juce::File> muitos;
+            for (int i = 0; i < kQuantidade; ++i) {
+                juce::File copia = pastaLote.getChildFile("copia_" + juce::String(i) + ".wav");
+                audio.copyFileTo(copia);
+                muitos.add(copia);
+            }
+
+            auto stmtAntes = registro.prepare("SELECT COUNT(*) FROM item");
+            stmtAntes.step();
+            int itensAntes = stmtAntes.columnInt(0);
+
+            mainComponent.ingerirArquivos(muitos);
+            // Deixa alguns arquivos passarem antes de cancelar, pra exercitar
+            // o caso real (lote em curso), não o de cancelar antes de começar.
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+            mainComponent.cancelarLoteIngest();
+            esperarIngestTerminar(mainComponent);
+
+            checar(!mainComponent.ingestEmAndamento(),
+                   "lote cancelado TERMINA — pendentes zera em vez de ficar preso 'em andamento'");
+
+            auto stmtDepois = registro.prepare("SELECT COUNT(*) FROM item");
+            stmtDepois.step();
+            int itensDepois = stmtDepois.columnInt(0);
+            checar(itensDepois < itensAntes + kQuantidade,
+                   "cancelar interrompeu de fato (entraram menos que os " + juce::String(kQuantidade) +
+                       " arquivos do lote: " + juce::String(itensDepois - itensAntes) + ")");
+            checar(itensDepois >= itensAntes,
+                   "cancelar NÃO reverteu o que já existia nem o que já tinha sido processado");
+
+            // A invariante que importa: nenhum item sem arquivo atrás.
+            // 'duplicata' fica de fora porque item duplicado NÃO tem linha
+            // em `arquivo` por design (item 9 — "um asset, muitas
+            // localizações": conteúdo já conhecido é reconhecido, não
+            // copiado de novo). As 40 cópias do mesmo .wav caem todas aí.
+            auto stmtFantasmas = registro.prepare(
+                "SELECT COUNT(*) FROM item i WHERE i.estado <> 'duplicata' "
+                "AND NOT EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id)");
+            stmtFantasmas.step();
+            checar(stmtFantasmas.columnInt(0) == 0,
+                   "nenhum item-fantasma sobrou: todo item no projeto tem arquivo de verdade");
+
+            checar(mainComponent.textoProgressoIngestParaTeste().contains("ancel"),
+                   "a faixa informa que foi cancelado, e não um resumo de sucesso");
+        }
+
 
         mainComponent.fecharProjeto();
         checar(!mainComponent.temProjetoAberto(), "fecharProjeto() limpa o estado corretamente");
@@ -165,12 +230,24 @@ int rodarTestIngerirArquivos() {
         mainComponentCatalog.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
         mainComponentCatalog.abrirProjeto(std::move(projetoPainel));
         checar(mainComponentCatalog.temPainelInconsistencias(),
-               "modo catálogo mostra o painel de inconsistências na área central");
-        mainComponentCatalog.ingerirArquivosComTipoConhecido({audio}, "release");
+               "modo catálogo mostra o painel de inconsistências na área central, mesmo sem nenhum item ainda");
+
+        // Classificar por tipo de mídia (§7.4) ainda não existe na UI —
+        // fora do ponto de parada desta etapa (item 6 em diante). Simula
+        // aqui só pra confirmar que o motor de detecção (Source/Ingest/
+        // PainelInconsistencias.cpp) continua reagindo assim que um item
+        // tem tipo_midia='release' sem capa, não importa como ele chegou
+        // lá — o item entra sempre com tipo_midia NULL agora (§7.1).
+        mainComponentCatalog.ingerirArquivos({audio});
         esperarIngestTerminar(mainComponentCatalog);
-        checar(mainComponentCatalog.totalInconsistencias() > 0,
-               "release sem capa é detectado assim que o item entra (" +
-                   std::to_string(mainComponentCatalog.totalInconsistencias()) + " inconsistência(s))");
+        matriz::db::Database& registroPainel = mainComponentCatalog.projetoAberto()->projeto().registro();
+        registroPainel.run("UPDATE item SET tipo_midia = 'release'", {});
+
+        PainelInconsistenciasComponent painelDireto(*mainComponentCatalog.projetoAberto());
+        painelDireto.recarregar();
+        checar(painelDireto.totalInconsistencias() > 0,
+               "release sem capa é detectado assim que o item é classificado (" +
+                   std::to_string(painelDireto.totalInconsistencias()) + " inconsistência(s))");
 
         matriz::model::NovoProjetoParams paramsPainelArchive;
         paramsPainelArchive.nome = "Teste painel archive";

@@ -1,8 +1,11 @@
 #include "MainWindow.h"
 
+#include "../Catalogo/CatalogoProxies.h"
+
 #include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
 #include "ConfiguracoesProjetoDialogo.h"
+#include "ConsolidacaoDialogo.h"
 #include "NovoProjetoDialogo.h"
 #include "Tokens.h"
 
@@ -17,6 +20,7 @@ enum ComandoMenu {
     kCmdSair,
     kCmdConfiguracoes,
     kCmdIngerirArquivos,
+    kCmdConsolidar,
     kCmdIdiomaIngles,
     kCmdIdiomaPortugues
 };
@@ -36,9 +40,18 @@ MainWindow::MainWindow(const juce::String& nome)
     setMenuBar(this);
 #endif
 
-    centreWithSize(1200, 800);
+    // Maximizada por padrão — ocupa a área útil da tela (exclui barra de
+    // menu/dock no macOS), mas continua uma janela normal: barra de
+    // título visível, aparece no Cmd+Tab, redimensionável/restaurável a
+    // qualquer momento. setFullScreen(true) fazia o modo nativo de tela
+    // cheia do macOS (Space própria, esconde a barra de menu) — não é o
+    // que foi pedido.
     setResizable(true, false);
     setVisible(true);
+    if (auto* tela = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+        setBounds(tela->userBounds.toNearestInt());
+    else
+        centreWithSize(1200, 800);
 }
 
 MainWindow::~MainWindow() {
@@ -68,14 +81,17 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         bool podeTrocarProjeto = !conteudo_->ingestEmAndamento();
         menu.addItem(kCmdNovoProjeto, matriz::i18n::t("menu.arquivo_novo_projeto"), podeTrocarProjeto);
         menu.addItem(kCmdAbrirProjeto, matriz::i18n::t("menu.arquivo_abrir_projeto"), podeTrocarProjeto);
+        // Também fecha um catálogo aberto em modo consulta — sem isto o
+        // operador entra no catálogo e não tem como sair pelo menu.
         menu.addItem(kCmdFecharProjeto, matriz::i18n::t("menu.arquivo_fechar_projeto"),
-                     conteudo_->temProjetoAberto() && podeTrocarProjeto);
+                     (conteudo_->temProjetoAberto() || conteudo_->temCatalogoAberto()) && podeTrocarProjeto);
         menu.addSeparator();
         menu.addItem(kCmdIngerirArquivos, matriz::i18n::t("menu.arquivo_ingerir_arquivos"), conteudo_->temProjetoAberto());
         menu.addSeparator();
         menu.addItem(kCmdSair, matriz::i18n::t("menu.arquivo_sair"));
     } else if (topLevelMenuIndex == kMenuProjeto) {
         menu.addItem(kCmdConfiguracoes, matriz::i18n::t("menu.projeto_configuracoes"), conteudo_->temProjetoAberto());
+        menu.addItem(kCmdConsolidar, matriz::i18n::t("consolidacao.titulo"), conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         // Troca aplicada na hora (Parte 2): reconstrói toda a UI com o
         // idioma novo, sem reiniciar o aplicativo.
@@ -95,6 +111,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdSair: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
+        case kCmdConsolidar: pedirConsolidar(); break;
         case kCmdIdiomaIngles: trocarIdioma("en"); break;
         case kCmdIdiomaPortugues: trocarIdioma("pt_BR"); break;
         default: break;
@@ -125,6 +142,8 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoPedirNovoProjeto = [this](matriz::model::Modo modo) { pedirNovoProjeto(modo); };
     conteudo_->aoPedirAbrirProjeto = [this] { pedirAbrirProjeto(); };
     conteudo_->aoAbrirRecente = [this](juce::File pasta) { abrirPasta(pasta); };
+    conteudo_->aoPedirIngerirArquivos = [this] { pedirIngerirArquivos(); };
+    conteudo_->aoPedirBackup = [this] { pedirConsolidar(); };
 }
 
 void MainWindow::pedirNovoProjetoViaMenu() {
@@ -159,6 +178,13 @@ void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
 }
 
 void MainWindow::abrirPasta(const juce::File& pasta) {
+    // Pasta de backup com catálogo dentro abre em modo consulta (item 11),
+    // não como projeto — é o caso de "recebi um HD de backup e quero ver o
+    // que tem nele", onde não existe projeto nenhum pra abrir.
+    if (matriz::catalogo::ehPastaDeCatalogo(pasta)) {
+        if (conteudo_->abrirCatalogo(pasta)) return;
+    }
+
     try {
         auto projeto = matriz::model::Project::abrir(pasta);
         matriz::app::registrarRecente(projeto->pasta().getFullPathName(), projeto->nome(),
@@ -187,6 +213,11 @@ void MainWindow::pedirAbrirProjeto() {
 void MainWindow::pedirConfiguracoesProjeto() {
     if (!conteudo_->temProjetoAberto()) return;
     mostrarDialogoConfiguracoesProjeto(*conteudo_->projetoAberto(), [] {});
+}
+
+void MainWindow::pedirConsolidar() {
+    if (!conteudo_->temProjetoAberto()) return;
+    mostrarDialogoConsolidacao(*conteudo_->projetoAberto(), [] {});
 }
 
 void MainWindow::pedirIngerirArquivos() {

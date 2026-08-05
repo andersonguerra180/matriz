@@ -28,7 +28,16 @@ CREATE TABLE IF NOT EXISTS projeto (
     instituicao_ou_selo             TEXT,
     responsavel                     TEXT,
     prefixo_nomenclatura            TEXT NOT NULL,
-    mascara_nomenclatura            TEXT NOT NULL DEFAULT '{prefixo}-{ano}-{item}-{seq}',
+    -- Máscara padrão do acervo inteiro (item 10, §11.6) — herdada por toda
+    -- pasta do Acervo que não tiver a sua própria. Tokens em
+    -- Source/Consolidacao/Mascara.h; atualizado pra bater com eles (o valor
+    -- antigo usava tokens de uma versão anterior da especificação, nunca
+    -- implementados).
+    mascara_nomenclatura            TEXT NOT NULL DEFAULT '{codigo}-{seq:03}-{titulo}',
+    -- Hierarquia de pastas do backup (item 5) — CSV de níveis, na ordem em
+    -- que o operador montou. NULL = padrão (projeto,ano,tipo_midia,
+    -- tipo_arquivo). Valores em Source/Consolidacao/Consolidacao.h.
+    hierarquia_backup               TEXT,
     destino_local                   TEXT,
     vocabulario_assuntos_livre      INTEGER NOT NULL DEFAULT 1 CHECK (vocabulario_assuntos_livre IN (0, 1)),
     formato_padrao_captura          TEXT,
@@ -84,9 +93,14 @@ CREATE TABLE IF NOT EXISTS item (
     projeto_id      TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
     codigo_acervo   TEXT NOT NULL,
     titulo          TEXT NOT NULL,
-    tipo_midia      TEXT NOT NULL, -- casa com o "tipo:" de uma definição YAML de ficha (§6)
+    tipo_midia      TEXT, -- casa com o "tipo:" de uma definição YAML de ficha (§6); NULL = ainda não catalogado
+                           -- (Reorientação completa §7.1: conteúdo aparece antes de qualquer classificação —
+                           -- material sem ficha nenhuma é estado legítimo, nunca bloqueia a navegação)
+    -- 'duplicata' (item 9, Acréscimos §5/§8.2): o conteúdo já existe no
+    -- acervo (mesmo SHA-256), reconhecido em vez de reimportado — nunca
+    -- copiado de novo, nunca um segundo asset pro mesmo arquivo.
     estado          TEXT NOT NULL DEFAULT 'nao_digitalizado'
-                    CHECK (estado IN ('nao_digitalizado', 'capturado', 'qc_ok', 'alerta', 'publicado')),
+                    CHECK (estado IN ('nao_digitalizado', 'capturado', 'qc_ok', 'alerta', 'publicado', 'duplicata')),
     notas_livres    TEXT,
     criado_em       TEXT NOT NULL,
     atualizado_em   TEXT NOT NULL,
@@ -188,12 +202,43 @@ CREATE TABLE IF NOT EXISTS marcador_assunto (
 );
 
 -- ---------------------------------------------------------------------------
+-- Observação — campo Observações/Notes da ficha (item 9 dos acréscimos de
+-- UI/catalogação). Várias por item, com autor e data. minutagem_ms é
+-- inteiro (não texto) de propósito: dado que nasce texto e vira número
+-- depois exige migração, e software de preservação evita migração
+-- silenciosa de dado. marcador_id fica NULL até a timeline de áudio/vídeo
+-- existir (fatia futura) — quando existir, a ligação passa a ser por ali
+-- em vez de minutagem digitada à mão.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS item_observacao (
+    id              TEXT PRIMARY KEY,
+    item_id         TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    texto           TEXT NOT NULL,
+    autor           TEXT NOT NULL,
+    criado_em       TEXT NOT NULL,
+    minutagem_ms    INTEGER,        -- posição em milissegundos; NULL quando não se aplica
+    marcador_id     TEXT REFERENCES marcador(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_observacao_item ON item_observacao(item_id);
+
+-- ---------------------------------------------------------------------------
 -- Arquivo — master, derivada, capa, verso, documento, stem (§5.4)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS arquivo (
     id                      TEXT PRIMARY KEY,
     item_id                 TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
     caminho_relativo        TEXT NOT NULL,   -- relativo à pasta do projeto (P5)
+    -- Caminho absoluto de onde o arquivo foi ingerido (Reorientação completa
+    -- §4/§5.1 — árvore ORIGEM): a estrutura de pastas de origem é metadado,
+    -- nunca é achatada nem descartada. NULL só em bancos antigos reabertos
+    -- antes deste campo existir (schema idempotente, sem migração formal
+    -- ainda — ver Project::abrir). O ingest de hoje ainda COPIA o arquivo
+    -- pra dentro do projeto (caminho_relativo) em vez de só referenciar no
+    -- lugar como o §4.3 pede — esse é um gap conhecido, não resolvido nesta
+    -- etapa; este campo existe pra a árvore Origem funcionar mesmo assim,
+    -- preservando de onde cada arquivo veio.
+    caminho_absoluto_origem TEXT,
     papel                   TEXT NOT NULL,   -- preservation_master | access_copy | capa_frente | capa_verso | encarte | documento | stem | foto_suporte ...
     eh_master               INTEGER NOT NULL DEFAULT 0 CHECK (eh_master IN (0, 1)),
 
@@ -250,3 +295,111 @@ WHEN NEW.eh_master = 1 AND NEW.derivada_de_arquivo_id IS NOT NULL
 BEGIN
     SELECT RAISE(ABORT, 'arquivo: master não pode ter derivada_de_arquivo_id');
 END;
+
+-- ---------------------------------------------------------------------------
+-- Acervo (Reorientação completa §5) — a estrutura VIRTUAL que o operador
+-- monta, independente da estrutura real em disco (Origem, que não tem
+-- tabela própria: é derivada de arquivo.caminho_absoluto_origem, §5.1).
+-- Puro planejamento — nenhuma linha aqui move, copia ou renomeia nada em
+-- disco (§5.3); a consolidação (§6, item 10) é que materializa isso.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS acervo_pasta (
+    id              TEXT PRIMARY KEY,
+    projeto_id      TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    pasta_pai_id    TEXT REFERENCES acervo_pasta(id) ON DELETE CASCADE, -- NULL = pasta de topo
+    nome            TEXT NOT NULL,
+    ordem           INTEGER NOT NULL DEFAULT 0,
+    -- Máscara de nomenclatura por pasta (§5.6) — herdada da pai quando NULL;
+    -- resolvida em tempo de consolidação, não gravada aqui.
+    mascara_nomenclatura TEXT,
+    criado_em       TEXT NOT NULL,
+    atualizado_em   TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_acervo_pasta_projeto ON acervo_pasta(projeto_id);
+CREATE INDEX IF NOT EXISTS idx_acervo_pasta_pai ON acervo_pasta(pasta_pai_id);
+
+-- Item <-> pasta do acervo. Muitos-para-muitos de propósito: material pode
+-- estar em mais de uma pasta (§5.4) — a consolidação avisa da duplicação,
+-- nunca proíbe aqui. Item sem nenhuma linha aqui aparece em "Não
+-- organizados" (§5.5), calculado por ausência, não guardado.
+CREATE TABLE IF NOT EXISTS acervo_item_pasta (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    pasta_id    TEXT NOT NULL REFERENCES acervo_pasta(id) ON DELETE CASCADE,
+    criado_em   TEXT NOT NULL,
+    UNIQUE (item_id, pasta_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_item ON acervo_item_pasta(item_id);
+CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_pasta ON acervo_item_pasta(pasta_id);
+
+-- ---------------------------------------------------------------------------
+-- Coleção inteligente (Acréscimos §10.2 — "salvar busca como coleção
+-- inteligente, que se atualiza sozinha"): guarda a DEFINIÇÃO da busca
+-- (texto + filtros), nunca um resultado. Reexecutada do zero toda vez que é
+-- aberta — por isso não há tabela de membros, só os parâmetros.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS colecao_inteligente (
+    id                  TEXT PRIMARY KEY,
+    projeto_id          TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    nome                TEXT NOT NULL,
+    busca_texto         TEXT,
+    filtros_tipo_midia  TEXT, -- CSV de tipo_midia — vazio/NULL = todos
+    filtros_estado      TEXT, -- CSV de estado — vazio/NULL = todos
+    filtros_extensao    TEXT, -- CSV de extensão de arquivo — vazio/NULL = todas
+    filtros_origem      TEXT, -- CSV de origem (Digital/Analógico) — vazio/NULL = todas
+    ano_de              INTEGER, -- faixa de ano; NULL nos dois = sem faixa
+    ano_ate             INTEGER,
+    ordem               INTEGER NOT NULL DEFAULT 0,
+    criado_em           TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_colecao_inteligente_projeto ON colecao_inteligente(projeto_id);
+
+-- ---------------------------------------------------------------------------
+-- Localização conhecida (item 9 — continuous ingestion, Acréscimos §5/§8.2):
+-- "um asset, muitas localizações" — quando o mesmo conteúdo (SHA-256 igual)
+-- é visto de novo em outro caminho, não vira um segundo item nem uma
+-- segunda cópia física; só amplia onde esse arquivo já foi encontrado.
+-- Escopo desta etapa: dedup exato por checksum. Near-duplicate (pHash/
+-- Chromaprint) e detecção automática de fonte reconectada NÃO estão aqui —
+-- dependem do modelo de fingerprint/asset completo (§4/§8), não construído
+-- ainda (gap já declarado no relatório do item 7).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS localizacao_conhecida (
+    id                  TEXT PRIMARY KEY,
+    arquivo_id          TEXT NOT NULL REFERENCES arquivo(id) ON DELETE CASCADE,
+    caminho_absoluto    TEXT NOT NULL,
+    criado_em           TEXT NOT NULL,
+    UNIQUE (arquivo_id, caminho_absoluto)
+);
+
+CREATE INDEX IF NOT EXISTS idx_localizacao_conhecida_arquivo ON localizacao_conhecida(arquivo_id);
+
+-- ---------------------------------------------------------------------------
+-- Consolidação (item 10, §11.7) — rastro do que já foi copiado pra
+-- `consolidado/`, pra a consolidação seguinte ser incremental (só copia o
+-- que é novo ou mudou, "não toca no que não mudou"). Uma linha por
+-- combinação (item, pasta do acervo, arquivo) — o mesmo item em duas pastas
+-- (§5.4) gera duas linhas, duas cópias físicas, de propósito.
+-- Escopo desta etapa, declarado: metadado embutido (BWF/bext, iXML, EXIF
+-- write, ID3, XMP) NÃO é gravado na cópia — precisa de escritores por
+-- formato que não existem ainda. O checksum aqui é da cópia renomeada tal
+-- como saiu, sem nenhum metadado embutido além do que já veio na origem.
+-- Destino também restrito a pasta local nesta etapa; NAS/FTP/S3/nuvem são
+-- os mesmos "destino" já previstos na tabela `destino`, mas a consolidação
+-- em si só sabe escrever em disco local por enquanto.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS consolidacao_registro (
+    id                      TEXT PRIMARY KEY,
+    item_id                 TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    pasta_id                TEXT NOT NULL REFERENCES acervo_pasta(id) ON DELETE CASCADE,
+    arquivo_id              TEXT NOT NULL REFERENCES arquivo(id) ON DELETE CASCADE,
+    caminho_relativo_destino TEXT NOT NULL, -- relativo à raiz de destino escolhida, ex.: "consolidado/01 Fitas/ACR-001.wav"
+    checksum_sha256         TEXT NOT NULL,   -- da CÓPIA consolidada (sem embedding), verificado depois de copiar
+    consolidado_em          TEXT NOT NULL,
+    UNIQUE (item_id, pasta_id, arquivo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_arquivo ON consolidacao_registro(arquivo_id);

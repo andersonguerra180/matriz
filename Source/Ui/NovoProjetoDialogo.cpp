@@ -33,6 +33,41 @@ private:
     std::unique_ptr<juce::Component> widget_;
 };
 
+// Prefixo de nomenclatura derivado do nome do projeto.
+//
+// Este era um campo de texto obrigatório, com o rótulo "Prefixo de
+// nomenclatura" — jargão de arquivologia que quem só quer organizar um HD
+// não tem como responder, e que travava a criação do projeto até ser
+// preenchido. Agora sai do nome automaticamente: iniciais quando o nome
+// tem várias palavras, senão as primeiras letras. O valor continua
+// existindo no banco e nos códigos de acervo (ACR-00001), só deixou de ser
+// uma pergunta feita ao operador.
+juce::String prefixoAPartirDoNome(const juce::String& nome) {
+    juce::StringArray palavras;
+    palavras.addTokens(nome, " -_.", "");
+    palavras.removeEmptyStrings();
+
+    juce::String prefixo;
+    if (palavras.size() >= 2) {
+        for (auto& palavra : palavras) {
+            juce::juce_wchar inicial = palavra[0];
+            if (juce::CharacterFunctions::isLetterOrDigit(inicial)) prefixo << inicial;
+            if (prefixo.length() >= 5) break;
+        }
+    } else if (palavras.size() == 1) {
+        for (int i = 0; i < palavras[0].length() && prefixo.length() < 5; ++i) {
+            juce::juce_wchar c = palavras[0][i];
+            if (juce::CharacterFunctions::isLetterOrDigit(c)) prefixo << c;
+        }
+    }
+
+    prefixo = prefixo.toUpperCase();
+    // Nome só de pontuação/emoji não gera nada aproveitável — o código de
+    // acervo precisa de algum prefixo, então cai num neutro em vez de
+    // gerar "-00001".
+    return prefixo.isEmpty() ? juce::String("MTZ") : prefixo;
+}
+
 } // namespace
 
 std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
@@ -46,11 +81,6 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     auto* nomeEditorPtr = nomeEditor.get();
     auto linhaNome = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_nome"), std::move(nomeEditor));
 
-    auto prefixoEditor = std::make_unique<juce::TextEditor>();
-    auto* prefixoEditorPtr = prefixoEditor.get();
-    auto linhaPrefixo =
-        std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_prefixo"), std::move(prefixoEditor));
-
     auto instituicaoEditor = std::make_unique<juce::TextEditor>();
     auto* instituicaoEditorPtr = instituicaoEditor.get();
     auto linhaInstituicao = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_instituicao"),
@@ -61,9 +91,16 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     auto linhaResponsavel = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_responsavel"),
                                                                 std::move(responsavelEditor));
 
-    auto isrcEditor = std::make_unique<juce::TextEditor>();
-    auto* isrcEditorPtr = isrcEditor.get();
-    auto linhaIsrc = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_isrc"), std::move(isrcEditor));
+    // ISRC só faz sentido no modo Catálogo (SPEC §5.2: "código de registrante
+    // ISRC (uso catálogo)") — no modo Acervo/Preservação o campo nem aparece,
+    // em vez de ficar vazio e sem sentido no formulário.
+    std::unique_ptr<LinhaFormulario> linhaIsrc;
+    juce::TextEditor* isrcEditorPtr = nullptr;
+    if (modo == matriz::model::Modo::Catalogo) {
+        auto isrcEditor = std::make_unique<juce::TextEditor>();
+        isrcEditorPtr = isrcEditor.get();
+        linhaIsrc = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_isrc"), std::move(isrcEditor));
+    }
 
     auto pastaBotao = std::make_unique<juce::TextButton>(matriz::i18n::t("dialogo_novo_projeto.botao_escolher_pasta"));
     auto pastaLabel = std::make_shared<juce::Label>();
@@ -86,11 +123,22 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     auto linhaPasta = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_pasta"), std::move(pastaBotao));
     linhaPasta->addAndMakeVisible(*pastaLabel);
     pastaLabel->setBounds(0, 34, 420, 16);
-    linhaPasta->setSize(420, 54);
 
-    for (auto* linha : {linhaNome.get(), linhaPrefixo.get(), linhaInstituicao.get(), linhaResponsavel.get(),
-                         linhaIsrc.get(), linhaPasta.get()})
-        janela->addCustomComponent(linha);
+    // "É pra lá que seus arquivos serão copiados — os originais não são
+    // movidos nem apagados": a dúvida que trava quem tem um HD cheio é
+    // exatamente essa, e ela precisa ser respondida ANTES de escolher a
+    // pasta, não num FAQ.
+    auto pastaAjuda = std::make_shared<juce::Label>();
+    pastaAjuda->setText(matriz::i18n::t("dialogo_novo_projeto.campo_pasta_ajuda"), juce::dontSendNotification);
+    pastaAjuda->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+    pastaAjuda->setColour(juce::Label::textColourId, tema().textoSecundario);
+    linhaPasta->addAndMakeVisible(*pastaAjuda);
+    pastaAjuda->setBounds(0, 52, 420, 30);
+    linhaPasta->setSize(420, 84);
+
+    for (auto* linha : {linhaNome.get(), linhaPasta.get(), linhaInstituicao.get(), linhaResponsavel.get(),
+                         linhaIsrc.get()})
+        if (linha) janela->addCustomComponent(linha);
 
     janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_criar"), 1, juce::KeyPress(juce::KeyPress::returnKey));
     janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -99,12 +147,13 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     // AlertWindow não assume posse dos componentes que recebe.
     struct EstadoVivo {
         std::shared_ptr<juce::AlertWindow> janela;
-        std::unique_ptr<LinhaFormulario> nome, prefixo, instituicao, responsavel, isrc, pasta;
+        std::unique_ptr<LinhaFormulario> nome, instituicao, responsavel, isrc, pasta;
+        std::shared_ptr<juce::Label> pastaAjuda;
     };
     auto estado = std::make_shared<EstadoVivo>();
     estado->janela = janela;
     estado->nome = std::move(linhaNome);
-    estado->prefixo = std::move(linhaPrefixo);
+    estado->pastaAjuda = pastaAjuda;
     estado->instituicao = std::move(linhaInstituicao);
     estado->responsavel = std::move(linhaResponsavel);
     estado->isrc = std::move(linhaIsrc);
@@ -112,8 +161,8 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
 
     janela->enterModalState(
         true,
-        juce::ModalCallbackFunction::create([estado, aoConcluir, modo, nomeEditorPtr, prefixoEditorPtr,
-                                              instituicaoEditorPtr, responsavelEditorPtr, isrcEditorPtr, pastaEscolhida,
+        juce::ModalCallbackFunction::create([estado, aoConcluir, modo, nomeEditorPtr, instituicaoEditorPtr,
+                                              responsavelEditorPtr, isrcEditorPtr, pastaEscolhida,
                                               seletorPasta](int resultadoBotao) {
             if (resultadoBotao != 1) {
                 aoConcluir(std::nullopt);
@@ -121,11 +170,10 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
             }
 
             juce::String nome = nomeEditorPtr->getText().trim();
-            juce::String prefixo = prefixoEditorPtr->getText().trim();
-            if (nome.isEmpty() || prefixo.isEmpty() || *pastaEscolhida == juce::File()) {
-                juce::String erro = nome.isEmpty()      ? matriz::i18n::t("dialogo_novo_projeto.erro_nome_vazio")
-                                     : prefixo.isEmpty() ? matriz::i18n::t("dialogo_novo_projeto.erro_prefixo_vazio")
-                                                          : matriz::i18n::t("dialogo_novo_projeto.erro_pasta_vazia");
+            juce::String prefixo = prefixoAPartirDoNome(nome);
+            if (nome.isEmpty() || *pastaEscolhida == juce::File()) {
+                juce::String erro = nome.isEmpty() ? matriz::i18n::t("dialogo_novo_projeto.erro_nome_vazio")
+                                                    : matriz::i18n::t("dialogo_novo_projeto.erro_pasta_vazia");
                 juce::AlertWindow::showAsync(
                     juce::MessageBoxOptions()
                         .withIconType(juce::MessageBoxIconType::WarningIcon)
@@ -144,7 +192,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
             r.params.prefixoNomenclatura = prefixo.toStdString();
             r.params.instituicaoOuSelo = instituicaoEditorPtr->getText().trim().toStdString();
             r.params.responsavel = responsavelEditorPtr->getText().trim().toStdString();
-            r.params.isrcRegistrante = isrcEditorPtr->getText().trim().toStdString();
+            r.params.isrcRegistrante = isrcEditorPtr ? isrcEditorPtr->getText().trim().toStdString() : std::string();
 
             aoConcluir(r);
         }));

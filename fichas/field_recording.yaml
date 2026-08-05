@@ -1,0 +1,49 @@
+tipo: field_recording
+rotulo: Gravação de campo
+modos: [archive]
+ordem: 150
+icone: audio
+grupos:
+  - rotulo: Captura
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: equipamento_gravador
+        rotulo: Gravador
+        tipo: opcao_livre
+        opcoes: [Zoom, "Sound Devices", Tascam, Other]
+      - id: microfone
+        rotulo: Microfone
+        tipo: opcao_livre
+      - id: padrao_polar
+        rotulo: Padrão polar
+        tipo: opcao
+        opcoes: ["cardióide", "omnidirecional", "figura-8", "estéreo XY", "estéreo MS", outro]
+  - rotulo: Ambiente
+    campos:
+      - id: ambiente
+        rotulo: Ambiente
+        tipo: opcao_livre
+        opcoes: [interno, externo, "estúdio", natureza, urbano]
+      - id: condicoes
+        rotulo: Condições (vento, chuva, ruído de fundo)
+        tipo: texto
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

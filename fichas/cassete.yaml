@@ -1,8 +1,20 @@
 tipo: cassete
 rotulo: Cassete
+modos: [archive]
+ordem: 10
+icone: audio
 grupos:
   - rotulo: Suporte
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: tipo_fita
         rotulo: Tipo de fita
         tipo: opcao
@@ -11,11 +23,29 @@ grupos:
       - id: marca
         rotulo: Marca
         tipo: opcao_livre
-        opcoes: [Maxell, TDK, Sony, BASF, Memorex, Denon, Fuji, Scotch/3M]
+        # opcao_livre JÁ aceita texto digitado — "Other" está na lista pra
+        # tornar essa saída descoberta, não só possível. O que for digitado
+        # entra no vocabulário do projeto (ProjetoAberto::valoresUsadosNoCampo).
+        opcoes: [Ampex, BASF, Scotch, Quantegy, ATR, Other]
       - id: duracao_nominal
         rotulo: Duração nominal
         tipo: opcao
         opcoes: [C46, C60, C90, C120]
+  - rotulo: Abrangência
+    campos:
+      - id: abrangencia
+        rotulo: Abrangência da gravação
+        tipo: opcao
+        opcoes: ["fita inteira", "trecho da fita"]
+        obrigatorio: true
+      - id: trecho_posicao
+        rotulo: Posição do trecho
+        tipo: texto
+        visivel_se: "abrangencia == trecho da fita"
+      - id: trecho_observacao
+        rotulo: Observação sobre o trecho
+        tipo: texto
+        visivel_se: "abrangencia == trecho da fita"
   - rotulo: Reprodução
     campos:
       - id: dolby

@@ -2,9 +2,11 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -34,6 +36,19 @@ struct ItemResumo {
     // arquivo original no ingest, nunca atualizado pela ficha).
     std::optional<std::string> artistaLancamento;
     std::optional<std::string> tituloLancamento;
+
+    // Campos universais (item 4 dos acréscimos de UI/catalogação — origem
+    // digital/analógico e ano em destaque, presentes nas 19 fichas). Vêm de
+    // item_campo(nivel='raiz', nivel_indice=0), como artistaLancamento
+    // acima — nullopt = ainda não preenchido.
+    std::optional<std::string> origem; // "Digital" | "Analógico" (valor bruto gravado no banco, não traduzido)
+    std::optional<int> ano;
+
+    // Extensão (sem ponto, minúscula) do arquivo principal — usada pro
+    // ícone de placeholder por categoria enquanto não há miniatura real
+    // (Reorientação completa §3.3: nunca bloco cinza vazio). Vazia se o
+    // item ainda não tem nenhum arquivo associado.
+    std::string extensaoArquivo;
 };
 
 class ProjetoAbertoError : public std::runtime_error {
@@ -70,9 +85,54 @@ public:
     // Papéis de arquivo já presentes para o item (§6.2 arquivos_esperados).
     std::vector<std::string> papeisArquivoPresentes(const std::string& itemId) const;
 
+    // --- Capa / miniatura personalizada (item 9) ---
+    //
+    // Uma imagem escolhida pelo operador vira a cara do material na grade e
+    // no preview, no lugar da miniatura gerada. Serve pro caso que a geração
+    // automática não cobre: áudio, documento e vídeo sem quadro
+    // representativo, onde a capa do disco ou a foto da fita é o único jeito
+    // de reconhecer o material de relance numa grade de milhares.
+    //
+    // A imagem é COPIADA pra dentro do projeto e registrada como arquivo de
+    // papel 'capa_frente' do item — não é um ponteiro pro arquivo original,
+    // que pode sumir. Vale pra vários itens de uma vez.
+    //
+    // Devolve quantos itens receberam a capa.
+    int definirCapa(const std::vector<std::string>& itemIds, const juce::File& imagem);
+
+    // Tira a capa e volta pra miniatura gerada — a linha antiga do índice
+    // continua lá, então basta remover a da capa pra ela voltar a valer.
+    void removerCapa(const std::vector<std::string>& itemIds);
+
+    bool temCapa(const std::string& itemId) const;
+
+    // Vocabulário do projeto pra um campo `opcao_livre`: os valores que já
+    // foram efetivamente usados em algum item deste projeto, em ordem
+    // alfabética, sem repetição.
+    //
+    // É o que faz "digitei uma marca nova e ela passa a aparecer na lista"
+    // funcionar sem inventar tabela de vocabulário nenhuma: a lista oferecida
+    // é a do YAML MAIS o que o operador já digitou. Vale pra qualquer campo
+    // opcao_livre (marca, formulação, ...), não só marca de fita.
+    std::vector<std::string> valoresUsadosNoCampo(const std::string& campoId) const;
+
     // Caminho absoluto da miniatura principal do item, se o índice já
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
+
+    struct ArquivoInfo {
+        std::string id;
+        juce::String caminhoAbsoluto;
+        std::string papel;
+        bool ehMaster = false;
+        juce::String caracteristicasTecnicasJson;
+    };
+
+    // Arquivo "principal" do item pra fins de preview (§3.4, Reorientação
+    // completa) — o master se existir, senão o primeiro arquivo cadastrado.
+    // nullopt se o item ainda não tem nenhum arquivo associado (ex.:
+    // ingest falhou antes de terminar a cópia).
+    std::optional<ArquivoInfo> arquivoPrincipal(const std::string& itemId) const;
 
     // --- Sugestão de IA (P3) — índice.sugestao_campo, nunca escrito por nós,
     // só lido e, quando o operador confirma, migrado pro registro. ---
@@ -92,6 +152,162 @@ public:
     // do registro; o índice é só rastro de auditoria descartável (P2).
     void confirmarSugestao(const SugestaoCampo& sugestao, const std::string& itemId, const std::string& nivel,
                             int nivelIndice, const std::string& campoId, const std::string& autor);
+
+    // --- Observações/Notes (item 9) — item_observacao, várias por item ---
+    struct ItemObservacao {
+        std::string id;
+        std::string texto;
+        std::string autor;
+        std::string criadoEm;
+        std::optional<int64_t> minutagemMs; // nulo pra imagem/documento e quando não informado
+    };
+
+    // Ordenadas por criado_em (mais antiga primeiro — mesma ordem em que
+    // marcadores de timeline vão aparecer quando existirem, item 9.2).
+    std::vector<ItemObservacao> observacoesDoItem(const std::string& itemId) const;
+
+    // Devolve o id gerado.
+    std::string adicionarObservacao(const std::string& itemId, const std::string& texto,
+                                     std::optional<int64_t> minutagemMs, const std::string& autor);
+
+    // Edita texto e/ou minutagem de uma observação existente. É por aqui que
+    // a timeline grava um marcador movido ou renomeado, e a ficha grava o
+    // texto editado — a MESMA linha nos dois casos (item 9.2: marcadores e
+    // observações são a mesma lista, vista de dois lugares).
+    void atualizarObservacao(const std::string& observacaoId, const std::string& texto,
+                             std::optional<int64_t> minutagemMs);
+
+    void removerObservacao(const std::string& observacaoId);
+
+    // --- Árvore Origem/Acervo (Reorientação completa §5, §8.1) ---
+    //
+    // Um nó da árvore lateral. `id` é o id de acervo_pasta na árvore Acervo;
+    // vazio nos nós sintéticos que não existem como linha própria (segmento
+    // de caminho na árvore Origem, e o nó "não organizados" na raiz do
+    // Acervo). `itemIds` é recursivo — já inclui os itens de todos os
+    // filhos, pronto pra virar filtro da grade sem precisar caminhar a
+    // árvore de novo.
+    struct NoArvore {
+        std::string id;
+        juce::String nome;
+        std::vector<NoArvore> filhos;
+        std::set<std::string> itemIds;
+        // Só os itens DESTA pasta, sem os das subpastas. `itemIds` continua
+        // sendo o recursivo. Os dois existem porque a grade oferece "incluir
+        // subpastas": ligado usa itemIds, desligado usa itemIdsDiretos.
+        std::set<std::string> itemIdsDiretos;
+    };
+
+    // Espelha a estrutura real de onde cada arquivo foi ingerido
+    // (arquivo.caminho_absoluto_origem), intocada — nunca escrita pelo
+    // operador (§5.1, §8.1). Item sem nenhum arquivo com origem registrada
+    // (banco de antes deste campo existir) não aparece nesta árvore.
+    NoArvore arvoreOrigem() const;
+
+    // Estrutura virtual que o operador monta (§5.2) — raiz sintética
+    // (id vazio) cujos filhos são as pastas de topo do acervo, mais um nó
+    // "não organizados" (id vazio, calculado por ausência — §5.5) ao final.
+    NoArvore arvoreAcervo() const;
+
+    std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId);
+    void renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
+    // Cascateia pra subpastas e memberships (ON DELETE CASCADE no schema) —
+    // nunca apaga o item em si, só tira ele da organização virtual (§5.3:
+    // planejamento é sempre reversível sem custo).
+    void apagarPastaAcervo(const std::string& pastaId);
+
+    // Adiciona à pasta sem tirar de nenhuma outra — material em mais de uma
+    // pasta é permitido de propósito (§5.4). Idempotente (UNIQUE no schema).
+    void adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId);
+
+    // Replica uma subárvore inteira da EXPLORER dentro da BACKUP.
+    //
+    // Esta é a operação central do software: arrastar uma pasta traz a
+    // hierarquia INTEIRA junto, em todos os níveis, exatamente como está na
+    // origem. Arrastar um catálogo inteiro nunca pode virar um oceano de
+    // arquivos soltos — se virar, o software falhou no seu propósito.
+    //
+    // manterEstrutura = true  → recria cada subpasta de `origem` sob
+    //                           `pastaPaiId` e prende cada item no nível
+    //                           correspondente ao que ele ocupa na origem.
+    // manterEstrutura = false → todos os itens da subárvore (recursivo) vão
+    //                           direto pra `pastaPaiId`, sem criar subpasta.
+    //
+    // pastaPaiId vazio = raiz da BACKUP. Devolve quantos itens foram
+    // vinculados (contando um item uma vez por pasta em que entrou).
+    int replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId, bool manterEstrutura);
+    void removerItemDaPasta(const std::string& itemId, const std::string& pastaId);
+
+    // --- Ações sobre item/seleção (menu de contexto e painel direito) ---
+    //
+    // NENHUMA destas apaga arquivo em disco. Nem o original na fonte, nem a
+    // cópia dentro do projeto: "remover" aqui é sempre sobre o registro e o
+    // plano de organização. A interface diz isso explicitamente ao operador.
+
+    // Tira os itens de TODAS as pastas da BACKUP — eles continuam no
+    // projeto, só voltam a ser "ainda sem pasta".
+    void removerItensDoBackup(const std::vector<std::string>& itemIds);
+
+    // Remove os itens do projeto (cascateia pra ficha, arquivo, pastas).
+    // Some da grade; o arquivo de origem no disco fica intacto, e a cópia
+    // dentro da pasta do projeto também — vira uma cópia órfã, que este
+    // método deliberadamente não apaga.
+    void removerItensDoProjeto(const std::vector<std::string>& itemIds);
+
+    // Renomeia (item.titulo) — é o que alimenta o token {titulo} da máscara
+    // de nomenclatura, ou seja, o nome que o arquivo terá no backup.
+    void renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo);
+
+    // Caminho absoluto de origem do arquivo principal — pra "Mostrar na
+    // origem" e "Copiar caminho". nullopt se o item não tem arquivo com
+    // origem registrada.
+    std::optional<juce::String> caminhoDeOrigem(const std::string& itemId) const;
+
+    // Outros itens do projeto cujo conteúdo é idêntico (mesmo SHA-256 de
+    // algum arquivo). Inclui o próprio item quando há duplicata, pra a grade
+    // poder mostrar o conjunto inteiro lado a lado; devolve vazio quando o
+    // item não tem duplicata nenhuma (ou ainda não tem checksum calculado).
+    std::set<std::string> itensComMesmoConteudo(const std::string& itemId) const;
+
+    // --- Busca avançada e coleções inteligentes (Acréscimos §10) ---
+    //
+    // Ids de item cujo código, título, algum valor de campo de ficha, ou
+    // assunto contém `texto` (case-insensitive). OCR e transcrição (§10.1)
+    // não existem ainda — gap declarado, não fingido: nenhum texto extraído
+    // de imagem/áudio é buscável nesta etapa. String vazia devolve conjunto
+    // vazio (nunca "todos", pra não confundir com "sem filtro").
+    std::set<std::string> buscarItens(const juce::String& texto) const;
+
+    // Contagens pra chips de filtro (§10.2 — "cada um com contagem"). Chave
+    // "" no mapa de tipo de mídia = itens ainda não classificados.
+    std::map<std::string, int> contagensPorTipoMidia() const;
+    std::map<std::string, int> contagensPorEstado() const;
+    std::map<std::string, int> contagensPorExtensao() const;
+    // Chave "" = origem ainda não preenchida (campo vazio).
+    std::map<std::string, int> contagensPorOrigem() const;
+
+    // Ids de item cujo campo "ano" (nível raiz) cai em [anoDe, anoAte].
+    // Item sem "ano" preenchido nunca entra (faixa é sobre o que se sabe).
+    std::set<std::string> itensPorFaixaAno(int anoDe, int anoAte) const;
+
+    // Coleção inteligente guarda a DEFINIÇÃO da busca (texto + filtros),
+    // nunca um resultado — reexecutada por inteiro toda vez que é aberta,
+    // "se atualiza sozinha conforme o acervo muda" (§10.2).
+    struct ColecaoInteligente {
+        std::string id; // vazio = ainda não salva
+        juce::String nome;
+        juce::String buscaTexto;
+        std::set<juce::String> filtrosTipoMidia;
+        std::set<juce::String> filtrosEstado;
+        std::set<juce::String> filtrosExtensao;
+        std::set<juce::String> filtrosOrigem;   // Digital/Analógico (item 4.2)
+        std::optional<int> anoDe, anoAte;        // faixa de ano (item 4.3); os dois nulos = sem faixa
+    };
+    std::vector<ColecaoInteligente> listarColecoes() const;
+    // colecao.id vazio cria uma nova; preenchido atualiza a existente.
+    // Devolve o id (novo ou o mesmo).
+    std::string salvarColecao(const ColecaoInteligente& colecao);
+    void apagarColecao(const std::string& id);
 
 private:
     std::unique_ptr<matriz::model::Project> projeto_;

@@ -62,6 +62,14 @@ struct LeituraTecnicaResultado {
     std::optional<int> exifOrientacao;              // 1-8, convenção EXIF
     std::optional<double> exifGpsLatitude;
     std::optional<double> exifGpsLongitude;
+
+    // Loudness EBU R128 (item 6.1) — pré-calculado aqui, nunca em tempo
+    // real. Só populado pra áudio legível pelos formatos do JUCE; vídeo
+    // precisaria extrair a trilha com ffmpeg, o que não acontece nesta
+    // etapa (gap declarado, não silencioso).
+    std::optional<double> lufsIntegrado;
+    std::optional<double> lra;
+    std::optional<double> picoDbfs;
 };
 
 // Roda ffprobe (áudio/vídeo/imagem) ou o leitor de PDF conforme a categoria

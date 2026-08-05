@@ -1,0 +1,32 @@
+tipo: sound_effects
+rotulo: Efeito sonoro
+modos: [archive, catalog]
+ordem: 160
+icone: audio
+grupos:
+  - rotulo: Classificação
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: categoria
+        rotulo: Categoria
+        tipo: opcao
+        opcoes: [impacto, ambiente, mecânico, animal, humano, UI, Foley, outro]
+        sugerido_por: clip_audio
+      - id: biblioteca_origem
+        rotulo: Biblioteca de origem
+        tipo: opcao_livre
+  - rotulo: Direitos
+    campos:
+      - id: licenca
+        rotulo: Licença
+        tipo: opcao
+        opcoes: ["royalty-free", exclusiva, "sample clearance pendente", "uso interno"]
+        obrigatorio: true

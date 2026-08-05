@@ -29,6 +29,7 @@ private:
     void abrirPasta(const juce::File& pasta);
     void pedirConfiguracoesProjeto();
     void pedirIngerirArquivos();
+    void pedirConsolidar();
     void trocarIdioma(const juce::String& locale);
     void conectarConteudo();
 

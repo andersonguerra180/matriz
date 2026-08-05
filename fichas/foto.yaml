@@ -1,8 +1,20 @@
 tipo: foto
 rotulo: Foto
+modos: [archive]
+ordem: 80
+icone: imagem
 grupos:
   - rotulo: Captura
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: suporte
         rotulo: Suporte
         tipo: opcao

@@ -61,4 +61,12 @@ juce::String t(const juce::String& chave) {
     return juce::String(juce::CharPointer_UTF8(it->second.c_str()));
 }
 
+juce::String tComFallback(const juce::String& chave, const juce::String& textoOriginal) {
+    auto it = tabela().find(chave.toStdString());
+    if (it == tabela().end()) return textoOriginal;
+    return juce::String(juce::CharPointer_UTF8(it->second.c_str()));
+}
+
+bool existe(const juce::String& chave) { return tabela().find(chave.toStdString()) != tabela().end(); }
+
 } // namespace matriz::i18n

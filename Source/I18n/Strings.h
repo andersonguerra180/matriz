@@ -25,4 +25,18 @@ void carregar(const juce::String& locale = "en");
 // óbvio visualmente que falta tradução (fácil de grepar nos testes).
 juce::String t(const juce::String& chave);
 
+// Igual a t(), mas devolve `textoOriginal` (não "[chave]") quando a chave
+// não existe. Usado pelas 14 definições de ficha (fichas/*.yaml): os
+// rótulos ali são texto fixo em português, e traduzir as ~300+ chaves
+// (tipo/grupo/campo/opção × 14 fichas) é trabalho incremental — enquanto
+// uma chave específica não tem tradução, mostrar o texto original do YAML
+// é sempre melhor que um "[chave]" visível pro operador.
+juce::String tComFallback(const juce::String& chave, const juce::String& textoOriginal);
+
+// Diferente de t()/tComFallback(), que sempre devolvem algo (chave
+// decorada ou texto de fallback), existe() diz se `chave` está de fato na
+// tabela do locale carregado — usado por selftests que precisam distinguir
+// "tem tradução" de "caiu no fallback".
+bool existe(const juce::String& chave);
+
 } // namespace matriz::i18n

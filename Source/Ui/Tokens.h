@@ -98,10 +98,64 @@ inline const Tema& temaBkrDark() {
         x.campoSugestaoIa = juce::Colour(0xffffb84d);
         x.campoSugestaoIaFundo = juce::Colour(0x22ffb84d);
 
-        x.tamanhoFonteTitulo = 20.0f;
-        x.tamanhoFonteSubtitulo = 15.0f;
-        x.tamanhoFonteCorpo = 13.0f;
-        x.tamanhoFontePequena = 11.0f;
+        x.tamanhoFonteTitulo = 22.0f;
+        x.tamanhoFonteSubtitulo = 17.0f;
+        x.tamanhoFonteCorpo = 15.0f;
+        x.tamanhoFontePequena = 13.0f;
+
+        x.espacoPequeno = 4;
+        x.espacoMedio = 8;
+        x.espacoGrande = 16;
+        x.espacoPainel = 12;
+
+        x.raioPequeno = 4.0f;
+        x.raioMedio = 6.0f;
+        return x;
+    }();
+    return t;
+}
+
+// BKR Light — cinza claro neutro, mesmo acento azul frio do BKR Dark pra
+// manter a identidade visual entre os dois. Estrutura idêntica ao Dark
+// campo a campo, de propósito: adicionar o terceiro tema (System CRT,
+// item 15 da ordem de trabalho) não deve exigir tocar nesta função nem em
+// nenhum Component, só escrever temaSystemCrt() e trocar o que tema()
+// devolve — mesma garantia que já valia pra este ser o segundo tema.
+inline const Tema& temaBkrLight() {
+    static const Tema t = [] {
+        Tema x;
+        x.fundo = juce::Colour(0xfff0f0f2);
+        x.painel = juce::Colour(0xfffafafb);
+        x.painelAlt = juce::Colour(0xffe6e6e9);
+        x.borda = juce::Colour(0xffcfcfd4);
+        x.bordaFoco = juce::Colour(0xff3d7fd6);
+
+        x.textoPrimario = juce::Colour(0xff1c1c1e);
+        x.textoSecundario = juce::Colour(0xff5a5a60);
+        x.textoTerciario = juce::Colour(0xff8a8a90);
+        x.textoSobreAcento = juce::Colour(0xffffffff);
+
+        x.acento = juce::Colour(0xff3d7fd6);
+        x.acentoHover = juce::Colour(0xff5b9dff);
+        x.perigo = juce::Colour(0xffc93f3f);
+        x.alerta = juce::Colour(0xffb87517);
+
+        x.estadoNaoDigitalizado = juce::Colour(0xff9a9aa0);
+        x.estadoCapturado = juce::Colour(0xff3d7fd6);
+        x.estadoQcOk = juce::Colour(0xff3f9142);
+        x.estadoAlerta = juce::Colour(0xffb87517);
+        x.haloSincronizado = juce::Colour(0xff1f8f84);
+
+        x.campoHumano = juce::Colour(0xff1c1c1e);
+        x.campoHerdado = juce::Colour(0xff5a5a60);
+        x.campoLeituraTecnica = juce::Colour(0xff5a5a60);
+        x.campoSugestaoIa = juce::Colour(0xffb87517);
+        x.campoSugestaoIaFundo = juce::Colour(0x22b87517);
+
+        x.tamanhoFonteTitulo = 22.0f;
+        x.tamanhoFonteSubtitulo = 17.0f;
+        x.tamanhoFonteCorpo = 15.0f;
+        x.tamanhoFontePequena = 13.0f;
 
         x.espacoPequeno = 4;
         x.espacoMedio = 8;

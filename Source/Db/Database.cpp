@@ -38,6 +38,10 @@ void Statement::bind(int oneBasedIndex, const Value& value) {
         case Value::Kind::Text: rc = sqlite3_bind_text(stmt_, oneBasedIndex, value.text.c_str(), -1, SQLITE_TRANSIENT); break;
         case Value::Kind::Int: rc = sqlite3_bind_int64(stmt_, oneBasedIndex, value.integer); break;
         case Value::Kind::Real: rc = sqlite3_bind_double(stmt_, oneBasedIndex, value.real); break;
+        case Value::Kind::Blob:
+            rc = sqlite3_bind_blob(stmt_, oneBasedIndex, value.blob.data(), static_cast<int>(value.blob.size()),
+                                    SQLITE_TRANSIENT);
+            break;
     }
     if (rc != SQLITE_OK)
         throw DatabaseError(std::string("falha ao vincular parâmetro: ") + sqlite3_errmsg(db_));

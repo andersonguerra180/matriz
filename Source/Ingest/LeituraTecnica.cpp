@@ -1,5 +1,6 @@
 #include "LeituraTecnica.h"
 
+#include "Loudness.h"
 #include "ProcessoExterno.h"
 
 #include <exiv2/exiv2.hpp>
@@ -215,7 +216,19 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
         throw LeituraTecnicaError("arquivo não encontrado: " + arquivo.getFullPathName().toStdString());
 
     switch (categoriaPorExtensao(arquivo)) {
-        case CategoriaMidia::Audio:
+        case CategoriaMidia::Audio: {
+            LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
+            // Loudness EBU R128 pré-calculado aqui (item 6.1). Silencioso se
+            // o formato não for legível pelos decodificadores do JUCE — o
+            // campo fica ausente em vez de zero, e a barra de métricas não
+            // mostra métrica que não foi medida.
+            if (auto l = medirLoudnessDoArquivo(arquivo)) {
+                r.lufsIntegrado = l->lufsIntegrado;
+                r.lra = l->lra;
+                r.picoDbfs = l->truePeakDbfs;
+            }
+            return r;
+        }
         case CategoriaMidia::Video:
             return lerViaFfprobe(arquivo);
         case CategoriaMidia::Imagem: {

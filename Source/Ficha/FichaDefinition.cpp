@@ -113,6 +113,46 @@ VisivelSe parseVisivelSe(const std::string& rawExpr) {
     throw FichaDefinitionError("visivel_se não reconhecido (esperava \"campo in [...]\", \"campo == valor\" ou \"campo != valor\"): \"" + rawExpr + "\"");
 }
 
+// Slug ASCII estável derivado de um rótulo em português (ex. "Estado físico"
+// -> "estado_fisico"). Base da chave de tradução de grupo em i18n/en.yaml —
+// precisa ser determinístico e não mudar se o rótulo em si não mudar.
+std::string slugify(const std::string& texto) {
+    static const std::vector<std::pair<std::string, std::string>> acentos = {
+        {"á", "a"}, {"à", "a"}, {"ã", "a"}, {"â", "a"}, {"ä", "a"},
+        {"Á", "a"}, {"À", "a"}, {"Ã", "a"}, {"Â", "a"}, {"Ä", "a"},
+        {"é", "e"}, {"è", "e"}, {"ê", "e"}, {"ë", "e"},
+        {"É", "e"}, {"È", "e"}, {"Ê", "e"}, {"Ë", "e"},
+        {"í", "i"}, {"ì", "i"}, {"î", "i"}, {"ï", "i"},
+        {"Í", "i"}, {"Ì", "i"}, {"Î", "i"}, {"Ï", "i"},
+        {"ó", "o"}, {"ò", "o"}, {"õ", "o"}, {"ô", "o"}, {"ö", "o"},
+        {"Ó", "o"}, {"Ò", "o"}, {"Õ", "o"}, {"Ô", "o"}, {"Ö", "o"},
+        {"ú", "u"}, {"ù", "u"}, {"û", "u"}, {"ü", "u"},
+        {"Ú", "u"}, {"Ù", "u"}, {"Û", "u"}, {"Ü", "u"},
+        {"ç", "c"}, {"Ç", "c"}, {"ñ", "n"}, {"Ñ", "n"},
+    };
+    std::string s = texto;
+    for (auto& [de, para] : acentos) {
+        size_t pos = 0;
+        while ((pos = s.find(de, pos)) != std::string::npos) {
+            s.replace(pos, de.size(), para);
+            pos += para.size();
+        }
+    }
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            out.push_back(c);
+        } else if (c >= 'A' && c <= 'Z') {
+            out.push_back(static_cast<char>(c - 'A' + 'a'));
+        } else if (!out.empty() && out.back() != '_') {
+            out.push_back('_');
+        }
+    }
+    while (!out.empty() && out.back() == '_') out.pop_back();
+    return out;
+}
+
 void checkIdsUnicos(const std::vector<Campo>& campos, const std::string& contexto) {
     std::set<std::string> vistos;
     for (auto& c : campos) {
@@ -289,6 +329,30 @@ FichaDefinition loadFromString(const std::string& yamlText, const std::string& o
         if (def.rotulo.empty())
             throw FichaDefinitionError("\"rotulo\" é obrigatório no nível raiz");
 
+        if (has(root, "modos")) {
+            YAML::Node modosNode = get(root, "modos");
+            if (!modosNode.IsSequence())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"modos\" deve ser uma lista");
+            def.modos = asStringList(modosNode);
+            for (auto& m : def.modos)
+                if (m != "archive" && m != "catalog")
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": modo desconhecido em \"modos\": \"" + m +
+                                                "\" (esperado \"archive\" ou \"catalog\")");
+        }
+
+        if (has(root, "ordem")) {
+            YAML::Node ordemNode = get(root, "ordem");
+            if (!ordemNode.IsScalar())
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"ordem\" deve ser um número inteiro");
+            try {
+                def.ordem = ordemNode.as<int>();
+            } catch (const YAML::BadConversion&) {
+                throw FichaDefinitionError("tipo \"" + def.tipo + "\": \"ordem\" deve ser um número inteiro");
+            }
+        }
+
+        def.icone = asString(get(root, "icone"));
+
         bool hasGrupos = has(root, "grupos");
         bool hasNiveis = has(root, "niveis");
         if (hasGrupos == hasNiveis)
@@ -329,6 +393,10 @@ FichaDefinition loadFromString(const std::string& yamlText, const std::string& o
                 grupo.rotulo = asString(get(g, "rotulo"));
                 if (grupo.rotulo.empty())
                     throw FichaDefinitionError("tipo \"" + def.tipo + "\": grupo sem \"rotulo\"");
+                grupo.chave = slugify(grupo.rotulo);
+                if (grupo.chave.empty())
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": grupo \"" + grupo.rotulo +
+                                                "\" gera uma chave de tradução vazia");
                 grupo.campos = parseCampos(get(g, "campos"), "grupo \"" + grupo.rotulo + "\" do tipo \"" + def.tipo + "\"");
                 for (auto& c : grupo.campos)
                     todosOsCamposDaRaiz.push_back(c);
@@ -336,6 +404,12 @@ FichaDefinition loadFromString(const std::string& yamlText, const std::string& o
             }
             checkIdsUnicos(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (ids devem ser únicos entre todos os grupos)");
             checkVisivelSeReferences(todosOsCamposDaRaiz, "tipo \"" + def.tipo + "\" (todos os grupos)");
+
+            std::set<std::string> chavesDeGrupoVistas;
+            for (auto& gr : def.grupos)
+                if (!chavesDeGrupoVistas.insert(gr.chave).second)
+                    throw FichaDefinitionError("tipo \"" + def.tipo + "\": dois grupos geram a mesma chave de tradução \"" +
+                                                gr.chave + "\" (\"" + gr.rotulo + "\")");
         }
 
         if (has(root, "arquivos_esperados")) {

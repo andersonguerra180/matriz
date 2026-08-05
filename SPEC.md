@@ -299,7 +299,10 @@ campos:
     tipo: texto
 ```
 ### 6.6 Tipos a escrever
-`fita_rolo`, `cassete`, `vinil`, `dat`, `minidisc`, `cd`, `filme`, `video`, `foto`, `negativo`, `slide`, `documento`, `release`, `sample`.
+Descobertos em tempo de execução: cada arquivo em `fichas/*.yaml` é um tipo, sem lista fixa em código
+(§6.1 — "adicionar tipo novo é escrever um arquivo, não recompilar"). Cada definição declara `modos`
+(`archive` e/ou `catalog`; ausente = disponível nos dois) e `ordem` (posição no diálogo de seleção).
+O diretório `fichas/` é a fonte da verdade; esta seção deixou de ser lista normativa.
 ---
 ## 7. Ingestão
 ### 7.1 O erro a evitar

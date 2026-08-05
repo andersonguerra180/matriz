@@ -20,10 +20,11 @@ public:
 
 // Valor de parâmetro/coluna. Null representa SQL NULL.
 struct Value {
-    enum class Kind { Null, Text, Int, Real } kind = Kind::Null;
+    enum class Kind { Null, Text, Int, Real, Blob } kind = Kind::Null;
     std::string text;
     long long integer = 0;
     double real = 0.0;
+    std::vector<unsigned char> blob;
 
     static Value null() { return Value{}; }
     static Value of(const std::string& s) { Value v; v.kind = Kind::Text; v.text = s; return v; }
@@ -32,6 +33,7 @@ struct Value {
     static Value of(int i) { return of(static_cast<long long>(i)); }
     static Value of(double d) { Value v; v.kind = Kind::Real; v.real = d; return v; }
     static Value of(bool b) { return of(static_cast<long long>(b ? 1 : 0)); }
+    static Value ofBlob(std::vector<unsigned char> bytes) { Value v; v.kind = Kind::Blob; v.blob = std::move(bytes); return v; }
 };
 
 class Statement {

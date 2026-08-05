@@ -5,10 +5,10 @@
 # i18n/pt_BR.yaml — same keys, both languages.
 
 app:
-  nome: MATRIZ
+  nome: "BKR Matriz"
 
 janela_principal:
-  titulo: MATRIZ
+  titulo: "BKR Matriz"
 
 menu:
   arquivo: File
@@ -16,7 +16,7 @@ menu:
   arquivo_abrir_projeto: "Open project…"
   arquivo_fechar_projeto: Close project
   arquivo_sair: Quit
-  arquivo_ingerir_arquivos: "Add material…"
+  arquivo_ingerir_arquivos: "Add files…"
   projeto: Project
   projeto_configuracoes: "Project settings…"
   exibir: View
@@ -28,34 +28,36 @@ menu:
   ajuda: Help
 
 tela_inicial:
-  subtitulo: "Choose how you want to work."
-  botao_abrir: "Open…"
-  cartao_archive_titulo: ARCHIVE
-  cartao_archive_descricao: "Tape, video, photos, documents, film"
-  cartao_archive_publico: "For artists, institutions, estates"
-  cartao_catalog_titulo: CATALOG
-  cartao_catalog_descricao: "Releases, tracks, masters, samples"
-  cartao_catalog_publico: "For labels, producers, musicians"
-  recentes_titulo: Recent
-  recente_modo_archive: Archive
-  recente_modo_catalog: Catalog
+  titulo: "What do you want to organize?"
+  subtitulo: "Pick one and drag your files in. You can always change your mind later by creating another project."
+  botao_abrir: "Open an existing project…"
+  cartao_archive_titulo: "ARCHIVE"
+  cartao_archive_descricao: "Photos, video, documents, tape, scanned paper — mixed material you want to keep and be able to find again."
+  cartao_archive_publico: "e.g. the drive with everything you piled up"
+  cartao_catalog_titulo: "CATALOG"
+  cartao_catalog_descricao: "Records, tracks, masters and samples — material that organizes itself by artist and release."
+  cartao_catalog_publico: "e.g. the studio project drive"
+  recentes_titulo: "Pick up where you left off"
+  recente_modo_archive: "Mixed files"
+  recente_modo_catalog: Music
 
 dialogo_novo_projeto:
   titulo: New project
-  campo_nome: Project name
-  campo_modo_preservacao: "Archive — keep it faithful, prove its integrity"
-  campo_modo_catalogo: "Catalog — organize, correct, export"
+  campo_nome: "Project name"
+  campo_modo_preservacao: "New mixed-files project"
+  campo_modo_catalogo: "New music project"
   campo_prefixo: Naming prefix
-  campo_instituicao: "Institution or label"
-  campo_responsavel: "Responsible party"
-  campo_isrc: "ISRC registrant (catalog use)"
-  campo_pasta: Project folder
+  campo_instituicao: "Institution or label (optional)"
+  campo_responsavel: "Responsible party (optional)"
+  campo_isrc: "ISRC registrant (optional)"
+  campo_pasta: "Backup folder"
+  campo_pasta_ajuda: "A new folder, on a drive with room to spare. This is where your files get copied to — the originals are never moved or deleted."
   botao_escolher_pasta: "Choose folder…"
   botao_criar: Create project
   botao_cancelar: Cancel
-  erro_nome_vazio: "The project name is required."
+  erro_nome_vazio: "Give the project a name to continue."
   erro_prefixo_vazio: "The naming prefix is required."
-  erro_pasta_vazia: "Choose a folder for the project."
+  erro_pasta_vazia: "Choose a folder for the project to live in."
   erro_titulo: "Could not create the project"
 
 dialogo_abrir_projeto:
@@ -80,15 +82,36 @@ mosaico:
   estado_qc_ok: "QC ok"
   estado_alerta: Alert
   estado_publicado: Published
+  estado_duplicata: "Already known"
   contagem_itens: "{n} items"
 
 ficha:
-  vazia: "Select an item to see its record sheet."
+  alternar: Details
+  vazia: "Click a file in the grid to see and edit its details here."
+  nao_classificado: "Not classified yet. Choose a media type to fill in its record sheet:"
+  recategorizar: "Change type"
+  recategorizar_titulo: "Choose a new media type:"
+  lote_titulo: "{n} materials selected"
+  lote_valores_multiplos: "Multiple values"
+  lote_tipo_misto: "Selection has mixed media types. Select items of the same type to batch-edit their record sheet."
+  lote_escolher_tipo: "None of the selected materials are classified yet. Choose a media type to apply to all of them:"
+  lote_campos_nao_suportados: "Table and person-list fields aren't editable in batch mode yet — edit them per item."
+  lote_tipo_misto_universais: "Selection has mixed media types — only Origin and Year are shared by every type, so only those can be edited together."
+  lote_previa: "{n} materials will be changed: {campos}"
+  lote_nenhum_campo_tocado: "Edit a field above, then apply it to the whole selection."
+  lote_aplicar: Apply
+  lote_desfazer: Undo
+  lote_resultado: "{sucessos} changed"
+  lote_resultado_falhas: ", {falhas} failed"
+  lote_resultado_desfeito: "{n} restored"
   cabecalho_sem_titulo: "(untitled)"
   secao_arquivos_esperados: "Expected files"
   arquivo_presente: present
   arquivo_ausente: missing
   arquivo_obrigatorio: required
+  secao_observacoes: "Notes"
+  observacao_nova: "New note"
+  observacao_minutagem_dica: "Time (MM:SS, optional)"
   sugestao_rotulo: suggestion
   sugestao_confirmar: Confirm
   sugestao_confianca: "confidence {p}%"
@@ -117,8 +140,104 @@ configuracoes_projeto:
   aviso_sobrescrever_cancelar: Cancel
   botao_fechar: Close
 
+transporte:
+  play: PLAY
+  stop: STOP
+  inicio: START
+  fim: END
+  jog: JOG
+  shuttle: SHUTTLE
+
+timeline:
+  zoom_tudo: "Zoom out"
+  timecode: Timecode
+  marcador: "+ Marker"
+  marcador_dica: "What does this mark?"
+  marcador_editar: "Edit text"
+  marcador_apagar: "Delete marker"
+  sem_onda: "No waveform for this file."
+
+metricas:
+  resumo_grade: "In the grid"
+  sem_arquivo: "No file yet"
+  itens: Items
+  tamanho: Size
+  formato: Format
+  lufs_i: "LUFS-I"
+  lra: LRA
+  pico: Peak
+  sample_rate: "Sample rate"
+  bit_depth: "Bit depth"
+  canais: Channels
+  codec: Codec
+  duracao: Duration
+  resolucao: Resolution
+  fps: FPS
+  bitrate: Bitrate
+  espaco_cor: "Color space"
+  dimensao: Dimensions
+  profundidade: Depth
+  paginas: Pages
+
+navegador:
+  titulo: "Add to backup"
+  abrir: "Browse files…"
+  buscar: "Search this folder and below"
+  vazio: "Nothing here."
+  secao_favoritos: FAVORITES
+  secao_volumes: VOLUMES
+  secao_recentes: RECENT
+  visao_colunas: Columns
+  visao_lista: List
+  visao_icones: Icons
+  filtro_todos: "All files"
+  filtro_audio: "Audio only"
+  filtro_video: "Video only"
+  filtro_imagem: "Images only"
+  filtro_documento: "Documents only"
+  ordem_nome: "Sort: name"
+  ordem_data: "Sort: date"
+  ordem_tamanho: "Sort: size"
+  ordem_tipo: "Sort: type"
+  manter_estrutura: "Keep folder structure"
+  adicionar: "ADD TO BACKUP"
+  adicionar_n: "ADD {n} TO BACKUP"
+  selecao_vazia: "Nothing selected."
+  resumo_selecao: "{n} files, {tamanho}"
+  previa_vazia: "Select something to preview it."
+  previa_pasta: "Folder"
+
+hierarquia:
+  titulo: "Backup folder structure"
+  acrescentar: "+ add level…"
+  nivel_projeto: Project
+  nivel_ano: Year
+  nivel_tipo_midia: "Media type"
+  nivel_tipo_arquivo: "File type"
+  nivel_origem: Origin
+  nivel_artista: Artist
+  nivel_pasta_manual: "Folders I made by hand"
+
+consolidacao:
+  titulo: Backup
+  destino_nao_escolhido: "Choose the drive or folder where the backup gets written."
+  escolher_destino: "Choose where to write…"
+  previa_vazia: "Nothing to write yet. Drag folders or files from EXPLORER into the BACKUP folders on the left — that layout is what becomes the backup."
+  ja_consolidado: "already copied"
+  aviso_nao_organizados: "{n} file(s) still outside any BACKUP folder — they won't be in this backup."
+  aviso_conflitos: "{n} duplicate name(s) — resolve them before writing."
+  aviso_espaco: "Needs: {necessario}  ·  Free at destination: {disponivel}"
+  consolidar: "Write backup"
+  consolidando: "Writing… for large archives this can take a long while."
+  progresso: "Writing… {feito}/{total}"
+  cancelado: "Cancelled — {feito} of {total} processed. What was written is saved and verified."
+  resultado: "{consolidados} copied, {pulados} already up to date"
+  resultado_falhas: "{n} failed"
+  fechar: Close
+
 comum:
   ok: OK
+  salvar: Save
   cancelar: Cancel
   sim: Yes
   nao: "No"
@@ -126,15 +245,895 @@ comum:
 
 ingest:
   titulo: "Ingest"
-  resumo: "{n} file(s) added successfully."
-  resumo_erros: "Could not add:"
+  resumo_novos: "{n} new"
+  resumo_duplicatas: "{n} already known"
+  resumo_erros: "{n} failed"
   erro_extensao_desconhecida: "unrecognized extension (media type could not be inferred)"
   ja_em_andamento: "A batch is already being added. Wait for it to finish before starting another."
   progresso: "Adding… {feito}/{total}"
+  cancelar: Cancel
+  cancelando: "Cancelling…"
+  cancelado: "Cancelled — {feito} of {total} processed. What was done is saved."
   selecionar_tipo_titulo: "Media type"
   selecionar_tipo_corpo: "{n} file(s) selected. What's the source media type for this batch?"
   selecionar_tipo_confirmar: Add
 
+# Proxy catalog — written inside the backup, opens without the original
+# project and without the material connected. This is what turns a backup
+# from a pile of files into something you can actually browse.
+catalogo:
+  titulo: "Backup catalog"
+  fechar: "Close catalog"
+  gerar: "Generate browsable catalog"
+  gerar_ajuda: "Thumbnails, records and the location of every file, written alongside the backup. Takes {tamanho} and lets you browse the archive with the drive unplugged."
+  gerando: "Generating catalog… {feito}/{total}"
+  gerado: "Catalog written — {n} materials browsable without the drive connected."
+  cancelado: "Catalog cancelled — {feito} of {total}. What was written is saved."
+  vazio: "This catalog is empty."
+  sem_resultado: "No material found for this search."
+  disponivel: available
+  ausente: "source missing"
+  volume_desconhecido: "unidentified drive"
+  onde_esta_titulo: "Where this file is"
+  onde_esta_corpo: "{titulo}\n\nDrive: {volume}\nFolder: {local}\n\nFull path:\n{caminho}\n\nConnect the drive to open the file."
+  abrir: "Open backup catalog…"
+  nao_e_catalogo: "This folder has no Matriz catalog inside it."
+
+metadados:
+  titulo: "Original metadata"
+  somente_leitura: "read only"
+  editaveis: "Backup metadata"
+  editaveis_ajuda: "what you fill in"
+  vazio: "This file carried no readable technical metadata."
+  tamanho: "File size"
+  duracao: Duration
+  dimensoes: Dimensions
+  codec: Codec
+  sample_rate: "Sample rate"
+  bit_depth: "Bit depth"
+  canais: Channels
+  fps: "Frames per second"
+  lossy: "Already lossy-compressed"
+  mais: "+ {n} more fields"
+
 painel_inconsistencias:
-  titulo: Inconsistencies
-  vazio: "No inconsistencies found."
+  titulo: "Needs attention"
+  vazio: "Nothing pending here — everything is consistent."
+
+preview:
+  sem_arquivo: "No file attached to this item yet."
+  sem_visualizacao: "No preview available for this file type."
+  video_sem_player: "Video playback isn't implemented yet — showing the keyframe and technical data."
+  duracao: Duration
+  sample_rate: "Sample rate"
+  dimensoes: Dimensions
+  tocar: Play
+  pausar: Pause
+
+estado_vazio:
+  titulo: "Drag your folder or drive here"
+  subtitulo: "or click here to browse your computer"
+  rodape: "Your original files are never moved or deleted — Matriz makes a copy inside the project."
+
+grade:
+  tamanho_pequeno: S
+  tamanho_medio: M
+  tamanho_grande: L
+  tamanho_lista: List
+  adicionar_material: "Add material…"
+  nao_classificado: Unclassified
+  sem_ano: "No year"
+  agrupar_automatico: "Group: type"
+  agrupar_por_ano: "Group: year"
+
+filtros:
+  secao_extensao: "File type"
+  secao_origem: "Origin"
+  origem_digital: Digital
+  origem_analogico: Analog
+  secao_colecoes: "Smart collections"
+  limpar: "Clear filters"
+  salvar_colecao: "Save current search…"
+  nome_colecao_titulo: "Save smart collection"
+  nome_colecao_mensagem: "Collection name:"
+
+arvore:
+  aba_origem: EXPLORER
+  aba_acervo: BACKUP
+  # EXPLORER = the real structure of the sources, untouched, only for
+  # browsing and locating. BACKUP = the structure the operator builds,
+  # and the one the backup run materializes.
+  explorer_dica: "The real structure of the source disk, as it is. Nothing here is editable."
+  backup_dica: "The structure you build, and the one that gets written to the backup."
+  manter_estrutura: "Keep the folder structure"
+  achatar_estrutura: "Put everything directly in this folder"
+  soltar_pasta_titulo: "How should this folder come in?"
+  soltar_pasta_mensagem: "\"{pasta}\" has {n} file(s) in subfolders."
+  incluir_subpastas: "Include subfolders"
+  todos_os_materiais: All files
+  nao_organizados: "No folder yet"
+  nova_pasta: "New folder"
+  nome_nova_pasta_titulo: "New folder"
+  nome_nova_pasta_mensagem: "Folder name:"
+  renomear_pasta_titulo: "Rename folder"
+  renomear_pasta_mensagem: "New name:"
+  menu_nova_subpasta: "New subfolder"
+  menu_renomear: Rename
+  menu_apagar: Delete
+  apagar_confirmar_titulo: "Delete folder?"
+  apagar_confirmar_mensagem: "This only removes the folder from your planned layout — no file on disk is touched. Files that were in it stay in the project, they just go back to \"No folder yet\"."
+
+# Actions on one file or on the selection — served identically by the grid's
+# right-click menu and by the right panel. None of them delete a file from
+# disk, and the wording says so explicitly: that is the guarantee an operator
+# needs before touching a drive they can't afford to lose.
+acoes:
+  categorizar: "Categorize…"
+  preview: "Preview"
+  renomear: "Rename…"
+  renomear_titulo: Rename
+  renomear_previa: "In the backup it will be: {nome}"
+  renomear_mensagem: "New name. This is what becomes the file name in the backup."
+  renomear_mensagem_lote: "New name for the {n} files. The mask numbers each one automatically."
+  enviar_para_pasta: "Send to folder"
+  sem_pastas: "No folders yet — create one with \"+\" in the BACKUP tab"
+  remover_do_backup: "Remove from backup"
+  remover_do_backup_titulo: "Remove from backup?"
+  remover_do_backup_mensagem: "{n} file(s) leave the BACKUP folders and go back to \"No folder yet\".\n\nNo file is deleted from disk."
+  remover_da_lista: "Remove from this list"
+  remover_da_lista_titulo: "Remove from this list?"
+  remover_da_lista_mensagem: "{n} file(s) disappear from this list and from the project, along with the details you filled in.\n\nNo file is deleted from disk: the original at the source stays where it is."
+  definir_capa: "Use image as cover…"
+  remover_capa: "Remove cover"
+  mostrar_na_origem: "Show at source"
+  copiar_caminho: "Copy path"
+  ver_duplicatas: "Show duplicates of this file"
+  sem_duplicatas: "No other file in the project has this same content."
+  origem_ausente_titulo: "Source isn't connected"
+  origem_ausente_mensagem: "This file came from:\n{caminho}\n\nConnect the source drive to open the folder."
+
+# Top toolbar — the app's real actions, always visible. They used to live
+# only in the system menu, which is why the app didn't explain itself:
+# a first-time user saw an empty grid and no buttons at all.
+barra:
+  adicionar: "Add files"
+  adicionar_dica: "Pick a folder or files to copy into the project. You can also drag straight from Finder onto anywhere in this window."
+  buscar: "Search by name, code or any detail"
+  tamanho_dica: "Thumbnail size"
+  detalhes_dica: "Shows or hides the side panel with the details of whatever is selected."
+  backup: Backup
+  backup_dica: "Copies the original byte for byte to another drive, following the folders you built under BACKUP. The source is never touched."
+  contagem: "{visiveis} of {total} files"
+  contagem_filtrada: "{visiveis} of {total} files  ·  filtered"
+
+# Guidance strip: says, in one sentence, what to do NOW. Changes with the
+# state of the project and can be dismissed — this is the direct answer to
+# "the software doesn't explain itself".
+guia:
+  vazio_titulo: "Start by dragging your files here"
+  vazio_corpo: "A whole drive, a folder, or loose files. Nothing is moved or deleted: Matriz copies them into the project and builds the view."
+  classificar_titulo: "{n} file(s) still have no category"
+  classificar_corpo: "Select several (click one, then Shift+click another) and use \"Batch edit\" to give them a category and details all at once."
+  organizar_titulo: "Now lay out the backup"
+  organizar_corpo: "Open the BACKUP tab on the left, make folders with \"+\", and drag folders or files from EXPLORER into them."
+  backup_titulo: "Ready to write the backup"
+  backup_corpo: "Click Backup and pick the destination drive. Matriz writes everything in the layout you built."
+  ocultar: "Got it"
+  mostrar: Tip
+
+# Selection bar — only appears when files are ticked in the grid. Makes
+# batch editing visible; it used to live only inside the side panel, which
+# is closed by default (nobody ever found it).
+selecao:
+  contagem_um: "1 file selected"
+  contagem: "{n} files selected"
+  editar_lote: "Batch edit"
+  selecionar_todos: "Select all"
+  limpar: "Clear selection"
+
+# Traduções das 14 definições de ficha (fichas/*.yaml) — os "rotulo:" ali
+# são texto fixo em português, nunca passaram pelo sistema de i18n até a
+# correção crítica pós-teste do usuário. Chaves por índice (grupo, opção)
+# ou por id estável (campo) — ver Source/Ficha/FichaI18n.h. pt_BR não
+# precisa destas seções: o fallback (tComFallback) já mostra o texto
+# original do YAML, que é a tradução portuguesa correta por definição.
+ficha_tipos:
+  fita_rolo: "Reel tape"
+  cassete: Cassette
+  vinil: Vinyl
+  dat: DAT
+  minidisc: MiniDisc
+  cd: CD
+  filme: "Film (16 mm / Super 8 / 8 mm)"
+  video: "Digitized analog video"
+  foto: Photo
+  negativo: "Photographic negative"
+  slide: Slide
+  documento: Document
+  release: Release
+  sample: Sample
+  digital_audio: "Digital audio"
+  field_recording: "Field recording"
+  sound_effects: "Sound effect"
+  digital_video: "Digital video"
+  "3d_file": "3D file"
+
+ficha_grupos:
+  # Chave é o slug do rótulo do grupo (Grupo::chave, FichaDefinition.cpp),
+  # não a posição na lista — inserir/reordenar um grupo em fichas/*.yaml não
+  # desincroniza mais nada aqui (era um risco documentado nesta seção antes
+  # da Fatia A trocar o casamento de posição para nome).
+  fita_rolo:
+    suporte: Media
+    abrangencia: Scope
+    reproducao: Playback
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  cassete:
+    suporte: Media
+    abrangencia: Scope
+    reproducao: Playback
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  vinil:
+    suporte: Media
+    reproducao: Playback
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  dat:
+    suporte: Media
+    reproducao: Playback
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  minidisc:
+    suporte: Media
+    reproducao: Playback
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  cd:
+    suporte: Media
+    captura: Capture
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  filme:
+    suporte: Media
+    digitalizacao_proveniencia_tecnica_11_5: "Digitization (technical provenance, §11.5)"
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  video:
+    suporte: Media
+    digitalizacao_proveniencia_tecnica_11_5: "Digitization (technical provenance, §11.5)"
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  foto:
+    captura: Capture
+    conteudo: Content
+    estado_fisico: "Physical condition"
+    direitos: Rights
+  negativo:
+    suporte: Media
+    digitalizacao: Digitization
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  slide:
+    suporte: Media
+    digitalizacao: Digitization
+    estado_fisico: "Physical condition"
+    conteudo: Content
+  documento:
+    identificacao: Identification
+    leitura_tecnica: "Technical reading"
+    estado: Condition
+  sample:
+    classificacao: Classification
+    direitos_e_origem: "Rights and origin"
+  digital_audio:
+    arquivo: File
+    origem_digital: "Digital origin"
+    conteudo: Content
+  field_recording:
+    captura: Capture
+    ambiente: Environment
+    conteudo: Content
+  sound_effects:
+    classificacao: Classification
+    direitos: Rights
+  digital_video:
+    arquivo: File
+    captura: Capture
+    conteudo: Content
+  "3d_file":
+    arquivo: File
+    especificacoes: Specifications
+
+ficha_campos:
+  fita_rolo:
+    origem: Origin
+    ano: Year
+    largura: Width
+    abrangencia: "Recording scope"
+    trecho_posicao: "Excerpt position"
+    trecho_observacao: "Note about the excerpt"
+    marca: Brand
+    formulacao: Formulation
+    espessura: Thickness
+    velocidade: Speed
+    curva: "Equalization curve"
+    pistas: "Track configuration"
+    direcao: Direction
+    maquina: "Playback machine"
+    alinhamento: "Alignment tape used"
+    sticky_shed: "Signs of sticky shed"
+    emendas: "Visible splices"
+    print_through: "Audible print-through"
+    estado_geral: "General condition"
+    natureza: "Content nature"
+    idioma: Language
+  cassete:
+    origem: Origin
+    ano: Year
+    tipo_fita: "Tape type"
+    abrangencia: "Recording scope"
+    trecho_posicao: "Excerpt position"
+    trecho_observacao: "Note about the excerpt"
+    marca: Brand
+    duracao_nominal: "Nominal duration"
+    dolby: "Noise reduction"
+    direcao: "Side captured"
+    deck: "Playback deck"
+    sticky_shed: "Signs of sticky shed"
+    fita_solta_enroscada: "Tape loose or tangled in mechanism"
+    estado_geral: "General condition"
+    natureza: "Content nature"
+    idioma: Language
+  vinil:
+    origem: Origin
+    ano: Year
+    formato: Format
+    velocidade: Speed
+    peso_gramatura: Weight
+    selo: "Original label/imprint"
+    numero_catalogo: "Catalog number"
+    curva: "Equalization curve"
+    cartucho: "Cartridge used"
+    toca_discos: Turntable
+    estado_disco: "Disc condition (Goldmine)"
+    empenado: Warped
+    riscos_audiveis: "Audible scratches"
+    estado_capa: "Sleeve condition"
+    natureza: "Content nature"
+    idioma: Language
+  dat:
+    origem: Origin
+    ano: Year
+    marca: "Tape brand"
+    duracao_fita: "Nominal duration"
+    sample_rate_original: "Original sample rate"
+    deck: "Playback deck"
+    caminho_captura: "Capture path"
+    subcode_disponivel: "Subcode (start ID/program) available"
+    erros_leitura: "Read errors during capture"
+    estado_geral: "General condition"
+    natureza: "Content nature"
+    idioma: Language
+  minidisc:
+    origem: Origin
+    ano: Year
+    tipo_disco: "Disc type"
+    marca: Brand
+    modo_gravacao: "Recording mode"
+    atrac_lossy: "Source in ATRAC (lossy)"
+    caminho_captura: "Capture path"
+    deck: "Playback deck"
+    erros_leitura: "Read errors during capture"
+    estado_geral: "General condition"
+    natureza: "Content nature"
+    idioma: Language
+  cd:
+    origem: Origin
+    ano: Year
+    tipo_disco: "Disc type"
+    marca_midia: "Media brand (if CD-R)"
+    numero_faixas: "Number of tracks"
+    toc: "TOC / total duration"
+    ripagem_bit_exata_confirmada: "Bit-exact rip confirmed"
+    estado_fisico: "Disc physical condition"
+    natureza: "Content nature"
+    idioma: Language
+  filme:
+    origem: Origin
+    ano: Year
+    bitola: Gauge
+    cor_pb: "Color or black and white"
+    som_optico: "Has optical soundtrack"
+    fps_captura: "Captured file FPS"
+    fps_original_declarado: "Declared original FPS"
+    pulldown_detectado: "3:2 pulldown detected"
+    quadro_duplicado_detectado: "Duplicated frame detected"
+    campo_entrelacado_detectado: "Interlaced field detected"
+    encolhimento: "Base shrinkage"
+    quebradico: "Brittle material (degraded nitrate/acetate base)"
+    mofo: "Signs of mold"
+    estado_geral: "General condition"
+    descricao_conteudo: "Content description"
+  video:
+    origem: Origin
+    ano: Year
+    formato_original: "Original format"
+    sistema: "Color system"
+    tbc_usado: "TBC used in digitization"
+    fps_captura: "Captured file FPS"
+    pulldown_detectado: "3:2 pulldown detected"
+    quadro_duplicado_detectado: "Duplicated frame detected"
+    campo_entrelacado_detectado: "Interlaced field detected"
+    dropout_frequente: "Frequent dropout"
+    fita_solta_enroscada: "Tape loose or tangled in mechanism"
+    estado_geral: "General condition"
+    descricao_conteudo: "Content description"
+    cortes_cena_detectados: "Scene cuts detected"
+  foto:
+    origem: Origin
+    ano: Year
+    suporte: Support
+    data_foto: "Photo date"
+    camera: "Camera / model"
+    dimensoes: Dimensions
+    fotografo: Photographer
+    local: Location
+    evento: Event
+    pessoas_identificadas: "Identified people"
+    estado_fisico: "General condition"
+    danos: "Visible damage"
+    licenca: "License / use"
+  negativo:
+    origem: Origin
+    ano: Year
+    formato: Format
+    cor_pb: "Color or black and white"
+    dimensoes_scan: "Scan dimensions"
+    resolucao_scan: "Scan resolution"
+    riscos: "Visible scratches"
+    mofo: "Signs of mold"
+    desvanecimento: "Color fading"
+    estado_geral: "General condition"
+    data_foto: "Photo date"
+    local: Location
+    pessoas_identificadas: "Identified people"
+  slide:
+    origem: Origin
+    ano: Year
+    formato: Format
+    moldura: Mount
+    dimensoes_scan: "Scan dimensions"
+    resolucao_scan: "Scan resolution"
+    fungo: "Signs of fungus"
+    desvanecimento: "Color fading"
+    estado_geral: "General condition"
+    data_foto: "Photo date"
+    local: Location
+    pessoas_identificadas: "Identified people"
+  documento:
+    origem: Origin
+    ano: Year
+    tipo_documento: "Document type"
+    data_documento: "Document date"
+    autor_documento: "Author / issuer"
+    idioma: Language
+    numero_paginas: "Number of pages"
+    texto_pesquisavel: "Searchable text in PDF"
+    assinado: Signed
+    estado_fisico: "Physical condition (if digitized from paper)"
+  release:
+    origem: Origin
+    titulo: Title
+    artista_principal: "Main artist"
+    selo: Label
+    numero_catalogo: "Catalog number"
+    upc_ean: "UPC/EAN"
+    ano: Year
+    data_lancamento: "Release date"
+    formato: Format
+    genero: Genre
+    numero: Number
+    isrc: ISRC
+    duracao: Duration
+    compositores: Composers
+    editora: Publisher
+    participacao: "Featured artists"
+    explicito: "Explicit content"
+    idioma: Language
+    splits: Splits
+  sample:
+    origem: Origin
+    ano: Year
+    categoria: Category
+    bpm: BPM
+    tonalidade: Key
+    tipo_temporal: "Temporal type"
+    licenca: License
+    origem_texto: Source
+  digital_audio:
+    origem: Origin
+    ano: Year
+    formato_arquivo: "File format"
+    sample_rate_declarado: "Declared sample rate"
+    bit_depth_declarado: "Declared bit depth"
+    codec: Codec
+    daw_origem: "Source DAW"
+    eh_mixdown_ou_stem: "Material type"
+    plugins_criticos: "Critical plugins (session dependency)"
+    natureza: "Content nature"
+    idioma: Language
+  field_recording:
+    origem: Origin
+    ano: Year
+    equipamento_gravador: Recorder
+    microfone: Microphone
+    padrao_polar: "Polar pattern"
+    ambiente: Environment
+    condicoes: "Conditions (wind, rain, background noise)"
+    natureza: "Content nature"
+    idioma: Language
+  sound_effects:
+    origem: Origin
+    ano: Year
+    categoria: Category
+    biblioteca_origem: "Source library"
+    licenca: License
+  digital_video:
+    origem: Origin
+    ano: Year
+    codec: Codec
+    resolucao: Resolution
+    frame_rate_declarado: "Declared frame rate"
+    formato_container: "Container format"
+    camera: "Camera / model"
+    data_gravacao: "Recording date"
+    descricao_conteudo: "Content description"
+  "3d_file":
+    origem: Origin
+    ano: Year
+    formato: Format
+    software_origem: "Source software"
+    contagem_poligonos: "Polygon count"
+    possui_texturas: "Has textures"
+    possui_rig: "Has rig"
+
+ficha_opcoes:
+  fita_rolo:
+    origem:
+      "0": Digital
+      "1": Analog
+    abrangencia:
+      "0": "whole tape"
+      "1": "excerpt of the tape"
+    largura:
+      "0": "1/4 in"
+      "1": "1/2 in"
+      "2": "1 in"
+      "3": "2 in"
+    velocidade:
+      "0": "4.75 cm/s"
+      "1": "9.5 cm/s"
+      "2": "19 cm/s"
+      "3": "38 cm/s"
+      "4": "76 cm/s"
+    direcao:
+      "0": unidirectional
+      "1": bidirectional
+      "2": reversed
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": ritual
+      "4": mixed
+      "5": "test tones"
+  cassete:
+    origem:
+      "0": Digital
+      "1": Analog
+    abrangencia:
+      "0": "whole tape"
+      "1": "excerpt of the tape"
+    tipo_fita:
+      "0": "I (normal/ferric)"
+      "1": "II (chrome)"
+      "2": "III (ferrichrome)"
+      "3": "IV (metal)"
+    dolby:
+      "0": none
+      "1": "Dolby B"
+      "2": "Dolby C"
+      "3": "Dolby S"
+    direcao:
+      "0": "side A"
+      "1": "side B"
+      "2": "autoreverse (A+B)"
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": ritual
+      "4": mixed
+      "5": "test tones"
+  vinil:
+    origem:
+      "0": Digital
+      "1": Analog
+    curva:
+      "0": RIAA
+      "1": Columbia
+      "2": Decca
+      "3": "78 acoustic (variable)"
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": mixed
+  dat:
+    origem:
+      "0": Digital
+      "1": Analog
+    caminho_captura:
+      "0": "S/PDIF"
+      "1": analog
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": ritual
+      "4": mixed
+      "5": "test tones"
+  minidisc:
+    origem:
+      "0": Digital
+      "1": Analog
+    tipo_disco:
+      "0": "Standard MD"
+      "1": "Hi-MD"
+    caminho_captura:
+      "0": analog
+      "1": "NetMD (Hi-MD only)"
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": ritual
+      "4": mixed
+      "5": "test tones"
+  cd:
+    origem:
+      "0": Digital
+      "1": Analog
+    tipo_disco:
+      "0": "CD-DA (pressed)"
+      "1": "CD-R"
+      "2": "CD-ROM with audio tracks"
+    estado_fisico:
+      "0": good
+      "1": fair
+      "2": scratched
+      "3": "unreadable in places"
+    natureza:
+      "0": speech
+      "1": music
+      "2": ambient
+      "3": mixed
+  filme:
+    origem:
+      "0": Digital
+      "1": Analog
+    cor_pb:
+      "0": color
+      "1": "black and white"
+    encolhimento:
+      "0": none
+      "1": mild
+      "2": moderate
+      "3": severe
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+  video:
+    origem:
+      "0": Digital
+      "1": Analog
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+  foto:
+    origem:
+      "0": Digital
+      "1": Analog
+    suporte:
+      "0": printed
+      "1": digital
+    estado_fisico:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+    danos:
+      "0": stain
+      "1": tear
+      "2": fold
+      "3": fading
+      "4": fungus
+    licenca:
+      "0": "free use"
+      "1": "rights reserved"
+      "2": "authorization pending"
+      "3": "public domain"
+  negativo:
+    origem:
+      "0": Digital
+      "1": Analog
+    formato:
+      "0": "35 mm"
+      "1": "120 (medium format)"
+      "2": "4x5 in"
+      "3": other
+    cor_pb:
+      "0": color
+      "1": "black and white"
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+  slide:
+    origem:
+      "0": Digital
+      "1": Analog
+    formato:
+      "0": "35 mm mounted"
+      "1": "120 mounted"
+      "2": other
+    moldura:
+      "0": cardboard
+      "1": plastic
+      "2": glass
+    estado_geral:
+      "0": good
+      "1": fair
+      "2": fragile
+      "3": critical
+  documento:
+    origem:
+      "0": Digital
+      "1": Analog
+    tipo_documento:
+      "0": contract
+      "1": letter
+      "2": receipt
+      "3": "spec sheet"
+      "4": "press release"
+      "5": other
+    estado_fisico:
+      "0": good
+      "1": fair
+      "2": damaged
+  release:
+    origem:
+      "0": Digital
+      "1": Analog
+    formato:
+      "0": album
+      "1": EP
+      "2": single
+      "3": compilation
+      "4": soundtrack
+  sample:
+    origem:
+      "0": Digital
+      "1": Analog
+    licenca:
+      "0": "royalty-free"
+      "1": exclusive
+      "2": "sample clearance pending"
+      "3": "internal use"
+  digital_audio:
+    origem:
+      "0": Digital
+      "1": Analog
+    formato_arquivo:
+      "0": WAV
+      "1": AIFF
+      "2": FLAC
+      "3": MP3
+      "4": Other
+    eh_mixdown_ou_stem:
+      "0": mixdown
+      "1": stem
+      "2": master
+      "3": bounce
+  field_recording:
+    origem:
+      "0": Digital
+      "1": Analog
+    padrao_polar:
+      "0": cardioid
+      "1": omnidirectional
+      "2": "figure-8"
+      "3": "XY stereo"
+      "4": "MS stereo"
+      "5": other
+    ambiente:
+      "0": indoor
+      "1": outdoor
+      "2": studio
+      "3": nature
+      "4": urban
+  sound_effects:
+    origem:
+      "0": Digital
+      "1": Analog
+    categoria:
+      "0": impact
+      "1": ambient
+      "2": mechanical
+      "3": animal
+      "4": human
+      "5": UI
+      "6": Foley
+      "7": other
+    licenca:
+      "0": "royalty-free"
+      "1": exclusive
+      "2": "sample clearance pending"
+      "3": "internal use"
+  digital_video:
+    origem:
+      "0": Digital
+      "1": Analog
+    formato_container:
+      "0": MP4
+      "1": MOV
+      "2": MXF
+      "3": Other
+  "3d_file":
+    origem:
+      "0": Digital
+      "1": Analog
+    formato:
+      "0": OBJ
+      "1": FBX
+      "2": "glTF"
+      "3": USDZ
+      "4": STL
+      "5": Other
+
+ficha_alertas:
+  fita_rolo:
+    sticky_shed: "Requires thermal treatment before playback"
+  cassete:
+    sticky_shed: "Requires thermal treatment before playback"
+  minidisc:
+    atrac_lossy: "Source is already lossy — digitization does not recover quality lost in the original recording"
+  filme:
+    quebradico: "Handling requires special care — risk of breakage or combustion with nitrate"

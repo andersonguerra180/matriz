@@ -1,0 +1,48 @@
+tipo: digital_video
+rotulo: Vídeo digital
+modos: [archive]
+ordem: 170
+icone: video
+grupos:
+  - rotulo: Arquivo
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: codec
+        rotulo: Codec
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: resolucao
+        rotulo: Resolução
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: frame_rate_declarado
+        rotulo: Frame rate declarado
+        tipo: numero
+        preenchido_por: leitura_tecnica
+      - id: formato_container
+        rotulo: Formato do container
+        tipo: opcao
+        opcoes: [MP4, MOV, MXF, Other]
+  - rotulo: Captura
+    campos:
+      - id: camera
+        rotulo: Câmera / modelo
+        tipo: opcao_livre
+        preenchido_por: leitura_tecnica
+      - id: data_gravacao
+        rotulo: Data de gravação
+        tipo: data
+        preenchido_por: leitura_tecnica
+  - rotulo: Conteúdo
+    campos:
+      - id: descricao_conteudo
+        rotulo: Descrição do conteúdo
+        tipo: texto

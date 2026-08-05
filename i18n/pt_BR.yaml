@@ -3,10 +3,10 @@
 # "secao.subsecao.chave" por Source/I18n/Strings.cpp.
 
 app:
-  nome: MATRIZ
+  nome: "BKR Matriz"
 
 janela_principal:
-  titulo: MATRIZ
+  titulo: "BKR Matriz"
 
 menu:
   arquivo: Arquivo
@@ -14,7 +14,7 @@ menu:
   arquivo_abrir_projeto: "Abrir projeto…"
   arquivo_fechar_projeto: Fechar projeto
   arquivo_sair: Sair
-  arquivo_ingerir_arquivos: "Ingerir arquivos…"
+  arquivo_ingerir_arquivos: "Adicionar arquivos…"
   projeto: Projeto
   projeto_configuracoes: "Configurações do projeto…"
   exibir: Exibir
@@ -26,34 +26,36 @@ menu:
   ajuda: Ajuda
 
 tela_inicial:
-  subtitulo: "Escolha como você quer trabalhar."
-  botao_abrir: "Abrir…"
-  cartao_archive_titulo: ACERVO
-  cartao_archive_descricao: "Fita, vídeo, fotos, documentos, filme"
-  cartao_archive_publico: "Pra artistas, instituições, espólios"
-  cartao_catalog_titulo: CATÁLOGO
-  cartao_catalog_descricao: "Lançamentos, faixas, masters, samples"
-  cartao_catalog_publico: "Pra selos, produtores, músicos"
-  recentes_titulo: Recentes
-  recente_modo_archive: Acervo
-  recente_modo_catalog: Catálogo
+  titulo: "O que você quer organizar?"
+  subtitulo: "Escolha um dos dois e arraste seus arquivos. Dá pra mudar de ideia depois criando outro projeto."
+  botao_abrir: "Abrir um projeto que já existe…"
+  cartao_archive_titulo: "ACERVO"
+  cartao_archive_descricao: "Fotos, vídeos, documentos, fitas, papéis digitalizados — material misturado que você quer guardar e achar depois."
+  cartao_archive_publico: "Ex.: o HD com tudo o que você acumulou"
+  cartao_catalog_titulo: "CATÁLOGO"
+  cartao_catalog_descricao: "Discos, faixas, masters e samples — material que se organiza por artista e por lançamento."
+  cartao_catalog_publico: "Ex.: o HD de projetos do estúdio"
+  recentes_titulo: "Continuar de onde parou"
+  recente_modo_archive: "Arquivos variados"
+  recente_modo_catalog: "Música"
 
 dialogo_novo_projeto:
   titulo: Novo projeto
-  campo_nome: Nome do projeto
-  campo_modo_preservacao: "Acervo — guardar fiel, provar integridade"
-  campo_modo_catalogo: "Catálogo — organizar, corrigir, exportar"
+  campo_nome: "Nome do projeto"
+  campo_modo_preservacao: "Novo projeto de arquivos variados"
+  campo_modo_catalogo: "Novo projeto de música"
   campo_prefixo: Prefixo de nomenclatura
-  campo_instituicao: "Instituição ou selo"
-  campo_responsavel: "Responsável"
-  campo_isrc: "Registrante ISRC (uso catálogo)"
-  campo_pasta: Pasta do projeto
+  campo_instituicao: "Instituição ou selo (opcional)"
+  campo_responsavel: "Responsável (opcional)"
+  campo_isrc: "Registrante ISRC (opcional)"
+  campo_pasta: "Pasta de backup"
+  campo_pasta_ajuda: "Uma pasta nova, num disco com espaço. É pra lá que seus arquivos serão copiados — os originais não são movidos nem apagados."
   botao_escolher_pasta: "Escolher pasta…"
   botao_criar: Criar projeto
   botao_cancelar: Cancelar
-  erro_nome_vazio: "O nome do projeto é obrigatório."
+  erro_nome_vazio: "Dê um nome ao projeto pra continuar."
   erro_prefixo_vazio: "O prefixo de nomenclatura é obrigatório."
-  erro_pasta_vazia: "Escolha uma pasta para o projeto."
+  erro_pasta_vazia: "Escolha uma pasta onde o projeto vai ficar."
   erro_titulo: "Não foi possível criar o projeto"
 
 dialogo_abrir_projeto:
@@ -78,15 +80,36 @@ mosaico:
   estado_qc_ok: "QC ok"
   estado_alerta: Alerta
   estado_publicado: Publicado
+  estado_duplicata: "Já conhecido"
   contagem_itens: "{n} itens"
 
 ficha:
-  vazia: "Selecione um item para ver a ficha."
+  alternar: Detalhes
+  vazia: "Clique num arquivo da grade pra ver e editar as informações dele aqui."
+  nao_classificado: "Ainda não classificado. Escolha um tipo de mídia pra preencher a ficha:"
+  recategorizar: "Trocar tipo"
+  recategorizar_titulo: "Escolha um novo tipo de mídia:"
+  lote_titulo: "{n} materiais selecionados"
+  lote_valores_multiplos: "Múltiplos valores"
+  lote_tipo_misto: "A seleção tem tipos de mídia diferentes. Selecione itens do mesmo tipo pra editar a ficha em lote."
+  lote_escolher_tipo: "Nenhum dos materiais selecionados está classificado ainda. Escolha um tipo de mídia pra aplicar a todos:"
+  lote_campos_nao_suportados: "Campos de tabela e lista de pessoas ainda não são editáveis em lote — edite item por item."
+  lote_tipo_misto_universais: "A seleção tem tipos de mídia diferentes — só Origem e Ano existem em todos os tipos, então só esses podem ser editados juntos."
+  lote_previa: "{n} materiais serão alterados: {campos}"
+  lote_nenhum_campo_tocado: "Edite um campo acima, depois aplique pra seleção inteira."
+  lote_aplicar: Aplicar
+  lote_desfazer: Desfazer
+  lote_resultado: "{sucessos} alterados"
+  lote_resultado_falhas: ", {falhas} falharam"
+  lote_resultado_desfeito: "{n} restaurados"
   cabecalho_sem_titulo: "(sem título)"
   secao_arquivos_esperados: "Arquivos esperados"
   arquivo_presente: presente
   arquivo_ausente: ausente
   arquivo_obrigatorio: obrigatório
+  secao_observacoes: "Observações"
+  observacao_nova: "Nova observação"
+  observacao_minutagem_dica: "Minutagem (MM:SS, opcional)"
   sugestao_rotulo: sugestão
   sugestao_confirmar: Confirmar
   sugestao_confianca: "confiança {p}%"
@@ -115,8 +138,104 @@ configuracoes_projeto:
   aviso_sobrescrever_cancelar: Cancelar
   botao_fechar: Fechar
 
+transporte:
+  play: PLAY
+  stop: STOP
+  inicio: START
+  fim: END
+  jog: JOG
+  shuttle: SHUTTLE
+
+timeline:
+  zoom_tudo: "Ver tudo"
+  timecode: Timecode
+  marcador: "+ Marcador"
+  marcador_dica: "O que este ponto indica?"
+  marcador_editar: "Editar texto"
+  marcador_apagar: "Apagar marcador"
+  sem_onda: "Sem forma de onda pra este arquivo."
+
+metricas:
+  resumo_grade: "Na grade"
+  sem_arquivo: "Ainda sem arquivo"
+  itens: Itens
+  tamanho: Tamanho
+  formato: Formato
+  lufs_i: "LUFS-I"
+  lra: LRA
+  pico: Pico
+  sample_rate: "Sample rate"
+  bit_depth: "Bit depth"
+  canais: Canais
+  codec: Codec
+  duracao: "Duração"
+  resolucao: "Resolução"
+  fps: FPS
+  bitrate: Bitrate
+  espaco_cor: "Espaço de cor"
+  dimensao: "Dimensões"
+  profundidade: Profundidade
+  paginas: "Páginas"
+
+navegador:
+  titulo: "Adicionar ao backup"
+  abrir: "Navegar arquivos…"
+  buscar: "Buscar nesta pasta e nas subpastas"
+  vazio: "Nada aqui."
+  secao_favoritos: FAVORITOS
+  secao_volumes: VOLUMES
+  secao_recentes: RECENTES
+  visao_colunas: Colunas
+  visao_lista: Lista
+  visao_icones: "Ícones"
+  filtro_todos: "Todos os arquivos"
+  filtro_audio: "Só áudio"
+  filtro_video: "Só vídeo"
+  filtro_imagem: "Só imagens"
+  filtro_documento: "Só documentos"
+  ordem_nome: "Ordem: nome"
+  ordem_data: "Ordem: data"
+  ordem_tamanho: "Ordem: tamanho"
+  ordem_tipo: "Ordem: tipo"
+  manter_estrutura: "Manter a estrutura de pastas"
+  adicionar: "ADICIONAR AO BACKUP"
+  adicionar_n: "ADICIONAR {n} AO BACKUP"
+  selecao_vazia: "Nada selecionado."
+  resumo_selecao: "{n} arquivos, {tamanho}"
+  previa_vazia: "Selecione algo pra ver a prévia."
+  previa_pasta: "Pasta"
+
+hierarquia:
+  titulo: "Estrutura de pastas do backup"
+  acrescentar: "+ acrescentar nível…"
+  nivel_projeto: Projeto
+  nivel_ano: Ano
+  nivel_tipo_midia: "Tipo de mídia"
+  nivel_tipo_arquivo: "Tipo de arquivo"
+  nivel_origem: Origem
+  nivel_artista: Artista
+  nivel_pasta_manual: "Pastas que eu montei à mão"
+
+consolidacao:
+  titulo: Backup
+  destino_nao_escolhido: "Escolha o disco ou a pasta onde o backup vai ser gravado."
+  escolher_destino: "Escolher onde gravar…"
+  previa_vazia: "Ainda não há nada pra gravar. Arraste pastas ou arquivos da EXPLORER pras pastas da BACKUP, à esquerda — é essa organização que vira o backup."
+  ja_consolidado: "já copiado"
+  aviso_nao_organizados: "{n} arquivo(s) ainda fora de qualquer pasta da BACKUP — não entram neste backup."
+  aviso_conflitos: "{n} nome(s) repetido(s) — resolva antes de gravar."
+  aviso_espaco: "Precisa de: {necessario}  ·  Livre no destino: {disponivel}"
+  consolidar: "Gravar backup"
+  consolidando: "Gravando… em acervos grandes isso pode demorar bastante."
+  progresso: "Gravando… {feito}/{total}"
+  cancelado: "Cancelado — {feito} de {total} processados. O que foi gravado está salvo e verificado."
+  resultado: "{consolidados} copiados, {pulados} já estavam em dia"
+  resultado_falhas: "{n} falharam"
+  fechar: Fechar
+
 comum:
   ok: OK
+  salvar: Salvar
   cancelar: Cancelar
   sim: Sim
   nao: "Não"
@@ -124,15 +243,188 @@ comum:
 
 ingest:
   titulo: "Ingestão"
-  resumo: "{n} arquivo(s) ingerido(s) com sucesso."
-  resumo_erros: "Não foi possível ingerir:"
+  resumo_novos: "{n} novo(s)"
+  resumo_duplicatas: "{n} já conhecido(s)"
+  resumo_erros: "{n} falharam"
   erro_extensao_desconhecida: "extensão não reconhecida (tipo de mídia não pôde ser inferido)"
   ja_em_andamento: "Já existe um lote sendo ingerido. Aguarde terminar antes de iniciar outro."
   progresso: "Ingerindo… {feito}/{total}"
+  cancelar: Cancelar
+  cancelando: "Cancelando…"
+  cancelado: "Cancelado — {feito} de {total} processados. O que foi feito está salvo."
   selecionar_tipo_titulo: "Tipo de mídia"
   selecionar_tipo_corpo: "{n} arquivo(s) selecionado(s). Qual o tipo de mídia de origem deste lote?"
   selecionar_tipo_confirmar: Ingerir
 
+# Catálogo de proxies — gravado dentro do backup, abre sem o projeto
+# original e sem o material conectado. É o que transforma o backup de um
+# monte de arquivos numa coisa consultável.
+catalogo:
+  titulo: "Catálogo do backup"
+  fechar: "Fechar catálogo"
+  gerar: "Gerar catálogo de consulta"
+  gerar_ajuda: "Miniaturas, fichas e a localização de cada arquivo, gravadas junto com o backup. Ocupa {tamanho} e permite consultar o acervo com o HD desconectado."
+  gerando: "Gerando catálogo… {feito}/{total}"
+  gerado: "Catálogo gravado — {n} materiais consultáveis sem o HD conectado."
+  cancelado: "Catálogo cancelado — {feito} de {total}. O que foi gravado está salvo."
+  vazio: "Este catálogo está vazio."
+  sem_resultado: "Nenhum material encontrado para esta busca."
+  disponivel: "disponível"
+  ausente: "fonte ausente"
+  volume_desconhecido: "disco não identificado"
+  onde_esta_titulo: "Onde este arquivo está"
+  onde_esta_corpo: "{titulo}\n\nDisco: {volume}\nPasta: {local}\n\nCaminho completo:\n{caminho}\n\nConecte o disco para abrir o arquivo."
+  abrir: "Abrir catálogo de backup…"
+  nao_e_catalogo: "Esta pasta não tem um catálogo do Matriz dentro."
+
+metadados:
+  titulo: "Metadados originais"
+  somente_leitura: "somente leitura"
+  editaveis: "Metadados do backup"
+  editaveis_ajuda: "o que você preenche"
+  vazio: "Este arquivo não trouxe metadado técnico legível."
+  tamanho: "Tamanho do arquivo"
+  duracao: "Duração"
+  dimensoes: "Dimensões"
+  codec: Codec
+  sample_rate: "Taxa de amostragem"
+  bit_depth: "Profundidade"
+  canais: Canais
+  fps: "Quadros por segundo"
+  lossy: "Já vinha comprimido com perda"
+  mais: "+ {n} outros campos"
+
 painel_inconsistencias:
-  titulo: Inconsistências
-  vazio: "Nenhuma inconsistência encontrada."
+  titulo: "Precisa de atenção"
+  vazio: "Nada pendente por aqui — está tudo consistente."
+
+preview:
+  sem_arquivo: "Este item ainda não tem arquivo associado."
+  sem_visualizacao: "Sem prévia disponível para este tipo de arquivo."
+  video_sem_player: "Reprodução de vídeo ainda não implementada — mostrando o keyframe e os dados técnicos."
+  duracao: Duração
+  sample_rate: "Taxa de amostragem"
+  dimensoes: Dimensões
+  tocar: Tocar
+  pausar: Pausar
+
+estado_vazio:
+  titulo: "Arraste sua pasta ou seu HD pra cá"
+  subtitulo: "ou clique aqui pra escolher no computador"
+  rodape: "Seus arquivos originais não são movidos nem apagados — o Matriz faz uma cópia dentro do projeto."
+
+grade:
+  tamanho_pequeno: P
+  tamanho_medio: M
+  tamanho_grande: G
+  tamanho_lista: Lista
+  adicionar_material: "Adicionar material…"
+  nao_classificado: "Não classificado"
+  sem_ano: "Sem ano"
+  agrupar_automatico: "Agrupar: tipo"
+  agrupar_por_ano: "Agrupar: ano"
+
+filtros:
+  secao_extensao: "Tipo de arquivo"
+  secao_origem: "Origem"
+  origem_digital: Digital
+  origem_analogico: "Analógico"
+  secao_colecoes: "Coleções inteligentes"
+  limpar: "Limpar filtros"
+  salvar_colecao: "Salvar busca atual…"
+  nome_colecao_titulo: "Salvar coleção inteligente"
+  nome_colecao_mensagem: "Nome da coleção:"
+
+arvore:
+  aba_origem: EXPLORER
+  aba_acervo: BACKUP
+  # EXPLORER = a estrutura real das fontes, intocada, só pra navegar e
+  # localizar. BACKUP = a estrutura que o operador monta e que vai ser
+  # materializada pela gravação do backup.
+  explorer_dica: "A estrutura real do disco de origem, como ela é. Nada aqui é editável."
+  backup_dica: "A estrutura que você monta e que vai ser gravada no backup."
+  manter_estrutura: "Manter a estrutura de pastas"
+  achatar_estrutura: "Colocar tudo direto nesta pasta"
+  soltar_pasta_titulo: "Como trazer esta pasta?"
+  soltar_pasta_mensagem: "\"{pasta}\" tem {n} arquivo(s) em subpastas."
+  incluir_subpastas: "Incluir subpastas"
+  todos_os_materiais: "Todos os arquivos"
+  nao_organizados: "Ainda sem pasta"
+  nova_pasta: "Nova pasta"
+  nome_nova_pasta_titulo: "Nova pasta"
+  nome_nova_pasta_mensagem: "Nome da pasta:"
+  renomear_pasta_titulo: "Renomear pasta"
+  renomear_pasta_mensagem: "Novo nome:"
+  menu_nova_subpasta: "Nova subpasta"
+  menu_renomear: Renomear
+  menu_apagar: Apagar
+  apagar_confirmar_titulo: "Apagar pasta?"
+  apagar_confirmar_mensagem: "Isto só apaga a pasta do plano de organização — nenhum arquivo em disco é tocado. Os arquivos que estavam nela continuam no projeto, só voltam pra \"Ainda sem pasta\"."
+
+# Ações sobre um arquivo ou sobre a seleção — servidas igualmente pelo menu
+# de botão direito na grade e pelo painel direito. Nenhuma delas apaga
+# arquivo em disco, e os textos dizem isso explicitamente: é a garantia que
+# o operador precisa ter pra mexer num HD que ele não quer perder.
+acoes:
+  categorizar: "Categorizar…"
+  preview: "Ver prévia"
+  renomear: "Renomear…"
+  renomear_titulo: Renomear
+  renomear_previa: "No backup vai ficar: {nome}"
+  renomear_mensagem: "Novo nome. É ele que vai virar o nome do arquivo no backup."
+  renomear_mensagem_lote: "Novo nome para os {n} arquivos. A máscara numera cada um automaticamente."
+  enviar_para_pasta: "Enviar para pasta"
+  sem_pastas: "Nenhuma pasta criada ainda — crie uma no \"+\" da aba BACKUP"
+  remover_do_backup: "Remover do backup"
+  remover_do_backup_titulo: "Remover do backup?"
+  remover_do_backup_mensagem: "{n} arquivo(s) saem das pastas da BACKUP e voltam para \"Ainda sem pasta\".\n\nNenhum arquivo é apagado do disco."
+  remover_da_lista: "Remover desta lista"
+  remover_da_lista_titulo: "Remover desta lista?"
+  remover_da_lista_mensagem: "{n} arquivo(s) somem desta lista e do projeto, junto com a ficha preenchida.\n\nNenhum arquivo é apagado do disco: o original na fonte continua onde está."
+  definir_capa: "Usar imagem como capa…"
+  remover_capa: "Remover capa"
+  mostrar_na_origem: "Mostrar na origem"
+  copiar_caminho: "Copiar caminho"
+  ver_duplicatas: "Ver duplicatas deste arquivo"
+  sem_duplicatas: "Nenhum outro arquivo do projeto tem este mesmo conteúdo."
+  origem_ausente_titulo: "Origem não está conectada"
+  origem_ausente_mensagem: "O arquivo veio de:\n{caminho}\n\nConecte o disco de origem para abrir a pasta."
+
+# Barra de ferramentas superior — as ações reais do app, sempre visíveis.
+# Antes só existiam no menu do sistema, o que fazia o app não se explicar
+# sozinho: quem abria pela primeira vez via uma grade vazia e nenhum botão.
+barra:
+  adicionar: "Adicionar arquivos"
+  adicionar_dica: "Escolha uma pasta ou arquivos pra copiar pro projeto. Você também pode arrastar direto do Finder pra qualquer lugar desta janela."
+  buscar: "Buscar por nome, código ou qualquer informação"
+  tamanho_dica: "Tamanho das miniaturas"
+  detalhes_dica: "Mostra ou esconde o painel lateral com as informações do que está selecionado."
+  backup: Backup
+  backup_dica: "Copia o original byte a byte pra outro disco, seguindo as pastas que você montou em BACKUP. A origem nunca é tocada."
+  contagem: "{visiveis} de {total} arquivos"
+  contagem_filtrada: "{visiveis} de {total} arquivos  ·  filtro ativo"
+
+# Faixa de orientação: diz, em uma frase, o que fazer AGORA. Muda conforme
+# o estado do projeto e pode ser dispensada — é a resposta direta a "o
+# software não se explica".
+guia:
+  vazio_titulo: "Comece arrastando seus arquivos pra cá"
+  vazio_corpo: "Pode ser um HD inteiro, uma pasta ou arquivos soltos. Nada é movido nem apagado: o Matriz copia pra dentro do projeto e monta a visualização."
+  classificar_titulo: "{n} arquivo(s) ainda sem categoria"
+  classificar_corpo: "Selecione vários (clique num, depois Shift+clique noutro) e use \"Editar em lote\" pra dar categoria e informações a todos de uma vez."
+  organizar_titulo: "Agora monte a organização do backup"
+  organizar_corpo: "Abra a aba BACKUP à esquerda, crie pastas no \"+\", e arraste pastas ou arquivos da EXPLORER pra dentro delas."
+  backup_titulo: "Pronto pra gravar o backup"
+  backup_corpo: "Clique em Backup e escolha o disco de destino. O Matriz grava tudo na organização que você montou."
+  ocultar: "Entendi"
+  mostrar: "Dica"
+
+# Barra de seleção — aparece só quando há arquivos marcados na grade.
+# Torna visível a edição em lote, que antes só existia dentro do painel
+# lateral fechado por padrão (ninguém achava).
+selecao:
+  contagem_um: "1 arquivo selecionado"
+  contagem: "{n} arquivos selecionados"
+  editar_lote: "Editar em lote"
+  selecionar_todos: "Selecionar todos"
+  limpar: "Limpar seleção"

@@ -9,6 +9,7 @@
 #include <iostream>
 
 #include "App/Preferencias.h"
+#include "Ficha/CatalogoDeFichas.h"
 #include "Ficha/FichaDefinition.h"
 #include "I18n/Strings.h"
 #include "Model/Project.h"
@@ -36,31 +37,31 @@ void expectThrow(const std::string& description, const std::function<void()>& fn
     }
 }
 
-const std::vector<std::string>& tiposEsperados() {
-    static const std::vector<std::string> tipos = {
-        "fita_rolo", "cassete", "vinil", "dat", "minidisc", "cd",
-        "filme", "video", "foto", "negativo", "slide", "documento",
-        "release", "sample"};
-    return tipos;
-}
-
+// Tipos descobertos em tempo de execução em fichas/*.yaml (§6.1) — nenhuma
+// lista de ids hardcoded. Se algum YAML for inválido, listarTodosOsTipos
+// lança; deixamos propagar pro catch abaixo, que reporta e para o teste
+// (falha visível é o comportamento desejado, não pular o arquivo quebrado).
 void testarDefinicoesDeFicha() {
-    std::cout << "== Parser/validador de ficha (" << tiposEsperados().size() << " tipos) ==\n";
     juce::File fichasDir(MATRIZ_FICHAS_DIR);
     check(fichasDir.isDirectory(), "pasta fichas/ existe: " + fichasDir.getFullPathName().toStdString());
 
-    for (auto& tipo : tiposEsperados()) {
-        juce::File f = fichasDir.getChildFile(tipo + ".yaml");
-        try {
-            matriz::ficha::FichaDefinition def = matriz::ficha::loadFromFile(f.getFullPathName().toStdString());
-            bool tipoOk = def.tipo == tipo;
-            bool temCampos = !def.todosCampos().empty();
-            check(tipoOk && temCampos,
-                  tipo + ".yaml carregou (" + std::to_string(def.todosCampos().size()) + " campos, " +
-                      (def.usaNiveis() ? "níveis: " + std::to_string(def.niveis.size()) : "grupos: " + std::to_string(def.grupos.size())) + ")");
-        } catch (const std::exception& e) {
-            check(false, tipo + ".yaml: " + e.what());
-        }
+    std::vector<matriz::ficha::TipoFichaInfo> tipos;
+    try {
+        tipos = matriz::ficha::listarTodosOsTipos(MATRIZ_FICHAS_DIR);
+    } catch (const std::exception& e) {
+        check(false, std::string("listarTodosOsTipos(fichas/): ") + e.what());
+        return;
+    }
+    std::cout << "== Parser/validador de ficha (" << tipos.size() << " tipos descobertos em fichas/) ==\n";
+
+    for (auto& info : tipos) {
+        bool tipoOk = info.definicao.tipo == info.id;
+        bool temCampos = !info.definicao.todosCampos().empty();
+        check(tipoOk && temCampos,
+              info.id + ".yaml carregou (" + std::to_string(info.definicao.todosCampos().size()) + " campos, " +
+                  (info.definicao.usaNiveis() ? "níveis: " + std::to_string(info.definicao.niveis.size())
+                                               : "grupos: " + std::to_string(info.definicao.grupos.size())) +
+                  ")");
     }
 
     // Definição inválida deliberada: grupos E niveis juntos devem ser rejeitados.
@@ -135,6 +136,22 @@ void testarDefinicoesDeFicha() {
               "âncora/referência YAML (recurso real, não suportado pelo parser artesanal antigo) funciona via yaml-cpp");
     } catch (const std::exception& e) {
         check(false, std::string("âncora/referência YAML: ") + e.what());
+    }
+}
+
+// Passo 5 da Fatia A (correção do usuário): tradução de grupo por nome, não
+// por posição. Todo grupo de toda ficha precisa de uma chave correspondente
+// em i18n/en.yaml (ficha_grupos.<tipo>.<chave>) — esquecer uma vira erro de
+// teste aqui, não um rótulo trocado em silêncio em produção.
+void testarTraducaoDeGrupos() {
+    std::cout << "== Cobertura de tradução de grupo (ficha_grupos.<tipo>.<chave> em en.yaml) ==\n";
+    matriz::i18n::carregar("en");
+    for (auto& info : matriz::ficha::listarTodosOsTipos(MATRIZ_FICHAS_DIR)) {
+        if (info.definicao.usaNiveis()) continue; // fichas com níveis não têm grupos
+        for (auto& grupo : info.definicao.grupos) {
+            std::string chave = "ficha_grupos." + info.id + "." + grupo.chave;
+            check(matriz::i18n::existe(chave), chave + " existe em en.yaml");
+        }
     }
 }
 
@@ -236,17 +253,19 @@ void testarI18n() {
 
     matriz::i18n::carregar("en");
     check(matriz::i18n::t("menu.arquivo") == "File", "locale en: menu.arquivo = \"File\"");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").isNotEmpty() &&
-              matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").startsWith("Archive"),
-          "locale en: modo preservação chama \"Archive\"");
+    // O rótulo do modo deixou de ser o jargão "Archive"/"Acervo" e passou a
+    // dizer o que a pessoa tem em mãos ("mixed files" / "arquivos variados")
+    // — mudança deliberada de vocabulário, não regressão.
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New mixed-files project",
+          "locale en: modo preservação chama \"New mixed-files project\"");
     check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
           "chave ausente devolve [chave], nunca lança nem trava");
 
     matriz::i18n::carregar("pt_BR");
     check(matriz::i18n::t("menu.arquivo") == "Arquivo",
           "carregar() de novo troca o locale em tempo real: menu.arquivo = \"Arquivo\"");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao").startsWith("Acervo"),
-          "locale pt_BR: modo preservação chama \"Acervo\"");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "Novo projeto de arquivos variados",
+          "locale pt_BR: modo preservação chama \"Novo projeto de arquivos variados\"");
 
     matriz::i18n::carregar("en");
     check(matriz::i18n::t("menu.arquivo") == "File", "troca de volta pra en funciona (não é só a primeira carga)");
@@ -281,6 +300,7 @@ void testarRecentes() {
 
 int main() {
     testarDefinicoesDeFicha();
+    testarTraducaoDeGrupos();
     testarProjetoPortavel();
     testarI18n();
     testarRecentes();

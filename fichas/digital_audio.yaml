@@ -1,0 +1,59 @@
+tipo: digital_audio
+rotulo: Áudio digital
+modos: [archive, catalog]
+ordem: 140
+icone: audio
+grupos:
+  - rotulo: Arquivo
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: formato_arquivo
+        rotulo: Formato do arquivo
+        tipo: opcao
+        opcoes: [WAV, AIFF, FLAC, MP3, Other]
+        obrigatorio: true
+      - id: sample_rate_declarado
+        rotulo: Sample rate declarado
+        tipo: inteiro
+        preenchido_por: leitura_tecnica
+      - id: bit_depth_declarado
+        rotulo: Bit depth declarado
+        tipo: inteiro
+        preenchido_por: leitura_tecnica
+      - id: codec
+        rotulo: Codec
+        tipo: texto
+        preenchido_por: leitura_tecnica
+  - rotulo: Origem digital
+    campos:
+      - id: daw_origem
+        rotulo: DAW de origem
+        tipo: opcao_livre
+        opcoes: ["Pro Tools", Logic, Ableton, Cubase, Reaper, Other]
+      - id: eh_mixdown_ou_stem
+        rotulo: Tipo de material
+        tipo: opcao
+        opcoes: [mixdown, stem, master, bounce]
+      - id: plugins_criticos
+        rotulo: Plugins críticos (dependência de sessão)
+        tipo: texto
+  - rotulo: Conteúdo
+    campos:
+      - id: natureza
+        rotulo: Natureza do conteúdo
+        tipo: opcao
+        opcoes: [fala, música, ambiente, ritual, misto, tons de teste]
+        sugerido_por: classificador_fala_musica
+        afeta: [habilitar_transcricao]
+      - id: idioma
+        rotulo: Idioma
+        tipo: opcao_livre
+        visivel_se: "natureza in [fala, misto]"

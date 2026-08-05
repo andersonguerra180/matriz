@@ -1,8 +1,17 @@
 tipo: release
 rotulo: Release fonográfico
+modos: [archive, catalog]
+ordem: 120
+icone: audio
 niveis: [release, faixa]
 release:
   campos:
+    - id: origem
+      rotulo: Origem
+      tipo: opcao
+      opcoes: [Digital, Analógico]
+      obrigatorio: true
+      preenchido_por: leitura_tecnica
     - id: titulo
       rotulo: Título
       tipo: texto

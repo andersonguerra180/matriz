@@ -1,8 +1,20 @@
 tipo: documento
 rotulo: Documento
+modos: [archive]
+ordem: 110
+icone: documento
 grupos:
   - rotulo: Identificação
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: tipo_documento
         rotulo: Tipo de documento
         tipo: opcao

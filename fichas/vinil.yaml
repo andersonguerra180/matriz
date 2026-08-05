@@ -1,8 +1,20 @@
 tipo: vinil
 rotulo: Vinil
+modos: [archive, catalog]
+ordem: 20
+icone: audio
 grupos:
   - rotulo: Suporte
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: formato
         rotulo: Formato
         tipo: opcao

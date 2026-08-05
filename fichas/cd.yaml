@@ -1,8 +1,20 @@
 tipo: cd
 rotulo: CD
+modos: [archive]
+ordem: 50
+icone: audio
 grupos:
   - rotulo: Suporte
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: tipo_disco
         rotulo: Tipo de disco
         tipo: opcao

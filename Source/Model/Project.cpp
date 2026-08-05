@@ -31,9 +31,32 @@ namespace {
 
 std::string readBinarySql(const char* data, int size) { return std::string(data, static_cast<size_t>(size)); }
 
+// CREATE TABLE IF NOT EXISTS cobre tabela nova, mas NÃO cobre coluna nova
+// numa tabela que já existe — um projeto criado por uma versão anterior
+// reabriria sem a coluna e a query falharia. Este é o mecanismo mínimo de
+// migração aditiva: pergunta ao SQLite se a coluna existe (PRAGMA
+// table_info) e só então faz o ALTER TABLE. Aditivo e idempotente, nunca
+// remove nem renomeia nada (migração destrutiva continua fora de escopo
+// até a Etapa 10).
+void garantirColuna(matriz::db::Database& db, const std::string& tabela, const std::string& coluna,
+                     const std::string& tipoEDefault) {
+    auto stmt = db.prepare("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?");
+    stmt.bind(1, matriz::db::Value::of(tabela));
+    stmt.bind(2, matriz::db::Value::of(coluna));
+    stmt.step();
+    if (stmt.columnInt(0) > 0) return;
+    db.exec("ALTER TABLE " + tabela + " ADD COLUMN " + coluna + " " + tipoEDefault);
+}
+
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     registro.execScript(readBinarySql(BinaryData::registro_sql, BinaryData::registro_sqlSize));
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
+
+    // Colunas acrescentadas depois da primeira versão do schema.
+    garantirColuna(registro, "colecao_inteligente", "filtros_origem", "TEXT");
+    garantirColuna(registro, "colecao_inteligente", "ano_de", "INTEGER");
+    garantirColuna(registro, "colecao_inteligente", "ano_ate", "INTEGER");
+    garantirColuna(registro, "projeto", "hierarquia_backup", "TEXT");
 }
 
 } // namespace

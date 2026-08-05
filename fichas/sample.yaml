@@ -1,8 +1,20 @@
 tipo: sample
 rotulo: Sample
+modos: [archive, catalog]
+ordem: 130
+icone: audio
 grupos:
   - rotulo: Classificação
     campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
       - id: categoria
         rotulo: Categoria
         tipo: opcao
@@ -29,6 +41,6 @@ grupos:
         tipo: opcao
         opcoes: ["royalty-free", exclusiva, "sample clearance pendente", "uso interno"]
         obrigatorio: true
-      - id: origem
+      - id: origem_texto
         rotulo: Origem
         tipo: texto

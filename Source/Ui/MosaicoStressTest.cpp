@@ -1,5 +1,6 @@
 #include "MosaicoStressTest.h"
 
+#include "../I18n/Strings.h"
 #include "../Model/Project.h"
 #include "MosaicoComponent.h"
 #include "ProjetoAberto.h"
@@ -183,6 +184,14 @@ int rodarStressTestMosaico10k() {
         // --- Agrupamento por modo (Parte 1 da correção de fluxo, §3.5) ---
         // Archive agrupa por tipo de mídia; Catalog por artista/lançamento
         // (lido da ficha, não de item.titulo — ver ProjetoAberto::listarItens).
+        //
+        // Fixa o locale antes de comparar rótulo: Main.cpp carrega o idioma
+        // das preferências da MÁQUINA antes de entrar no selftest, então
+        // sem isto o teste passava ou falhava conforme o idioma em que o
+        // app tivesse sido deixado da última vez — verde num computador,
+        // vermelho em outro, sem nada no código ter mudado.
+        matriz::i18n::carregar("en");
+
         matriz::model::NovoProjetoParams paramsArchive;
         paramsArchive.nome = "Grupos archive";
         paramsArchive.modo = matriz::model::Modo::Preservacao;
@@ -198,12 +207,15 @@ int rodarStressTestMosaico10k() {
         auto gruposArchive = mosaicoArchive.rotulosDeGrupo();
         checar(gruposArchive.size() == 2, "archive com fita_rolo+foto rende 2 grupos (" +
                                                juce::String(static_cast<int>(gruposArchive.size())) + ")");
+        // Rótulos em inglês (locale padrão) — fichas/*.yaml agora passa
+        // pela camada de tradução (Source/Ficha/FichaI18n.h, correção
+        // crítica pós-teste do usuário #2).
         checar(std::any_of(gruposArchive.begin(), gruposArchive.end(),
-                            [](const juce::String& s) { return s == "Fita de rolo — 2"; }),
-               "grupo \"Fita de rolo — 2\" presente");
+                            [](const juce::String& s) { return s == "Reel tape — 2"; }),
+               "grupo \"Reel tape — 2\" presente");
         checar(std::any_of(gruposArchive.begin(), gruposArchive.end(),
-                            [](const juce::String& s) { return s == "Foto — 1"; }),
-               "grupo \"Foto — 1\" presente");
+                            [](const juce::String& s) { return s == "Photo — 1"; }),
+               "grupo \"Photo — 1\" presente");
 
         matriz::model::NovoProjetoParams paramsCatalog;
         paramsCatalog.nome = "Grupos catalog";
