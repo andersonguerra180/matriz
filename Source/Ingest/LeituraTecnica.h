@@ -33,9 +33,10 @@ public:
     explicit LeituraTecnicaError(const std::string& message) : std::runtime_error(message) {}
 };
 
-enum class CategoriaMidia { Audio, Video, Imagem, Documento, Desconhecida };
+enum class CategoriaMidia { Audio, Video, Imagem, Documento, Texto, Sessao, Desconhecida };
 
 CategoriaMidia categoriaPorExtensao(const juce::File& arquivo);
+CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto);
 
 struct LeituraTecnicaResultado {
     juce::var bruto; // objeto completo retornado por ffprobe (+ "exif" quando Exiv2 encontra dados), vira arquivo.caracteristicas_tecnicas_json

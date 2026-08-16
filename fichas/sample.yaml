@@ -3,6 +3,7 @@ rotulo: Sample
 modos: [archive, catalog]
 ordem: 130
 icone: audio
+categoria: digital
 grupos:
   - rotulo: Classificação
     campos:

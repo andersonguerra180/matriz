@@ -1,0 +1,59 @@
+tipo: vhs
+rotulo: VHS
+modos: [archive]
+ordem: 72
+icone: video
+categoria: analog
+grupos:
+  - rotulo: Media
+    campos:
+      - id: formato
+        rotulo: Format
+        tipo: opcao
+        opcoes: [VHS, S-VHS, VHS-C, S-VHS-C]
+        obrigatorio: true
+      - id: sistema_cor
+        rotulo: Color system
+        tipo: opcao
+        opcoes: [NTSC, PAL, SECAM]
+        obrigatorio: true
+      - id: ano
+        rotulo: Year
+        tipo: inteiro
+      - id: duracao_fita
+        rotulo: Tape length
+        tipo: opcao
+        opcoes: [T-30, T-60, T-90, T-120, T-160, T-180, T-210]
+  - rotulo: Digitization
+    campos:
+      - id: tbc_usado
+        rotulo: TBC used
+        tipo: booleano
+      - id: fps_captura
+        rotulo: Capture FPS
+        tipo: numero
+        preenchido_por: leitura_tecnica
+      - id: campo_entrelacado_detectado
+        rotulo: Interlaced field detected
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+  - rotulo: Physical condition
+    campos:
+      - id: dropout_frequente
+        rotulo: Frequent dropout
+        tipo: booleano
+      - id: fita_solta_enroscada
+        rotulo: Tape loose or tangled
+        tipo: booleano
+      - id: mofo
+        rotulo: Mold
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Overall condition
+        tipo: opcao
+        opcoes: [good, fair, fragile, critical]
+  - rotulo: Content
+    campos:
+      - id: descricao_conteudo
+        rotulo: Content description
+        tipo: texto

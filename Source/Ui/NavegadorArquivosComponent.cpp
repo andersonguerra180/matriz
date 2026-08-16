@@ -16,10 +16,18 @@ matriz::ingest::CategoriaMidia categoriaDe(const juce::File& f) { return matriz:
 
 NavegadorArquivosComponent::NavegadorArquivosComponent() {
     setWantsKeyboardFocus(true);
-    startTimer(120); // mede tamanho de pasta em fatias, fora do caminho do clique
+    addAndMakeVisible(btnVoltar_);
+    addAndMakeVisible(btnAvancar_);
+    addAndMakeVisible(btnSubir_);
+    btnVoltar_.onClick = [this] { voltar(); atualizarBotoesNavegacao(); repaint(); };
+    btnAvancar_.onClick = [this] { avancar(); atualizarBotoesNavegacao(); repaint(); };
+    btnSubir_.onClick = [this] { subirUmNivel(); atualizarBotoesNavegacao(); repaint(); };
+    atualizarBotoesNavegacao();
 }
 
-NavegadorArquivosComponent::~NavegadorArquivosComponent() { stopTimer(); }
+NavegadorArquivosComponent::~NavegadorArquivosComponent() {
+    threadPool_.removeAllJobs(true, 1000);
+}
 
 void NavegadorArquivosComponent::definirVisao(Visao v) {
     if (visao_ == v) return;
@@ -111,17 +119,34 @@ void NavegadorArquivosComponent::subirUmNivel() {
     if (pai != atual) irPara(pai);
 }
 
+bool NavegadorArquivosComponent::tipoCombina(const juce::File& arquivo, FiltroTipo filtro) {
+    if (filtro == FiltroTipo::Todos) return true;
+    auto cat = categoriaDe(arquivo);
+    return (filtro == FiltroTipo::Audio && cat == matriz::ingest::CategoriaMidia::Audio) ||
+           (filtro == FiltroTipo::Video && cat == matriz::ingest::CategoriaMidia::Video) ||
+           (filtro == FiltroTipo::Imagem && cat == matriz::ingest::CategoriaMidia::Imagem) ||
+           (filtro == FiltroTipo::Documento && cat == matriz::ingest::CategoriaMidia::Documento);
+}
+
+void NavegadorArquivosComponent::ordenarEntradas(std::vector<Entrada>& entradas, Ordenacao ordenacao) {
+    std::sort(entradas.begin(), entradas.end(), [ordenacao](const Entrada& a, const Entrada& b) {
+        // Pasta antes de arquivo sempre — é o que faz navegar rápido.
+        if (a.ehPasta != b.ehPasta) return a.ehPasta;
+        switch (ordenacao) {
+            case Ordenacao::Data: return a.modificado > b.modificado;
+            case Ordenacao::Tamanho: return a.tamanho > b.tamanho;
+            case Ordenacao::Tipo:
+                return a.arquivo.getFileExtension().compareIgnoreCase(b.arquivo.getFileExtension()) < 0;
+            case Ordenacao::Nome:
+            default: return a.arquivo.getFileName().compareIgnoreCase(b.arquivo.getFileName()) < 0;
+        }
+    });
+}
+
 bool NavegadorArquivosComponent::passaFiltros(const juce::File& arquivo, bool ehPasta) const {
     // Pasta nunca é escondida por filtro de tipo: esconder pasta impede de
     // navegar até o que está dentro dela.
-    if (!ehPasta && filtroTipo_ != FiltroTipo::Todos) {
-        auto cat = categoriaDe(arquivo);
-        bool bate = (filtroTipo_ == FiltroTipo::Audio && cat == matriz::ingest::CategoriaMidia::Audio) ||
-                    (filtroTipo_ == FiltroTipo::Video && cat == matriz::ingest::CategoriaMidia::Video) ||
-                    (filtroTipo_ == FiltroTipo::Imagem && cat == matriz::ingest::CategoriaMidia::Imagem) ||
-                    (filtroTipo_ == FiltroTipo::Documento && cat == matriz::ingest::CategoriaMidia::Documento);
-        if (!bate) return false;
-    }
+    if (!ehPasta && !tipoCombina(arquivo, filtroTipo_)) return false;
     if (busca_.trim().isNotEmpty() && !arquivo.getFileName().containsIgnoreCase(busca_.trim())) return false;
     return true;
 }
@@ -130,13 +155,9 @@ std::vector<NavegadorArquivosComponent::Entrada> NavegadorArquivosComponent::ler
     std::vector<Entrada> out;
     if (!pasta.isDirectory()) return out;
 
-    // Busca ativa alcança as subpastas também (item 3.2 — "filtrando a pasta
-    // atual e as subpastas"), então o modo de varredura muda com a busca.
-    bool recursivo = busca_.trim().isNotEmpty();
     int flags = juce::File::findFilesAndDirectories | juce::File::ignoreHiddenFiles;
-    for (const auto& f : pasta.findChildFiles(flags, recursivo)) {
+    for (const auto& f : pasta.findChildFiles(flags, false)) {
         bool ehPasta = f.isDirectory();
-        if (recursivo && ehPasta) continue; // numa busca, o resultado é arquivo, não pasta intermediária
         if (!passaFiltros(f, ehPasta)) continue;
         Entrada e;
         e.arquivo = f;
@@ -146,18 +167,7 @@ std::vector<NavegadorArquivosComponent::Entrada> NavegadorArquivosComponent::ler
         out.push_back(std::move(e));
     }
 
-    std::sort(out.begin(), out.end(), [this](const Entrada& a, const Entrada& b) {
-        // Pasta antes de arquivo sempre — é o que faz navegar rápido.
-        if (a.ehPasta != b.ehPasta) return a.ehPasta;
-        switch (ordenacao_) {
-            case Ordenacao::Data: return a.modificado > b.modificado;
-            case Ordenacao::Tamanho: return a.tamanho > b.tamanho;
-            case Ordenacao::Tipo:
-                return a.arquivo.getFileExtension().compareIgnoreCase(b.arquivo.getFileExtension()) < 0;
-            case Ordenacao::Nome:
-            default: return a.arquivo.getFileName().compareIgnoreCase(b.arquivo.getFileName()) < 0;
-        }
-    });
+    ordenarEntradas(out, ordenacao_);
     return out;
 }
 
@@ -168,8 +178,55 @@ void NavegadorArquivosComponent::reconstruirColunas() {
     } else if (!caminho_.empty()) {
         colunas_.push_back({caminho_.back(), lerPasta(caminho_.back()), 0});
     }
+    atualizarBotoesNavegacao();
     resized();
     repaint();
+
+    // A busca só se aplica à pasta ATUAL (a última coluna): filtrar também
+    // as colunas ancestrais faria uma varredura recursiva por nível de
+    // caminho — com a raiz num volume grande, minutos de message thread
+    // parada, que é exatamente o travamento que motivou I1.
+    juce::String termo = busca_.trim();
+    if (termo.isNotEmpty() && !caminho_.empty()) dispararBuscaRecursiva(caminho_.back(), termo);
+}
+
+void NavegadorArquivosComponent::dispararBuscaRecursiva(const juce::File& pasta, const juce::String& termo) {
+    const int geracao = ++geracaoBusca_;
+    buscaEmAndamento_ = true;
+    juce::Component::SafePointer<NavegadorArquivosComponent> safeThis(this);
+    auto filtroTipo = filtroTipo_;
+    auto ordenacao = ordenacao_;
+
+    threadPool_.addJob([safeThis, pasta, termo, geracao, filtroTipo, ordenacao]() {
+        std::vector<Entrada> achados;
+        for (const auto& f : pasta.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true)) {
+            if (!f.getFileName().containsIgnoreCase(termo)) continue;
+            if (filtroTipo != FiltroTipo::Todos && !tipoCombina(f, filtroTipo)) continue;
+            Entrada e;
+            e.arquivo = f;
+            e.ehPasta = false;  // resultado de busca é arquivo, não pasta intermediária
+            e.tamanho = f.getSize();
+            e.modificado = f.getLastModificationTime();
+            achados.push_back(std::move(e));
+            if (static_cast<int>(achados.size()) >= kMaxResultadosBusca) break;
+        }
+
+        ordenarEntradas(achados, ordenacao);
+
+        juce::MessageManager::callAsync([safeThis, geracao, achados = std::move(achados)]() mutable {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            // Resultado de uma busca já superada (o operador continuou
+            // digitando): descarta em vez de sobrescrever a coluna atual.
+            if (geracao != self->geracaoBusca_) return;
+            self->buscaEmAndamento_ = false;
+            if (self->colunas_.empty()) return;
+            self->colunas_.back().entradas = std::move(achados);
+            self->colunas_.back().scrollY = 0;
+            self->resized();
+            self->repaint();
+        });
+    });
 }
 
 void NavegadorArquivosComponent::limparSelecao() {
@@ -180,25 +237,33 @@ void NavegadorArquivosComponent::limparSelecao() {
 
 void NavegadorArquivosComponent::notificarSelecao() {
     for (auto& f : selecao_)
-        if (f.isDirectory() && !cacheTamanhoPasta_.count(f.getFullPathName()))
-            pastasPendentesDeMedida_.insert(f.getFullPathName());
+        if (f.isDirectory() && !cacheTamanhoPasta_.count(f.getFullPathName()) && !pastasEmAndamento_.count(f.getFullPathName()))
+            dispararMedidaDePasta(f.getFullPathName());
     if (aoMudarSelecao) aoMudarSelecao();
 }
 
-void NavegadorArquivosComponent::timerCallback() {
-    if (pastasPendentesDeMedida_.empty()) return;
-    juce::String caminho = *pastasPendentesDeMedida_.begin();
-    pastasPendentesDeMedida_.erase(pastasPendentesDeMedida_.begin());
+void NavegadorArquivosComponent::dispararMedidaDePasta(const juce::String& caminho) {
+    pastasEmAndamento_.insert(caminho);
+    juce::Component::SafePointer<NavegadorArquivosComponent> safeThis(this);
 
-    juce::File pasta(caminho);
-    int contagem = 0;
-    juce::int64 bytes = 0;
-    for (const auto& f : pasta.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true)) {
-        ++contagem;
-        bytes += f.getSize();
-    }
-    cacheTamanhoPasta_[caminho] = {contagem, bytes};
-    if (aoMudarSelecao) aoMudarSelecao(); // o resumo muda quando a medida chega
+    threadPool_.addJob([safeThis, caminho]() {
+        juce::File pasta(caminho);
+        int contagem = 0;
+        juce::int64 bytes = 0;
+        for (const auto& f : pasta.findChildFiles(juce::File::findFiles | juce::File::ignoreHiddenFiles, true)) {
+            ++contagem;
+            bytes += f.getSize();
+        }
+
+        juce::MessageManager::callAsync([safeThis, caminho, contagem, bytes]() {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            self->cacheTamanhoPasta_[caminho] = {contagem, bytes};
+            self->pastasEmAndamento_.erase(caminho);
+            self->repaint();
+            if (self->aoMudarSelecao) self->aoMudarSelecao();
+        });
+    });
 }
 
 int NavegadorArquivosComponent::totalArquivosNaSelecao() const {
@@ -237,8 +302,15 @@ juce::String NavegadorArquivosComponent::resumoSelecao() const {
 // --- layout e desenho --------------------------------------------------------
 
 void NavegadorArquivosComponent::resized() {
-    int alturaNecessaria = 0;
-    for (auto& c : colunas_) alturaNecessaria = std::max(alturaNecessaria, static_cast<int>(c.entradas.size()) * kAlturaLinha);
+    auto area = getLocalBounds();
+    auto toolbar = area.removeFromTop(kAlturaToolbar);
+    int btnW = kAlturaToolbar;
+    btnVoltar_.setBounds(toolbar.removeFromLeft(btnW));
+    btnAvancar_.setBounds(toolbar.removeFromLeft(btnW));
+    btnSubir_.setBounds(toolbar.removeFromLeft(btnW));
+
+    int alturaNecessaria = kAlturaToolbar;
+    for (auto& c : colunas_) alturaNecessaria = std::max(alturaNecessaria, kAlturaToolbar + static_cast<int>(c.entradas.size()) * kAlturaLinha);
     if (visao_ == Visao::Colunas) {
         setSize(std::max(getParentWidth(), static_cast<int>(colunas_.size()) * kLarguraColuna),
                  std::max(getParentHeight(), alturaNecessaria));
@@ -247,10 +319,20 @@ void NavegadorArquivosComponent::resized() {
     }
 }
 
+void NavegadorArquivosComponent::atualizarBotoesNavegacao() {
+    btnVoltar_.setEnabled(podeVoltar());
+    btnAvancar_.setEnabled(podeAvancar());
+    btnSubir_.setEnabled(!caminho_.empty() && caminho_.back().getParentDirectory() != caminho_.back());
+}
+
 void NavegadorArquivosComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.painel);
 
+    g.setColour(tk.borda);
+    g.drawHorizontalLine(kAlturaToolbar - 1, 0.0f, static_cast<float>(getWidth()));
+
+    int yOffset = kAlturaToolbar;
     for (size_t ic = 0; ic < colunas_.size(); ++ic) {
         auto& coluna = colunas_[ic];
         int x = visao_ == Visao::Colunas ? static_cast<int>(ic) * kLarguraColuna : 0;
@@ -258,12 +340,12 @@ void NavegadorArquivosComponent::paint(juce::Graphics& g) {
 
         if (visao_ == Visao::Colunas && ic + 1 < colunas_.size()) {
             g.setColour(tk.borda);
-            g.drawVerticalLine(x + largura - 1, 0.0f, static_cast<float>(getHeight()));
+            g.drawVerticalLine(x + largura - 1, static_cast<float>(yOffset), static_cast<float>(getHeight()));
         }
 
         for (size_t i = 0; i < coluna.entradas.size(); ++i) {
             auto& e = coluna.entradas[i];
-            juce::Rectangle<int> linha(x, static_cast<int>(i) * kAlturaLinha, largura - 1, kAlturaLinha);
+            juce::Rectangle<int> linha(x, yOffset + static_cast<int>(i) * kAlturaLinha, largura - 1, kAlturaLinha);
             bool selecionado = std::find(selecao_.begin(), selecao_.end(), e.arquivo) != selecao_.end();
             bool noCaminho = e.ehPasta && std::find(caminho_.begin(), caminho_.end(), e.arquivo) != caminho_.end();
 
@@ -317,7 +399,9 @@ int NavegadorArquivosComponent::colunaNaPosicao(juce::Point<int> p) const {
 
 int NavegadorArquivosComponent::indiceEntradaNaPosicao(int coluna, juce::Point<int> p) const {
     if (coluna < 0 || coluna >= static_cast<int>(colunas_.size())) return -1;
-    int i = p.y / kAlturaLinha;
+    int y = p.y - kAlturaToolbar;
+    if (y < 0) return -1;
+    int i = y / kAlturaLinha;
     return i >= 0 && i < static_cast<int>(colunas_[static_cast<size_t>(coluna)].entradas.size()) ? i : -1;
 }
 
@@ -355,22 +439,21 @@ void NavegadorArquivosComponent::mouseDown(const juce::MouseEvent& e) {
         }
     }
 
+    juce::File arquivoClicado = entrada.arquivo;
+    bool ehPasta = entrada.ehPasta;
+
     if (e.mods.isCommandDown()) {
-        auto it = std::find(selecao_.begin(), selecao_.end(), entrada.arquivo);
+        auto it = std::find(selecao_.begin(), selecao_.end(), arquivoClicado);
         if (it != selecao_.end()) selecao_.erase(it);
-        else selecao_.push_back(entrada.arquivo);
+        else selecao_.push_back(arquivoClicado);
     } else {
-        selecao_ = {entrada.arquivo};
-        // Clicar numa pasta navega pra dentro dela (abre a coluna seguinte),
-        // mantendo-a selecionada — é assim que o Finder se comporta, e é o
-        // que permite selecionar a pasta INTEIRA e adicionar de uma vez.
-        if (entrada.ehPasta) {
-            juce::File pasta = entrada.arquivo;
-            irPara(pasta);
-            selecao_ = {pasta};
+        selecao_ = {arquivoClicado};
+        if (ehPasta) {
+            irPara(arquivoClicado);
+            selecao_ = {arquivoClicado};
         }
     }
-    ancoraShift_ = entrada.arquivo;
+    ancoraShift_ = arquivoClicado;
     notificarSelecao();
     repaint();
 }
@@ -389,7 +472,7 @@ void NavegadorArquivosComponent::atualizarSelecaoDoLaco(const juce::MouseEvent&)
         int largura = visao_ == Visao::Colunas ? kLarguraColuna : getWidth();
         auto& entradas = colunas_[ic].entradas;
         for (size_t i = 0; i < entradas.size(); ++i) {
-            juce::Rectangle<int> linha(x, static_cast<int>(i) * kAlturaLinha, largura, kAlturaLinha);
+            juce::Rectangle<int> linha(x, kAlturaToolbar + static_cast<int>(i) * kAlturaLinha, largura, kAlturaLinha);
             if (!lacoAtual_.intersects(linha)) continue;
             if (std::find(selecao_.begin(), selecao_.end(), entradas[i].arquivo) == selecao_.end())
                 selecao_.push_back(entradas[i].arquivo);

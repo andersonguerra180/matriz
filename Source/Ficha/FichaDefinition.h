@@ -82,6 +82,7 @@ struct FichaDefinition {
     std::vector<std::string> modos;                         // "archive" e/ou "catalog"; vazio = disponível nos dois modos
     int ordem = 0;                                           // posição no diálogo de seleção de tipo; empate por `tipo` alfabético
     std::string icone;                                       // categoria de ícone sugerida; "" = nenhuma
+    std::string categoria;                                   // "digital" or "analog" — groups types in the selector
 
     bool usaNiveis() const { return !niveis.empty(); }
 

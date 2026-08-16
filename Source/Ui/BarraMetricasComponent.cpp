@@ -69,7 +69,7 @@ void BarraMetricasComponent::mostrarItem(ProjetoAberto& projeto, const std::stri
 }
 
 void BarraMetricasComponent::reconstruirCampos(const juce::var& tecnica, const std::string& extensao) {
-    auto categoria = matriz::ingest::categoriaPorExtensao(juce::File("x." + juce::String(extensao)));
+    auto categoria = matriz::ingest::categoriaPorExtensao(juce::String(extensao));
     using Cat = matriz::ingest::CategoriaMidia;
 
     auto adicionar = [this](const char* chaveI18n, const juce::String& valor) {

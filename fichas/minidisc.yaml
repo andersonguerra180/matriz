@@ -1,8 +1,9 @@
 tipo: minidisc
 rotulo: MiniDisc
-modos: [archive]
+modos: [archive, catalog]
 ordem: 40
 icone: audio
+categoria: digital
 grupos:
   - rotulo: Suporte
     campos:

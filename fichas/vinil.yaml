@@ -3,6 +3,7 @@ rotulo: Vinil
 modos: [archive, catalog]
 ordem: 20
 icone: audio
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

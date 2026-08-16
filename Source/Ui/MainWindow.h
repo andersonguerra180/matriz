@@ -26,11 +26,14 @@ private:
     // o modo com um diálogo mínimo antes de seguir pro fluxo de sempre.
     void pedirNovoProjetoViaMenu();
     void pedirAbrirProjeto();
+    void pedirAbrirCatalogo();
     void abrirPasta(const juce::File& pasta);
     void pedirConfiguracoesProjeto();
     void pedirIngerirArquivos();
+    void pedirSalvarProjetoComo();
     void pedirConsolidar();
-    void trocarIdioma(const juce::String& locale);
+    void mostrarPreferenciasDialogo();
+    void mostrarAudioDeviceDialogo();
     void conectarConteudo();
 
     std::unique_ptr<MainComponent> conteudo_;

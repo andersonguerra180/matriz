@@ -17,7 +17,7 @@ namespace matriz::ingest {
 struct Inconsistencia {
     std::string tipo; // faixa_sem_isrc | release_sem_capa | master_lossy | sample_rate_divergente |
                        // capa_abaixo_minimo | splits_nao_somam_100 | isrc_duplicado |
-                       // arquivo_orfao | checksum_divergente
+                       // checksum_divergente
     std::string itemId;
     std::string arquivoId;
     std::string descricao;
@@ -30,9 +30,11 @@ struct Inconsistencia {
 std::vector<Inconsistencia> detectarInconsistenciasFicha(
     matriz::db::Database& registro, const std::map<std::string, matriz::ficha::FichaDefinition>& definicoesPorTipo);
 
-// Checagens que precisam ler o disco (§7.4: arquivo órfão, checksum
-// divergente). Percorre todo arquivo.caminho_relativo do projeto e o
-// conteúdo real da pasta.
+// Checagens que precisam ler o disco (§7.4: arquivo ausente, checksum
+// divergente). Resolve cada `arquivo` pelo Vault dele (I5 — preservação
+// in-place) e relê os bytes. Pula Vault offline (I3 — indisponível não é
+// corrompido) e placeholder de nuvem não baixado (critério 12 — checar
+// forçaria o download).
 std::vector<Inconsistencia> verificarArquivosNoDisco(matriz::model::Project& projeto);
 
 } // namespace matriz::ingest

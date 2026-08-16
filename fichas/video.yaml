@@ -3,6 +3,7 @@ rotulo: Vídeo analógico digitalizado
 modos: [archive]
 ordem: 70
 icone: video
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

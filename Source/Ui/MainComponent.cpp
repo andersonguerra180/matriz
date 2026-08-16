@@ -2,70 +2,33 @@
 
 #include "../App/Cancelamento.h"
 #include "../App/Preferencias.h"
+#include "../App/Logger.h"
+#include "../Diag/Watchdog.h"
+#include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
+#include <mutex>
+
+#include "../Ficha/OrigemPadrao.h"
+#include "../Ingest/CacheArquivo.h"
+#include "../Vault/Reconciliacao.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Ingest/Miniaturas.h"
 #include "AcoesItem.h"
 #include "ArvoreComponent.h"
 #include "BarraFerramentasComponent.h"
-#include "BarraMetricasComponent.h"
-#include "BarraGuiaComponent.h"
-#include "BarraSelecaoComponent.h"
 #include "CatalogoComponent.h"
 #include "FichaPanelComponent.h"
 #include "FiltrosComponent.h"
 #include "MosaicoComponent.h"
 #include "PainelInconsistenciasComponent.h"
+#include "SelecionarTipoMidiaDialogo.h"
 #include "NavegadorArquivosDialogo.h"
 #include "PreviewComponent.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
 
-// Faixa de progresso do ingest — barra preenchida proporcionalmente, com o
-// texto por cima. Substitui o juce::Label anterior: em lote de milhares de
-// arquivos, "1287/9500" sozinho não dá noção nenhuma de quanto falta, e a
-// sensação era de app travado. Mantém setText/getText porque o self-test de
-// UI lê o resumo final por textoProgressoIngestParaTeste().
-class FaixaProgressoIngest : public juce::Component {
-public:
-    FaixaProgressoIngest() { setInterceptsMouseClicks(false, false); }
-
-    void setText(const juce::String& texto) {
-        texto_ = texto;
-        repaint();
-    }
-    juce::String getText() const { return texto_; }
-
-    // fracao < 0 = lote terminado (mostra a faixa cheia, com o resumo).
-    void definirFracao(double fracao) {
-        fracao_ = fracao;
-        repaint();
-    }
-
-    void paint(juce::Graphics& g) override {
-        const auto& tk = tema();
-        bool concluido = fracao_ < 0.0;
-        auto area = getLocalBounds();
-
-        g.setColour(concluido ? tk.acento.withAlpha(0.92f) : tk.acento.withAlpha(0.28f));
-        g.fillRect(area);
-        if (!concluido) {
-            auto preenchido = area.withWidth(juce::roundToInt(area.getWidth() * juce::jlimit(0.0, 1.0, fracao_)));
-            g.setColour(tk.acento.withAlpha(0.92f));
-            g.fillRect(preenchido);
-        }
-
-        g.setColour(tk.textoSobreAcento);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        g.drawText(texto_, area, juce::Justification::centred, true);
-    }
-
-private:
-    juce::String texto_;
-    double fracao_ = 0.0;
-};
 
 // Faixa de ações no topo do painel direito (item 5 das correções de
 // operação: "resolver tudo no mesmo lugar"). Com o arquivo selecionado, dá
@@ -136,6 +99,139 @@ public:
 
 private:
     std::unique_ptr<juce::TextButton> botaoCategorizar_, botaoRenomear_, botaoPreview_, botaoEnviar_, botaoRemover_;
+};
+
+class DivisorArrastavel : public juce::Component {
+public:
+    DivisorArrastavel() { setMouseCursor(juce::MouseCursor::LeftRightResizeCursor); }
+
+    std::function<void(int deltaX)> aoArrastar;
+
+    void paint(juce::Graphics& g) override {
+        auto area = getLocalBounds();
+        g.setColour(emHover_ ? tema().bordaFoco : tema().borda);
+        g.fillRect(area.withWidth(1).withX(area.getCentreX()));
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { emHover_ = false; repaint(); }
+    void mouseDown(const juce::MouseEvent&) override { posInicioX_ = getPosition().x; }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (aoArrastar) aoArrastar(e.getDistanceFromDragStartX());
+    }
+
+    int posInicioX_ = 0;
+
+private:
+    bool emHover_ = false;
+};
+
+class DivisorArrastavelV : public juce::Component {
+public:
+    DivisorArrastavelV() { setMouseCursor(juce::MouseCursor::UpDownResizeCursor); }
+
+    std::function<void(int deltaY)> aoArrastar;
+
+    void paint(juce::Graphics& g) override {
+        auto area = getLocalBounds();
+        g.setColour(emHover_ ? tema().bordaFoco : tema().borda);
+        g.fillRect(area.withHeight(1).withY(area.getCentreY()));
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { emHover_ = false; repaint(); }
+    void mouseDown(const juce::MouseEvent&) override { posInicioY_ = getPosition().y; }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (aoArrastar) aoArrastar(e.getDistanceFromDragStartY());
+    }
+
+    int posInicioY_ = 0;
+
+private:
+    bool emHover_ = false;
+};
+
+// Transport bar — Pro Tools-style: position counter + transport buttons.
+// Purely visual for now; wired to AudioWorkspace when audio is playing.
+class TransportComponent : public juce::Component {
+public:
+    TransportComponent() {
+        setInterceptsMouseClicks(true, true);
+
+        auto makeBotao = [this](std::unique_ptr<juce::TextButton>& b, const juce::String& label) {
+            b = std::make_unique<juce::TextButton>(label);
+            b->setColour(juce::TextButton::buttonColourId, tema().painel);
+            b->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+            addAndMakeVisible(*b);
+        };
+
+        makeBotao(botaoInicio_,    juce::String::fromUTF8("\xe2\x8f\xae"));
+        makeBotao(botaoRebobinar_, juce::String::fromUTF8("\xe2\x8f\xaa"));
+        makeBotao(botaoAvancar_,   juce::String::fromUTF8("\xe2\x8f\xa9"));
+        makeBotao(botaoFim_,       juce::String::fromUTF8("\xe2\x8f\xad"));
+        makeBotao(botaoParar_,     juce::String::fromUTF8("\xe2\x96\xa0"));
+        makeBotao(botaoPlay_,      juce::String::fromUTF8("\xe2\x96\xb6"));
+        makeBotao(botaoGravar_,    juce::String::fromUTF8("\xe2\x97\x89"));
+
+        botaoGravar_->setColour(juce::TextButton::textColourOffId, tema().perigo);
+        botaoPlay_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff4adf4a));
+
+        botaoPlay_->onClick = [this] { tocando_ = !tocando_; repaint(); if (aoPlay) aoPlay(tocando_); };
+        botaoParar_->onClick = [this] { tocando_ = false; repaint(); if (aoParar) aoParar(); };
+    }
+
+    std::function<void(bool)> aoPlay;
+    std::function<void()> aoParar;
+
+    void definirPosicao(double segundos) {
+        posicaoSegundos_ = segundos;
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        g.fillAll(tema().painel);
+        g.setColour(tema().borda);
+        g.fillRect(0, getHeight() - 1, getWidth(), 1);
+
+        auto counter = getLocalBounds().withWidth(180).withX(8).reduced(0, 4);
+        g.setColour(juce::Colour(0xff111114));
+        g.fillRoundedRectangle(counter.toFloat(), 3.0f);
+        g.setColour(juce::Colour(0xff22dd44));
+        g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+
+        int mins = static_cast<int>(posicaoSegundos_) / 60;
+        int secs = static_cast<int>(posicaoSegundos_) % 60;
+        int frames = static_cast<int>((posicaoSegundos_ - std::floor(posicaoSegundos_)) * 30.0);
+        g.drawText(juce::String::formatted("%02d : %02d : %02d", mins, secs, frames),
+                   counter, juce::Justification::centred, true);
+    }
+
+    void resized() override {
+        constexpr int kBotaoW = 32;
+        constexpr int kGap = 2;
+        int x = 196;
+        int y = (getHeight() - 24) / 2;
+        auto colocar = [&](juce::TextButton* b) {
+            b->setBounds(x, y, kBotaoW, 24);
+            x += kBotaoW + kGap;
+        };
+        colocar(botaoInicio_.get());
+        colocar(botaoRebobinar_.get());
+        colocar(botaoAvancar_.get());
+        colocar(botaoFim_.get());
+        x += 6;
+        colocar(botaoParar_.get());
+        colocar(botaoPlay_.get());
+        colocar(botaoGravar_.get());
+    }
+
+    static constexpr int kAltura = 36;
+
+private:
+    std::unique_ptr<juce::TextButton> botaoInicio_, botaoRebobinar_, botaoAvancar_, botaoFim_;
+    std::unique_ptr<juce::TextButton> botaoParar_, botaoPlay_, botaoGravar_;
+    double posicaoSegundos_ = 0.0;
+    bool tocando_ = false;
 };
 
 // Cartão grande e clicável de escolha de modo (§1.1) — a primeira decisão
@@ -261,10 +357,8 @@ PapelInfo papelPorCategoria(matriz::ingest::CategoriaMidia categoria) {
 } // namespace
 
 MainComponent::MainComponent() {
-    // Precisa existir antes de qualquer Component com setTooltip() — sem um
-    // TooltipWindow vivo na hierarquia o JUCE simplesmente não desenha dica
-    // nenhuma, e as explicações dos botões da barra nunca apareceriam.
     tooltips_ = std::make_unique<juce::TooltipWindow>(this, 600);
+    addChildComponent(overlay_);
     reconstruirTelaInicial();
 }
 
@@ -281,22 +375,36 @@ void MainComponent::reconstruirTelaInicial() {
     mosaicoViewport_.reset();
     mosaico_.reset();
     preview_.reset();
+    escuta_.reset();
     itemEmPreview_.clear();
-    painelInconsistenciasViewport_.reset();
-    painelInconsistencias_.reset();
     fichaPanel_.reset();
     barraAcoesFicha_.reset();
     barraFerramentas_.reset();
-    barraGuia_.reset();
-    barraSelecao_.reset();
+    transport_.reset();
     fichaAberta_ = false;
-    arvoreViewport_.reset();
-    arvore_.reset();
-    botaoAbaOrigem_.reset();
-    botaoAbaAcervo_.reset();
+    arvoreOrigemViewport_.reset();
+    arvoreOrigem_.reset();
+    arvoreAcervoViewport_.reset();
+    arvoreAcervo_.reset();
+    labelSource_.reset();
+    botaoSourceLista_.reset();
+    botaoSourceIcones_.reset();
+    labelBackupTree_.reset();
+    botaoBackupLista_.reset();
+    botaoBackupIcones_.reset();
     botaoNovaPastaAcervo_.reset();
+    divisor1_.reset();
+    divisor2_.reset();
+    divisorFicha_.reset();
     filtrosViewport_.reset();
     filtros_.reset();
+
+    barraNavegacao_.reset();
+    catalogWorkspace_.reset();
+    analyticsWorkspace_.reset();
+    treeWorkspace_.reset();
+    backupWorkspace_.reset();
+    preservationWorkspace_.reset();
 
     // Pergunta direta em vez de instrução abstrata: a tela inicial abria com
     // "Escolha como você quer trabalhar", que não diz nada a quem nunca viu
@@ -366,6 +474,10 @@ void MainComponent::reconstruirTelaInicial() {
 }
 
 void MainComponent::reconstruirLayoutProjeto() {
+    telaAtiva_ = TelaAtiva::Catalog;
+    homePanel_.reset();
+    ingestWizard_.reset();
+
     telaInicialTitulo_.reset();
     telaInicialSubtitulo_.reset();
     telaInicialCartaoArchive_.reset();
@@ -389,65 +501,195 @@ void MainComponent::reconstruirLayoutProjeto() {
         atualizarBarraMetricas();
     };
     mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> itemIds) { abrirMenuContextoItens(std::move(itemIds)); };
+    mosaico_->aoNavegarParaSubpasta = [this](const SubpastaInfo& sub) {
+        if (painelAtivo_ == PainelAtivo::Source && arvoreOrigem_)
+            arvoreOrigem_->selecionarNoPorItemIds(sub.itemIds);
+        else if (painelAtivo_ == PainelAtivo::BackupTree && arvoreAcervo_)
+            arvoreAcervo_->selecionarNoPorItemIds(sub.itemIds);
+    };
+    // Atalhos 1-9 (critério 14). A lista de tipos vem de fichas/*.yaml, na
+    // MESMA ordem do seletor — o operador aprende a posição uma vez e ela
+    // vale nos dois lugares.
+    mosaico_->aoCategorizarPorAtalho = [this](int indice, std::vector<std::string> itemIds) {
+        if (!projetoAberto_) return;
+        auto tipos = listarTiposMidiaDisponiveis(*projetoAberto_);
+        if (indice < 0 || indice >= static_cast<int>(tipos.size())) return;
+
+        const std::string& tipo = tipos[static_cast<size_t>(indice)].id;
+        for (const auto& itemId : itemIds) projetoAberto_->atualizarTipoMidia(itemId, tipo);
+
+        if (mosaico_) mosaico_->recarregar();
+        atualizarPainelDeApoio();
+        if (filtros_) filtros_->recarregar();
+    };
 
     mosaicoViewport_ = std::make_unique<juce::Viewport>();
     mosaicoViewport_->setViewedComponent(mosaico_.get(), false);
     addAndMakeVisible(*mosaicoViewport_);
 
-    // Árvore Origem/Acervo (§3.1, §5) — painel esquerdo fixo. Cabeçalho
-    // (abas + "+") mora aqui, fora do Viewport, pra nunca rolar junto com
-    // a lista (ver ArvoreComponent.h). Criada DEPOIS do mosaico porque seu
-    // callback de seleção precisa dele já existir.
-    arvore_ = std::make_unique<ArvoreComponent>(*projetoAberto_);
-    arvore_->aoSelecionarNo = [this](std::optional<std::set<std::string>> itemIds) {
+    // Dois painéis lado a lado: SOURCE (Origem) e BACKUP TREE (Acervo).
+    // Sempre visíveis — sem abas, sem trocar. Cada painel tem cabeçalho
+    // próprio. Clicar num painel o ativa (highlight + filtros atuam nele).
+    arvoreOrigem_ = std::make_unique<ArvoreComponent>(*projetoAberto_);
+    arvoreOrigem_->definirAba(ArvoreComponent::Aba::Origem);
+    arvoreOrigem_->aoSelecionarNo = [this](std::optional<std::set<std::string>> itemIds) {
+        ativarPainel(PainelAtivo::Source);
         if (mosaico_) mosaico_->definirFiltroItens(std::move(itemIds));
     };
-    arvoreViewport_ = std::make_unique<juce::Viewport>();
-    arvoreViewport_->setViewedComponent(arvore_.get(), false);
-    addAndMakeVisible(*arvoreViewport_);
+    arvoreOrigem_->aoMudarSubpastas = [this](std::vector<SubpastaInfo> subs) {
+        if (mosaico_) mosaico_->definirSubpastas(std::move(subs));
+    };
+    arvoreOrigemViewport_ = std::make_unique<juce::Viewport>();
+    arvoreOrigemViewport_->setViewedComponent(arvoreOrigem_.get(), false);
+    addAndMakeVisible(*arvoreOrigemViewport_);
 
-    botaoAbaOrigem_ = std::make_unique<juce::TextButton>(matriz::i18n::t("arvore.aba_origem"));
-    botaoAbaOrigem_->onClick = [this] { selecionarAbaArvore(0); };
-    addAndMakeVisible(*botaoAbaOrigem_);
+    arvoreAcervo_ = std::make_unique<ArvoreComponent>(*projetoAberto_);
+    arvoreAcervo_->definirAba(ArvoreComponent::Aba::Acervo);
+    arvoreAcervo_->definirModoVisao(ArvoreComponent::ModoVisao::Icones);
+    arvoreAcervo_->aoSelecionarNo = [this](std::optional<std::set<std::string>> itemIds) {
+        ativarPainel(PainelAtivo::BackupTree);
+        if (mosaico_) mosaico_->definirFiltroItens(std::move(itemIds));
+    };
+    arvoreAcervo_->aoMudarSubpastas = [this](std::vector<SubpastaInfo> subs) {
+        if (mosaico_) mosaico_->definirSubpastas(std::move(subs));
+    };
+    arvoreAcervoViewport_ = std::make_unique<juce::Viewport>();
+    arvoreAcervoViewport_->setViewedComponent(arvoreAcervo_.get(), false);
+    addAndMakeVisible(*arvoreAcervoViewport_);
 
-    botaoAbaAcervo_ = std::make_unique<juce::TextButton>(matriz::i18n::t("arvore.aba_acervo"));
-    botaoAbaAcervo_->onClick = [this] { selecionarAbaArvore(1); };
-    addAndMakeVisible(*botaoAbaAcervo_);
+    labelSource_ = std::make_unique<juce::Label>("", matriz::i18n::t("arvore.aba_origem"));
+    labelSource_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+    labelSource_->setColour(juce::Label::textColourId, tema().textoPrimario);
+    labelSource_->setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(*labelSource_);
+
+    // View mode toggles for SOURCE panel (list/icons)
+    botaoSourceLista_ = std::make_unique<juce::TextButton>(matriz::i18n::t("navegador.visao_lista"));
+    botaoSourceLista_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    botaoSourceLista_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    botaoSourceLista_->onClick = [this] {
+        if (arvoreOrigem_) arvoreOrigem_->definirModoVisao(ArvoreComponent::ModoVisao::Lista);
+    };
+    addAndMakeVisible(*botaoSourceLista_);
+
+    botaoSourceIcones_ = std::make_unique<juce::TextButton>(matriz::i18n::t("navegador.visao_icones"));
+    botaoSourceIcones_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    botaoSourceIcones_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    botaoSourceIcones_->onClick = [this] {
+        if (arvoreOrigem_) arvoreOrigem_->definirModoVisao(ArvoreComponent::ModoVisao::Icones);
+    };
+    addAndMakeVisible(*botaoSourceIcones_);
+
+    labelBackupTree_ = std::make_unique<juce::Label>("", matriz::i18n::t("arvore.aba_acervo"));
+    labelBackupTree_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+    labelBackupTree_->setColour(juce::Label::textColourId, tema().textoPrimario);
+    labelBackupTree_->setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(*labelBackupTree_);
+
+    // View mode toggles for BACKUP TREE panel
+    botaoBackupLista_ = std::make_unique<juce::TextButton>(matriz::i18n::t("navegador.visao_lista"));
+    botaoBackupLista_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    botaoBackupLista_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    botaoBackupLista_->onClick = [this] {
+        if (arvoreAcervo_) arvoreAcervo_->definirModoVisao(ArvoreComponent::ModoVisao::Lista);
+    };
+    addAndMakeVisible(*botaoBackupLista_);
+
+    botaoBackupIcones_ = std::make_unique<juce::TextButton>(matriz::i18n::t("navegador.visao_icones"));
+    botaoBackupIcones_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    botaoBackupIcones_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    botaoBackupIcones_->onClick = [this] {
+        if (arvoreAcervo_) arvoreAcervo_->definirModoVisao(ArvoreComponent::ModoVisao::Icones);
+    };
+    addAndMakeVisible(*botaoBackupIcones_);
 
     botaoNovaPastaAcervo_ = std::make_unique<juce::TextButton>("+");
-    botaoNovaPastaAcervo_->onClick = [this] { if (arvore_) arvore_->criarPastaDeTopoNivel(); };
+    botaoNovaPastaAcervo_->onClick = [this] { if (arvoreAcervo_) arvoreAcervo_->criarPastaDeTopoNivel(); };
     addAndMakeVisible(*botaoNovaPastaAcervo_);
-    selecionarAbaArvore(0); // Origem por padrão — tem conteúdo desde o primeiro ingest
+
+    {
+        auto d1 = std::make_unique<DivisorArrastavel>();
+        d1->aoArrastar = [this](int deltaX) {
+            auto* div = static_cast<DivisorArrastavel*>(divisor1_.get());
+            int larguraUtil = getWidth();
+            int novaPos = div->posInicioX_ + deltaX;
+            propPainel1_ = juce::jlimit(0.10f, 0.40f, static_cast<float>(novaPos) / larguraUtil);
+            resized();
+        };
+        divisor1_ = std::move(d1);
+        addAndMakeVisible(*divisor1_);
+    }
+    {
+        auto d2 = std::make_unique<DivisorArrastavel>();
+        d2->aoArrastar = [this](int deltaX) {
+            auto* div = static_cast<DivisorArrastavel*>(divisor2_.get());
+            int larguraUtil = getWidth();
+            int novaPos = div->posInicioX_ + deltaX;
+            propPainel2_ = juce::jlimit(0.10f, 0.40f, 1.0f - static_cast<float>(novaPos) / larguraUtil);
+            resized();
+        };
+        divisor2_ = std::move(d2);
+        addAndMakeVisible(*divisor2_);
+    }
+    {
+        auto dv = std::make_unique<DivisorArrastavelV>();
+        dv->aoArrastar = [this](int deltaY) {
+            auto* div = static_cast<DivisorArrastavelV*>(divisorFicha_.get());
+            int alturaPainel = arvoreAcervoViewport_ ? arvoreAcervoViewport_->getHeight() +
+                (fichaPanel_ ? fichaPanel_->getHeight() : 0) + BarraAcoesFicha::kAltura + 6 : getHeight();
+            int novaPos = div->posInicioY_ + deltaY;
+            int base = arvoreAcervoViewport_ ? arvoreAcervoViewport_->getY() : 0;
+            propFichaBackup_ = juce::jlimit(0.15f, 0.70f, 1.0f - static_cast<float>(novaPos - base) / alturaPainel);
+            resized();
+        };
+        divisorFicha_ = std::move(dv);
+        addAndMakeVisible(*divisorFicha_);
+    }
+
+    arvoreOrigem_->aoMudarOrganizacao = [this] {
+        if (arvoreAcervo_) arvoreAcervo_->recarregarSincrono();
+        if (painelAtivo_ == PainelAtivo::Source && arvoreOrigem_ && mosaico_)
+            mosaico_->definirFiltroItens(arvoreOrigem_->todosOsItensVisiveis());
+        if (mosaico_) mosaico_->recarregar();
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
+        atualizarEtapaDoFluxo();
+    };
+    arvoreAcervo_->aoMudarOrganizacao = [this] {
+        if (arvoreOrigem_) arvoreOrigem_->recarregarSincrono();
+        if (painelAtivo_ == PainelAtivo::Source && arvoreOrigem_ && mosaico_)
+            mosaico_->definirFiltroItens(arvoreOrigem_->todosOsItensVisiveis());
+        if (mosaico_) mosaico_->recarregar();
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
+        atualizarEtapaDoFluxo();
+    };
+
+    painelAtivo_ = PainelAtivo::Source;
 
     // Filtros (chips) + busca + coleções inteligentes (item 7, Acréscimos
     // §10) — embaixo da árvore na mesma coluna (§9.1). Também precisa do
     // mosaico já existir (opera direto sobre ele, mesmo padrão de
     // ArvoreComponent sobre ProjetoAberto).
     filtros_ = std::make_unique<FiltrosComponent>(*projetoAberto_, *mosaico_);
+    // Aviso de "backup planejado" na mesma faixa discreta do ingest e da
+    // reconciliação — nunca um modal (§8/§9: nada que exija resposta).
+    filtros_->aoAvisar = [this](const juce::String& mensagem) {
+        textoProgressoIngest_ = mensagem;
+    };
     filtrosViewport_ = std::make_unique<juce::Viewport>();
     filtrosViewport_->setViewedComponent(filtros_.get(), false);
     addAndMakeVisible(*filtrosViewport_);
 
-    // No Catalog, o painel de inconsistências fica numa faixa fixa embaixo
-    // da área central — nunca escondido em menu (§1.3/§3.5), mas também
-    // nunca bloqueia a grade acima dele.
-    if (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) {
-        painelInconsistencias_ = std::make_unique<PainelInconsistenciasComponent>(*projetoAberto_);
-        painelInconsistenciasViewport_ = std::make_unique<juce::Viewport>();
-        painelInconsistenciasViewport_->setViewedComponent(painelInconsistencias_.get(), false);
-        addAndMakeVisible(*painelInconsistenciasViewport_);
-        painelInconsistencias_->recarregar();
-    }
 
-    // Ficha lateral colapsada por padrão (§7.1 — "a ficha nunca bloqueia") —
-    // o botão de alternar fica sempre visível, mesmo fechada.
+    // Ficha (metadata) always visible below the grid — clicking a file
+    // immediately shows its details for editing.
+    fichaAberta_ = true;
     fichaPanel_ = std::make_unique<FichaPanelComponent>(*projetoAberto_);
     addAndMakeVisible(*fichaPanel_);
-    fichaPanel_->setVisible(fichaAberta_);
 
     barraAcoesFicha_ = std::make_unique<BarraAcoesFicha>();
     addAndMakeVisible(*barraAcoesFicha_);
-    barraAcoesFicha_->setVisible(fichaAberta_);
     {
         // Mesmos ganchos do menu de contexto — as duas portas compartilham
         // não só as funções de ação, mas também o que acontece depois delas.
@@ -456,7 +698,9 @@ void MainComponent::reconstruirLayoutProjeto() {
             return std::vector<std::string>(mosaico_->itensSelecionados().begin(),
                                              mosaico_->itensSelecionados().end());
         };
-        barraAcoesFicha_->aoCategorizar = [this] { if (mosaico_) selecionarItem(mosaico_->itemSelecionado()); };
+        barraAcoesFicha_->aoCategorizar = [this, idsSelecionados] {
+            matriz::ui::acoes::mudarTipo(*projetoAberto_, idsSelecionados(), ganchosDeAcao());
+        };
         barraAcoesFicha_->aoRenomear = [this, idsSelecionados] {
             matriz::ui::acoes::renomear(*projetoAberto_, idsSelecionados(), ganchosDeAcao());
         };
@@ -475,11 +719,17 @@ void MainComponent::reconstruirLayoutProjeto() {
     // contagem de chips e o painel de inconsistências em outro lugar.
     fichaPanel_->aoAplicarEmLote = [this] {
         if (mosaico_) mosaico_->recarregar();
-        if (arvore_) arvore_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
         if (filtros_) filtros_->recarregar();
-        if (painelInconsistencias_) painelInconsistencias_->recarregar();
         atualizarPainelDeApoio();
-        atualizarEtapaDoFluxo(); // classificar em lote pode ter fechado a etapa "sem categoria"
+    };
+    fichaPanel_->aoMudar = [this] {
+        if (mosaico_) mosaico_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
     };
 
     // --- Barras de apoio ---
@@ -504,34 +754,62 @@ void MainComponent::reconstruirLayoutProjeto() {
                                         : indice == 2 ? MosaicoComponent::TamanhoCelula::Grande
                                                       : MosaicoComponent::TamanhoCelula::Medio);
     };
+    barraFerramentas_->aoAlternarModoVisao = [this](bool lista) {
+        if (!mosaico_) return;
+        mosaico_->definirModoVisao(lista ? MosaicoComponent::ModoVisao::Lista
+                                          : MosaicoComponent::ModoVisao::Grade);
+    };
+    barraFerramentas_->aoMudarFiltroHorizontal = [this](const std::string& filtro) {
+        if (!mosaico_ || !projetoAberto_) return;
+        
+        if (filtro == "all") {
+            mosaico_->definirFiltroItens(std::nullopt);
+            mosaico_->recarregar();
+            return;
+        }
+        
+        std::vector<std::string> tipos;
+        if (filtro == "audio") {
+            tipos = {"fita_rolo", "cassete", "vinil", "dat", "minidisc", "cd", "digital_audio", "field_recording", "sound_effects"};
+        } else if (filtro == "video") {
+            tipos = {"filme", "video", "dvd", "vhs", "umatic", "betacam", "betamax", "digital_video"};
+        } else if (filtro == "image") {
+            tipos = {"foto", "cover_art", "negativo", "slide"};
+        } else if (filtro == "document") {
+            tipos = {"documento", "sample", "3d_file", "release"};
+        }
+        
+        std::set<std::string> ids;
+        juce::String sql = "SELECT id FROM item";
+        if (filtro == "recent") {
+            sql += " ORDER BY data_criacao DESC LIMIT 50";
+        } else if (!tipos.empty()) {
+            sql += " WHERE tipo_midia IN (";
+            for (size_t i = 0; i < tipos.size(); ++i) {
+                sql += "'" + juce::String(tipos[i]) + "'";
+                if (i + 1 < tipos.size()) sql += ",";
+            }
+            sql += ")";
+        }
+        
+        try {
+            auto stmt = projetoAberto_->projeto().registro().prepare(sql.toStdString());
+            while (stmt.step()) {
+                ids.insert(stmt.columnText(0));
+            }
+        } catch (const std::exception& e) {
+            juce::Logger::writeToLog("SQL error in horizontal filter: " + juce::String(e.what()));
+        }
+        
+        mosaico_->definirFiltroItens(ids);
+        mosaico_->recarregar();
+    };
     addAndMakeVisible(*barraFerramentas_);
 
-    barraGuia_ = std::make_unique<BarraGuiaComponent>();
-    barraGuia_->aoMudarAltura = [this] { resized(); };
-    addAndMakeVisible(*barraGuia_);
+    transport_ = std::make_unique<TransportComponent>();
+    addAndMakeVisible(*transport_);
 
-    // Barra de métricas do rodapé (item 6) — LUFS-I/LRA/FPS vêm da leitura
-    // técnica já gravada, e o VU é alimentado pelo preview quando toca.
-    barraMetricas_ = std::make_unique<BarraMetricasComponent>();
-    addAndMakeVisible(*barraMetricas_);
-
-    barraSelecao_ = std::make_unique<BarraSelecaoComponent>();
-    barraSelecao_->aoEditarEmLote = [this] {
-        // Abrir a ficha já em modo lote é o ponto inteiro desta barra: o
-        // recurso existia, mas exigia adivinhar que estava atrás de um
-        // painel fechado que não anunciava conter edição em lote.
-        if (!fichaAberta_) alternarFicha();
-        if (mosaico_) selecionarItem(mosaico_->itemSelecionado());
-    };
-    barraSelecao_->aoSelecionarTodos = [this] {
-        if (!mosaico_) return;
-        mosaico_->selecionarTodos();
-        selecionarItem(mosaico_->itemSelecionado());
-    };
-    barraSelecao_->aoLimparSelecao = [this] {
-        if (mosaico_) mosaico_->limparSelecao();
-    };
-    addAndMakeVisible(*barraSelecao_);
+    setWantsKeyboardFocus(true);
 
     // A busca agora mora na barra de ferramentas, no topo — deixar uma
     // segunda caixa de busca na coluna esquerda faria o operador não saber
@@ -555,11 +833,10 @@ matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     // árvore e o estágio do fluxo — recarrega tudo por um caminho só.
     ganchos.aoMudarDados = [this] {
         if (mosaico_) mosaico_->recarregar();
-        if (arvore_) arvore_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
         if (filtros_) filtros_->recarregar();
-        if (painelInconsistencias_) painelInconsistencias_->recarregar();
         atualizarPainelDeApoio();
-        atualizarEtapaDoFluxo();
     };
     ganchos.aoAbrirDetalhes = [this] {
         if (!fichaAberta_) alternarFicha();
@@ -583,6 +860,7 @@ void MainComponent::abrirMenuContextoItens(std::vector<std::string> itemIds) {
 }
 
 void MainComponent::atualizarPainelDeApoio() {
+    MATRIZ_TRACE("MainComponent::atualizarPainelDeApoio");
     if (!projetoAberto_ || !mosaico_) return;
 
     int total = mosaico_->totalItensCarregados();
@@ -596,66 +874,38 @@ void MainComponent::atualizarPainelDeApoio() {
     if (barraAcoesFicha_)
         barraAcoesFicha_->definirQuantidadeSelecionada(static_cast<int>(mosaico_->itensSelecionados().size()));
 
-    if (barraSelecao_) {
-        int antes = barraSelecao_->quantidade();
-        barraSelecao_->definirQuantidade(static_cast<int>(mosaico_->itensSelecionados().size()));
-        // A barra some/aparece; o mosaico abaixo dela precisa de bounds novos.
-        if ((antes > 0) != (barraSelecao_->quantidade() > 0)) resized();
-    }
 }
 
-void MainComponent::atualizarEtapaDoFluxo() {
-    if (!projetoAberto_ || !mosaico_ || !barraGuia_) return;
+void MainComponent::atualizarEtapaDoFluxo() {}
 
-    int total = mosaico_->totalItensCarregados();
-
-    // Em que ponto do fluxo o projeto está — a faixa sempre aponta o
-    // próximo passo concreto, nunca um texto genérico de boas-vindas.
-    if (total == 0) {
-        barraGuia_->definirEtapa(BarraGuiaComponent::Etapa::Vazio);
-        return;
-    }
-
-    auto contagens = projetoAberto_->contagensPorTipoMidia();
-    auto naoClassificados = contagens.find("");
-    if (naoClassificados != contagens.end() && naoClassificados->second > 0) {
-        barraGuia_->definirEtapa(BarraGuiaComponent::Etapa::Classificar, naoClassificados->second);
-        return;
-    }
-
-    // Tudo classificado: falta montar as pastas do backup ou gravá-lo.
-    // Pasta de acervo com id vazio é o nó sintético "ainda sem pasta"
-    // (ver ProjetoAberto::arvoreAcervo) — não conta como organização.
-    int organizados = 0;
-    for (auto& pasta : projetoAberto_->arvoreAcervo().filhos)
-        if (!pasta.id.empty()) organizados += static_cast<int>(pasta.itemIds.size());
-
-    barraGuia_->definirEtapa(organizados > 0 ? BarraGuiaComponent::Etapa::Backup
-                                             : BarraGuiaComponent::Etapa::Organizar);
-}
-
-void MainComponent::selecionarAbaArvore(int aba) {
-    if (!arvore_) return;
-    arvore_->definirAba(aba == 0 ? ArvoreComponent::Aba::Origem : ArvoreComponent::Aba::Acervo);
-    bool ehAcervo = aba != 0;
-    if (botaoNovaPastaAcervo_) botaoNovaPastaAcervo_->setVisible(ehAcervo);
-    if (botaoAbaOrigem_) botaoAbaOrigem_->setColour(juce::TextButton::buttonColourId,
-                                                     ehAcervo ? tema().painel : tema().painelAlt);
-    if (botaoAbaAcervo_) botaoAbaAcervo_->setColour(juce::TextButton::buttonColourId,
-                                                     ehAcervo ? tema().painelAlt : tema().painel);
+void MainComponent::ativarPainel(PainelAtivo painel) {
+    if (painelAtivo_ == painel) return;
+    painelAtivo_ = painel;
+    repaint();
 }
 
 void MainComponent::alternarFicha() {
     fichaAberta_ = !fichaAberta_;
     if (fichaPanel_) fichaPanel_->setVisible(fichaAberta_);
     if (barraAcoesFicha_) barraAcoesFicha_->setVisible(fichaAberta_);
+    if (divisorFicha_) divisorFicha_->setVisible(fichaAberta_);
     if (barraFerramentas_) barraFerramentas_->definirDetalhesAbertos(fichaAberta_);
     resized();
-    repaint();
 }
 
 void MainComponent::abrirPreview(const std::string& itemId) {
     if (!projetoAberto_) return;
+
+    // Áudio abre na Estação de Escuta (§7), não no preview genérico: pra
+    // material sonoro, "abrir" significa ouvir, com transporte, marcadores e
+    // medidores — não olhar uma miniatura.
+    if (auto info = projetoAberto_->arquivoPrincipal(itemId)) {
+        if (matriz::ingest::categoriaPorExtensao(juce::File(info->caminhoAbsoluto)) ==
+            matriz::ingest::CategoriaMidia::Audio) {
+            abrirEscuta(itemId);
+            return;
+        }
+    }
 
     if (!preview_) {
         preview_ = std::make_unique<PreviewComponent>(*projetoAberto_);
@@ -673,8 +923,77 @@ void MainComponent::abrirPreview(const std::string& itemId) {
     mosaico_->selecionarItem(itemId);
     selecionarItem(itemId);
 
+    if (transport_) {
+        auto* vp = preview_->videoPlayerParaTeste();
+        transport_->aoPlay = [vp](bool tocando) {
+            if (!vp) return;
+            if (tocando) vp->tocar(); else vp->pausar();
+        };
+        transport_->aoParar = [vp]() {
+            if (vp) vp->parar();
+        };
+        if (vp) {
+            vp->aoPosicaoMudar = [this](double s) {
+                if (transport_) transport_->definirPosicao(s);
+            };
+        }
+    }
+
     mosaicoViewport_->setVisible(false);
     preview_->setVisible(true);
+    resized();
+    repaint();
+}
+
+// Estação de escuta (§7). Criada na primeira vez que um áudio é aberto —
+// abrir placa de som e alocar buffer de reprodução num projeto que só tem
+// fotos seria custo puro.
+void MainComponent::abrirEscuta(const std::string& itemId) {
+    matriz::diag::breadcrumb("abrirEscuta");
+    if (!projetoAberto_) return;
+
+    if (!escuta_) {
+        escuta_ = std::make_unique<AudioWorkspace>(*projetoAberto_);
+        escuta_->aoFechar = [this] { fecharEscuta(); };
+        escuta_->aoMudarMarcadores = [this] {
+            if (fichaPanel_ && !itemEmEscuta_.empty())
+                fichaPanel_->mostrarItem(itemEmEscuta_);
+        };
+        addAndMakeVisible(*escuta_);
+    }
+
+    auto itens = projetoAberto_->listarItens();
+    auto it = std::find_if(itens.begin(), itens.end(), [&](const ItemResumo& r) { return r.id == itemId; });
+    if (it == itens.end()) return;
+
+    // O arquivo é OPCIONAL (I3): com o Vault desconectado o workspace abre
+    // do mesmo jeito, com forma de onda e métricas vindas do cache, e só o
+    // transporte fica desabilitado.
+    std::optional<juce::File> arquivo;
+    if (auto info = projetoAberto_->arquivoPrincipal(itemId)) {
+        juce::File f(info->caminhoAbsoluto);
+        if (f.existsAsFile()) arquivo = f;
+    }
+
+    itemEmEscuta_ = itemId;
+    escuta_->carregarAsset(*it, arquivo, nullptr);
+    selecionarItem(itemId);
+
+    mosaicoViewport_->setVisible(false);
+    if (preview_) preview_->setVisible(false);
+    escuta_->setVisible(true);
+    escuta_->grabKeyboardFocus();  // JKL/espaço só valem com o foco aqui
+    resized();
+    repaint();
+}
+
+void MainComponent::fecharEscuta() {
+    matriz::diag::breadcrumb("fecharEscuta");
+    if (!escuta_) return;
+    escuta_->descarregar();
+    escuta_->setVisible(false);
+    mosaicoViewport_->setVisible(true);
+    itemEmEscuta_.clear();
     resized();
     repaint();
 }
@@ -713,7 +1032,7 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
     addAndMakeVisible(*catalogoViewport_);
 
     catalogoTitulo_ = std::make_unique<juce::Label>();
-    catalogoTitulo_->setText(matriz::i18n::t("catalogo.titulo") + "  ·  " + pasta.getFileName(),
+    catalogoTitulo_->setText(matriz::i18n::t("catalogo.titulo") + "  |  " + pasta.getFileName(),
                               juce::dontSendNotification);
     catalogoTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     catalogoTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
@@ -735,8 +1054,417 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 }
 
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
+    catalogWorkspace_.reset();
+    analyticsWorkspace_.reset();
+    treeWorkspace_.reset();
+    homePanel_.reset();
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
-    reconstruirLayoutProjeto();
+    
+    // Create navigation bar
+    barraNavegacao_ = std::make_unique<BarraNavegacaoComponent>();
+    barraNavegacao_->aoMudarTab = [this](BarraNavegacaoComponent::Tab tab) {
+        if (tab == BarraNavegacaoComponent::Tab::Home) mostrarHome();
+        else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
+        else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
+        else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
+        else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
+    };
+    barraNavegacao_->aoClicarFechar = [this] { fecharProjeto(); };
+    addAndMakeVisible(*barraNavegacao_);
+
+    if (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) {
+        mostrarGrid();
+    } else {
+        mostrarHome();
+    }
+
+    verificarVaultsConectados();
+    startTimer(5000);
+}
+
+void MainComponent::mostrarHome() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Home;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Home);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!homePanel_) {
+        homePanel_ = std::make_unique<HomePanelComponent>(*projetoAberto_);
+        homePanel_->aoIngerir = [this] { mostrarIngestWizard(); };
+        homePanel_->aoCatalogar = [this] { mostrarGrid(); };
+        homePanel_->aoBackup = [this] { mostrarBackup(); };
+        homePanel_->aoPreservacao = [this] { mostrarAnalytics(); };
+        addAndMakeVisible(*homePanel_);
+    } else {
+        homePanel_->recarregar();
+        homePanel_->setVisible(true);
+    }
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarCatalog() {
+    mostrarGrid();
+}
+
+void MainComponent::mostrarGrid() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Catalog;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Grid);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!catalogWorkspace_) {
+        catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
+        catalogWorkspace_->aoAgruparEIrParaTree = [this](std::string folderId) {
+            mostrarTree();
+            if (treeWorkspace_) {
+                treeWorkspace_->selecionarERenomearPasta(folderId);
+            }
+        };
+        addAndMakeVisible(*catalogWorkspace_);
+    } else {
+        catalogWorkspace_->setVisible(true);
+        catalogWorkspace_->recarregar();
+    }
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarAnalytics() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Preservation;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Analytics);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!analyticsWorkspace_) {
+        analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
+        addAndMakeVisible(*analyticsWorkspace_);
+    } else {
+        analyticsWorkspace_->setVisible(true);
+        analyticsWorkspace_->recarregar();
+    }
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarTree() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Catalog;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Tree);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!treeWorkspace_) {
+        treeWorkspace_ = std::make_unique<ArvoreBackupComponent>(*projetoAberto_);
+        addAndMakeVisible(*treeWorkspace_);
+    } else {
+        treeWorkspace_->setVisible(true);
+        treeWorkspace_->recarregar();
+    }
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarIngestWizard() {
+    if (!projetoAberto_) return;
+
+    auto chooser = std::make_shared<juce::FileChooser>(
+        "Select files or folders to ingest",
+        juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+        "*");
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode
+            | juce::FileBrowserComponent::canSelectFiles
+            | juce::FileBrowserComponent::canSelectDirectories
+            | juce::FileBrowserComponent::canSelectMultipleItems,
+        [safeThis, chooser](const juce::FileChooser& fc) {
+            if (!safeThis) return;
+            auto results = fc.getResults();
+            if (results.isEmpty()) return;
+
+            juce::Array<juce::File> arquivos;
+            for (auto& f : results) arquivos.add(f);
+            safeThis->ingerirArquivos(arquivos);
+
+            if (safeThis->telaAtiva_ != TelaAtiva::Catalog)
+                safeThis->mostrarCatalog();
+        });
+}
+
+void MainComponent::mostrarBackup() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Backup;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Backup);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+
+    std::set<std::string> selected;
+    if (catalogWorkspace_) selected = catalogWorkspace_->itensSelecionados();
+    else if (mosaico_) selected = mosaico_->itensSelecionados();
+
+    backupWorkspace_ = std::make_unique<BackupWorkspaceComponent>(*projetoAberto_, selected);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    backupWorkspace_->aoConcluir = [safeThis] {
+        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->mostrarGrid(); });
+    };
+    backupWorkspace_->aoVoltarHome = [safeThis] {
+        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->mostrarHome(); });
+    };
+    backupWorkspace_->aoAbrirCatalogo = [safeThis](const juce::File& pastaBackup) {
+        juce::MessageManager::callAsync([safeThis, pastaBackup] { if (safeThis) safeThis->abrirCatalogo(pastaBackup); });
+    };
+    addAndMakeVisible(*backupWorkspace_);
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarPreservation() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Preservation;
+
+    homePanel_.reset();
+    ingestWizard_.reset();
+    backupWorkspace_.reset();
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+
+    // Hide project layout
+    if (barraFerramentas_) barraFerramentas_->setVisible(false);
+    if (transport_) transport_->setVisible(false);
+    if (mosaicoViewport_) mosaicoViewport_->setVisible(false);
+    if (arvoreOrigemViewport_) arvoreOrigemViewport_->setVisible(false);
+    if (arvoreAcervoViewport_) arvoreAcervoViewport_->setVisible(false);
+    if (divisor1_) divisor1_->setVisible(false);
+    if (divisor2_) divisor2_->setVisible(false);
+    if (divisorFicha_) divisorFicha_->setVisible(false);
+    if (labelSource_) labelSource_->setVisible(false);
+    if (botaoSourceLista_) botaoSourceLista_->setVisible(false);
+    if (botaoSourceIcones_) botaoSourceIcones_->setVisible(false);
+    if (labelBackupTree_) labelBackupTree_->setVisible(false);
+    if (botaoBackupLista_) botaoBackupLista_->setVisible(false);
+    if (botaoBackupIcones_) botaoBackupIcones_->setVisible(false);
+    if (botaoNovaPastaAcervo_) botaoNovaPastaAcervo_->setVisible(false);
+    if (filtrosViewport_) filtrosViewport_->setVisible(false);
+    if (fichaPanel_) fichaPanel_->setVisible(false);
+    if (barraAcoesFicha_) barraAcoesFicha_->setVisible(false);
+    if (preview_) preview_->setVisible(false);
+    if (escuta_) escuta_->setVisible(false);
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Analytics);
+        barraNavegacao_->setVisible(true);
+    }
+
+    preservationWorkspace_ = std::make_unique<PreservationWorkspaceComponent>(*projetoAberto_);
+    preservationWorkspace_->aoClicarMetrica = [this](const std::string& chave) {
+        mostrarCatalog();
+        if (!catalogWorkspace_ || !projetoAberto_) return;
+
+        if (chave == "total") {
+            catalogWorkspace_->filtrarPorChave("all");
+        } else if (chave == "verified" || chave == "corrompido") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                std::string sql = (chave == "verified")
+                    ? "SELECT DISTINCT item_id FROM arquivo WHERE checksum_verificado_em IS NOT NULL AND estado_presenca = 'presente'"
+                    : "SELECT DISTINCT item_id FROM arquivo WHERE estado_presenca = 'corrompido'";
+                auto stmt = db.prepare(sql);
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else {
+            catalogWorkspace_->filtrarPorChave(chave);
+        }
+    };
+    addAndMakeVisible(*preservationWorkspace_);
+
+    resized();
+    repaint();
+}
+
+void MainComponent::timerCallback() {
+    // Um timer só, dois trabalhos com ritmos muito diferentes:
+    //
+    //  - acompanhar o lote de ingest: 10 Hz, pra a grade parecer viva;
+    //  - reavaliar Vaults montados: a cada 5 s, porque conectar um disco não
+    //    é evento que precise de resposta em décimos de segundo.
+    if (loteEmCurso_) {
+        finalizarUnidadeDeLote(estadoLoteAtual_, nullptr);
+        if (pendentes_->load() <= 0) {
+            loteEmCurso_ = false;
+            estadoLoteAtual_.reset();
+        }
+    }
+
+    if (++ticksDoTimer_ >= 50) {
+        ticksDoTimer_ = 0;
+        verificarVaultsConectados();
+    }
+
+    // Sem lote em curso, o timer volta ao ritmo lento — 10 Hz com a janela
+    // parada seria acordar o processo 10 vezes por segundo à toa.
+    if (!loteEmCurso_ && getTimerInterval() != 5000) startTimer(5000);
+}
+
+void MainComponent::verificarVaultsConectados() {
+    MATRIZ_TRACE("MainComponent::verificarVaultsConectados");
+    if (!projetoAberto_ || reconciliacaoEmAndamento_) return;
+
+    // Durante um lote de ingest não vale a pena: a pool está saturada (a
+    // varredura entraria na fila atrás de milhares de arquivos) e o quadro
+    // de Vaults muda a cada arquivo. Reconectar um disco espera o lote.
+    if (ingestEmAndamento()) return;
+
+    // reavaliarVaults() parece barato — "só compara caminho e UUID" — mas o
+    // UUID vem do DiskArbitration, que é IPC síncrono com o daemon do
+    // sistema. Sob carga isso bloqueia por segundos, e era o pico de 17 s
+    // medido na message thread. Vai pra background como todo o resto.
+    reconciliacaoEmAndamento_ = true;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* projeto = projetoAberto_.get();
+
+    poolVaults_.addJob([safeThis, projeto]() {
+        std::vector<std::string> reconectados;
+        try {
+            reconectados = projeto->reavaliarVaults();
+        } catch (const std::exception&) {
+        }
+
+        juce::MessageManager::callAsync([safeThis, reconectados]() {
+            if (!safeThis) return;
+            safeThis.getComponent()->aoTerminarReavaliacaoDeVaults(reconectados);
+        });
+    });
+}
+
+void MainComponent::atualizarCacheDeTamanhoTotal() {
+    if (!projetoAberto_ || calculandoTamanhoTotal_) return;
+    calculandoTamanhoTotal_ = true;
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* projeto = projetoAberto_.get();
+
+    poolVaults_.addJob([safeThis, projeto]() {
+        juce::int64 total = 0;
+        try {
+            total = projeto->tamanhoTotalDosMasters();
+        } catch (const std::exception&) {
+        }
+
+        juce::MessageManager::callAsync([safeThis, total]() {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            self->calculandoTamanhoTotal_ = false;
+            if (self->tamanhoTotalEmCache_ == total) return;
+            self->tamanhoTotalEmCache_ = total;
+            (void)self;
+        });
+    });
+}
+
+void MainComponent::aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados) {
+    if (!projetoAberto_) {
+        reconciliacaoEmAndamento_ = false;
+        return;
+    }
+
+    if (filtros_) filtros_->recarregar();  // bolinha verde/cinza muda na hora
+    if (reconectados.empty()) {
+        reconciliacaoEmAndamento_ = false;
+        return;
+    }
+
+    textoProgressoIngest_ = matriz::i18n::t("vault.reconciliando");
+
+    matriz::db::Database* registro = &projetoAberto_->projeto().registro();
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+
+    poolVaults_.addJob([registro, reconectados, safeThis]() mutable {
+        matriz::vault::ResumoReconciliacao total;
+        for (const auto& vaultId : reconectados) {
+            auto r = matriz::vault::varreduraRapida(*registro, vaultId);
+            total.novos += r.novos;
+            total.movidos += r.movidos;
+            total.ausentes += r.ausentes;
+            total.alterados += r.alterados;
+        }
+
+        juce::MessageManager::callAsync([safeThis, total]() {
+            if (!safeThis) return;
+            safeThis->concluirReconciliacao(total);
+        });
+    });
+}
+
+void MainComponent::concluirReconciliacao(const matriz::vault::ResumoReconciliacao& resumo) {
+    reconciliacaoEmAndamento_ = false;
+    if (!projetoAberto_) return;
+
+    // Aviso discreto na faixa, nunca um modal (§8): reconectar um disco não
+    // é um evento que exige resposta do operador.
+    textoProgressoIngest_ = resumo.comoTexto();
+
+    if (mosaico_) mosaico_->recarregar();
+    if (filtros_) filtros_->recarregar();
+    atualizarPainelDeApoio();
+}
+
+void MainComponent::salvarProjeto() {
+    if (!projetoAberto_) return;
+    try {
+        projetoAberto_->projeto().registro().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+        projetoAberto_->projeto().indice().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+    } catch (...) {}
+}
+
+juce::File MainComponent::pastaProjeto() const {
+    if (!projetoAberto_) return {};
+    return projetoAberto_->projeto().pasta();
 }
 
 void MainComponent::fecharProjeto() {
@@ -756,18 +1484,30 @@ void MainComponent::fecharProjeto() {
     // checagem é o cinto de segurança pra qualquer outro chamador (ex.:
     // testes headless).
     if (ingestEmAndamento()) return;
+    stopTimer();
+    catalogWorkspace_.reset();
+    analyticsWorkspace_.reset();
+    treeWorkspace_.reset();
+    homePanel_.reset();
+    ingestWizard_.reset();
+    barraNavegacao_.reset();
+    backupWorkspace_.reset();
+    preservationWorkspace_.reset();
+    telaAtiva_ = TelaAtiva::Inicial;
     projetoAberto_.reset();
     reconstruirTelaInicial();
 }
 
-bool MainComponent::temPainelInconsistencias() const { return painelInconsistencias_ != nullptr; }
+bool MainComponent::temPainelInconsistencias() const {
+    return catalogWorkspace_ != nullptr && catalogWorkspace_->isVisible();
+}
 
 int MainComponent::totalInconsistencias() const {
-    return painelInconsistencias_ ? painelInconsistencias_->totalInconsistencias() : -1;
+    return (catalogWorkspace_ != nullptr && catalogWorkspace_->isVisible()) ? 1 : 0;
 }
 
 juce::String MainComponent::textoProgressoIngestParaTeste() const {
-    return labelProgressoIngest_ ? labelProgressoIngest_->getText() : juce::String();
+    return textoProgressoIngest_;
 }
 
 std::unique_ptr<matriz::model::Project> MainComponent::destacarProjeto() {
@@ -777,6 +1517,7 @@ std::unique_ptr<matriz::model::Project> MainComponent::destacarProjeto() {
 }
 
 void MainComponent::selecionarItem(const std::string& itemId) {
+    MATRIZ_TRACE("MainComponent::selecionarItem");
     if (!fichaPanel_) return;
 
     // Clique único abre o painel direito, sem duplo clique e sem menu — o
@@ -792,39 +1533,81 @@ void MainComponent::selecionarItem(const std::string& itemId) {
         fichaPanel_->mostrarItem(itemId);
     }
 
-    // Barra de métricas acompanha a seleção (item 6.2 — "com nenhum arquivo
-    // selecionado, mostra o resumo do que está na grade").
-    atualizarBarraMetricas();
 }
 
-void MainComponent::atualizarBarraMetricas() {
-    if (!barraMetricas_ || !projetoAberto_) return;
-    std::string sel = mosaico_ ? mosaico_->itemSelecionado() : std::string();
-    if (sel.empty() || (mosaico_ && mosaico_->itensSelecionados().size() > 1)) {
-        // Resumo da grade: soma o tamanho dos arquivos principais do que
-        // está visível sob os filtros atuais, não do acervo inteiro.
-        juce::int64 total = 0;
-        int contagem = mosaico_ ? mosaico_->totalItensVisiveis() : 0;
-        if (mosaico_)
-            for (auto& r : projetoAberto_->listarItens())
-                if (auto a = projetoAberto_->arquivoPrincipal(r.id)) total += juce::File(a->caminhoAbsoluto).getSize();
-        barraMetricas_->mostrarResumoDaGrade(contagem, total);
-        return;
-    }
-    barraMetricas_->mostrarItem(*projetoAberto_, sel);
-}
+void MainComponent::atualizarBarraMetricas() {}
 
 void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas) {
     if (!projetoAberto_) return;
 
-    // Nenhum diálogo, nenhuma pergunta (Reorientação completa §2.1): solta
-    // a pasta e o conteúdo aparece na grade imediatamente. Lotes que
-    // chegam enquanto outro ainda está em andamento se somam ao mesmo
-    // lote em vez de serem rejeitados — soltar mais arquivos durante o
-    // processamento tem que funcionar (§2.2).
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
-    processarLoteEmBackground(arquivos);
+
+    auto arqs = std::make_shared<std::vector<juce::File>>(std::move(arquivos));
+    int totalArqs = static_cast<int>(arqs->size());
+
+    bool ehCatalogo = projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo;
+
+    std::vector<juce::String> opcoesSourceMedia;
+    std::vector<juce::String> opcoesCollection;
+
+    if (ehCatalogo) {
+        opcoesSourceMedia = {
+            "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "DAT", "MD",
+            "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
+            "35mm", "16mm", "Super8mm",
+            "Camera", "Cellphone", "Scanner", "Internet", "Email", "Cloud"
+        };
+        opcoesCollection = {
+            "Album", "EP", "Single", "Sample Pack", "Soundtrack",
+            "Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate",
+            "Photo", "Artwork", "Album Cover", "Poster", "Documentation",
+            "Book", "Contract", "Manual", "Report", "Reference",
+            "Project", "Archive"
+        };
+    } else {
+        opcoesSourceMedia = {
+            "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "DAT", "MD",
+            "Laser Disc", "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette",
+            "2\" Tape", "1\" Tape", "1/2\" Tape", "1/4\" Tape",
+            "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
+            "35mm", "16mm", "Super8mm",
+            "Camera", "Cellphone", "Scanner", "Internet", "Email", "Cloud"
+        };
+        opcoesCollection = {
+            "Family Archive", "Personal Collection", "Studio Collection",
+            "Museum Collection", "Gallery Collection", "Institutional Archive",
+            "Corporate Archive", "Press Archive", "Research Archive",
+            "Estate Collection", "Private Collection", "Donor Collection",
+            "Historical Archive", "Educational Collection",
+            "Religious Archive", "Government Archive",
+            "Film Archive", "Sound Archive", "Photo Archive",
+            "Library Collection", "Manuscript Collection"
+        };
+    }
+
+    PainelOverlay::Config cfg;
+    cfg.titulo = "Pre-Ingest Metadata";
+    cfg.mensagem = juce::String(totalArqs) + " file(s) ready to ingest.\nOptionally set metadata to apply to all items:";
+    cfg.campos = {
+        {"source_media", "SOURCE MEDIA", "", "", opcoesSourceMedia},
+        {"collection",   "COLLECTION",   "", "", opcoesCollection}
+    };
+    cfg.botoes = {
+        {"Ingest",         1, true,  false},
+        {"Skip Metadata",  2, false, false},
+        {"Cancel",         0, false, true}
+    };
+
+    overlay_.mostrar(std::move(cfg), [this, arqs](PainelOverlay::Resultado r) {
+        if (r.botaoId == 0) return;
+        std::string sourceMedia, collection;
+        if (r.botaoId == 1) {
+            sourceMedia = r.valores["source_media"].trim().toStdString();
+            collection  = r.valores["collection"].trim().toStdString();
+        }
+        processarLoteEmBackground(*arqs, sourceMedia, collection);
+    });
 }
 
 // Navegador estilo Finder embutido (item 3) — segunda porta de entrada,
@@ -862,45 +1645,67 @@ void MainComponent::abrirNavegadorArquivos() {
         [this](juce::File pasta) { ultimaLocalizacaoNavegador_ = pasta; });
 }
 
-void MainComponent::filesDropped(const juce::StringArray& files, int, int) {
+void MainComponent::filesDropped(const juce::StringArray& files, int x, int y) {
+    matriz::diag::breadcrumb("filesDropped");
     arrastandoArquivo_ = false;
     if (mosaico_) mosaico_->definirArrastandoArquivo(false);
     repaint();
     if (!temProjetoAberto()) return;
+
+    if (ingestWizard_ && ingestWizard_->isInterestedInFileDrag(files)) {
+        ingestWizard_->filesDropped(files, x, y);
+        return;
+    }
+
     juce::Array<juce::File> arquivos;
     for (auto& caminho : files) arquivos.add(juce::File(caminho));
     ingerirArquivos(arquivos);
 }
 
 void MainComponent::fileDragEnter(const juce::StringArray&, int, int) {
+    matriz::diag::breadcrumb("fileDragEnter");
     arrastandoArquivo_ = true;
     if (mosaico_) mosaico_->definirArrastandoArquivo(true);
     repaint();
 }
 
 void MainComponent::fileDragExit(const juce::StringArray&) {
+    matriz::diag::breadcrumb("fileDragExit");
     arrastandoArquivo_ = false;
     if (mosaico_) mosaico_->definirArrastandoArquivo(false);
     repaint();
 }
 
 std::vector<juce::File> MainComponent::expandirArquivos(const juce::Array<juce::File>& arquivosOuPastas) const {
-    // Pastas entram recursivamente como arquivos individuais — ainda não é
-    // a inferência de estrutura real do §7.3 (release/faixa/capa por
-    // convenção de nome), só o mínimo pra "arrastei uma pasta" funcionar.
     std::vector<juce::File> arquivos;
     for (auto& entrada : arquivosOuPastas) {
         if (entrada.isDirectory()) {
-            for (auto& sub : juce::RangedDirectoryIterator(entrada, true, "*", juce::File::findFiles))
-                arquivos.push_back(sub.getFile());
+            for (auto& sub : juce::RangedDirectoryIterator(entrada, true, "*", juce::File::findFiles)) {
+                juce::File f = sub.getFile();
+                juce::String name = f.getFileName();
+                juce::String ext = f.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+
+                if (name.startsWith(".") || f.getSize() == 0) continue;
+                if (ext == "sfk" || ext == "reapeaks" || ext == "asd") continue;
+
+                arquivos.push_back(f);
+            }
         } else {
+            juce::String name = entrada.getFileName();
+            juce::String ext = entrada.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+
+            if (name.startsWith(".") || entrada.getSize() == 0) continue;
+            if (ext == "sfk" || ext == "reapeaks" || ext == "asd") continue;
+
             arquivos.push_back(entrada);
         }
     }
     return arquivos;
 }
 
-void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) {
+void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
+                                                const std::string& sourceMedia,
+                                                const std::string& collection) {
     if (!projetoAberto_) return;
 
     // Ponteiro, não referência: a referência local morreria ao sair desta
@@ -917,16 +1722,6 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
     std::string projetoId = stmtProjeto.columnText(0);
     juce::String prefixo = stmtProjeto.columnText(1);
 
-    auto stmtContagem = registro->prepare("SELECT COUNT(*) FROM item");
-    stmtContagem.step();
-    int proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
-
-    // Fase 1 — síncrona, mas rápida (só INSERT, sem tocar em arquivo
-    // nenhum): cada item existe no banco ANTES de qualquer processamento
-    // pesado começar, pra grade poder mostrar o lote inteiro na hora
-    // (Reorientação completa §2.1 — "os arquivos aparecem na grade
-    // IMEDIATAMENTE"). tipo_midia fica NULL — classificar é trabalho de
-    // depois, por cima do que já está visível (§7.1).
     std::vector<std::string> itemIds;
     itemIds.reserve(arquivos.size());
     registro->run("BEGIN", {});
@@ -934,14 +1729,41 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
         for (auto& arquivo : arquivos) {
             std::string itemId = matriz::model::novoUuid();
             std::string agora = matriz::model::agoraIso8601();
-            juce::String codigo = prefixo + "-" + juce::String(proximoNumero++).paddedLeft('0', 5);
+
+            auto cat = matriz::ingest::categoriaPorExtensao(arquivo);
+            std::string tipoMidia;
+            switch (cat) {
+                case matriz::ingest::CategoriaMidia::Audio:      tipoMidia = "digital_audio"; break;
+                case matriz::ingest::CategoriaMidia::Video:      tipoMidia = "digital_video"; break;
+                case matriz::ingest::CategoriaMidia::Imagem:     tipoMidia = "foto"; break;
+                case matriz::ingest::CategoriaMidia::Documento:  tipoMidia = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Texto:      tipoMidia = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Sessao:     tipoMidia = "sessao"; break;
+                default: break;
+            }
+
+            std::string estado = tipoMidia.empty() ? "capturado" : "catalogado";
+            auto tipoVal = tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia);
+
             registro->run(
                 "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
-                "VALUES (?, ?, ?, ?, NULL, 'capturado', ?, ?)",
+                "VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
                 {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId),
-                 matriz::db::Value::of(codigo.toStdString()),
                  matriz::db::Value::of(arquivo.getFileNameWithoutExtension().toStdString()),
+                 tipoVal, matriz::db::Value::of(estado),
                  matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            if (!tipoMidia.empty()) {
+                auto origem = matriz::ficha::origemPadraoParaTipo(tipoMidia);
+                if (origem) {
+                    registro->run(
+                        "INSERT OR IGNORE INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                        "VALUES (?, ?, 'raiz', 0, 'origem', ?, 'leitura_tecnica', ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                         matriz::db::Value::of(*origem), matriz::db::Value::of(agora)});
+                }
+            }
+
             itemIds.push_back(itemId);
         }
         registro->run("COMMIT", {});
@@ -950,10 +1772,19 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
         throw;
     }
 
+    if (!sourceMedia.empty() || !collection.empty()) {
+        for (auto& id : itemIds) {
+            if (!sourceMedia.empty())
+                projetoAberto_->salvarMetadado(id, "source_media", sourceMedia);
+            if (!collection.empty())
+                projetoAberto_->salvarMetadado(id, "collection_type", collection);
+        }
+    }
+
     ingestsTotalLote_ += static_cast<int>(arquivos.size());
-    ingestsPendentes_ += static_cast<int>(arquivos.size());
+    *pendentes_ += static_cast<int>(arquivos.size());
     atualizarLabelProgresso();
-    if (mosaico_) mosaico_->recarregar(); // lote inteiro já visível, mesmo sem miniatura/checksum ainda
+    if (mosaico_) mosaico_->recarregar();
 
     // Um lote novo rearma o token — cancelar um lote não pode deixar todos
     // os seguintes nascendo cancelados.
@@ -962,12 +1793,21 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
     auto cancelamento = cancelamentoLote_;
 
     auto estadoLote = std::make_shared<EstadoLote>();
+    estadoLoteAtual_ = estadoLote;
+    loteEmCurso_ = true;
+    // 100 ms: rápido o bastante pra grade parecer viva, devagar o bastante
+    // pra o acompanhamento do lote custar 10 idas à message thread por
+    // segundo em vez de uma por arquivo.
+    startTimer(100);
     juce::Component::SafePointer<MainComponent> safeThis(this);
     // Atualiza a grade periodicamente durante o lote (não a cada arquivo —
     // custaria uma consulta completa por arquivo em lotes de milhares) pra
     // as miniaturas irem preenchendo visivelmente atrás, como pedido em
     // §2.1/§2.2, sem esperar o lote inteiro terminar.
     auto contadorParaAtualizar = std::make_shared<std::atomic<int>>(0);
+    // Um mutex por LOTE, compartilhado por todos os jobs dele: serializa só a
+    // escrita no registro, deixando a análise (o caro) genuinamente paralela.
+    auto escritaRegistro = std::make_shared<std::mutex>();
     constexpr int kAtualizarACada = 20;
 
     for (size_t i = 0; i < arquivos.size(); ++i) {
@@ -979,7 +1819,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
         // travamento reportado. Agora cada arquivo é um job no ThreadPool
         // (1 thread — sequencial, sem concorrência de escrita no registro).
         ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis,
-                             contadorParaAtualizar, cancelamento]() mutable {
+                             contadorParaAtualizar, cancelamento, prefixo, escritaRegistro,
+                             pendentes = pendentes_]() mutable {
             juce::String erro;
             bool sucesso = false;
             bool duplicata = false;
@@ -993,52 +1834,103 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
                     estadoLote->cancelado = true;
                     estadoLote->naoProcessados.push_back(itemId);
                 }
-                juce::MessageManager::callAsync([safeThis, estadoLote, contadorParaAtualizar]() {
-                    if (!safeThis) return;
-                    safeThis.getComponent()->finalizarUnidadeDeLote(estadoLote, contadorParaAtualizar);
-                });
+                // Sem callAsync por arquivo — ver a nota em
+                // finalizarUnidadeDeLote. Quem observa o fim é o timer.
+                registrarUnidadeConcluida(pendentes);
                 return;
             }
 
+            auto inicio = std::chrono::system_clock::now();
+            juce::int64 bytes = arquivo.getSize();
+            std::string workerId = "WorkerThread-" + std::to_string((uint64_t)juce::Thread::getCurrentThreadId());
+
             try {
-                // Continuous ingestion (item 9, §8.2 — "um asset, muitas
-                // localizações"): se o MESMO conteúdo já está no acervo
-                // (SHA-256 igual, não importa nome nem pasta), reconhece em
-                // vez de copiar de novo — o operador nunca reimporta.
-                auto conhecido = matriz::ingest::buscarAssetConhecido(*registro, arquivo);
-                if (conhecido) {
-                    matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
-                    juce::String nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
-                                         " — already in the archive, not copied again.";
-                    registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                                  {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(itemId)});
-                    duplicata = true;
-                    sucesso = true;
-                } else {
-                    auto categoria = matriz::ingest::categoriaPorExtensao(arquivo);
-                    PapelInfo papelInfo = papelPorCategoria(categoria);
+                // FASE 1 — cara e PURA: checksum, ffprobe/Exiv2, decodificação.
+                // Não toca no banco, então N threads fazem isto ao mesmo tempo
+                // (critério 3: ingestão concorrente).
+                auto analise = matriz::ingest::analisarArquivo(arquivo);
+                auto categoria = matriz::ingest::categoriaPorExtensao(arquivo);
 
-                    auto resultado = matriz::ingest::ingerirArquivo(*registro, pastaProjeto, itemId, arquivo,
-                                                                      papelInfo.papel, papelInfo.ehMaster);
-                    sucesso = true;
+                // FASE 1b — também pura, e a mais cara de todas: LUFS, forma de
+                // onda, miniatura. Fica FORA do lock pelo mesmo motivo.
+                matriz::ingest::AnaliseCache cache;
+                if (!analise.ehPlaceholderNuvem)
+                    cache = matriz::ingest::calcularCache(arquivo, categoria, pastaProjeto,
+                                                          analise.leitura.duracaoSegundos);
 
-                    // Miniatura (§3.3 — "todo arquivo tem miniatura", nunca
-                    // bloco cinza): nunca derruba o ingest se falhar, a
-                    // própria função garante isso.
-                    matriz::ingest::gerarEGravarMiniaturaPrincipal(*indice, pastaProjeto, itemId,
-                                                                     resultado.arquivoId, resultado.arquivoNoProjeto,
-                                                                     categoria, resultado.leitura.duracaoSegundos);
+                // FASE 2 — banco. Sob lock: o handle SQLite é um só, e a
+                // numeração do acervo precisa de exclusão mútua pra dois
+                // arquivos não gastarem o mesmo sequencial.
+                std::string arquivoIdGravado;
+                {
+                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+
+                    auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, analise.checksums.sha256);
+                    if (conhecido) {
+                        matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
+                        juce::String nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
+                                             " - already in the archive, not copied again.";
+                        // codigo_acervo fica NULL: o conteúdo já tem um código (o
+                        // do item original, citado na nota) e um sequencial só é
+                        // gasto por conteúdo novo (§5, critério 6).
+                        registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                                      {matriz::db::Value::of(nota.toStdString()),
+                                       matriz::db::Value::of(itemId)});
+                        duplicata = true;
+                        sucesso = true;
+                    } else {
+                        PapelInfo papelInfo = papelPorCategoria(categoria);
+                        auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
+                                                                                 papelInfo.papel,
+                                                                                 papelInfo.ehMaster);
+                        arquivoIdGravado = resultado.arquivoId;
+
+                        // Sequencial permanente SÓ no sucesso (critério 6).
+                        int proximoNumero = 1;
+                        auto stmtContagem =
+                            registro->prepare("SELECT COUNT(*) FROM item WHERE codigo_acervo IS NOT NULL");
+                        if (stmtContagem.step())
+                            proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+                        juce::String codigo =
+                            prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
+
+                        // 'novo', não 'catalogado': o arquivo entrou e foi lido,
+                        // mas tipo_midia ainda é NULL — ninguém classificou
+                        // nada. Quem move pra 'catalogado' é a classificação
+                        // (ProjetoAberto::atualizarTipoMidia), que é decisão
+                        // humana. Marcar como catalogado aqui faria a coleção
+                        // "Incompletos" (§10) e a faixa de orientação mentirem.
+                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = NULL WHERE id = ?",
+                                      {matriz::db::Value::of(codigo.toStdString()),
+                                       matriz::db::Value::of(itemId)});
+
+                        matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
+                        sucesso = true;
+                    }
                 }
+
+                if (!arquivoIdGravado.empty()) {
+                    // Miniatura no índice: banco separado, sem disputa com o
+                    // registro, então fica fora do lock.
+                    matriz::ingest::gerarEGravarMiniaturaPrincipal(*indice, pastaProjeto, itemId,
+                                                                     arquivoIdGravado, arquivo, categoria,
+                                                                     analise.leitura.duracaoSegundos);
+                }
+
+                auto fim = std::chrono::system_clock::now();
+                matriz::app::registrarLogOperacao(pastaProjeto,
+                                                   duplicata ? "ingest_duplicate" : "ingest_success", itemId,
+                                                   workerId, inicio, fim, duplicata ? 0 : bytes);
             } catch (const std::exception& e) {
                 erro = arquivo.getFileName() + ": " + juce::String(e.what());
-                // Arquivo que falhou aparece marcado, nunca some em
-                // silêncio (§2.2) — o item já existe (fase 1), só marca
-                // estado de alerta e guarda o motivo.
+                auto fim = std::chrono::system_clock::now();
+                matriz::app::registrarLogOperacao(pastaProjeto, "ingest_error", itemId, workerId, inicio, fim, 0, e.what());
+
+                // Failed item does NOT get a code and is removed from the catalog
                 try {
-                    registro->run("UPDATE item SET estado = 'alerta', notas_livres = ? WHERE id = ?",
-                                  {matriz::db::Value::of(erro.toStdString()), matriz::db::Value::of(itemId)});
-                } catch (const std::exception&) {
-                }
+                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+                } catch (...) {}
             }
 
             {
@@ -1051,37 +1943,68 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos) 
                 }
             }
 
-            juce::MessageManager::callAsync([safeThis, estadoLote, contadorParaAtualizar]() {
-                if (!safeThis) return;
-                safeThis.getComponent()->finalizarUnidadeDeLote(estadoLote, contadorParaAtualizar);
-            });
+            registrarUnidadeConcluida(pendentes);
         });
     }
 }
 
+// Chamado da thread de trabalho, uma vez por arquivo. Deliberadamente
+// mínimo: um decremento atômico, nada de banco, nada de UI.
+void MainComponent::registrarUnidadeConcluida(const std::shared_ptr<std::atomic<int>>& pendentes) {
+    pendentes->fetch_sub(1);
+}
+
+// Passo do lote na MESSAGE THREAD, chamado pelo timer — não uma vez por
+// arquivo.
+//
+// Antes, cada job postava um callAsync ao terminar. Com 5.000 arquivos isso
+// enfileirava 5.000 callbacks na message thread, e o loop de mensagens os
+// drenava em rajadas: mesmo com cada callback custando menos de 35 ms, uma
+// volta do loop passava de um segundo. O trabalho era pequeno; o problema
+// era a QUANTIDADE de idas e voltas.
+//
+// Agora o worker só decrementa um átomo (registrarUnidadeConcluida) e a
+// message thread consulta o estado no seu próprio ritmo. O custo de
+// acompanhar um lote deixa de depender do tamanho do lote.
 void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLote,
                                             std::shared_ptr<std::atomic<int>> contadorParaAtualizar) {
-    constexpr int kAtualizarACada = 20;
+    MATRIZ_TRACE("MainComponent::finalizarUnidadeDeLote");
+    juce::ignoreUnused(contadorParaAtualizar);
+    if (estadoLote == nullptr || !projetoAberto_) return;
+    constexpr int kIntervaloAtualizacaoMs = 1500;
 
-    ingestsPendentes_.fetch_sub(1);
-    atualizarLabelProgresso();
+    bool ultimo = pendentes_->load() <= 0;
+    auto agora = juce::Time::getMillisecondCounter();
+    bool naHora = static_cast<int>(agora - ultimaAtualizacaoDeLoteMs_) >= kIntervaloAtualizacaoMs;
 
-    int feitos = contadorParaAtualizar->fetch_add(1) + 1;
-    bool ultimo = ingestsPendentes_.load() <= 0;
-    if (ultimo || feitos % kAtualizarACada == 0) {
-        if (mosaico_) mosaico_->recarregar();
-        if (painelInconsistencias_) painelInconsistencias_->recarregar();
-        if (filtros_) filtros_->recarregar(); // contagens dos chips mudam com novo material
-        // Só na aba EXPLORER: cada arquivo novo pode ter vindo de uma pasta
-        // de disco ainda não vista (§5.1) — se recarregasse também na aba
-        // BACKUP, perderia qualquer seleção de pasta que o operador tivesse
-        // acabado de fazer enquanto o lote ainda processava.
-        if (arvore_ && arvore_->abaAtual() == ArvoreComponent::Aba::Origem) arvore_->recarregar();
+    // Durante o lote, só o que o operador de fato acompanha: a grade
+    // enchendo e os contadores. Os dois são assíncronos — a message thread
+    // dispara e segue.
+    if (ultimo || naHora) {
+        ultimaAtualizacaoDeLoteMs_ = agora;
+        // Também throttled: com 5.000 arquivos, redesenhar o rótulo a cada
+        // um enfileirava 5.000 repinturas na message thread e o loop as
+        // drenava em rajadas de mais de um segundo. Ninguém lê 5.000
+        // atualizações de contador — o operador lê o número subindo.
+        atualizarLabelProgresso();
+        if (mosaico_) mosaico_->recarregar();  // Thread de Snapshot
+        if (filtros_) filtros_->recarregar();  // agregações em background
         atualizarPainelDeApoio();
-        atualizarEtapaDoFluxo();
     }
 
     if (!ultimo) return;
+
+    // Daqui pra baixo, UMA vez, no fim do lote. Cada uma destas percorre o
+    // acervo inteiro na message thread; rodar a cada 700 ms num lote de
+    // 5.000 arquivos era o congelamento medido (17 s numa única volta do
+    // loop de mensagens):
+    //
+    //  - a árvore EXPLORER remonta a hierarquia de caminhos de TODOS os itens;
+    //  - a faixa de orientação reconta tipos de mídia;
+    //  - o painel de inconsistências relê cada arquivo e recalcula SHA-256
+    //    (este já vai pra background sozinho, mas nem faz sentido rodar
+    //    antes do lote fechar: o quadro muda a cada arquivo).
+    if (arvoreOrigem_) arvoreOrigem_->recarregar();
 
     int sucessos, duplicatas, totalErros;
     bool cancelado;
@@ -1103,7 +2026,8 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
     if (!naoProcessados.empty() && projetoAberto_) {
         projetoAberto_->removerItensDoProjeto(naoProcessados);
         if (mosaico_) mosaico_->recarregar();
-        if (arvore_) arvore_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();
         atualizarEtapaDoFluxo();
@@ -1130,24 +2054,18 @@ void MainComponent::cancelarLoteIngest() {
     // Feedback na hora, sem esperar o último job drenar: o operador clicou
     // e precisa ver que o clique valeu, mesmo que ainda faltem alguns
     // callbacks de arquivos em curso chegarem.
-    if (labelProgressoIngest_) labelProgressoIngest_->setText(matriz::i18n::t("ingest.cancelando"));
-    if (botaoCancelarIngest_) botaoCancelarIngest_->setEnabled(false);
+    textoProgressoIngest_ = matriz::i18n::t("ingest.cancelando");
 }
 
 void MainComponent::mostrarResumoCancelado(int processados, int total) {
-    garantirLabelProgressoIngest();
-    labelProgressoIngest_->setText(matriz::i18n::t("ingest.cancelado")
-                                        .replace("{feito}", juce::String(processados))
-                                        .replace("{total}", juce::String(total)));
-    labelProgressoIngest_->definirFracao(-1.0);
-    if (botaoCancelarIngest_) {
-        botaoCancelarIngest_.reset();
-        resized();
-    }
+    textoProgressoIngest_ = matriz::i18n::t("ingest.cancelado")
+                                .replace("{feito}", juce::String(processados))
+                                .replace("{total}", juce::String(total));
 }
 
 void MainComponent::atualizarLabelProgresso() {
-    int pendentes = ingestsPendentes_.load();
+    MATRIZ_TRACE("MainComponent::atualizarLabelProgresso");
+    int pendentes = pendentes_->load();
     // Enquanto o lote está rodando, mostra progresso. O estado "terminou"
     // não reseta o rótulo aqui — quem decide o que mostrar depois do
     // último arquivo é mostrarResumoLote(), chamado à parte (item 9, §5:
@@ -1155,51 +2073,95 @@ void MainComponent::atualizarLabelProgresso() {
     // barra, não desaparece sozinho).
     if (pendentes <= 0) return;
 
-    garantirLabelProgressoIngest();
     int total = ingestsTotalLote_.load();
     int concluidos = total - pendentes;
-    labelProgressoIngest_->setText(matriz::i18n::t("ingest.progresso")
-                                        .replace("{feito}", juce::String(concluidos))
-                                        .replace("{total}", juce::String(total)));
-    labelProgressoIngest_->definirFracao(total > 0 ? static_cast<double>(concluidos) / total : 0.0);
+    textoProgressoIngest_ = matriz::i18n::t("ingest.progresso")
+                                .replace("{feito}", juce::String(concluidos))
+                                .replace("{total}", juce::String(total));
 }
 
 void MainComponent::garantirLabelProgressoIngest() {
-    if (labelProgressoIngest_) return;
-    labelProgressoIngest_ = std::make_unique<FaixaProgressoIngest>();
-    addAndMakeVisible(*labelProgressoIngest_);
-
-    botaoCancelarIngest_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ingest.cancelar"));
-    botaoCancelarIngest_->setColour(juce::TextButton::buttonColourId, tema().painel);
-    botaoCancelarIngest_->setColour(juce::TextButton::textColourOffId, tema().perigo);
-    botaoCancelarIngest_->onClick = [this] { cancelarLoteIngest(); };
-    addAndMakeVisible(*botaoCancelarIngest_);
-
-    resized();
 }
 
 void MainComponent::mostrarResumoLote(int novos, int duplicatas, int erros) {
-    garantirLabelProgressoIngest();
     juce::String texto = matriz::i18n::t("ingest.resumo_novos").replace("{n}", juce::String(novos));
     if (duplicatas > 0)
-        texto += " · " + matriz::i18n::t("ingest.resumo_duplicatas").replace("{n}", juce::String(duplicatas));
-    if (erros > 0) texto += " · " + matriz::i18n::t("ingest.resumo_erros").replace("{n}", juce::String(erros));
-    labelProgressoIngest_->setText(texto);
-    labelProgressoIngest_->definirFracao(-1.0); // lote terminado — faixa cheia com o resumo
-    if (botaoCancelarIngest_) {
-        botaoCancelarIngest_.reset(); // nada mais a cancelar
-        resized();
-    }
+        texto += " | " + matriz::i18n::t("ingest.resumo_duplicatas").replace("{n}", juce::String(duplicatas));
+    if (erros > 0) texto += " | " + matriz::i18n::t("ingest.resumo_erros").replace("{n}", juce::String(erros));
+    textoProgressoIngest_ = texto;
     atualizarPainelDeApoio();
     atualizarEtapaDoFluxo();
 }
 
+void MainComponent::renomearItemSelecionado() {
+    if (catalogWorkspace_) catalogWorkspace_->renomearSelecionados();
+    else if (mosaico_) mosaico_->renomearSelecao();
+}
+
+void MainComponent::removerItemSelecionadoDoBackup() {
+    if (catalogWorkspace_) catalogWorkspace_->removerSelecionadosDoBackup();
+    else if (mosaico_) mosaico_->removerSelecaoDoBackup();
+}
+
+bool MainComponent::podeDesfazer() const {
+    return projetoAberto_ && projetoAberto_->podeDesfazer();
+}
+
+void MainComponent::executarUndo() {
+    if (!projetoAberto_) return;
+    if (projetoAberto_->desfazer()) {
+        if (mosaico_) mosaico_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
+    }
+}
+
+bool MainComponent::keyPressed(const juce::KeyPress& key) {
+    if (key == juce::KeyPress::spaceKey) {
+        if (preview_ && preview_->videoPlayerParaTeste()) {
+            auto* vp = preview_->videoPlayerParaTeste();
+            if (vp->estaTocando()) vp->pausar(); else vp->tocar();
+            return true;
+        }
+    }
+    if (key == juce::KeyPress('z', juce::ModifierKeys::commandModifier, 0)) {
+        executarUndo();
+        return true;
+    }
+    if (key == juce::KeyPress('s', juce::ModifierKeys::commandModifier, 0)) {
+        salvarProjeto();
+        return true;
+    }
+    if (key == juce::KeyPress('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0)) {
+        if (aoSalvarComo) aoSalvarComo();
+        return true;
+    }
+    return false;
+}
+
 void MainComponent::paint(juce::Graphics& g) {
     g.fillAll(tema().fundo);
-    if (!arrastandoArquivo_) return;
 
-    // Feedback visual da janela inteira como alvo de drop (Parte 3.2 da
-    // correção crítica) — sem isso o operador não sabe se pode soltar ali.
+    // Highlight do painel ativo (item 9): borda colorida no painel que
+    // está recebendo os comandos de filtro (MEDIA TYPE / STATUS / FILE TYPE).
+    if (arvoreOrigemViewport_ && arvoreAcervoViewport_) {
+        auto destacar = [&](juce::Viewport* viewport, bool ativo) {
+            auto bounds = viewport->getBounds().expanded(1);
+            if (ativo) {
+                g.setColour(tema().bordaFoco);
+                g.drawRect(bounds, 2);
+            } else {
+                g.setColour(tema().borda);
+                g.drawRect(bounds, 1);
+            }
+        };
+        destacar(arvoreOrigemViewport_.get(), painelAtivo_ == PainelAtivo::Source);
+        destacar(arvoreAcervoViewport_.get(), painelAtivo_ == PainelAtivo::BackupTree);
+    }
+
+    if (!arrastandoArquivo_) return;
     g.setColour(tema().acento.withAlpha(0.10f));
     g.fillRect(getLocalBounds());
     g.setColour(tema().acento);
@@ -1207,6 +2169,12 @@ void MainComponent::paint(juce::Graphics& g) {
 }
 
 void MainComponent::resized() {
+    MATRIZ_TRACE("MainComponent::resized");
+
+    // O overlay cobre a janela inteira, sempre — é o que faz o scrim
+    // escurecer tudo e engolir o clique de qualquer painel atrás.
+    overlay_.setBounds(getLocalBounds());
+
     auto area = getLocalBounds();
 
     if (catalogo_) {
@@ -1218,13 +2186,51 @@ void MainComponent::resized() {
         catalogoTitulo_->setBounds(cabecalho);
 
         catalogoViewport_->setBounds(area);
-        catalogo_->setSize(catalogoViewport_->getWidth() - catalogoViewport_->getScrollBarThickness(),
-                            catalogo_->getHeight());
-        catalogo_->resized();
+        int targetW = catalogoViewport_->getWidth() - catalogoViewport_->getScrollBarThickness();
+        catalogo_->setSize(targetW, catalogo_->getHeight());
         return;
     }
 
-    if (!temProjetoAberto()) {
+    if (projetoAberto_ && barraNavegacao_) {
+        if (telaAtiva_ != TelaAtiva::Inicial) {
+            barraNavegacao_->setBounds(area.removeFromTop(44));
+            barraNavegacao_->setVisible(true);
+        } else {
+            barraNavegacao_->setVisible(false);
+        }
+    }
+
+    if (homePanel_ && homePanel_->isVisible()) {
+        homePanel_->setBounds(area);
+        return;
+    }
+
+    if (catalogWorkspace_ && catalogWorkspace_->isVisible()) {
+        catalogWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) {
+        analyticsWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (treeWorkspace_ && treeWorkspace_->isVisible()) {
+        treeWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (backupWorkspace_ && backupWorkspace_->isVisible()) {
+        backupWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (ingestWizard_ && ingestWizard_->isVisible()) {
+        ingestWizard_->setBounds(area);
+        return;
+    }
+
+    if (!temProjetoAberto() && telaInicialTitulo_) {
         constexpr int kLarguraCartao = 320;
         constexpr int kAlturaCartao = 180;
         constexpr int kLarguraColuna = kLarguraCartao * 2 + 24; // dois cartões + espaço entre eles
@@ -1248,8 +2254,6 @@ void MainComponent::resized() {
         coluna.removeFromTop(tema().espacoGrande);
 
         auto linhaAbrir = coluna.removeFromTop(32);
-        // 160 px cortava "Abrir um projeto que já existe…" em duas linhas
-        // dentro de um botão de 32 px de altura.
         telaInicialBotaoAbrir_->setBounds(linhaAbrir.withSizeKeepingCentre(260, 32));
 
         if (telaInicialRecentesTitulo_) {
@@ -1260,110 +2264,130 @@ void MainComponent::resized() {
         return;
     }
 
-    constexpr int kLarguraFicha = 340;
-    constexpr int kLarguraArvore = 220;
-    constexpr int kAlturaFaixaBotao = 34;
-    constexpr int kAlturaPainelInconsistencias = 180;
+    constexpr int kAlturaCabecalhoPainel = 28;
+    constexpr int kLarguraDivisor = 6;
 
-    // Barra de ferramentas e faixa de orientação atravessam a janela
-    // inteira, ACIMA de tudo — inclusive da coluna esquerda. Elas falam do
-    // projeto como um todo, não de um painel específico, e ficar no topo
-    // absoluto é o que garante que sejam a primeira coisa lida.
     if (barraFerramentas_) barraFerramentas_->setBounds(area.removeFromTop(BarraFerramentasComponent::kAltura));
-    if (barraGuia_) barraGuia_->setBounds(area.removeFromTop(barraGuia_->alturaDesejada()));
+    if (transport_) transport_->setBounds(area.removeFromTop(TransportComponent::kAltura));
 
-    // Barra de métricas fixa no rodapé da janela inteira (item 6) — abaixo
-    // de tudo, inclusive da coluna esquerda e da ficha, porque fala do
-    // arquivo selecionado, não de um painel. Sai do `area` antes de todos os
-    // outros painéis pra que nenhum deles a cubra.
-    if (barraMetricas_) barraMetricas_->setBounds(area.removeFromBottom(BarraMetricasComponent::kAlturaPreferida));
+    int larguraTotal = area.getWidth();
+    int lSource = mostrarEstruturaOrigem_ ? juce::jmax(80, static_cast<int>(larguraTotal * propPainel1_)) : 0;
+    
+    bool mostrarColunaDireita = mostrarEstruturaBackup_ || (fichaPanel_ && fichaPanel_->isVisible());
+    int lBackup = mostrarColunaDireita ? juce::jmax(80, static_cast<int>(larguraTotal * propPainel2_)) : 0;
 
-    // Árvore Origem/Acervo — painel esquerdo fixo (§3.1), largura
-    // constante, sempre visível (ao contrário da ficha, que só reserva
-    // espaço quando aberta).
-    auto areaArvore = area.removeFromLeft(kLarguraArvore);
-    auto areaCabecalhoArvore = areaArvore.removeFromTop(kAlturaFaixaBotao).reduced(4, 4);
-    botaoNovaPastaAcervo_->setBounds(areaCabecalhoArvore.removeFromRight(28));
-    areaCabecalhoArvore.removeFromRight(4);
-    int metadeAbas = areaCabecalhoArvore.getWidth() / 2;
-    botaoAbaOrigem_->setBounds(areaCabecalhoArvore.removeFromLeft(metadeAbas));
-    botaoAbaAcervo_->setBounds(areaCabecalhoArvore);
-
-    // Árvore ocupa uma fração do que sobrou da coluna esquerda; filtros +
-    // busca + coleções ficam com o resto embaixo (§9.1 — "Árvore / Filtros
-    // / Busca" empilhados na mesma coluna). Ambos roláveis por conta própria.
-    int alturaArvore = static_cast<int>(areaArvore.getHeight() * 0.55f);
-    arvoreViewport_->setBounds(areaArvore.removeFromTop(alturaArvore));
-    filtrosViewport_->setBounds(areaArvore);
-
-    if (arvore_) {
-        arvore_->setSize(arvoreViewport_->getWidth() - arvoreViewport_->getScrollBarThickness(), arvore_->getHeight());
-        arvore_->resized();
+    int numDivisores = (mostrarEstruturaOrigem_ ? 1 : 0) + (mostrarColunaDireita ? 1 : 0);
+    int lMosaico = larguraTotal - lSource - lBackup - kLarguraDivisor * numDivisores;
+    if (lMosaico < 120) {
+        lMosaico = 120;
+        lSource = mostrarEstruturaOrigem_ ? 150 : 0;
+        lBackup = mostrarColunaDireita ? (larguraTotal - lSource - lMosaico - kLarguraDivisor * numDivisores) : 0;
     }
-    if (filtros_) {
+
+    // --- Left column (Filters / Source Tree) ---
+    auto areaSource = area.removeFromLeft(lSource);
+    if (mostrarEstruturaOrigem_) {
+        auto cabecalhoSource = areaSource.removeFromTop(kAlturaCabecalhoPainel);
+        if (botaoSourceIcones_) { botaoSourceIcones_->setVisible(true); botaoSourceIcones_->setBounds(cabecalhoSource.removeFromRight(42).reduced(2, 2)); }
+        if (botaoSourceLista_) { botaoSourceLista_->setVisible(true); botaoSourceLista_->setBounds(cabecalhoSource.removeFromRight(36).reduced(2, 2)); }
+        if (labelSource_) { labelSource_->setVisible(true); labelSource_->setBounds(cabecalhoSource.reduced(6, 2)); }
+
+        int alturaFiltros = static_cast<int>(areaSource.getHeight() * 0.35f);
+        auto areaFiltros = areaSource.removeFromBottom(alturaFiltros);
+        if (filtrosViewport_) { filtrosViewport_->setVisible(true); filtrosViewport_->setBounds(areaFiltros); }
+        if (arvoreOrigemViewport_) { arvoreOrigemViewport_->setVisible(true); arvoreOrigemViewport_->setBounds(areaSource); }
+    } else {
+        if (botaoSourceIcones_) botaoSourceIcones_->setVisible(false);
+        if (botaoSourceLista_) botaoSourceLista_->setVisible(false);
+        if (labelSource_) labelSource_->setVisible(false);
+        if (arvoreOrigemViewport_) arvoreOrigemViewport_->setVisible(false);
+        if (filtrosViewport_) filtrosViewport_->setVisible(false);
+    }
+
+    if (filtros_ && filtrosViewport_ && filtrosViewport_->isVisible()) {
         filtros_->setSize(filtrosViewport_->getWidth() - filtrosViewport_->getScrollBarThickness(), filtros_->getHeight());
         filtros_->resized();
     }
-
-    // Ficha lateral só reserva espaço quando aberta (§7.1 — "a ficha nunca
-    // bloqueia"); fechada, a grade recupera essa largura inteira.
-    if (fichaAberta_) {
-        auto colunaFicha = area.removeFromRight(kLarguraFicha);
-        barraAcoesFicha_->setBounds(colunaFicha.removeFromTop(BarraAcoesFicha::kAltura));
-        fichaPanel_->setBounds(colunaFicha);
+    if (arvoreOrigem_ && arvoreOrigemViewport_ && arvoreOrigemViewport_->isVisible()) {
+        arvoreOrigem_->setSize(arvoreOrigemViewport_->getWidth() - arvoreOrigemViewport_->getScrollBarThickness(), arvoreOrigem_->getHeight());
+        arvoreOrigem_->resized();
     }
 
-    // Faixa fixa do painel de inconsistências no Catalog — nunca escondida
-    // em menu (§1.3/§3.5), mas nunca por cima da grade acima dela.
-    if (painelInconsistenciasViewport_) {
-        painelInconsistenciasViewport_->setBounds(area.removeFromBottom(kAlturaPainelInconsistencias));
-        if (painelInconsistencias_) {
-            painelInconsistencias_->setSize(
-                painelInconsistenciasViewport_->getWidth() - painelInconsistenciasViewport_->getScrollBarThickness(),
-                painelInconsistencias_->getHeight());
+    if (divisor1_) {
+        divisor1_->setVisible(mostrarEstruturaOrigem_);
+        if (mostrarEstruturaOrigem_) divisor1_->setBounds(area.removeFromLeft(kLarguraDivisor));
+    }
+
+    // --- Right column (Ficha / Backup Tree) ---
+    if (mostrarColunaDireita) {
+        auto areaBackup = area.removeFromRight(lBackup);
+        if (mostrarEstruturaBackup_) {
+            auto cabecalhoBackup = areaBackup.removeFromTop(kAlturaCabecalhoPainel);
+            if (botaoNovaPastaAcervo_) { botaoNovaPastaAcervo_->setVisible(true); botaoNovaPastaAcervo_->setBounds(cabecalhoBackup.removeFromRight(28).reduced(2, 2)); }
+            if (botaoBackupIcones_) { botaoBackupIcones_->setVisible(true); botaoBackupIcones_->setBounds(cabecalhoBackup.removeFromRight(42).reduced(2, 2)); }
+            if (botaoBackupLista_) { botaoBackupLista_->setVisible(true); botaoBackupLista_->setBounds(cabecalhoBackup.removeFromRight(36).reduced(2, 2)); }
+            if (labelBackupTree_) { labelBackupTree_->setVisible(true); labelBackupTree_->setBounds(cabecalhoBackup.reduced(6, 2)); }
+
+            if (fichaPanel_ && fichaPanel_->isVisible()) {
+                int alturaDisponivel = areaBackup.getHeight();
+                int alturaFicha = juce::jmax(100, static_cast<int>(alturaDisponivel * propFichaBackup_));
+                int alturaArvore = alturaDisponivel - alturaFicha - kLarguraDivisor;
+                if (alturaArvore < 60) { alturaArvore = 60; alturaFicha = alturaDisponivel - alturaArvore - kLarguraDivisor; }
+
+                auto areaArvore = areaBackup.removeFromTop(alturaArvore);
+                if (arvoreAcervoViewport_) { arvoreAcervoViewport_->setVisible(true); arvoreAcervoViewport_->setBounds(areaArvore); }
+                if (divisorFicha_) { divisorFicha_->setVisible(true); divisorFicha_->setBounds(areaBackup.removeFromTop(kLarguraDivisor)); }
+                if (barraAcoesFicha_) { barraAcoesFicha_->setVisible(true); barraAcoesFicha_->setBounds(areaBackup.removeFromTop(BarraAcoesFicha::kAltura)); }
+                if (fichaPanel_) { fichaPanel_->setVisible(true); fichaPanel_->setBounds(areaBackup); }
+            } else {
+                if (arvoreAcervoViewport_) { arvoreAcervoViewport_->setVisible(true); arvoreAcervoViewport_->setBounds(areaBackup); }
+                if (divisorFicha_) divisorFicha_->setVisible(false);
+                if (barraAcoesFicha_) barraAcoesFicha_->setVisible(false);
+                if (fichaPanel_) fichaPanel_->setVisible(false);
+            }
+        } else {
+            if (botaoNovaPastaAcervo_) botaoNovaPastaAcervo_->setVisible(false);
+            if (botaoBackupIcones_) botaoBackupIcones_->setVisible(false);
+            if (botaoBackupLista_) botaoBackupLista_->setVisible(false);
+            if (labelBackupTree_) labelBackupTree_->setVisible(false);
+            if (arvoreAcervoViewport_) arvoreAcervoViewport_->setVisible(false);
+            if (divisorFicha_) divisorFicha_->setVisible(false);
+
+            if (fichaPanel_ && fichaPanel_->isVisible()) {
+                if (barraAcoesFicha_) { barraAcoesFicha_->setVisible(true); barraAcoesFicha_->setBounds(areaBackup.removeFromTop(BarraAcoesFicha::kAltura)); }
+                if (fichaPanel_) { fichaPanel_->setVisible(true); fichaPanel_->setBounds(areaBackup); }
+            }
         }
+
+        if (arvoreAcervo_ && arvoreAcervoViewport_ && arvoreAcervoViewport_->isVisible()) {
+            arvoreAcervo_->setSize(arvoreAcervoViewport_->getWidth() - arvoreAcervoViewport_->getScrollBarThickness(), arvoreAcervo_->getHeight());
+            arvoreAcervo_->resized();
+        }
+
+        if (divisor2_) {
+            divisor2_->setVisible(true);
+            divisor2_->setBounds(area.removeFromRight(kLarguraDivisor));
+        }
+    } else {
+        if (divisor2_) divisor2_->setVisible(false);
+        if (divisorFicha_) divisorFicha_->setVisible(false);
+        if (arvoreAcervoViewport_) arvoreAcervoViewport_->setVisible(false);
+        if (fichaPanel_) fichaPanel_->setVisible(false);
+        if (barraAcoesFicha_) barraAcoesFicha_->setVisible(false);
     }
 
-    // Barra de seleção flutua sobre o rodapé da grade — reserva espaço em
-    // vez de cobrir a última fileira de células, senão esconderia
-    // justamente parte do que está selecionado.
-    if (barraSelecao_) {
-        // Só desconta espaço da grade quando está de fato à mostra; escondida,
-        // continua recebendo bounds (sobrepostos à grade, sem efeito visual)
-        // em vez de ficar 0x0 — Component sem tamanho é o que o self-test de
-        // UI trata como layout quebrado, e com razão: quando reaparecesse
-        // dependeria de um resized() extra pra ter dimensão.
-        bool visivel = barraSelecao_->quantidade() > 0;
-        auto areaSelecao = visivel ? area.removeFromBottom(BarraSelecaoComponent::kAltura + tema().espacoMedio)
-                                   : area.withTop(area.getBottom() - BarraSelecaoComponent::kAltura -
-                                                   tema().espacoMedio);
-        barraSelecao_->setBounds(areaSelecao.reduced(tema().espacoMedio, 0)
-                                      .withTrimmedBottom(tema().espacoMedio)
-                                      .withHeight(BarraSelecaoComponent::kAltura));
-    }
+    // --- Center: Grid/Preview/Listening (full height) ---
+    auto areaCentro = area;
 
-    // Grade e preview dividem o MESMO espaço, alternando visibilidade
-    // (abrirPreview/fecharPreview) — nunca os dois ao mesmo tempo (§3.1/§3.4).
-    mosaicoViewport_->setBounds(area);
-    if (preview_) preview_->setBounds(area);
+    if (mosaicoViewport_) mosaicoViewport_->setBounds(areaCentro);
+    if (preview_) preview_->setBounds(areaCentro);
+    if (escuta_) escuta_->setBounds(areaCentro);
 
     if (mosaico_) {
         mosaico_->setSize(mosaicoViewport_->getWidth() - mosaicoViewport_->getScrollBarThickness(), mosaico_->getHeight());
         mosaico_->resized();
     }
 
-    // Progresso do ingest fica logo abaixo da barra de ferramentas, não no
-    // topo absoluto — no topo ele cobria os próprios botões da barra.
-    if (labelProgressoIngest_) {
-        int y = barraFerramentas_ ? BarraFerramentasComponent::kAltura : 0;
-        juce::Rectangle<int> faixa(0, y, getWidth(), 26);
-        if (botaoCancelarIngest_) {
-            botaoCancelarIngest_->setBounds(faixa.removeFromRight(110).reduced(4, 2));
-            botaoCancelarIngest_->toFront(false);
-        }
-        labelProgressoIngest_->setBounds(faixa);
-        labelProgressoIngest_->toFront(false);
-    }
 }
 
 } // namespace matriz::ui

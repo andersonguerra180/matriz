@@ -27,6 +27,7 @@ struct ItemResumo {
     std::string tipoMidia;
     std::string estado; // nao_digitalizado | capturado | qc_ok | alerta | publicado
     std::string atualizadoEm;
+    std::string criadoEm;
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -43,12 +44,17 @@ struct ItemResumo {
     // acima — nullopt = ainda não preenchido.
     std::optional<std::string> origem; // "Digital" | "Analógico" (valor bruto gravado no banco, não traduzido)
     std::optional<int> ano;
+    std::optional<std::string> contentType;
+    std::optional<std::string> collectionType;
 
     // Extensão (sem ponto, minúscula) do arquivo principal — usada pro
     // ícone de placeholder por categoria enquanto não há miniatura real
     // (Reorientação completa §3.3: nunca bloco cinza vazio). Vazia se o
     // item ainda não tem nenhum arquivo associado.
     std::string extensaoArquivo;
+    std::string nomeOriginalArquivo;
+    std::string pastaNome; // Name of the acervo_pasta folder the item belongs to
+    juce::int64 tamanhoBytes = 0;
 };
 
 class ProjetoAbertoError : public std::runtime_error {
@@ -60,7 +66,7 @@ class ProjetoAberto {
 public:
     explicit ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto);
 
-    matriz::model::Project& projeto() { return *projeto_; }
+    matriz::model::Project& projeto() { jassert(projeto_ != nullptr); return *projeto_; }
 
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
     // que reconstrói a árvore de Component inteira do zero (é o jeito mais
@@ -70,6 +76,15 @@ public:
     std::unique_ptr<matriz::model::Project> destacarProjeto() { return std::move(projeto_); }
 
     std::vector<ItemResumo> listarItens() const;
+    // Soma o tamanho do master de cada item. Roda um SUM com função de
+    // janela sobre `arquivo` inteiro — 619 ms com 5.000 itens sob carga,
+    // medido. NUNCA chamar na message thread durante um lote.
+    juce::int64 tamanhoTotalDosMasters() const;
+    bool obterItemInfo(const std::string& itemId, std::string& titulo, std::string& tipoMidia, std::string& codigoAcervo) const;
+    std::set<int> indicesExistentes(const std::string& itemId, const std::string& nivel) const;
+    void atualizarTipoMidia(const std::string& itemId, const std::string& tipoMidia);
+    void aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia);
+    void obterTiposMidiaDosItens(const std::vector<std::string>& itemIds, std::set<std::string>& tiposPresentes, bool& algumNulo) const;
 
     // Carrega (e cacheia) a definição de ficha para `tipoMidia` a partir de
     // fichas/*.yaml. Lança ProjetoAbertoError se o tipo não tiver definição —
@@ -116,9 +131,40 @@ public:
     // opcao_livre (marca, formulação, ...), não só marca de fita.
     std::vector<std::string> valoresUsadosNoCampo(const std::string& campoId) const;
 
+    // --- Undo (up to 10 levels) ---
+    struct UndoChange {
+        std::string itemId;
+        std::string coluna;
+        std::string valorAnterior;
+    };
+    struct UndoGroup {
+        std::string descricao;
+        std::vector<UndoChange> mudancas;
+    };
+    void iniciarGrupoUndo(const std::string& descricao = {});
+    void finalizarGrupoUndo();
+    bool desfazer();
+    bool podeDesfazer() const { return !pilhaUndo_.empty(); }
+    std::string descricaoUndoAtual() const;
+    std::function<void()> aoMudarUndo;
+
+    // --- Unified Metadata (direct item columns) ---
+    // Reads a direct column from the item table (ano, caminho_catalogo, content_type, source_media, collection_type, isrc, notas_livres)
+    std::optional<std::string> lerMetadado(const std::string& itemId, const std::string& coluna) const;
+    // Writes a direct column on the item table
+    void salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor);
+
+    // --- Tags ---
+    std::vector<std::string> lerTags(const std::string& itemId) const;
+    void definirTags(const std::string& itemId, const std::vector<std::string>& tags);
+    void adicionarTag(const std::string& itemId, const std::string& tag);
+    void removerTag(const std::string& itemId, const std::string& tag);
+
     // Caminho absoluto da miniatura principal do item, se o índice já
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
+
+    void gerarMiniaturasFaltantes();
 
     struct ArquivoInfo {
         std::string id;
@@ -190,35 +236,28 @@ public:
     struct NoArvore {
         std::string id;
         juce::String nome;
+        std::string pastaPaiId;
+        int posicaoX = 0;
+        int posicaoY = 0;
+        bool ativo = true;
         std::vector<NoArvore> filhos;
         std::set<std::string> itemIds;
-        // Só os itens DESTA pasta, sem os das subpastas. `itemIds` continua
-        // sendo o recursivo. Os dois existem porque a grade oferece "incluir
-        // subpastas": ligado usa itemIds, desligado usa itemIdsDiretos.
         std::set<std::string> itemIdsDiretos;
     };
 
-    // Espelha a estrutura real de onde cada arquivo foi ingerido
-    // (arquivo.caminho_absoluto_origem), intocada — nunca escrita pelo
-    // operador (§5.1, §8.1). Item sem nenhum arquivo com origem registrada
-    // (banco de antes deste campo existir) não aparece nesta árvore.
-    NoArvore arvoreOrigem() const;
-
-    // Estrutura virtual que o operador monta (§5.2) — raiz sintética
-    // (id vazio) cujos filhos são as pastas de topo do acervo, mais um nó
-    // "não organizados" (id vazio, calculado por ausência — §5.5) ao final.
+    NoArvore arvoreOrigem(bool incluirTodos = false) const;
     NoArvore arvoreAcervo() const;
 
     std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId);
     void renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
-    // Cascateia pra subpastas e memberships (ON DELETE CASCADE no schema) —
-    // nunca apaga o item em si, só tira ele da organização virtual (§5.3:
-    // planejamento é sempre reversível sem custo).
     void apagarPastaAcervo(const std::string& pastaId);
 
-    // Adiciona à pasta sem tirar de nenhuma outra — material em mais de uma
-    // pasta é permitido de propósito (§5.4). Idempotente (UNIQUE no schema).
+    void moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId);
+    void atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y);
+    void alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo);
+
     void adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId);
+    std::string agruparItensEmNovaPasta(const std::vector<std::string>& itemIds);
 
     // Replica uma subárvore inteira da EXPLORER dentro da BACKUP.
     //
@@ -236,6 +275,7 @@ public:
     // pastaPaiId vazio = raiz da BACKUP. Devolve quantos itens foram
     // vinculados (contando um item uma vez por pasta em que entrou).
     int replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId, bool manterEstrutura);
+    void resetarEImportarEstruturaOrigem();
     void removerItemDaPasta(const std::string& itemId, const std::string& pastaId);
 
     // --- Ações sobre item/seleção (menu de contexto e painel direito) ---
@@ -269,6 +309,26 @@ public:
     // item não tem duplicata nenhuma (ou ainda não tem checksum calculado).
     std::set<std::string> itensComMesmoConteudo(const std::string& itemId) const;
 
+    struct ParDuplicatas {
+        struct ItemInfo {
+            std::string id;
+            std::string codigoAcervo;
+            std::string titulo;
+            std::string tipoMidia;
+            std::string estado;
+            juce::String caminhoRelativo;
+            juce::String caminhoOrigem;
+            juce::int64 tamanhoBytes = 0;
+        };
+        std::vector<ItemInfo> itens;
+        juce::String filename;
+        juce::int64 tamanhoBytes = 0;
+        std::string checksumSha256;
+    };
+
+    std::vector<ParDuplicatas> listarGruposDuplicados() const;
+    void atualizarEstadoItem(const std::string& itemId, const std::string& novoEstado);
+
     // --- Busca avançada e coleções inteligentes (Acréscimos §10) ---
     //
     // Ids de item cujo código, título, algum valor de campo de ficha, ou
@@ -285,6 +345,8 @@ public:
     std::map<std::string, int> contagensPorExtensao() const;
     // Chave "" = origem ainda não preenchida (campo vazio).
     std::map<std::string, int> contagensPorOrigem() const;
+    std::map<std::string, int> contagensPorContentType() const;
+    std::map<std::string, int> contagensPorCollectionType() const;
 
     // Ids de item cujo campo "ano" (nível raiz) cai em [anoDe, anoAte].
     // Item sem "ano" preenchido nunca entra (faixa é sobre o que se sabe).
@@ -300,10 +362,40 @@ public:
         std::set<juce::String> filtrosTipoMidia;
         std::set<juce::String> filtrosEstado;
         std::set<juce::String> filtrosExtensao;
-        std::set<juce::String> filtrosOrigem;   // Digital/Analógico (item 4.2)
-        std::optional<int> anoDe, anoAte;        // faixa de ano (item 4.3); os dois nulos = sem faixa
+        std::set<juce::String> filtrosOrigem;         // Digital/Analógico (item 4.2)
+        std::set<juce::String> filtrosContentType;    // Content filter (item 13)
+        std::set<juce::String> filtrosCollectionType; // Collection filter (item 13)
+        std::optional<int> anoDe, anoAte;              // faixa de ano (item 4.3); os dois nulos = sem faixa
     };
     std::vector<ColecaoInteligente> listarColecoes() const;
+
+    // -----------------------------------------------------------------
+    // Vaults (§8) e coleções EMBUTIDAS (§10). As embutidas não são salvas
+    // pelo operador: são views SQL do schema (colecao_embutida), que se
+    // atualizam sozinhas a cada consulta — daí não haver id de banco nem
+    // parâmetros pra editar, só a chave.
+    // -----------------------------------------------------------------
+    struct VaultResumo {
+        std::string id;
+        juce::String nome;
+        juce::String localizacao;
+        bool online = false;
+        int totalItens = 0;
+    };
+    std::vector<VaultResumo> listarVaults() const;
+
+    struct ColecaoEmbutida {
+        std::string chave;   // "clipping", "ausentes", ...
+        juce::String rotulo; // já traduzido
+        int contagem = 0;
+    };
+    std::vector<ColecaoEmbutida> listarColecoesEmbutidas() const;
+    std::set<std::string> itensDaColecaoEmbutida(const std::string& chave) const;
+
+    // Reavalia quais Vaults estão montados agora e devolve os que acabaram
+    // de ficar online — o gatilho da varredura de §8. Barato: só compara
+    // caminho e UUID, não percorre volume nenhum.
+    std::vector<std::string> reavaliarVaults();
     // colecao.id vazio cria uma nova; preenchido atualiza a existente.
     // Devolve o id (novo ou o mesmo).
     std::string salvarColecao(const ColecaoInteligente& colecao);
@@ -312,6 +404,11 @@ public:
 private:
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
+
+    static constexpr int kMaxUndo = 10;
+    std::vector<UndoGroup> pilhaUndo_;
+    std::optional<UndoGroup> grupoAberto_;
+    bool desfazendo_ = false;
 };
 
 } // namespace matriz::ui

@@ -3,6 +3,7 @@ rotulo: Áudio digital
 modos: [archive, catalog]
 ordem: 140
 icone: audio
+categoria: digital
 grupos:
   - rotulo: Arquivo
     campos:

@@ -30,7 +30,7 @@ void check(bool condition, const std::string& description) {
 void expectThrow(const std::string& description, const std::function<void()>& fn) {
     try {
         fn();
-        std::cout << "  FAIL " << description << " (esperava exceção, nenhuma foi lançada)\n";
+        std::cout << "  FAIL " << description << " (expected an exception, none was thrown)\n";
         ++failures;
     } catch (const std::exception& e) {
         std::cout << "  OK   " << description << " (" << e.what() << ")\n";
@@ -43,7 +43,7 @@ void expectThrow(const std::string& description, const std::function<void()>& fn
 // (falha visível é o comportamento desejado, não pular o arquivo quebrado).
 void testarDefinicoesDeFicha() {
     juce::File fichasDir(MATRIZ_FICHAS_DIR);
-    check(fichasDir.isDirectory(), "pasta fichas/ existe: " + fichasDir.getFullPathName().toStdString());
+    check(fichasDir.isDirectory(), "fichas/ directory exists: " + fichasDir.getFullPathName().toStdString());
 
     std::vector<matriz::ficha::TipoFichaInfo> tipos;
     try {
@@ -52,20 +52,20 @@ void testarDefinicoesDeFicha() {
         check(false, std::string("listarTodosOsTipos(fichas/): ") + e.what());
         return;
     }
-    std::cout << "== Parser/validador de ficha (" << tipos.size() << " tipos descobertos em fichas/) ==\n";
+    std::cout << "== Record parser/validator (" << tipos.size() << " types discovered in fichas/) ==\n";
 
     for (auto& info : tipos) {
         bool tipoOk = info.definicao.tipo == info.id;
         bool temCampos = !info.definicao.todosCampos().empty();
         check(tipoOk && temCampos,
-              info.id + ".yaml carregou (" + std::to_string(info.definicao.todosCampos().size()) + " campos, " +
-                  (info.definicao.usaNiveis() ? "níveis: " + std::to_string(info.definicao.niveis.size())
-                                               : "grupos: " + std::to_string(info.definicao.grupos.size())) +
+              info.id + ".yaml loaded (" + std::to_string(info.definicao.todosCampos().size()) + " fields, " +
+                  (info.definicao.usaNiveis() ? "levels: " + std::to_string(info.definicao.niveis.size())
+                                               : "groups: " + std::to_string(info.definicao.grupos.size())) +
                   ")");
     }
 
     // Definição inválida deliberada: grupos E niveis juntos devem ser rejeitados.
-    expectThrow("definição com grupos+niveis é rejeitada", [] {
+    expectThrow("a definition with both groups and levels is rejected", [] {
         matriz::ficha::loadFromString(
             "tipo: invalido\n"
             "rotulo: Inválido\n"
@@ -78,7 +78,7 @@ void testarDefinicoesDeFicha() {
     });
 
     // Campo tipo "opcao" sem opcoes deve ser rejeitado.
-    expectThrow("campo opcao sem opcoes é rejeitado", [] {
+    expectThrow("an option field with no options is rejected", [] {
         matriz::ficha::loadFromString(
             "tipo: invalido2\n"
             "rotulo: Inválido 2\n"
@@ -91,7 +91,7 @@ void testarDefinicoesDeFicha() {
     });
 
     // sugerido_por e herda_do_projeto juntos no mesmo campo devem ser rejeitados.
-    expectThrow("origens mutuamente exclusivas são impostas", [] {
+    expectThrow("mutually exclusive value origins are enforced", [] {
         matriz::ficha::loadFromString(
             "tipo: invalido3\n"
             "rotulo: Inválido 3\n"
@@ -107,7 +107,7 @@ void testarDefinicoesDeFicha() {
 
     // YAML genuinamente inválido (âncora indefinida) — confirma que o erro do
     // yaml-cpp chega como FichaDefinitionError, não como exceção crua.
-    expectThrow("YAML malformado (âncora indefinida) é rejeitado com mensagem do parser real", [] {
+    expectThrow("malformed YAML (undefined anchor) is rejected with the real parser message", [] {
         matriz::ficha::loadFromString(
             "tipo: invalido4\n"
             "rotulo: Inválido 4\n"
@@ -133,9 +133,9 @@ void testarDefinicoesDeFicha() {
             "        opcoes: *opcoes_sim_nao\n");
         check(def.todosCampos().size() == 2 &&
                   def.todosCampos()[0]->opcoes == def.todosCampos()[1]->opcoes,
-              "âncora/referência YAML (recurso real, não suportado pelo parser artesanal antigo) funciona via yaml-cpp");
+              "YAML anchors/references work through yaml-cpp");
     } catch (const std::exception& e) {
-        check(false, std::string("âncora/referência YAML: ") + e.what());
+        check(false, std::string("YAML anchor/reference: ") + e.what());
     }
 }
 
@@ -144,19 +144,19 @@ void testarDefinicoesDeFicha() {
 // em i18n/en.yaml (ficha_grupos.<tipo>.<chave>) — esquecer uma vira erro de
 // teste aqui, não um rótulo trocado em silêncio em produção.
 void testarTraducaoDeGrupos() {
-    std::cout << "== Cobertura de tradução de grupo (ficha_grupos.<tipo>.<chave> em en.yaml) ==\n";
+    std::cout << "== Group label coverage (ficha_grupos.<type>.<key>) ==\n";
     matriz::i18n::carregar("en");
     for (auto& info : matriz::ficha::listarTodosOsTipos(MATRIZ_FICHAS_DIR)) {
         if (info.definicao.usaNiveis()) continue; // fichas com níveis não têm grupos
         for (auto& grupo : info.definicao.grupos) {
             std::string chave = "ficha_grupos." + info.id + "." + grupo.chave;
-            check(matriz::i18n::existe(chave), chave + " existe em en.yaml");
+            check(matriz::i18n::existe(chave), chave + " exists in the English table");
         }
     }
 }
 
 void testarProjetoPortavel() {
-    std::cout << "== Projeto portátil (criação, imutabilidade de master, reabertura) ==\n";
+    std::cout << "== Portable project (creation, master immutability, reopening) ==\n";
 
     juce::File tmpRoot = juce::File::getSpecialLocation(juce::File::tempDirectory)
                               .getChildFile("matriz_selftest_" + juce::Uuid().toDashedString());
@@ -173,13 +173,13 @@ void testarProjetoPortavel() {
 
     try {
         auto projeto = matriz::model::Project::criar(pastaProjeto, params);
-        check(pastaProjeto.getChildFile("registro.sqlite").existsAsFile(), "registro.sqlite criado");
-        check(pastaProjeto.getChildFile("indice.sqlite").existsAsFile(), "indice.sqlite criado");
+        check(pastaProjeto.getChildFile("registro.sqlite").existsAsFile(), "registro.sqlite created");
+        check(pastaProjeto.getChildFile("indice.sqlite").existsAsFile(), "indice.sqlite created");
         projetoId = projeto->projetoId();
-        check(!projetoId.empty(), "projeto tem id: " + projetoId);
+        check(!projetoId.empty(), "project has id: " + projetoId);
 
         // Segundo projeto no mesmo banco deve ser rejeitado (linha única).
-        expectThrow("segunda linha em projeto é rejeitada (linha única)", [&] {
+        expectThrow("a second row in `projeto` is rejected (single-row table)", [&] {
             projeto->registro().run(
                 "INSERT INTO projeto (id, modo, nome, prefixo_nomenclatura, criado_em, atualizado_em) "
                 "VALUES (?, 'catalogo', 'Outro', 'OUT', ?, ?)",
@@ -194,13 +194,13 @@ void testarProjetoPortavel() {
             "VALUES (?, ?, 'TST-001', 'Rolo de teste', 'fita_rolo', ?, ?)",
             {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
              matriz::db::Value::of(agora)});
-        check(true, "item inserido: " + itemId);
+        check(true, "item inserted: " + itemId);
 
         projeto->registro().run(
             "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
             "VALUES (?, ?, 'raiz', 0, 'velocidade', '19 cm/s', 'humano', ?)",
             {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(agora)});
-        check(true, "item_campo (velocidade, fonte humano) inserido");
+        check(true, "item_campo (velocidade, human source) inserted");
 
         arquivoId = matriz::model::novoUuid();
         projeto->registro().run(
@@ -208,9 +208,9 @@ void testarProjetoPortavel() {
             "VALUES (?, ?, 'masters/tst-001.wav', 'preservation_master', 1, 'abc123', ?, ?)",
             {matriz::db::Value::of(arquivoId), matriz::db::Value::of(itemId), matriz::db::Value::of(agora),
              matriz::db::Value::of(agora)});
-        check(true, "arquivo master inserido: " + arquivoId);
+        check(true, "master file inserted: " + arquivoId);
 
-        expectThrow("master travado bloqueia sobrescrita de checksum (P1)", [&] {
+        expectThrow("a locked master blocks checksum overwrite (P1)", [&] {
             projeto->registro().run("UPDATE arquivo SET checksum_sha256 = 'zzz999' WHERE id = ?",
                                      {matriz::db::Value::of(arquivoId)});
         });
@@ -223,52 +223,60 @@ void testarProjetoPortavel() {
         auto stmt = projeto->registro().prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(arquivoId));
         stmt.step();
-        check(stmt.columnText(0) == "zzz999", "checksum atualizado após permitir_sobrescrever_master = 1");
+        check(stmt.columnText(0) == "zzz999", "checksum updated once permitir_sobrescrever_master = 1");
     } catch (const std::exception& e) {
-        check(false, std::string("fluxo de criação do projeto: ") + e.what());
+        check(false, std::string("project creation flow: ") + e.what());
     }
 
     // Reabre a pasta como se fosse outra máquina/outra sessão (P5).
     try {
         auto reaberto = matriz::model::Project::abrir(pastaProjeto);
-        check(reaberto->projetoId() == projetoId, "projeto reaberto tem o mesmo id");
+        check(reaberto->projetoId() == projetoId, "the reopened project has the same id");
 
         auto stmt = reaberto->registro().prepare("SELECT codigo_acervo, titulo FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
         bool achou = stmt.step();
-        check(achou && stmt.columnText(0) == "TST-001", "item persistiu após reabrir o projeto");
+        check(achou && stmt.columnText(0) == "TST-001", "the item survived reopening the project");
     } catch (const std::exception& e) {
-        check(false, std::string("reabertura do projeto: ") + e.what());
+        check(false, std::string("project reopening: ") + e.what());
     }
 
     tmpRoot.deleteRecursively();
 }
 
-// i18n (Parte 2 da correção de fluxo): inglês é o padrão, português troca
-// em tempo real — carregar() pode ser chamado de novo a qualquer momento,
-// sem reiniciar. Confirma que os dois locales têm conteúdo real e que a
-// troca de fato muda o valor devolvido por t(), não só que não lança.
+// Idioma único (§6): a interface inteira é em inglês, vinda da tabela
+// estática de Source/Ui/Strings.h. Não há mais troca de locale em tempo real
+// nem tabela pt_BR — carregar() continua existindo (chamado no start do
+// programa) mas é no-op, e pedir outro locale não pode mudar nada nem travar.
 void testarI18n() {
-    std::cout << "== i18n (inglês padrão, troca em tempo real pra português) ==\n";
+    std::cout << "== i18n (single language: English) ==\n";
 
     matriz::i18n::carregar("en");
-    check(matriz::i18n::t("menu.arquivo") == "File", "locale en: menu.arquivo = \"File\"");
+    check(matriz::i18n::t("menu.arquivo") == "File", "menu.arquivo = \"File\"");
     // O rótulo do modo deixou de ser o jargão "Archive"/"Acervo" e passou a
-    // dizer o que a pessoa tem em mãos ("mixed files" / "arquivos variados")
-    // — mudança deliberada de vocabulário, não regressão.
+    // dizer o que a pessoa tem em mãos ("mixed files") — mudança deliberada
+    // de vocabulário, não regressão.
     check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New mixed-files project",
-          "locale en: modo preservação chama \"New mixed-files project\"");
+          "preservation mode is called \"New mixed-files project\"");
     check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
-          "chave ausente devolve [chave], nunca lança nem trava");
+          "a missing key returns [key], never throws and never hangs");
 
+    // Pedir outro locale não derruba nem devolve string vazia: continua tudo
+    // em inglês (critério 13 — interface, logs e relatórios 100% em inglês).
     matriz::i18n::carregar("pt_BR");
-    check(matriz::i18n::t("menu.arquivo") == "Arquivo",
-          "carregar() de novo troca o locale em tempo real: menu.arquivo = \"Arquivo\"");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "Novo projeto de arquivos variados",
-          "locale pt_BR: modo preservação chama \"Novo projeto de arquivos variados\"");
+    check(matriz::i18n::t("menu.arquivo") == "File",
+          "asking for pt_BR changes nothing: the interface stays in English");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New mixed-files project",
+          "no Portuguese string survives after asking for pt_BR");
 
     matriz::i18n::carregar("en");
-    check(matriz::i18n::t("menu.arquivo") == "File", "troca de volta pra en funciona (não é só a primeira carga)");
+    check(matriz::i18n::t("menu.arquivo") == "File", "switching back to en is idempotent");
+
+    // Valores de banco traduzidos em tempo real (§6) — estado de item,
+    // prioridade e estado de presença vêm do SQLite em português.
+    check(matriz::i18n::t("nao_baixado") == "Not Downloaded",
+          "the database value 'nao_baixado' is displayed as \"Not Downloaded\"");
+    check(matriz::i18n::t("ausente") == "Missing", "the database value 'ausente' is displayed as \"Missing\"");
 }
 
 // Lista de projetos recentes (Parte 1 da correção de fluxo — tela inicial
@@ -276,7 +284,7 @@ void testarI18n() {
 // dedup+topo+limite (matriz::app::comRecenteNoTopo), sem tocar no arquivo
 // real de preferências do usuário.
 void testarRecentes() {
-    std::cout << "== Projetos recentes (lógica pura, sem tocar no arquivo real) ==\n";
+    std::cout << "== Recent projects (pure logic, no real file touched) ==\n";
     using matriz::app::comRecenteNoTopo;
     using matriz::app::ProjetoRecente;
 
@@ -284,16 +292,16 @@ void testarRecentes() {
     lista = comRecenteNoTopo(lista, {"/a", "Projeto A", "preservacao"});
     lista = comRecenteNoTopo(lista, {"/b", "Projeto B", "catalogo"});
     check(lista.size() == 2 && lista[0].pasta == "/b" && lista[1].pasta == "/a",
-          "mais recente entra no topo");
+          "the most recent one goes to the top");
 
     lista = comRecenteNoTopo(lista, {"/a", "Projeto A (renomeado)", "preservacao"});
     check(lista.size() == 2 && lista[0].pasta == "/a" && lista[0].nome == "Projeto A (renomeado)",
-          "reabrir um projeto já na lista move pro topo em vez de duplicar");
+          "reopening a project already in the list moves it to the top instead of duplicating");
 
     std::vector<ProjetoRecente> cheia;
     for (int i = 0; i < 5; ++i) cheia = comRecenteNoTopo(cheia, {"/p" + std::to_string(i), "P", "catalogo"}, 3);
     check(cheia.size() == 3 && cheia[0].pasta == "/p4" && cheia[2].pasta == "/p2",
-          "limite de tamanho descarta os mais antigos (3 mais recentes de 5 inserções)");
+          "the size cap drops the oldest (3 most recent out of 5 insertions)");
 }
 
 } // namespace
@@ -305,6 +313,6 @@ int main() {
     testarI18n();
     testarRecentes();
 
-    std::cout << "\n" << (failures == 0 ? "TODOS OS TESTES PASSARAM" : std::to_string(failures) + " FALHA(S)") << "\n";
+    std::cout << "\n" << (failures == 0 ? "ALL TESTS PASSED" : std::to_string(failures) + " FAILURE(S)") << "\n";
     return failures == 0 ? 0 : 1;
 }

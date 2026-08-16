@@ -3,6 +3,7 @@ rotulo: Slide / diapositivo
 modos: [archive]
 ordem: 100
 icone: imagem
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

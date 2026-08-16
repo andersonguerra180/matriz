@@ -5,6 +5,7 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "ProjetoAberto.h"
 #include "TimelineComponent.h"
+#include "VideoPlayerComponent.h"
 
 // Preview no painel central (Reorientação completa §3.4) — troca a grade
 // pelo conteúdo do arquivo selecionado, no mesmo espaço. Imagem mostra a
@@ -46,14 +47,13 @@ private:
     std::unique_ptr<juce::TextButton> botaoProximo_;
     std::unique_ptr<juce::TextButton> botaoFechar_;
 
-    juce::Image imagemPrincipal_; // imagem real, keyframe de vídeo, ou miniatura de forma de onda
+    juce::Image imagemPrincipal_;
     std::unique_ptr<juce::Label> labelMetadados_;
-    std::unique_ptr<juce::Label> labelSemPreview_; // PDF/documento/desconhecido — nota honesta, não esconde a lacuna
+    std::unique_ptr<juce::Label> labelSemPreview_;
+    std::unique_ptr<juce::TextEditor> textViewer_;
 
-    // Timeline de editor (item 8) — só construída quando categoriaAtual_ ==
-    // Audio e o arquivo é decodificável. Ela é dona do transporte, do
-    // jog/shuttle, do zoom e dos marcadores.
     std::unique_ptr<TimelineComponent> timeline_;
+    std::unique_ptr<VideoPlayerComponent> videoPlayer_;
 
 public:
     // Repassados pra fora: a ficha escuta marcadores (item 9.2) e a barra de
@@ -61,8 +61,8 @@ public:
     std::function<void()> aoMudarMarcadores;
     std::function<void(float esquerda, float direita)> aoMedirNivel;
 
-    // Introspecção pra teste — nullptr quando o item não é áudio.
     TimelineComponent* timelineParaTeste() { return timeline_.get(); }
+    VideoPlayerComponent* videoPlayerParaTeste() { return videoPlayer_.get(); }
 };
 
 } // namespace matriz::ui

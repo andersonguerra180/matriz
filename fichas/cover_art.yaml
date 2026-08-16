@@ -1,0 +1,58 @@
+tipo: cover_art
+rotulo: Cover Art
+modos: [archive, catalog]
+ordem: 85
+icone: imagem
+categoria: digital
+grupos:
+  - rotulo: Identification
+    campos:
+      - id: origem
+        rotulo: Origin
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Year
+        tipo: inteiro
+      - id: artista
+        rotulo: Artist
+        tipo: opcao_livre
+      - id: titulo_release
+        rotulo: Release title
+        tipo: opcao_livre
+      - id: formato
+        rotulo: Format
+        tipo: opcao
+        opcoes: [CD, Vinyl, Digital, Cassette, Other]
+
+  - rotulo: Image
+    campos:
+      - id: dimensoes
+        rotulo: Dimensions
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: resolucao
+        rotulo: Resolution
+        tipo: texto
+        preenchido_por: leitura_tecnica
+      - id: tipo_arte
+        rotulo: Art type
+        tipo: opcao
+        opcoes: [front, back, booklet, disc, insert, spine, obi, other]
+        obrigatorio: true
+      - id: designer
+        rotulo: Designer / photographer
+        tipo: opcao_livre
+
+  - rotulo: Rights
+    campos:
+      - id: licenca
+        rotulo: License / use
+        tipo: opcao
+        opcoes: ["uso livre", "direitos reservados", "autorização pendente", "domínio público"]
+
+arquivos_esperados:
+  - papel: imagem_principal
+    obrigatorio: true

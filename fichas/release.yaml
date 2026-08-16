@@ -3,6 +3,7 @@ rotulo: Release fonográfico
 modos: [archive, catalog]
 ordem: 120
 icone: audio
+categoria: digital
 niveis: [release, faixa]
 release:
   campos:

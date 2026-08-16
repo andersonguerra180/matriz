@@ -29,8 +29,21 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     campoBusca_->setColour(juce::TextEditor::outlineColourId, tema().borda);
     campoBusca_->setColour(juce::TextEditor::focusedOutlineColourId, tema().bordaFoco);
     campoBusca_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
-    campoBusca_->onTextChange = [this] { if (aoBuscar) aoBuscar(campoBusca_->getText()); };
+    campoBusca_->onTextChange = [this] {
+        if (btnLimparBusca_) btnLimparBusca_->setVisible(campoBusca_->getText().isNotEmpty());
+        if (aoBuscar) aoBuscar(campoBusca_->getText());
+    };
     addAndMakeVisible(*campoBusca_);
+
+    btnLimparBusca_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xc3\x97"));
+    btnLimparBusca_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    btnLimparBusca_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnLimparBusca_->setVisible(false);
+    btnLimparBusca_->onClick = [this] {
+        campoBusca_->setText("", true);
+        btnLimparBusca_->setVisible(false);
+    };
+    addAndMakeVisible(*btnLimparBusca_);
 
     labelContagem_ = std::make_unique<juce::Label>();
     labelContagem_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
@@ -56,6 +69,19 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     }
     marcarTamanhoAtivo(tamanhoAtivo_);
 
+    botaoModoVisao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("grade.modo_lista"));
+    botaoModoVisao_->setTooltip(matriz::i18n::t("barra.modo_visao_dica"));
+    botaoModoVisao_->onClick = [this] {
+        modoLista_ = !modoLista_;
+        const auto& tk = tema();
+        botaoModoVisao_->setButtonText(matriz::i18n::t(modoLista_ ? "grade.modo_grade" : "grade.modo_lista"));
+        botaoModoVisao_->setColour(juce::TextButton::buttonColourId, modoLista_ ? tk.acento : tk.painelAlt);
+        botaoModoVisao_->setColour(juce::TextButton::textColourOffId, modoLista_ ? tk.textoSobreAcento : tk.textoPrimario);
+        if (aoAlternarModoVisao) aoAlternarModoVisao(modoLista_);
+    };
+    aplicarEstiloBotao(*botaoModoVisao_, false);
+    addAndMakeVisible(*botaoModoVisao_);
+
     botaoDetalhes_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.alternar"));
     botaoDetalhes_->setTooltip(matriz::i18n::t("barra.detalhes_dica"));
     botaoDetalhes_->onClick = [this] { if (aoAlternarDetalhes) aoAlternarDetalhes(); };
@@ -67,6 +93,76 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     botaoBackup_->onClick = [this] { if (aoFazerBackup) aoFazerBackup(); };
     aplicarEstiloBotao(*botaoBackup_, false);
     addAndMakeVisible(*botaoBackup_);
+
+    botaoEstruturaOrigem_ = std::make_unique<juce::TextButton>("SRC TREE");
+    botaoEstruturaOrigem_->setTooltip("Show/hide Source Directory Structure");
+    botaoEstruturaOrigem_->onClick = [this] {
+        mostrarEstruturaOrigem_ = !mostrarEstruturaOrigem_;
+        const auto& tk = tema();
+        botaoEstruturaOrigem_->setColour(juce::TextButton::buttonColourId, mostrarEstruturaOrigem_ ? tk.acento : tk.painelAlt);
+        botaoEstruturaOrigem_->setColour(juce::TextButton::textColourOffId, mostrarEstruturaOrigem_ ? tk.textoSobreAcento : tk.textoPrimario);
+        if (aoAlternarEstruturaOrigem) aoAlternarEstruturaOrigem(mostrarEstruturaOrigem_);
+    };
+    aplicarEstiloBotao(*botaoEstruturaOrigem_, false);
+    // addChildComponent, não addAndMakeVisible: o segundo força visible=true e
+    // desfaz o estado inicial escondido (só ADVANCED revela estes dois).
+    addChildComponent(*botaoEstruturaOrigem_);
+
+    botaoEstruturaBackup_ = std::make_unique<juce::TextButton>("DEST TREE");
+    botaoEstruturaBackup_->setTooltip("Show/hide Backup Destination Structure");
+    botaoEstruturaBackup_->onClick = [this] {
+        mostrarEstruturaBackup_ = !mostrarEstruturaBackup_;
+        const auto& tk = tema();
+        botaoEstruturaBackup_->setColour(juce::TextButton::buttonColourId, mostrarEstruturaBackup_ ? tk.acento : tk.painelAlt);
+        botaoEstruturaBackup_->setColour(juce::TextButton::textColourOffId, mostrarEstruturaBackup_ ? tk.textoSobreAcento : tk.textoPrimario);
+        if (aoAlternarEstruturaBackup) aoAlternarEstruturaBackup(mostrarEstruturaBackup_);
+    };
+    aplicarEstiloBotao(*botaoEstruturaBackup_, false);
+    addChildComponent(*botaoEstruturaBackup_);
+
+    botaoAdvanced_ = std::make_unique<juce::TextButton>("ADVANCED");
+    botaoAdvanced_->setTooltip("Show/hide advanced directory trees");
+    botaoAdvanced_->onClick = [this] {
+        mostrarAdvanced_ = !mostrarAdvanced_;
+        const auto& tk = tema();
+        botaoAdvanced_->setColour(juce::TextButton::buttonColourId, mostrarAdvanced_ ? tk.acento : tk.painelAlt);
+        botaoAdvanced_->setColour(juce::TextButton::textColourOffId, mostrarAdvanced_ ? tk.textoSobreAcento : tk.textoPrimario);
+        
+        botaoEstruturaOrigem_->setVisible(mostrarAdvanced_);
+        botaoEstruturaBackup_->setVisible(mostrarAdvanced_);
+        resized();
+    };
+    aplicarEstiloBotao(*botaoAdvanced_, false);
+    addAndMakeVisible(*botaoAdvanced_);
+
+    // Horizontal filters
+    btnAllAssets_ = std::make_unique<juce::TextButton>("ALL ASSETS");
+    btnRecent_ = std::make_unique<juce::TextButton>("RECENT");
+    btnAudio_ = std::make_unique<juce::TextButton>("AUDIO");
+    btnVideo_ = std::make_unique<juce::TextButton>("VIDEO");
+    btnImage_ = std::make_unique<juce::TextButton>("IMAGE");
+    btnDocument_ = std::make_unique<juce::TextButton>("DOCUMENT");
+
+    std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
+        { btnAllAssets_.get(), "all" },
+        { btnRecent_.get(), "recent" },
+        { btnAudio_.get(), "audio" },
+        { btnVideo_.get(), "video" },
+        { btnImage_.get(), "image" },
+        { btnDocument_.get(), "document" }
+    };
+
+    for (const auto& hf : horizontalFilters) {
+        aplicarEstiloBotao(*hf.first, false);
+        std::string chave = hf.second;
+        hf.first->onClick = [this, chave] {
+            filtroHorizontalAtivo_ = chave;
+            atualizarBotoesFiltroHorizontal();
+            if (aoMudarFiltroHorizontal) aoMudarFiltroHorizontal(chave);
+        };
+        addAndMakeVisible(*hf.first);
+    }
+    atualizarBotoesFiltroHorizontal();
 
     definirContagem(0, 0, false);
 }
@@ -88,6 +184,29 @@ void BarraFerramentasComponent::marcarTamanhoAtivo(int indice) {
         bool ativo = i == indice;
         botoes[i]->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
         botoes[i]->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoSecundario);
+    }
+}
+
+void BarraFerramentasComponent::definirFiltroHorizontalAtivo(const std::string& chave) {
+    filtroHorizontalAtivo_ = chave;
+    atualizarBotoesFiltroHorizontal();
+}
+
+void BarraFerramentasComponent::atualizarBotoesFiltroHorizontal() {
+    const auto& tk = tema();
+    std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
+        { btnAllAssets_.get(), "all" },
+        { btnRecent_.get(), "recent" },
+        { btnAudio_.get(), "audio" },
+        { btnVideo_.get(), "video" },
+        { btnImage_.get(), "image" },
+        { btnDocument_.get(), "document" }
+    };
+    for (const auto& hf : horizontalFilters) {
+        if (!hf.first) continue;
+        bool ativo = (hf.second == filtroHorizontalAtivo_);
+        hf.first->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
+        hf.first->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoPrimario);
     }
 }
 
@@ -128,32 +247,62 @@ void BarraFerramentasComponent::paint(juce::Graphics& g) {
 
 void BarraFerramentasComponent::resized() {
     const auto& tk = tema();
-    auto area = getLocalBounds().reduced(tk.espacoMedio, 8);
+    
+    // Divide the bounds into top and bottom rows
+    auto areaTop = getLocalBounds().removeFromTop(44).reduced(tk.espacoMedio, 8);
+    auto areaBottom = getLocalBounds().removeFromBottom(44).reduced(tk.espacoMedio, 8);
 
-    botaoAdicionar_->setBounds(area.removeFromLeft(170));
-    area.removeFromLeft(tk.espacoMedio);
-    botaoNavegar_->setBounds(area.removeFromLeft(150));
-    area.removeFromLeft(tk.espacoGrande);
+    // --- TOP ROW ---
+    botaoAdicionar_->setBounds(areaTop.removeFromLeft(140));
+    areaTop.removeFromLeft(tk.espacoMedio);
+    botaoBackup_->setBounds(areaTop.removeFromLeft(100));
+    areaTop.removeFromLeft(tk.espacoGrande);
 
-    // Da direita pra esquerda: as ações de destino do fluxo (backup,
-    // detalhes) e o controle de tamanho ficam ancorados na borda direita,
-    // pra não dançarem quando a janela é redimensionada.
-    botaoBackup_->setBounds(area.removeFromRight(130));
-    area.removeFromRight(tk.espacoMedio);
-    botaoDetalhes_->setBounds(area.removeFromRight(96));
-    area.removeFromRight(tk.espacoGrande);
+    // Da direita para a esquerda: View Mode, Sizes, Metadata Details, and Advanced Options
+    botaoAdvanced_->setBounds(areaTop.removeFromRight(88));
+    areaTop.removeFromRight(tk.espacoMedio);
+    
+    if (mostrarAdvanced_) {
+        botaoEstruturaBackup_->setBounds(areaTop.removeFromRight(90));
+        areaTop.removeFromRight(tk.espacoMedio);
+        botaoEstruturaOrigem_->setBounds(areaTop.removeFromRight(90));
+        areaTop.removeFromRight(tk.espacoMedio);
+    }
+    
+    botaoDetalhes_->setBounds(areaTop.removeFromRight(84));
+    areaTop.removeFromRight(tk.espacoGrande);
 
     constexpr int kLarguraTamanho = 34;
-    botaoTamanhoG_->setBounds(area.removeFromRight(kLarguraTamanho));
-    botaoTamanhoM_->setBounds(area.removeFromRight(kLarguraTamanho));
-    botaoTamanhoP_->setBounds(area.removeFromRight(kLarguraTamanho));
-    area.removeFromRight(tk.espacoGrande);
+    botaoTamanhoG_->setBounds(areaTop.removeFromRight(kLarguraTamanho));
+    botaoTamanhoM_->setBounds(areaTop.removeFromRight(kLarguraTamanho));
+    botaoTamanhoP_->setBounds(areaTop.removeFromRight(kLarguraTamanho));
+    areaTop.removeFromRight(tk.espacoPequeno);
+    botaoModoVisao_->setBounds(areaTop.removeFromRight(44));
+    areaTop.removeFromRight(tk.espacoGrande);
 
-    // O que sobra é da busca + contagem. A busca encolhe com a janela; a
-    // contagem tem largura fixa e some junto com o texto quando vazia.
-    auto areaContagem = area.removeFromRight(juce::jmin(170, area.getWidth() / 3));
+    // The remaining top row space is for Search and Count
+    auto areaContagem = areaTop.removeFromRight(juce::jmin(150, areaTop.getWidth() / 3));
     labelContagem_->setBounds(areaContagem.withTrimmedLeft(tk.espacoMedio));
-    campoBusca_->setBounds(area.removeFromLeft(juce::jmax(0, area.getWidth())));
+    auto buscaBox = areaTop.removeFromLeft(juce::jmax(0, areaTop.getWidth()));
+    if (btnLimparBusca_) {
+        auto clearBox = buscaBox.removeFromRight(24);
+        btnLimparBusca_->setBounds(clearBox);
+    }
+    campoBusca_->setBounds(buscaBox);
+
+    // --- BOTTOM ROW ---
+    // Lay out the 6 horizontal filter buttons side-by-side
+    int nFilters = 6;
+    int filterW = 120;
+    int gap = tk.espacoMedio;
+    int startX = areaBottom.getX();
+    
+    btnAllAssets_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    btnRecent_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    btnAudio_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    btnVideo_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    btnImage_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    btnDocument_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight());
 }
 
 } // namespace matriz::ui

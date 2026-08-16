@@ -3,6 +3,7 @@ rotulo: Fita de rolo
 modos: [archive, catalog]
 ordem: 0
 icone: audio
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

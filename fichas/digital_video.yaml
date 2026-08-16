@@ -1,8 +1,9 @@
 tipo: digital_video
 rotulo: Vídeo digital
-modos: [archive]
+modos: [archive, catalog]
 ordem: 170
 icone: video
+categoria: digital
 grupos:
   - rotulo: Arquivo
     campos:

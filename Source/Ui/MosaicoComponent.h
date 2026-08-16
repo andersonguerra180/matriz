@@ -8,43 +8,43 @@
 #include <unordered_map>
 
 #include "../Ingest/LeituraTecnica.h"
+#include "EventBus.h"
 #include "ProjetoAberto.h"
-
-// Mosaico do acervo (§11.2, B.1.2/B.2). Virtualizado desde o início: o
-// Component inteiro é UM objeto independente da quantidade de itens —
-// paint() só desenha o que g.getClipBounds() pede (o Viewport que o contém
-// só pede a área visível), e miniatura só é carregada sob demanda pras
-// células realmente pintadas, em background, com placeholder enquanto
-// carrega. Testado com 10 mil itens sintéticos (ver
-// tools/ui_selftest/main.cpp) — não existe nenhum trabalho O(total de
-// itens) por frame, só O(células visíveis).
 
 namespace matriz::ui {
 
 enum class Ordenacao { Codigo, Titulo, Estado, Atualizado };
 
-// Um cabeçalho de seção do mosaico (Parte 1 da correção de fluxo, §3.5):
-// Archive agrupa por tipo de mídia, Catalog por artista/lançamento. Um
-// grupo é sempre um intervalo CONTÍGUO de itensFiltrados_ — nunca precisa
-// tocar os itens de dentro pra desenhar o cabeçalho ou localizar uma
-// célula, o que mantém paint() em O(células visíveis), não O(total de
-// itens), mesmo com muitos grupos.
 struct GrupoMosaico {
-    juce::String rotulo; // já inclui a contagem, ex.: "Reel tapes — 12"
+    juce::String rotulo;
     int indiceInicio = 0;
     int quantidade = 0;
-    int yTopo = 0;  // topo do cabeçalho
-    int yItens = 0; // topo da primeira linha de células
+    int yTopo = 0;
+    int yItens = 0;
     int linhas = 0;
 };
 
-class MosaicoComponent : public juce::Component {
+struct SubpastaInfo {
+    juce::String nome;
+    int quantidade = 0;
+    std::set<std::string> itemIds;
+};
+
+class MosaicoComponent : public juce::Component, public EventBusListener, private juce::Timer {
 public:
     explicit MosaicoComponent(ProjetoAberto& projeto);
     ~MosaicoComponent() override;
 
+    void aoItemAlterado(const EventoItemAlterado& e) override;
+
     // Recarrega a lista de itens do banco e reaplica filtro/ordenação atuais.
+    // Recarrega em BACKGROUND (I1/I4): a consulta e a montagem do vetor
+    // rodam na Thread de Snapshot, e a grade só recebe o resultado pronto.
+    // Retorna imediatamente — quem precisa do resultado na hora usa
+    // recarregarSincrono().
     void recarregar();
+    void recarregarSincrono();
+    bool snapshotEmAndamentoParaTeste() const { return poolSnapshot_.getNumJobs() > 0; }
 
     // Chips de filtro (Acréscimos §10.2 — "clicáveis e combináveis"):
     // múltipla seleção DENTRO de uma categoria é OU ("tipo=vinil OU
@@ -56,11 +56,15 @@ public:
     // Origem (Digital/Analógico, item 4 dos acréscimos) — mesmo padrão OU-
     // dentro-da-categoria dos outros chips. "" filtra pelos ainda sem valor.
     void alternarFiltroOrigem(const juce::String& origem);
+    void alternarFiltroContentType(const juce::String& contentType);
+    void alternarFiltroCollectionType(const juce::String& collectionType);
     void limparFiltros(); // chips + busca + faixa de ano — não mexe no filtro de pasta da árvore (eixo independente)
     const std::set<juce::String>& filtrosTipoMidiaAtivos() const { return filtrosTipoMidia_; }
     const std::set<juce::String>& filtrosEstadoAtivos() const { return filtrosEstado_; }
     const std::set<juce::String>& filtrosExtensaoAtivos() const { return filtrosExtensao_; }
     const std::set<juce::String>& filtrosOrigemAtivos() const { return filtrosOrigem_; }
+    const std::set<juce::String>& filtrosContentTypeAtivos() const { return filtrosContentType_; }
+    const std::set<juce::String>& filtrosCollectionTypeAtivos() const { return filtrosCollectionType_; }
 
     // Faixa de ano ("1978-1985", item 4.3) — E com os demais filtros. Item
     // sem "ano" preenchido nunca aparece dentro de uma faixa ativa.
@@ -109,6 +113,13 @@ public:
     // barra de seleção e a ficha lateral acompanham por aqui.
     std::function<void()> aoMudarSelecao;
 
+    std::function<void(int indice, std::vector<std::string> itemIds)> aoCategorizarPorAtalho;
+    std::function<void()> aoRenomearItem;
+    std::function<void()> aoRemoverDoBackup;
+
+    void renomearSelecao();
+    void removerSelecaoDoBackup();
+
     // Disparado sempre que o CONJUNTO VISÍVEL muda — chip de filtro, busca,
     // ordenação, pasta da árvore, recarregar(). É o único funil por onde
     // todas essas mudanças passam (aplicarFiltrosEOrdenacao), então quem
@@ -124,13 +135,19 @@ public:
     int totalItensCarregados() const { return static_cast<int>(itensTodos_.size()); }
     int totalItensVisiveis() const { return static_cast<int>(itensFiltrados_.size()); }
 
-    // Tamanho de célula ajustável (§3.3 — "controle de tamanho no
-    // rodapé"). Só os três tamanhos de grade nesta etapa; visão em lista
-    // (layout de linha única, bem diferente de uma grade) fica pra depois
-    // do ponto de parada — não declarado aqui pra não sugerir que existe.
+    void definirSubpastas(std::vector<SubpastaInfo> subpastas);
+    std::function<void(const SubpastaInfo&)> aoNavegarParaSubpasta;
+
+    enum class ModoVisao { Grade, Lista };
+    void definirModoVisao(ModoVisao modo);
+    ModoVisao modoVisaoAtual() const { return modoVisao_; }
+
     enum class TamanhoCelula { Pequeno, Medio, Grande };
     void definirTamanhoCelula(TamanhoCelula tamanho);
     TamanhoCelula tamanhoCelulaAtual() const { return tamanhoCelula_; }
+
+    void definirTamanhoContinuo(double valor);
+    double tamanhoContinuoAtual() const;
 
     // Introspecção pra teste (Parte 1 — agrupamento por modo, §3.5): os
     // rótulos de grupo já visíveis na tela, na ordem em que aparecem.
@@ -192,7 +209,12 @@ private:
     juce::Rectangle<int> boundsDaCelula(int indice) const;
     int indiceNaPosicao(juce::Point<int> pos) const;
     const GrupoMosaico* grupoNaPosicaoY(int y) const;
+    int alturaSecaoSubpastas() const;
+    juce::Rectangle<int> boundsSubpasta(int indice) const;
+    int indiceSubpastaNaPosicao(juce::Point<int> pos) const;
+    void desenharSubpasta(juce::Graphics&, juce::Rectangle<int> bounds, const SubpastaInfo& sub) const;
     juce::Colour corDoEstado(const std::string& estado) const;
+    juce::Colour corPorCategoria(const std::string& tipoMidia) const;
     const juce::Image* miniaturaCache(const std::string& itemId);
     void pedirCarregamentoMiniatura(const std::string& itemId);
     void desenharPlaceholderCategoria(juce::Graphics&, juce::Rectangle<int> area, const std::string& extensao) const;
@@ -203,10 +225,19 @@ private:
     juce::Image imagemDeArrasto(int quantidade) const;
 
     ProjetoAberto& projeto_;
+    // Thread de Snapshot (§2): uma só, sequencial — dois snapshots
+    // concorrentes só disputariam o banco pra um deles ser descartado.
+    juce::ThreadPool poolSnapshot_{juce::ThreadPoolOptions{}.withThreadName("MatrizSnapshot")
+                                   .withNumberOfThreads(1)
+                                   .withDesiredThreadPriority(juce::Thread::Priority::low)};
+    int geracaoSnapshot_ = 0;
+    bool snapshotPendente_ = false;
+
     std::vector<ItemResumo> itensTodos_;
     std::vector<ItemResumo> itensFiltrados_; // agrupado — itens do mesmo grupo sempre contíguos
     std::vector<GrupoMosaico> grupos_;
-    std::set<juce::String> filtrosTipoMidia_, filtrosEstado_, filtrosExtensao_, filtrosOrigem_; // chips, ver alternarFiltro*
+    std::set<juce::String> filtrosTipoMidia_, filtrosEstado_, filtrosExtensao_, filtrosOrigem_;
+    std::set<juce::String> filtrosContentType_, filtrosCollectionType_;
     std::optional<std::pair<int, int>> filtroFaixaAno_;                                          // ver definirFiltroFaixaAno
     ModoAgrupamento modoAgrupamento_ = ModoAgrupamento::Automatico;
     juce::String buscaTexto_;
@@ -230,6 +261,12 @@ private:
     juce::Rectangle<int> lacoAtual_;
     std::set<std::string> selecaoAntesDoLaco_;
 
+    bool pendingDeselect_ = false;
+    std::string pendingDeselectId_;
+
+    std::vector<SubpastaInfo> subpastas_;
+
+    ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;
@@ -241,6 +278,16 @@ private:
     std::deque<std::string> ordemCache_;
     static constexpr size_t kCapacidadeCache = 400;
     juce::CriticalSection cacheLock_;
+
+    // Inline rename (click on title area of selected item)
+    void timerCallback() override;
+    void iniciarEdicaoInline(int indice);
+    void confirmarEdicaoInline();
+    void cancelarEdicaoInline();
+    juce::Rectangle<int> areaTituloDaCelula(int indice) const;
+    std::unique_ptr<juce::TextEditor> editorInline_;
+    int indiceEditando_ = -1;
+    bool clicouNaTituloDeItemSelecionado_ = false;
 };
 
 } // namespace matriz::ui

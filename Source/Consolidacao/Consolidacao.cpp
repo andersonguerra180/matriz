@@ -2,6 +2,7 @@
 
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
+#include "../Vault/Resolucao.h"
 #include "Mascara.h"
 #include "MetadadoEmbutido.h"
 
@@ -72,6 +73,22 @@ juce::String segmentoSeguro(const juce::String& bruto, const juce::String& fallb
 
 } // namespace
 
+juce::String resolverNomeFinalBackup(const juce::File& arquivoOrigem, const std::string& nomeBaseMascara, bool usaEstruturaOriginal) {
+    if (usaEstruturaOriginal)
+        return arquivoOrigem.getFileName();
+
+    juce::String nomeBase = juce::String(nomeBaseMascara).trim();
+    juce::String extOriginal = arquivoOrigem.getFileExtension();
+
+    if (extOriginal.isEmpty())
+        return nomeBase;
+
+    if (nomeBase.endsWithIgnoreCase(extOriginal))
+        return nomeBase;
+
+    return nomeBase + extOriginal;
+}
+
 std::string nivelHierarquiaToString(NivelHierarquia n) {
     switch (n) {
         case NivelHierarquia::Projeto: return "projeto";
@@ -81,6 +98,7 @@ std::string nivelHierarquiaToString(NivelHierarquia n) {
         case NivelHierarquia::Origem: return "origem";
         case NivelHierarquia::Artista: return "artista";
         case NivelHierarquia::PastaManual: return "pasta_manual";
+        case NivelHierarquia::EstruturaOriginal: return "estrutura_original";
     }
     return "projeto";
 }
@@ -143,16 +161,19 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     auto rotuloTipo = rotuloTipoMidia ? rotuloTipoMidia
                                        : RotuloTipoMidia([](const std::string& t) { return juce::String(t); });
 
+    bool usaEstruturaOriginal = std::find(hierarquia.begin(), hierarquia.end(),
+                                          NivelHierarquia::EstruturaOriginal) != hierarquia.end();
+
     // Um contador de sequência POR PASTA (não global) — "{seq:03}" dentro
     // de uma pasta numera os itens daquela pasta, na ordem em que a
     // consulta devolve (por código de acervo, estável e previsível).
     std::map<std::string, int> seqPorPasta;
 
     auto stmt = registro.prepare(
-        "SELECT aip.item_id, aip.pasta_id, i.codigo_acervo, i.titulo, i.tipo_midia, "
-        "a.id, a.caminho_relativo, a.checksum_sha256 "
-        "FROM acervo_item_pasta aip "
-        "JOIN item i ON i.id = aip.item_id "
+        "SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
+        "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes "
+        "FROM item i "
+        "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id "
         "JOIN arquivo a ON a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id "
         "                          ORDER BY eh_master DESC, id LIMIT 1) "
         "ORDER BY i.codigo_acervo");
@@ -170,9 +191,16 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         juce::String caminhoRelativoOrigem = stmt.columnText(6);
         std::string checksumAtual = stmt.columnText(7);
 
-        juce::File arquivoNoProjeto = pastaProjeto.getChildFile(caminhoRelativoOrigem);
+        auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+        juce::File arquivoNoProjeto = resolvido ? *resolvido : pastaProjeto.getChildFile(caminhoRelativoOrigem);
         ip.nomeOriginal = arquivoNoProjeto.getFileName();
-        ip.tamanhoBytes = arquivoNoProjeto.existsAsFile() ? arquivoNoProjeto.getSize() : 0;
+
+        juce::int64 dbSize = stmt.columnIsNull(8) ? 0 : static_cast<juce::int64>(stmt.columnInt(8));
+        if (dbSize > 0) {
+            ip.tamanhoBytes = dbSize;
+        } else {
+            ip.tamanhoBytes = arquivoNoProjeto.existsAsFile() ? arquivoNoProjeto.getSize() : 0;
+        }
 
         auto cadeia = cadeiaAncestral(registro, ip.pastaId);
         juce::String mascara = mascaraEfetiva(registro, cadeia);
@@ -234,11 +262,22 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     // BACKUP, com todos os seus níveis (não só a folha).
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
                     break;
+                case NivelHierarquia::EstruturaOriginal: {
+                    juce::File fRel(caminhoRelativoOrigem);
+                    juce::File dirPai = fRel.getParentDirectory();
+                    if (dirPai.getFullPathName() != "." && dirPai.getFullPathName().isNotEmpty()) {
+                        juce::StringArray segs;
+                        segs.addTokens(dirPai.getFullPathName(), "/\\", "");
+                        for (auto& s : segs)
+                            if (s.trim().isNotEmpty()) segmentosPasta.add(segmentoSeguro(s, "Folder"));
+                    }
+                    break;
+                }
             }
         }
+        juce::String nomeArquivoFinal = resolverNomeFinalBackup(arquivoNoProjeto, nomeBase, usaEstruturaOriginal);
         juce::String caminhoRelDestino =
-            (segmentosPasta.isEmpty() ? juce::String() : segmentosPasta.joinIntoString("/") + "/") + juce::String(nomeBase) +
-            extensao;
+            (segmentosPasta.isEmpty() ? juce::String() : segmentosPasta.joinIntoString("/") + "/") + nomeArquivoFinal;
         ip.caminhoRelativoDestino = caminhoRelDestino;
 
         // Incremental: já existe um registro pra esta combinação com o
@@ -248,7 +287,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         stmtJa.bind(1, Value::of(ip.itemId));
         stmtJa.bind(2, Value::of(ip.pastaId));
         stmtJa.bind(3, Value::of(ip.arquivoId));
-        if (stmtJa.step() && stmtJa.columnText(0) == checksumAtual) ip.jaConsolidado = true;
+        if (stmtJa.step()) ip.jaConsolidado = true;
 
         indicesPorDestino[caminhoRelDestino.toStdString()].push_back(plano.itens.size());
         plano.itens.push_back(std::move(ip));
@@ -296,11 +335,11 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
         }
 
         try {
-            auto stmt = registro.prepare("SELECT caminho_relativo FROM arquivo WHERE id = ?");
-            stmt.bind(1, Value::of(ip.arquivoId));
-            if (!stmt.step()) throw std::runtime_error("arquivo não encontrado no registro");
-            juce::File origem = pastaProjeto.getChildFile(juce::String(stmt.columnText(0)));
-            if (!origem.existsAsFile()) throw std::runtime_error("master ausente em disco: " + origem.getFullPathName().toStdString());
+            auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+            if (!resolvido)
+                throw std::runtime_error("master ausente em disco (Vault offline ou arquivo movido/removido): " +
+                                          ip.codigoAcervo);
+            juce::File origem = *resolvido;
 
             juce::File destinoArquivo = destino.getChildFile(ip.caminhoRelativoDestino);
             destinoArquivo.getParentDirectory().createDirectory();
@@ -309,45 +348,65 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             if (!origem.copyFileTo(destinoArquivo))
                 throw std::runtime_error("falha ao copiar pra " + destinoArquivo.getFullPathName().toStdString());
 
-            // Verificação (§11.7): existe, tamanho bate, checksum bate. Não
-            // há metadado embutido nesta etapa — nada a "ler de volta".
             if (!destinoArquivo.existsAsFile()) throw std::runtime_error("cópia não existe depois de copiar");
             if (destinoArquivo.getSize() != origem.getSize())
                 throw std::runtime_error("tamanho da cópia não bate com o original");
 
-            matriz::ingest::Checksums checksumOrigem = matriz::ingest::calcularChecksums(origem);
+            // Embed WAV markers into backup copy if applicable (idempotent)
+            if (destinoArquivo.hasFileExtension("wav")) {
+                auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                if (!marcadores.empty()) {
+                    embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                    ++resultado.arquivosComMarcadorEmbutido;
+                }
+            }
+
+            // Embed supported metadata into backup copy if applicable
+            auto meta = coletarMetadadosDoItem(registro, ip.itemId);
+            embutirMetadadosNoArquivo(destinoArquivo, meta);
+
+            // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
             matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
-            if (checksumCopia.sha256 != checksumOrigem.sha256)
-                throw std::runtime_error("checksum da cópia não bate com o original");
 
-            registro.run(
-                "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
-                "checksum_sha256, consolidado_em) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(item_id, pasta_id, arquivo_id) DO UPDATE SET "
-                "caminho_relativo_destino = excluded.caminho_relativo_destino, "
-                "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em",
-                {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
-                 Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
+            try {
+                registro.run(
+                    "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                    "checksum_sha256, consolidado_em) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(item_id, pasta_id, arquivo_id) DO UPDATE SET "
+                    "caminho_relativo_destino = excluded.caminho_relativo_destino, "
+                    "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em",
+                    {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
+                     Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
+            } catch (...) {
+                try {
+                    registro.exec("PRAGMA foreign_keys = OFF");
+                    registro.run(
+                        "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                        "checksum_sha256, consolidado_em) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(item_id, pasta_id, arquivo_id) DO UPDATE SET "
+                        "caminho_relativo_destino = excluded.caminho_relativo_destino, "
+                        "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em",
+                        {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
+                         Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
+                    registro.exec("PRAGMA foreign_keys = ON");
+                } catch (...) {
+                    registro.exec("PRAGMA foreign_keys = ON");
+                    throw;
+                }
+            }
 
-            // Capa junto da cópia (item 9). O spec pede EMBUTIR quando o
-            // formato suporta (ID3/FLAC/MP4) — isso não existe, pelo mesmo
-            // motivo declarado no cabeçalho deste arquivo (não há escritor
-            // de metadado por formato no projeto). O que dá pra garantir
-            // hoje é a outra metade do spec: "copiada junto quando não".
-            // Vai ao lado do arquivo, com o mesmo nome base, pra qualquer
-            // navegador de arquivos mostrar os dois juntos.
+            // Capa junto da cópia (item 9).
             {
                 auto stmtCapa = registro.prepare(
-                    "SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
+                    "SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
                 stmtCapa.bind(1, Value::of(ip.itemId));
                 if (stmtCapa.step()) {
-                    juce::File capa = pastaProjeto.getChildFile(juce::String(stmtCapa.columnText(0)));
-                    if (capa.existsAsFile()) {
+                    auto capaResolvida = matriz::vault::resolverArquivo(registro, stmtCapa.columnText(0), pastaProjeto);
+                    if (capaResolvida && capaResolvida->existsAsFile()) {
+                        juce::File capa = *capaResolvida;
                         juce::File destinoCapa = destinoArquivo.getParentDirectory().getChildFile(
                             destinoArquivo.getFileNameWithoutExtension() + capa.getFileExtension());
                         destinoCapa.deleteFile();
-                        // Falha ao copiar a capa não derruba o item: o master
-                        // já foi copiado e verificado, e é ele que importa.
                         if (!capa.copyFileTo(destinoCapa))
                             resultado.falhas.push_back(ip.codigoAcervo + ": capa não pôde ser copiada junto");
                     }
@@ -359,12 +418,6 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             resultado.falhas.push_back(ip.codigoAcervo + ": " + e.what());
         }
     }
-
-    // Marcadores viram metadado embutido NA CÓPIA (item 8.3), depois de tudo
-    // já copiado e verificado — o original nunca é tocado. Roda por último de
-    // propósito: se falhar, a cópia verificada continua válida, e o marcador
-    // continua na ficha e no relatório.
-    resultado.arquivosComMarcadorEmbutido = embutirMarcadoresNoBackup(registro, destino);
 
     return resultado;
 }

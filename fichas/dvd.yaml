@@ -1,0 +1,52 @@
+tipo: dvd
+rotulo: DVD
+modos: [archive, catalog]
+ordem: 71
+icone: video
+categoria: digital
+grupos:
+  - rotulo: Media
+    campos:
+      - id: formato
+        rotulo: Format
+        tipo: opcao
+        opcoes: [DVD-Video, DVD-R, DVD-RW, DVD+R, DVD+RW, DVD-RAM]
+        obrigatorio: true
+      - id: regiao
+        rotulo: Region
+        tipo: opcao
+        opcoes: ["0 (Region Free)", "1 (US/Canada)", "2 (Europe/Japan)", "3 (SE Asia)", "4 (Latin America/Oceania)", "5 (Africa/Russia)", "6 (China)"]
+      - id: ano
+        rotulo: Year
+        tipo: inteiro
+      - id: titulo
+        rotulo: Title
+        tipo: texto
+  - rotulo: Technical
+    campos:
+      - id: sistema_cor
+        rotulo: Color system
+        tipo: opcao
+        opcoes: [NTSC, PAL, SECAM]
+      - id: aspecto
+        rotulo: Aspect ratio
+        tipo: opcao
+        opcoes: ["4:3", "16:9", "2.35:1"]
+      - id: audio_tracks
+        rotulo: Audio tracks
+        tipo: inteiro
+        preenchido_por: leitura_tecnica
+  - rotulo: Physical condition
+    campos:
+      - id: arranhoes
+        rotulo: Scratches
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Overall condition
+        tipo: opcao
+        opcoes: [good, fair, fragile, critical]
+  - rotulo: Content
+    campos:
+      - id: descricao_conteudo
+        rotulo: Content description
+        tipo: texto

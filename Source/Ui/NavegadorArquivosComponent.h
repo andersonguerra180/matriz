@@ -23,7 +23,7 @@
 
 namespace matriz::ui {
 
-class NavegadorArquivosComponent : public juce::Component, private juce::Timer {
+class NavegadorArquivosComponent : public juce::Component {
 public:
     NavegadorArquivosComponent();
     ~NavegadorArquivosComponent() override;
@@ -84,11 +84,15 @@ public:
 
     // Introspecção pra teste — o harness de UI dirige o navegador sem mouse.
     int totalColunasParaTeste() const { return static_cast<int>(colunas_.size()); }
+    // A busca é assíncrona (I1) — o harness bombeia mensagens até isto virar
+    // false antes de conferir o resultado.
+    bool buscaEmAndamentoParaTeste() const { return buscaEmAndamento_; }
     std::vector<juce::File> entradasVisiveisParaTeste(int coluna) const;
     void selecionarParaTeste(const juce::File& arquivo, bool somarASelecao = false);
 
     static constexpr int kLarguraColuna = 200;
     static constexpr int kAlturaLinha = 22;
+    static constexpr int kAlturaToolbar = 26;
 
 private:
     struct Entrada {
@@ -104,14 +108,24 @@ private:
     };
 
     void reconstruirColunas();
+    // Listagem de UM nível — o que o Finder faz a cada clique. Rápida e
+    // limitada, roda na message thread sem problema.
     std::vector<Entrada> lerPasta(const juce::File& pasta) const;
+    // Busca recursiva na pasta atual (item 3.2). NUNCA na message thread:
+    // uma subárvore grande trava a interface por minutos (I1). Dispara um job
+    // e entrega o resultado por callAsync.
+    void dispararBuscaRecursiva(const juce::File& pasta, const juce::String& termo);
     bool passaFiltros(const juce::File& arquivo, bool ehPasta) const;
+    // Estáticas porque o job de busca roda fora da message thread e não pode
+    // tocar em estado do componente — recebe filtro e ordenação por cópia.
+    static bool tipoCombina(const juce::File& arquivo, FiltroTipo filtro);
+    static void ordenarEntradas(std::vector<Entrada>& entradas, Ordenacao ordenacao);
     void registrarNoHistorico(const juce::File& pasta);
     int colunaNaPosicao(juce::Point<int> p) const;
     int indiceEntradaNaPosicao(int coluna, juce::Point<int> p) const;
     void atualizarSelecaoDoLaco(const juce::MouseEvent& e);
     void notificarSelecao();
-    void timerCallback() override; // recalcula tamanho de pasta em background sem travar a UI
+    void dispararMedidaDePasta(const juce::String& caminho);
 
     std::vector<juce::File> caminho_;  // raiz .. pasta atual
     std::vector<Coluna> colunas_;
@@ -133,7 +147,21 @@ private:
     // Cache de tamanho recursivo de pasta — calcular na hora numa pasta com
     // 100 mil arquivos travaria a UI a cada clique.
     mutable std::map<juce::String, std::pair<int, juce::int64>> cacheTamanhoPasta_;
-    std::set<juce::String> pastasPendentesDeMedida_;
+    std::set<juce::String> pastasEmAndamento_;
+    juce::ThreadPool threadPool_{1};
+
+    // Cada busca recebe um número; resultado que chega com número velho é
+    // descartado. Sem isso, digitar rápido faz a resposta de um termo antigo
+    // sobrescrever a do termo atual.
+    int geracaoBusca_ = 0;
+    bool buscaEmAndamento_ = false;
+
+    juce::TextButton btnVoltar_{"<"}, btnAvancar_{">"}, btnSubir_{"^"};
+    void atualizarBotoesNavegacao();
+
+    // Teto de resultados de busca: acima disso a coluna vira uma lista que
+    // ninguém lê e a varredura vira custo puro.
+    static constexpr int kMaxResultadosBusca = 2000;
 };
 
 } // namespace matriz::ui

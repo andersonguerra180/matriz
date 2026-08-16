@@ -2,7 +2,6 @@
 
 #include "LeituraTecnica.h"
 #include "Pcm.h"
-#include "ProcessoExterno.h"
 
 #include <algorithm>
 #include <array>
@@ -46,34 +45,23 @@ std::array<std::array<double, kLadoPHash>, kLadoPHash> dct2D(
 
 } // namespace
 
-uint64_t calcularPHashImagem(const juce::File& imagem, const juce::File& dirTemporario) {
-    dirTemporario.createDirectory();
-    juce::File tmp = dirTemporario.getChildFile("matriz_phash_" + juce::Uuid().toDashedString() + ".raw");
+uint64_t calcularPHashImagem(const juce::File& imagem, const juce::File& /*dirTemporario*/) {
+    juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
+    if (img.isNull())
+        throw DuplicataError("Falha ao decodificar a imagem nativamente: " + imagem.getFullPathName().toStdString());
 
-    rodarEsperandoSucesso("ffmpeg",
-                          {"-y", "-hide_banner", "-loglevel", "error", "-i", imagem.getFullPathName(),
-                           "-vf", "scale=" + juce::String(kLadoPHash) + ":" + juce::String(kLadoPHash) +
-                                      ":flags=lanczos,format=gray",
-                           "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", tmp.getFullPathName()});
+    juce::Image imgRedimensionada = img.rescaled(kLadoPHash, kLadoPHash, juce::Graphics::highResamplingQuality);
 
-    if (!tmp.existsAsFile())
-        throw DuplicataError("ffmpeg não gerou a matriz de pixels para pHash: " + imagem.getFullPathName().toStdString());
+    std::array<std::array<double, kLadoPHash>, kLadoPHash> pixels{};
+    for (int y = 0; y < kLadoPHash; ++y) {
+        for (int x = 0; x < kLadoPHash; ++x) {
+            juce::Colour c = imgRedimensionada.getPixelAt(x, y);
+            double luma = 0.299 * c.getRed() + 0.587 * c.getGreen() + 0.114 * c.getBlue();
+            pixels[static_cast<size_t>(y)][static_cast<size_t>(x)] = luma;
+        }
+    }
 
-    juce::MemoryBlock bloco;
-    tmp.loadFileAsData(bloco);
-    tmp.deleteFile();
-
-    if (bloco.getSize() != static_cast<size_t>(kLadoPHash * kLadoPHash))
-        throw DuplicataError("pHash: tamanho de pixel inesperado para " + imagem.getFullPathName().toStdString());
-
-    const auto* pixels = static_cast<const uint8_t*>(bloco.getData());
-    std::array<std::array<double, kLadoPHash>, kLadoPHash> matriz{};
-    for (int y = 0; y < kLadoPHash; ++y)
-        for (int x = 0; x < kLadoPHash; ++x)
-            matriz[static_cast<size_t>(y)][static_cast<size_t>(x)] =
-                pixels[static_cast<size_t>(y * kLadoPHash + x)];
-
-    auto dct = dct2D(matriz);
+    auto dct = dct2D(pixels);
 
     std::array<double, kBlocoPHash * kBlocoPHash> valores{};
     int idx = 0;
@@ -113,7 +101,7 @@ FingerprintAudio calcularFingerprintAudio(const juce::File& audio, const juce::F
 
     auto leitura = lerTecnica(audio);
     if (!leitura.duracaoSegundos || *leitura.duracaoSegundos <= 0.0)
-        throw DuplicataError("duração desconhecida, não é possível gerar fingerprint: " +
+        throw DuplicataError("unknown duration, cannot generate fingerprint: " +
                               audio.getFullPathName().toStdString());
     double duracaoTotal = *leitura.duracaoSegundos;
 
@@ -174,7 +162,7 @@ AnaliseCorteBanda detectarCorteDeBanda(const juce::File& audio, const juce::File
     auto leitura = lerTecnica(audio);
     double duracaoTotal = leitura.duracaoSegundos.value_or(0.0);
     if (duracaoTotal <= 0.0)
-        throw DuplicataError("duração desconhecida, não é possível analisar corte de banda: " +
+        throw DuplicataError("unknown duration, cannot analyse bandwidth cutoff: " +
                               audio.getFullPathName().toStdString());
 
     double duracaoAnalise = std::min(15.0, duracaoTotal);

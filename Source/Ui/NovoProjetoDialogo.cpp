@@ -2,6 +2,7 @@
 
 #include "../I18n/Strings.h"
 #include "Tokens.h"
+#include "ModalMitigacao.h"
 
 namespace matriz::ui {
 
@@ -11,10 +12,15 @@ namespace {
 // do AlertWindow (que só aceita Component por addCustomComponent()).
 class LinhaFormulario : public juce::Component {
 public:
-    LinhaFormulario(const juce::String& rotulo, std::unique_ptr<juce::Component> widget) : widget_(std::move(widget)) {
+    // alturaWidget > 0 fixa a altura do widget e deixa o resto da linha livre
+    // para rótulos extras posicionados pelo chamador. Sem isso o widget ocupa
+    // toda a área restante e qualquer label solto por cima rouba o clique.
+    LinhaFormulario(const juce::String& rotulo, std::unique_ptr<juce::Component> widget, int alturaWidget = 0)
+        : widget_(std::move(widget)), alturaWidget_(alturaWidget) {
         rotulo_.setText(rotulo, juce::dontSendNotification);
         rotulo_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         rotulo_.setColour(juce::Label::textColourId, tema().textoSecundario);
+        rotulo_.setInterceptsMouseClicks(false, false);
         addAndMakeVisible(rotulo_);
         addAndMakeVisible(*widget_);
         setSize(420, 50);
@@ -23,7 +29,7 @@ public:
     void resized() override {
         auto area = getLocalBounds();
         rotulo_.setBounds(area.removeFromTop(16));
-        widget_->setBounds(area.reduced(0, 2));
+        widget_->setBounds(alturaWidget_ > 0 ? area.removeFromTop(alturaWidget_) : area.reduced(0, 2));
     }
 
     juce::Component& widget() { return *widget_; }
@@ -31,6 +37,7 @@ public:
 private:
     juce::Label rotulo_;
     std::unique_ptr<juce::Component> widget_;
+    int alturaWidget_ = 0;
 };
 
 // Prefixo de nomenclatura derivado do nome do projeto.
@@ -120,21 +127,14 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
                                        }
                                    });
     };
-    auto linhaPasta = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_pasta"), std::move(pastaBotao));
+    // O botão ocupa uma faixa própria de 40px (alvo de clique inteiro) e o
+    // caminho escolhido aparece ABAIXO dele — nada é desenhado por cima.
+    auto linhaPasta = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_pasta"),
+                                                         std::move(pastaBotao), 40);
+    pastaLabel->setInterceptsMouseClicks(false, false);
     linhaPasta->addAndMakeVisible(*pastaLabel);
-    pastaLabel->setBounds(0, 34, 420, 16);
-
-    // "É pra lá que seus arquivos serão copiados — os originais não são
-    // movidos nem apagados": a dúvida que trava quem tem um HD cheio é
-    // exatamente essa, e ela precisa ser respondida ANTES de escolher a
-    // pasta, não num FAQ.
-    auto pastaAjuda = std::make_shared<juce::Label>();
-    pastaAjuda->setText(matriz::i18n::t("dialogo_novo_projeto.campo_pasta_ajuda"), juce::dontSendNotification);
-    pastaAjuda->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-    pastaAjuda->setColour(juce::Label::textColourId, tema().textoSecundario);
-    linhaPasta->addAndMakeVisible(*pastaAjuda);
-    pastaAjuda->setBounds(0, 52, 420, 30);
-    linhaPasta->setSize(420, 84);
+    pastaLabel->setBounds(0, 58, 420, 16);
+    linhaPasta->setSize(420, 76);
 
     for (auto* linha : {linhaNome.get(), linhaPasta.get(), linhaInstituicao.get(), linhaResponsavel.get(),
                          linhaIsrc.get()})
@@ -148,12 +148,12 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     struct EstadoVivo {
         std::shared_ptr<juce::AlertWindow> janela;
         std::unique_ptr<LinhaFormulario> nome, instituicao, responsavel, isrc, pasta;
-        std::shared_ptr<juce::Label> pastaAjuda;
+        std::shared_ptr<juce::Label> pastaLabel;
     };
     auto estado = std::make_shared<EstadoVivo>();
     estado->janela = janela;
     estado->nome = std::move(linhaNome);
-    estado->pastaAjuda = pastaAjuda;
+    estado->pastaLabel = pastaLabel;
     estado->instituicao = std::move(linhaInstituicao);
     estado->responsavel = std::move(linhaResponsavel);
     estado->isrc = std::move(linhaIsrc);
@@ -164,6 +164,11 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
         juce::ModalCallbackFunction::create([estado, aoConcluir, modo, nomeEditorPtr, instituicaoEditorPtr,
                                               responsavelEditorPtr, isrcEditorPtr, pastaEscolhida,
                                               seletorPasta](int resultadoBotao) {
+            // §3: tira o peer da tela antes de qualquer coisa — a validação
+            // abaixo pode abrir OUTRO diálogo (erro de nome/pasta), e dois
+            // peers vivos ao mesmo tempo é onde o crash de repintura aparecia.
+            if (estado->janela) retirarPeerDaTela(*estado->janela);
+
             if (resultadoBotao != 1) {
                 aoConcluir(std::nullopt);
                 return;

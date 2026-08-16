@@ -10,6 +10,18 @@
 // Wrapper fino sobre sqlite3. Não é um ORM — expõe exatamente o necessário
 // para abrir um banco (registro.sqlite ou indice.sqlite), rodar um script de
 // schema, e preparar/rodar statements parametrizados.
+//
+// CONCORRÊNCIA: o SQLite é compilado com SQLITE_THREADSAFE=1 (modo
+// serializado, ver cmake/Dependencies.cmake), então usar o MESMO handle de
+// várias threads não corrompe nada — o próprio SQLite serializa. É isso que
+// permite ao ingest concorrente (N threads de análise) compartilhar um único
+// Database.
+//
+// O que o SQLite NÃO resolve é atomicidade de sequência lógica: um
+// SELECT seguido de um INSERT que depende do resultado (numerar o próximo
+// código de acervo, criar o Vault se não existir) continua sendo uma corrida
+// entre threads. Quem faz isso precisa de exclusão mútua própria — ver o
+// mutex de escrita em MainComponent::processarLoteEmBackground.
 
 namespace matriz::db {
 
@@ -58,6 +70,9 @@ public:
     long long columnInt(int index) const;
     double columnReal(int index) const;
     bool columnIsNull(int index) const;
+    // Vazio quando a coluna é NULL ou tem zero bytes — o chamador distingue
+    // pelos dois casos serem equivalentes pra quem consome cache.
+    std::vector<unsigned char> columnBlob(int index) const;
 
 private:
     sqlite3* db_ = nullptr;

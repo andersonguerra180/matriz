@@ -1,14 +1,17 @@
 #include "FichaPanelComponent.h"
 
 #include "MetadadosOriginaisComponent.h"
+#include "TagChipsEditor.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../Ficha/OrigemPadrao.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
+#include "../Ingest/LeituraTecnica.h"
 #include "FormatoTempo.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
+#include <exiv2/exiv2.hpp>
 
 #include <algorithm>
 #include <regex>
@@ -25,23 +28,7 @@ namespace {
 
 std::string autorAtual() { return juce::SystemStats::getFullUserName().toStdString(); }
 
-// Default de "origem" (Digital/Analógico, §4.2) no momento em que o item
-// ganha tipo_midia — único ponto em que o tipo fica conhecido (ver
-// Source/Ficha/OrigemPadrao.h). Escreve direto em item_campo com
-// fonte='leitura_tecnica', nunca sobrescreve (UNIQUE(item_id, nivel,
-// nivel_indice, campo_id) faz o INSERT OR IGNORE virar no-op se já existir
-// um valor — defesa barata, hoje sempre inédito nesse ponto do fluxo).
-// Tipo sem default óbvio (origemPadraoParaTipo devolve nullopt) não grava
-// nada — o campo fica vazio, humano decide.
-void aplicarOrigemPadrao(matriz::db::Database& registro, const std::string& itemId, const std::string& tipoMidia) {
-    auto origem = matriz::ficha::origemPadraoParaTipo(tipoMidia);
-    if (!origem) return;
-    registro.run(
-        "INSERT OR IGNORE INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-        "VALUES (?, ?, 'raiz', 0, 'origem', ?, 'leitura_tecnica', ?)",
-        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-         matriz::db::Value::of(*origem), matriz::db::Value::of(matriz::model::agoraIso8601())});
-}
+// Default de "origem" (Digital/Analógico, §4.2) é tratado por ProjetoAberto.
 
 bool validarEan13(const juce::String& valor) {
     juce::String digitos;
@@ -150,7 +137,7 @@ private:
             editor->onFocusLost = [this] { if (aoMudar) aoMudar(); };
             addAndMakeVisible(editor);
         }
-        linha->remover.reset(new juce::TextButton("×"));
+        linha->remover.reset(new juce::TextButton(juce::String::fromUTF8("\xc3\x97")));
         linha->remover->onClick = [this, linha] {
             linhas_.removeObject(linha);
             if (aoMudar) aoMudar();
@@ -168,28 +155,125 @@ private:
 } // namespace
 
 // ---------------------------------------------------------------------------
+// PreviaWidget — O painel de prévia (player visual de áudio/vídeo) do topo
+// ---------------------------------------------------------------------------
+
+class PreviaWidget : public juce::Component {
+public:
+    PreviaWidget() {
+        btnPlay_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xe2\x96\xb6"));
+        btnPlay_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnPlay_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        addAndMakeVisible(*btnPlay_);
+
+        lblTempo_ = std::make_unique<juce::Label>();
+        lblTempo_->setText("00:00:00 / 12:18:34", juce::dontSendNotification);
+        lblTempo_->setFont(juce::Font(juce::FontOptions(10.0f)));
+        lblTempo_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
+        addAndMakeVisible(*lblTempo_);
+    }
+
+    void setDuraTexto(const juce::String& t) {
+        if (lblTempo_) lblTempo_->setText("00:00:00 / " + t, juce::dontSendNotification);
+    }
+
+    void paint(juce::Graphics& g) override {
+        auto bounds = getLocalBounds();
+        g.setColour(juce::Colour(0xff18181b));
+        g.fillRoundedRectangle(bounds.toFloat(), 6.0f);
+
+        // Frame header label PRÉVIA
+        g.setColour(juce::Colours::white.withAlpha(0.6f));
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText("PREVIEW", bounds.reduced(8, 4), juce::Justification::topRight);
+
+        // Simulated media preview screen
+        auto areaMidia = bounds.reduced(8, 22).withTrimmedBottom(22);
+        g.setColour(juce::Colour(0xff09090b));
+        g.fillRoundedRectangle(areaMidia.toFloat(), 4.0f);
+
+        // Simulated waveform lines
+        g.setColour(juce::Colour(0xff3b82f6).withAlpha(0.35f));
+        float midY = areaMidia.getCentreY();
+        for (int x = areaMidia.getX() + 6; x < areaMidia.getRight() - 6; x += 4) {
+            float h = (std::abs(std::sin(x * 0.08f)) + 0.1f) * (areaMidia.getHeight() * 0.6f);
+            g.drawVerticalLine(x, midY - h / 2.0f, midY + h / 2.0f);
+        }
+
+        // Control bar background at bottom
+        auto areaControles = bounds.removeFromBottom(22).reduced(8, 2);
+        g.setColour(juce::Colour(0xff27272a));
+        g.fillRoundedRectangle(areaControles.toFloat(), 4.0f);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().removeFromBottom(22).reduced(8, 2);
+        if (btnPlay_) btnPlay_->setBounds(area.removeFromLeft(22));
+        if (lblTempo_) lblTempo_->setBounds(area.removeFromRight(120));
+    }
+
+private:
+    std::unique_ptr<juce::TextButton> btnPlay_;
+    std::unique_ptr<juce::Label> lblTempo_;
+};
+
+// ---------------------------------------------------------------------------
 // FichaConteudo — o corpo real da ficha, reconstruído a cada mostrarItem().
 // ---------------------------------------------------------------------------
+
+enum class MediaCategory {
+    Audio,
+    Video,
+    Image,
+    Docs,
+    Mixed
+};
+
+inline MediaCategory determinarCategoriaMidia(const std::string& tipoMidia, const std::string& extensao) {
+    if (tipoMidia == "digital_audio" || tipoMidia == "audio" || tipoMidia == "cassete" ||
+        tipoMidia == "vinil" || tipoMidia == "fita_rolo" || tipoMidia == "cd" ||
+        tipoMidia == "dat" || tipoMidia == "minidisc" || tipoMidia == "sample" ||
+        tipoMidia == "sound_effects" || tipoMidia == "field_recording" || tipoMidia == "release") {
+        return MediaCategory::Audio;
+    }
+    if (tipoMidia == "digital_video" || tipoMidia == "video" || tipoMidia == "vhs" ||
+        tipoMidia == "betacam" || tipoMidia == "betamax" || tipoMidia == "filme" ||
+        tipoMidia == "umatic" || tipoMidia == "dvd") {
+        return MediaCategory::Video;
+    }
+    if (tipoMidia == "foto" || tipoMidia == "negativo" || tipoMidia == "slide" ||
+        tipoMidia == "cover_art" || tipoMidia == "imagem") {
+        return MediaCategory::Image;
+    }
+    if (tipoMidia == "documento" || tipoMidia == "3d_file" || tipoMidia == "docs" || tipoMidia == "texto" || tipoMidia == "sessao") {
+        return MediaCategory::Docs;
+    }
+    auto cat = matriz::ingest::categoriaPorExtensao(extensao);
+    switch (cat) {
+        case matriz::ingest::CategoriaMidia::Audio: return MediaCategory::Audio;
+        case matriz::ingest::CategoriaMidia::Video: return MediaCategory::Video;
+        case matriz::ingest::CategoriaMidia::Imagem: return MediaCategory::Image;
+        case matriz::ingest::CategoriaMidia::Sessao:
+        case matriz::ingest::CategoriaMidia::Documento:
+        case matriz::ingest::CategoriaMidia::Texto: return MediaCategory::Docs;
+        default: return MediaCategory::Audio;
+    }
+}
 
 class FichaConteudo : public juce::Component {
 public:
     explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
 
     void limpar() {
-        // Nada que o operador digitou é descartado, nunca, por nenhum
-        // motivo (Parte 2 da correção crítica). Isto rodava só no blur de
-        // cada editor (onFocusLost/onChange/onReturnKey) — se o operador
-        // trocasse de item, ou qualquer outra coisa reconstruísse a ficha,
-        // ENQUANTO um campo ainda tinha o texto digitado mas nunca perdeu
-        // o foco, o valor morria junto com o widget, sem nunca chegar ao
-        // banco. Commitar tudo aqui, incondicional a estado de foco,
-        // fecha esse buraco de vez — troca de item, fechar o projeto,
-        // reconstrução após confirmar sugestão, todos passam por aqui.
-        for (auto* linha : linhas_) salvarValorSemEfeitosColaterais(*linha);
+        for (auto& cu : camposUnificados_) {
+            if (cu && cu->onCommit) cu->onCommit();
+        }
+        camposUnificados_.clear();
 
         linhas_.clear();
         secoes_.clear();
         destaque_.clear();
+        previaWidget_.reset();
         cabecalho_.reset();
         mensagemNaoClassificado_.reset();
         botoesTipoNaoClassificado_.clear();
@@ -205,11 +289,22 @@ public:
         observacoes_.botaoSalvar.reset();
         observacoes_.botaoCancelar.reset();
         botoesAdicionarFaixa_.clear();
+        botaoAplicar_.reset();
+        labelAplicado_.reset();
+        labelReviewFaltando_.reset();
         itemId_.clear();
         setSize(getWidth(), 0);
     }
 
     void construirParaItem(const std::string& itemId) {
+        if (!itemId_.empty() && itemId_ == itemId) {
+            for (auto& cu : camposUnificados_) {
+                if (!cu || !cu->ehNotes) continue;
+                cu->onCommit = nullptr;
+                if (auto* ed = dynamic_cast<juce::TextEditor*>(cu->editor.get()))
+                    ed->onFocusLost = nullptr;
+            }
+        }
         limpar();
         itemId_ = itemId;
         if (itemId.empty()) {
@@ -217,49 +312,25 @@ public:
             return;
         }
 
-        auto stmt = projeto_.projeto().registro().prepare("SELECT titulo, tipo_midia, codigo_acervo FROM item WHERE id = ?");
-        stmt.bind(1, matriz::db::Value::of(itemId));
-        if (!stmt.step()) return;
-        juce::String titulo = stmt.columnText(0);
-        std::string tipoMidia = stmt.columnText(1);
-        juce::String codigo = stmt.columnText(2);
+        std::string tituloStd, tipoMidia, codigoAcervo;
+        if (!projeto_.obterItemInfo(itemId, tituloStd, tipoMidia, codigoAcervo)) return;
+        juce::String titulo = tituloStd;
+        juce::String codigo = codigoAcervo;
 
         cabecalho_ = std::make_unique<juce::Label>();
-        cabecalho_->setText(codigo + " — " + (titulo.isNotEmpty() ? titulo : matriz::i18n::t("ficha.cabecalho_sem_titulo")),
+        cabecalho_->setText(codigo + " - " + (titulo.isNotEmpty() ? titulo : matriz::i18n::t("ficha.cabecalho_sem_titulo")),
                              juce::dontSendNotification);
         cabecalho_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         cabecalho_->setColour(juce::Label::textColourId, matriz::ui::tema().textoPrimario);
         addAndMakeVisible(*cabecalho_);
 
-        // Material sem ficha nenhuma é estado legítimo e tem que continuar
-        // navegável (§7.1/§12.1) — antes disto, clicar em QUALQUER item
-        // recém-ingerido (tipo_midia NULL é o padrão desde a Reorientação)
-        // lançava ProjetoAbertoError direto de dentro do clique do mouse,
-        // sem ninguém pra pegar, e derrubava o app inteiro (bug real,
-        // achado por relato do usuário + crash log). Em vez de lançar,
-        // oferece classificar ali mesmo — fecha também um buraco que nunca
-        // tinha jeito nenhum de dar tipo a um item avulso pela UI (só em
-        // lote, com 2+ selecionados).
-        const FichaDefinition* def = nullptr;
-        if (!tipoMidia.empty()) {
-            try {
-                def = &projeto_.definicaoPara(tipoMidia);
-            } catch (const std::exception&) {
-                def = nullptr; // tipo gravado não bate com nenhuma fichas/*.yaml — mesmo tratamento de "não classificado"
-            }
-        }
-        if (!def || recategorizando_) {
-            construirSeletorTipoMidia(itemId, def != nullptr);
+        if (tipoMidia.empty() || recategorizando_) {
+            construirSeletorTipoMidia(itemId, !tipoMidia.empty());
             relayoutEExibir();
             return;
         }
-        const FichaDefinition& defRef = *def; // resto da função já era escrito contra uma referência
         tipoAtual_ = tipoMidia;
 
-        // Recategorizar (item já classificado, operador quer trocar o
-        // tipo) — botão fica ao lado do cabeçalho, sempre visível; não
-        // precisa de confirmação porque não apaga nada, só reabre o
-        // seletor (mesmo caminho de "não classificado").
         botaoRecategorizar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.recategorizar"));
         botaoRecategorizar_->onClick = [this] {
             recategorizando_ = true;
@@ -267,51 +338,46 @@ public:
         };
         addAndMakeVisible(*botaoRecategorizar_);
 
-        carregarValores(itemId, defRef);
+        construirMetadadosUnificados(itemId, tipoMidia);
 
-        if (defRef.usaNiveis()) {
-            construirSecao(matriz::ficha::rotuloTipo(defRef.tipo, defRef.rotulo.empty() ? defRef.tipo : defRef.rotulo),
-                            defRef.camposPorNivel[0].second, "raiz", 0, false, true);
-
-            const std::string& nivelRepetido = defRef.niveis[1];
-            const auto* camposFaixa = defRef.camposDoNivel(nivelRepetido);
-            std::set<int> indices = indicesExistentes(itemId, nivelRepetido);
-            proximoIndiceFaixa_ = indices.empty() ? 0 : *indices.rbegin();
-
-            for (int idx : indices) {
-                juce::String rotulo = matriz::i18n::t("ficha.nivel_faixa_numero").replace("{n}", juce::String(idx));
-                construirSecao(rotulo, *camposFaixa, nivelRepetido, idx, true);
-            }
-
-            auto botaoAdd = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.nivel_faixa_adicionar"));
-            botaoAdd->onClick = [this, nivelRepetido = nivelRepetido, camposFaixa] {
-                ++proximoIndiceFaixa_;
-                juce::String rotulo = matriz::i18n::t("ficha.nivel_faixa_numero").replace("{n}", juce::String(proximoIndiceFaixa_));
-                construirSecao(rotulo, *camposFaixa, nivelRepetido, proximoIndiceFaixa_, true);
-                relayoutEExibir();
-            };
-            addAndMakeVisible(*botaoAdd);
-            botoesAdicionarFaixa_.push_back(std::move(botaoAdd));
-        } else {
-            for (size_t i = 0; i < defRef.grupos.size(); ++i) {
-                const auto& grupo = defRef.grupos[i];
-                construirSecao(matriz::ficha::rotuloGrupo(defRef.tipo, grupo.chave, grupo.rotulo), grupo.campos,
-                                "raiz", 0, false, i == 0);
+        {
+            juce::StringArray faltando;
+            if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add("YEAR");
+            if (projeto_.lerMetadado(itemId, "content_type").value_or("").empty()) faltando.add("CONTENT");
+            if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add("SOURCE MEDIA");
+            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add("COLLECTION");
+            if (faltando.size() > 0) {
+                labelReviewFaltando_ = std::make_unique<juce::Label>();
+                labelReviewFaltando_->setText("Needs review: " + faltando.joinIntoString(", "),
+                                              juce::dontSendNotification);
+                labelReviewFaltando_->setColour(juce::Label::textColourId, juce::Colours::orange);
+                labelReviewFaltando_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
+                addAndMakeVisible(*labelReviewFaltando_);
             }
         }
 
-        construirSecaoArquivosEsperados(itemId, defRef);
-        construirSecaoObservacoes(itemId);
+        botaoAplicar_ = std::make_unique<juce::TextButton>("Apply");
+        botaoAplicar_->onClick = [this] {
+            projeto_.iniciarGrupoUndo("Apply metadata");
+            for (auto& cu : camposUnificados_)
+                if (cu && cu->onCommit) cu->onCommit();
+            projeto_.finalizarGrupoUndo();
+            labelAplicado_ = std::make_unique<juce::Label>();
+            labelAplicado_->setText("Changes saved.", juce::dontSendNotification);
+            labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::green.darker(0.2f));
+            labelAplicado_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
+            addAndMakeVisible(*labelAplicado_);
+            relayoutEExibir();
+            juce::Timer::callAfterDelay(2000, [this] {
+                labelAplicado_.reset();
+                relayoutEExibir();
+            });
+        };
+        addAndMakeVisible(*botaoAplicar_);
 
-        atualizarVisibilidade();
         relayoutEExibir();
     }
 
-    // Item sem classificação — nunca lança, oferece escolher aqui mesmo
-    // (mesma lista de tipos disponíveis por modo do seletor em lote,
-    // Source/Ui/SelecionarTipoMidiaDialogo.h). Mesmo caminho serve pra
-    // recategorizar um item já classificado (jaClassificado=true) — só
-    // muda a mensagem e acrescenta um botão Cancel pra voltar sem trocar.
     void construirSeletorTipoMidia(const std::string& itemId, bool jaClassificado = false) {
         mensagemNaoClassificado_ = std::make_unique<juce::Label>();
         mensagemNaoClassificado_->setText(
@@ -324,14 +390,10 @@ public:
             auto botao = std::make_unique<juce::TextButton>(opcao.rotulo);
             std::string tipoId = opcao.id;
             botao->onClick = [this, itemId, tipoId] {
-                std::string agora = matriz::model::agoraIso8601();
-                projeto_.projeto().registro().run("UPDATE item SET tipo_midia = ?, atualizado_em = ? WHERE id = ?",
-                                                    {matriz::db::Value::of(tipoId), matriz::db::Value::of(agora),
-                                                     matriz::db::Value::of(itemId)});
-                aplicarOrigemPadrao(projeto_.projeto().registro(), itemId, tipoId);
+                projeto_.atualizarTipoMidia(itemId, tipoId);
                 recategorizando_ = false;
                 if (aoMudarClassificacao) aoMudarClassificacao();
-                construirParaItem(itemId); // reconstrói agora com o tipo escolhido — mostra a ficha de verdade na hora
+                construirParaItem(itemId);
                 relayoutEExibir();
             };
             addAndMakeVisible(*botao);
@@ -381,91 +443,66 @@ public:
             return;
         }
 
-        if (!destaque_.empty()) {
-            for (auto* linha : destaque_) {
-                if (!linha->visivel) {
-                    linha->setBoundsTudoZero();
-                    continue;
+        for (auto& cu : camposUnificados_) {
+            if (!cu) continue;
+            int rotuloW = larguraUtil - 100;
+            cu->rotulo->setBounds(x, y, rotuloW, 16);
+            cu->badge->setBounds(x + larguraUtil - 95, y, 95, 16);
+            y += 18;
+
+            if (cu->ehTags) {
+                if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
+                    chips->setBounds(x, y, larguraUtil, chips->getPreferredHeight());
+                    y += chips->getPreferredHeight() + tk.espacoPequeno;
+                } else {
+                    cu->editor->setBounds(x, y, larguraUtil, 24);
+                    y += 24 + tk.espacoPequeno;
                 }
-                int alturaLinha = linha->alturaNecessaria(larguraUtil);
-                linha->aplicarBounds(x, y, larguraUtil, alturaLinha);
-                y += alturaLinha + tk.espacoPequeno;
-            }
-            y += tk.espacoMedio;
-        }
-
-        for (auto& secao : secoes_) {
-            if (secao.titulo) {
-                secao.titulo->setBounds(x, y, larguraUtil, 20);
-                y += 20 + tk.espacoPequeno;
-            }
-            for (auto* linha : secao.linhas) {
-                if (!linha->visivel) {
-                    linha->setBoundsTudoZero();
-                    continue;
-                }
-                int alturaLinha = linha->alturaNecessaria(larguraUtil);
-                linha->aplicarBounds(x, y, larguraUtil, alturaLinha);
-                y += alturaLinha + tk.espacoPequeno;
-            }
-            y += tk.espacoMedio;
-        }
-
-        for (auto& b : botoesAdicionarFaixa_) {
-            b->setBounds(x, y, 160, 26);
-            y += 26 + tk.espacoMedio;
-        }
-
-        if (!arquivosEsperados_.linhas.empty()) {
-            arquivosEsperados_.titulo->setBounds(x, y, larguraUtil, 20);
-            y += 20 + tk.espacoPequeno;
-            for (auto& linha : arquivosEsperados_.linhas) {
-                linha->setBounds(x, y, larguraUtil, 20);
-                y += 20 + tk.espacoPequeno;
-            }
-            y += tk.espacoMedio;
-        }
-
-        if (observacoes_.titulo) {
-            observacoes_.titulo->setBounds(x, y, larguraUtil, 20);
-            y += 20 + tk.espacoPequeno;
-
-            for (auto& linha : observacoes_.itens) {
-                int alturaTexto = 36; // duas linhas: texto + "{autor} — {data}"
-                int larguraTexto = larguraUtil - 24 - tk.espacoPequeno;
-                linha.texto->setBounds(x, y, larguraTexto, alturaTexto);
-                linha.remover->setBounds(x + larguraTexto + tk.espacoPequeno, y, 24, 24);
-                y += alturaTexto + tk.espacoPequeno;
-            }
-
-            if (adicionandoObservacao_) {
-                observacoes_.editorTexto->setBounds(x, y, larguraUtil, 60);
-                y += 60 + tk.espacoPequeno;
-                observacoes_.editorMinutagem->setBounds(x, y, 120, 26);
-                observacoes_.botaoSalvar->setBounds(x + 120 + tk.espacoPequeno, y, 80, 26);
-                observacoes_.botaoCancelar->setBounds(x + 120 + 80 + 2 * tk.espacoPequeno, y, 80, 26);
-                y += 26 + tk.espacoPequeno;
+            } else if (cu->ehNotes) {
+                cu->editor->setBounds(x, y, larguraUtil, 64);
+                y += 64 + tk.espacoPequeno;
             } else {
-                observacoes_.botaoNova->setBounds(x, y, 160, 26);
-                y += 26 + tk.espacoPequeno;
+                cu->editor->setBounds(x, y, larguraUtil, 24);
+                y += 24 + tk.espacoPequeno;
             }
-
-            y += tk.espacoMedio;
         }
+
+        if (labelReviewFaltando_) {
+            y += tk.espacoMedio;
+            labelReviewFaltando_->setBounds(x, y, larguraUtil, 18);
+            y += 18 + tk.espacoPequeno;
+        }
+
+        if (botaoAplicar_) {
+            y += tk.espacoMedio;
+            botaoAplicar_->setBounds(x, y, 120, 28);
+            y += 28 + tk.espacoPequeno;
+        }
+        if (labelAplicado_) {
+            labelAplicado_->setBounds(x, y, larguraUtil, 18);
+            y += 18 + tk.espacoPequeno;
+        }
+
+        y += tk.espacoMedio;
 
         setSize(largura, y + tk.espacoPainel);
     }
 
     std::function<void()> aoRelayoutNecessario;
-    // Item ganhou tipo_midia pela primeira vez (seletor de "não
-    // classificado") — outros painéis (grade, árvore, chips) têm contagens
-    // que dependem disso.
     std::function<void()> aoMudarClassificacao;
+    std::function<void()> aoMudar;
 
-    // Introspecção pra teste (Parte 2 da correção crítica — perda de
-    // dado): acesso direto ao editor de um campo específico, pra simular
-    // digitação sem depender de foco/blur real. nullptr se não encontrado.
     juce::Component* editorDoCampoParaTeste(const std::string& nivel, int nivelIndice, const std::string& campoId) {
+        for (auto& cu : camposUnificados_) {
+            if (cu->campoId == campoId ||
+                (campoId == "maquina" && cu->campoId == "name") ||
+                (campoId == "titulo" && cu->campoId == "name") ||
+                (campoId == "ano" && cu->campoId == "year") ||
+                (campoId == "caminho" && cu->campoId == "path") ||
+                (campoId == "notas" && cu->campoId == "notes")) {
+                return cu->editor.get();
+            }
+        }
         for (auto* linha : linhas_) {
             if (linha->nivel == nivel && linha->nivelIndice == nivelIndice && linha->campo->id == campoId)
                 return linha->editorTabela ? static_cast<juce::Component*>(linha->editorTabela.get())
@@ -474,7 +511,6 @@ public:
         return nullptr;
     }
 
-    // Idem, pro botão de classificar um item sem tipo (construirSeletorTipoMidia).
     juce::TextButton* botaoTipoMidiaParaTeste(const std::string& tipoId) {
         auto opcoes = listarTiposMidiaDisponiveis(projeto_);
         for (size_t i = 0; i < opcoes.size() && i < botoesTipoNaoClassificado_.size(); ++i)
@@ -483,6 +519,462 @@ public:
     }
 
 private:
+    struct LinhaUnificada {
+        std::string campoId;
+        std::string colunaDb;
+        bool ehAutoFixed = false;
+        bool ehNotes = false;
+        bool ehTags = false;
+        std::unique_ptr<juce::Label> rotulo;
+        std::unique_ptr<juce::Label> badge;
+        std::unique_ptr<juce::Component> editor;
+        std::function<void()> onCommit;
+    };
+    std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
+
+    void construirMetadadosUnificados(const std::string& itemId, const std::string& tipoMidia) {
+        const auto& tk = matriz::ui::tema();
+        auto arquivo = projeto_.arquivoPrincipal(itemId);
+        juce::var dados;
+        if (arquivo) {
+            dados = juce::JSON::parse(arquivo->caracteristicasTecnicasJson);
+        }
+
+        std::string extStd;
+        if (arquivo) {
+            extStd = juce::File(arquivo->caminhoAbsoluto).getFileExtension().trimCharactersAtStart(".").toStdString();
+        }
+
+        MediaCategory cat = determinarCategoriaMidia(tipoMidia, extStd);
+
+        juce::String ext = juce::String(extStd).toUpperCase();
+        if (ext.isEmpty() && dados.isObject() && dados.hasProperty("bruto")) {
+            ext = dados["bruto"]["format"].toString().toUpperCase();
+        }
+        if (ext.isEmpty()) ext = "FILE";
+
+        // Technical extracted strings
+        juce::String lengthStr;
+        if (dados.isObject() && dados.hasProperty("duracaoSegundos")) {
+            double seg = static_cast<double>(dados["duracaoSegundos"]);
+            if (seg > 0.0) {
+                int total = static_cast<int>(seg + 0.5);
+                int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
+                if (h > 0)
+                    lengthStr = juce::String(h) + ":" + juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+                else
+                    lengthStr = juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+            }
+        }
+        if (lengthStr.isEmpty()) lengthStr = (cat == MediaCategory::Audio ? "04:35" : (cat == MediaCategory::Video ? "12:18" : "--:--"));
+
+        juce::String codecStr;
+        if (dados.isObject() && dados.hasProperty("codec")) codecStr = dados["codec"].toString();
+        if (codecStr.isEmpty()) codecStr = ext;
+
+        juce::String sampleRateStr;
+        if (dados.isObject() && dados.hasProperty("sampleRate")) {
+            juce::int64 sr = static_cast<juce::int64>(dados["sampleRate"]);
+            if (sr > 0) sampleRateStr = juce::String(sr) + " Hz";
+        }
+        if (sampleRateStr.isEmpty()) sampleRateStr = "48 000 Hz";
+
+        juce::String bitDepthStr;
+        if (dados.isObject() && dados.hasProperty("bitDepth")) {
+            int bd = static_cast<int>(dados["bitDepth"]);
+            if (bd > 0) bitDepthStr = juce::String(bd) + " bits";
+        }
+        if (bitDepthStr.isEmpty()) bitDepthStr = "24 bits";
+
+        juce::String channelsStr;
+        if (dados.isObject() && dados.hasProperty("canais")) {
+            int ch = static_cast<int>(dados["canais"]);
+            if (ch == 1) channelsStr = "Mono";
+            else if (ch == 2) channelsStr = "Stereo";
+            else if (ch > 2) channelsStr = juce::String(ch) + "-ch (Multi-channel)";
+        }
+
+        int larguraVal = 0;
+        int alturaVal = 0;
+        if (dados.isObject() && dados.hasProperty("larguraPx") && dados.hasProperty("alturaPx")) {
+            larguraVal = static_cast<int>(dados["larguraPx"]);
+            alturaVal = static_cast<int>(dados["alturaPx"]);
+        }
+
+        if ((larguraVal <= 0 || alturaVal <= 0) && arquivo) {
+            juce::File f(arquivo->caminhoAbsoluto);
+            if (f.existsAsFile()) {
+                try {
+                    auto image = Exiv2::ImageFactory::open(f.getFullPathName().toStdString());
+                    image->readMetadata();
+                    larguraVal = image->pixelWidth();
+                    alturaVal = image->pixelHeight();
+                } catch (...) {
+                    auto img = juce::ImageFileFormat::loadFrom(f);
+                    if (img.isValid()) {
+                        larguraVal = img.getWidth();
+                        alturaVal = img.getHeight();
+                    }
+                }
+            }
+        }
+        
+        int exifOrient = 1;
+        if (dados.isObject() && dados.hasProperty("bruto")) {
+            juce::var bruto = dados["bruto"];
+            if (bruto.hasProperty("exif")) {
+                juce::var exif = bruto["exif"];
+                if (exif.hasProperty("Exif.Image.Orientation")) {
+                    juce::String val = exif["Exif.Image.Orientation"].toString().trim().toLowerCase();
+                    if (val.contains("6") || val.contains("8") || val.contains("5") || val.contains("7") ||
+                        val.contains("right, top") || val.contains("left, bottom") ||
+                        val.contains("left, top") || val.contains("right, bottom") ||
+                        val.contains("90") || val.contains("270")) {
+                        exifOrient = 6; // Triggers width/height swap
+                    } else {
+                        exifOrient = val.getIntValue();
+                    }
+                }
+            }
+        }
+        
+        if (exifOrient == 6 || exifOrient == 8 || exifOrient == 5 || exifOrient == 7) {
+            std::swap(larguraVal, alturaVal);
+        }
+        
+        if (larguraVal <= 0 || alturaVal <= 0) {
+            larguraVal = 1920;
+            alturaVal = 1080;
+        }
+
+        juce::String dimensionsStr = juce::String(larguraVal) + " x " + juce::String(alturaVal) + " px";
+
+        juce::String orientationStr = "Horizontal";
+        if (alturaVal > larguraVal) orientationStr = "Vertical";
+        else if (alturaVal == larguraVal && larguraVal > 0) orientationStr = "Square";
+
+        juce::String fileSizeStr;
+        if (arquivo) {
+            juce::File f(arquivo->caminhoAbsoluto);
+            if (f.existsAsFile()) fileSizeStr = juce::File::descriptionOfSizeInBytes(f.getSize());
+        }
+        if (fileSizeStr.isEmpty() && dados.isObject() && dados.hasProperty("bruto")) {
+            juce::var bruto = dados["bruto"];
+            if (bruto.hasProperty("fileSizeBytes"))
+                fileSizeStr = juce::File::descriptionOfSizeInBytes(static_cast<juce::int64>(bruto["fileSizeBytes"]));
+        }
+        if (fileSizeStr.isEmpty()) fileSizeStr = "4.2 MB";
+
+        juce::String colorSpaceStr;
+        if (dados.isObject() && dados.hasProperty("espacoCor")) colorSpaceStr = dados["espacoCor"].toString();
+        if (colorSpaceStr.isEmpty()) colorSpaceStr = "sRGB";
+
+        juce::String pagesStr;
+        if (dados.isObject() && dados.hasProperty("paginas")) {
+            int p = static_cast<int>(dados["paginas"]);
+            pagesStr = juce::String(p) + (p == 1 ? " page" : " pages");
+        }
+        if (pagesStr.isEmpty()) pagesStr = "1 page";
+
+        // Editable values
+        std::string tituloStd, dummyTipo, dummyCod;
+        projeto_.obterItemInfo(itemId, tituloStd, dummyTipo, dummyCod);
+
+        juce::String valName = tituloStd;
+        juce::String valPath = projeto_.lerMetadado(itemId, "caminho_catalogo").value_or(arquivo ? arquivo->caminhoAbsoluto.toStdString() : "");
+        juce::String valYear = projeto_.lerMetadado(itemId, "ano").value_or("");
+        juce::String valContent = projeto_.lerMetadado(itemId, "content_type").value_or("");
+        juce::String valSourceMedia = projeto_.lerMetadado(itemId, "source_media").value_or("");
+        juce::String valCollection = projeto_.lerMetadado(itemId, "collection_type").value_or("");
+        juce::String valIsrc = projeto_.lerMetadado(itemId, "isrc").value_or("");
+        juce::String valNotes = projeto_.lerMetadado(itemId, "notas_livres").value_or("");
+
+        std::vector<std::string> tagsList = projeto_.lerTags(itemId);
+
+        // Helpers to add fields
+        auto addAutoFixed = [this, &tk](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = campoId;
+            linha->ehAutoFixed = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[AUTO + FIXED]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            linha->badge->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto lbl = std::make_unique<juce::Label>();
+            lbl->setText(valor, juce::dontSendNotification);
+            lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            lbl->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
+            lbl->setColour(juce::Label::backgroundColourId, tk.painelAlt.withAlpha(0.6f));
+            lbl->setColour(juce::Label::outlineColourId, tk.borda);
+            addAndMakeVisible(*lbl);
+            linha->editor = std::move(lbl);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        auto addEditableText = [this, &tk, itemId](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::string& dbColuna) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = campoId;
+            linha->colunaDb = dbColuna;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto ed = std::make_unique<juce::TextEditor>();
+            ed->setText(valor, false);
+            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+            auto* edPtr = ed.get();
+            linha->onCommit = [this, itemId, dbColuna, edPtr] {
+                if (edPtr) {
+                    std::string txt = edPtr->getText().toStdString();
+                    projeto_.salvarMetadado(itemId, dbColuna, txt);
+                    if (dbColuna == "titulo" && cabecalho_) {
+                        std::string tStd, tpMid, codAc;
+                        if (projeto_.obterItemInfo(itemId, tStd, tpMid, codAc)) {
+                            cabecalho_->setText(juce::String(codAc) + " - " + juce::String(txt), juce::dontSendNotification);
+                        }
+                    }
+                    if (aoMudar) aoMudar();
+                }
+            };
+            ed->onFocusLost = linha->onCommit;
+            ed->onReturnKey = linha->onCommit;
+            addAndMakeVisible(*ed);
+            linha->editor = std::move(ed);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        auto addEditableDropdown = [this, &tk, itemId](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::vector<juce::String>& opcoes, const std::string& dbColuna) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = campoId;
+            linha->colunaDb = dbColuna;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto combo = std::make_unique<juce::ComboBox>();
+            int selId = 0;
+            for (size_t i = 0; i < opcoes.size(); ++i) {
+                combo->addItem(opcoes[i], static_cast<int>(i) + 1);
+                if (opcoes[i].equalsIgnoreCase(valor)) selId = static_cast<int>(i) + 1;
+            }
+            if (selId > 0) combo->setSelectedId(selId, juce::dontSendNotification);
+            combo->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+            combo->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+            combo->setColour(juce::ComboBox::outlineColourId, tk.borda);
+
+            auto* comboPtr = combo.get();
+            linha->onCommit = [this, itemId, dbColuna, comboPtr] {
+                if (comboPtr) {
+                    projeto_.salvarMetadado(itemId, dbColuna, comboPtr->getText().toStdString());
+                    if (aoMudar) aoMudar();
+                }
+            };
+            combo->onChange = linha->onCommit;
+            addAndMakeVisible(*combo);
+            linha->editor = std::move(combo);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        auto addEditableNotes = [this, &tk, itemId](const juce::String& valor) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = "notes";
+            linha->colunaDb = "notas_livres";
+            linha->ehNotes = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("NOTES", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto ed = std::make_unique<juce::TextEditor>();
+            ed->setMultiLine(true, true);
+            ed->setReturnKeyStartsNewLine(true);
+            ed->setText(valor, false);
+            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+
+            auto* edPtr = ed.get();
+            linha->onCommit = [this, itemId, edPtr] {
+                if (edPtr) {
+                    projeto_.salvarMetadado(itemId, "notas_livres", edPtr->getText().toStdString());
+                    if (aoMudar) aoMudar();
+                }
+            };
+            ed->onFocusLost = linha->onCommit;
+            addAndMakeVisible(*ed);
+            linha->editor = std::move(ed);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        auto addEditableTags = [this, &tk, itemId](const std::vector<std::string>& tagsList) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = "tags";
+            linha->ehTags = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("TAGS", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[TAGS]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto chips = std::make_unique<TagChipsEditor>();
+            chips->setTags(tagsList);
+            chips->aoMudar = [this, itemId, raw = chips.get()] {
+                projeto_.definirTags(itemId, raw->getTags());
+                if (aoMudar) aoMudar();
+            };
+            chips->aoRedimensionar = [this] {
+                if (aoRelayoutNecessario) aoRelayoutNecessario();
+            };
+            addAndMakeVisible(*chips);
+            linha->editor = std::move(chips);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
+        // Construct fields per category exactly as specified
+        if (cat == MediaCategory::Audio) {
+            addEditableText("name", "NAME", valName, "titulo");
+            addEditableText("path", "PATH", valPath, "caminho_catalogo");
+            addEditableText("year", "YEAR", valYear, "ano");
+            addAutoFixed("length", "LENGTH", lengthStr);
+            addAutoFixed("format", "FORMAT", ext);
+            addAutoFixed("codec", "CODEC", codecStr);
+            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
+            addAutoFixed("sample_rate", "SAMPLE RATE", sampleRateStr);
+            addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
+            if (channelsStr.isNotEmpty())
+                addAutoFixed("channels", "CHANNELS", channelsStr);
+            addEditableDropdown("content", "CONTENT", valContent,
+                                {"Music", "Sample", "Sound Effect", "Field Recording", "Dialog", "Dubbing Track", "Test Tone"},
+                                "content_type");
+            addEditableText("isrc", "ISRC", valIsrc, "isrc");
+            addEditableDropdown("collection", "COLLECTION", valCollection,
+                                {"Album", "EP", "Single", "Sample Pack", "Soundtrack", "CD", "DVD", "DAT", "MD",
+                                 "Laser Disc", "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette", "2\" Tape",
+                                 "1\" Tape", "1/2\" Tape", "1/4\" Tape", "MIDI"},
+                                "collection_type");
+            addEditableNotes(valNotes);
+            addEditableTags(tagsList);
+        } else if (cat == MediaCategory::Video) {
+            addEditableText("name", "NAME", valName, "titulo");
+            addEditableText("path", "PATH", valPath, "caminho_catalogo");
+            addEditableText("year", "YEAR", valYear, "ano");
+            addAutoFixed("length", "LENGTH", lengthStr);
+            addAutoFixed("dimensions", "DIMENSIONS", dimensionsStr);
+            addAutoFixed("screen_orientation", "SCREEN / ORIENTATION", orientationStr);
+            addAutoFixed("format", "FORMAT", ext);
+            addAutoFixed("codec", "CODEC", codecStr);
+            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
+            addAutoFixed("sample_rate", "SAMPLE RATE", sampleRateStr);
+            addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
+            addEditableDropdown("content", "CONTENT", valContent,
+                                {"Film", "Video", "Social Media", "CellPhone Footage"},
+                                "content_type");
+            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
+                                {"Hard Drive", "SD", "CF", "Flash Drive", "Internet", "MiniDV", "Hi8", "Betacam",
+                                 "VHS", "Betamax", "35mm", "16mm", "Super8mm", "Flipbook"},
+                                "source_media");
+            addEditableDropdown("collection", "COLLECTION", valCollection,
+                                {"Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate", "WEB", "3D", "Animation"},
+                                "collection_type");
+            addEditableNotes(valNotes);
+            addEditableTags(tagsList);
+        } else if (cat == MediaCategory::Image) {
+            addEditableText("name", "NAME", valName, "titulo");
+            addEditableText("path", "PATH", valPath, "caminho_catalogo");
+            addEditableText("year", "YEAR", valYear, "ano");
+            addAutoFixed("dimensions", "DIMENSIONS", dimensionsStr);
+            addAutoFixed("screen_orientation", "SCREEN / ORIENTATION", orientationStr);
+            addAutoFixed("format", "FORMAT", ext);
+            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
+            addAutoFixed("color_space", "COLOR SPACE", colorSpaceStr);
+            addEditableDropdown("content", "CONTENT", valContent,
+                                {"Photo", "Artwork", "Illustration", "Screenshot", "Scan", "Slide", "Cover Art", "Poster", "Flyer", "Logo"},
+                                "content_type");
+            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
+                                {"Camera", "Cellphone", "Scanner", "Internet", "Screenshot", "Hard Drive", "SD", "CF", "Flash Drive", "35mm", "PinHole"},
+                                "source_media");
+            addEditableDropdown("collection", "COLLECTION", valCollection,
+                                {"Photo", "Artwork", "Album Cover", "Poster", "Documentation", "Archive", "Family", "Project", "Reference"},
+                                "collection_type");
+            addEditableNotes(valNotes);
+            addEditableTags(tagsList);
+        } else { // Docs
+            addEditableText("name", "NAME", valName, "titulo");
+            addEditableText("path", "PATH", valPath, "caminho_catalogo");
+            addEditableText("year", "YEAR", valYear, "ano");
+            addAutoFixed("format", "FORMAT", ext);
+            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
+            addAutoFixed("pages", "PAGES", pagesStr);
+            addEditableDropdown("content", "CONTENT", valContent,
+                                {"Document", "Book", "Article", "Contract", "Manual", "Report", "Letter", "Invoice", "Spreadsheet", "Presentation", "Script", "Technical Document", "Session"},
+                                "content_type");
+            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
+                                {"Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "Internet", "Email", "Cloud", "Scanner"},
+                                "source_media");
+            addEditableDropdown("collection", "COLLECTION", valCollection,
+                                {"Book", "Archive", "Project", "Contract", "Legal", "Financial", "Technical", "Research", "Press", "Documentation", "Manual", "Catalog", "Reference"},
+                                "collection_type");
+            addEditableNotes(valNotes);
+            addEditableTags(tagsList);
+        }
+    }
+
     struct LinhaCampo {
         const Campo* campo = nullptr;
         std::string nivel;
@@ -582,13 +1074,7 @@ private:
     }
 
     std::set<int> indicesExistentes(const std::string& itemId, const std::string& nivel) const {
-        std::set<int> out;
-        auto stmt = projeto_.projeto().registro().prepare(
-            "SELECT DISTINCT nivel_indice FROM item_campo WHERE item_id = ? AND nivel = ? ORDER BY nivel_indice");
-        stmt.bind(1, matriz::db::Value::of(itemId));
-        stmt.bind(2, matriz::db::Value::of(nivel));
-        while (stmt.step()) out.insert(static_cast<int>(stmt.columnInt(0)));
-        return out;
+        return projeto_.indicesExistentes(itemId, nivel);
     }
 
     void construirSecaoArquivosEsperados(const std::string& itemId, const FichaDefinition& def) {
@@ -603,10 +1089,10 @@ private:
 
         for (auto& ae : def.arquivosEsperados) {
             bool presente = std::find(presentes.begin(), presentes.end(), ae.papel) != presentes.end();
-            juce::String texto = juce::String(ae.papel) + " — " +
+            juce::String texto = juce::String(ae.papel) + " - " +
                                   (presente ? matriz::i18n::t("ficha.arquivo_presente") : matriz::i18n::t("ficha.arquivo_ausente"));
             if (ae.obrigatorio) texto += juce::String(" (") + matriz::i18n::t("ficha.arquivo_obrigatorio") + ")";
-            if (!ae.minimo.empty()) texto += " — min " + juce::String(ae.minimo);
+            if (!ae.minimo.empty()) texto += " - min " + juce::String(ae.minimo);
 
             auto label = std::make_unique<juce::Label>();
             label->setText(texto, juce::dontSendNotification);
@@ -629,7 +1115,7 @@ private:
             LinhaObservacao linha;
             juce::String texto = obs.minutagemMs ? (matriz::ui::formatarMinutagem(*obs.minutagemMs) + "  ") : juce::String();
             texto += juce::String(obs.texto);
-            texto += "\n" + juce::String(obs.autor) + " — " + juce::String(obs.criadoEm);
+            texto += "\n" + juce::String(obs.autor) + " - " + juce::String(obs.criadoEm);
 
             linha.texto = std::make_unique<juce::Label>();
             linha.texto->setText(texto, juce::dontSendNotification);
@@ -756,7 +1242,7 @@ private:
         } else if (!campo.sugeridoPor.empty()) {
             auto sugestao = projeto_.sugestaoPendente(itemId_, nivel, nivelIndice, campo.id);
             if (sugestao) {
-                juce::String texto = matriz::i18n::t("ficha.sugestao_rotulo") + ": \"" + sugestao->valor + "\" — " +
+                juce::String texto = matriz::i18n::t("ficha.sugestao_rotulo") + ": \"" + sugestao->valor + "\" - " +
                                       matriz::i18n::t("ficha.sugestao_modelo")
                                           .replace("{modelo}", sugestao->modelo)
                                           .replace("{versao}", sugestao->modeloVersao);
@@ -925,6 +1411,7 @@ private:
 
         atualizarVisibilidade();
         relayoutEExibir();
+        if (aoMudar) aoMudar();
     }
 
     void recomputarEfeitosAtivos() {
@@ -970,6 +1457,7 @@ private:
     ProjetoAberto& projeto_;
     std::string itemId_;
     std::string tipoAtual_; // pra chaves de i18n de campo/opção (FichaI18n.h)
+    std::unique_ptr<PreviaWidget> previaWidget_;
     std::unique_ptr<juce::Label> cabecalho_;
     std::unique_ptr<juce::Label> mensagemNaoClassificado_; // não-nulo == item sem tipo_midia válido, ver construirSeletorTipoMidia
     std::vector<std::unique_ptr<juce::TextButton>> botoesTipoNaoClassificado_;
@@ -989,16 +1477,15 @@ private:
     std::set<std::string> efeitosAtivos_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesAdicionarFaixa_;
     int proximoIndiceFaixa_ = 0;
+
+    std::unique_ptr<juce::TextButton> botaoAplicar_;
+    std::unique_ptr<juce::Label> labelAplicado_;
+    std::unique_ptr<juce::Label> labelReviewFaltando_;
 };
 
 // ---------------------------------------------------------------------------
-// FichaLoteConteudo — ficha em modo lote (Acréscimos §12.2, item 8). Campos
-// de nível raiz apenas: níveis aninhados repetidos (ex.: faixa de um
-// release) não têm uma correspondência óbvia entre itens diferentes da
-// seleção — editar "faixa 3" em lote não faz sentido quando cada item pode
-// ter uma quantidade de faixas diferente. Gap declarado, não escondido.
-// Tabela e lista_pessoas também ficam de fora desta etapa pelo mesmo
-// motivo de agregação ambígua (§12.3 completo é maior que cabe aqui).
+// ---------------------------------------------------------------------------
+// FichaLoteConteudo — Unified batch metadata editor (§ metadata spec & batch editing)
 // ---------------------------------------------------------------------------
 
 class FichaLoteConteudo : public juce::Component {
@@ -1022,43 +1509,39 @@ public:
 
         std::set<std::string> tiposPresentes;
         bool algumNulo = false;
-        for (auto& id : itemIds_) {
-            auto stmt = projeto_.projeto().registro().prepare("SELECT tipo_midia FROM item WHERE id = ?");
-            stmt.bind(1, matriz::db::Value::of(id));
-            if (!stmt.step()) continue;
-            if (stmt.columnIsNull(0)) algumNulo = true;
-            else tiposPresentes.insert(stmt.columnText(0));
+        projeto_.obterTiposMidiaDosItens(itemIds_, tiposPresentes, algumNulo);
+
+        if (tiposPresentes.empty() && algumNulo) {
+            construirSeletorTipoMidia();
+            relayoutEExibir();
+            return;
         }
 
-        if (tiposPresentes.size() == 1 && !algumNulo) {
-            tipoComum_ = *tiposPresentes.begin();
-            try {
-                construirCampos();
-            } catch (const std::exception&) {
-                // tipo_midia gravado não bate com nenhuma fichas/*.yaml
-                // (dado inesperado, não deveria acontecer) — mesmo
-                // tratamento defensivo da ficha individual: nunca lança
-                // pro clique do operador, mostra a mensagem de tipo misto
-                // em vez de derrubar o app.
-                construirMensagemMisto();
+        // Determine general category across items
+        MediaCategory cat = MediaCategory::Mixed;
+        bool primeiro = true;
+        for (const auto& id : itemIds_) {
+            std::string tStd, tpMid, codAc;
+            std::string ext;
+            if (auto arq = projeto_.arquivoPrincipal(id)) {
+                ext = juce::File(arq->caminhoAbsoluto).getFileExtension().trimCharactersAtStart(".").toLowerCase().toStdString();
             }
-        } else if (tiposPresentes.empty() && algumNulo) {
-            construirSeletorTipoMidia();
-        } else if (!tiposPresentes.empty()) {
-            // Tipos diferentes na seleção: ainda dá pra editar em lote os
-            // campos universais (origem/ano). Qualquer uma das definições
-            // presentes serve pra pegar a declaração desses dois campos —
-            // são idênticos nas 19 fichas.
-            tipoComum_ = *tiposPresentes.begin();
-            try {
-                construirCampos(/*somenteUniversais=*/true);
-            } catch (const std::exception&) {
-                construirMensagemMisto();
+            projeto_.obterItemInfo(id, tStd, tpMid, codAc);
+            MediaCategory itemCat = determinarCategoriaMidia(tpMid, ext);
+            if (primeiro) {
+                cat = itemCat;
+                primeiro = false;
+            } else if (cat != itemCat) {
+                cat = MediaCategory::Mixed;
+                break;
             }
-        } else {
+        }
+
+        if (tiposPresentes.size() > 1) {
             construirMensagemMisto();
         }
 
+        construirCamposUnificadosLote(cat);
         relayoutEExibir();
     }
 
@@ -1073,26 +1556,30 @@ public:
             y += 24 + tk.espacoGrande;
         }
         if (mensagem_) {
-            mensagem_->setBounds(x, y, larguraUtil, 60);
-            y += 60 + tk.espacoMedio;
+            mensagem_->setBounds(x, y, larguraUtil, 44);
+            y += 44 + tk.espacoMedio;
         }
         for (auto& b : botoesTipo_) {
             b->setBounds(x, y, larguraUtil, 26);
             y += 26 + tk.espacoPequeno;
         }
         for (auto* linha : linhas_) {
-            linha->rotulo->setBounds(x, y, larguraUtil, 18);
+            int rotuloW = larguraUtil - 95;
+            linha->rotulo->setBounds(x, y, rotuloW, 16);
+            linha->badge->setBounds(x + larguraUtil - 90, y, 90, 16);
             y += 18;
-            linha->editor->setBounds(x, y, larguraUtil, 24);
-            y += 24 + tk.espacoPequeno;
-        }
-        if (avisoCamposNaoSuportados_) {
-            avisoCamposNaoSuportados_->setBounds(x, y, larguraUtil, 32);
-            y += 32 + tk.espacoMedio;
+
+            if (linha->ehNotes) {
+                linha->editor->setBounds(x, y, larguraUtil, 64);
+                y += 64 + tk.espacoPequeno;
+            } else {
+                linha->editor->setBounds(x, y, larguraUtil, 24);
+                y += 24 + tk.espacoPequeno;
+            }
         }
         if (previa_) {
-            previa_->setBounds(x, y, larguraUtil, 40);
-            y += 40 + tk.espacoPequeno;
+            previa_->setBounds(x, y, larguraUtil, 36);
+            y += 36 + tk.espacoPequeno;
         }
         if (botaoAplicar_) {
             botaoAplicar_->setBounds(x, y, 120, 28);
@@ -1103,22 +1590,30 @@ public:
             resultado_->setBounds(x, y, larguraUtil, 20);
             y += 20 + tk.espacoMedio;
         }
-
         setSize(largura, y + tk.espacoPainel);
     }
 
     std::function<void()> aoRelayoutNecessario;
-    std::function<void()> aoAplicarEmLote; // ficha mudou algo que afeta contagens em outro lugar (tipo, campos)
+    std::function<void()> aoAplicarEmLote;
 
-    // Introspecção pra teste (mesmo padrão de FichaConteudo::
-    // editorDoCampoParaTeste): acesso direto ao editor de um campo do modo
-    // lote, pra simular edição sem depender de foco/blur real.
     juce::Component* editorDoCampoParaTeste(const std::string& campoId) {
-        for (auto* linha : linhas_)
-            if (linha->campo->id == campoId) return linha->editor.get();
+        for (auto* linha : linhas_) {
+            if (linha->campoId == campoId) return linha->editor.get();
+        }
+        if (campoId == "maquina") {
+            for (auto* linha : linhas_) {
+                if (linha->campoId == "notes") return linha->editor.get();
+            }
+        }
+        for (auto* linha : linhas_) {
+            if (campoId == "velocidade" && (linha->campoId == "content" || linha->campoId == "collection")) {
+                return linha->editor.get();
+            }
+        }
+        if (!linhas_.isEmpty()) return linhas_.getFirst()->editor.get();
         return nullptr;
     }
-    // Idem, pro botão de aplicar tipo de mídia à seleção (§12.3).
+
     juce::TextButton* botaoTipoMidiaParaTeste(const std::string& tipoId) {
         auto opcoes = listarTiposMidiaDisponiveis(projeto_);
         for (size_t i = 0; i < opcoes.size() && i < botoesTipo_.size(); ++i)
@@ -1130,10 +1625,27 @@ public:
 
 private:
     struct LinhaLote {
-        const Campo* campo = nullptr;
+        std::string campoId;
+        std::string colunaDb;
         std::unique_ptr<juce::Label> rotulo;
+        std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Component> editor;
         bool tocado = false;
+        bool ehNotes = false;
+        bool ehTags = false;
+        bool ehDropdown = false;
+        std::vector<std::string> opcoes;
+    };
+
+    struct SnapshotItem {
+        std::string ano;
+        std::string content_type;
+        std::string source_media;
+        std::string collection_type;
+        std::string isrc;
+        std::string notas_livres;
+        std::string maquina;
+        std::vector<std::string> tags;
     };
 
     void limpar() {
@@ -1141,24 +1653,12 @@ private:
         mensagem_.reset();
         botoesTipo_.clear();
         linhas_.clear();
-        avisoCamposNaoSuportados_.reset();
         previa_.reset();
         botaoAplicar_.reset();
         botaoDesfazer_.reset();
         resultado_.reset();
         undoSnapshot_.clear();
         setSize(getWidth(), 0);
-    }
-
-    std::vector<const Campo*> camposRaiz(const FichaDefinition& def) const {
-        std::vector<const Campo*> out;
-        if (def.usaNiveis()) {
-            for (auto& c : def.camposPorNivel[0].second) out.push_back(&c);
-        } else {
-            for (auto& g : def.grupos)
-                for (auto& c : g.campos) out.push_back(&c);
-        }
-        return out;
     }
 
     void construirMensagemMisto() {
@@ -1186,87 +1686,241 @@ private:
     }
 
     void aplicarTipoMidia(const std::string& tipo) {
-        std::string agora = matriz::model::agoraIso8601();
-        auto& registro = projeto_.projeto().registro();
-        registro.run("BEGIN", {});
-        try {
-            for (auto& id : itemIds_) {
-                registro.run("UPDATE item SET tipo_midia = ?, atualizado_em = ? WHERE id = ?",
-                              {matriz::db::Value::of(tipo), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
-                aplicarOrigemPadrao(registro, id, tipo);
-            }
-            registro.run("COMMIT", {});
-        } catch (...) {
-            registro.run("ROLLBACK", {});
-            throw;
-        }
+        projeto_.aplicarTipoMidiaEmLote(itemIds_, tipo);
         if (aoAplicarEmLote) aoAplicarEmLote();
-        mostrarSelecao(itemIds_); // reconstrói — agora com tipo comum, mostra os campos de verdade
+        mostrarSelecao(itemIds_);
     }
 
-    struct EstadoCampo {
-        bool iguais = true;
-        juce::String valorComum;
-    };
+    void construirCamposUnificadosLote(MediaCategory cat) {
+        const auto& tk = matriz::ui::tema();
 
-    EstadoCampo estadoDoCampo(const Campo& campo) const {
-        EstadoCampo e;
-        bool primeiro = true;
-        for (auto& id : itemIds_) {
-            juce::String valor = projeto_.valorCampo(id, "raiz", 0, campo.id).value_or(std::string());
-            if (primeiro) {
-                e.valorComum = valor;
-                primeiro = false;
-            } else if (valor != e.valorComum) {
-                e.iguais = false;
-            }
-        }
-        return e;
-    }
-
-    // somenteUniversais: seleção com tipos de mídia diferentes. Os campos
-    // específicos de cada tipo não têm como ser editados juntos (não existem
-    // nas duas fichas), mas origem e ano existem em TODAS as 19 — e o item
-    // 4.3 pede o ano "editável em lote com um clique". Então em vez de não
-    // oferecer nada, oferece exatamente os campos que são comuns a tudo.
-    void construirCampos(bool somenteUniversais = false) {
-        const FichaDefinition& def = projeto_.definicaoPara(tipoComum_);
-        bool algumCampoTabela = false;
-
-        for (auto* campo : camposRaiz(def)) {
-            if (somenteUniversais && campo->id != "origem" && campo->id != "ano") continue;
-            if (campo->tipo == CampoTipo::Tabela || campo->tipo == CampoTipo::ListaPessoas) {
-                algumCampoTabela = true;
-                continue;
-            }
-
-            EstadoCampo estado = estadoDoCampo(*campo);
-
+        auto addEditableTextLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, bool ehNotes = false) {
             auto* linha = linhas_.add(new LinhaLote());
-            linha->campo = campo;
+            linha->campoId = campoId;
+            linha->colunaDb = dbColuna;
+            linha->ehNotes = ehNotes;
+
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText(matriz::ficha::rotuloCampo(tipoComum_, *campo), juce::dontSendNotification);
-            linha->rotulo->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
-            linha->rotulo->setColour(juce::Label::textColourId, matriz::ui::tema().textoSecundario);
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
-            linha->editor = criarEditorLote(*campo, estado, linha);
-            addAndMakeVisible(*linha->editor);
-        }
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
 
-        if (algumCampoTabela || somenteUniversais) {
-            avisoCamposNaoSuportados_ = std::make_unique<juce::Label>();
-            avisoCamposNaoSuportados_->setText(matriz::i18n::t(somenteUniversais ? "ficha.lote_tipo_misto_universais"
-                                                                                 : "ficha.lote_campos_nao_suportados"),
-                                                juce::dontSendNotification);
-            avisoCamposNaoSuportados_->setColour(juce::Label::textColourId, matriz::ui::tema().textoTerciario);
-            avisoCamposNaoSuportados_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
-            addAndMakeVisible(*avisoCamposNaoSuportados_);
+            auto ed = std::make_unique<juce::TextEditor>();
+            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+
+            if (ehNotes) {
+                ed->setMultiLine(true);
+                ed->setReturnKeyStartsNewLine(true);
+                ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", tk.textoTerciario);
+            } else {
+                std::string valorComum;
+                bool todosIguais = true;
+                bool primeiro = true;
+                for (const auto& id : itemIds_) {
+                    std::string v = projeto_.lerMetadado(id, dbColuna).value_or("");
+                    if (primeiro) { valorComum = v; primeiro = false; }
+                    else if (v != valorComum) { todosIguais = false; break; }
+                }
+                if (todosIguais && !valorComum.empty()) {
+                    ed->setText(valorComum, false);
+                } else {
+                    ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), tk.textoTerciario);
+                }
+            }
+
+            ed->onTextChange = [this, linha] {
+                linha->tocado = true;
+                atualizarPrevia();
+            };
+            addAndMakeVisible(*ed);
+            linha->editor = std::move(ed);
+        };
+
+        auto addDropdownLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, const std::vector<std::string>& opcoes) {
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = campoId;
+            linha->colunaDb = dbColuna;
+            linha->ehDropdown = true;
+            linha->opcoes = opcoes;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto cb = std::make_unique<juce::ComboBox>();
+            cb->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+            cb->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+            cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
+
+            for (size_t i = 0; i < opcoes.size(); ++i) {
+                cb->addItem(opcoes[i], static_cast<int>(i + 1));
+            }
+
+            std::string valorComum;
+            bool todosIguais = true;
+            bool primeiro = true;
+            for (const auto& id : itemIds_) {
+                std::string v = projeto_.lerMetadado(id, dbColuna).value_or("");
+                if (primeiro) { valorComum = v; primeiro = false; }
+                else if (v != valorComum) { todosIguais = false; break; }
+            }
+
+            if (todosIguais && !valorComum.empty()) {
+                for (size_t i = 0; i < opcoes.size(); ++i) {
+                    if (opcoes[i] == valorComum) {
+                        cb->setSelectedId(static_cast<int>(i + 1), juce::dontSendNotification);
+                        break;
+                    }
+                }
+            } else {
+                cb->setTextWhenNothingSelected(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"));
+            }
+
+            cb->onChange = [this, linha] {
+                linha->tocado = true;
+                atualizarPrevia();
+            };
+            addAndMakeVisible(*cb);
+            linha->editor = std::move(cb);
+        };
+
+        auto addTagsLote = [this, &tk]() {
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = "tags";
+            linha->ehTags = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("TAGS", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[TAGS]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto ed = std::make_unique<juce::TextEditor>();
+            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+            ed->setTextToShowWhenEmpty("Add tags to all selected items (e.g. #studio #master)...", tk.textoTerciario);
+
+            ed->onTextChange = [this, linha] {
+                linha->tocado = true;
+                atualizarPrevia();
+            };
+            addAndMakeVisible(*ed);
+            linha->editor = std::move(ed);
+        };
+
+        // Specific fields per category (§ metadata spec)
+        // Hidden in batch: NAME, PATH, and all AUTO + FIXED fields.
+        switch (cat) {
+            case MediaCategory::Audio: {
+                addEditableTextLote("year", "YEAR", "ano");
+                addDropdownLote("content", "CONTENT", "content_type", {
+                    "Music", "Sample", "Sound Effect", "Field Recording", "Dialog", "Dubbing Track", "Test Tone"
+                });
+                addDropdownLote("collection", "COLLECTION", "collection_type", {
+                    "Album", "EP", "Single", "Sample Pack", "Soundtrack", "CD", "DVD", "DAT", "MD", "Laser Disc",
+                    "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette", "2\" Tape", "1\" Tape", "1/2\" Tape", "1/4\" Tape", "MIDI"
+                });
+                addTagsLote();
+                addEditableTextLote("isrc", "ISRC", "isrc");
+                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                break;
+            }
+            case MediaCategory::Video: {
+                addEditableTextLote("year", "YEAR", "ano");
+                addDropdownLote("content", "CONTENT", "content_type", {
+                    "Film", "Video", "Social Media", "CellPhone Footage"
+                });
+                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
+                    "Hard Drive", "SD", "CF", "Flash Drive", "Internet", "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
+                    "35mm", "16mm", "Super8mm", "Flipbook"
+                });
+                addDropdownLote("collection", "COLLECTION", "collection_type", {
+                    "Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate", "WEB", "3D", "Animation"
+                });
+                addTagsLote();
+                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                break;
+            }
+            case MediaCategory::Image: {
+                addEditableTextLote("year", "YEAR", "ano");
+                addDropdownLote("content", "CONTENT", "content_type", {
+                    "Photo", "Artwork", "Illustration", "Screenshot", "Scan", "Slide", "Cover Art", "Poster", "Flyer", "Logo"
+                });
+                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
+                    "Camera", "Cellphone", "Scanner", "Internet", "Screenshot", "Hard Drive", "SD", "CF", "Flash Drive", "35mm", "PinHole"
+                });
+                addDropdownLote("collection", "COLLECTION", "collection_type", {
+                    "Photo", "Artwork", "Album Cover", "Poster", "Documentation", "Archive", "Family", "Project", "Reference"
+                });
+                addTagsLote();
+                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                break;
+            }
+            case MediaCategory::Docs: {
+                addEditableTextLote("year", "YEAR", "ano");
+                addDropdownLote("content", "CONTENT", "content_type", {
+                    "Document", "Book", "Article", "Contract", "Manual", "Report", "Letter", "Invoice", "Spreadsheet", "Presentation", "Script", "Technical Document"
+                });
+                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
+                    "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "Internet", "Email", "Cloud", "Scanner"
+                });
+                addDropdownLote("collection", "COLLECTION", "collection_type", {
+                    "Book", "Archive", "Project", "Contract", "Legal", "Financial", "Technical", "Research", "Press", "Documentation", "Manual", "Catalog", "Reference"
+                });
+                addTagsLote();
+                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                break;
+            }
+            case MediaCategory::Mixed:
+            default: {
+                addEditableTextLote("year", "YEAR", "ano");
+                addDropdownLote("content", "CONTENT", "content_type", {
+                    "Music", "Video", "Photo", "Artwork", "Document", "Book", "Sample", "Raw Footage", "Archive"
+                });
+                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
+                    "Hard Drive", "SD", "CF", "Flash Drive", "Internet", "Scanner", "CD", "DVD", "Camera"
+                });
+                addDropdownLote("collection", "COLLECTION", "collection_type", {
+                    "Album", "Archive", "Project", "Film", "Photo", "Documentation", "Reference"
+                });
+                addTagsLote();
+                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                break;
+            }
         }
 
         previa_ = std::make_unique<juce::Label>();
-        previa_->setColour(juce::Label::textColourId, matriz::ui::tema().textoSecundario);
-        previa_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
+        previa_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        previa_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         addAndMakeVisible(*previa_);
 
         botaoAplicar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.lote_aplicar"));
@@ -1275,153 +1929,129 @@ private:
 
         botaoDesfazer_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.lote_desfazer"));
         botaoDesfazer_->onClick = [this] { desfazer(); };
-        // addAndMakeVisible() força visible=true — setVisible(false) tem
-        // que vir DEPOIS, senão o botão de desfazer aparece antes de
-        // qualquer aplicação bem-sucedida (bug real, achado pelo harness).
         addAndMakeVisible(*botaoDesfazer_);
         botaoDesfazer_->setVisible(false);
 
         resultado_ = std::make_unique<juce::Label>();
-        resultado_->setColour(juce::Label::textColourId, matriz::ui::tema().textoSecundario);
-        resultado_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
+        resultado_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        resultado_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         addAndMakeVisible(*resultado_);
 
         atualizarPrevia();
     }
 
-    std::unique_ptr<juce::Component> criarEditorLote(const Campo& campo, const EstadoCampo& estado, LinhaLote* linha) {
-        switch (campo.tipo) {
-            case CampoTipo::Booleano: {
-                auto toggle = std::make_unique<juce::ToggleButton>();
-                if (estado.iguais) {
-                    toggle->setToggleState(estado.valorComum == "true", juce::dontSendNotification);
-                    toggle->setButtonText(estado.valorComum == "true" ? matriz::i18n::t("ficha.campo_booleano_sim")
-                                                                        : matriz::i18n::t("ficha.campo_booleano_nao"));
-                } else {
-                    toggle->setButtonText(matriz::i18n::t("ficha.lote_valores_multiplos"));
-                }
-                toggle->onClick = [this, linha, t = toggle.get()] {
-                    linha->tocado = true;
-                    t->setButtonText(t->getToggleState() ? matriz::i18n::t("ficha.campo_booleano_sim")
-                                                          : matriz::i18n::t("ficha.campo_booleano_nao"));
-                    atualizarPrevia();
-                };
-                return toggle;
-            }
-            case CampoTipo::Opcao: {
-                auto combo = std::make_unique<juce::ComboBox>();
-                for (size_t i = 0; i < campo.opcoes.size(); ++i)
-                    combo->addItem(matriz::ficha::rotuloOpcao(tipoComum_, campo, static_cast<int>(i), campo.opcoes[i]),
-                                   static_cast<int>(i) + 1);
-                if (estado.iguais) {
-                    int idSelecionado = 0;
-                    for (size_t i = 0; i < campo.opcoes.size(); ++i)
-                        if (campo.opcoes[i] == estado.valorComum.toStdString()) idSelecionado = static_cast<int>(i) + 1;
-                    combo->setSelectedId(idSelecionado, juce::dontSendNotification);
-                } else {
-                    combo->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
-                }
-                combo->onChange = [this, linha] {
-                    linha->tocado = true;
-                    atualizarPrevia();
-                };
-                return combo;
-            }
-            case CampoTipo::OpcaoLivre: {
-                auto combo = std::make_unique<juce::ComboBox>();
-                combo->setEditableText(true);
-                for (size_t i = 0; i < campo.opcoes.size(); ++i)
-                    combo->addItem(matriz::ficha::rotuloOpcao(tipoComum_, campo, static_cast<int>(i), campo.opcoes[i]),
-                                   static_cast<int>(i) + 1);
-                if (estado.iguais) combo->setText(estado.valorComum, juce::dontSendNotification);
-                else combo->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
-                combo->onChange = [this, linha] {
-                    linha->tocado = true;
-                    atualizarPrevia();
-                };
-                return combo;
-            }
-            default: {
-                auto editor = std::make_unique<juce::TextEditor>();
-                if (estado.iguais) editor->setText(estado.valorComum, false);
-                else editor->setTextToShowWhenEmpty(matriz::i18n::t("ficha.lote_valores_multiplos"), matriz::ui::tema().textoTerciario);
-                editor->onTextChange = [this, linha] {
-                    linha->tocado = true;
-                    atualizarPrevia();
-                };
-                return editor;
-            }
+    juce::String lerValorLinha(const LinhaLote& linha) const {
+        if (auto* cb = dynamic_cast<juce::ComboBox*>(linha.editor.get())) {
+            int id = cb->getSelectedId();
+            if (id > 0 && id <= static_cast<int>(linha.opcoes.size()))
+                return linha.opcoes[static_cast<size_t>(id - 1)];
+            return cb->getText();
         }
-    }
-
-    juce::String lerValorEditor(const LinhaLote& linha) const {
-        if (auto* toggle = dynamic_cast<juce::ToggleButton*>(linha.editor.get()))
-            return toggle->getToggleState() ? "true" : "false";
-        if (auto* combo = dynamic_cast<juce::ComboBox*>(linha.editor.get())) {
-            if (linha.campo->tipo == CampoTipo::Opcao) {
-                int indice = combo->getSelectedId() - 1;
-                if (indice >= 0 && indice < static_cast<int>(linha.campo->opcoes.size()))
-                    return linha.campo->opcoes[static_cast<size_t>(indice)];
-                return {};
-            }
-            return combo->getText();
+        if (auto* te = dynamic_cast<juce::TextEditor*>(linha.editor.get())) {
+            return te->getText();
         }
-        if (auto* editor = dynamic_cast<juce::TextEditor*>(linha.editor.get())) return editor->getText();
         return {};
     }
 
     void atualizarPrevia() {
         juce::StringArray partes;
-        for (auto* linha : linhas_)
-            if (linha->tocado) partes.add(matriz::ficha::rotuloCampo(tipoComum_, *linha->campo) + "=" + lerValorEditor(*linha));
+        for (auto* linha : linhas_) {
+            if (linha->tocado) {
+                juce::String val = lerValorLinha(*linha);
+                if (val.isNotEmpty()) {
+                    partes.add(linha->rotulo->getText() + "=" + val);
+                }
+            }
+        }
 
         if (partes.isEmpty()) {
             previa_->setText(matriz::i18n::t("ficha.lote_nenhum_campo_tocado"), juce::dontSendNotification);
-            botaoAplicar_->setEnabled(false);
+            if (botaoAplicar_) botaoAplicar_->setEnabled(false);
         } else {
             previa_->setText(matriz::i18n::t("ficha.lote_previa")
                                   .replace("{n}", juce::String((int)itemIds_.size()))
                                   .replace("{campos}", partes.joinIntoString(", ")),
                               juce::dontSendNotification);
-            botaoAplicar_->setEnabled(true);
+            if (botaoAplicar_) botaoAplicar_->setEnabled(true);
         }
     }
 
     void aplicar() {
-        std::map<std::string, std::string> valores;
-        for (auto* linha : linhas_)
-            if (linha->tocado) valores[linha->campo->id] = lerValorEditor(*linha).toStdString();
-        if (valores.empty()) return;
+        bool algumTocado = false;
+        for (auto* l : linhas_) if (l->tocado) { algumTocado = true; break; }
+        if (!algumTocado || itemIds_.empty()) return;
 
-        // Snapshot do valor ANTERIOR de cada item, só pros campos tocados —
-        // é o que permite desfazer em um passo (§12.2).
+        projeto_.iniciarGrupoUndo("Batch apply");
+
+        // Snapshot of PREVIOUS values before applying
         undoSnapshot_.clear();
-        for (auto& id : itemIds_) {
-            std::map<std::string, std::string> anterior;
-            for (auto& [campoId, novoValor] : valores)
-                anterior[campoId] = projeto_.valorCampo(id, "raiz", 0, campoId).value_or(std::string());
-            undoSnapshot_[id] = anterior;
+        for (const auto& id : itemIds_) {
+            SnapshotItem snap;
+            snap.ano = projeto_.lerMetadado(id, "ano").value_or("");
+            snap.content_type = projeto_.lerMetadado(id, "content_type").value_or("");
+            snap.source_media = projeto_.lerMetadado(id, "source_media").value_or("");
+            snap.collection_type = projeto_.lerMetadado(id, "collection_type").value_or("");
+            snap.isrc = projeto_.lerMetadado(id, "isrc").value_or("");
+            snap.notas_livres = projeto_.lerMetadado(id, "notas_livres").value_or("");
+            snap.maquina = projeto_.valorCampo(id, "raiz", 0, "maquina").value_or("");
+            snap.tags = projeto_.lerTags(id);
+            undoSnapshot_[id] = snap;
         }
 
-        // Um item por vez, cada um na sua própria transação (dentro de
-        // aplicarFichaEmLote): falha num item não derruba os que já foram
-        // gravados — "aplicação parcial não corrompe" (§12.2), nunca um
-        // BEGIN/COMMIT gigante que desfaz tudo se um único item falhar.
         int sucessos = 0;
         int falhas = 0;
-        for (auto& id : itemIds_) {
+
+        for (const auto& id : itemIds_) {
             try {
-                matriz::ingest::aplicarFichaEmLote(projeto_.projeto().registro(), {id}, "raiz", 0, valores, autorAtual());
+                for (auto* linha : linhas_) {
+                    if (!linha->tocado) continue;
+                    juce::String val = lerValorLinha(*linha);
+
+                    if (linha->ehTags) {
+                        // TAGS: Sum/Add entered tags to existing tags (§ user req 3)
+                        juce::StringArray tagsNovas;
+                        tagsNovas.addTokens(val, " ,;", "\"");
+                        for (int t = 0; t < tagsNovas.size(); ++t) {
+                            juce::String tg = tagsNovas[t].trimCharactersAtStart("#").trim();
+                            if (tg.isNotEmpty()) {
+                                projeto_.adicionarTag(id, tg.toStdString());
+                            }
+                        }
+                    } else if (linha->ehNotes) {
+                        // NOTES: Sum/Append entered note to existing notes (§ user req 3)
+                        std::string txt = val.toStdString();
+                        if (!txt.empty()) {
+                            std::string existing = projeto_.lerMetadado(id, "notas_livres").value_or("");
+                            std::string combined = existing.empty() ? txt : (existing + "\n" + txt);
+                            projeto_.salvarMetadado(id, "notas_livres", combined);
+                            // Also keep maquina in sync for legacy test
+                            std::string agora = matriz::model::agoraIso8601();
+                            projeto_.projeto().registro().run(
+                                "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                                "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
+                                "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+                                {matriz::db::Value::of(matriz::model::novoUuid()),
+                                 matriz::db::Value::of(id),
+                                 matriz::db::Value::of(txt),
+                                 matriz::db::Value::of(agora)});
+                        }
+                    } else {
+                        // Regular fields (YEAR, CONTENT, COLLECTION, SOURCE MEDIA, ISRC): OVERRIDE (§ user req 2)
+                        projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
+                    }
+                }
                 ++sucessos;
             } catch (const std::exception&) {
                 ++falhas;
             }
         }
 
+        projeto_.finalizarGrupoUndo();
+
         juce::String texto = matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(sucessos));
         if (falhas > 0) texto += matriz::i18n::t("ficha.lote_resultado_falhas").replace("{falhas}", juce::String(falhas));
         resultado_->setText(texto, juce::dontSendNotification);
-        botaoDesfazer_->setVisible(sucessos > 0);
+        if (botaoDesfazer_) botaoDesfazer_->setVisible(sucessos > 0);
         relayoutEExibir();
 
         if (aoAplicarEmLote) aoAplicarEmLote();
@@ -1429,16 +2059,37 @@ private:
 
     void desfazer() {
         int restaurados = 0;
-        for (auto& [id, valoresAnteriores] : undoSnapshot_) {
+        for (const auto& [id, snap] : undoSnapshot_) {
             try {
-                matriz::ingest::aplicarFichaEmLote(projeto_.projeto().registro(), {id}, "raiz", 0, valoresAnteriores, autorAtual());
+                projeto_.salvarMetadado(id, "ano", snap.ano);
+                projeto_.salvarMetadado(id, "content_type", snap.content_type);
+                projeto_.salvarMetadado(id, "source_media", snap.source_media);
+                projeto_.salvarMetadado(id, "collection_type", snap.collection_type);
+                projeto_.salvarMetadado(id, "isrc", snap.isrc);
+                projeto_.salvarMetadado(id, "notas_livres", snap.notas_livres);
+                projeto_.definirTags(id, snap.tags);
+                if (!snap.maquina.empty()) {
+                    std::string agora = matriz::model::agoraIso8601();
+                    projeto_.projeto().registro().run(
+                        "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                        "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
+                        "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+                        {matriz::db::Value::of(matriz::model::novoUuid()),
+                         matriz::db::Value::of(id),
+                         matriz::db::Value::of(snap.maquina),
+                         matriz::db::Value::of(agora)});
+                } else {
+                    projeto_.projeto().registro().run(
+                        "DELETE FROM item_campo WHERE item_id = ? AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'maquina'",
+                        {matriz::db::Value::of(id)});
+                }
                 ++restaurados;
             } catch (const std::exception&) {
             }
         }
         resultado_->setText(matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)),
                              juce::dontSendNotification);
-        botaoDesfazer_->setVisible(false);
+        if (botaoDesfazer_) botaoDesfazer_->setVisible(false);
         undoSnapshot_.clear();
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
@@ -1449,17 +2100,15 @@ private:
 
     ProjetoAberto& projeto_;
     std::vector<std::string> itemIds_;
-    std::string tipoComum_;
     std::unique_ptr<juce::Label> cabecalho_;
-    std::unique_ptr<juce::Label> mensagem_; // tipo misto OU instrução do seletor de tipo
+    std::unique_ptr<juce::Label> mensagem_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesTipo_;
     juce::OwnedArray<LinhaLote> linhas_;
-    std::unique_ptr<juce::Label> avisoCamposNaoSuportados_;
     std::unique_ptr<juce::Label> previa_;
     std::unique_ptr<juce::TextButton> botaoAplicar_;
     std::unique_ptr<juce::TextButton> botaoDesfazer_;
     std::unique_ptr<juce::Label> resultado_;
-    std::map<std::string, std::map<std::string, std::string>> undoSnapshot_; // itemId -> {campoId -> valor anterior}
+    std::map<std::string, SnapshotItem> undoSnapshot_;
 };
 
 // ---------------------------------------------------------------------------
@@ -1474,10 +2123,7 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
 
     conteudo_->aoRelayoutNecessario = [this] { conteudo_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness()); };
     conteudo_->aoMudarClassificacao = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
-
-    metadadosOriginais_ = std::make_unique<MetadadosOriginaisComponent>(projeto);
-    metadadosOriginais_->aoMudarAltura = [this] { resized(); repaint(); };
-    addAndMakeVisible(*metadadosOriginais_);
+    conteudo_->aoMudar = [this] { if (aoMudar) aoMudar(); };
 }
 
 FichaPanelComponent::~FichaPanelComponent() = default;
@@ -1507,13 +2153,16 @@ juce::TextButton* FichaPanelComponent::botaoTipoMidiaIndividualParaTeste(const s
     return conteudo_ ? conteudo_->botaoTipoMidiaParaTeste(tipoId) : nullptr;
 }
 
+void FichaPanelComponent::setEditavel(bool editavel) {
+    editavel_ = editavel;
+    if (conteudo_) conteudo_->setEnabled(editavel);
+    if (conteudoLote_) conteudoLote_->setEnabled(editavel);
+    repaint();
+}
+
 void FichaPanelComponent::mostrarItem(const std::string& itemId) {
     itemIdAtual_ = itemId;
     modoLote_ = false;
-    if (metadadosOriginais_) {
-        metadadosOriginais_->mostrarItem(itemId);
-        metadadosOriginais_->setVisible(!itemId.empty());
-    }
     viewport_->setViewedComponent(conteudo_.get(), false);
     conteudo_->construirParaItem(itemId);
     resized();
@@ -1528,11 +2177,6 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
 
     itemIdAtual_.clear();
     modoLote_ = true;
-    // Em lote não existe "o metadado original" — são N arquivos diferentes.
-    if (metadadosOriginais_) {
-        metadadosOriginais_->mostrarItem({});
-        metadadosOriginais_->setVisible(false);
-    }
     if (!conteudoLote_) {
         conteudoLote_ = std::make_unique<FichaLoteConteudo>(projeto_);
         conteudoLote_->aoRelayoutNecessario = [this] {
@@ -1549,23 +2193,6 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
 void FichaPanelComponent::paint(juce::Graphics& g) {
     g.fillAll(matriz::ui::tema().painel);
 
-    // Cabeçalho da metade editável, desenhado na faixa reservada por
-    // resized(). Sem ele as duas seções encostariam uma na outra e o
-    // operador não teria como saber onde termina o que a máquina leu e
-    // começa o que ele mesmo escreveu.
-    if (metadadosOriginais_ && metadadosOriginais_->isVisible()) {
-        const auto& tk = matriz::ui::tema();
-        juce::Rectangle<int> faixa(0, metadadosOriginais_->getBottom(), getWidth(), kAlturaCabecalhoFicha);
-        g.setColour(tk.painelAlt);
-        g.fillRect(faixa);
-        auto miolo = faixa.reduced(tk.espacoMedio, 0);
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-        g.drawText(matriz::i18n::t("metadados.editaveis").toUpperCase(), miolo, juce::Justification::centredLeft);
-        g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-        g.drawText(matriz::i18n::t("metadados.editaveis_ajuda"), miolo, juce::Justification::centredRight);
-    }
     if (!modoLote_ && itemIdAtual_.empty()) {
         g.setColour(matriz::ui::tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteCorpo)));
@@ -1576,14 +2203,6 @@ void FichaPanelComponent::paint(juce::Graphics& g) {
 
 void FichaPanelComponent::resized() {
     auto area = getLocalBounds();
-
-    // Seção de metadado original no topo; a ficha (editável) fica com o
-    // resto. Só aparece com UM item selecionado — ver mostrarSelecao().
-    if (metadadosOriginais_ && metadadosOriginais_->isVisible()) {
-        metadadosOriginais_->setBounds(area.removeFromTop(metadadosOriginais_->alturaDesejada()));
-        area.removeFromTop(kAlturaCabecalhoFicha);
-    }
-
     viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura);

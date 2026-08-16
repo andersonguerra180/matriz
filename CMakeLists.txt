@@ -22,6 +22,26 @@ add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dependencies.cmake")
 
 # ------------------------------------------------------------------------------
+# AddressSanitizer opcional (critério 21 — `--selftest-modal-loop` sob ASan).
+#
+# Aplicado só aos NOSSOS alvos, nunca globalmente: com -fsanitize=address em
+# CMAKE_CXX_FLAGS, o try_run de std::filesystem do exiv2 falha na
+# configuração e a build inteira não sai do lugar. O binário principal ser
+# instrumentado já basta — é onde vive o código de ciclo de vida de diálogo
+# que o teste exercita.
+#
+#   cmake -B build-asan -DMATRIZ_ASAN=ON && cmake --build build-asan --target matriz
+# ------------------------------------------------------------------------------
+option(MATRIZ_ASAN "Compila os alvos do MATRIZ com AddressSanitizer" OFF)
+
+function(matriz_aplicar_asan alvo)
+    if(MATRIZ_ASAN)
+        target_compile_options(${alvo} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+        target_link_options(${alvo} PRIVATE -fsanitize=address)
+    endif()
+endfunction()
+
+# ------------------------------------------------------------------------------
 # Schema do banco (schema/registro.sql, schema/indice.sql) embutido no binário
 # — aplicado (idempotente, CREATE ... IF NOT EXISTS) toda vez que um projeto é
 # criado ou aberto (Source/Model/Project.cpp).
@@ -77,6 +97,8 @@ target_link_libraries(matriz_selftest PRIVATE
     PUBLIC
     juce::juce_recommended_config_flags)
 
+matriz_aplicar_asan(matriz_selftest)
+
 # ------------------------------------------------------------------------------
 # Etapa 2 — self-test headless: motor de ingestão (leitura técnica, checksum,
 # duplicata, agrupamento, painel de inconsistências). Cresce a cada peça da
@@ -88,6 +110,7 @@ juce_generate_juce_header(matriz_ingest_selftest)
 target_sources(matriz_ingest_selftest PRIVATE
     tools/ingest_selftest/main.cpp
     Source/Ingest/Checksum.cpp
+    Source/Ingest/CacheArquivo.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Loudness.cpp
@@ -99,6 +122,10 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/PainelInconsistencias.cpp
+    Source/Vault/Volume.cpp
+    Source/Vault/Resolucao.cpp
+    Source/Vault/Reconciliacao.cpp
+    Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
@@ -134,8 +161,12 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     # Loudness EBU R128 (item 6.1) decodifica o arquivo com os formatos do
     # JUCE pra medir LUFS-I/LRA na leitura técnica.
     juce::juce_audio_formats
+    # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
+    $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     PUBLIC
     juce::juce_recommended_config_flags)
+
+matriz_aplicar_asan(matriz_ingest_selftest)
 
 # ------------------------------------------------------------------------------
 # Etapa 3 — app principal (B.1.1-B.1.3, B.4, B.5): janela, criação/abertura de
@@ -143,29 +174,49 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
 # genérica, configurações do projeto, i18n. Tira de diagnóstico, transporte,
 # marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
 # ------------------------------------------------------------------------------
-juce_add_gui_app(matriz PRODUCT_NAME "BKR Matriz" VERSION 0.1.0)
+juce_add_gui_app(matriz
+    PRODUCT_NAME "BKR Matriz"
+    VERSION 0.1.0
+    COMPANY_NAME "BKR"
+    BUNDLE_ID "com.bkr.matriz")
 juce_generate_juce_header(matriz)
 
 target_sources(matriz PRIVATE
     Source/Main.cpp
     Source/App/Preferencias.cpp
+    Source/Diag/NSExceptionGuard.mm
     Source/I18n/Strings.cpp
     Source/Ui/Tokens.h
+    Source/Ui/Tokens.cpp
     Source/Ui/ProjetoAberto.cpp
     Source/Ui/AcoesItem.cpp
     Source/Ui/ArvoreComponent.cpp
     Source/Ui/BarraFerramentasComponent.cpp
     Source/Ui/BarraGuiaComponent.cpp
+    Source/Ui/BarraNavegacaoComponent.cpp
     Source/Ui/BarraSelecaoComponent.cpp
     Source/Ui/FiltrosComponent.cpp
     Source/Ui/MetadadosOriginaisComponent.cpp
     Source/Ui/MosaicoComponent.cpp
+    Source/Ui/EstatisticasComponent.cpp
+    Source/Ui/ArvoreBackupComponent.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
+    Source/Ui/ModalLoopSelfTest.cpp
+    Source/Ui/OverlayComponent.cpp
+    Source/Ui/AudioWorkspace.cpp
+    Source/Ui/BackupWorkspaceComponent.cpp
+    Source/Ui/CatalogWorkspaceComponent.cpp
+    Source/Ui/HierarquiaEditorComponent.cpp
+    Source/Ui/TagChipsEditor.cpp
     Source/Ui/FichaPanelComponent.cpp
+    Source/Ui/HomePanelComponent.cpp
+    Source/Ui/IngestWizardComponent.cpp
     Source/Ui/PainelInconsistenciasComponent.cpp
+    Source/Ui/PainelDuplicatasComponent.cpp
     Source/Ui/PreviewComponent.cpp
+    Source/Ui/PreservationWorkspaceComponent.cpp
     Source/Ui/NovoProjetoDialogo.cpp
     Source/Ui/BarraMetricasComponent.cpp
     Source/Ui/TimelineComponent.cpp
@@ -178,14 +229,25 @@ target_sources(matriz PRIVATE
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
+    Source/Ui/VideoPlayerComponent.cpp
+    Source/Ui/VideoPlayerBridge.mm
+    Source/Audio/MotorReproducao.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/Checksum.cpp
+    Source/Ingest/CacheArquivo.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/PainelInconsistencias.cpp
     Source/Ingest/Miniaturas.cpp
+    Source/Ingest/ClassificadorFalaMusica.cpp
+    Source/Ingest/Pcm.cpp
+    Source/Ingest/Duplicata.cpp
+    Source/Vault/Volume.cpp
+    Source/Vault/Resolucao.cpp
+    Source/Vault/Reconciliacao.cpp
+    Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
@@ -229,5 +291,16 @@ target_link_libraries(matriz PRIVATE
     juce::juce_audio_formats
     # AudioThumbnail/AudioThumbnailCache: forma de onda da timeline (item 8).
     juce::juce_audio_utils
+    juce::juce_dsp
+    # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
+    $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
+    $<$<PLATFORM_ID:Darwin>:-framework\ AVFoundation>
+    $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
     PUBLIC
     juce::juce_recommended_config_flags)
+
+if(APPLE)
+    target_link_options(matriz PRIVATE "LINKER:-stack_size,0x4000000")
+endif()
+
+matriz_aplicar_asan(matriz)

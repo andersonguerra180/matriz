@@ -2,10 +2,60 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exiv2/exiv2.hpp>
+#include "../Model/Project.h"
+#include "../Vault/Resolucao.h"
 
 namespace matriz::consolidacao {
 
 using matriz::db::Value;
+
+namespace {
+
+void salvarMetadadoOriginalComoObservacao(matriz::db::Database& registro, const std::string& itemId,
+                                          const juce::File& arquivo) {
+    juce::String texto = "ORIGINAL METADATA (preserved before embed):\n";
+    bool temAlgo = false;
+
+    if (arquivo.hasFileExtension("jpg;jpeg;png;tif;tiff;dng;cr2;nef;arw;webp;heic;heif")) {
+        try {
+            auto image = Exiv2::ImageFactory::open(arquivo.getFullPathName().toStdString());
+            image->readMetadata();
+            auto& exif = image->exifData();
+            auto& xmp = image->xmpData();
+
+            auto addIfExists = [&](const char* tag, const char* label) {
+                auto it = exif.findKey(Exiv2::ExifKey(tag));
+                if (it != exif.end() && !it->value().toString().empty()) {
+                    texto += juce::String(label) + ": " + juce::String(it->value().toString()) + "\n";
+                    temAlgo = true;
+                }
+            };
+            addIfExists("Exif.Image.ImageDescription", "Description");
+            addIfExists("Exif.Image.Artist", "Artist");
+            addIfExists("Exif.Image.DateTime", "Date");
+            addIfExists("Exif.Photo.DateTimeOriginal", "DateTimeOriginal");
+
+            for (auto& x : xmp) {
+                juce::String key(x.key());
+                if (key.startsWith("Xmp.dc.")) {
+                    texto += key + ": " + juce::String(x.value().toString()) + "\n";
+                    temAlgo = true;
+                }
+            }
+        } catch (...) {}
+    }
+
+    if (!temAlgo) return;
+
+    std::string agora = matriz::model::agoraIso8601();
+    registro.run(
+        "INSERT INTO item_observacao (id, item_id, texto, autor, criado_em) VALUES (?, ?, ?, ?, ?)",
+        {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(texto.toStdString()),
+         Value::of(std::string("system/embed")), Value::of(agora)});
+}
+
+} // namespace
 
 namespace {
 
@@ -121,14 +171,35 @@ bool embutirMarcadoresEmWav(const juce::File& wavDestino, const std::vector<Marc
 
     juce::MemoryBlock ixml = construirIxml(marcadores, sampleRate);
 
-    // Monta o arquivo novo: cabeçalho RIFF + todo o conteúdo original a
-    // partir do byte 12, e os chunks novos no fim. Nenhum chunk existente é
-    // reescrito nem reordenado — o áudio em si sai idêntico.
     juce::MemoryOutputStream saida;
     escreverFourCC(saida, "RIFF");
     saida.writeInt(0); // tamanho, corrigido no fim
     escreverFourCC(saida, "WAVE");
-    saida.write(dados + 12, original.getSize() - 12);
+
+    // Copia chunks originais pulando chunks de marcador BKR anteriores (idempotência)
+    size_t pos = 12;
+    while (pos + 8 <= original.getSize()) {
+        const char* chunkId = dados + pos;
+        juce::uint32 chunkLen = juce::ByteOrder::littleEndianInt(dados + pos + 4);
+        size_t totalChunkLen = 8 + chunkLen + (chunkLen % 2);
+        if (pos + totalChunkLen > original.getSize()) break;
+
+        bool pular = false;
+        if (std::strncmp(chunkId, "cue ", 4) == 0) {
+            pular = true;
+        } else if (std::strncmp(chunkId, "iXML", 4) == 0) {
+            pular = true;
+        } else if (std::strncmp(chunkId, "LIST", 4) == 0 && chunkLen >= 4) {
+            if (std::strncmp(dados + pos + 8, "adtl", 4) == 0) {
+                pular = true;
+            }
+        }
+
+        if (!pular) {
+            saida.write(dados + pos, totalChunkLen);
+        }
+        pos += totalChunkLen;
+    }
 
     juce::MemoryBlock cueBloco(cue.getData(), cue.getDataSize());
     juce::MemoryBlock adtlBloco(adtl.getData(), adtl.getDataSize());
@@ -137,12 +208,9 @@ bool embutirMarcadoresEmWav(const juce::File& wavDestino, const std::vector<Marc
     escreverChunk(saida, "iXML", ixml);
 
     juce::MemoryBlock resultado(saida.getData(), saida.getDataSize());
-    juce::ByteOrder::littleEndianInt(resultado.getData()); // no-op explícito: o campo é corrigido abaixo
     juce::uint32 tamanhoRiff = static_cast<juce::uint32>(resultado.getSize() - 8);
     std::memcpy(static_cast<char*>(resultado.getData()) + 4, &tamanhoRiff, 4);
 
-    // Escreve num temporário e só então substitui — se faltar espaço ou o
-    // processo morrer no meio, a cópia verificada continua intacta.
     juce::File temporario = wavDestino.getSiblingFile(wavDestino.getFileName() + ".marcadores.tmp");
     if (!temporario.replaceWithData(resultado.getData(), resultado.getSize())) return false;
     if (!temporario.moveFileTo(wavDestino)) {
@@ -161,10 +229,175 @@ int embutirMarcadoresNoBackup(matriz::db::Database& registro, const juce::File& 
         std::string itemId = stmt.columnText(0);
         juce::File destino = raizDestino.getChildFile(stmt.columnText(1));
         if (!destino.existsAsFile()) continue;
-        if (!destino.hasFileExtension("wav")) continue; // ver nota de escopo no header
+        if (!destino.hasFileExtension("wav")) continue;
         if (embutirMarcadoresEmWav(destino, marcadoresDoItem(registro, itemId))) ++enriquecidos;
     }
     return enriquecidos;
+}
+
+MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId) {
+    MetadadoParaEmbutir meta;
+    std::string itemAno;
+    std::string itemNotas;
+    auto stmt = registro.prepare("SELECT titulo, tipo_midia, codigo_acervo, ano, notas_livres FROM item WHERE id = ?");
+    stmt.bind(1, Value::of(itemId));
+    if (stmt.step()) {
+        meta.titulo = stmt.columnText(0);
+        meta.tipoMidia = stmt.columnIsNull(1) ? "" : stmt.columnText(1);
+        meta.codigoAcervo = stmt.columnText(2);
+        if (!stmt.columnIsNull(3)) itemAno = stmt.columnText(3);
+        if (!stmt.columnIsNull(4)) itemNotas = stmt.columnText(4);
+    }
+
+    auto lerCampo = [&](const char* campoId) -> std::string {
+        auto s = registro.prepare(
+            "SELECT valor FROM item_campo WHERE item_id = ? AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = ?");
+        s.bind(1, Value::of(itemId));
+        s.bind(2, Value::of(std::string(campoId)));
+        return s.step() ? s.columnText(0) : "";
+    };
+
+    meta.descricao = !itemNotas.empty() ? itemNotas : lerCampo("descricao");
+    if (meta.descricao.empty()) meta.descricao = lerCampo("notas");
+
+    try {
+        auto sAi = registro.prepare(
+            "SELECT resumo FROM ai_scan_resultado WHERE item_id = ? ORDER BY analisado_em DESC LIMIT 1");
+        sAi.bind(1, Value::of(itemId));
+        if (sAi.step()) meta.resumoAi = sAi.columnText(0);
+    } catch (...) {}
+
+    meta.artista = lerCampo("artista_principal");
+    if (meta.artista.empty()) meta.artista = lerCampo("artista");
+    if (meta.artista.empty()) meta.artista = lerCampo("autor");
+    std::string anoStr = !itemAno.empty() ? itemAno : lerCampo("ano");
+    if (!anoStr.empty()) {
+        try { meta.ano = std::stoi(anoStr); } catch (...) {}
+    }
+    return meta;
+}
+
+StatusEmbedding embutirMetadadosNoArquivo(const juce::File& destino, const MetadadoParaEmbutir& meta) {
+    if (!destino.existsAsFile()) return StatusEmbedding::Failed;
+    if (meta.titulo.empty() && meta.descricao.empty() && meta.artista.empty()
+        && meta.codigoAcervo.empty() && meta.resumoAi.empty()) return StatusEmbedding::NoMetadata;
+
+    bool suportaExiv2 = destino.hasFileExtension("jpg;jpeg;png;tif;tiff;dng;cr2;nef;arw;webp;heic;heif");
+
+    if (suportaExiv2) {
+        juce::File tempCopy = destino.getSiblingFile(destino.getFileName() + ".embed.tmp");
+        if (!destino.copyFileTo(tempCopy)) return StatusEmbedding::Failed;
+
+        try {
+            auto image = Exiv2::ImageFactory::open(tempCopy.getFullPathName().toStdString());
+            image->readMetadata();
+            auto& xmp = image->xmpData();
+
+            if (!meta.titulo.empty())
+                xmp["Xmp.dc.title"] = meta.titulo;
+            if (!meta.descricao.empty())
+                xmp["Xmp.dc.description"] = meta.descricao;
+            if (!meta.artista.empty())
+                xmp["Xmp.dc.creator"] = meta.artista;
+            if (!meta.codigoAcervo.empty())
+                xmp["Xmp.dc.identifier"] = meta.codigoAcervo;
+            if (meta.ano)
+                xmp["Xmp.dc.date"] = std::to_string(*meta.ano);
+            if (!meta.resumoAi.empty())
+                xmp["Xmp.dc.subject"] = meta.resumoAi;
+
+            auto& exif = image->exifData();
+            std::string descricaoExif = meta.descricao;
+            if (!meta.resumoAi.empty())
+                descricaoExif = descricaoExif.empty() ? meta.resumoAi
+                                                      : descricaoExif + "\n\n[AI] " + meta.resumoAi;
+            if (!descricaoExif.empty())
+                exif["Exif.Image.ImageDescription"] = descricaoExif;
+            if (!meta.artista.empty())
+                exif["Exif.Image.Artist"] = meta.artista;
+
+            image->writeMetadata();
+
+            if (!tempCopy.moveFileTo(destino)) {
+                tempCopy.deleteFile();
+                return StatusEmbedding::Failed;
+            }
+            return StatusEmbedding::Embedded;
+        } catch (...) {
+            tempCopy.deleteFile();
+            return StatusEmbedding::Failed;
+        }
+    }
+
+    // Normal backup MUST NOT generate automatic XMP sidecars for unsupported formats (Rule 5 & 10).
+    return StatusEmbedding::Unsupported;
+}
+
+int embutirMetadadosNoBackup(matriz::db::Database& registro, const juce::File& raizDestino) {
+    int enriquecidos = 0;
+    auto stmt = registro.prepare(
+        "SELECT DISTINCT cr.item_id, cr.caminho_relativo_destino FROM consolidacao_registro cr");
+    while (stmt.step()) {
+        std::string itemId = stmt.columnText(0);
+        juce::File destino = raizDestino.getChildFile(stmt.columnText(1));
+        auto meta = coletarMetadadosDoItem(registro, itemId);
+        salvarMetadadoOriginalComoObservacao(registro, itemId, destino);
+        if (embutirMetadadosNoArquivo(destino, meta) == StatusEmbedding::Embedded) ++enriquecidos;
+    }
+    return enriquecidos;
+}
+
+ResultadoEmbedding embutirMetadadosEmItens(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                            const std::vector<std::string>& itemIds) {
+    ResultadoEmbedding resultado;
+    for (const auto& itemId : itemIds) {
+        auto meta = coletarMetadadosDoItem(registro, itemId);
+        if (meta.titulo.empty() && meta.descricao.empty() && meta.artista.empty()) {
+            resultado.erros.push_back(itemId + ": no metadata to embed");
+            ++resultado.falha;
+            continue;
+        }
+
+        auto stmtArq = registro.prepare(
+            std::string("SELECT a.id, ") + matriz::vault::colunasDeResolucao() +
+            " FROM arquivo a " + matriz::vault::joinDeResolucao() +
+            " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
+        stmtArq.bind(1, Value::of(itemId));
+        if (!stmtArq.step()) {
+            resultado.erros.push_back(itemId + ": no file found");
+            ++resultado.falha;
+            continue;
+        }
+
+        juce::File arquivo = matriz::vault::caminhoEsperado(
+            pastaProjeto, stmtArq.columnText(1), stmtArq.columnText(2), stmtArq.columnText(3));
+
+        if (!arquivo.existsAsFile()) {
+            resultado.erros.push_back(meta.codigoAcervo + ": file not found");
+            ++resultado.falha;
+            continue;
+        }
+
+        if (arquivo.hasFileExtension("wav")) {
+            auto marcadores = marcadoresDoItem(registro, itemId);
+            if (!marcadores.empty()) {
+                embutirMarcadoresEmWav(arquivo, marcadores);
+                ++resultado.sucesso;
+                continue;
+            }
+        }
+
+        auto status = embutirMetadadosNoArquivo(arquivo, meta);
+        if (status == StatusEmbedding::Embedded)
+            ++resultado.sucesso;
+        else if (status == StatusEmbedding::Unsupported) {
+            ++resultado.naoSuportados;
+        } else {
+            resultado.erros.push_back((meta.codigoAcervo.empty() ? itemId : meta.codigoAcervo) + ": embedding failed");
+            ++resultado.falha;
+        }
+    }
+    return resultado;
 }
 
 } // namespace matriz::consolidacao

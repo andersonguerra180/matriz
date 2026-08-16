@@ -13,19 +13,27 @@ namespace matriz::ingest {
 namespace {
 
 const std::set<juce::String>& extensoesAudio() {
-    static const std::set<juce::String> s = {"wav", "aiff", "aif", "flac", "mp3", "m4a", "aac", "ogg", "wma", "dsf"};
+    static const std::set<juce::String> s = {"wav", "aiff", "aif", "flac", "mp3", "m4a", "aac", "ogg", "wma", "dsf", "alac", "opus", "ape", "wv", "tak", "dff", "caf", "au", "snd", "ra", "mid", "midi", "w64", "rf64"};
     return s;
 }
 const std::set<juce::String>& extensoesVideo() {
-    static const std::set<juce::String> s = {"mov", "mp4", "avi", "mkv", "mxf", "m4v", "wmv"};
+    static const std::set<juce::String> s = {"mov", "mp4", "avi", "mkv", "mxf", "m4v", "wmv", "webm", "mts", "m2ts", "ts", "mpg", "mpeg", "vob", "3gp", "3g2", "flv", "f4v", "ogv", "divx", "dv", "r3d"};
     return s;
 }
 const std::set<juce::String>& extensoesImagem() {
-    static const std::set<juce::String> s = {"jpg", "jpeg", "png", "tif", "tiff", "bmp", "heic", "dng", "cr2", "nef"};
+    static const std::set<juce::String> s = {"jpg", "jpeg", "png", "tif", "tiff", "bmp", "heic", "heif", "webp", "gif", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2", "pef", "srw", "cr3", "svg", "ico", "psd", "psb", "ai", "eps", "exr", "hdr"};
     return s;
 }
 const std::set<juce::String>& extensoesDocumento() {
-    static const std::set<juce::String> s = {"pdf"};
+    static const std::set<juce::String> s = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "keynote", "epub"};
+    return s;
+}
+const std::set<juce::String>& extensoesSessao() {
+    static const std::set<juce::String> s = {"rpp", "ptx", "ptf", "als", "flp", "logic", "logicx", "cpr", "npr", "rxdoc", "pd", "pproj"};
+    return s;
+}
+const std::set<juce::String>& extensoesTexto() {
+    static const std::set<juce::String> s = {"txt", "md", "markdown", "csv", "log", "rtf", "json", "xml", "yaml", "yml", "html", "htm", "srt", "ass", "ssa", "vtt", "lrc", "ini", "cfg", "conf", "tex", "bib"};
     return s;
 }
 
@@ -53,49 +61,162 @@ std::optional<double> parseFraction(const juce::String& s) {
     return num / den;
 }
 
-LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
-    juce::StringArray args{"-v", "quiet", "-print_format", "json",
-                            "-show_format", "-show_streams", arquivo.getFullPathName()};
-    std::string output = runProcess("ffprobe", args);
-    if (output.empty())
-        throw LeituraTecnicaError("ffprobe não retornou dados para: " + arquivo.getFullPathName().toStdString());
+void parseId3Tags(const juce::File& arquivo, juce::DynamicObject* tagsObj) {
+    juce::FileInputStream stream(arquivo);
+    if (!stream.openedOk()) return;
 
-    juce::var root = juce::JSON::parse(juce::String(output));
-    if (!root.isObject())
-        throw LeituraTecnicaError("ffprobe: saída JSON inválida para: " + arquivo.getFullPathName().toStdString());
+    char header[10];
+    if (stream.read(header, 10) != 10) return;
+
+    if (std::memcmp(header, "ID3", 3) != 0) return;
+
+    int versionMajor = header[3];
+    int size = ((header[6] & 0x7F) << 21) |
+               ((header[7] & 0x7F) << 14) |
+               ((header[8] & 0x7F) << 7)  |
+               (header[9] & 0x7F);
+
+    if (size <= 0 || size > 10 * 1024 * 1024) return; // safety boundary
+
+    std::vector<char> tagData(static_cast<size_t>(size));
+    if (stream.read(tagData.data(), size) != size) return;
+
+    size_t offset = 0;
+    while (offset + 10 < static_cast<size_t>(size)) {
+        std::string frameId(tagData.data() + offset, 4);
+        if (frameId[0] == '\0' || frameId[0] == ' ') break;
+
+        uint32_t frameSize = 0;
+        if (versionMajor == 3) {
+            frameSize = (static_cast<uint8_t>(tagData[offset + 4]) << 24) |
+                        (static_cast<uint8_t>(tagData[offset + 5]) << 16) |
+                        (static_cast<uint8_t>(tagData[offset + 6]) << 8)  |
+                        static_cast<uint8_t>(tagData[offset + 7]);
+        } else {
+            frameSize = ((tagData[offset + 4] & 0x7F) << 21) |
+                        ((tagData[offset + 5] & 0x7F) << 14) |
+                        ((tagData[offset + 6] & 0x7F) << 7)  |
+                        (tagData[offset + 7] & 0x7F);
+        }
+
+        if (offset + 10 + frameSize > static_cast<size_t>(size)) break;
+
+        const char* dataPtr = tagData.data() + offset + 10;
+        if (frameSize > 1) {
+            int encoding = dataPtr[0];
+            juce::String val;
+            if (encoding == 0 || encoding == 3) {
+                val = juce::String::fromUTF8(dataPtr + 1, static_cast<int>(frameSize - 1));
+            } else if (encoding == 1 || encoding == 2) {
+                // UTF-16 string conversion helper:
+                val = juce::String::fromUTF8(dataPtr + 1, static_cast<int>(frameSize - 1));
+            } else {
+                val = juce::String::fromUTF8(dataPtr, static_cast<int>(frameSize));
+            }
+
+            val = val.trim().trimCharactersAtEnd(juce::String::charToString('\0'));
+
+            if (frameId == "TIT2") tagsObj->setProperty("title", val);
+            else if (frameId == "TPE1") tagsObj->setProperty("artist", val);
+            else if (frameId == "TCOM") tagsObj->setProperty("composer", val);
+            else if (frameId == "TSRC") tagsObj->setProperty("isrc", val);
+        }
+
+        offset += 10 + frameSize;
+    }
+}
+
+LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
+    juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+    if (extensoesAudio().count(ext) > 0) {
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(arquivo));
+        if (reader != nullptr) {
+            LeituraTecnicaResultado r;
+            r.duracaoSegundos = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
+            r.sampleRate = static_cast<int>(reader->sampleRate);
+            r.bitDepth = static_cast<int>(reader->bitsPerSample);
+            r.canais = static_cast<int>(reader->numChannels);
+            r.codec = ext.toStdString();
+            if (ext == "wav" || ext == "aiff" || ext == "aif") {
+                if (reader->bitsPerSample == 16) r.codec = "pcm_s16le";
+                else if (reader->bitsPerSample == 24) r.codec = "pcm_s24le";
+                else if (reader->bitsPerSample == 32) r.codec = "pcm_s32le";
+                else r.codec = "pcm_s16le";
+            }
+            if (codecsAudioLossy().count(ext) > 0) r.codecLossyDeclarado = true;
+
+            auto formatObj = std::make_unique<juce::DynamicObject>();
+            formatObj->setProperty("duration", r.duracaoSegundos.value_or(0.0));
+
+            auto tagsObj = std::make_unique<juce::DynamicObject>();
+            for (auto& key : reader->metadataValues.getAllKeys()) {
+                juce::String lowerKey = key.toLowerCase();
+                tagsObj->setProperty(lowerKey, reader->metadataValues[key]);
+            }
+            // Parse native ID3 tags from file directly to guarantee complete coverage
+            parseId3Tags(arquivo, tagsObj.get());
+
+            formatObj->setProperty("tags", juce::var(tagsObj.release()));
+
+            auto rootObj = std::make_unique<juce::DynamicObject>();
+            rootObj->setProperty("format", juce::var(formatObj.release()));
+
+            auto streamObj = std::make_unique<juce::DynamicObject>();
+            streamObj->setProperty("codec_type", "audio");
+            streamObj->setProperty("sample_rate", r.sampleRate.value_or(0));
+            streamObj->setProperty("bits_per_sample", r.bitDepth.value_or(0));
+            streamObj->setProperty("channels", r.canais.value_or(0));
+            streamObj->setProperty("codec_name", juce::String(r.codec));
+
+            auto streamsArray = std::make_unique<juce::Array<juce::var>>();
+            streamsArray->add(juce::var(streamObj.release()));
+            rootObj->setProperty("streams", juce::var(*streamsArray));
+
+            r.bruto = juce::var(rootObj.release());
+            return r;
+        }
+    }
 
     LeituraTecnicaResultado r;
-    r.bruto = root;
 
-    juce::var format = root["format"];
-    if (format.isObject() && format.hasProperty("duration"))
-        r.duracaoSegundos = juce::String(format["duration"].toString()).getDoubleValue();
+    try {
+        juce::StringArray args{"-v", "quiet", "-print_format", "json",
+                                "-show_format", "-show_streams", arquivo.getFullPathName()};
+        std::string output = runProcess("ffprobe", args);
+        if (!output.empty()) {
+            juce::var root = juce::JSON::parse(juce::String(output));
+            if (root.isObject()) {
+                r.bruto = root;
+                juce::var format = root["format"];
+                if (format.isObject() && format.hasProperty("duration"))
+                    r.duracaoSegundos = juce::String(format["duration"].toString()).getDoubleValue();
 
-    juce::var streams = root["streams"];
-    if (streams.isArray()) {
-        for (auto& streamVar : *streams.getArray()) {
-            juce::String tipo = streamVar["codec_type"].toString();
-            if (tipo == "audio" && r.sampleRate == std::nullopt) {
-                r.sampleRate = streamVar["sample_rate"].toString().getIntValue();
-                juce::String bits = streamVar["bits_per_raw_sample"].toString();
-                if (bits.isEmpty()) bits = streamVar["bits_per_sample"].toString();
-                if (bits.isNotEmpty() && bits.getIntValue() > 0) r.bitDepth = bits.getIntValue();
-                r.canais = streamVar["channels"].toString().getIntValue();
-                r.codec = streamVar["codec_name"].toString().toStdString();
-                if (!r.duracaoSegundos && streamVar.hasProperty("duration"))
-                    r.duracaoSegundos = juce::String(streamVar["duration"].toString()).getDoubleValue();
-                if (codecsAudioLossy().count(juce::String(r.codec)) > 0)
-                    r.codecLossyDeclarado = true;
-            } else if (tipo == "video" && r.larguraPx == std::nullopt) {
-                r.larguraPx = streamVar["width"].toString().getIntValue();
-                r.alturaPx = streamVar["height"].toString().getIntValue();
-                if (r.codec.empty()) r.codec = streamVar["codec_name"].toString().toStdString();
-                juce::String frameRate = streamVar["r_frame_rate"].toString();
-                if (frameRate.isNotEmpty()) r.fps = parseFraction(frameRate);
-                if (!r.duracaoSegundos && streamVar.hasProperty("duration"))
-                    r.duracaoSegundos = juce::String(streamVar["duration"].toString()).getDoubleValue();
+                juce::var streams = root["streams"];
+                if (streams.isArray()) {
+                    for (auto& streamVar : *streams.getArray()) {
+                        juce::String tipo = streamVar["codec_type"].toString();
+                        if (tipo == "video") {
+                            if (streamVar.hasProperty("width"))
+                                r.larguraPx = streamVar["width"].toString().getIntValue();
+                            if (streamVar.hasProperty("height"))
+                                r.alturaPx = streamVar["height"].toString().getIntValue();
+                            r.codec = streamVar["codec_name"].toString().toStdString();
+                            juce::String frameRate = streamVar["r_frame_rate"].toString();
+                            if (frameRate.isNotEmpty()) r.fps = parseFraction(frameRate);
+                        }
+                    }
+                }
             }
         }
+    } catch (...) {
+    }
+
+    if (r.bruto.isVoid()) {
+        auto obj = std::make_unique<juce::DynamicObject>();
+        obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
+        r.bruto = juce::var(obj.release());
     }
 
     return r;
@@ -152,6 +273,11 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
         auto posOrientacao = exifData.findKey(Exiv2::ExifKey("Exif.Image.Orientation"));
         if (posOrientacao != exifData.end()) r.exifOrientacao = static_cast<int>(posOrientacao->toInt64());
 
+        if (image->pixelWidth() > 0 && image->pixelHeight() > 0) {
+            r.larguraPx = image->pixelWidth();
+            r.alturaPx = image->pixelHeight();
+        }
+
         r.exifGpsLatitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLatitude", "Exif.GPSInfo.GPSLatitudeRef");
         r.exifGpsLongitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLongitude", "Exif.GPSInfo.GPSLongitudeRef");
 
@@ -200,20 +326,35 @@ LeituraTecnicaResultado lerDocumentoPdf(const juce::File& arquivo) {
     return r;
 }
 
+LeituraTecnicaResultado lerDocumentoTexto(const juce::File& arquivo) {
+    LeituraTecnicaResultado r;
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
+
+    r.bruto = juce::var(obj.release());
+    return r;
+}
+
 } // namespace
 
 CategoriaMidia categoriaPorExtensao(const juce::File& arquivo) {
-    juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+    return categoriaPorExtensao(arquivo.getFileExtension().trimCharactersAtStart("."));
+}
+
+CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto) {
+    juce::String ext = extensaoSemPonto.toLowerCase();
     if (extensoesAudio().count(ext) > 0) return CategoriaMidia::Audio;
     if (extensoesVideo().count(ext) > 0) return CategoriaMidia::Video;
     if (extensoesImagem().count(ext) > 0) return CategoriaMidia::Imagem;
+    if (extensoesSessao().count(ext) > 0) return CategoriaMidia::Sessao;
     if (extensoesDocumento().count(ext) > 0) return CategoriaMidia::Documento;
+    if (extensoesTexto().count(ext) > 0) return CategoriaMidia::Texto;
     return CategoriaMidia::Desconhecida;
 }
 
 LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
     if (!arquivo.existsAsFile())
-        throw LeituraTecnicaError("arquivo não encontrado: " + arquivo.getFullPathName().toStdString());
+        throw LeituraTecnicaError("file not found: " + arquivo.getFullPathName().toStdString());
 
     switch (categoriaPorExtensao(arquivo)) {
         case CategoriaMidia::Audio: {
@@ -236,12 +377,21 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
             enriquecerComExif(r, arquivo);
             return r;
         }
+        case CategoriaMidia::Sessao:
+            return lerDocumentoTexto(arquivo);
         case CategoriaMidia::Documento:
             return lerDocumentoPdf(arquivo);
-        case CategoriaMidia::Desconhecida:
-            throw LeituraTecnicaError("extensão não reconhecida para leitura técnica: " + arquivo.getFullPathName().toStdString());
+        case CategoriaMidia::Texto:
+            return lerDocumentoTexto(arquivo);
+        case CategoriaMidia::Desconhecida: {
+            LeituraTecnicaResultado r;
+            auto obj = std::make_unique<juce::DynamicObject>();
+            obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
+            r.bruto = juce::var(obj.release());
+            return r;
+        }
     }
-    throw LeituraTecnicaError("categoria de mídia inesperada");
+    throw LeituraTecnicaError("unexpected media category");
 }
 
 std::string paraJson(const LeituraTecnicaResultado& r) {

@@ -81,7 +81,7 @@ void MetadadosOriginaisComponent::reconstruir(const std::string& itemId) {
     }
     if (tem("larguraPx") && tem("alturaPx"))
         linhas_.push_back({matriz::i18n::t("metadados.dimensoes"),
-                            texto("larguraPx") + " × " + texto("alturaPx") + " px"});
+                            texto("larguraPx") + " x " + texto("alturaPx") + " px"});
     if (tem("codec")) linhas_.push_back({matriz::i18n::t("metadados.codec"), texto("codec")});
     if (tem("sampleRate"))
         linhas_.push_back({matriz::i18n::t("metadados.sample_rate"),
@@ -113,6 +113,23 @@ void MetadadosOriginaisComponent::reconstruir(const std::string& itemId) {
         if (auto* obj = exif.getDynamicObject())
             for (auto& prop : obj->getProperties())
                 linhas_.push_back({prop.name.toString(), prop.value.toString()});
+    }
+
+    juce::File fArquivo(arquivo->caminhoAbsoluto);
+    if (fArquivo.existsAsFile()) {
+        juce::String tam = formatarBytes(fArquivo.getSize());
+        if (tam.isNotEmpty() && linhas_.size() < static_cast<size_t>(kMaxLinhasVisiveis))
+            linhas_.push_back({matriz::i18n::t("metadados.tamanho_arquivo"), tam});
+
+        auto criado = fArquivo.getCreationTime();
+        if (criado.toMilliseconds() > 0)
+            linhas_.push_back({matriz::i18n::t("metadados.criado_em"), criado.toString(true, true, false)});
+
+        auto modificado = fArquivo.getLastModificationTime();
+        if (modificado.toMilliseconds() > 0)
+            linhas_.push_back({matriz::i18n::t("metadados.modificado_em"), modificado.toString(true, true, false)});
+
+        linhas_.push_back({matriz::i18n::t("metadados.extensao"), fArquivo.getFileExtension()});
     }
 
     if (linhas_.empty()) semArquivo_ = true;
@@ -151,16 +168,12 @@ void MetadadosOriginaisComponent::paint(juce::Graphics& g) {
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
     g.drawText((colapsada_ ? juce::String("+  ") : juce::String("-  ")) +
-                   matriz::i18n::t("metadados.titulo").toUpperCase(),
+                   juce::String("AUTO + FIXED"),
                cabecalho, juce::Justification::centredLeft);
 
-    // A legenda "somente leitura" fica no cabeçalho, visível mesmo com a
-    // seção fechada: é o que distingue esta metade da ficha editável logo
-    // abaixo, e ela precisa ser lida ANTES de o operador procurar onde
-    // editar um valor que não é editável.
     g.setColour(tk.textoTerciario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-    g.drawText(matriz::i18n::t("metadados.somente_leitura"), cabecalho, juce::Justification::centredRight);
+    g.drawText(juce::String("extracted from file"), cabecalho, juce::Justification::centredRight);
 
     g.setColour(tk.borda);
     g.fillRect(0, getHeight() - 1, getWidth(), 1);

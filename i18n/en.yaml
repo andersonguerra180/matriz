@@ -545,6 +545,35 @@ ficha_grupos:
   "3d_file":
     arquivo: File
     especificacoes: Specifications
+  dvd:
+    media: Media
+    technical: Technical
+    physical_condition: "Physical condition"
+    content: Content
+  vhs:
+    media: Media
+    digitization: Digitization
+    physical_condition: "Physical condition"
+    content: Content
+  umatic:
+    media: Media
+    digitization: Digitization
+    physical_condition: "Physical condition"
+    content: Content
+  betacam:
+    media: Media
+    digitization: Digitization
+    physical_condition: "Physical condition"
+    content: Content
+  betamax:
+    media: Media
+    digitization: Digitization
+    physical_condition: "Physical condition"
+    content: Content
+  cover_art:
+    identification: Identification
+    image: Image
+    rights: Rights
 
 ficha_campos:
   fita_rolo:

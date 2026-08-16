@@ -20,6 +20,11 @@ juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta) {
     juce::File candidatoResources =
         execDir.getParentDirectory().getChildFile("Resources").getChildFile(nomeArquivo);
     if (candidatoResources.existsAsFile()) return candidatoResources.getFullPathName();
+
+    for (auto* path : { "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin" }) {
+        juce::File f = juce::File(path).getChildFile(nomeArquivo);
+        if (f.existsAsFile()) return f.getFullPathName();
+    }
 #endif
 
 #ifdef MATRIZ_DEV_BUILD
@@ -38,7 +43,7 @@ std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::St
 
     juce::ChildProcess proc;
     if (!proc.start(argv, juce::ChildProcess::wantStdOut))
-        throw ProcessoExternoError(nomeFerramenta + " não pôde ser iniciado: " + argv[0].toStdString());
+        throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
 
     juce::String output = proc.readAllProcessOutput();
     proc.waitForProcessToFinish(timeoutMs);
@@ -52,12 +57,12 @@ void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::String
 
     juce::ChildProcess proc;
     if (!proc.start(argv, juce::ChildProcess::wantStdOut))
-        throw ProcessoExternoError(nomeFerramenta + " não pôde ser iniciado: " + argv[0].toStdString());
+        throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
 
     proc.readAllProcessOutput();
     proc.waitForProcessToFinish(timeoutMs);
     if (proc.getExitCode() != 0)
-        throw ProcessoExternoError(nomeFerramenta + " terminou com código de erro " + std::to_string(proc.getExitCode()));
+        throw ProcessoExternoError(nomeFerramenta + " exited with error code " + std::to_string(proc.getExitCode()));
 }
 
 } // namespace matriz::ingest

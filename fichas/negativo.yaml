@@ -1,8 +1,9 @@
 tipo: negativo
 rotulo: Negativo fotográfico
-modos: [archive]
+modos: [archive, catalog]
 ordem: 90
 icone: imagem
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

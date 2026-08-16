@@ -43,4 +43,39 @@ bool embutirMarcadoresEmWav(const juce::File& wavDestino, const std::vector<Marc
 // WAV. Devolve quantos arquivos foram enriquecidos.
 int embutirMarcadoresNoBackup(matriz::db::Database& registro, const juce::File& raizDestino);
 
+struct MetadadoParaEmbutir {
+    std::string titulo;
+    std::string descricao;
+    std::string artista;
+    std::string codigoAcervo;
+    std::string tipoMidia;
+    std::optional<int> ano;
+    // Resumo do AI SCAN, quando existe. Vai para Xmp.dc.subject / a descrição
+    // do arquivo, de modo que o contexto detectado viaje junto com a cópia e
+    // não fique preso no banco do projeto.
+    std::string resumoAi;
+};
+
+enum class StatusEmbedding {
+    Embedded,
+    Unsupported,
+    Failed,
+    NoMetadata
+};
+
+MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId);
+
+StatusEmbedding embutirMetadadosNoArquivo(const juce::File& destino, const MetadadoParaEmbutir& meta);
+
+int embutirMetadadosNoBackup(matriz::db::Database& registro, const juce::File& raizDestino);
+
+struct ResultadoEmbedding {
+    int sucesso = 0;
+    int naoSuportados = 0;
+    int falha = 0;
+    std::vector<std::string> erros;
+};
+ResultadoEmbedding embutirMetadadosEmItens(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                            const std::vector<std::string>& itemIds);
+
 } // namespace matriz::consolidacao

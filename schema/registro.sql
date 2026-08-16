@@ -91,7 +91,11 @@ CREATE INDEX IF NOT EXISTS idx_assunto_projeto ON assunto(projeto_id);
 CREATE TABLE IF NOT EXISTS item (
     id              TEXT PRIMARY KEY,
     projeto_id      TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
-    codigo_acervo   TEXT NOT NULL,
+    -- NULL até o ingest do arquivo dar certo (§5, critério 6): o sequencial
+    -- ALLNO-xxxxx é recurso escasso e permanente, não pode ser gasto por um
+    -- item que falhou na leitura ou tinha tamanho zero. UNIQUE continua
+    -- valendo porque o SQLite trata cada NULL como distinto.
+    codigo_acervo   TEXT,
     titulo          TEXT NOT NULL,
     tipo_midia      TEXT, -- casa com o "tipo:" de uma definição YAML de ficha (§6); NULL = ainda não catalogado
                            -- (Reorientação completa §7.1: conteúdo aparece antes de qualquer classificação —
@@ -99,8 +103,14 @@ CREATE TABLE IF NOT EXISTS item (
     -- 'duplicata' (item 9, Acréscimos §5/§8.2): o conteúdo já existe no
     -- acervo (mesmo SHA-256), reconhecido em vez de reimportado — nunca
     -- copiado de novo, nunca um segundo asset pro mesmo arquivo.
-    estado          TEXT NOT NULL DEFAULT 'nao_digitalizado'
-                    CHECK (estado IN ('nao_digitalizado', 'capturado', 'qc_ok', 'alerta', 'publicado', 'duplicata')),
+    -- Estados de workflow do §4 ('novo' -> 'arquivado') mais os dois estados
+    -- de ingest que não são etapa de curadoria: 'duplicata' (conteúdo já no
+    -- acervo) e os legados de bancos anteriores, que continuam válidos pra
+    -- projeto reaberto não virar erro de CHECK.
+    estado          TEXT NOT NULL DEFAULT 'novo'
+                    CHECK (estado IN ('novo', 'em_analise', 'catalogado', 'revisado', 'aprovado',
+                                      'publicado', 'arquivado', 'duplicata',
+                                      'nao_digitalizado', 'capturado', 'qc_ok', 'alerta')),
     notas_livres    TEXT,
     criado_em       TEXT NOT NULL,
     atualizado_em   TEXT NOT NULL,
@@ -110,6 +120,20 @@ CREATE TABLE IF NOT EXISTS item (
 CREATE INDEX IF NOT EXISTS idx_item_projeto ON item(projeto_id);
 CREATE INDEX IF NOT EXISTS idx_item_tipo_midia ON item(tipo_midia);
 CREATE INDEX IF NOT EXISTS idx_item_estado ON item(estado);
+
+-- ---------------------------------------------------------------------------
+-- Tags — cada tag é armazenada separadamente para busca (§ metadata spec).
+-- Múltiplas tags por item, cada uma como linha independente.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS item_tag (
+    id       TEXT PRIMARY KEY,
+    item_id  TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    tag      TEXT NOT NULL,
+    UNIQUE (item_id, tag)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_tag_item ON item_tag(item_id);
+CREATE INDEX IF NOT EXISTS idx_item_tag_tag ON item_tag(tag);
 
 -- Assunto aplicado ao item inteiro, não só a um trecho (§10.3)
 CREATE TABLE IF NOT EXISTS item_assunto (
@@ -228,7 +252,8 @@ CREATE INDEX IF NOT EXISTS idx_item_observacao_item ON item_observacao(item_id);
 CREATE TABLE IF NOT EXISTS arquivo (
     id                      TEXT PRIMARY KEY,
     item_id                 TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
-    caminho_relativo        TEXT NOT NULL,   -- relativo à pasta do projeto (P5)
+    vault_id                TEXT REFERENCES vault(id) ON DELETE SET NULL,
+    caminho_relativo        TEXT NOT NULL,   -- relativo ao vault ou pasta do projeto (P5)
     -- Caminho absoluto de onde o arquivo foi ingerido (Reorientação completa
     -- §4/§5.1 — árvore ORIGEM): a estrutura de pastas de origem é metadado,
     -- nunca é achatada nem descartada. NULL só em bancos antigos reabertos
@@ -241,6 +266,7 @@ CREATE TABLE IF NOT EXISTS arquivo (
     caminho_absoluto_origem TEXT,
     papel                   TEXT NOT NULL,   -- preservation_master | access_copy | capa_frente | capa_verso | encarte | documento | stem | foto_suporte ...
     eh_master               INTEGER NOT NULL DEFAULT 0 CHECK (eh_master IN (0, 1)),
+    tamanho_bytes           INTEGER,
 
     checksum_md5            TEXT,
     checksum_sha256         TEXT,
@@ -270,12 +296,32 @@ CREATE TABLE IF NOT EXISTS arquivo (
 
 CREATE INDEX IF NOT EXISTS idx_arquivo_item ON arquivo(item_id);
 CREATE INDEX IF NOT EXISTS idx_arquivo_checksum_sha256 ON arquivo(checksum_sha256);
+CREATE INDEX IF NOT EXISTS idx_arquivo_caminho_absoluto_origem ON arquivo(caminho_absoluto_origem);
+
+-- ---------------------------------------------------------------------------
+-- Sinalizador de reconciliação em curso (§8).
+--
+-- A trava de master abaixo existe pra impedir que um caminho de EDIÇÃO
+-- reescreva a identidade de um master. A reconciliação de Vault não é
+-- edição: ela não muda o arquivo, ela CONSTATA que o arquivo mudou de lugar
+-- ou de conteúdo por fora do software, e o registro tem que refletir isso —
+-- senão o catálogo aponta pra um caminho que não existe mais e o §8 fica
+-- impossível de cumprir.
+--
+-- Como o SQLite não desliga trigger, a reconciliação declara o que está
+-- fazendo inserindo uma linha aqui, e a trava consulta. É explícito e
+-- auditável: qualquer UPDATE de master fora dessa janela continua barrado.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS reconciliacao_em_curso (
+    marca INTEGER PRIMARY KEY CHECK (marca = 1)
+);
 
 -- ---------------------------------------------------------------------------
 -- P1 embutido na estrutura: master é travado por padrão. Qualquer UPDATE que
 -- mude caminho ou checksum de um arquivo eh_master=1 é abortado, a menos que
--- o projeto tenha permitir_sobrescrever_master=1. Correção sempre vira
--- derivada nova (INSERT com derivada_de_arquivo_id preenchido).
+-- o projeto tenha permitir_sobrescrever_master=1 ou uma reconciliação de
+-- Vault esteja em curso. Correção sempre vira derivada nova (INSERT com
+-- derivada_de_arquivo_id preenchido).
 -- ---------------------------------------------------------------------------
 CREATE TRIGGER IF NOT EXISTS arquivo_master_travado
 BEFORE UPDATE OF caminho_relativo, checksum_md5, checksum_sha256 ON arquivo
@@ -284,6 +330,7 @@ WHEN OLD.eh_master = 1
       OR IFNULL(NEW.checksum_md5, '') <> IFNULL(OLD.checksum_md5, '')
       OR IFNULL(NEW.checksum_sha256, '') <> IFNULL(OLD.checksum_sha256, ''))
  AND (SELECT permitir_sobrescrever_master FROM projeto WHERE id = (SELECT projeto_id FROM item WHERE id = OLD.item_id)) = 0
+ AND (SELECT COUNT(*) FROM reconciliacao_em_curso) = 0
 BEGIN
     SELECT RAISE(ABORT, 'arquivo: master travado — ligue "permitir sobrescrever master" no projeto para editar, ou gere uma derivada');
 END;
@@ -394,7 +441,7 @@ CREATE INDEX IF NOT EXISTS idx_localizacao_conhecida_arquivo ON localizacao_conh
 CREATE TABLE IF NOT EXISTS consolidacao_registro (
     id                      TEXT PRIMARY KEY,
     item_id                 TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
-    pasta_id                TEXT NOT NULL REFERENCES acervo_pasta(id) ON DELETE CASCADE,
+    pasta_id                TEXT NOT NULL DEFAULT '',
     arquivo_id              TEXT NOT NULL REFERENCES arquivo(id) ON DELETE CASCADE,
     caminho_relativo_destino TEXT NOT NULL, -- relativo à raiz de destino escolhida, ex.: "consolidado/01 Fitas/ACR-001.wav"
     checksum_sha256         TEXT NOT NULL,   -- da CÓPIA consolidada (sem embedding), verificado depois de copiar
@@ -403,3 +450,272 @@ CREATE TABLE IF NOT EXISTS consolidacao_registro (
 );
 
 CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_arquivo ON consolidacao_registro(arquivo_id);
+
+-- ---------------------------------------------------------------------------
+-- Vault (Cofre de Preservação)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vault (
+    id            TEXT PRIMARY KEY,
+    projeto_id    TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    nome          TEXT NOT NULL,
+    tipo          TEXT NOT NULL CHECK (tipo IN ('local','optico','lto','rede','nuvem_sync')),
+    uuid_volume   TEXT,
+    raiz_relativa TEXT,
+    localizacao   TEXT NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online','offline')),
+    visto_em      TEXT,
+    criado_em     TEXT NOT NULL,
+    verificado_em TEXT
+);
+
+-- ---------------------------------------------------------------------------
+-- Cache de Arquivo (Visualização Offline)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS cache_arquivo (
+    arquivo_id    TEXT PRIMARY KEY REFERENCES arquivo(id) ON DELETE CASCADE,
+    miniatura     BLOB,
+    forma_onda    BLOB,
+    lufs_i        REAL,
+    lra           REAL,
+    true_peak     REAL,
+    peak_amostra  REAL,
+    correlacao_media REAL,
+    calculado_em  TEXT NOT NULL,
+    versao_analise INTEGER NOT NULL DEFAULT 1
+);
+
+-- ---------------------------------------------------------------------------
+-- Proveniência Append-Only
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS proveniencia (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    evento      TEXT NOT NULL,
+    autor       TEXT NOT NULL,
+    detalhes    TEXT,
+    criado_em   TEXT NOT NULL
+);
+
+-- ---------------------------------------------------------------------------
+-- Publicação
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS publicacao (
+    id            TEXT PRIMARY KEY,
+    projeto_id    TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    vault_id      TEXT NOT NULL REFERENCES vault(id) ON DELETE CASCADE,
+    autor         TEXT NOT NULL,
+    layout_pasta  TEXT NOT NULL,
+    criada_em     TEXT NOT NULL,
+    status        TEXT NOT NULL CHECK (status IN ('planejada','concluida','falha')),
+    nota          TEXT
+);
+
+CREATE TABLE IF NOT EXISTS item_publicacao (
+    item_id           TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    publicacao_id     TEXT NOT NULL REFERENCES publicacao(id) ON DELETE CASCADE,
+    caminho_relativo  TEXT NOT NULL,
+    checksum_validado TEXT NOT NULL,
+    verificado_em     TEXT NOT NULL,
+    PRIMARY KEY (item_id, publicacao_id)
+);
+
+-- ---------------------------------------------------------------------------
+-- Tipo de Marcador (Lookup)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tipo_marcador (
+    id     TEXT PRIMARY KEY,
+    rotulo TEXT NOT NULL,
+    cor    TEXT NOT NULL,
+    embutido INTEGER NOT NULL DEFAULT 0
+);
+
+-- ---------------------------------------------------------------------------
+-- Entidades Ricas
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS entidade (
+    id         TEXT PRIMARY KEY,
+    projeto_id TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    tipo       TEXT NOT NULL CHECK (tipo IN ('pessoa','lugar','evento','organizacao')),
+    nome       TEXT NOT NULL,
+    nota       TEXT,
+    criado_em  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS item_entidade (
+    item_id     TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    entidade_id TEXT NOT NULL REFERENCES entidade(id) ON DELETE CASCADE,
+    papel       TEXT,
+    PRIMARY KEY (item_id, entidade_id, papel)
+);
+
+-- ---------------------------------------------------------------------------
+-- AI Scan — resultados persistidos de análise contextual com IA (Gemini).
+-- Armazenados no registro (não no índice) porque são decisão do operador
+-- (ele escolheu executar o scan) e precisam sobreviver a rebuild do índice.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ai_scan_resultado (
+    id              TEXT PRIMARY KEY,
+    item_id         TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    modelo          TEXT NOT NULL,       -- e.g. "gemini-2.0-flash"
+    -- 'visual' | 'audio' | 'video' | 'documento'. Sem CHECK: a lista de tipos
+    -- analisáveis cresce junto com a API, e um CHECK aqui transforma cada tipo
+    -- novo numa exceção em tempo de execução no meio de um scan longo.
+    tipo_analise    TEXT NOT NULL,
+    contexto_json   TEXT NOT NULL,       -- JSON array of detected concepts/tags
+    resumo          TEXT,                -- human-readable summary
+    confianca       REAL,               -- 0.0-1.0
+    analisado_em    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_scan_resultado_item ON ai_scan_resultado(item_id);
+
+-- FTS index for AI scan results — enables contextual search ("bicycle", "beach", etc.)
+CREATE TRIGGER IF NOT EXISTS trg_ai_scan_busca_insert AFTER INSERT ON ai_scan_resultado FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.resumo);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_ai_scan_busca_delete AFTER DELETE ON ai_scan_resultado FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.resumo;
+END;
+
+-- ---------------------------------------------------------------------------
+-- Busca Textual Spotlight (FTS5)
+-- ---------------------------------------------------------------------------
+CREATE VIRTUAL TABLE IF NOT EXISTS busca_fts USING fts5(
+    item_id UNINDEXED,
+    conteudo,
+    tokenize='unicode61'
+);
+
+-- Triggers para manter busca_fts em sincronia
+-- codigo_acervo é NULL enquanto o ingest não confirma (§5): indexar o NULL
+-- encheria a FTS de linhas sem conteúdo, então cada trigger filtra.
+CREATE TRIGGER IF NOT EXISTS trg_item_busca_insert AFTER INSERT ON item FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_busca_delete AFTER DELETE ON item FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_busca_update AFTER UPDATE ON item FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.id
+      AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo);
+    INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_delete AFTER DELETE ON item_campo FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.valor;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.valor;
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_insert AFTER INSERT ON item_assunto FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, (SELECT termo FROM assunto WHERE id = new.assunto_id));
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_delete AFTER DELETE ON item_assunto FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id);
+END;
+
+-- ---------------------------------------------------------------------------
+-- Coleções Inteligentes embutidas (§10) — VIEWS, não tabelas.
+--
+-- Uma view não guarda resultado: cada SELECT reexecuta a pergunta sobre o
+-- estado atual do catálogo. É o que faz "Ausentes" ficar certo no instante em
+-- que a reconciliação de Vault (§8) marca um arquivo como ausente, sem
+-- ninguém precisar reindexar nada.
+--
+-- Todas expõem a MESMA forma — (item_id, colecao) — pra a árvore da esquerda
+-- listar qualquer uma sem saber o que cada uma pergunta.
+-- ---------------------------------------------------------------------------
+
+-- Clipping: True Peak acima de -0.1 dBTP. Vem do cache de análise, calculado
+-- na ingestão (I2) — nunca medido na hora de abrir a coleção.
+CREATE VIEW IF NOT EXISTS colecao_clipping AS
+SELECT DISTINCT a.item_id AS item_id, 'clipping' AS colecao
+FROM cache_arquivo c
+JOIN arquivo a ON a.id = c.arquivo_id
+WHERE c.true_peak IS NOT NULL AND c.true_peak > -0.1;
+
+-- Ausentes: o arquivo não está mais onde foi catalogado. A ficha continua
+-- inteira (§8) — é o item que precisa ser reencontrado, não recadastrado.
+CREATE VIEW IF NOT EXISTS colecao_ausentes AS
+SELECT DISTINCT a.item_id AS item_id, 'ausentes' AS colecao
+FROM arquivo a
+WHERE a.estado_presenca IN ('ausente', 'corrompido');
+
+-- Não baixados: placeholder de iCloud/Dropbox registrado sem forçar o
+-- download dos bytes (critério 12).
+CREATE VIEW IF NOT EXISTS colecao_nao_baixados AS
+SELECT DISTINCT a.item_id AS item_id, 'nao_baixados' AS colecao
+FROM arquivo a
+WHERE a.estado_presenca = 'nao_baixado';
+
+-- Incompletos: sem título, sem artista ou sem ISRC. O título vive em `item`;
+-- artista e ISRC são campos de ficha, então a checagem é por ausência de
+-- linha em item_campo (ou linha vazia).
+CREATE VIEW IF NOT EXISTS colecao_incompletos AS
+SELECT i.id AS item_id, 'incompletos' AS colecao
+FROM item i
+WHERE i.titulo IS NULL OR TRIM(i.titulo) = ''
+   OR NOT EXISTS (SELECT 1 FROM item_campo c WHERE c.item_id = i.id
+                   AND c.campo_id IN ('artista_principal', 'artista') AND TRIM(IFNULL(c.valor, '')) <> '')
+   OR NOT EXISTS (SELECT 1 FROM item_campo c WHERE c.item_id = i.id
+                   AND c.campo_id = 'isrc' AND TRIM(IFNULL(c.valor, '')) <> '');
+
+-- Vulneráveis: existe um único lugar no mundo com esse conteúdo. Item que
+-- nunca entrou numa publicação concluída não tem cópia de preservação
+-- nenhuma — é o que a coleção existe pra tornar visível antes de ser tarde.
+CREATE VIEW IF NOT EXISTS colecao_vulneraveis AS
+SELECT i.id AS item_id, 'vulneraveis' AS colecao
+FROM item i
+WHERE NOT EXISTS (
+    SELECT 1 FROM item_publicacao ip
+    JOIN publicacao p ON p.id = ip.publicacao_id
+    WHERE ip.item_id = i.id AND p.status = 'concluida');
+
+-- Revisão: tem marcador aberto do tipo "revisar" ou "dropout" OR has missing metadata.
+CREATE VIEW IF NOT EXISTS colecao_revisao AS
+SELECT DISTINCT m.item_id AS item_id, 'revisao' AS colecao
+FROM marcador m
+WHERE IFNULL(m.status, 'aberto') = 'aberto'
+  AND (m.tipo_id IN ('revisar', 'dropout'))
+UNION
+SELECT i.id AS item_id, 'revisao' AS colecao
+FROM item i
+CROSS JOIN projeto p
+WHERE (p.modo = 'catalogo' AND (
+      (i.tipo_midia IS NULL OR TRIM(i.tipo_midia) = '')
+      OR (i.titulo IS NULL OR TRIM(i.titulo) = '')
+      OR (i.caminho_catalogo IS NULL OR TRIM(i.caminho_catalogo) = '')
+      OR (i.ano IS NULL OR TRIM(i.ano) = '')
+      OR (i.content_type IS NULL OR TRIM(i.content_type) = '')
+      OR (i.collection_type IS NULL OR TRIM(i.collection_type) = '')
+      OR (i.notas_livres IS NULL OR TRIM(i.notas_livres) = '')
+      OR (NOT EXISTS (SELECT 1 FROM item_tag t WHERE t.item_id = i.id))
+      OR (i.tipo_midia = 'audio' AND (i.isrc IS NULL OR TRIM(i.isrc) = ''))
+      OR (i.tipo_midia IN ('video', 'image', 'document', 'texto', 'sessao', 'documento', 'foto', 'digital_video') AND (i.source_media IS NULL OR TRIM(i.source_media) = ''))
+   ))
+   OR (p.modo = 'preservacao' AND (
+      (i.tipo_midia IS NULL OR TRIM(i.tipo_midia) = '')
+      OR (i.titulo IS NULL OR TRIM(i.titulo) = '')
+   ));
+
+-- União de todas, pra a UI consultar um lugar só.
+CREATE VIEW IF NOT EXISTS colecao_embutida AS
+SELECT item_id, colecao FROM colecao_clipping
+UNION ALL SELECT item_id, colecao FROM colecao_ausentes
+UNION ALL SELECT item_id, colecao FROM colecao_nao_baixados
+UNION ALL SELECT item_id, colecao FROM colecao_incompletos
+UNION ALL SELECT item_id, colecao FROM colecao_vulneraveis
+UNION ALL SELECT item_id, colecao FROM colecao_revisao;

@@ -29,6 +29,10 @@ public:
     std::function<void()> aoFazerBackup;
     std::function<void(const juce::String&)> aoBuscar;
     std::function<void(int)> aoMudarTamanho; // 0 = pequeno, 1 = médio, 2 = grande
+    std::function<void(bool)> aoAlternarModoVisao; // true = lista, false = grade
+    std::function<void(bool)> aoAlternarEstruturaOrigem;
+    std::function<void(bool)> aoAlternarEstruturaBackup;
+    std::function<void(const std::string&)> aoMudarFiltroHorizontal;
 
     // Contagem "X de Y arquivos" no meio da barra — é o feedback de que o
     // filtro/busca fez alguma coisa, sem o operador ter que contar célula.
@@ -43,24 +47,47 @@ public:
     // salva) e o campo precisa acompanhar sem realimentar o mosaico.
     void definirTextoBuscaSemNotificar(const juce::String& texto);
 
+    // Actively select one of the horizontal filters from the code
+    void definirFiltroHorizontalAtivo(const std::string& chave);
+
     void paint(juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int kAltura = 52;
+    static constexpr int kAltura = 88;
 
 private:
     void aplicarEstiloBotao(juce::TextButton& botao, bool primario) const;
     void marcarTamanhoAtivo(int indice);
+    void atualizarBotoesFiltroHorizontal();
 
     std::unique_ptr<juce::TextButton> botaoAdicionar_;
     std::unique_ptr<juce::TextButton> botaoNavegar_;
     std::unique_ptr<juce::TextEditor> campoBusca_;
+    std::unique_ptr<juce::TextButton> btnLimparBusca_;
     std::unique_ptr<juce::Label> labelContagem_;
     std::unique_ptr<juce::TextButton> botaoTamanhoP_, botaoTamanhoM_, botaoTamanhoG_;
+    std::unique_ptr<juce::TextButton> botaoModoVisao_;
     std::unique_ptr<juce::TextButton> botaoDetalhes_;
     std::unique_ptr<juce::TextButton> botaoBackup_;
+    std::unique_ptr<juce::TextButton> botaoEstruturaOrigem_;
+    std::unique_ptr<juce::TextButton> botaoEstruturaBackup_;
+    std::unique_ptr<juce::TextButton> botaoAdvanced_;
+
+    // Horizontal filters
+    std::unique_ptr<juce::TextButton> btnAllAssets_;
+    std::unique_ptr<juce::TextButton> btnRecent_;
+    std::unique_ptr<juce::TextButton> btnAudio_;
+    std::unique_ptr<juce::TextButton> btnVideo_;
+    std::unique_ptr<juce::TextButton> btnImage_;
+    std::unique_ptr<juce::TextButton> btnDocument_;
+    std::string filtroHorizontalAtivo_ = "all";
+
     int tamanhoAtivo_ = 1; // médio, mesmo padrão de MosaicoComponent
     bool detalhesAbertos_ = false;
+    bool modoLista_ = false;
+    bool mostrarEstruturaOrigem_ = false;
+    bool mostrarEstruturaBackup_ = false;
+    bool mostrarAdvanced_ = false;
 };
 
 } // namespace matriz::ui

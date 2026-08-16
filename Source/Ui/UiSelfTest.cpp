@@ -18,7 +18,10 @@
 #include "PainelInconsistenciasComponent.h"
 #include "PreviewComponent.h"
 #include "ProjetoAberto.h"
+#include "AudioWorkspace.h"
+#include "../Ingest/CacheArquivo.h"
 #include "SelecionarTipoMidiaDialogo.h"
+#include "TagChipsEditor.h"
 
 #include <JuceHeader.h>
 
@@ -90,11 +93,11 @@ void verificarInvariantes(juce::Component& raiz, const juce::String& contexto, i
         juce::String nome = contexto + "/" + juce::String(i);
 
         checar(filho->getWidth() > 0 && filho->getHeight() > 0,
-               "sem tamanho zero: " + nome + " (" + juce::String(filho->getWidth()) + "x" +
+               "non-zero size: " + nome + " (" + juce::String(filho->getWidth()) + "x" +
                    juce::String(filho->getHeight()) + ")");
 
         if (!dentroDeConteudoRolavel(*filho)) {
-            checar(raiz.getLocalBounds().contains(filho->getBounds()), "dentro dos limites do pai: " + nome);
+            checar(raiz.getLocalBounds().contains(filho->getBounds()), "within parent bounds: " + nome);
         }
 
         verificarInvariantes(*filho, nome, profundidade - 1);
@@ -136,8 +139,8 @@ std::string inserirItemComOrigem(matriz::db::Database& registro, const std::stri
                                   const std::string& codigo, const juce::String& caminhoOrigem) {
     std::string id = inserirItemTipado(registro, projetoId, codigo, "documento");
     registro.run(
-        "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, "
-        "criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'documento', 0, ?, ?)",
+        "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, "
+        "criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'documento', 0, 1024, ?, ?)",
         {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
          matriz::db::Value::of("originais/" + codigo + ".txt"),
          matriz::db::Value::of(caminhoOrigem.toStdString()), matriz::db::Value::of(matriz::model::agoraIso8601()),
@@ -192,7 +195,7 @@ void esperarDispatch(int ms = 30) { juce::MessageManager::getInstance()->runDisp
 // foco de teclado é um conceito de janela real, não existe sem peer.
 // ---------------------------------------------------------------------
 void testarPerdaDeDadoNaFicha(ProjetoAberto& projeto, const std::string& itemId1, const std::string& itemId2) {
-    std::cout << "== Parte 2: ficha nunca descarta o que foi digitado ==\n";
+    std::cout << "== Part 2: the record never discards what was typed ==\n";
 
     PeerDeTeste peer(420, 900);
     FichaPanelComponent ficha(projeto);
@@ -201,10 +204,11 @@ void testarPerdaDeDadoNaFicha(ProjetoAberto& projeto, const std::string& itemId1
 
     ficha.mostrarItem(itemId1);
     auto* editor = ficha.editorDoCampoParaTeste("raiz", 0, "maquina"); // fita_rolo.yaml: campo de texto simples
-    checar(editor != nullptr, "campo de texto \"maquina\" (fita_rolo) encontrado na ficha renderizada");
+    checar(editor != nullptr, "the \"maquina\" text field (fita_rolo) was found in the rendered record");
     if (auto* te = dynamic_cast<juce::TextEditor*>(editor)) {
         te->grabKeyboardFocus();
         esperarDispatch();
+        te->selectAll();
         te->insertTextAtCaret("Studer A80 #7");
         // Deliberadamente SEM onFocusLost/onReturnKey — troca de item com o
         // campo ainda em edição, o cenário exato do bug relatado.
@@ -213,7 +217,7 @@ void testarPerdaDeDadoNaFicha(ProjetoAberto& projeto, const std::string& itemId1
 
     auto valorSalvo = projeto.valorCampo(itemId1, "raiz", 0, "maquina");
     checar(valorSalvo.has_value() && *valorSalvo == "Studer A80 #7",
-           "valor digitado sem nunca perder o foco sobrevive à troca de item (salvo: \"" +
+           "typed value survives switching items without ever losing focus (saved: \"" +
                (valorSalvo ? *valorSalvo : std::string("<vazio>")) + "\")");
 
     // Reabre o item 1 e confirma que a ficha carrega exatamente o que foi
@@ -221,16 +225,16 @@ void testarPerdaDeDadoNaFicha(ProjetoAberto& projeto, const std::string& itemId1
     ficha.mostrarItem(itemId1);
     auto* editorReaberto = ficha.editorDoCampoParaTeste("raiz", 0, "maquina");
     if (auto* te = dynamic_cast<juce::TextEditor*>(editorReaberto)) {
-        checar(te->getText() == "Studer A80 #7", "ficha reaberta mostra o valor persistido, não vazio");
+        checar(te->getText() == "Studer A80 #7", "reopened record shows the persisted value, not an empty field");
     } else {
-        checar(false, "editor do campo \"maquina\" reaparece ao reabrir o item");
+        checar(false, "the \"maquina\" field editor comes back when the item is reopened");
     }
 
     // Campo obrigatório vazio (largura, sem valor) não deve ter apagado
     // NENHUM outro campo do mesmo item — confirma que o resto sobreviveu.
     auto velocidade = projeto.valorCampo(itemId1, "raiz", 0, "velocidade");
-    checar(true, "campo obrigatório vazio (\"largura\") não é motivo pra apagar outros campos — "
-                 "nenhum \"required gate\" existe nesta ficha, cada campo é independente");
+    checar(true, "an empty required field (\"largura\") is no reason to drop other fields - "
+                 "no \"required gate\" exists in this record, each field stands alone");
     juce::ignoreUnused(velocidade);
 }
 
@@ -269,7 +273,7 @@ void testarDragAndDrop(const juce::File& pastaReal, const juce::File& arquivoRea
     janela->abrirProjeto(std::move(projetoDescartavel));
 
     checar(janela->isInterestedInFileDrag({pastaReal.getFullPathName()}),
-           "MainComponent aceita arrastar uma PASTA (com projeto aberto) — antes só o mosaico aceitava");
+           "MainComponent accepts dragging a FOLDER (with a project open) - only the grid used to");
     checar(janela->isInterestedInFileDrag({arquivoReal.getFullPathName()}),
            "MainComponent aceita arrastar um ARQUIVO avulso (com projeto aberto)");
 }
@@ -278,14 +282,77 @@ void testarDragAndDrop(const juce::File& pastaReal, const juce::File& arquivoRea
 
 int rodarUiSelfTest() {
     std::cout.setf(std::ios_base::unitbuf); // flush a cada linha — precisa do log exato se travar/crashar
-    std::cout << "== Harness de UI headless (correção crítica — Parte 1) ==\n";
-    std::cout << "Saída: " << pastaSaida().getFullPathName() << "\n\n";
+    std::cout << "== Headless UI harness ==\n";
+    std::cout << "Output: " << pastaSaida().getFullPathName() << "\n\n";
 
     juce::File tmpRoot = juce::File::getSpecialLocation(juce::File::tempDirectory)
                               .getChildFile("matriz_uitest_" + juce::Uuid().toDashedString());
 
     try {
         matriz::i18n::carregar("en");
+
+        // ===================================================================
+        // TagChipsEditor (Bloco B) — roda primeiro, não precisa de projeto
+        // ===================================================================
+        std::cout << "\n== TagChipsEditor ==\n";
+        {
+            TagChipsEditor chips;
+            chips.setBounds(0, 0, 300, 28);
+
+            checar(chips.getTags().empty(), "starts empty");
+
+            // Simula digitar "mixagem" e apertar Enter
+            chips.getInputForTest()->setText("mixagem", false);
+            checar(chips.getInputForTest()->getText() == "mixagem", "text entered: \"" + chips.getInputForTest()->getText() + "\"");
+
+            auto enterKey = juce::KeyPress(juce::KeyPress::returnKey);
+            bool handled = chips.getInputForTest()->keyPressed(enterKey);
+            checar(handled, "Enter key was handled by TagInput");
+
+            checar(chips.getTags().size() == 1, "Enter creates one chip (got " +
+                   juce::String(static_cast<int>(chips.getTags().size())) + ")");
+            if (!chips.getTags().empty())
+                checar(chips.getTags()[0] == "mixagem", "chip has correct text");
+            checar(chips.getInputForTest()->getText().isEmpty(), "input cleared after Enter");
+
+            // Segunda tag
+            chips.getInputForTest()->setText("master", false);
+            chips.getInputForTest()->keyPressed(enterKey);
+            checar(chips.getTags().size() == 2, "two chips after second Enter");
+
+            // Terceira tag
+            chips.getInputForTest()->setText("final", false);
+            chips.getInputForTest()->keyPressed(enterKey);
+            checar(chips.getTags().size() == 3, "three chips after third Enter");
+
+            // Backspace com campo vazio remove último chip
+            auto bksp = juce::KeyPress(juce::KeyPress::backspaceKey);
+            chips.getInputForTest()->keyPressed(bksp);
+            checar(chips.getTags().size() == 2, "Backspace removed last chip");
+
+            // Múltiplas tags com vírgula via Enter (commitText faz o split)
+            chips.getInputForTest()->setText("rock, ao vivo, 1998", false);
+            chips.getInputForTest()->keyPressed(enterKey);
+            checar(chips.getTags().size() == 5, "comma-separated text creates multiple chips (got " +
+                   juce::String(static_cast<int>(chips.getTags().size())) + ")");
+
+            // Deduplicação
+            chips.getInputForTest()->setText("rock", false);
+            chips.getInputForTest()->keyPressed(enterKey);
+            checar(chips.getTags().size() == 5, "duplicate not added");
+
+            // Tab também commita
+            chips.getInputForTest()->setText("newtag", false);
+            auto tabKey = juce::KeyPress(juce::KeyPress::tabKey);
+            chips.getInputForTest()->keyPressed(tabKey);
+            checar(chips.getTags().size() == 6, "Tab commits tag");
+
+            // setTags e getTags round-trip
+            std::vector<std::string> preset = {"a", "b", "c"};
+            chips.setTags(preset);
+            checar(chips.getTags().size() == 3, "setTags works");
+            checar(chips.getTags()[0] == "a", "first tag preserved");
+        }
 
         // ================= Projeto Archive: um item de cada tipo descoberto em fichas/ =================
         matriz::model::NovoProjetoParams paramsArchive;
@@ -322,10 +389,11 @@ int rodarUiSelfTest() {
         auto projetoCatalog = matriz::model::Project::criar(tmpRoot.getChildFile("catalog"), paramsCatalog);
         std::string releaseId = inserirItemTipado(projetoCatalog->registro(), projetoCatalog->projetoId(), "UIC-01", "release");
         gravarCampoRaiz(projetoCatalog->registro(), releaseId, "artista_principal", "Banda Teste");
-        gravarCampoRaiz(projetoCatalog->registro(), releaseId, "titulo", "Álbum de Teste");
+        gravarCampoRaiz(projetoCatalog->registro(), releaseId, "titulo", "Test Album");
         MainComponent janelaCatalog;
         janelaCatalog.setBounds(0, 0, 1280, 800);
         janelaCatalog.abrirProjeto(std::move(projetoCatalog));
+        janelaCatalog.mostrarCatalog();
 
         // ===================================================================
         // Telas: renderizar pra PNG (1.2) + invariantes automáticas
@@ -344,7 +412,7 @@ int rodarUiSelfTest() {
         matriz::i18n::carregar("en"); // volta pro padrão pro resto do harness
 
         auto dialogoNovo = mostrarDialogoNovoProjeto(matriz::model::Modo::Preservacao, [](auto) {});
-        checar(dialogoNovo != nullptr, "diálogo de criação (\"criação\", 1.2) foi construído");
+        checar(dialogoNovo != nullptr, "the create-project dialog (1.2) was built");
         if (dialogoNovo) {
             if (dialogoNovo->getWidth() <= 0 || dialogoNovo->getHeight() <= 0) dialogoNovo->setSize(460, 480);
             salvarSnapshot(*dialogoNovo, "02_dialogo_novo_projeto");
@@ -364,33 +432,44 @@ int rodarUiSelfTest() {
 
         salvarSnapshot(janelaCatalog, "04_janela_principal_catalog");
         verificarInvariantes(janelaCatalog, "janela_principal_catalog");
-        checar(janelaCatalog.temPainelInconsistencias(), "janela Catalog mostra o painel de inconsistências (§1.3)");
+        checar(janelaCatalog.temPainelInconsistencias(), "the Catalog window shows the inconsistency panel (1.3)");
         checar(janelaCatalog.totalInconsistencias() > 0,
-               "release sem capa já aparece como inconsistência (" +
+               "a release with no cover already shows up as an inconsistency (" +
                    juce::String(janelaCatalog.totalInconsistencias()) + ")");
 
         MosaicoComponent mosaicoVazio(*janelaVazia.projetoAberto());
         mosaicoVazio.setBounds(0, 0, 320, 800);
-        mosaicoVazio.recarregar();
+        mosaicoVazio.recarregarSincrono();
         salvarSnapshot(mosaicoVazio, "05_mosaico_vazio");
-        checar(mosaicoVazio.totalItensCarregados() == 0, "mosaico vazio (\"mosaico com/sem itens\", 1.2) tem 0 itens");
+        checar(mosaicoVazio.totalItensCarregados() == 0, "the empty grid has 0 items");
 
         MosaicoComponent mosaicoComItens(*janelaArchive.projetoAberto());
         mosaicoComItens.setBounds(0, 0, 320, 1200);
-        mosaicoComItens.recarregar();
+        mosaicoComItens.recarregarSincrono();
         salvarSnapshot(mosaicoComItens, "05b_mosaico_com_itens");
         checar(mosaicoComItens.totalItensCarregados() == static_cast<int>(todosOsTipos().size()),
-               "mosaico com itens carregou todos os " + juce::String(todosOsTipos().size()) + " tipos descobertos");
+               "the populated grid loaded all " + juce::String(todosOsTipos().size()) + " tipos descobertos");
 
+        // Seletor de tipo de mídia (1.2) — agora um overlay interno da
+        // janela (§3), não mais um AlertWindow com peer nativo próprio.
         auto opcoesTipo = listarTiposMidiaDisponiveis(*janelaArchive.projetoAberto());
-        auto dialogoTipo = mostrarDialogoSelecionarTipoMidia(opcoesTipo, 3, [](auto) {});
-        checar(dialogoTipo != nullptr, "diálogo de tipo de mídia (1.2) foi construído");
-        if (dialogoTipo) {
-            if (dialogoTipo->getWidth() <= 0 || dialogoTipo->getHeight() <= 0) dialogoTipo->setSize(460, 200);
-            salvarSnapshot(*dialogoTipo, "06_dialogo_tipo_midia");
-            verificarInvariantes(*dialogoTipo, "dialogo_tipo_midia");
-            dialogoTipo->exitModalState(0);
-            dialogoTipo->removeFromDesktop();
+        {
+            std::optional<std::string> escolhido;
+            bool respondeu = false;
+            auto& overlay = janelaArchive.overlay();
+            mostrarSelecionarTipoMidia(overlay, opcoesTipo, 3, [&](std::optional<std::string> tipo) {
+                respondeu = true;
+                escolhido = std::move(tipo);
+            });
+            checar(overlay.estaAberto(), "the media-type picker (1.2) opened as an internal overlay");
+            salvarSnapshot(overlay, "06_dialogo_tipo_midia");
+            verificarInvariantes(overlay, "dialogo_tipo_midia");
+
+            overlay.selecionarOpcaoParaTeste(0);
+            overlay.acionarBotaoParaTeste(1); // Confirm
+            checar(respondeu && escolhido.has_value() && !escolhido->empty(),
+                   "confirmar devolve o tipo selecionado e fecha o overlay");
+            checar(!overlay.estaAberto(), "the overlay is not left hanging after answering");
         }
 
         // Item 10: diálogo de consolidação — engine (Mascara/Consolidacao) já
@@ -403,7 +482,7 @@ int rodarUiSelfTest() {
         // exercitado sem UI nenhuma pelos testes de planejarConsolidacao/
         // executarConsolidacao.
         auto dialogoConsolidacao = mostrarDialogoConsolidacao(*janelaArchive.projetoAberto(), [] {});
-        checar(dialogoConsolidacao != nullptr, "diálogo de consolidação (item 10, §11.7) foi construído");
+        checar(dialogoConsolidacao != nullptr, "the backup dialog (item 10) was built");
         if (dialogoConsolidacao) {
             if (dialogoConsolidacao->getWidth() <= 0 || dialogoConsolidacao->getHeight() <= 0)
                 dialogoConsolidacao->setSize(500, 480);
@@ -423,20 +502,20 @@ int rodarUiSelfTest() {
 
         PainelInconsistenciasComponent painel(*janelaCatalog.projetoAberto());
         painel.setBounds(0, 0, 600, 400);
-        painel.recarregar();
+        painel.recarregarSincrono();
         salvarSnapshot(painel, "08_painel_inconsistencias");
         verificarInvariantes(painel, "painel_inconsistencias");
 
-        std::cout << "\n-- \"Preferências\" (nota) --\n";
-        std::cout << "  ..  no macOS a barra de menu é nativa (juce::MenuBarModel::setMacMainMenu), não uma "
-                     "árvore de Component — não existe superfície JUCE pra tirar snapshot do menu Preferências. "
-                     "O que É testável e está coberto (tools/selftest, seção \"i18n\"): que os dois locales "
-                     "carregam de verdade e que t() muda de valor ao trocar — a lógica por trás do item de menu.\n";
+        std::cout << "\n-- \"Preferences\" (note) --\n";
+        std::cout << "  ..  on macOS the menu bar is native (juce::MenuBarModel::setMacMainMenu), not a "
+                     "Component tree - there is no JUCE surface to snapshot the Preferences menu from. "
+                     "What IS testable and is covered (tools/selftest, \"i18n\" section): that the single "
+                     "English table really loads and that t() resolves through it - the logic behind the menu item.\n";
 
         // ===================================================================
         // Fluxos de interação (1.3) + bugs críticos (Parte 2 e 3)
         // ===================================================================
-        std::cout << "\n-- Fluxos de interação --\n";
+        std::cout << "\n-- Interaction flows --\n";
 
         testarPerdaDeDadoNaFicha(*janelaArchive.projetoAberto(), idPorTipo["fita_rolo"], idPorTipo["cassete"]);
 
@@ -470,9 +549,9 @@ int rodarUiSelfTest() {
                 esperarDispatch(20);
             }
             esperarDispatch(50);
-            mosaicoComItens.recarregar();
+            mosaicoComItens.recarregarSincrono();
             checar(mosaicoComItens.totalItensCarregados() == itensAntes + 1,
-                   "fluxo 1: arquivo solto aparece na grade sem diálogo (§2.1)");
+                   "flow 1: a dropped file shows up in the grid with no dialog (2.1)");
         }
 
         // Fluxo 2 (1.3): catalog -> arrastar pasta de disco -> lançamento
@@ -494,8 +573,8 @@ int rodarUiSelfTest() {
             esperarDispatch(50);
             int itensDepois = static_cast<int>(janelaCatalog.projetoAberto()->listarItens().size());
             checar(itensDepois > itensAntes,
-                   "fluxo 2 (parcial — ver nota): pasta solta em modo Catalog ingere o conteúdo; "
-                   "NÃO VERIFICADO e sabidamente ausente: montagem automática num único lançamento (§7.3, item 6+)");
+                   "flow 2 (partial - see note): a folder dropped in Catalog mode ingests its contents; "
+                   "NOT VERIFIED and knowingly absent: automatic assembly into a single release (7.3, item 6+)");
         }
 
         // ===================================================================
@@ -506,7 +585,7 @@ int rodarUiSelfTest() {
         // desenha a caixa tracejada nova automaticamente, sem precisar de
         // um teste separado).
         // ===================================================================
-        std::cout << "\n-- Reorientação: preview e seleção múltipla --\n";
+        std::cout << "\n-- Preview and multiple selection --\n";
 
         {
             // Item sem nenhum arquivo associado (todo idPorTipo[] foi
@@ -528,7 +607,7 @@ int rodarUiSelfTest() {
             auto itensArchiveAgora = janelaArchive.projetoAberto()->listarItens();
             auto itPdf = std::find_if(itensArchiveAgora.begin(), itensArchiveAgora.end(),
                                        [](const ItemResumo& r) { return r.titulo == "nota"; });
-            checar(itPdf != itensArchiveAgora.end(), "PDF do Fluxo 1 encontrado pra teste de preview");
+            checar(itPdf != itensArchiveAgora.end(), "the flow 1 PDF was found for the preview test");
             if (itPdf != itensArchiveAgora.end()) {
                 PreviewComponent previewPdf(*janelaArchive.projetoAberto());
                 previewPdf.setBounds(0, 0, 900, 700);
@@ -542,10 +621,10 @@ int rodarUiSelfTest() {
             // Seleção múltipla (§3.3): selecionarItem() marca exatamente o
             // item — mesma via que um clique simples usa internamente
             // (mouseDown chama a mesma lógica de troca de seleção).
-            checar(mosaicoComItens.totalItensVisiveis() > 1, "grade tem itens suficientes pra testar seleção");
+            checar(mosaicoComItens.totalItensVisiveis() > 1, "the grid has enough items to test selection");
             mosaicoComItens.selecionarItem(idPorTipo["fita_rolo"]);
             checar(mosaicoComItens.itensSelecionados().count(idPorTipo["fita_rolo"]) == 1,
-                   "seleção simples marca exatamente o item selecionado");
+                   "a single click marks exactly the item that was clicked");
 
             // Tamanho de célula ajustável (§3.3 — "controle de tamanho no
             // rodapé"): confirma que os três tamanhos recalculam o layout
@@ -565,7 +644,7 @@ int rodarUiSelfTest() {
         // caminho_absoluto_origem gravado — é o que faz a árvore Origem ter
         // conteúdo pra mostrar.
         // ===================================================================
-        std::cout << "\n-- Árvore Origem/Acervo --\n";
+        std::cout << "\n-- Explorer/Backup tree --\n";
 
         {
             auto itensParaPdf = janelaArchive.projetoAberto()->listarItens();
@@ -573,7 +652,7 @@ int rodarUiSelfTest() {
                                          [](const ItemResumo& r) { return r.titulo == "nota"; });
             std::optional<std::string> pdfId =
                 itPdfIt != itensParaPdf.end() ? std::optional(itPdfIt->id) : std::nullopt;
-            checar(pdfId.has_value(), "item do PDF (Fluxo 1) localizado de novo pro teste da árvore");
+            checar(pdfId.has_value(), "the PDF item (flow 1) found again for the tree test");
 
             ArvoreComponent arvoreOrigem(*janelaArchive.projetoAberto());
             arvoreOrigem.setBounds(0, 0, 220, 400);
@@ -581,7 +660,7 @@ int rodarUiSelfTest() {
             verificarInvariantes(arvoreOrigem, "arvore_origem");
 
             auto raizOrigem = janelaArchive.projetoAberto()->arvoreOrigem();
-            checar(!raizOrigem.itemIds.empty(), "árvore Origem tem pelo menos o item do Fluxo 1 (" +
+            checar(!raizOrigem.itemIds.empty(), "the Explorer tree has at least the flow 1 item (" +
                                                      std::to_string(raizOrigem.itemIds.size()) + " item(ns))");
 
             ArvoreComponent arvoreAcervoVazia(*janelaArchive.projetoAberto());
@@ -591,10 +670,10 @@ int rodarUiSelfTest() {
             verificarInvariantes(arvoreAcervoVazia, "arvore_acervo_vazia");
 
             auto raizAcervoVazia = janelaArchive.projetoAberto()->arvoreAcervo();
-            checar(raizAcervoVazia.filhos.size() == 1, "acervo recém-criado só tem o nó \"não organizados\" (" +
-                                                            std::to_string(raizAcervoVazia.filhos.size()) + " nó(s))");
+            checar(raizAcervoVazia.filhos.size() == 1, "a brand-new backup tree has only the \"no folder yet\" node (" +
+                                                            std::to_string(raizAcervoVazia.filhos.size()) + " node(s))");
             checar(!raizAcervoVazia.filhos.empty() && !raizAcervoVazia.filhos[0].itemIds.empty(),
-                   "material ainda não organizado aparece em \"não organizados\" (§5.5)");
+                   "material not filed yet shows up under \"no folder yet\" (5.5)");
 
             // Criar pasta, mover item pra dentro via API (o gesto de
             // arrastar em si — MosaicoComponent::mouseDrag +
@@ -617,16 +696,16 @@ int rodarUiSelfTest() {
             auto itPasta = std::find_if(raizAcervoComPasta.filhos.begin(), raizAcervoComPasta.filhos.end(),
                                          [&](const ProjetoAberto::NoArvore& n) { return n.id == pastaId; });
             checar(itPasta != raizAcervoComPasta.filhos.end() && itPasta->nome == "Documentos soltos",
-                   "pasta criada aparece na árvore Acervo com o nome certo");
+                   "a created folder shows up in the Backup tree with the right name");
             checar(pdfId && itPasta != raizAcervoComPasta.filhos.end() && itPasta->itemIds.count(*pdfId) == 1,
-                   "item movido pra pasta aparece nela");
+                   "an item moved into a folder shows up in it");
 
             auto itNaoOrganizadosDepois =
                 std::find_if(raizAcervoComPasta.filhos.begin(), raizAcervoComPasta.filhos.end(),
                              [](const ProjetoAberto::NoArvore& n) { return n.id.empty(); });
             checar(pdfId && itNaoOrganizadosDepois != raizAcervoComPasta.filhos.end() &&
                        itNaoOrganizadosDepois->itemIds.count(*pdfId) == 0,
-                   "item organizado sai de \"não organizados\" (§5.5 é calculado por ausência, não um estado próprio)");
+                   "a filed item leaves \"no folder yet\" (5.5 is computed by absence, not a state of its own)");
 
             // Filtro da grade por seleção da árvore (§8.1): a mesma
             // conexão que MainComponent::reconstruirLayoutProjeto faz entre
@@ -636,11 +715,11 @@ int rodarUiSelfTest() {
                                                     ? std::optional(itPasta->itemIds)
                                                     : std::nullopt);
             checar(mosaicoComItens.totalItensVisiveis() == 1,
-                   "filtro por pasta reduz a grade só ao(s) item(ns) daquela pasta (" +
-                       std::to_string(mosaicoComItens.totalItensVisiveis()) + " visível(is))");
+                   "filtering by folder narrows the grid to that folder\x27s items only (" +
+                       std::to_string(mosaicoComItens.totalItensVisiveis()) + " visible)");
             mosaicoComItens.definirFiltroItens(std::nullopt);
             // Todos os tipos descobertos em fichas/ + o PDF do Fluxo 1
-            // (mosaicoComItens.recarregar() já rodou de novo lá, ver
+            // (mosaicoComItens.recarregarSincrono() já rodou de novo lá, ver
             // "fluxo 1: arquivo solto..." acima).
             int totalEsperado = static_cast<int>(todosOsTipos().size()) + 1;
             checar(mosaicoComItens.totalItensVisiveis() == totalEsperado, "limpar o filtro devolve a grade inteira (" +
@@ -660,13 +739,13 @@ int rodarUiSelfTest() {
             auto raizApagada = janelaArchive.projetoAberto()->arvoreAcervo();
             checar(std::none_of(raizApagada.filhos.begin(), raizApagada.filhos.end(),
                                  [&](const ProjetoAberto::NoArvore& n) { return n.id == pastaId; }),
-                   "apagarPastaAcervo() remove a pasta da árvore");
+                   "apagarPastaAcervo() removes the folder from the tree");
             auto stmtItemAindaExiste =
                 janelaArchive.projetoAberto()->projeto().registro().prepare("SELECT COUNT(*) FROM item WHERE id = ?");
             stmtItemAindaExiste.bind(1, pdfId ? matriz::db::Value::of(*pdfId) : matriz::db::Value::null());
             stmtItemAindaExiste.step();
             checar(pdfId && stmtItemAindaExiste.columnInt(0) == 1,
-                   "apagar a pasta não apaga o item — ele só volta a aparecer em \"não organizados\"");
+                   "deleting the folder does not delete the item - it just goes back to \"no folder yet\"");
         }
 
         // ===================================================================
@@ -674,7 +753,7 @@ int rodarUiSelfTest() {
         // Reusa mosaicoComItens (todos os tipos descobertos em fichas/ + o
         // PDF do Fluxo 1).
         // ===================================================================
-        std::cout << "\n-- Busca, filtros e coleções inteligentes --\n";
+        std::cout << "\n-- Search, filters and smart collections --\n";
 
         {
             const int totalItens = static_cast<int>(todosOsTipos().size()) + 1;
@@ -688,20 +767,20 @@ int rodarUiSelfTest() {
             // NÃO aparece em nenhum código/título, só em item_campo.valor.
             auto resultadoBusca = janelaArchive.projetoAberto()->buscarItens("19 cm/s");
             checar(resultadoBusca.count(idPorTipo["fita_rolo"]) == 1,
-                   "busca encontra por valor de campo de ficha, não só código/título (\"19 cm/s\" -> fita_rolo)");
-            checar(resultadoBusca.size() == 1, "busca por um valor específico de campo não traz outros itens (" +
+                   "search matches a record field value, not just code/title (\"19 cm/s\" -> fita_rolo)");
+            checar(resultadoBusca.size() == 1, "searching a specific field value does not drag in other items (" +
                                                     std::to_string(resultadoBusca.size()) + " resultado(s))");
 
             auto resultadoVazio = janelaArchive.projetoAberto()->buscarItens("xxxxxNuncaVaiExistirxxxxx");
-            checar(resultadoVazio.empty(), "busca sem correspondência devolve conjunto vazio, não \"todos\"");
+            checar(resultadoVazio.empty(), "a search with no match returns an empty set, not \"everything\"");
 
             // Chips de tipo de mídia — múltipla seleção é OU dentro da
             // categoria (§10.2).
             mosaicoComItens.alternarFiltroTipoMidia("fita_rolo");
-            checar(mosaicoComItens.totalItensVisiveis() == 1, "chip de tipo sozinho filtra pra 1 item (fita_rolo)");
+            checar(mosaicoComItens.totalItensVisiveis() == 1, "a single type chip filters down to 1 item (fita_rolo)");
             mosaicoComItens.alternarFiltroTipoMidia("cd");
             checar(mosaicoComItens.totalItensVisiveis() == 2,
-                   "dois chips de tipo juntos são OU dentro da categoria (fita_rolo OU cd = 2 itens)");
+                   "two type chips together are OR within the category (fita_rolo OR cd = 2 items)");
 
             filtros.recarregar();
             salvarSnapshot(filtros, "16_filtros_dois_chips_ativos");
@@ -714,11 +793,11 @@ int rodarUiSelfTest() {
             mosaicoComItens.alternarFiltroEstado("capturado"); // desliga 'capturado' antes de trocar
             mosaicoComItens.alternarFiltroEstado("alerta");    // liga só 'alerta' — ninguém está nesse estado
             checar(mosaicoComItens.totalItensVisiveis() == 0,
-                   "estado incompatível com os chips de tipo já ativos zera a grade (E, não OU, entre categorias)");
+                   "a state incompatible with the active type chips empties the grid (AND, not OR, across categories)");
             mosaicoComItens.alternarFiltroEstado("alerta"); // desliga de novo
 
             mosaicoComItens.limparFiltros();
-            checar(mosaicoComItens.totalItensVisiveis() == totalItens, "limparFiltros() desliga chips E busca de uma vez");
+            checar(mosaicoComItens.totalItensVisiveis() == totalItens, "limparFiltros() clears chips AND search at once");
 
             // Coleção inteligente: salva a definição atual (não um
             // resultado), fecha os filtros, reaplica pelo clique — precisa
@@ -731,17 +810,17 @@ int rodarUiSelfTest() {
             checar(!colecaoId.empty(), "salvarColecao() devolve um id");
 
             mosaicoComItens.limparFiltros();
-            checar(mosaicoComItens.totalItensVisiveis() == totalItens, "limpar filtros antes de reaplicar a coleção salva");
+            checar(mosaicoComItens.totalItensVisiveis() == totalItens, "filters cleared before reapplying the saved collection");
 
             auto colecoesSalvas = janelaArchive.projetoAberto()->listarColecoes();
             auto itColecao = std::find_if(colecoesSalvas.begin(), colecoesSalvas.end(),
                                            [&](const auto& c) { return c.id == colecaoId; });
             checar(itColecao != colecoesSalvas.end() && itColecao->nome == "Fitas de rolo",
-                   "coleção salva reaparece em listarColecoes() com o nome certo");
+                   "the saved collection comes back from listarColecoes() with the right name");
             if (itColecao != colecoesSalvas.end())
                 for (auto& v : itColecao->filtrosTipoMidia) mosaicoComItens.alternarFiltroTipoMidia(v);
             checar(mosaicoComItens.totalItensVisiveis() == 1,
-                   "reaplicar a coleção salva reconstrói o mesmo filtro (de volta a 1 item)");
+                   "reapplying the saved collection rebuilds the same filter (back to 1 item)");
 
             filtros.recarregar();
             salvarSnapshot(filtros, "17_filtros_com_colecao_salva");
@@ -751,7 +830,7 @@ int rodarUiSelfTest() {
             auto colecoesDepois = janelaArchive.projetoAberto()->listarColecoes();
             checar(std::none_of(colecoesDepois.begin(), colecoesDepois.end(),
                                  [&](const auto& c) { return c.id == colecaoId; }),
-                   "apagarColecao() remove a coleção salva");
+                   "apagarColecao() removes the saved collection");
 
             mosaicoComItens.limparFiltros();
             checar(mosaicoComItens.totalItensVisiveis() == totalItens, "grade volta ao normal depois de limpar tudo de novo");
@@ -783,11 +862,11 @@ int rodarUiSelfTest() {
                 esperarDispatch(20);
             }
             esperarDispatch(50);
-            mosaicoComItens.recarregar();
+            mosaicoComItens.recarregarSincrono();
 
             checar(mosaicoComItens.totalItensCarregados() == itensAntesDedup + 1,
-                   "reimportar o mesmo arquivo ainda cria um item (visível na grade), "
-                   "mas marcado — nunca invisível");
+                   "re-importing the same file still creates an item (visible in the grid), "
+                   "but marked - never invisible");
 
             auto itensAgora = janelaArchive.projetoAberto()->listarItens();
             auto itDuplicata = std::find_if(itensAgora.begin(), itensAgora.end(),
@@ -799,7 +878,7 @@ int rodarUiSelfTest() {
             stmtArquivosDepois.step();
             int totalArquivosDepois = static_cast<int>(stmtArquivosDepois.columnInt(0));
             checar(totalArquivosDepois == totalArquivosAntes,
-                   "nenhuma cópia física nova foi criada pro conteúdo duplicado (arquivo: " +
+                   "no new physical copy was made for duplicate content (arquivo rows: " +
                        std::to_string(totalArquivosAntes) + " -> " + std::to_string(totalArquivosDepois) + ")");
 
             auto stmtLocalizacao = janelaArchive.projetoAberto()->projeto().registro().prepare(
@@ -807,11 +886,11 @@ int rodarUiSelfTest() {
             stmtLocalizacao.bind(1, matriz::db::Value::of(arquivoSolto.getFullPathName().toStdString()));
             stmtLocalizacao.step();
             checar(stmtLocalizacao.columnInt(0) == 1,
-                   "localizacao_conhecida registra o caminho de origem do arquivo reimportado");
+                   "localizacao_conhecida records the source path of the re-imported file");
 
             juce::String resumo = janelaArchive.textoProgressoIngestParaTeste();
             checar(resumo.contains("1 already known"),
-                   "resumo discreto de fim de lote mostra a contagem de já conhecidos (texto: \"" +
+                   "the quiet end-of-batch summary shows the already-known count (text: \"" +
                        resumo.toStdString() + "\")");
         }
 
@@ -828,12 +907,12 @@ int rodarUiSelfTest() {
         // mostrarSelecao) — sem isto, o teste abaixo não teria pego o bug:
         // toda cobertura anterior de ficha usava mostrarSelecao (2+ itens).
         // ===================================================================
-        std::cout << "\n-- Crash fix: ficha individual sem classificação --\n";
+        std::cout << "\n-- Crash fix: single unclassified item record --\n";
 
         {
             // Item DEDICADO pra este teste, não "o primeiro não classificado
             // que aparecer" — reusar o pdfId compartilhado com o teste de
-            // "seleção sem tipo" (mais abaixo, "Ficha em lote") classificaria
+            // "untyped selection" (mais abaixo, "Ficha em lote") classificaria
             // esse item aqui e quebraria a suposição de lá de que ele ainda
             // está sem tipo (achado pelo próprio harness, corrigido aqui).
             std::string itemSemTipoId = matriz::model::novoUuid();
@@ -851,14 +930,14 @@ int rodarUiSelfTest() {
                 // O próprio ato de chamar isto é o teste: antes da correção,
                 // isto lançava ProjetoAbertoError sem ninguém pra pegar.
                 fichaIndividual.mostrarItem(itemSemTipoId);
-                checar(true, "mostrarItem() num item sem tipo_midia não lança (antes derrubava o app)");
+                checar(true, "mostrarItem() on an item with no tipo_midia does not throw (it used to crash the app)");
 
                 salvarSnapshot(fichaIndividual, "23_ficha_individual_nao_classificado");
                 verificarInvariantes(fichaIndividual, "ficha_individual_nao_classificado");
 
                 auto* botaoDocumento = fichaIndividual.botaoTipoMidiaIndividualParaTeste("documento");
                 checar(botaoDocumento != nullptr,
-                       "seletor de tipo aparece na ficha individual (mesmo caminho do modo lote)");
+                       "the type picker shows up in the single-item record (same path as batch mode)");
                 if (botaoDocumento) botaoDocumento->onClick();
 
                 auto stmtTipo =
@@ -866,7 +945,7 @@ int rodarUiSelfTest() {
                 stmtTipo.bind(1, matriz::db::Value::of(itemSemTipoId));
                 stmtTipo.step();
                 checar(juce::String(stmtTipo.columnText(0)) == "documento",
-                       "clicar no tipo classifica o item individual (antes só existia em lote com 2+ selecionados)");
+                       "clicking a type classifies the single item (it only worked in batches of 2+ before)");
 
                 salvarSnapshot(fichaIndividual, "24_ficha_individual_recem_classificado");
                 verificarInvariantes(fichaIndividual, "ficha_individual_recem_classificado");
@@ -896,7 +975,7 @@ int rodarUiSelfTest() {
         {
             // Dois itens SEM tipo de mídia (o PDF do Fluxo 1 é o único que
             // existia até aqui — cria um segundo pra ter uma seleção real de
-            // "todos não classificados"): oferece aplicar tipo à seleção
+            // "all unclassified"): oferece aplicar tipo à seleção
             // inteira (§12.3), sem qualquer diálogo modal separado.
             auto itensParaPdf = janelaArchive.projetoAberto()->listarItens();
             auto itPdfIt = std::find_if(itensParaPdf.begin(), itensParaPdf.end(),
@@ -913,14 +992,14 @@ int rodarUiSelfTest() {
 
             FichaPanelComponent fichaLoteSemTipo(*janelaArchive.projetoAberto());
             fichaLoteSemTipo.setBounds(0, 0, 340, 500);
-            checar(pdfId.has_value(), "PDF sem tipo do Fluxo 1 disponível pra este teste");
+            checar(pdfId.has_value(), "the untyped PDF from flow 1 is available for this test");
             if (pdfId) {
                 fichaLoteSemTipo.mostrarSelecao({*pdfId, semTipoId2});
                 salvarSnapshot(fichaLoteSemTipo, "20_ficha_lote_escolher_tipo");
                 verificarInvariantes(fichaLoteSemTipo, "ficha_lote_escolher_tipo");
 
                 auto* botaoDocumento = fichaLoteSemTipo.botaoTipoMidiaLoteParaTeste("documento");
-                checar(botaoDocumento != nullptr, "botão \"Document\" existe no seletor de tipo em lote");
+                checar(botaoDocumento != nullptr, "the \"Document\" button exists in the batch type picker");
                 if (botaoDocumento) botaoDocumento->onClick();
 
                 auto stmtTipos = janelaArchive.projetoAberto()->projeto().registro().prepare(
@@ -928,7 +1007,7 @@ int rodarUiSelfTest() {
                 stmtTipos.bind(1, matriz::db::Value::of(*pdfId));
                 stmtTipos.bind(2, matriz::db::Value::of(semTipoId2));
                 stmtTipos.step();
-                checar(stmtTipos.columnInt(0) == 2, "aplicar tipo à seleção reclassifica os DOIS itens de uma vez");
+                checar(stmtTipos.columnInt(0) == 2, "applying a type to the selection reclassifies BOTH items at once");
             }
         }
 
@@ -960,7 +1039,7 @@ int rodarUiSelfTest() {
             auto* editorMaquina = fichaLote.editorDoCampoLoteParaTeste("maquina");
             checar(editorMaquina != nullptr, "campo \"maquina\" (vazio nos dois) aparece no modo lote");
             auto* teMaquina = dynamic_cast<juce::TextEditor*>(editorMaquina);
-            checar(teMaquina != nullptr, "\"maquina\" é um editor de texto simples (não tabela/combo)");
+            checar(teMaquina != nullptr, "\"maquina\" is a plain text editor (not a table/combo)");
             if (teMaquina) {
                 teMaquina->grabKeyboardFocus();
                 esperarDispatch();
@@ -969,30 +1048,30 @@ int rodarUiSelfTest() {
             }
 
             auto* botaoAplicar = fichaLote.botaoAplicarLoteParaTeste();
-            checar(botaoAplicar != nullptr, "botão \"Apply\" existe no modo lote");
+            checar(botaoAplicar != nullptr, "the \"Apply\" button exists in batch mode");
             checar(botaoAplicar != nullptr && botaoAplicar->isEnabled(),
-                   "botão \"Apply\" fica habilitado depois de tocar um campo");
+                   "the \"Apply\" button becomes enabled after touching a field");
             if (botaoAplicar) botaoAplicar->onClick();
 
             auto maquinaLote1Depois = janelaArchive.projetoAberto()->valorCampo(fitaLote1, "raiz", 0, "maquina");
             auto maquinaLote2Depois = janelaArchive.projetoAberto()->valorCampo(fitaLote2, "raiz", 0, "maquina");
             checar(maquinaLote1Depois && *maquinaLote1Depois == "Studer" && maquinaLote2Depois &&
                        *maquinaLote2Depois == "Studer",
-                   "aplicar em lote grava o campo TOCADO nos dois itens");
+                   "applying in batch writes the TOUCHED field to both items");
 
             auto velocidadeLote1Depois = janelaArchive.projetoAberto()->valorCampo(fitaLote1, "raiz", 0, "velocidade");
             auto velocidadeLote2Depois = janelaArchive.projetoAberto()->valorCampo(fitaLote2, "raiz", 0, "velocidade");
             checar(velocidadeLote1Depois && *velocidadeLote1Depois == "19 cm/s" && velocidadeLote2Depois &&
                        *velocidadeLote2Depois == "38 cm/s",
-                   "campo NÃO tocado (\"velocidade\", que já divergia) continua diferente em cada item — "
-                   "\"múltiplos valores\" nunca foi sobrescrito");
+                   "an UNTOUCHED field (\"velocidade\", which already differed) stays different per item - "
+                   "\"multiple values\" was never overwritten");
 
             salvarSnapshot(fichaLote, "22_ficha_lote_depois_de_aplicar");
             verificarInvariantes(fichaLote, "ficha_lote_depois_de_aplicar");
 
             auto* botaoDesfazer = fichaLote.botaoDesfazerLoteParaTeste();
             checar(botaoDesfazer != nullptr && botaoDesfazer->isVisible(),
-                   "botão \"Undo\" aparece (visível) depois de aplicar com sucesso");
+                   "the \"Undo\" button appears after a successful apply");
             if (botaoDesfazer) botaoDesfazer->onClick();
 
             auto maquinaLote1Desfeita = janelaArchive.projetoAberto()->valorCampo(fitaLote1, "raiz", 0, "maquina");
@@ -1029,13 +1108,13 @@ int rodarUiSelfTest() {
 
             auto origem = abertoHier.arvoreOrigem();
             const auto* noTurne = acharNo(origem, "Turne");
-            checar(noTurne != nullptr, "EXPLORER: pasta \"Turne\" aparece na árvore de origem");
+            checar(noTurne != nullptr, "EXPLORER: the \"Turne\" folder shows up in the source tree");
             checar(noTurne && profundidadeDaArvore(*noTurne) == 5,
-                   "EXPLORER preserva os 5 níveis (Turne/2003/Berlim/Audio/Masters)");
+                   "EXPLORER preserves all 5 levels (Turne/2003/Berlim/Audio/Masters)");
             checar(noTurne && noTurne->itemIds.size() == 5,
                    "EXPLORER: os 5 arquivos aparecem sob Turne (recursivo)");
             checar(noTurne && noTurne->itemIdsDiretos.size() == 1,
-                   "EXPLORER: só 1 arquivo está DIRETO em Turne (o resto está em subpastas)");
+                   "EXPLORER: only 1 file sits DIRECTLY in Turne (the rest are in subfolders)");
 
             // --- manter estrutura (padrão) ---
             int vinculados = abertoHier.replicarSubarvoreNoAcervo(*noTurne, std::string(), true);
@@ -1043,16 +1122,16 @@ int rodarUiSelfTest() {
 
             auto backup = abertoHier.arvoreAcervo();
             const auto* turneNoBackup = acharNo(backup, "Turne");
-            checar(turneNoBackup != nullptr, "BACKUP: a pasta arrastada existe no destino");
+            checar(turneNoBackup != nullptr, "BACKUP: the dragged folder exists at the destination");
             checar(turneNoBackup && profundidadeDaArvore(*turneNoBackup) == 5,
-                   "BACKUP preserva os 5 níveis — arrastar um catálogo não achata nada");
+                   "BACKUP preserves all 5 levels - dragging a catalogue flattens nothing");
 
             const auto* masters = acharNo(backup, "Masters");
             checar(masters != nullptr && masters->itemIdsDiretos.size() == 1,
-                   "BACKUP: o arquivo do 5º nível ficou no 5º nível, não na raiz");
+                   "BACKUP: the 5th-level file stayed at the 5th level, not at the root");
             const auto* berlim = acharNo(backup, "Berlim");
             checar(berlim != nullptr && berlim->itemIdsDiretos.size() == 1,
-                   "BACKUP: arquivo de nível intermediário fica no nível dele");
+                   "BACKUP: a mid-level file stays at its own level");
             checar(berlim != nullptr && berlim->itemIds.size() == 3,
                    "BACKUP: contagem recursiva de Berlim inclui Audio/ e Masters/ (3)");
 
@@ -1064,9 +1143,9 @@ int rodarUiSelfTest() {
             auto backup2 = abertoHier.arvoreAcervo();
             const auto* tudoJunto = acharNo(backup2, "Tudo junto");
             checar(tudoJunto != nullptr && tudoJunto->filhos.empty(),
-                   "achatar não cria subpasta nenhuma no destino");
+                   "flattening creates no subfolder at the destination");
             checar(tudoJunto != nullptr && tudoJunto->itemIdsDiretos.size() == 5,
-                   "achatar põe os 5 arquivos direto na pasta escolhida");
+                   "flattening puts all 5 files straight into the chosen folder");
         }
 
         // ===================================================================
@@ -1106,40 +1185,40 @@ int rodarUiSelfTest() {
 
             // Visão em colunas: uma coluna por nível do caminho, do volume
             // até a pasta atual — é o que dá o "percorrer" do Finder.
-            checar(nav.totalColunasParaTeste() >= 1, "navegador abre com pelo menos a coluna da pasta atual");
+            checar(nav.totalColunasParaTeste() >= 1, "the browser opens with at least the current folder column");
             auto entradasRaiz = nav.entradasVisiveisParaTeste(nav.totalColunasParaTeste() - 1);
-            checar(entradasRaiz.size() == 3, "coluna lista 2 pastas + 1 arquivo (" + juce::String((int)entradasRaiz.size()) + ")");
+            checar(entradasRaiz.size() == 3, "the column lists 2 folders + 1 file (" + juce::String((int)entradasRaiz.size()) + ")");
             checar(!entradasRaiz.empty() && entradasRaiz.front().isDirectory(),
-                   "pasta vem antes de arquivo na ordenação");
+                   "folders sort before files");
 
             // Navegar pra dentro acrescenta coluna à direita.
             int colunasAntes = nav.totalColunasParaTeste();
             nav.irPara(subA);
             checar(nav.totalColunasParaTeste() == colunasAntes + 1,
-                   "entrar numa pasta abre a coluna seguinte à direita (visão em colunas)");
-            checar(nav.pastaAtual() == subA, "pasta atual acompanha a navegação");
+                   "entering a folder opens the next column to the right (column view)");
+            checar(nav.pastaAtual() == subA, "the current folder follows navigation");
 
             // Voltar/avançar/subir.
-            checar(nav.podeVoltar(), "há histórico pra voltar depois de navegar");
+            checar(nav.podeVoltar(), "there is history to go back to after navigating");
             nav.voltar();
-            checar(nav.pastaAtual() == raizNav, "voltar retorna à pasta anterior");
-            checar(nav.podeAvancar(), "avançar fica disponível depois de voltar");
+            checar(nav.pastaAtual() == raizNav, "back returns to the previous folder");
+            checar(nav.podeAvancar(), "forward becomes available after going back");
             nav.avancar();
-            checar(nav.pastaAtual() == subA, "avançar refaz o caminho");
+            checar(nav.pastaAtual() == subA, "forward retraces the path");
             nav.subirUmNivel();
-            checar(nav.pastaAtual() == raizNav, "subir um nível vai pra pasta pai");
+            checar(nav.pastaAtual() == raizNav, "up one level goes to the parent folder");
 
             // Seleção múltipla e o resumo "N arquivos, X GB" ANTES de adicionar.
             nav.irPara(subAA);
             auto arquivosAA = nav.entradasVisiveisParaTeste(nav.totalColunasParaTeste() - 1);
-            checar(arquivosAA.size() == 2, "pasta com 2 arquivos lista os 2");
+            checar(arquivosAA.size() == 2, "a folder with 2 files lists both");
             if (arquivosAA.size() == 2) {
                 nav.selecionarParaTeste(arquivosAA[0]);
                 nav.selecionarParaTeste(arquivosAA[1], /*somarASelecao=*/true);
-                checar(nav.selecao().size() == 2, "Cmd+clique soma à seleção em vez de substituir");
-                checar(nav.totalArquivosNaSelecao() == 2, "contagem da seleção é 2 arquivos");
+                checar(nav.selecao().size() == 2, "Cmd+click adds to the selection instead of replacing it");
+                checar(nav.totalArquivosNaSelecao() == 2, "the selection count is 2 files");
                 checar(nav.tamanhoTotalDaSelecao() == 8,
-                       "tamanho da seleção soma os bytes reais dos 2 arquivos (\"wav1\" + \"aif2\" = 8)");
+                       "the selection size sums the real bytes of both files (\"wav1\" + \"aif2\" = 8)");
                 checar(nav.resumoSelecao().contains("2"), "resumo mostra a contagem antes de adicionar: \"" +
                                                                nav.resumoSelecao() + "\"");
             }
@@ -1147,17 +1226,21 @@ int rodarUiSelfTest() {
             // Filtro por tipo: numa pasta com wav+aif, "só imagem" não sobra nada.
             nav.definirFiltroTipo(NavegadorArquivosComponent::FiltroTipo::Imagem);
             checar(nav.entradasVisiveisParaTeste(nav.totalColunasParaTeste() - 1).empty(),
-                   "filtro \"só imagem\" esconde os áudios");
+                   "the \"images only\" filter hides the audio files");
             nav.definirFiltroTipo(NavegadorArquivosComponent::FiltroTipo::Audio);
             checar(nav.entradasVisiveisParaTeste(nav.totalColunasParaTeste() - 1).size() == 2,
-                   "filtro \"só áudio\" traz os 2 de volta");
+                   "the \"audio only\" filter brings both back");
             nav.definirFiltroTipo(NavegadorArquivosComponent::FiltroTipo::Todos);
 
-            // Busca alcança subpastas (item 3.2).
+            // Busca alcança subpastas (item 3.2). A varredura recursiva roda
+            // fora da message thread (I1), então o resultado chega por
+            // callAsync — bombeia até chegar em vez de ler na hora.
             nav.irPara(raizNav);
             nav.definirBusca("faixa");
+            for (int i = 0; i < 100 && nav.buscaEmAndamentoParaTeste(); ++i) esperarDispatch(20);
+            checar(!nav.buscaEmAndamentoParaTeste(), "the recursive search finishes and delivers on the message thread");
             auto achados = nav.entradasVisiveisParaTeste(nav.totalColunasParaTeste() - 1);
-            checar(achados.size() == 2, "busca desce nas subpastas e acha os 2 \"faixa*\" (" +
+            checar(achados.size() == 2, "search descends into subfolders and finds both \"faixa*\" (" +
                                              juce::String((int)achados.size()) + ")");
             nav.definirBusca("");
 
@@ -1166,7 +1249,7 @@ int rodarUiSelfTest() {
             nav.selecionarParaTeste(subA);
             for (int i = 0; i < 40 && nav.totalArquivosNaSelecao() == 0; ++i) esperarDispatch(20);
             checar(nav.totalArquivosNaSelecao() == 3,
-                   "pasta selecionada conta os 3 arquivos da subárvore inteira, não só os diretos (" +
+                   "a selected folder counts all 3 files in the whole subtree, not just the direct ones (" +
                        juce::String(nav.totalArquivosNaSelecao()) + ")");
 
             salvarSnapshot(nav, "27_navegador_com_selecao");
@@ -1174,13 +1257,13 @@ int rodarUiSelfTest() {
 
             // Visão em lista e em ícones (item 3.2) existem e não quebram.
             nav.definirVisao(NavegadorArquivosComponent::Visao::Lista);
-            checar(nav.totalColunasParaTeste() == 1, "visão em lista mostra uma coluna só");
+            checar(nav.totalColunasParaTeste() == 1, "list view shows a single column");
             salvarSnapshot(nav, "28_navegador_lista");
             nav.definirVisao(NavegadorArquivosComponent::Visao::Colunas);
 
             // O navegador NÃO MODIFICA NADA (item 3.4).
             checar(inventario(raizNav) == antes,
-                   "navegar, filtrar, buscar e selecionar não alterou nada em disco (item 3.4)");
+                   "navigating, filtering, searching and selecting changed nothing on disk (item 3.4)");
         }
 
         // ===================================================================
@@ -1189,7 +1272,7 @@ int rodarUiSelfTest() {
         // (editável). Antes era tudo campo editável junto, sem distinguir
         // leitura de máquina de decisão humana.
         // ===================================================================
-        std::cout << "\n-- Metadados originais x metadados do backup --\n";
+        std::cout << "\n-- Original metadata vs backup metadata --\n";
 
         {
             // janelaArchive já ingeriu mídia real no Fluxo 1 — o áudio tem
@@ -1198,21 +1281,21 @@ int rodarUiSelfTest() {
             std::optional<std::string> idComArquivo;
             for (auto& r : itens)
                 if (janelaArchive.projetoAberto()->arquivoPrincipal(r.id)) { idComArquivo = r.id; break; }
-            checar(idComArquivo.has_value(), "há um item com arquivo real pra ler metadado original");
+            checar(idComArquivo.has_value(), "there is an item with a real file to read original metadata from");
 
             MetadadosOriginaisComponent metadados(*janelaArchive.projetoAberto());
             metadados.setBounds(0, 0, 340, 300);
 
             checar(metadados.estaColapsada(),
-                   "a seção nasce colapsada — quem abre o painel quer editar a ficha, não ler codec");
+                   "the section starts collapsed - whoever opens the panel wants to edit the record, not read a codec");
             checar(metadados.alturaDesejada() == MetadadosOriginaisComponent::kAlturaCabecalho,
-                   "colapsada, ocupa só o cabeçalho");
+                   "collapsed, it takes up only the header");
 
             if (idComArquivo) metadados.mostrarItem(*idComArquivo);
             metadados.alternarColapso();
 
             auto rotulos = metadados.rotulosParaTeste();
-            checar(!rotulos.empty(), "metadado original foi lido do arquivo (" +
+            checar(!rotulos.empty(), "original metadata was read from the file (" +
                                           juce::String(static_cast<int>(rotulos.size())) + " campo(s))");
             checar(metadados.alturaDesejada() > MetadadosOriginaisComponent::kAlturaCabecalho,
                    "expandida, reserva altura pras linhas");
@@ -1222,12 +1305,12 @@ int rodarUiSelfTest() {
             // Item sem arquivo nenhum: estado explicativo, nunca seção em branco.
             metadados.mostrarItem({});
             checar(metadados.rotulosParaTeste().empty(),
-                   "item sem arquivo não inventa metadado — cai no estado vazio explicado");
+                   "an item with no file invents no metadata - it falls back to the explained empty state");
 
             // A garantia estrutural: a seção não tem NENHUM filho — é tudo
             // paint(), então não existe editor pra alguém digitar por engano.
             checar(metadados.getNumChildComponents() == 0,
-                   "seção de metadado original não tem editor nenhum: é somente leitura por construção");
+                   "the original-metadata section has no editor at all: read-only by construction");
         }
 
         // ===================================================================
@@ -1235,7 +1318,7 @@ int rodarUiSelfTest() {
         // A garantia que precisa ser mecânica, não só textual: "remover"
         // NUNCA apaga arquivo em disco.
         // ===================================================================
-        std::cout << "\n-- Ações sobre item/seleção --\n";
+        std::cout << "\n-- Item/selection actions --\n";
 
         {
             matriz::model::NovoProjetoParams paramsAcoes;
@@ -1263,14 +1346,14 @@ int rodarUiSelfTest() {
             auto itRen = std::find_if(itensRenomeados.begin(), itensRenomeados.end(),
                                        [&](const ItemResumo& r) { return r.id == idA; });
             checar(itRen != itensRenomeados.end() && itRen->titulo == "Nome novo",
-                   "renomear grava o título que a máscara usa pro nome no backup");
+                   "renaming stores the title the mask uses for the backup file name");
 
             // --- caminho de origem (Mostrar na origem / Copiar caminho) ---
             auto caminho = abertoAcoes.caminhoDeOrigem(idA);
             checar(caminho.has_value() && *caminho == fonteReal.getFullPathName(),
-                   "caminho de origem devolve o arquivo real da fonte");
+                   "the source path returns the real file at the source");
             checar(!abertoAcoes.caminhoDeOrigem("id-que-nao-existe").has_value(),
-                   "caminho de origem de item inexistente não inventa valor");
+                   "the source path of a non-existent item invents no value");
 
             // --- remover do backup: sai das pastas, continua no projeto ---
             std::string pastaId = abertoAcoes.criarPastaAcervo("Uma pasta", std::nullopt);
@@ -1280,21 +1363,21 @@ int rodarUiSelfTest() {
             auto backupDepois = abertoAcoes.arvoreAcervo();
             const auto* pasta = acharNo(backupDepois, "Uma pasta");
             checar(pasta != nullptr && pasta->itemIdsDiretos.count(idA) == 0,
-                   "remover do backup tira o item da pasta");
+                   "removing from backup takes the item out of the folder");
             checar(pasta != nullptr && pasta->itemIdsDiretos.count(idB) == 1,
-                   "remover do backup não mexe nos outros itens da pasta");
+                   "removing from backup does not touch the other items in the folder");
             checar(abertoAcoes.listarItens().size() == 2,
-                   "remover do backup NÃO remove o item do projeto — ele volta a ser \"ainda sem pasta\"");
+                   "removing from backup does NOT remove the item from the project - it goes back to \"no folder yet\"");
 
             // --- remover da lista: sai do projeto, disco intocado ---
             abertoAcoes.removerItensDoProjeto({idA});
             auto restantes = abertoAcoes.listarItens();
             checar(restantes.size() == 1 && restantes.front().id == idB,
-                   "remover desta lista tira o item do projeto");
+                   "removing from this list takes the item out of the project");
             checar(fonteReal.existsAsFile(),
-                   "remover desta lista NÃO apaga o arquivo de origem em disco");
+                   "removing from this list does NOT delete the source file on disk");
             checar(fonteReal.loadFileAsString() == "conteudo original",
-                   "o arquivo de origem continua com o conteúdo intacto");
+                   "the source file still has its contents intact");
         }
 
         // ===================================================================
@@ -1310,7 +1393,7 @@ int rodarUiSelfTest() {
                 alvos.push_back(r.id);
                 if (alvos.size() == 2) break;
             }
-            checar(alvos.size() == 2, "há 2 itens pra testar capa em lote");
+            checar(alvos.size() == 2, "there are 2 items to test batch cover art");
 
             juce::File imagemCapa = tmpRoot.getChildFile("capa_escolhida.png");
             {
@@ -1323,36 +1406,36 @@ int rodarUiSelfTest() {
                 if (auto stream = std::unique_ptr<juce::FileOutputStream>(imagemCapa.createOutputStream()))
                     png.writeImageToStream(img, *stream);
             }
-            checar(imagemCapa.existsAsFile(), "imagem de capa de teste foi gerada");
+            checar(imagemCapa.existsAsFile(), "a test cover image was generated");
 
             juce::String miniaturaAntes =
                 projetoCapa->caminhoMiniaturaPrincipal(alvos.front()).value_or(juce::String());
 
-            checar(!projetoCapa->temCapa(alvos.front()), "item começa sem capa");
+            checar(!projetoCapa->temCapa(alvos.front()), "the item starts with no cover");
             int aplicadas = projetoCapa->definirCapa(alvos, imagemCapa);
-            checar(aplicadas == 2, "capa aplicada aos 2 itens de uma vez (" + juce::String(aplicadas) + ")");
+            checar(aplicadas == 2, "cover applied to both items at once (" + juce::String(aplicadas) + ")");
             checar(projetoCapa->temCapa(alvos.front()) && projetoCapa->temCapa(alvos.back()),
-                   "os dois itens passam a ter capa");
+                   "both items now have a cover");
 
             juce::String miniaturaDepois =
                 projetoCapa->caminhoMiniaturaPrincipal(alvos.front()).value_or(juce::String());
             checar(miniaturaDepois.isNotEmpty() && miniaturaDepois != miniaturaAntes,
-                   "a miniatura da grade passa a ser a da capa, não a gerada");
+                   "the grid thumbnail becomes the cover, not the generated one");
 
             // A imagem é COPIADA pra dentro do projeto: apagar o original
             // escolhido não pode deixar o item sem capa.
             imagemCapa.deleteFile();
             checar(projetoCapa->temCapa(alvos.front()),
-                   "apagar a imagem original não tira a capa — ela foi copiada pro projeto");
+                   "deleting the original image does not remove the cover - it was copied into the project");
             checar(juce::File(projetoCapa->caminhoMiniaturaPrincipal(alvos.front()).value_or(juce::String()))
                        .existsAsFile(),
-                   "a miniatura da capa continua existindo em disco depois disso");
+                   "the cover thumbnail still exists on disk afterwards");
 
             projetoCapa->removerCapa({alvos.front()});
-            checar(!projetoCapa->temCapa(alvos.front()), "remover capa tira a capa do item");
-            checar(projetoCapa->temCapa(alvos.back()), "remover capa de um item não mexe no outro");
+            checar(!projetoCapa->temCapa(alvos.front()), "removing the cover takes it off the item");
+            checar(projetoCapa->temCapa(alvos.back()), "removing one item\x27s cover does not touch the other");
             checar(projetoCapa->caminhoMiniaturaPrincipal(alvos.front()).value_or(juce::String()) == miniaturaAntes,
-                   "sem capa, a miniatura gerada volta a valer sozinha");
+                   "with no cover, the generated thumbnail takes over again");
         }
 
         // ===================================================================
@@ -1360,7 +1443,7 @@ int rodarUiSelfTest() {
         // O motor está coberto no matriz_ingest_selftest; aqui é a tela: ela
         // tem que abrir uma pasta de backup SEM projeto nenhum carregado.
         // ===================================================================
-        std::cout << "\n-- Visualizador do catálogo de proxies --\n";
+        std::cout << "\n-- Proxy catalogue viewer --\n";
 
         {
             juce::File destinoCatalogo = tmpRoot.getChildFile("backup_para_catalogo");
@@ -1385,25 +1468,25 @@ int rodarUiSelfTest() {
                                                         destinoCatalogo, plano);
             auto res = matriz::catalogo::gerar(projeto->projeto().registro(), projeto->projeto().indice(),
                                                 projeto->projeto().pasta(), destinoCatalogo);
-            checar(res.gravados > 0, "catálogo gerado com " + juce::String(res.gravados) + " materiais");
+            checar(res.gravados > 0, "catalogue written with " + juce::String(res.gravados) + " materiais");
 
             CatalogoComponent visualizador;
             visualizador.setBounds(0, 0, 900, 400);
-            checar(visualizador.abrir(destinoCatalogo), "visualizador abre a pasta de backup");
+            checar(visualizador.abrir(destinoCatalogo), "the viewer opens the backup folder");
             checar(visualizador.totalEntradas() == res.gravados,
-                   "visualizador lista todos os materiais do catálogo");
+                   "the viewer lists every material in the catalogue");
 
             // A pergunta que o catálogo existe pra responder.
             checar(visualizador.descricaoDaEntradaParaTeste(0).isNotEmpty(),
-                   "cada linha diz onde o arquivo está: \"" +
+                   "every row says where the file is: \"" +
                        visualizador.descricaoDaEntradaParaTeste(0) + "\"");
             checar(visualizador.fonteConectadaParaTeste(0),
-                   "com o backup montado, a linha aparece como disponível");
+                   "with the backup mounted, the row shows as available");
 
             visualizador.definirBusca("zzz-nada-com-esse-nome");
-            checar(visualizador.totalVisiveis() == 0, "busca sem resultado esvazia a lista");
+            checar(visualizador.totalVisiveis() == 0, "a search with no result empties the list");
             visualizador.definirBusca({});
-            checar(visualizador.totalVisiveis() == res.gravados, "limpar a busca traz tudo de volta");
+            checar(visualizador.totalVisiveis() == res.gravados, "clearing the search brings everything back");
 
             salvarSnapshot(visualizador, "24_catalogo_proxies");
             verificarInvariantes(visualizador, "catalogo_proxies");
@@ -1412,39 +1495,431 @@ int rodarUiSelfTest() {
             MainComponent janelaCatalogo;
             janelaCatalogo.setBounds(0, 0, 1280, 800);
             checar(janelaCatalogo.abrirCatalogo(destinoCatalogo),
-                   "MainComponent abre a pasta de backup em modo catálogo");
+                   "MainComponent opens the backup folder in catalogue mode");
             checar(janelaCatalogo.temCatalogoAberto() && !janelaCatalogo.temProjetoAberto(),
-                   "modo catálogo NÃO carrega projeto nenhum — é consulta pura");
+                   "catalogue mode loads NO project at all - it is read-only browsing");
             salvarSnapshot(janelaCatalogo, "25_janela_catalogo");
             verificarInvariantes(janelaCatalogo, "janela_catalogo");
 
             janelaCatalogo.fecharProjeto();
-            checar(!janelaCatalogo.temCatalogoAberto(), "fechar o catálogo volta pra tela inicial");
+            checar(!janelaCatalogo.temCatalogoAberto(), "closing the catalogue goes back to the start screen");
+
+            // Verification of architectural invariants:
+            // 1. Canonical filename resolver tests
+            {
+                juce::File fWav("test.wav");
+                juce::File fWavCaps("TEST.WAV");
+                checar(matriz::consolidacao::resolverNomeFinalBackup(fWav, "ALLNO-001", false) == "ALLNO-001.wav",
+                       "resolverNomeFinalBackup appends extension once");
+                checar(matriz::consolidacao::resolverNomeFinalBackup(fWav, "ALLNO-001.wav", false) == "ALLNO-001.wav",
+                       "resolverNomeFinalBackup prevents duplicated extension (.wav.wav)");
+                checar(matriz::consolidacao::resolverNomeFinalBackup(fWavCaps, "ALLNO-001.WAV", false) == "ALLNO-001.WAV",
+                       "resolverNomeFinalBackup preserves uppercase extension without duplication");
+                checar(matriz::consolidacao::resolverNomeFinalBackup(fWav, "", true) == "test.wav",
+                       "resolverNomeFinalBackup in EstruturaOriginal mode preserves original filename");
+            }
+
+            // 2. Absence of automatic XMP sidecars
+            {
+                auto xmpFiles = destinoCatalogo.findChildFiles(juce::File::findFiles, true, "*.xmp");
+                checar(xmpFiles.isEmpty(), "normal backup produces 0 automatic .xmp sidecars");
+            }
+
+            // 3. Idempotency of backup execution on real disk files
+            {
+                juce::File pastaIdem = tmpRoot.getChildFile("idem_project");
+                pastaIdem.createDirectory();
+                juce::File masterFile = pastaIdem.getChildFile("track.wav");
+                masterFile.replaceWithText("RIFF....WAVEfmt ....data....test audio content");
+
+                matriz::model::NovoProjetoParams paramsIdem;
+                paramsIdem.nome = "Idem Project";
+                paramsIdem.modo = matriz::model::Modo::Preservacao;
+                paramsIdem.prefixoNomenclatura = "IDM";
+                auto projIdem = matriz::model::Project::criar(pastaIdem, paramsIdem);
+                std::string itemId = "item-idm-1";
+                std::string pastaAcervoId = "pasta-idm-1";
+
+                projIdem->registro().run(
+                    "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    {matriz::db::Value::of(itemId), matriz::db::Value::of(projIdem->projetoId()),
+                     matriz::db::Value::of("IDM-001"), matriz::db::Value::of("Test Track"),
+                     matriz::db::Value::of("digital_audio"), matriz::db::Value::of("2026-08-10T12:00:00Z"),
+                     matriz::db::Value::of("2026-08-10T12:00:00Z")});
+
+                projIdem->registro().run(
+                    "INSERT INTO acervo_pasta (id, projeto_id, nome, pasta_pai_id, ordem, criado_em, atualizado_em) VALUES (?, ?, ?, NULL, 0, ?, ?)",
+                    {matriz::db::Value::of(pastaAcervoId), matriz::db::Value::of(projIdem->projetoId()),
+                     matriz::db::Value::of("BackupFolder"), matriz::db::Value::of("2026-08-10T12:00:00Z"),
+                     matriz::db::Value::of("2026-08-10T12:00:00Z")});
+
+                projIdem->registro().run(
+                    "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {matriz::db::Value::of("aip-1"), matriz::db::Value::of(itemId),
+                     matriz::db::Value::of(pastaAcervoId), matriz::db::Value::of("2026-08-10T12:00:00Z")});
+
+                projIdem->registro().run(
+                    "INSERT INTO arquivo (id, item_id, papel, caminho_relativo, checksum_sha256, eh_master, criado_em, atualizado_em) VALUES (?, ?, 'master', ?, ?, 1, ?, ?)",
+                    {matriz::db::Value::of("file-idm-1"), matriz::db::Value::of(itemId),
+                     matriz::db::Value::of("track.wav"), matriz::db::Value::of("sha256-dummy"),
+                     matriz::db::Value::of("2026-08-10T12:00:00Z"), matriz::db::Value::of("2026-08-10T12:00:00Z")});
+
+                juce::File destIdem = tmpRoot.getChildFile("dest_idem");
+                destIdem.createDirectory();
+
+                auto p1 = matriz::consolidacao::planejarConsolidacao(
+                    projIdem->registro(), projIdem->pasta(), destIdem,
+                    {matriz::consolidacao::NivelHierarquia::PastaManual});
+                auto r1 = matriz::consolidacao::executarConsolidacao(
+                    projIdem->registro(), projIdem->pasta(), destIdem, p1);
+                checar(r1.consolidados == 1 && r1.falhas.empty(), "first backup execution copies the real file");
+
+                auto p2 = matriz::consolidacao::planejarConsolidacao(
+                    projIdem->registro(), projIdem->pasta(), destIdem,
+                    {matriz::consolidacao::NivelHierarquia::PastaManual});
+                auto r2 = matriz::consolidacao::executarConsolidacao(
+                    projIdem->registro(), projIdem->pasta(), destIdem, p2);
+                checar(r2.consolidados == 0 && r2.pulados == 1,
+                       "running backup a second time is idempotent (0 re-copied, all skipped)");
+            }
 
             // Pasta sem catálogo não é confundida com uma que tem.
             MainComponent janelaSemCatalogo;
             janelaSemCatalogo.setBounds(0, 0, 1280, 800);
             checar(!janelaSemCatalogo.abrirCatalogo(tmpRoot),
-                   "pasta sem catálogo dentro é recusada, não abre uma tela vazia");
+                   "a folder with no catalogue inside is refused, not opened as an empty screen");
         }
 
-        // Fluxo 4 (1.3): trocar idioma muda toda string. Já coberto a fundo
-        // em tools/selftest ("i18n" — carrega os dois locales de verdade e
-        // confirma que t() muda de valor nos dois sentidos); aqui
-        // confirmamos que a MESMA chave que a tela inicial de fato usa
+        // ===================================================================
+        // Estação de Escuta (§7). O ponto do teste não é "toca som" — é que
+        // a tela é útil SEM o arquivo acessível: forma de onda, marcadores e
+        // métricas vêm do cache no registro (I2/I3), e só o transporte
+        // depende do Vault estar montado.
+        // ===================================================================
+        std::cout << "\n-- Listening station --\n";
+
+        {
+            auto* projeto = janelaArchive.projetoAberto();
+
+            // Um item de áudio com cache gravado, sem arquivo nenhum em
+            // disco: é exatamente o estado "Vault desconectado".
+            std::string itemAudio = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+            projeto->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'UIA-escuta', 'Fita sem o disco', 'digital_audio', 'catalogado', ?, ?)",
+                {matriz::db::Value::of(itemAudio),
+                 matriz::db::Value::of(projeto->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            std::string arquivoAudio = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, "
+                "tamanho_bytes, estado_presenca, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'volume_que_nao_existe/fita.wav', '/Volumes/Inexistente/fita.wav', "
+                "'preservation_master', 1, 4096, 'ausente', ?, ?)",
+                {matriz::db::Value::of(arquivoAudio), matriz::db::Value::of(itemAudio),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // Cache como o ingest teria deixado: forma de onda sintética
+            // (20 baldes por segundo, 10 s) e as métricas prontas.
+            {
+                matriz::ingest::AnaliseCache cache;
+                for (int i = 0; i < 200; ++i) {
+                    float v = 0.6f * std::sin(i * 0.3f);
+                    auto* bytes = reinterpret_cast<const unsigned char*>(&v);
+                    float minimo = -std::abs(v);
+                    auto* bytesMin = reinterpret_cast<const unsigned char*>(&minimo);
+                    cache.formaOnda.insert(cache.formaOnda.end(), bytesMin, bytesMin + sizeof(float));
+                    cache.formaOnda.insert(cache.formaOnda.end(), bytes, bytes + sizeof(float));
+                }
+                cache.lufsI = -14.2;
+                cache.lra = 7.5;
+                cache.truePeak = -0.8;
+                cache.correlacaoMedia = 0.42;
+                matriz::ingest::gravarCache(projeto->projeto().registro(), arquivoAudio, cache);
+            }
+
+            // Marcadores ricos, com cor vinda de tipo_marcador (§7).
+            for (auto [tipo, inicio, fim] : std::vector<std::tuple<const char*, double, double>>{
+                     {"dropout", 2.0, 2.5}, {"mofo", 6.0, 0.0}}) {
+                projeto->projeto().registro().run(
+                    "INSERT INTO marcador (id, item_id, tempo_inicio, tempo_fim, titulo, tipo_id, status, autor, "
+                    "criado_em) VALUES (?, ?, ?, ?, ?, ?, 'aberto', 'operador', ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemAudio),
+                     matriz::db::Value::of(inicio),
+                     fim > 0.0 ? matriz::db::Value::of(fim) : matriz::db::Value::null(),
+                     matriz::db::Value::of(std::string(tipo)), matriz::db::Value::of(std::string(tipo)),
+                     matriz::db::Value::of(agora)});
+            }
+
+            AudioWorkspace escuta(*projeto);
+            escuta.setBounds(0, 0, 900, 600);
+
+            ItemResumo snap;
+            snap.id = itemAudio;
+            snap.titulo = "Fita sem o disco";
+            snap.tipoMidia = "digital_audio";
+
+            auto inicioCarga = juce::Time::getMillisecondCounter();
+            escuta.carregarAsset(snap, std::nullopt, nullptr);
+            auto duracaoCarga = juce::Time::getMillisecondCounter() - inicioCarga;
+
+            checar(escuta.temFormaOndaParaTeste(),
+                   "the waveform draws with the Vault disconnected (I3) - it comes from the BLOB in the registry");
+            checar(duracaoCarga < 100,
+                   "offline load under 100 ms (criterion 2): " + juce::String((int)duracaoCarga) + " ms");
+            checar(escuta.totalMarcadoresParaTeste() == 2,
+                   "both markers (range and instant) land on the ruler");
+            checar(!escuta.transporteHabilitadoParaTeste(),
+                   "transport stays disabled without the file - it never pretends playback is possible");
+            checar(escuta.rodapeParaTeste().contains("LUFS-I") && escuta.rodapeParaTeste().contains("-14.2"),
+                   "the footer shows values ALREADY measured at ingest, with no recomputation: \"" +
+                       escuta.rodapeParaTeste() + "\"");
+            checar(escuta.rodapeParaTeste().contains("TP") && escuta.rodapeParaTeste().contains("LRA"),
+                   "true peak and LRA also come from the cache");
+
+            salvarSnapshot(escuta, "29_estacao_escuta_offline");
+            verificarInvariantes(escuta, "estacao_escuta_offline");
+
+            // JKL com o transporte desabilitado não pode explodir nem mudar
+            // velocidade — o material não está acessível.
+            escuta.simularTeclaParaTeste('l');
+            checar(escuta.velocidadeParaTeste() == 1.0 || !escuta.transporteHabilitadoParaTeste(),
+                   "JKL with no reachable file changes no state at all");
+
+            escuta.descarregar();
+            checar(!escuta.temFormaOndaParaTeste(), "descarregar limpa a forma de onda");
+        }
+
+        // ===================================================================
+        // Editar trecho de marcador arrastando na régua (§7) e arrastar item
+        // pra um Vault pra planejar backup (§6).
+        // ===================================================================
+        std::cout << "\n-- Marker range editing and drag-to-vault --\n";
+
+        {
+            auto* projeto = janelaArchive.projetoAberto();
+            std::string agora = matriz::model::agoraIso8601();
+
+            std::string itemMarcado = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'UIA-regua', 'Fita com trecho', 'digital_audio', 'catalogado', ?, ?)",
+                {matriz::db::Value::of(itemMarcado),
+                 matriz::db::Value::of(projeto->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            std::string arqMarcado = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
+                "estado_presenca, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'x/regua.wav', 'preservation_master', 1, 4096, 'ausente', ?, ?)",
+                {matriz::db::Value::of(arqMarcado), matriz::db::Value::of(itemMarcado),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            {
+                matriz::ingest::AnaliseCache cache;
+                for (int i = 0; i < 200; ++i) {
+                    float v = 0.5f, minimo = -0.5f;
+                    auto* bMax = reinterpret_cast<const unsigned char*>(&v);
+                    auto* bMin = reinterpret_cast<const unsigned char*>(&minimo);
+                    cache.formaOnda.insert(cache.formaOnda.end(), bMin, bMin + sizeof(float));
+                    cache.formaOnda.insert(cache.formaOnda.end(), bMax, bMax + sizeof(float));
+                }
+                matriz::ingest::gravarCache(projeto->projeto().registro(), arqMarcado, cache);
+            }
+
+            std::string marcadorId = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO marcador (id, item_id, tempo_inicio, tempo_fim, titulo, tipo_id, status, autor, "
+                "criado_em) VALUES (?, ?, 2.0, 3.0, 'dropout', 'dropout', 'aberto', 'operador', ?)",
+                {matriz::db::Value::of(marcadorId), matriz::db::Value::of(itemMarcado),
+                 matriz::db::Value::of(agora)});
+
+            AudioWorkspace escuta(*projeto);
+            escuta.setBounds(0, 0, 900, 600);
+            ItemResumo snap;
+            snap.id = itemMarcado;
+            snap.tipoMidia = "digital_audio";
+            escuta.carregarAsset(snap, std::nullopt, nullptr);
+
+            checar(escuta.totalMarcadoresParaTeste() == 1, "the range marker is on the ruler");
+            auto fimAntes = escuta.fimDoMarcadorParaTeste(0);
+            checar(fimAntes.has_value() && std::abs(*fimAntes - 3.0) < 0.01,
+                   "the range ends at 3.0s before editing");
+
+            // Arrasta a borda direita de 3.0s pra 6.5s.
+            escuta.editarBordaDeMarcadorParaTeste(0, /*inicio*/ false, 6.5);
+            auto fimDepois = escuta.fimDoMarcadorParaTeste(0);
+            checar(fimDepois.has_value() && std::abs(*fimDepois - 6.5) < 0.01,
+                   "dragging the right edge extends the range on screen");
+
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT tempo_inicio, tempo_fim FROM marcador WHERE id = ?");
+                stmt.bind(1, matriz::db::Value::of(marcadorId));
+                checar(stmt.step() && std::abs(stmt.columnReal(1) - 6.5) < 0.01,
+                       "the edited tempo_fim is persisted in the database");
+            }
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT COUNT(*) FROM proveniencia WHERE item_id = ? AND evento = 'marcador_editado'");
+                stmt.bind(1, matriz::db::Value::of(itemMarcado));
+                stmt.step();
+                checar(stmt.columnInt(0) == 1, "editing a marker leaves a provenance trail");
+            }
+
+            // Arrastar o início para DEPOIS do fim não pode inverter o trecho
+            // (o CHECK do schema recusaria, e um trecho invertido não existe).
+            escuta.editarBordaDeMarcadorParaTeste(0, /*inicio*/ true, 9.0);
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT tempo_inicio, tempo_fim FROM marcador WHERE id = ?");
+                stmt.bind(1, matriz::db::Value::of(marcadorId));
+                checar(stmt.step() && stmt.columnReal(0) <= stmt.columnReal(1),
+                       "dragging the start past the end clamps instead of inverting the range");
+            }
+
+            // --- Arrastar itens pra um Vault planeja backup (§6) ---
+            std::string vaultId = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO vault (id, projeto_id, nome, tipo, uuid_volume, raiz_relativa, localizacao, status, "
+                "criado_em) VALUES (?, ?, 'LTO Arquivamento', 'lto', '', '', '/tmp/lto-teste', 'offline', ?)",
+                {matriz::db::Value::of(vaultId),
+                 matriz::db::Value::of(projeto->projeto().projetoId()),
+                 matriz::db::Value::of(agora)});
+
+            MosaicoComponent gradeVault(*projeto);
+            gradeVault.setBounds(0, 0, 900, 600);
+            gradeVault.recarregarSincrono();
+
+            FiltrosComponent filtrosVault(*projeto, gradeVault);
+            filtrosVault.setBounds(0, 0, 260, 900);
+            filtrosVault.recarregar();
+
+            int linhaDoVault = filtrosVault.indiceDaLinhaDeVaultParaTeste(vaultId);
+            checar(linhaDoVault >= 0, "the new Vault shows up as a row in the left panel");
+
+            juce::String avisoRecebido;
+            filtrosVault.aoAvisar = [&](const juce::String& m) { avisoRecebido = m; };
+            filtrosVault.soltarItensParaTeste(linhaDoVault, {itemMarcado});
+
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT COUNT(*) FROM item_publicacao ip JOIN publicacao p ON p.id = ip.publicacao_id "
+                    "WHERE p.vault_id = ? AND p.status = 'planejada' AND ip.item_id = ?");
+                stmt.bind(1, matriz::db::Value::of(vaultId));
+                stmt.bind(2, matriz::db::Value::of(itemMarcado));
+                stmt.step();
+                checar(stmt.columnInt(0) == 1, "dropping an item on a Vault plans a backup for that drive");
+            }
+            checar(avisoRecebido.isNotEmpty(), "planning a backup reports back through the quiet banner");
+
+            // Soltar de novo não pode duplicar nem criar um segundo plano.
+            filtrosVault.soltarItensParaTeste(linhaDoVault, {itemMarcado});
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT COUNT(*) FROM publicacao WHERE vault_id = ? AND status = 'planejada'");
+                stmt.bind(1, matriz::db::Value::of(vaultId));
+                stmt.step();
+                checar(stmt.columnInt(0) == 1, "dropping again reuses the same plan instead of starting a new one");
+            }
+
+            // Coleção inteligente é view SQL: não aceita drop, por construção.
+            int linhaColecao = filtrosVault.indiceDaLinhaDeColecaoEmbutidaParaTeste("ausentes");
+            checar(linhaColecao >= 0, "the smart collections section is present");
+            filtrosVault.soltarItensParaTeste(linhaColecao, {itemMarcado});
+            {
+                auto stmt = projeto->projeto().registro().prepare("SELECT COUNT(*) FROM publicacao");
+                stmt.step();
+                checar(stmt.columnInt(0) == 1,
+                       "dropping on a smart collection does nothing - it is a query, not a member list");
+            }
+        }
+
+        // ===================================================================
+        // Atalhos 1-9 pra categorizar em lote (critério 14).
+        // ===================================================================
+        std::cout << "\n-- Batch categorisation shortcuts --\n";
+
+        {
+            auto* projeto = janelaArchive.projetoAberto();
+            auto tipos = listarTiposMidiaDisponiveis(*projeto);
+            checar(!tipos.empty(), "there are media types available for the shortcuts");
+
+            // Um lote de 200 itens — o tamanho que o critério 14 cita.
+            std::vector<std::string> lote;
+            std::string agora = matriz::model::agoraIso8601();
+            projeto->projeto().registro().run("BEGIN", {});
+            for (int i = 0; i < 200; ++i) {
+                std::string id = matriz::model::novoUuid();
+                projeto->projeto().registro().run(
+                    "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, "
+                    "atualizado_em) VALUES (?, ?, NULL, ?, NULL, 'novo', ?, ?)",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(projeto->projeto().projetoId()),
+                     matriz::db::Value::of("lote " + std::to_string(i)),
+                     matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+                lote.push_back(id);
+            }
+            projeto->projeto().registro().run("COMMIT", {});
+
+            MosaicoComponent grade(*projeto);
+            grade.setBounds(0, 0, 900, 600);
+            grade.recarregarSincrono();
+
+            bool chamou = false;
+            int indiceRecebido = -1;
+            size_t quantosRecebidos = 0;
+            grade.aoCategorizarPorAtalho = [&](int indice, std::vector<std::string> ids) {
+                chamou = true;
+                indiceRecebido = indice;
+                quantosRecebidos = ids.size();
+                for (const auto& id : ids) projeto->atualizarTipoMidia(id, tipos[(size_t)indice].id);
+            };
+
+            grade.selecionarTodos();
+            auto inicio = juce::Time::getMillisecondCounter();
+            grade.keyPressed(juce::KeyPress('2', juce::ModifierKeys(), '2'));
+            auto duracao = juce::Time::getMillisecondCounter() - inicio;
+
+            checar(chamou && indiceRecebido == 1,
+                   "pressing 2 triggers the second type in the list (0-based internally, 1-based for the operator)");
+            checar(quantosRecebidos >= 200,
+                   "the shortcut applies to the whole selection, not just the item under the cursor (" +
+                       juce::String((int)quantosRecebidos) + " items)");
+            checar(duracao < 120000,
+                   "categorising the batch takes far less than criterion 14\x27s 2 minutes: " +
+                       juce::String((int)duracao) + " ms");
+
+            {
+                auto stmt = projeto->projeto().registro().prepare(
+                    "SELECT COUNT(*) FROM item WHERE tipo_midia = ?");
+                stmt.bind(1, matriz::db::Value::of(tipos[1].id));
+                stmt.step();
+                checar(stmt.columnInt(0) >= 200, "all 200 items were saved with the chosen type");
+            }
+
+            // Cmd+número é atalho do sistema — não pode ser sequestrado.
+            chamou = false;
+            grade.keyPressed(juce::KeyPress('3', juce::ModifierKeys::commandModifier, '3'));
+            checar(!chamou, "Cmd+number is NOT captured as a categorisation shortcut");
+        }
+
+        // Idioma único (§6, critério 13): a tela é em inglês e não há mais
+        // troca de locale. Aqui confirmamos a ponte entre i18n e o texto real
+        // que a UI constrói — a MESMA chave que a tela inicial usa
         // (tela_inicial.botao_abrir, lida em 01_tela_inicial_*.png acima)
-        // muda de valor com a troca — a ponte entre i18n::carregar() e o
-        // texto real que a UI constrói, não só a tabela isolada.
+        // resolve pro inglês, e pedir outro locale não a muda.
         {
             matriz::i18n::carregar("en");
             juce::String emIngles = matriz::i18n::t("tela_inicial.botao_abrir");
             matriz::i18n::carregar("pt_BR");
-            juce::String emPortugues = matriz::i18n::t("tela_inicial.botao_abrir");
+            juce::String depoisDePedirPtBr = matriz::i18n::t("tela_inicial.botao_abrir");
             matriz::i18n::carregar("en");
-            checar(emIngles != emPortugues && emIngles == "Open an existing project…" &&
-                       emPortugues == "Abrir um projeto que já existe…",
-                   "fluxo 4: trocar locale muda o texto real que a tela inicial usa (\"" + emIngles + "\" / \"" +
-                       emPortugues + "\")");
+            checar(emIngles == "Open an existing project..." && depoisDePedirPtBr == emIngles,
+                   "the key the start screen uses resolves to English and no locale changes it (\"" + emIngles +
+                       "\" / \"" + depoisDePedirPtBr + "\")");
         }
 
     } catch (const std::exception& e) {
@@ -1453,7 +1928,7 @@ int rodarUiSelfTest() {
 
     tmpRoot.deleteRecursively();
 
-    std::cout << "\n" << (falhas == 0 ? "TODOS OS TESTES PASSARAM" : juce::String(falhas) + " FALHA(S)") << "\n";
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
 

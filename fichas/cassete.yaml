@@ -1,8 +1,9 @@
 tipo: cassete
 rotulo: Cassete
-modos: [archive]
+modos: [archive, catalog]
 ordem: 10
 icone: audio
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

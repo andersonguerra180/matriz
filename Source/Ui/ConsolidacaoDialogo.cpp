@@ -9,6 +9,7 @@
 #include "Tokens.h"
 
 #include <JuceHeader.h>
+#include "ModalMitigacao.h"
 
 namespace matriz::ui {
 
@@ -49,7 +50,7 @@ public:
             }
             g.setColour(item.emConflito ? tk.perigo : (item.jaConsolidado ? tk.textoTerciario : tk.textoPrimario));
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            juce::String texto = item.nomeOriginal + "  →  " + item.caminhoRelativoDestino;
+            juce::String texto = item.nomeOriginal + " -> " + item.caminhoRelativoDestino;
             if (item.jaConsolidado) texto += "  (" + matriz::i18n::t("consolidacao.ja_consolidado") + ")";
             g.drawText(texto, linha.reduced(6, 2), juce::Justification::centredLeft, true);
             y += kAlturaLinha;
@@ -163,11 +164,12 @@ private:
             ofertados.push_back(n);
         }
         if (ofertados.empty()) return;
-        menu.showMenuAsync(juce::PopupMenu::Options(), [this, ofertados](int resultado) {
-            if (resultado < 1 || resultado > static_cast<int>(ofertados.size())) return;
-            hierarquia_.push_back(ofertados[static_cast<size_t>(resultado - 1)]);
-            definirHierarquia(hierarquia_);
-            if (aoMudar) aoMudar();
+        juce::Component::SafePointer<ListaNiveisHierarquia> safeThis(this);
+        menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, ofertados](int resultado) {
+            if (!safeThis || resultado < 1 || resultado > static_cast<int>(ofertados.size())) return;
+            safeThis->hierarquia_.push_back(ofertados[static_cast<size_t>(resultado - 1)]);
+            safeThis->definirHierarquia(safeThis->hierarquia_);
+            if (safeThis->aoMudar) safeThis->aoMudar();
         });
     }
 
@@ -486,7 +488,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoConsolidacao(ProjetoAberto& pro
                                   .replace("{consolidados}", juce::String(resultado.consolidados))
                                   .replace("{pulados}", juce::String(resultado.pulados));
         if (!resultado.falhas.empty()) {
-            texto += " · " +
+            texto += " | " +
                      matriz::i18n::t("consolidacao.resultado_falhas").replace("{n}", juce::String((int)resultado.falhas.size()));
             vivo->labelResultado->setColour(juce::Label::textColourId, tema().perigo);
         } else {
@@ -528,6 +530,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoConsolidacao(ProjetoAberto& pro
     atualizarPlano();
 
     vivo->janela->enterModalState(true, juce::ModalCallbackFunction::create([vivo, aoConcluir = std::move(aoFechar)](int) {
+                                        retirarPeerDaTela(*vivo->janela); // §3
                                         if (aoConcluir) aoConcluir();
                                     }));
     return vivo->janela;

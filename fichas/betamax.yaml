@@ -1,0 +1,59 @@
+tipo: betamax
+rotulo: Betamax
+modos: [archive]
+ordem: 75
+icone: video
+categoria: analog
+grupos:
+  - rotulo: Media
+    campos:
+      - id: formato
+        rotulo: Format
+        tipo: opcao
+        opcoes: [Betamax, Super Betamax, Betamax ED, Betamax HiFi]
+        obrigatorio: true
+      - id: sistema_cor
+        rotulo: Color system
+        tipo: opcao
+        opcoes: [NTSC, PAL, SECAM]
+        obrigatorio: true
+      - id: ano
+        rotulo: Year
+        tipo: inteiro
+      - id: duracao_fita
+        rotulo: Tape length
+        tipo: opcao
+        opcoes: [L-125, L-250, L-370, L-500, L-750, L-830]
+  - rotulo: Digitization
+    campos:
+      - id: tbc_usado
+        rotulo: TBC used
+        tipo: booleano
+      - id: fps_captura
+        rotulo: Capture FPS
+        tipo: numero
+        preenchido_por: leitura_tecnica
+      - id: campo_entrelacado_detectado
+        rotulo: Interlaced field detected
+        tipo: booleano
+        preenchido_por: leitura_tecnica
+  - rotulo: Physical condition
+    campos:
+      - id: dropout_frequente
+        rotulo: Frequent dropout
+        tipo: booleano
+      - id: fita_solta_enroscada
+        rotulo: Tape loose or tangled
+        tipo: booleano
+      - id: mofo
+        rotulo: Mold
+        tipo: booleano
+      - id: estado_geral
+        rotulo: Overall condition
+        tipo: opcao
+        opcoes: [good, fair, fragile, critical]
+  - rotulo: Content
+    campos:
+      - id: descricao_conteudo
+        rotulo: Content description
+        tipo: texto

@@ -12,13 +12,28 @@ juce::PropertiesFile::Options opcoesPropriedades() {
     opts.filenameSuffix = "settings";
     opts.folderName = "MATRIZ";
     opts.osxLibrarySubFolder = "Application Support";
+    opts.millisecondsBeforeSaving = -1;
     return opts;
 }
 
-juce::PropertiesFile& arquivo() {
-    static juce::PropertiesFile instancia(opcoesPropriedades());
-    return instancia;
+} // namespace
+
+std::unique_ptr<juce::PropertiesFile> g_arquivoPreferencias;
+
+void inicializarPreferencias() {
+    g_arquivoPreferencias = std::make_unique<juce::PropertiesFile>(opcoesPropriedades());
 }
+
+void fecharPreferencias() {
+    g_arquivoPreferencias.reset();
+}
+
+juce::PropertiesFile& arquivo() {
+    jassert (g_arquivoPreferencias != nullptr);
+    return *g_arquivoPreferencias;
+}
+
+namespace {
 
 constexpr int kMaxRecentes = 10;
 
@@ -28,6 +43,49 @@ juce::String lerLocale() { return arquivo().getValue("locale", "en"); }
 
 void gravarLocale(const juce::String& locale) {
     arquivo().setValue("locale", locale);
+    arquivo().saveIfNeeded();
+}
+
+juce::String lerGeminiApiKey() { return arquivo().getValue("gemini_api_key", ""); }
+
+void gravarGeminiApiKey(const juce::String& key) {
+    arquivo().setValue("gemini_api_key", key);
+    arquivo().saveIfNeeded();
+}
+
+juce::String lerTema() { return arquivo().getValue("tema", "dark"); }
+
+void gravarTema(const juce::String& tema) {
+    arquivo().setValue("tema", tema);
+    arquivo().saveIfNeeded();
+}
+
+float lerEscalaFonte() {
+    return static_cast<float>(arquivo().getDoubleValue("escala_fonte", 1.0));
+}
+
+void gravarEscalaFonte(float escala) {
+    arquivo().setValue("escala_fonte", juce::var(static_cast<double>(escala)));
+    arquivo().saveIfNeeded();
+}
+
+RecentlyIngestedMode lerRecentlyIngestedMode() {
+    auto v = arquivo().getValue("recently_ingested_mode", "time");
+    return v == "clear_on_start" ? RecentlyIngestedMode::ClearOnStart : RecentlyIngestedMode::Time;
+}
+
+void gravarRecentlyIngestedMode(RecentlyIngestedMode modo) {
+    arquivo().setValue("recently_ingested_mode",
+        modo == RecentlyIngestedMode::ClearOnStart ? "clear_on_start" : "time");
+    arquivo().saveIfNeeded();
+}
+
+int lerRecentlyIngestedHoras() {
+    return arquivo().getIntValue("recently_ingested_horas", 3);
+}
+
+void gravarRecentlyIngestedHoras(int horas) {
+    arquivo().setValue("recently_ingested_horas", horas);
     arquivo().saveIfNeeded();
 }
 

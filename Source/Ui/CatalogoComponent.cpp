@@ -43,7 +43,9 @@ void CatalogoComponent::aplicarBusca() {
 }
 
 void CatalogoComponent::resized() {
-    setSize(getWidth(), juce::jmax(getParentHeight(), static_cast<int>(visiveis_.size()) * kAlturaLinha));
+    int targetH = juce::jmax(getParentHeight(), static_cast<int>(visiveis_.size()) * kAlturaLinha);
+    if (getHeight() != targetH)
+        setSize(getWidth(), targetH);
 }
 
 int CatalogoComponent::indiceNaPosicao(int y) const {

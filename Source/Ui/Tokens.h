@@ -65,38 +65,39 @@ struct Tema {
     float raioMedio;
 };
 
-// BKR Dark — padrão, referência Logic Pro dark (§11.6): cinza neutro escuro,
-// acento azul frio, reconhecível sem cansar em turno longo.
+// BKR Dark — Pro Tools-inspired dark theme: medium charcoal surfaces,
+// visible borders, cool blue accent. Brighter than Logic, closer to
+// Pro Tools / Reaper default.
 inline const Tema& temaBkrDark() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xff1a1a1c);
-        x.painel = juce::Colour(0xff232326);
-        x.painelAlt = juce::Colour(0xff1e1e20);
-        x.borda = juce::Colour(0xff38383c);
-        x.bordaFoco = juce::Colour(0xff5b9dff);
+        x.fundo = juce::Colour(0xff353a42);
+        x.painel = juce::Colour(0xff1a1c1e);
+        x.painelAlt = juce::Colour(0xff111214);
+        x.borda = juce::Colour(0xff252930);
+        x.bordaFoco = juce::Colour(0xff4c8dff);
 
-        x.textoPrimario = juce::Colour(0xffe8e8ea);
-        x.textoSecundario = juce::Colour(0xff9a9aa0);
-        x.textoTerciario = juce::Colour(0xff68686e);
+        x.textoPrimario = juce::Colour(0xffffffff);
+        x.textoSecundario = juce::Colour(0xffc5cad3);
+        x.textoTerciario = juce::Colour(0xff8b929e);
         x.textoSobreAcento = juce::Colour(0xffffffff);
 
-        x.acento = juce::Colour(0xff5b9dff);
-        x.acentoHover = juce::Colour(0xff7bb0ff);
-        x.perigo = juce::Colour(0xffff6b6b);
-        x.alerta = juce::Colour(0xffffb84d);
+        x.acento = juce::Colour(0xff4c8dff);
+        x.acentoHover = juce::Colour(0xff6ea0ff);
+        x.perigo = juce::Colour(0xffe74c3c);
+        x.alerta = juce::Colour(0xfff1c40f);
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff6e6e74);
-        x.estadoCapturado = juce::Colour(0xff4a90e2);
-        x.estadoQcOk = juce::Colour(0xff4caf50);
-        x.estadoAlerta = juce::Colour(0xffffb84d);
-        x.haloSincronizado = juce::Colour(0xff6fe7dd);
+        x.estadoNaoDigitalizado = juce::Colour(0xff8b929e);
+        x.estadoCapturado = juce::Colour(0xff4c8dff);
+        x.estadoQcOk = juce::Colour(0xff2ecc71);
+        x.estadoAlerta = juce::Colour(0xfff1c40f);
+        x.haloSincronizado = juce::Colour(0xff2ecc71);
 
-        x.campoHumano = juce::Colour(0xffe8e8ea);
-        x.campoHerdado = juce::Colour(0xff9a9aa0);
-        x.campoLeituraTecnica = juce::Colour(0xff9a9aa0);
-        x.campoSugestaoIa = juce::Colour(0xffffb84d);
-        x.campoSugestaoIaFundo = juce::Colour(0x22ffb84d);
+        x.campoHumano = juce::Colour(0xffffffff);
+        x.campoHerdado = juce::Colour(0xffa7adb7);
+        x.campoLeituraTecnica = juce::Colour(0xffa7adb7);
+        x.campoSugestaoIa = juce::Colour(0xfff39c12);
+        x.campoSugestaoIaFundo = juce::Colour(0x33f39c12);
 
         x.tamanhoFonteTitulo = 22.0f;
         x.tamanhoFonteSubtitulo = 17.0f;
@@ -124,21 +125,21 @@ inline const Tema& temaBkrDark() {
 inline const Tema& temaBkrLight() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xfff0f0f2);
-        x.painel = juce::Colour(0xfffafafb);
-        x.painelAlt = juce::Colour(0xffe6e6e9);
-        x.borda = juce::Colour(0xffcfcfd4);
+        x.fundo = juce::Colour(0xffc0c0c5);
+        x.painel = juce::Colour(0xfff5f5f7);
+        x.painelAlt = juce::Colour(0xffe5e5ea);
+        x.borda = juce::Colour(0xff9a9aa0);
         x.bordaFoco = juce::Colour(0xff3d7fd6);
 
-        x.textoPrimario = juce::Colour(0xff1c1c1e);
-        x.textoSecundario = juce::Colour(0xff5a5a60);
-        x.textoTerciario = juce::Colour(0xff8a8a90);
+        x.textoPrimario = juce::Colour(0xff000000);
+        x.textoSecundario = juce::Colour(0xff2c2c2e);
+        x.textoTerciario = juce::Colour(0xff68686d);
         x.textoSobreAcento = juce::Colour(0xffffffff);
 
         x.acento = juce::Colour(0xff3d7fd6);
         x.acentoHover = juce::Colour(0xff5b9dff);
-        x.perigo = juce::Colour(0xffc93f3f);
-        x.alerta = juce::Colour(0xffb87517);
+        x.perigo = juce::Colour(0xffc0392b);
+        x.alerta = juce::Colour(0xffd35400);
 
         x.estadoNaoDigitalizado = juce::Colour(0xff9a9aa0);
         x.estadoCapturado = juce::Colour(0xff3d7fd6);
@@ -169,6 +170,12 @@ inline const Tema& temaBkrLight() {
     return t;
 }
 
-inline const Tema& tema() { return temaBkrDark(); }
+// Active theme — reads preference on first call, caches until recarregarTema().
+// Not inline: defined in Tokens.cpp (linked via CMakeLists).
+const Tema& tema();
+void recarregarTema();
+
+// Font scale applied globally.
+float escalaFonte();
 
 } // namespace matriz::ui

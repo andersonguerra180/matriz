@@ -3,6 +3,7 @@ rotulo: Arquivo 3D
 modos: [archive]
 ordem: 180
 icone: desconhecida
+categoria: digital
 grupos:
   - rotulo: Arquivo
     campos:

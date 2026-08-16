@@ -10,9 +10,30 @@
 
 namespace matriz::app {
 
+void inicializarPreferencias();
+void fecharPreferencias();
+
 // "en" ou "pt_BR". Default "en" (Parte 2 da correção de fluxo).
 juce::String lerLocale();
 void gravarLocale(const juce::String& locale);
+
+// Gemini API key (AI Scan feature). Stored in app preferences, never in project DB.
+juce::String lerGeminiApiKey();
+void gravarGeminiApiKey(const juce::String& key);
+
+// Theme preference: "dark", "light". Default "dark".
+juce::String lerTema();
+void gravarTema(const juce::String& tema);
+
+// Font size scale factor (0.8 - 1.5). Default 1.0.
+float lerEscalaFonte();
+void gravarEscalaFonte(float escala);
+
+enum class RecentlyIngestedMode { Time, ClearOnStart };
+RecentlyIngestedMode lerRecentlyIngestedMode();
+void gravarRecentlyIngestedMode(RecentlyIngestedMode modo);
+int lerRecentlyIngestedHoras();
+void gravarRecentlyIngestedHoras(int horas);
 
 struct ProjetoRecente {
     juce::String pasta;

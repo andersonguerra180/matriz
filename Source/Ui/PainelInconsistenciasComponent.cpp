@@ -1,4 +1,5 @@
 #include "PainelInconsistenciasComponent.h"
+#include "../Diag/Watchdog.h"
 
 #include "../I18n/Strings.h"
 #include "Tokens.h"
@@ -9,32 +10,62 @@ namespace matriz::ui {
 
 PainelInconsistenciasComponent::PainelInconsistenciasComponent(ProjetoAberto& projeto) : projeto_(projeto) {}
 
-void PainelInconsistenciasComponent::recarregar() {
-    itens_.clear();
-
+std::vector<matriz::ingest::Inconsistencia> PainelInconsistenciasComponent::coletar(ProjetoAberto& projeto) {
     // Só carrega definição de ficha dos tipos que de fato aparecem no
-    // projeto — nunca as 14, a maioria delas irrelevante fora do Archive.
+    // projeto — nunca as 19, a maioria delas irrelevante fora do Archive.
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesPorTipo;
     std::set<std::string> tiposVistos;
-    for (auto& item : projeto_.listarItens()) {
+    for (auto& item : projeto.listarItens()) {
         if (tiposVistos.count(item.tipoMidia)) continue;
         tiposVistos.insert(item.tipoMidia);
         try {
-            definicoesPorTipo.emplace(item.tipoMidia, projeto_.definicaoPara(item.tipoMidia));
+            definicoesPorTipo.emplace(item.tipoMidia, projeto.definicaoPara(item.tipoMidia));
         } catch (const std::exception&) {
             // Ficha ausente/corrompida pra esse tipo — não impede o resto
             // do painel, só não checa esse tipo específico.
         }
     }
 
-    itens_ = matriz::ingest::detectarInconsistenciasFicha(projeto_.projeto().registro(), definicoesPorTipo);
-    auto doDisco = matriz::ingest::verificarArquivosNoDisco(projeto_.projeto());
-    itens_.insert(itens_.end(), doDisco.begin(), doDisco.end());
+    auto itens = matriz::ingest::detectarInconsistenciasFicha(projeto.projeto().registro(), definicoesPorTipo);
+    auto doDisco = matriz::ingest::verificarArquivosNoDisco(projeto.projeto());
+    itens.insert(itens.end(), doDisco.begin(), doDisco.end());
+    return itens;
+}
 
+void PainelInconsistenciasComponent::aplicar(std::vector<matriz::ingest::Inconsistencia> itens) {
+    itens_ = std::move(itens);
     setSize(getWidth(), juce::jmax(getParentHeight(),
                                      kAlturaCabecalho + static_cast<int>(itens_.size()) * kAlturaLinha +
                                          tema().espacoPainel));
     repaint();
+}
+
+void PainelInconsistenciasComponent::recarregar() {
+    const int geracao = ++geracao_;
+    juce::Component::SafePointer<PainelInconsistenciasComponent> safeThis(this);
+    ProjetoAberto* projeto = &projeto_;
+
+    pool_.addJob([safeThis, projeto, geracao]() {
+        std::vector<matriz::ingest::Inconsistencia> itens;
+        try {
+            itens = coletar(*projeto);
+        } catch (const std::exception&) {
+            return;  // projeto fechado no meio da verificação
+        }
+
+        juce::MessageManager::callAsync([safeThis, geracao, itens = std::move(itens)]() mutable {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            if (geracao != self->geracao_) return;  // verificação superada
+            MATRIZ_TRACE("PainelInconsistencias::aplicar");
+            self->aplicar(std::move(itens));
+        });
+    });
+}
+
+void PainelInconsistenciasComponent::recarregarSincrono() {
+    ++geracao_;  // invalida qualquer verificação em voo
+    aplicar(coletar(projeto_));
 }
 
 void PainelInconsistenciasComponent::resized() {}

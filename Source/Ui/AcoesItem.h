@@ -49,11 +49,14 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 // "Renomear" no painel e escolher "Renomear…" no botão direito façam
 // exatamente a mesma coisa, incluindo as confirmações.
 void renomear(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
+void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Item 9 — escolhe uma imagem e a torna a miniatura do(s) item(ns).
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Abre o menu de pastas da BACKUP ancorado no componente dado.
 void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos,
                       juce::Component* ancora);
+
+void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 
 } // namespace matriz::ui::acoes

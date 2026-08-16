@@ -11,20 +11,20 @@ BarraSelecaoComponent::BarraSelecaoComponent() {
     // "Editar em lote" é a ação primária: é ela que justifica a barra
     // existir. As outras duas são utilitárias e ficam com o estilo neutro.
     botaoEditarLote_ = std::make_unique<juce::TextButton>(matriz::i18n::t("selecao.editar_lote"));
-    botaoEditarLote_->setColour(juce::TextButton::buttonColourId, tk.textoSobreAcento);
-    botaoEditarLote_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    botaoEditarLote_->setColour(juce::TextButton::buttonColourId, tk.acento);
+    botaoEditarLote_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     botaoEditarLote_->onClick = [this] { if (aoEditarEmLote) aoEditarEmLote(); };
     addAndMakeVisible(*botaoEditarLote_);
 
     botaoSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("selecao.selecionar_todos"));
-    botaoSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.acento.brighter(0.25f));
-    botaoSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    botaoSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    botaoSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     botaoSelecionarTodos_->onClick = [this] { if (aoSelecionarTodos) aoSelecionarTodos(); };
     addAndMakeVisible(*botaoSelecionarTodos_);
 
     botaoLimpar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("selecao.limpar"));
-    botaoLimpar_->setColour(juce::TextButton::buttonColourId, tk.acento.brighter(0.25f));
-    botaoLimpar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    botaoLimpar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    botaoLimpar_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     botaoLimpar_->onClick = [this] { if (aoLimparSelecao) aoLimparSelecao(); };
     addAndMakeVisible(*botaoLimpar_);
 
@@ -53,12 +53,14 @@ void BarraSelecaoComponent::definirQuantidade(int quantidade) {
 void BarraSelecaoComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     auto area = getLocalBounds().toFloat().reduced(1.0f);
-    g.setColour(tk.acento);
+    g.setColour(tk.painelAlt);
     g.fillRoundedRectangle(area, tk.raioMedio);
+    g.setColour(tk.borda);
+    g.drawRoundedRectangle(area, tk.raioMedio, 1.0f);
 
     auto miolo = getLocalBounds().reduced(tk.espacoGrande, 0);
-    miolo.removeFromRight(340); // espaço dos três botões
-    g.setColour(tk.textoSobreAcento);
+    miolo.removeFromRight(340);
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     g.drawText(texto_, miolo, juce::Justification::centredLeft, true);
 }

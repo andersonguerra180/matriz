@@ -1,72 +1,50 @@
 #include "Strings.h"
-
-#include "I18nBinaryData.h"
-
-#include <yaml-cpp/yaml.h>
-
-#include <unordered_map>
+#include "../Ui/Strings.h"
 
 namespace matriz::i18n {
 
-namespace {
-
-std::unordered_map<std::string, std::string>& tabela() {
-    static std::unordered_map<std::string, std::string> t;
-    return t;
-}
-
-void achatar(const YAML::Node& node, const std::string& prefixo, std::unordered_map<std::string, std::string>& out) {
-    if (node.IsScalar()) {
-        out[prefixo] = node.as<std::string>();
-        return;
-    }
-    if (node.IsMap()) {
-        for (const auto& par : node) {
-            std::string chave = par.first.as<std::string>();
-            std::string novoPrefixo = prefixo.empty() ? chave : prefixo + "." + chave;
-            achatar(par.second, novoPrefixo, out);
-        }
-    }
-}
-
-const char* dadosParaLocale(const juce::String& locale, int& tamanho) {
-    if (locale == "en") {
-        tamanho = I18nBinaryData::en_yamlSize;
-        return I18nBinaryData::en_yaml;
-    }
-    if (locale == "pt_BR") {
-        tamanho = I18nBinaryData::pt_BR_yamlSize;
-        return I18nBinaryData::pt_BR_yaml;
-    }
-    tamanho = 0;
-    return nullptr;
-}
-
-} // namespace
-
-void carregar(const juce::String& locale) {
-    int tamanho = 0;
-    const char* dados = dadosParaLocale(locale, tamanho);
-    tabela().clear();
-    if (!dados || tamanho == 0) return;
-
-    std::string texto(dados, static_cast<size_t>(tamanho));
-    YAML::Node raiz = YAML::Load(texto);
-    achatar(raiz, "", tabela());
+void carregar(const juce::String& /*locale*/) {
+    // No-op: English is always the default and only language
 }
 
 juce::String t(const juce::String& chave) {
-    auto it = tabela().find(chave.toStdString());
-    if (it == tabela().end()) return "[" + chave + "]";
+    const auto& strings = getEnglishStrings();
+    auto it = strings.find(chave.toStdString());
+    if (it == strings.end()) {
+        std::string s = chave.toStdString();
+        if (s == "novo") return "New";
+        if (s == "em_analise") return "In Analysis";
+        if (s == "catalogado") return "Cataloged";
+        if (s == "revisado") return "Reviewed";
+        if (s == "aprovado") return "Approved";
+        if (s == "publicado") return "Published";
+        if (s == "arquivado") return "Archived";
+        if (s == "baixa") return "Low";
+        if (s == "media") return "Medium";
+        if (s == "alta") return "High";
+        if (s == "aberto") return "Open";
+        if (s == "em_progresso") return "In Progress";
+        if (s == "resolvido") return "Resolved";
+        if (s == "presente") return "Present";
+        if (s == "ausente") return "Missing";
+        if (s == "alterado") return "Changed";
+        if (s == "corrompido") return "Corrupted";
+        if (s == "nao_baixado") return "Not Downloaded";
+        return "[" + chave + "]";
+    }
     return juce::String(juce::CharPointer_UTF8(it->second.c_str()));
 }
 
 juce::String tComFallback(const juce::String& chave, const juce::String& textoOriginal) {
-    auto it = tabela().find(chave.toStdString());
-    if (it == tabela().end()) return textoOriginal;
+    const auto& strings = getEnglishStrings();
+    auto it = strings.find(chave.toStdString());
+    if (it == strings.end()) return textoOriginal;
     return juce::String(juce::CharPointer_UTF8(it->second.c_str()));
 }
 
-bool existe(const juce::String& chave) { return tabela().find(chave.toStdString()) != tabela().end(); }
+bool existe(const juce::String& chave) {
+    const auto& strings = getEnglishStrings();
+    return strings.find(chave.toStdString()) != strings.end();
+}
 
 } // namespace matriz::i18n

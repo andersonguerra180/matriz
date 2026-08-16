@@ -49,4 +49,9 @@ struct ResultadoFalaMusica {
 
 ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::File& dirTemporario);
 
+// Overload accepting pre-computed duration to avoid a redundant ffprobe call
+// when the caller (e.g. IngestWizard) already has AnaliseDeArquivo.leitura.
+ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::File& dirTemporario,
+                                          double duracaoSegundos);
+
 } // namespace matriz::ingest

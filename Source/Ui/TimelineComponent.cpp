@@ -32,6 +32,30 @@ void garantirDispositivo() {
     aberto = true;
 }
 
+class SilentAudioFormatReader : public juce::AudioFormatReader {
+public:
+    SilentAudioFormatReader(double sr, juce::int64 length)
+        : juce::AudioFormatReader(nullptr, "Silent")
+    {
+        sampleRate = sr;
+        bitsPerSample = 16;
+        lengthInSamples = length;
+        numChannels = 2;
+        usesFloatingPointData = false;
+    }
+    ~SilentAudioFormatReader() override = default;
+
+    bool readSamples(int* const* destChannels, int numDestChannels, int startOffsetInDestBuffer,
+                     juce::int64 startSampleInFile, int numSamples) override {
+        for (int i = 0; i < numDestChannels; ++i) {
+            if (destChannels[i] != nullptr) {
+                juce::zeromem(destChannels[i] + startOffsetInDestBuffer, static_cast<size_t>(numSamples) * sizeof(int));
+            }
+        }
+        return true;
+    }
+};
+
 } // namespace
 
 TimelineComponent::TimelineComponent(ProjetoAberto& projeto) : projeto_(projeto) {
@@ -68,7 +92,17 @@ bool TimelineComponent::carregarItem(const std::string& itemId, const juce::File
     arquivo_ = arquivo;
 
     std::unique_ptr<juce::AudioFormatReader> leitor(formatManager_.createReaderFor(arquivo));
-    if (leitor == nullptr) return false;
+    if (leitor == nullptr) {
+        double dur = 0.0;
+        if (auto info = projeto_.arquivoPrincipal(itemId)) {
+            juce::var raiz = juce::JSON::parse(info->caracteristicasTecnicasJson);
+            if (raiz.isObject() && raiz.hasProperty("duracaoSegundos")) {
+                dur = static_cast<double>(raiz["duracaoSegundos"]);
+            }
+        }
+        if (dur <= 0.0) dur = 10.0;
+        leitor = std::make_unique<SilentAudioFormatReader>(44100.0, static_cast<juce::int64>(dur * 44100.0));
+    }
 
     sampleRate_ = leitor->sampleRate > 0 ? leitor->sampleRate : 44100.0;
     duracao_ = static_cast<double>(leitor->lengthInSamples) / sampleRate_;
@@ -245,6 +279,7 @@ void TimelineComponent::inserirMarcadorNaPosicaoAtual() {
     // vem depois, sem interromper a reprodução).
     std::string id = projeto_.adicionarObservacao(itemId_, std::string(), static_cast<int64_t>(pos * 1000.0), autorAtual());
     recarregarMarcadores();
+    sincronizarMarcadoresParaNotas();
     if (aoMudarMarcadores) aoMudarMarcadores();
 
     for (size_t i = 0; i < marcadores_.size(); ++i)
@@ -281,6 +316,7 @@ void TimelineComponent::fecharEditorInline(bool gravando) {
         projeto_.atualizarObservacao(m.observacaoId, texto.toStdString(),
                                       static_cast<int64_t>(m.segundos * 1000.0));
         m.texto = texto;
+        sincronizarMarcadoresParaNotas();
         if (aoMudarMarcadores) aoMudarMarcadores();
     }
     // Destruir de dentro de um callback do próprio editor (onFocusLost) é
@@ -443,9 +479,11 @@ void TimelineComponent::mouseDown(const juce::MouseEvent& e) {
                 juce::PopupMenu menu;
                 menu.addItem(1, matriz::i18n::t("timeline.marcador_editar"));
                 menu.addItem(2, matriz::i18n::t("timeline.marcador_apagar"));
-                menu.showMenuAsync(juce::PopupMenu::Options(), [this, i](int r) {
-                    if (r == 1) abrirEditorInline(i);
-                    else if (r == 2) apagarMarcadorParaTeste(i);
+                juce::Component::SafePointer<TimelineComponent> safeThis(this);
+                menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, i](int r) {
+                    if (!safeThis) return;
+                    if (r == 1) safeThis->abrirEditorInline(i);
+                    else if (r == 2) safeThis->apagarMarcadorParaTeste(i);
                 });
                 return;
             }
@@ -475,6 +513,7 @@ void TimelineComponent::mouseUp(const juce::MouseEvent&) {
     projeto_.atualizarObservacao(m.observacaoId, m.texto.toStdString(), static_cast<int64_t>(m.segundos * 1000.0));
     indiceArrastado_ = -1;
     recarregarMarcadores(); // reordena por tempo depois de mover
+    sincronizarMarcadoresParaNotas();
     if (aoMudarMarcadores) aoMudarMarcadores();
 }
 
@@ -561,6 +600,7 @@ void TimelineComponent::editarTextoDoMarcadorParaTeste(int indice, const juce::S
     auto& m = marcadores_[static_cast<size_t>(indice)];
     projeto_.atualizarObservacao(m.observacaoId, texto.toStdString(), static_cast<int64_t>(m.segundos * 1000.0));
     m.texto = texto;
+    sincronizarMarcadoresParaNotas();
     if (aoMudarMarcadores) aoMudarMarcadores();
     repaint();
 }
@@ -571,6 +611,7 @@ void TimelineComponent::arrastarMarcadorParaTeste(int indice, double novosSegund
     m.segundos = juce::jlimit(0.0, std::max(0.0, duracao_), novosSegundos);
     projeto_.atualizarObservacao(m.observacaoId, m.texto.toStdString(), static_cast<int64_t>(m.segundos * 1000.0));
     recarregarMarcadores();
+    sincronizarMarcadoresParaNotas();
     if (aoMudarMarcadores) aoMudarMarcadores();
 }
 
@@ -578,7 +619,36 @@ void TimelineComponent::apagarMarcadorParaTeste(int indice) {
     if (indice < 0 || indice >= static_cast<int>(marcadores_.size())) return;
     projeto_.removerObservacao(marcadores_[static_cast<size_t>(indice)].observacaoId);
     recarregarMarcadores();
+    sincronizarMarcadoresParaNotas();
     if (aoMudarMarcadores) aoMudarMarcadores();
+}
+
+void TimelineComponent::sincronizarMarcadoresParaNotas() {
+    if (itemId_.empty()) return;
+    
+    std::string notas = projeto_.lerMetadado(itemId_, "notas_livres").value_or("");
+    
+    juce::StringArray linhas;
+    linhas.addLines(notas);
+    
+    juce::StringArray novasLinhas;
+    for (auto& linha : linhas) {
+        juce::String l = linha.trim();
+        if (ehLinhaDeMinutagemNotas(l)) continue;
+        int primeiroColon = l.indexOfChar(':');
+        if (l.startsWithChar('(') && primeiroColon > 0 && primeiroColon < 15 && l.endsWithChar(')'))
+            continue;
+        novasLinhas.add(linha);
+    }
+
+    for (auto& m : marcadores_) {
+        juce::String minutagem = formatarMinutagemNotas(m.segundos);
+        juce::String textoMarcador = m.texto.trim();
+        novasLinhas.add(minutagem + " - " + textoMarcador);
+    }
+    
+    std::string resultado = novasLinhas.joinIntoString("\n").toStdString();
+    projeto_.salvarMetadado(itemId_, "notas_livres", resultado);
 }
 
 } // namespace matriz::ui

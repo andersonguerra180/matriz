@@ -2,7 +2,9 @@
 
 #include "../Consolidacao/Mascara.h"
 #include "../I18n/Strings.h"
+#include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
+#include "ModalMitigacao.h"
 
 namespace matriz::ui::acoes {
 
@@ -11,6 +13,7 @@ namespace {
 enum Comando {
     kCategorizar = 1,
     kRenomear,
+    kRenomearEmLote,
     kRemoverDoBackup,
     kRemoverDaLista,
     kMostrarNaOrigem,
@@ -49,6 +52,7 @@ void confirmar(const juce::String& titulo, const juce::String& mensagem, const j
     janela->addButton(rotuloConfirmar, 1);
     janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
     janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, aoConfirmar](int resultado) {
+        retirarPeerDaTela(*janela); // §3
         if (resultado == 1) aoConfirmar();
     }));
 }
@@ -64,12 +68,10 @@ juce::String previaDoNomeNoBackup(ProjetoAberto& projeto, const std::string& ite
     ctx.titulo = titulo.toStdString();
     ctx.seq = 1;
 
-    auto stmt = projeto.projeto().registro().prepare(
-        "SELECT codigo_acervo, tipo_midia FROM item WHERE id = ?");
-    stmt.bind(1, matriz::db::Value::of(itemId));
-    if (stmt.step()) {
-        ctx.codigoAcervo = stmt.columnText(0);
-        if (!stmt.columnIsNull(1)) ctx.tipoMidia = stmt.columnText(1);
+    std::string tituloStd, tipoMidia, codigoAcervo;
+    if (projeto.obterItemInfo(itemId, tituloStd, tipoMidia, codigoAcervo)) {
+        ctx.codigoAcervo = codigoAcervo;
+        ctx.tipoMidia = tipoMidia;
     }
 
     auto arquivo = projeto.arquivoPrincipal(itemId);
@@ -150,6 +152,7 @@ void pedirNovoNome(ProjetoAberto& projeto, const std::vector<std::string>& itemI
     ProjetoAberto* p = &projeto;
     auto ids = itemIds;
     janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, campo, p, ids, aoConcluir](int resultado) {
+        retirarPeerDaTela(*janela); // §3
         if (resultado != 1) return;
         juce::String novo = campo->texto();
         if (novo.isEmpty()) return;
@@ -178,6 +181,26 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
                               p->definirCapa(ids, imagem);
                               if (ganchos.aoMudarDados) ganchos.aoMudarDados();
                           });
+}
+
+void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    if (itemIds.empty()) return;
+    auto tipos = listarTiposMidiaDisponiveis(projeto);
+    if (tipos.empty()) return;
+
+    juce::PopupMenu menu;
+    for (int i = 0; i < static_cast<int>(tipos.size()); ++i)
+        menu.addItem(i + 1, tipos[static_cast<size_t>(i)].rotulo);
+
+    ProjetoAberto* p = &projeto;
+    auto ids = itemIds;
+    menu.showMenuAsync(juce::PopupMenu::Options(), [p, ids, ganchos, tipos](int resultado) {
+        if (resultado <= 0) return;
+        const std::string& tipo = tipos[static_cast<size_t>(resultado - 1)].id;
+        for (auto& itemId : ids)
+            p->atualizarTipoMidia(itemId, tipo);
+        if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+    });
 }
 
 void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
@@ -221,6 +244,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
 
     menu.addItem(kCategorizar, matriz::i18n::t("acoes.categorizar"));
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
+    if (!umSo) menu.addItem(kRenomearEmLote, matriz::i18n::t("renomear_lote.titulo"));
 
     juce::PopupMenu submenuPastas;
     auto pastas = pastasDoBackup(projeto);
@@ -269,11 +293,15 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
     switch (resultado) {
         case kCategorizar:
-            if (ganchos.aoAbrirDetalhes) ganchos.aoAbrirDetalhes();
+            mudarTipo(projeto, itemIds, ganchos);
             break;
 
         case kRenomear:
             renomear(projeto, itemIds, ganchos);
+            break;
+
+        case kRenomearEmLote:
+            renomearEmLote(projeto, itemIds, ganchos);
             break;
 
         case kDefinirCapa:
@@ -341,6 +369,72 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         default: break;
     }
+}
+
+void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    if (itemIds.empty()) return;
+
+    auto janela = std::make_shared<juce::AlertWindow>(
+        matriz::i18n::t("renomear_lote.titulo"),
+        juce::String(), juce::MessageBoxIconType::NoIcon);
+
+    janela->addComboBox("modo", {
+        matriz::i18n::t("renomear_lote.adicionar_depois"),
+        matriz::i18n::t("renomear_lote.adicionar_antes"),
+        matriz::i18n::t("renomear_lote.substituir")
+    });
+    janela->addTextEditor("texto", "", matriz::i18n::t("renomear_lote.campo_texto"));
+    janela->addTextEditor("procurar", "", matriz::i18n::t("renomear_lote.campo_procurar"));
+    janela->addTextEditor("substituir_por", "", matriz::i18n::t("renomear_lote.campo_substituir_por"));
+
+    auto* combo = janela->getComboBoxComponent("modo");
+    auto* campoTexto = janela->getTextEditor("texto");
+    auto* campoProcurar = janela->getTextEditor("procurar");
+    auto* campoSubstituirPor = janela->getTextEditor("substituir_por");
+
+    campoTexto->setVisible(true);
+    campoProcurar->setVisible(false);
+    campoSubstituirPor->setVisible(false);
+
+    combo->onChange = [campoTexto, campoProcurar, campoSubstituirPor, combo] {
+        int modo = combo->getSelectedItemIndex();
+        campoTexto->setVisible(modo <= 1);
+        campoProcurar->setVisible(modo == 2);
+        campoSubstituirPor->setVisible(modo == 2);
+    };
+
+    janela->addButton(matriz::i18n::t("renomear_lote.renomear"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    ProjetoAberto* p = &projeto;
+    auto ids = itemIds;
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, p, ids, ganchos](int resultado) {
+        retirarPeerDaTela(*janela);
+        if (resultado != 1) return;
+
+        int modo = janela->getComboBoxComponent("modo")->getSelectedItemIndex();
+
+        for (auto& itemId : ids) {
+            std::string titulo, tipoMidia, codigo;
+            if (!p->obterItemInfo(itemId, titulo, tipoMidia, codigo)) continue;
+            juce::String nome(titulo);
+
+            if (modo == 0) {
+                juce::String texto = janela->getTextEditorContents("texto");
+                nome = nome + texto;
+            } else if (modo == 1) {
+                juce::String texto = janela->getTextEditorContents("texto");
+                nome = texto + nome;
+            } else {
+                juce::String procurar = janela->getTextEditorContents("procurar");
+                juce::String substituirPor = janela->getTextEditorContents("substituir_por");
+                if (procurar.isNotEmpty())
+                    nome = nome.replace(procurar, substituirPor);
+            }
+            p->renomearItens({itemId}, nome.toStdString());
+        }
+        if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+    }));
 }
 
 } // namespace matriz::ui::acoes

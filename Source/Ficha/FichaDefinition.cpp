@@ -352,6 +352,7 @@ FichaDefinition loadFromString(const std::string& yamlText, const std::string& o
         }
 
         def.icone = asString(get(root, "icone"));
+        if (has(root, "categoria")) def.categoria = asString(get(root, "categoria"));
 
         bool hasGrupos = has(root, "grupos");
         bool hasNiveis = has(root, "niveis");

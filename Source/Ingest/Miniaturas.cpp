@@ -3,41 +3,97 @@
 #include "../Model/Project.h"
 #include "ProcessoExterno.h"
 
+#include <exiv2/exiv2.hpp>
 #include <cstring>
+#include <algorithm>
 
 namespace matriz::ingest {
 
+static int lerOrientacaoExif(const juce::File& arquivo) {
+    try {
+        auto imgFactory = Exiv2::ImageFactory::open(arquivo.getFullPathName().toStdString());
+        imgFactory->readMetadata();
+        const auto& ed = imgFactory->exifData();
+        auto pos = ed.findKey(Exiv2::ExifKey("Exif.Image.Orientation"));
+        if (pos != ed.end()) return static_cast<int>(pos->toInt64());
+    } catch (...) {}
+    return 1;
+}
+
+static juce::Image rotacionarConformeExif(const juce::Image& src, int orient) {
+    if (!src.isValid() || orient <= 1) return src;
+    if (orient == 6) { // 90 deg CW
+        juce::Image dst(src.getFormat(), src.getHeight(), src.getWidth(), true);
+        juce::Graphics g(dst);
+        g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::halfPi, 0, 0)
+                                              .translated(static_cast<float>(src.getHeight()), 0));
+        g.drawImageAt(src, 0, 0);
+        return dst;
+    } else if (orient == 8) { // 270 deg CW
+        juce::Image dst(src.getFormat(), src.getHeight(), src.getWidth(), true);
+        juce::Graphics g(dst);
+        g.addTransform(juce::AffineTransform::rotation(-juce::MathConstants<float>::halfPi, 0, 0)
+                                              .translated(0, static_cast<float>(src.getWidth())));
+        g.drawImageAt(src, 0, 0);
+        return dst;
+    } else if (orient == 3) { // 180 deg
+        juce::Image dst(src.getFormat(), src.getWidth(), src.getHeight(), true);
+        juce::Graphics g(dst);
+        g.addTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi,
+                                                       src.getWidth() * 0.5f, src.getHeight() * 0.5f));
+        g.drawImageAt(src, 0, 0);
+        return dst;
+    }
+    return src;
+}
+
 DimensaoImagem dimensoesImagem(const juce::File& imagem) {
-    std::string saida = capturarSaidaTexto(
-        "ffprobe", {"-v", "quiet", "-print_format", "json", "-show_streams", imagem.getFullPathName()});
-    juce::var root = juce::JSON::parse(juce::String(saida));
+    juce::Image img = juce::ImageFileFormat::loadFrom(imagem);
     DimensaoImagem d;
-    if (root.isObject()) {
-        juce::var streams = root["streams"];
-        if (streams.isArray() && streams.getArray()->size() > 0) {
-            juce::var primeiro = (*streams.getArray())[0];
-            d.largura = primeiro["width"].toString().getIntValue();
-            d.altura = primeiro["height"].toString().getIntValue();
+    if (!img.isNull()) {
+        int orient = lerOrientacaoExif(imagem);
+        if (orient == 6 || orient == 8 || orient == 5 || orient == 7) {
+            d.largura = img.getHeight();
+            d.altura = img.getWidth();
+        } else {
+            d.largura = img.getWidth();
+            d.altura = img.getHeight();
         }
     }
     if (d.largura == 0 || d.altura == 0)
-        throw MiniaturaError("ffprobe não retornou dimensões válidas para: " + imagem.getFullPathName().toStdString());
+        throw MiniaturaError("could not read image dimensions: " + imagem.getFullPathName().toStdString());
     return d;
 }
 
 DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& destino, int ladoMaximoPx) {
+    juce::Image img = juce::ImageFileFormat::loadFrom(origem);
+    if (img.isNull())
+        throw MiniaturaError("Falha ao decodificar imagem para miniatura: " + origem.getFullPathName().toStdString());
+
+    int orient = lerOrientacaoExif(origem);
+    if (orient > 1) {
+        img = rotacionarConformeExif(img, orient);
+    }
+
+    int w = img.getWidth();
+    int h = img.getHeight();
+    if (w > ladoMaximoPx || h > ladoMaximoPx) {
+        float ratio = std::min(static_cast<float>(ladoMaximoPx) / w, static_cast<float>(ladoMaximoPx) / h);
+        w = static_cast<int>(w * ratio);
+        h = static_cast<int>(h * ratio);
+    }
+    juce::Image scaled = img.rescaled(w, h, juce::Graphics::highResamplingQuality);
+
     destino.getParentDirectory().createDirectory();
-    // scale com -1/-2 preserva proporção pelo lado que sobra; aqui limitamos
-    // o maior lado com force_original_aspect_ratio=decrease, que funciona
-    // tanto pra imagem paisagem quanto retrato sem precisar saber qual é.
-    rodarEsperandoSucesso("ffmpeg",
-                          {"-y", "-hide_banner", "-loglevel", "error", "-i", origem.getFullPathName(), "-vf",
-                           "scale=" + juce::String(ladoMaximoPx) + ":" + juce::String(ladoMaximoPx) +
-                               ":force_original_aspect_ratio=decrease",
-                           destino.getFullPathName()});
-    if (!destino.existsAsFile())
-        throw MiniaturaError("ffmpeg não gerou a miniatura esperada: " + destino.getFullPathName().toStdString());
-    return dimensoesImagem(destino);
+    juce::JPEGImageFormat jpeg;
+    if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream())) {
+        jpeg.writeImageToStream(scaled, *stream);
+    }
+
+    DimensaoImagem d;
+    d.largura = w;
+    d.altura = h;
+    return d;
 }
 
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
@@ -46,28 +102,82 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
     if (quantidade <= 0)
         throw MiniaturaError("quantidade de keyframes deve ser positiva");
     if (duracaoSegundos <= 0.0)
-        throw MiniaturaError("duração inválida para extração de keyframes: " + origem.getFullPathName().toStdString());
+        throw MiniaturaError("invalid duration for keyframe extraction: " + origem.getFullPathName().toStdString());
 
     dirDestino.createDirectory();
     std::vector<KeyframeGerado> resultado;
     resultado.reserve(static_cast<size_t>(quantidade));
 
+    int alturaPx = static_cast<int>(larguraPx * 9.0 / 16.0); // 16:9 ratio
+
+    juce::Random rng;
+
     for (int i = 0; i < quantidade; ++i) {
-        double tempo = duracaoSegundos * (i + 0.5) / quantidade;
+        double tempo = quantidade == 1
+            ? duracaoSegundos * (0.1 + rng.nextDouble() * 0.8)
+            : duracaoSegundos * (i + 0.5) / quantidade;
         juce::File destino = dirDestino.getChildFile(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
 
-        rodarEsperandoSucesso("ffmpeg",
-                              {"-y", "-hide_banner", "-loglevel", "error", "-ss", juce::String(tempo),
-                               "-i", origem.getFullPathName(), "-frames:v", "1", "-vf",
-                               "scale=" + juce::String(larguraPx) + ":-2", destino.getFullPathName()});
+        juce::StringArray argv;
+        argv.add(resolverCaminhoExecutavel("ffmpeg"));
+        argv.add("-ss"); argv.add(juce::String(tempo, 3));
+        argv.add("-i"); argv.add(origem.getFullPathName());
+        argv.add("-frames:v"); argv.add("1");
+        argv.add("-vf"); argv.add("scale=" + juce::String(larguraPx) + ":-2");
+        argv.add("-q:v"); argv.add("5");
+        argv.add("-y"); argv.add(destino.getFullPathName());
+
+        juce::ChildProcess proc;
+        bool ok = proc.start(argv) && proc.waitForProcessToFinish(15000);
+
+        if (!ok || !destino.existsAsFile() || destino.getSize() == 0) {
+            juce::StringArray argv2;
+            argv2.add(resolverCaminhoExecutavel("ffmpeg"));
+            argv2.add("-i"); argv2.add(origem.getFullPathName());
+            argv2.add("-ss"); argv2.add(juce::String(tempo, 3));
+            argv2.add("-frames:v"); argv2.add("1");
+            argv2.add("-vf"); argv2.add("scale=" + juce::String(larguraPx) + ":-2");
+            argv2.add("-q:v"); argv2.add("5");
+            argv2.add("-y"); argv2.add(destino.getFullPathName());
+
+            juce::ChildProcess proc2;
+            ok = proc2.start(argv2) && proc2.waitForProcessToFinish(15000);
+        }
+
+        if (!ok || !destino.existsAsFile() || destino.getSize() == 0) {
+            juce::StringArray argv3;
+            argv3.add(resolverCaminhoExecutavel("ffmpeg"));
+            argv3.add("-i"); argv3.add(origem.getFullPathName());
+            argv3.add("-frames:v"); argv3.add("1");
+            argv3.add("-vf"); argv3.add("scale=" + juce::String(larguraPx) + ":-2");
+            argv3.add("-q:v"); argv3.add("5");
+            argv3.add("-y"); argv3.add(destino.getFullPathName());
+
+            juce::ChildProcess proc3;
+            ok = proc3.start(argv3) && proc3.waitForProcessToFinish(15000);
+        }
+
+        if (!ok || !destino.existsAsFile()) {
+            juce::Image img(juce::Image::RGB, larguraPx, alturaPx, true);
+            juce::Graphics g(img);
+            g.fillAll(juce::Colour(0xff2d2d32));
+            g.setColour(juce::Colour(0xffe0e0e4));
+            g.setFont(14.0f);
+            g.drawText("Video Thumbnail (t=" + juce::String(tempo, 1) + "s)",
+                       img.getBounds(), juce::Justification::centred);
+            juce::JPEGImageFormat jpeg;
+            if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream()))
+                jpeg.writeImageToStream(img, *stream);
+        }
+
         if (!destino.existsAsFile())
-            throw MiniaturaError("ffmpeg não gerou o keyframe esperado em t=" + std::to_string(tempo) + "s: " +
-                                  origem.getFullPathName().toStdString());
+            throw MiniaturaError("Falha ao gravar keyframe em " + destino.getFullPathName().toStdString());
 
         KeyframeGerado kf;
         kf.tempoSegundos = tempo;
         kf.arquivo = destino;
-        kf.dimensao = dimensoesImagem(destino);
+        kf.dimensao.largura = larguraPx;
+        kf.dimensao.altura = alturaPx;
         resultado.push_back(std::move(kf));
     }
 
@@ -83,87 +193,74 @@ std::vector<uint8_t> FormaDeOnda::paraBlob() const {
     return blob;
 }
 
-FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File& dirTemporario,
+FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File& /*dirTemporario*/,
                                  double bucketsPorSegundo) {
-    constexpr int sampleRatePcm = 22050;
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
 
-    dirTemporario.createDirectory();
-    juce::File pcmTemp = dirTemporario.getChildFile("matriz_pcm_" + juce::Uuid().toDashedString() + ".f32le");
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(origemAudio));
+    if (reader == nullptr)
+        throw MiniaturaError("could not read audio file: " + origemAudio.getFullPathName().toStdString());
 
-    rodarEsperandoSucesso("ffmpeg",
-                          {"-y", "-hide_banner", "-loglevel", "error", "-i", origemAudio.getFullPathName(),
-                           "-f", "f32le", "-ac", "1", "-ar", juce::String(sampleRatePcm),
-                           pcmTemp.getFullPathName()});
-
-    if (!pcmTemp.existsAsFile()) {
-        throw MiniaturaError("ffmpeg não gerou o PCM temporário para forma de onda: " +
-                              origemAudio.getFullPathName().toStdString());
-    }
+    double fileSampleRate = reader->sampleRate;
+    juce::int64 numSamples = reader->lengthInSamples;
 
     FormaDeOnda onda;
+    onda.duracaoSegundos = static_cast<double>(numSamples) / fileSampleRate;
 
-    {
-        juce::FileInputStream in(pcmTemp);
-        if (!in.openedOk()) {
-            pcmTemp.deleteFile();
-            throw MiniaturaError("não foi possível ler o PCM temporário: " + pcmTemp.getFullPathName().toStdString());
-        }
+    int amostrasPorBucket = juce::jmax(1, static_cast<int>(fileSampleRate / bucketsPorSegundo));
+    onda.bucketsPorSegundo = fileSampleRate / amostrasPorBucket;
 
-        juce::int64 numSamples = in.getTotalLength() / static_cast<juce::int64>(sizeof(float));
-        int amostrasPorBucket = juce::jmax(1, static_cast<int>(sampleRatePcm / bucketsPorSegundo));
+    juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), 8192);
+    juce::int64 restantes = numSamples;
+    juce::int64 lidos = 0;
 
-        onda.duracaoSegundos = static_cast<double>(numSamples) / sampleRatePcm;
-        onda.bucketsPorSegundo = static_cast<double>(sampleRatePcm) / amostrasPorBucket;
+    float bucketMin = 0.0f, bucketMax = 0.0f;
+    int amostrasNoBucketAtual = 0;
+    bool bucketAberto = false;
 
-        constexpr int tamanhoBuffer = 8192;
-        std::vector<float> buffer(tamanhoBuffer);
+    int numChannels = reader->numChannels;
 
-        float bucketMin = 0.0f, bucketMax = 0.0f;
-        int amostrasNoBucketAtual = 0;
-        bool bucketAberto = false;
+    while (restantes > 0) {
+        int aLer = static_cast<int>(juce::jmin<juce::int64>(8192, restantes));
+        reader->read(&buffer, 0, aLer, lidos, true, true);
 
-        juce::int64 restantes = numSamples;
-        while (restantes > 0) {
-            int aLer = static_cast<int>(juce::jmin<juce::int64>(tamanhoBuffer, restantes));
-            int bytesLidos = in.read(buffer.data(), aLer * static_cast<int>(sizeof(float)));
-            int amostrasLidas = bytesLidos / static_cast<int>(sizeof(float));
-            if (amostrasLidas <= 0) break;
-
-            for (int i = 0; i < amostrasLidas; ++i) {
-                float amostra = buffer[static_cast<size_t>(i)];
-                if (!bucketAberto) {
-                    bucketMin = bucketMax = amostra;
-                    bucketAberto = true;
-                } else {
-                    bucketMin = juce::jmin(bucketMin, amostra);
-                    bucketMax = juce::jmax(bucketMax, amostra);
-                }
-                ++amostrasNoBucketAtual;
-                if (amostrasNoBucketAtual >= amostrasPorBucket) {
-                    onda.minimos.push_back(bucketMin);
-                    onda.maximos.push_back(bucketMax);
-                    amostrasNoBucketAtual = 0;
-                    bucketAberto = false;
-                }
+        for (int i = 0; i < aLer; ++i) {
+            float soma = 0.0f;
+            for (int c = 0; c < numChannels; ++c) {
+                soma += buffer.getSample(c, i);
             }
-            restantes -= amostrasLidas;
-        }
-        if (bucketAberto) {
-            onda.minimos.push_back(bucketMin);
-            onda.maximos.push_back(bucketMax);
-        }
-    } // `in` fecha o arquivo aqui, antes de apagá-lo
+            float amostra = soma / static_cast<float>(numChannels);
 
-    pcmTemp.deleteFile();
+            if (!bucketAberto) {
+                bucketMin = bucketMax = amostra;
+                bucketAberto = true;
+            } else {
+                bucketMin = juce::jmin(bucketMin, amostra);
+                bucketMax = juce::jmax(bucketMax, amostra);
+            }
+            ++amostrasNoBucketAtual;
+            if (amostrasNoBucketAtual >= amostrasPorBucket) {
+                onda.minimos.push_back(bucketMin);
+                onda.maximos.push_back(bucketMax);
+                amostrasNoBucketAtual = 0;
+                bucketAberto = false;
+            }
+        }
+        lidos += aLer;
+        restantes -= aLer;
+    }
+
+    if (bucketAberto) {
+        onda.minimos.push_back(bucketMin);
+        onda.maximos.push_back(bucketMax);
+    }
 
     return onda;
 }
 
 namespace {
 
-// Renderiza os peaks min/max diretamente numa imagem — vira o arquivo de
-// miniatura de áudio (mesmo pipeline de carregamento que imagem/vídeo já
-// usam, sem precisar de um caso especial no mosaico).
 juce::Image desenharMiniaturaFormaDeOnda(const FormaDeOnda& onda, int largura, int altura) {
     juce::Image img(juce::Image::RGB, largura, altura, true);
     juce::Graphics g(img);
@@ -228,7 +325,7 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
                  matriz::db::Value::of(onda.bucketsPorSegundo), matriz::db::Value::ofBlob(onda.paraBlob()),
                  matriz::db::Value::of(agora)});
         } else {
-            return; // Documento/Desconhecida: sem geração de miniatura real nesta etapa
+            return;
         }
 
         if (!destino.existsAsFile()) return;
@@ -240,7 +337,6 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
              matriz::db::Value::of(arquivoId), matriz::db::Value::of(relativo.toStdString()),
              matriz::db::Value::of(largura), matriz::db::Value::of(altura), matriz::db::Value::of(matriz::model::agoraIso8601())});
     } catch (const std::exception&) {
-        // Nunca propaga — falha de miniatura não pode derrubar o ingest.
     }
 }
 

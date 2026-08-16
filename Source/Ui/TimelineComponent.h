@@ -122,6 +122,7 @@ private:
     void abrirEditorInline(int indiceMarcador);
     void fecharEditorInline(bool gravando);
     juce::String formatarPosicao(double segundos) const;
+    void sincronizarMarcadoresParaNotas();
 
     ProjetoAberto& projeto_;
     std::string itemId_;

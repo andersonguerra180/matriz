@@ -1,45 +1,58 @@
 #include "Pcm.h"
 
-#include "ProcessoExterno.h"
-
-#include <cstring>
+#include <algorithm>
+#include <vector>
 
 namespace matriz::ingest {
 
-std::vector<float> decodificarExcertoPcmMono(const juce::File& audio, const juce::File& dirTemporario,
+std::vector<float> decodificarExcertoPcmMono(const juce::File& audio, const juce::File& /*dirTemporario*/,
                                               int sampleRate, double offsetSegundos, double duracaoSegundos) {
-    dirTemporario.createDirectory();
-    juce::File tmp = dirTemporario.getChildFile("matriz_excerto_" + juce::Uuid().toDashedString() + ".f32le");
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
 
-    juce::StringArray args{"-y", "-hide_banner", "-loglevel", "error"};
-    if (offsetSegundos > 0.0) {
-        args.add("-ss");
-        args.add(juce::String(offsetSegundos));
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(audio));
+    if (reader == nullptr)
+        return {};
+
+    double fileSampleRate = reader->sampleRate;
+    juce::int64 startSample = static_cast<juce::int64>(offsetSegundos * fileSampleRate);
+    juce::int64 numSamples = static_cast<juce::int64>(duracaoSegundos * fileSampleRate);
+
+    if (startSample >= reader->lengthInSamples)
+        return {};
+    if (startSample + numSamples > reader->lengthInSamples)
+        numSamples = reader->lengthInSamples - startSample;
+
+    juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), static_cast<int>(numSamples));
+    reader->read(&buffer, 0, static_cast<int>(numSamples), startSample, true, true);
+
+    std::vector<float> monoAmostras(static_cast<size_t>(numSamples));
+    int numChannels = reader->numChannels;
+    if (numChannels > 0) {
+        for (juce::int64 i = 0; i < numSamples; ++i) {
+            float soma = 0.0f;
+            for (int c = 0; c < numChannels; ++c) {
+                soma += buffer.getSample(c, static_cast<int>(i));
+            }
+            monoAmostras[static_cast<size_t>(i)] = soma / static_cast<float>(numChannels);
+        }
     }
-    args.add("-i");
-    args.add(audio.getFullPathName());
-    args.add("-t");
-    args.add(juce::String(duracaoSegundos));
-    args.add("-f");
-    args.add("f32le");
-    args.add("-ac");
-    args.add("1");
-    args.add("-ar");
-    args.add(juce::String(sampleRate));
-    args.add(tmp.getFullPathName());
 
-    rodarEsperandoSucesso("ffmpeg", args);
-
-    std::vector<float> amostras;
-    if (tmp.existsAsFile()) {
-        juce::MemoryBlock bloco;
-        tmp.loadFileAsData(bloco);
-        size_t n = bloco.getSize() / sizeof(float);
-        amostras.resize(n);
-        std::memcpy(amostras.data(), bloco.getData(), n * sizeof(float));
-        tmp.deleteFile();
+    if (fileSampleRate != sampleRate && numSamples > 0) {
+        double ratio = fileSampleRate / static_cast<double>(sampleRate);
+        juce::int64 targetSamples = static_cast<juce::int64>(numSamples / ratio);
+        std::vector<float> resampled(static_cast<size_t>(targetSamples));
+        for (juce::int64 i = 0; i < targetSamples; ++i) {
+            double pos = i * ratio;
+            juce::int64 idx1 = static_cast<juce::int64>(pos);
+            juce::int64 idx2 = std::min(idx1 + 1, numSamples - 1);
+            float frac = static_cast<float>(pos - idx1);
+            resampled[static_cast<size_t>(i)] = (1.0f - frac) * monoAmostras[static_cast<size_t>(idx1)] + frac * monoAmostras[static_cast<size_t>(idx2)];
+        }
+        return resampled;
     }
-    return amostras;
+
+    return monoAmostras;
 }
 
 } // namespace matriz::ingest

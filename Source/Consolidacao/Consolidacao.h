@@ -39,7 +39,8 @@ namespace matriz::consolidacao {
 // Material sem o campo de um nível (ano desconhecido, tipo não classificado)
 // vai pra uma pasta "sem <campo>" em vez de desaparecer ou travar o backup
 // (§5.2 — "nunca desaparece nem trava").
-enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, PastaManual };
+// EstruturaOriginal preserves the relative folder structure from the source path.
+enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, PastaManual, EstruturaOriginal };
 
 std::string nivelHierarquiaToString(NivelHierarquia n);
 NivelHierarquia nivelHierarquiaFromString(const std::string& s); // lança std::runtime_error se desconhecido
@@ -85,6 +86,10 @@ struct PlanoConsolidacao {
 // o rótulo de exibição traduzido ("Reel tape"), como no exemplo do §5.1.
 // Existe como callback, e não como include de FichaI18n aqui, porque este
 // módulo não é de UI e é compilado no selftest headless, que não linka i18n.
+// Canonical filename resolver: guarantees basename + existing extension = exactly one extension.
+// Prevents duplicated extensions (.wav.wav, .jpg.jpg) across all modes.
+juce::String resolverNomeFinalBackup(const juce::File& arquivoOrigem, const std::string& nomeBaseMascara, bool usaEstruturaOriginal);
+
 using RotuloTipoMidia = std::function<juce::String(const std::string& tipoMidia)>;
 
 // `hierarquia` vazia = usa o que estiver gravado em projeto.hierarquia_backup

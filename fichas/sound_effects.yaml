@@ -3,6 +3,7 @@ rotulo: Efeito sonoro
 modos: [archive, catalog]
 ordem: 160
 icone: audio
+categoria: digital
 grupos:
   - rotulo: Classificação
     campos:

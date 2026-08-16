@@ -82,16 +82,20 @@ tools/ingest_selftest/  self-test headless do motor de ingestão/backup, sobre m
 
 | Componente | O que é |
 |---|---|
-| `MainWindow` / `MainComponent` | janela, menu nativo, layout, drag-and-drop na janela inteira |
+| `MainWindow` / `MainComponent` | janela, menu nativo (File/Edit/Preferences), layout, drag-and-drop na janela inteira, Cmd+Z/S/Shift+S |
 | `MosaicoComponent` | grade virtualizada; agrupa por tipo de mídia, artista/lançamento ou **ano** |
 | `ArvoreComponent` | árvore EXPLORER (origem em disco, intocada) / BACKUP (estrutura virtual) |
-| `FichaPanelComponent` | ficha genérica sobre `FichaDefinition`; origem/ano em destaque, observações, edição em lote, **trocar tipo** |
+| `ArvoreBackupComponent` | TREE workspace n8n-style: grafo de nós, zoom/pan/minimap, edição inline, conexão por arrasto |
+| `CatalogWorkspaceComponent` | sidebar com contagens + grid + ficha; RECENTLY INGESTED com timer de refresh |
+| `FichaPanelComponent` | ficha genérica sobre `FichaDefinition`; Apply funcional (single/batch), undo, "Needs review" |
 | `FiltrosComponent` | chips de tipo/estado/extensão/**origem**, faixa de ano, coleções inteligentes |
 | `NavegadorArquivos*` | navegador estilo Finder embutido (colunas/lista/ícones, ADD TO BACKUP) |
+| `IngestWizardComponent` | diálogo pré-ingest: pasta destino, flatten, auto-classificação |
 | `TimelineComponent` | timeline de editor: onda, cursor, zoom, régua/timecode, transporte, jog/shuttle, marcadores |
 | `BarraMetricasComponent` | barra fixa no rodapé: LUFS-I, LRA, FPS, VU e formato, adaptando-se ao tipo |
 | `ConsolidacaoDialogo` | backup: hierarquia de níveis arrastáveis com prévia da árvore ao vivo |
 | `CatalogoComponent` | consulta ao catálogo de proxies sem o volume original |
+| `ProjetoAberto` | estado central do projeto aberto: undo stack (10 níveis), leitura/gravação de metadado, tags |
 | `Tokens.h` | design tokens (BKR Dark é o padrão; nenhuma cor literal fora deste arquivo) |
 
 ## Build
@@ -112,10 +116,12 @@ cmake --build build -j 8
 ./build/matriz_selftest_artefacts/matriz_selftest
 ./build/matriz_ingest_selftest_artefacts/matriz_ingest_selftest
 "build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-uitest
+"build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-modal-loop
+"build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-mosaico-10k
 open "build/matriz_artefacts/BKR Matriz.app"
 ```
 
-Três suítes, todas verdes (109 + 177 + 638 verificações):
+Quatro suítes, todas verdes:
 
 - **`matriz_selftest`** — carrega e valida as 19 definições de ficha (descobertas do
   diretório, não de lista fixa), confirma que todo grupo de toda ficha tem tradução em
@@ -129,11 +135,63 @@ Três suítes, todas verdes (109 + 177 + 638 verificações):
   real, ficha em lote, painel de inconsistências, hierarquia de backup, consolidação
   incremental/cancelável, catálogo de proxies, e o metadado embutido na cópia **com prova
   de que o original fica byte a byte idêntico**.
-- **`--selftest-uitest`** — harness de UI headless (ver abaixo).
+  Cobre também, desde a reconstrução em leva única: o **cache de análise** (I2 — LUFS-I
+  conferido contra o `ebur128` do ffmpeg dentro de 0,1 LU, critério 9), a **reconciliação
+  de Vault** (§8 — mover, alterar, apagar e reconectar volume, com a ficha e o histórico
+  seguindo o asset), as **coleções inteligentes** (§10 — views SQL que se atualizam
+  sozinhas) e a **publicação** (§9 — pacote `.matriz` com `manifest.txt` conferível por
+  `shasum -c`, releitura de cada byte gravado, e recusa explícita de publicar com o Vault
+  desconectado).
+- **`--selftest-uitest`** — harness de UI headless (ver abaixo). Inclui a Estação de
+  Escuta carregando **offline** em 1 ms (critério 2) e os atalhos 1–9 categorizando 200
+  itens de uma vez (critério 14).
+- **`--selftest-modal-loop`** — 500 ciclos de abrir/fechar diálogo na message thread
+  (§3, critério 21). Feito pra rodar sob AddressSanitizer:
+
+  ```bash
+  cmake -B build-asan -DMATRIZ_ASAN=ON
+  cmake --build build-asan --target matriz -j 8
+  "build-asan/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-modal-loop
+  ```
+
+### Como o critério 3 é medido (e duas medições erradas antes dela)
+
+`--selftest-ingerir-arquivos` ingere 5.000 arquivos e mede se a interface congelou. Chegar
+na medida certa custou três tentativas, e vale registrar porque as duas primeiras me
+levaram a conclusões erradas:
+
+1. **Cronometrar em volta de `runDispatchLoopUntil()`** acusou picos de 18 s. Mede também
+   o tempo em que a thread não foi *escalonada* — com 6 workers de ingest e milhares de
+   subprocessos de ffprobe disputando CPU, isso não é a janela travada, é o sistema
+   dividindo a máquina.
+2. **Atraso de `juce::Timer`** acusou travamentos de exatamente 20 s, a cada 20 s —
+   enquanto o loop de mensagens demonstravelmente girava 3.160 vezes no mesmo período. O
+   Timer do JUCE depende de uma thread interna que também disputa CPU; num laço de
+   bombeamento apertado ela deixa de disparar sem que a interface esteja travada.
+3. **Latência de entrega de `callAsync`** — o caminho que o handler de um botão percorre.
+   Se o callback demora, a interface demorou. É a medida que ficou: **232 ms no pior caso**
+   ao longo dos 5.000 arquivos.
+
+O caminho até lá encontrou defeitos reais, cada um medido com `sample(1)` e com o próprio
+`perf.log` em vez de adivinhado:
+
+- `Project::modo()` fazia um `SELECT` a cada chamada, no caminho de reordenar a grade.
+  Com o ingest concorrente, cada `prepare()` esperava o mutex da conexão SQLite. O modo não
+  muda depois da criação — agora é lido uma vez (lote de 5.000: 207 s → 151 s).
+- `verificarArquivosNoDisco` mantinha um statement SQLite **aberto** enquanto calculava
+  SHA-256 de milhares de arquivos, e a conexão é uma só, compartilhada com a message
+  thread.
+- O ingest postava um `callAsync` por arquivo: 5.000 idas à message thread, drenadas em
+  rajadas. Virou um contador atômico consultado por timer a 10 Hz.
+- Árvore, filtros, painel de inconsistências e barra de métricas rodavam agregações e
+  varreduras de disco na message thread. Todos foram pra background, com guarda contra
+  empilhar jobs.
+- O `MessageLoopMonitor` era um `static` local: um `juce::Timer` destruído na destruição de
+  estáticos, depois de o MessageManager já ter morrido — crash no fim do processo.
 
 O app tem outros dois modos de verificação headless: `--selftest-mosaico-10k` (benchmark
-de virtualização contra 10 mil itens) e `--selftest-ingerir-arquivos` (ingest via
-`MainComponent` de verdade, não um atalho).
+de virtualização contra **100 mil** itens, critério 18) e `--selftest-ingerir-arquivos`
+(ingest via `MainComponent` de verdade, não um atalho).
 
 ### Harness de UI headless (`--selftest-uitest`)
 
@@ -154,14 +212,26 @@ drag-and-drop cobrindo só uma coluna da janela, a visão em lista do navegador 
 colunas ancestrais na tela, e os rótulos de ficha aparecendo em português com locale=en.
 Nenhum desses aparecia em teste de lógica.
 
-**Achado real durante a construção do harness** (não uma limitação do harness, um bug do
-próprio JUCE/AlertWindow nesta configuração): deixar o `MessageManager` bombear o loop de
-mensagens enquanto um `AlertWindow` modal aberto por dentro de uma `MainComponent` fora do
-Desktop ainda está vivo — mesmo bem depois de `exitModalState()` — faz o macOS
-eventualmente tentar compor essa janela de verdade (NSView/CoreAnimation reais) e crasha
-dentro de `juce::AlertWindow::paint()` -> `Component::getName()`. O contorno usado no
-harness é chamar `removeFromDesktop()` explicitamente logo depois de `exitModalState()`,
-antes de qualquer novo bombeamento do loop de mensagens; a causa raiz não foi isolada.
+**O crash de `AlertWindow` foi resolvido, não contornado.** O modo de falha era: com um
+`AlertWindow` modal ainda vivo, o macOS eventualmente tenta compor a janela de verdade
+(NSView/CoreAnimation) e crasha dentro de `juce::AlertWindow::paint()` ->
+`Component::getName()` — inclusive depois de `exitModalState()`. A causa é o modelo de
+janela: o `AlertWindow` cria um **peer nativo próprio** e entra num loop modal do sistema,
+e nenhuma ordem de destruição do lado do JUCE fecha isso por completo.
+
+A solução do §3 tem duas partes:
+
+1. **`PainelOverlay`** (`Source/Ui/OverlayComponent.h`) — diálogo como Component filho
+   comum do `MainComponent`, sem peer, sem loop modal, sem janela nativa. Pintar é a
+   mesma pintura de qualquer painel; fechar é remover um filho. O seletor de tipo de mídia
+   (justamente o diálogo do crash) já usa isto.
+2. **`retirarPeerDaTela()`** (`Source/Ui/ModalMitigacao.h`) — pros `AlertWindow` que
+   sobraram, todo callback modal começa tirando o peer da tela, antes de ler qualquer
+   campo. Sem peer não há quem repinte.
+
+`--selftest-modal-loop` sob AddressSanitizer é a prova: 500 ciclos de abrir/confirmar/
+cancelar/descartar, bombeando mensagens com o painel aberto E depois de fechado, mais o
+caso de abrir um overlay por cima de outro e o de destruir a janela com diálogo vivo.
 
 ## Como se usa (fluxo real)
 
@@ -230,6 +300,28 @@ nada vai ao usuário antes do conjunto inteiro estar pronto).
       origem e ano em destaque com filtro/busca/agrupamento/lote; hierarquia de pastas do
       backup; barra de métricas; transporte e jog; timeline com marcadores; observações
       multi-entrada ligadas aos marcadores.
+- [x] **Reconstrução em leva única.** Preservação in-place (I5 — o original nunca é
+      copiado, movido nem reescrito; a catalogação registra a referência), identidade de
+      volume por UUID (DiskArbitration), cache de análise no registro (I2/I3 — miniatura,
+      forma de onda, LUFS-I/LRA/true peak/correlação como BLOB e números prontos),
+      Vaults com reconciliação automática ao conectar o volume e auditoria completa de
+      bit rot (§8), Estação de Escuta com JKL/jog/VU/correlação/vetorscópio/espectrograma
+      (§7), publicação de pacote `.matriz` autocontido com `manifest.txt` e preservation
+      report (§9), coleções inteligentes como views SQL (§10), overlays internos no lugar
+      dos modais nativos (§3), watchdog de 16 ms com call stack em `~/Library/Logs/MATRIZ/
+      perf.log` (§0), atalhos 1–9 pra categorizar em lote, e idioma único inglês (§6).
+- [x] **Catálogo, metadados e TREE (itens 22–31).** Diálogo pré-ingest com seletor de
+      pasta destino e opção de achatamento; menu File completo (New/Open/Recent/Save/
+      Save As/Preferences/Quit); auto-classificação de tipo de mídia por extensão na
+      ingestão; painel de metadados unificado com Apply funcional (single + batch) e
+      "Needs review" para campos obrigatórios vazios; UNDO operacional com até 10 níveis
+      e Cmd+Z/Cmd+S/Cmd+Shift+S; RECENTLY INGESTED baseado em tempo (default 3h,
+      configurável em Preferences com modo TIME ou CLEAR LIST on start, refresh
+      automático a cada 60s); workspace TREE com zoom in/out (+/- keys, scroll wheel,
+      range 15%–300%), pan por arrasto no canvas, minimap/navigator no canto inferior
+      direito com arrasto pra navegar, edição inline de nomes de pasta por duplo-clique
+      ou F2, e botões +/−/FIT na toolbar; AI Scan via Gemini API (chave em Preferences).
+
 - [ ] Etapa 4 — Índice e IA leve
 - [ ] Etapa 5 — Captura de áudio ao vivo
 - [ ] Etapa 6 — Vídeo e imagem (player com fps original, pulldown, conformidade)
@@ -246,17 +338,20 @@ parecerem prontas:
 - **Capítulos em MP4** (item 8.3). Marcador embutido funciona em WAV (cue/adtl/iXML);
   MP4 exigiria remuxar o container, operação com risco de perda que precisa de
   verificação byte a byte dedicada. O marcador continua na ficha e no relatório.
-- **Scrub com áudio contínuo no jog** (item 7.2). O jog reposiciona com precisão de
-  amostra, mas não toca o áudio "esticado" durante o giro — isso pede resampling em tempo
-  real, que o `AudioTransportSource` atual não faz. Shuttle pra trás também move a posição
-  sem áudio.
+- **Duração de reprodução limitada a 45 minutos.** A Estação de Escuta reproduz a partir
+  de um buffer em memória, e não streaming do disco — é o que permite shuttle reverso e
+  jog com precisão de amostra sem leitura de arquivo dentro do audio callback. Acima do
+  teto (`kMaxSegundosEmMemoria`), os primeiros 45 minutos carregam e o rodapé avisa; o
+  resto não toca. Declarado, não truncado em silêncio.
 - **LUFS-I/LRA de vídeo.** Medidos só pra áudio legível pelos formatos do JUCE; a trilha
   de um vídeo precisaria ser extraída com ffmpeg antes.
 - **Contagem de páginas de PDF.** PDFium e MuPDF avaliados e descartados (sem build
   FetchContent+CMake viável nos dois sistemas) — ausente de forma explícita em vez de um
   parser artesanal que erra em silêncio.
-- **Descrições do painel de inconsistências** ainda são strings em português escritas
-  antes da externalização de UI; não passam por `i18n::t()`.
+- **Arrastar item pra uma coleção inteligente** não faz nada, por construção: uma view SQL
+  guarda a pergunta, não a resposta, e "adicionar um item a uma pergunta" não quer dizer
+  nada. Quem coleciona item a item é a árvore BACKUP, que recebe o mesmo arrasto. Arrastar
+  pra um **Vault** planeja backup (§6) e funciona.
 - **Prévia de áudio/vídeo dentro do navegador de arquivos** mostra nome/tamanho/data e
   imagem quando é imagem; gerar waveform/keyframe por arquivo selecionado dentro de um
   navegador seria caro demais.
@@ -280,6 +375,12 @@ não foram olhados um por um.
   abrir dispositivo de áudio (o dispositivo só é aberto de fato no primeiro play). O som
   saindo pela placa, a sensação do jog e a balística do VU em uso contínuo não foram
   ouvidos aqui.
+- **Volume físico sendo montado/desmontado.** A reconciliação de Vault é testada com
+  volumes sintéticos (pastas movidas), não com um HD externo sendo plugado. O UUID de
+  volume via DiskArbitration só devolve valor pra volume montado de verdade — em pasta
+  comum cai no fallback por caminho, que é o caminho exercitado pelos testes.
+- **Operação contínua de 30 minutos** (critério 7). Precisa de tempo de uso real, não de
+  harness.
 - **Gesto de drag-and-drop do sistema operacional.** `screencapture` e
   System Events/AppleScript não têm permissão nesta máquina (Gravação de Tela e
   Automação). O pipeline de drop é testado chamando `isInterestedInFileDrag`/`filesDropped`

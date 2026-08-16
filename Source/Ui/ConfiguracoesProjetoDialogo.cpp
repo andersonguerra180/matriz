@@ -51,7 +51,7 @@ void mostrarDialogoConfiguracoesProjeto(ProjetoAberto& projeto, std::function<vo
                                                         juce::MessageBoxIconType::NoIcon);
 
     auto infoLabel = std::make_shared<juce::Label>();
-    infoLabel->setText(juce::String(estado->nome) + "  ·  " +
+    infoLabel->setText(juce::String(estado->nome) + "  |  " +
                             (estado->modo == "catalogo" ? matriz::i18n::t("dialogo_novo_projeto.campo_modo_catalogo")
                                                           : matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao")),
                         juce::dontSendNotification);

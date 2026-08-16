@@ -48,7 +48,7 @@ FramesCalculados calcularFrames(const std::vector<float>& amostras) {
 double energiaModulacao4Hz(const std::vector<float>& envelope) {
     int n = std::min(static_cast<int>(envelope.size()), kEnvelopeFftSize);
     if (n < kEnvelopeFftSize / 4)
-        throw ClassificadorFalaMusicaError("trecho curto demais para analisar modulação de envelope");
+        throw ClassificadorFalaMusicaError("excerpt too short to analyse envelope modulation");
 
     double media = std::accumulate(envelope.begin(), envelope.begin() + n, 0.0) / n;
 
@@ -87,19 +87,18 @@ double variabilidadeZcr(const std::vector<float>& zcr) {
 
 } // namespace
 
-ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::File& dirTemporario) {
-    auto leitura = lerTecnica(audio);
-    if (!leitura.duracaoSegundos || *leitura.duracaoSegundos <= 0.0)
-        throw ClassificadorFalaMusicaError("duração desconhecida, não é possível classificar: " +
+ResultadoFalaMusica classificarComDuracao(const juce::File& audio, const juce::File& dirTemporario,
+                                          double duracaoTotal) {
+    if (duracaoTotal <= 0.0)
+        throw ClassificadorFalaMusicaError("unknown duration, cannot classify: " +
                                             audio.getFullPathName().toStdString());
-    double duracaoTotal = *leitura.duracaoSegundos;
 
     double duracaoAnalise = std::min(30.0, duracaoTotal);
     double offset = duracaoTotal > duracaoAnalise ? (duracaoTotal - duracaoAnalise) / 2.0 : 0.0;
 
     std::vector<float> amostras = decodificarExcertoPcmMono(audio, dirTemporario, kSampleRate, offset, duracaoAnalise);
     if (amostras.size() < static_cast<size_t>(kFrameLen) * 10)
-        throw ClassificadorFalaMusicaError("trecho de áudio curto demais para classificar: " +
+        throw ClassificadorFalaMusicaError("audio excerpt too short to classify: " +
                                             audio.getFullPathName().toStdString());
 
     FramesCalculados frames = calcularFrames(amostras);
@@ -119,11 +118,24 @@ ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::F
         r.rotulo = "musica";
         r.confianca = clamp01((kLimiarMusica - score) / kLimiarMusica);
     } else {
-        r.rotulo = std::nullopt; // zona cinzenta — nenhuma sugestão, evita empurrar palpite fraco (P3)
+        r.rotulo = std::nullopt;
         r.confianca = 0.0;
     }
 
     return r;
+}
+
+ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::File& dirTemporario) {
+    auto leitura = lerTecnica(audio);
+    if (!leitura.duracaoSegundos || *leitura.duracaoSegundos <= 0.0)
+        throw ClassificadorFalaMusicaError("unknown duration, cannot classify: " +
+                                            audio.getFullPathName().toStdString());
+    return classificarComDuracao(audio, dirTemporario, *leitura.duracaoSegundos);
+}
+
+ResultadoFalaMusica classificarFalaMusica(const juce::File& audio, const juce::File& dirTemporario,
+                                          double duracaoSegundos) {
+    return classificarComDuracao(audio, dirTemporario, duracaoSegundos);
 }
 
 } // namespace matriz::ingest

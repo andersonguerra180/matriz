@@ -1,5 +1,6 @@
 #include "PainelInconsistencias.h"
 
+#include "../Vault/Resolucao.h"
 #include "Checksum.h"
 
 #include <cmath>
@@ -33,7 +34,7 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
             Inconsistencia inc;
             inc.tipo = "faixa_sem_isrc";
             inc.itemId = stmt.columnText(0);
-            inc.descricao = "Faixa " + std::to_string(stmt.columnInt(1)) + " sem ISRC";
+            inc.descricao = "Track " + std::to_string(stmt.columnInt(1)) + " has no ISRC";
             out.push_back(std::move(inc));
         }
     }
@@ -47,7 +48,7 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
             Inconsistencia inc;
             inc.tipo = "release_sem_capa";
             inc.itemId = stmt.columnText(0);
-            inc.descricao = "Release sem capa frente";
+            inc.descricao = "Release has no front cover";
             out.push_back(std::move(inc));
         }
     }
@@ -68,7 +69,7 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
                 inc.itemId = itemId;
                 inc.arquivoId = arquivoId;
                 juce::String codec = json.getProperty("codec", juce::var()).toString();
-                inc.descricao = "Master em codec lossy" + (codec.isNotEmpty() ? (" (" + codec.toStdString() + ")") : "");
+                inc.descricao = "Master in a lossy codec" + (codec.isNotEmpty() ? (" (" + codec.toStdString() + ")") : "");
                 out.push_back(std::move(inc));
             }
             if (json.hasProperty("sampleRate"))
@@ -84,7 +85,7 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
             Inconsistencia inc;
             inc.tipo = "sample_rate_divergente";
             inc.itemId = itemId;
-            inc.descricao = "Masters do item têm sample rates diferentes: " + lista;
+            inc.descricao = "Masters of this item have different sample rates: " + lista;
             out.push_back(std::move(inc));
         }
     }
@@ -119,8 +120,8 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
                     inc.tipo = "capa_abaixo_minimo";
                     inc.itemId = itemId;
                     inc.arquivoId = arquivoId;
-                    inc.descricao = "Capa " + std::to_string(largura) + "x" + std::to_string(altura) +
-                                     " abaixo do mínimo exigido (" + ae.minimo + ")";
+                    inc.descricao = "Cover " + std::to_string(largura) + "x" + std::to_string(altura) +
+                                     " is below the required minimum (" + ae.minimo + ")";
                     out.push_back(std::move(inc));
                 }
             }
@@ -144,8 +145,8 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
                 Inconsistencia inc;
                 inc.tipo = "splits_nao_somam_100";
                 inc.itemId = itemId;
-                inc.descricao = "Splits da faixa " + std::to_string(nivelIndice) + " somam " + std::to_string(soma) +
-                                 "%, não 100%";
+                inc.descricao = "Splits for track " + std::to_string(nivelIndice) + " add up to " + std::to_string(soma) +
+                                 "%, not 100%";
                 out.push_back(std::move(inc));
             }
         }
@@ -159,7 +160,7 @@ std::vector<Inconsistencia> detectarInconsistenciasFicha(
         while (stmt.step()) {
             Inconsistencia inc;
             inc.tipo = "isrc_duplicado";
-            inc.descricao = "ISRC " + stmt.columnText(0) + " duplicado em: " + stmt.columnText(2);
+            inc.descricao = "ISRC " + stmt.columnText(0) + " duplicated in: " + stmt.columnText(2);
             out.push_back(std::move(inc));
         }
     }
@@ -171,50 +172,76 @@ std::vector<Inconsistencia> verificarArquivosNoDisco(matriz::model::Project& pro
     std::vector<Inconsistencia> out;
     juce::File pasta = projeto.pasta();
 
-    std::set<std::string> caminhosConhecidos;
+    // Não há mais varredura de órfãos: com a ingestão in-place (I5) o projeto
+    // não tem pasta `arquivos/` própria, e "arquivo no volume sem registro no
+    // catálogo" é o estado NORMAL de qualquer volume — quem quer catalogar o
+    // que falta usa o ingest, não o painel de inconsistências.
+    //
+    // Vault offline também não é inconsistência (I3): um item cujo volume
+    // está desmontado não está corrompido, só indisponível. Só reportamos
+    // divergência quando o Vault está online e mesmo assim o arquivo sumiu
+    // ou mudou de conteúdo.
+    // Lê TUDO primeiro, fecha o statement, e só então relê os arquivos.
+    //
+    // A versão anterior calculava o SHA-256 de cada arquivo DENTRO do laço
+    // do statement. Um statement aberto segura a conexão SQLite, e a conexão
+    // é uma só, compartilhada com a message thread e com as outras threads
+    // de fundo — o resultado era a janela congelada por 20 s enquanto esta
+    // verificação relia milhares de arquivos. Ler linhas é rápido; hashear é
+    // que é caro, e isso tem que acontecer com a conexão livre.
+    struct LinhaArquivo {
+        std::string arquivoId, itemId, checksumRegistrado, estadoPresenca, statusVault;
+        std::string localizacaoVault, caminhoRelativo, caminhoOrigem;
+    };
+    std::vector<LinhaArquivo> linhas;
     {
-        auto stmt = projeto.registro().prepare("SELECT id, item_id, caminho_relativo, checksum_sha256 FROM arquivo");
-        while (stmt.step()) {
-            std::string arquivoId = stmt.columnText(0);
-            std::string itemId = stmt.columnText(1);
-            juce::String caminhoRelativo = stmt.columnText(2);
-            std::string checksumRegistrado = stmt.columnText(3);
+        auto stmt = projeto.registro().prepare(
+            std::string("SELECT a.id, a.item_id, a.checksum_sha256, a.estado_presenca, "
+                        "COALESCE(v.status, 'online'), ") + matriz::vault::colunasDeResolucao() +
+            " FROM arquivo a " + matriz::vault::joinDeResolucao());
+        while (stmt.step())
+            linhas.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2), stmt.columnText(3),
+                              stmt.columnText(4), stmt.columnText(5), stmt.columnText(6), stmt.columnText(7)});
+    }
 
-            caminhosConhecidos.insert(caminhoRelativo.toStdString());
-            juce::File arquivo = pasta.getChildFile(caminhoRelativo);
+    for (const auto& linha : linhas) {
+        const std::string& arquivoId = linha.arquivoId;
+        const std::string& itemId = linha.itemId;
+        const std::string& checksumRegistrado = linha.checksumRegistrado;
+        const std::string& estadoPresenca = linha.estadoPresenca;
+        const std::string& statusVault = linha.statusVault;
+        const std::string& localizacaoVault = linha.localizacaoVault;
+        const std::string& caminhoRelativo = linha.caminhoRelativo;
+        const std::string& caminhoOrigem = linha.caminhoOrigem;
 
-            if (!arquivo.existsAsFile()) {
+        // Placeholder de nuvem ainda não baixado não tem bytes pra conferir
+        // (critério 12) — checar aqui forçaria o download.
+        if (estadoPresenca == "nao_baixado") continue;
+        if (statusVault == "offline") continue;
+
+        auto resolvido = matriz::vault::resolverCaminho(pasta, localizacaoVault, caminhoRelativo, caminhoOrigem);
+        juce::File esperado = matriz::vault::caminhoEsperado(pasta, localizacaoVault, caminhoRelativo, caminhoOrigem);
+
+        if (!resolvido) {
+            Inconsistencia inc;
+            inc.tipo = "checksum_divergente";
+            inc.itemId = itemId;
+            inc.arquivoId = arquivoId;
+            inc.descricao = "Registered file no longer exists on disk: " +
+                             esperado.getFullPathName().toStdString();
+            out.push_back(std::move(inc));
+            continue;
+        }
+
+        if (!checksumRegistrado.empty()) {
+            Checksums atual = calcularChecksums(*resolvido);
+            if (atual.sha256 != checksumRegistrado) {
                 Inconsistencia inc;
                 inc.tipo = "checksum_divergente";
                 inc.itemId = itemId;
                 inc.arquivoId = arquivoId;
-                inc.descricao = "Arquivo registrado não existe mais no disco: " + caminhoRelativo.toStdString();
-                out.push_back(std::move(inc));
-                continue;
-            }
-            if (!checksumRegistrado.empty()) {
-                Checksums atual = calcularChecksums(arquivo);
-                if (atual.sha256 != checksumRegistrado) {
-                    Inconsistencia inc;
-                    inc.tipo = "checksum_divergente";
-                    inc.itemId = itemId;
-                    inc.arquivoId = arquivoId;
-                    inc.descricao = "Checksum do arquivo no disco não confere com o registrado: " +
-                                     caminhoRelativo.toStdString();
-                    out.push_back(std::move(inc));
-                }
-            }
-        }
-    }
-
-    juce::File dirArquivos = pasta.getChildFile("arquivos");
-    if (dirArquivos.isDirectory()) {
-        for (auto& entrada : juce::RangedDirectoryIterator(dirArquivos, true, "*", juce::File::findFiles)) {
-            juce::String relativo = entrada.getFile().getRelativePathFrom(pasta);
-            if (caminhosConhecidos.count(relativo.toStdString()) == 0) {
-                Inconsistencia inc;
-                inc.tipo = "arquivo_orfao";
-                inc.descricao = "Arquivo no disco sem registro no catálogo: " + relativo.toStdString();
+                inc.descricao = "Checksum of the file on disk does not match the registered one: " +
+                                 resolvido->getFullPathName().toStdString();
                 out.push_back(std::move(inc));
             }
         }

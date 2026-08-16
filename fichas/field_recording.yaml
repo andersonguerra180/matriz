@@ -1,8 +1,9 @@
 tipo: field_recording
 rotulo: Gravação de campo
-modos: [archive]
+modos: [archive, catalog]
 ordem: 150
 icone: audio
+categoria: digital
 grupos:
   - rotulo: Captura
     campos:

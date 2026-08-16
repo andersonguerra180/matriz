@@ -1,6 +1,7 @@
 #include "CatalogoProxies.h"
 
 #include "../Model/Project.h"
+#include "../Vault/Resolucao.h"
 
 namespace matriz::catalogo {
 
@@ -101,11 +102,18 @@ std::vector<ProxyDeItem> levantarProxies(matriz::db::Database& registro, matriz:
     std::vector<ProxyDeItem> out;
 
     auto stmt = registro.prepare(
-        "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, "
-        "a.caminho_absoluto_origem, a.caminho_relativo, a.checksum_sha256, a.id, a.caracteristicas_tecnicas_json "
-        "FROM item i LEFT JOIN arquivo a ON a.id = "
-        "  (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
-        "ORDER BY i.codigo_acervo");
+        std::string("SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, "
+                    "a.caminho_absoluto_origem, a.caminho_relativo, a.checksum_sha256, a.id, "
+                    "a.caracteristicas_tecnicas_json, COALESCE(v.localizacao, '') "
+                    "FROM item i LEFT JOIN arquivo a ON a.id = "
+                    "  (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) ") +
+        matriz::vault::joinDeResolucao() +
+        // codigo_acervo pode ser NULL (§5: só é gasto quando o ingest do
+        // arquivo dá certo, e uma duplicata reconhecida nunca gasta um). Sem
+        // o teste de NULL primeiro, o SQLite ordena esses itens ANTES de
+        // todos os outros e o catálogo abre encabeçado por linhas que não têm
+        // arquivo nenhum pra descrever.
+        " ORDER BY (i.codigo_acervo IS NULL), i.codigo_acervo");
 
     while (stmt.step()) {
         ProxyDeItem p;
@@ -118,8 +126,11 @@ std::vector<ProxyDeItem> levantarProxies(matriz::db::Database& registro, matriz:
         if (!stmt.columnIsNull(8)) p.metadadoJson = juce::String(stmt.columnText(8));
 
         if (!stmt.columnIsNull(5)) {
-            juce::File noProjeto = pastaProjeto.getChildFile(juce::String(stmt.columnText(5)));
-            if (noProjeto.existsAsFile()) p.tamanhoBytes = noProjeto.getSize();
+            // I5: o master mora no Vault; `pastaProjeto` só entra como
+            // fallback de projeto legado.
+            auto master = matriz::vault::resolverCaminho(pastaProjeto, stmt.columnText(9), stmt.columnText(5),
+                                                          stmt.columnIsNull(4) ? std::string() : stmt.columnText(4));
+            if (master) p.tamanhoBytes = master->getSize();
         }
 
         std::string arquivoId = stmt.columnIsNull(7) ? std::string() : stmt.columnText(7);
@@ -283,7 +294,10 @@ std::vector<EntradaCatalogo> abrir(const juce::File& pasta) {
     auto stmt = banco.prepare(
         "SELECT item_id, codigo_acervo, titulo, tipo_midia, caminho_origem, volume_origem, caminho_no_backup, "
         "checksum_sha256, tamanho_bytes, miniatura_relativa, tem_forma_onda, metadado_tecnico_json, ficha_json "
-        "FROM proxy_item ORDER BY codigo_acervo");
+        // Mesma regra da geração: item sem código de acervo (§5 — duplicata
+        // reconhecida, ou ingest que falhou) vai pro fim, não encabeça a
+        // lista com uma linha sem arquivo pra descrever.
+        "FROM proxy_item ORDER BY (codigo_acervo IS NULL OR codigo_acervo = ''), codigo_acervo");
     while (stmt.step()) {
         EntradaCatalogo e;
         e.itemId = stmt.columnText(0);

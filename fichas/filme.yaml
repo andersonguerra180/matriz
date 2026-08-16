@@ -3,6 +3,7 @@ rotulo: Filme (16 mm / Super 8 / 8 mm)
 modos: [archive]
 ordem: 60
 icone: video
+categoria: analog
 grupos:
   - rotulo: Suporte
     campos:

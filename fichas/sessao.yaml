@@ -1,0 +1,26 @@
+tipo: sessao
+rotulo: Sessão
+modos: [archive, catalog]
+ordem: 120
+icone: documento
+categoria: digital
+grupos:
+  - rotulo: Identificação
+    campos:
+      - id: origem
+        rotulo: Origem
+        tipo: opcao
+        opcoes: [Digital, Analógico]
+        obrigatorio: true
+        preenchido_por: leitura_tecnica
+      - id: ano
+        rotulo: Ano
+        tipo: inteiro
+      - id: software_origem
+        rotulo: Software de origem
+        tipo: opcao
+        opcoes: [Reaper, Pro Tools, Logic Pro, Ableton Live, Cubase, Nuendo, FL Studio, Adobe Premiere Pro, iZotope RX, Pure Data, outro]
+        obrigatorio: true
+      - id: produtor
+        rotulo: Produtor / Autor
+        tipo: texto

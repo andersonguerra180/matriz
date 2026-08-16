@@ -10,7 +10,7 @@ namespace matriz::db {
 
 Statement::Statement(sqlite3* db, const std::string& sql) : db_(db) {
     if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &stmt_, nullptr) != SQLITE_OK)
-        throw DatabaseError(std::string("falha ao preparar statement: ") + sqlite3_errmsg(db_) + "\nSQL: " + sql);
+        throw DatabaseError(std::string("failed to prepare statement: ") + sqlite3_errmsg(db_) + "\nSQL: " + sql);
 }
 
 Statement::~Statement() {
@@ -44,14 +44,14 @@ void Statement::bind(int oneBasedIndex, const Value& value) {
             break;
     }
     if (rc != SQLITE_OK)
-        throw DatabaseError(std::string("falha ao vincular parâmetro: ") + sqlite3_errmsg(db_));
+        throw DatabaseError(std::string("failed to bind parameter: ") + sqlite3_errmsg(db_));
 }
 
 bool Statement::step() {
     int rc = sqlite3_step(stmt_);
     if (rc == SQLITE_ROW) return true;
     if (rc == SQLITE_DONE) return false;
-    throw DatabaseError(std::string("falha ao executar statement: ") + sqlite3_errmsg(db_));
+    throw DatabaseError(std::string("failed to execute statement: ") + sqlite3_errmsg(db_));
 }
 
 void Statement::reset() {
@@ -68,6 +68,17 @@ long long Statement::columnInt(int index) const { return sqlite3_column_int64(st
 double Statement::columnReal(int index) const { return sqlite3_column_double(stmt_, index); }
 bool Statement::columnIsNull(int index) const { return sqlite3_column_type(stmt_, index) == SQLITE_NULL; }
 
+std::vector<unsigned char> Statement::columnBlob(int index) const {
+    // Ordem obrigatória do SQLite: sqlite3_column_bytes() DEPOIS de
+    // sqlite3_column_blob(). Ao contrário, uma conversão de tipo pode
+    // invalidar o ponteiro e o tamanho lido não corresponderia aos bytes.
+    const void* dados = sqlite3_column_blob(stmt_, index);
+    int tamanho = sqlite3_column_bytes(stmt_, index);
+    if (dados == nullptr || tamanho <= 0) return {};
+    auto* bytes = static_cast<const unsigned char*>(dados);
+    return std::vector<unsigned char>(bytes, bytes + tamanho);
+}
+
 // ---------------------------------------------------------------------------
 // Database
 // ---------------------------------------------------------------------------
@@ -77,7 +88,7 @@ Database::Database(const std::string& path) {
         std::string msg = sqlite3_errmsg(db_);
         sqlite3_close(db_);
         db_ = nullptr;
-        throw DatabaseError("falha ao abrir banco em \"" + path + "\": " + msg);
+        throw DatabaseError("failed to open database at \"" + path + "\": " + msg);
     }
     sqlite3_busy_timeout(db_, 5000);
 }
@@ -90,9 +101,9 @@ void Database::execScript(const std::string& sqlScript) {
     char* errMsg = nullptr;
     int rc = sqlite3_exec(db_, sqlScript.c_str(), nullptr, nullptr, &errMsg);
     if (rc != SQLITE_OK) {
-        std::string msg = errMsg ? errMsg : "erro desconhecido";
+        std::string msg = errMsg ? errMsg : "unknown error";
         sqlite3_free(errMsg);
-        throw DatabaseError("falha ao executar script SQL: " + msg);
+        throw DatabaseError("failed to run SQL script: " + msg);
     }
 }
 

@@ -47,19 +47,38 @@ public:
     // (registro.sqlite e indice.sqlite presentes com schema aplicado).
     static std::unique_ptr<Project> abrir(const juce::File& pastaProjeto);
 
+    Project(const Project&) = delete;
+    Project& operator=(const Project&) = delete;
+    Project(Project&&) = delete;
+    Project& operator=(Project&&) = delete;
+
     const juce::File& pasta() const { return pastaProjeto_; }
-    matriz::db::Database& registro() { return *registro_; }
-    matriz::db::Database& indice() { return *indice_; }
+    matriz::db::Database& registro() {
+        jassert(registro_ != nullptr);
+        if (!registro_) throw ProjectError("internal: registro database is null (use-after-free?)");
+        return *registro_;
+    }
+    matriz::db::Database& indice() {
+        jassert(indice_ != nullptr);
+        if (!indice_) throw ProjectError("internal: indice database is null (use-after-free?)");
+        return *indice_;
+    }
 
     std::string projetoId() const { return projetoId_; }
 
-    // Lidos direto de `projeto` (linha única) — nunca cacheados, pra nunca
-    // divergir do banco. `modo` não muda depois de criado (decisão de
-    // produto, Parte 1 da correção de fluxo); `nome` hoje também não é
-    // editável em nenhuma tela, mas ler ao vivo custa uma linha e evita
-    // qualquer dúvida sobre staleness se isso mudar no futuro.
+    // `nome` é lido direto de `projeto` (linha única): não é editável em
+    // nenhuma tela hoje, mas ler ao vivo custa uma linha e evita dúvida
+    // sobre staleness se isso mudar.
     std::string nome();
-    Modo modo();
+    // O modo é decidido na criação do projeto e nunca muda — lê do banco
+    // UMA vez, na abertura, e devolve o valor guardado.
+    //
+    // Fazia um SELECT a cada chamada, e a chamada está no caminho de
+    // reordenar a grade. Com o ingest concorrente escrevendo pelos 6 workers,
+    // cada um desses prepare() esperava o mutex da conexão SQLite: a message
+    // thread ficou presa 20 s, medido em sample(1). Nada que não muda deveria
+    // custar uma ida ao banco.
+    Modo modo() const { return modo_; }
 
 private:
     Project(juce::File pastaProjeto, std::unique_ptr<matriz::db::Database> registro,
@@ -69,6 +88,7 @@ private:
     std::unique_ptr<matriz::db::Database> registro_;
     std::unique_ptr<matriz::db::Database> indice_;
     std::string projetoId_;
+    Modo modo_ = Modo::Preservacao;
 };
 
 // Timestamp ISO-8601 UTC ("YYYY-MM-DDTHH:MM:SSZ"), a convenção de todo

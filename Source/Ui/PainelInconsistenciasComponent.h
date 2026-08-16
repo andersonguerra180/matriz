@@ -20,10 +20,16 @@ class PainelInconsistenciasComponent : public juce::Component {
 public:
     explicit PainelInconsistenciasComponent(ProjetoAberto& projeto);
 
-    // Roda as checagens de novo (ficha + disco) e redesenha. Chamado ao
-    // abrir o painel e depois de qualquer ingest/edição de ficha que possa
-    // ter mudado o quadro.
+    // Roda as checagens de novo (ficha + disco) e redesenha.
+    //
+    // A checagem de disco RELÊ CADA ARQUIVO e recalcula o SHA-256
+    // (verificarArquivosNoDisco). Num acervo de milhares de itens isso é
+    // minutos — na message thread, era a janela congelada. Vai pra
+    // background (I1); a tela recebe só a lista pronta.
     void recarregar();
+    // Mesma coisa, na mesma pilha de chamada — só pro harness headless.
+    void recarregarSincrono();
+    bool verificacaoEmAndamentoParaTeste() const { return pool_.getNumJobs() > 0; }
 
     int totalInconsistencias() const { return static_cast<int>(itens_.size()); }
 
@@ -31,8 +37,16 @@ public:
     void resized() override;
 
 private:
+    static std::vector<matriz::ingest::Inconsistencia> coletar(ProjetoAberto& projeto);
+    void aplicar(std::vector<matriz::ingest::Inconsistencia> itens);
+
     ProjetoAberto& projeto_;
     std::vector<matriz::ingest::Inconsistencia> itens_;
+
+    juce::ThreadPool pool_{juce::ThreadPoolOptions{}.withThreadName("MatrizVerificacao")
+                           .withNumberOfThreads(1)
+                           .withDesiredThreadPriority(juce::Thread::Priority::low)};
+    int geracao_ = 0;
 
     static constexpr int kAlturaCabecalho = 30;
     static constexpr int kAlturaLinha = 40;

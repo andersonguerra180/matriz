@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS forma_onda (
     gerado_em           TEXT NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS idx_forma_onda_item ON forma_onda(item_id);
+
 -- ---------------------------------------------------------------------------
 -- Embeddings — CLIP de imagem/keyframe e de texto, espaço único de busca (§9.1)
 -- ---------------------------------------------------------------------------

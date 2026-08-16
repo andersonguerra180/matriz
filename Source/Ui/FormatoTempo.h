@@ -22,4 +22,10 @@ std::optional<int64_t> parsearMinutagem(const juce::String& texto);
 // "H:MM:SS" caso contrário.
 juce::String formatarMinutagem(int64_t ms);
 
+// Formato para anotações em NOTES: "HH:MM:SS,CC" (sempre com horas e centésimos).
+juce::String formatarMinutagemNotas(double segundos);
+
+// Detecta linha de marcador no formato NOTES: "HH:MM:SS,CC - texto"
+bool ehLinhaDeMinutagemNotas(const juce::String& linha);
+
 } // namespace matriz::ui

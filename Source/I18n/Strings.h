@@ -4,25 +4,23 @@
 
 // Strings de interface externalizadas desde a primeira tela (§0.6, B.5).
 // Nenhum literal de texto de UI deve viver dentro de código de Component —
-// tudo passa por t("chave.pontilhada"). O texto de verdade mora em
-// i18n/en.yaml e i18n/pt_BR.yaml (chave: valor, agrupado por tela),
-// embutidos no binário via juce_add_binary_data, igual ao schema do banco.
+// tudo passa por t("chave.pontilhada").
 //
-// Inglês é o padrão (Parte 2 da correção de fluxo — abre em inglês
-// independente do idioma do sistema); português fica disponível em
-// Preferences, trocável em tempo real (carregar() pode ser chamado de
-// novo a qualquer momento — recarrega a tabela inteira, sem precisar
-// reiniciar o processo).
+// IDIOMA ÚNICO (§6, critério 13): a interface, os logs e os relatórios são
+// 100% em inglês. O texto mora numa tabela estática em Source/Ui/Strings.h —
+// não há mais tabela pt_BR nem troca de locale em tempo real. Valores que
+// vêm do banco em português (estado de item, prioridade, estado de presença)
+// são traduzidos na hora pela própria t().
 
 namespace matriz::i18n {
 
-// Carrega o locale ("en" ou "pt_BR"). Chamado uma vez no início do
-// programa e de novo sempre que o operador troca o idioma em Preferences.
+// No-op mantido pelo call site do início do programa e pela assinatura dos
+// testes: qualquer locale pedido continua devolvendo inglês.
 void carregar(const juce::String& locale = "en");
 
-// Busca a string traduzida pra `chave`. Se a chave não existir na tabela
-// carregada, devolve "[chave]" — nunca lança, nunca trava a UI, mas deixa
-// óbvio visualmente que falta tradução (fácil de grepar nos testes).
+// Busca a string de `chave`. Se a chave não existir na tabela, devolve
+// "[chave]" — nunca lança, nunca trava a UI, mas deixa óbvio visualmente que
+// falta uma string (fácil de grepar nos testes).
 juce::String t(const juce::String& chave);
 
 // Igual a t(), mas devolve `textoOriginal` (não "[chave]") quando a chave
