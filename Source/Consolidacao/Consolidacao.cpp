@@ -2,6 +2,7 @@
 
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
+#include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
 #include "MetadadoEmbutido.h"
@@ -394,6 +395,55 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                     throw;
                 }
             }
+
+            // -------------------------------------------------------------------
+            // Preservation events — PREMIS BACKUP_CREATED + BACKUP_VERIFIED.
+            // BACKUP_VERIFIED:SUCCESS é o único critério para backup_status=OK.
+            // Erros silenciados: falha de preservação não aborta o backup.
+            // -------------------------------------------------------------------
+            try {
+                // Lê SHA-256 original do banco para comparação
+                std::string sha256Original;
+                {
+                    auto stmtSha = registro.prepare(
+                        "SELECT IFNULL(checksum_sha256,'') FROM arquivo WHERE id = ? LIMIT 1");
+                    stmtSha.bind(1, Value::of(ip.arquivoId));
+                    if (stmtSha.step()) sha256Original = stmtSha.columnText(0);
+                }
+
+                std::string destStr = destinoArquivo.getFullPathName().toStdString();
+
+                // BACKUP_CREATED — sempre, independente da comparação
+                preservation::registrarEvento(
+                    registro, ip.itemId, ip.arquivoId,
+                    preservation::EventType::BackupCreated,
+                    "Destination: " + destStr,
+                    preservation::Outcome::Success, {},
+                    "bkr-agent-sistema");
+
+                // BACKUP_VERIFIED — compara hash da cópia com hash original
+                bool hashBate = !sha256Original.empty() && (checksumCopia.sha256 == sha256Original);
+                if (hashBate) {
+                    preservation::registrarEvento(
+                        registro, ip.itemId, ip.arquivoId,
+                        preservation::EventType::BackupVerified,
+                        "Destination: " + destStr +
+                        " | SHA-256: " + checksumCopia.sha256,
+                        preservation::Outcome::Success, {},
+                        "bkr-agent-sistema");
+                } else {
+                    std::string detail = sha256Original.empty()
+                        ? "No baseline SHA-256 to compare against"
+                        : "Expected: " + sha256Original + " | Got: " + checksumCopia.sha256;
+                    preservation::registrarEvento(
+                        registro, ip.itemId, ip.arquivoId,
+                        preservation::EventType::BackupVerified,
+                        "Destination: " + destStr,
+                        preservation::Outcome::Failure,
+                        detail,
+                        "bkr-agent-sistema");
+                }
+            } catch (...) {}
 
             // Capa junto da cópia (item 9).
             {

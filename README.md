@@ -28,6 +28,28 @@ Marcador, ficha, organização e hierarquia de backup são registro no banco —
 arquivo original nunca é reescrito. Metadado embutido (cue/iXML) vai na *cópia*
 de backup, e um teste garante que o original continua byte a byte idêntico.
 
+## Preservação Digital (OAIS / PREMIS / FAIR)
+
+O sistema implementa uma camada completa de preservação digital patrimonial sem reescrever a arquitetura existente nem alterar os arquivos originais:
+
+1. **Identidade Permanente Aditiva (Persistent Identifier)**:
+   - Adiciona um identificador permanente e único (`persistent_id`) no formato `BKR:ASSET:<HEX>` (ex: `BKR:ASSET:8F72A91C`) à tabela `item`.
+   - Preserva o UUID v4 técnico (`item.id`) como chave interna, criando uma camada interoperável sem substituir a chave estável.
+2. **Schema & Estrutura PREMIS (`schema/registro.sql`)**:
+   - `preservation_agent`: cataloga agentes do sistema (`bkr-agent-sistema`, `bkr-agent-ffprobe`, `bkr-agent-exiv2`, operador).
+   - `preservation_event`: log auditável append-only de eventos com `event_type`, `event_date_time`, `event_outcome`, `outcome_detail` e `agent_id`.
+   - `preservation_right`: gestão de direitos autorais (`PUBLIC_DOMAIN`, `COPYRIGHT`, `LICENSED`, `RESTRICTED`, `UNKNOWN`).
+   - View `asset_preservation_status`: apuração automática do estado de preservação (IDENTITY, FIXITY, FORMAT, BACKUP, RIGHTS, PROVENANCE) por item. O `backup_status` exige confirmação estrita de evento PREMIS `BACKUP_VERIFIED` com status `SUCCESS`.
+3. **Módulo C++ de Preservação (`Source/Preservation/Preservation.h / .cpp`)**:
+   - `verificarFixity`: checagem assíncrona de integridade SHA-256 em background (somente leitura) que registra eventos PREMIS `FIXITY_CHECK` e atualiza a data de verificação.
+   - Pacotes de Exportação DIP/FAIR em **JSON** estruturado e **CSV** com escaping correto.
+4. **Hooks de Ingest e Consolidação**:
+   - Ingestão (`IngestArquivo.cpp`): registra automaticamente eventos `INGEST`, `FIXITY_CALCULATED`, `FORMAT_IDENTIFIED` e `METADATA_EXTRACTED`.
+   - Consolidação (`Consolidacao.cpp`): calcula o SHA-256 da cópia no Vault e registra eventos `BACKUP_CREATED` e `BACKUP_VERIFIED` (`SUCCESS` / `FAILURE`).
+5. **Dashboard e Interface (ANALYTICS & Ficha)**:
+   - `PreservationWorkspaceComponent`: apuração em tempo real de 12 métricas de saúde do acervo e banner de integridade (`ARCHIVE HEALTH STATUS: GOOD / WARNING / CRITICAL`).
+   - `FichaPanelComponent`: seções de ficha `PRESERVATION` (com Persistent ID copyable e botão *"Verify Integrity"*), `RIGHTS` e `EVENT HISTORY`.
+
 ## Stack
 
 C++20 / [JUCE](https://juce.com) via CMake, seguindo a convenção das outras
@@ -66,6 +88,8 @@ Source/Ingest/          motor de ingestão: checksum, leitura técnica (ffprobe 
                         de ficha em lote, painel de inconsistências
 Source/Consolidacao/    backup: hierarquia de pastas configurável, máscara de nomenclatura,
                         verificação por checksum, metadado embutido na cópia (cue/adtl/iXML)
+Source/Preservation/    camada de preservação digital (OAIS/PREMIS/FAIR): verificação de fixity
+                        SHA-256 em background, pacotes de exportação DIP (JSON/CSV), gestão de direitos
 Source/Catalogo/        catálogo de proxies — consultar o backup sem o volume original conectado
 Source/App/             preferências de nível de aplicativo (idioma, projetos recentes) e
                         cancelamento cooperativo de operação longa

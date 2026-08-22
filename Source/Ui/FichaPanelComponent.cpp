@@ -8,6 +8,8 @@
 #include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Preservation/Preservation.h"
+#include "../Vault/Resolucao.h"
 #include "FormatoTempo.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
@@ -265,9 +267,6 @@ public:
     explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
 
     void limpar() {
-        for (auto& cu : camposUnificados_) {
-            if (cu && cu->onCommit) cu->onCommit();
-        }
         camposUnificados_.clear();
 
         linhas_.clear();
@@ -297,14 +296,6 @@ public:
     }
 
     void construirParaItem(const std::string& itemId) {
-        if (!itemId_.empty() && itemId_ == itemId) {
-            for (auto& cu : camposUnificados_) {
-                if (!cu || !cu->ehNotes) continue;
-                cu->onCommit = nullptr;
-                if (auto* ed = dynamic_cast<juce::TextEditor*>(cu->editor.get()))
-                    ed->onFocusLost = nullptr;
-            }
-        }
         limpar();
         itemId_ = itemId;
         if (itemId.empty()) {
@@ -358,22 +349,101 @@ public:
 
         botaoAplicar_ = std::make_unique<juce::TextButton>("Apply");
         botaoAplicar_->onClick = [this] {
+            if (itemId_.empty()) {
+                DBG("APPLY ERROR: itemId_ is empty — nothing to save");
+                return;
+            }
+
+            int saved = 0;
+            int verified = 0;
+            int errors = 0;
+            juce::StringArray errorDetails;
+
             projeto_.iniciarGrupoUndo("Apply metadata");
-            for (auto& cu : camposUnificados_)
-                if (cu && cu->onCommit) cu->onCommit();
+
+            for (auto& cu : camposUnificados_) {
+                if (!cu || cu->ehAutoFixed) continue;
+
+                // Tags: save via TagChipsEditor directly
+                if (cu->ehTags) {
+                    if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
+                        try {
+                            projeto_.definirTags(itemId_, chips->getTags());
+                            ++saved;
+                        } catch (const std::exception& e) {
+                            ++errors;
+                            errorDetails.add("Tags: " + juce::String(e.what()));
+                        }
+                    }
+                    continue;
+                }
+
+                if (cu->colunaDb.empty()) continue;
+
+                // Read current value from the UI widget
+                std::string val;
+                if (auto* ed = dynamic_cast<juce::TextEditor*>(cu->editor.get())) {
+                    val = ed->getText().toStdString();
+                } else if (auto* combo = dynamic_cast<juce::ComboBox*>(cu->editor.get())) {
+                    val = combo->getText().toStdString();
+                } else {
+                    continue;
+                }
+
+                // Write to database
+                try {
+                    projeto_.salvarMetadado(itemId_, cu->colunaDb, val);
+                    ++saved;
+                } catch (const std::exception& e) {
+                    ++errors;
+                    errorDetails.add(juce::String(cu->colunaDb) + ": " + juce::String(e.what()));
+                    continue;
+                }
+
+                // Verify: read back from database
+                auto readBack = projeto_.lerMetadado(itemId_, cu->colunaDb);
+                if (readBack.has_value() && readBack.value() == val) {
+                    ++verified;
+                } else {
+                    ++errors;
+                    errorDetails.add(juce::String(cu->colunaDb) + ": write succeeded but verify failed");
+                }
+            }
+
             projeto_.finalizarGrupoUndo();
+
+            DBG("APPLY: item=" + juce::String(itemId_)
+                + " saved=" + juce::String(saved)
+                + " verified=" + juce::String(verified)
+                + " errors=" + juce::String(errors));
+            for (auto& e : errorDetails) DBG("  ERROR: " + e);
+
+            if (aoAplicarSucesso) aoAplicarSucesso(itemId_);
+
+            if (aoMudar) aoMudar();
+
+            // Visual feedback
             labelAplicado_ = std::make_unique<juce::Label>();
-            labelAplicado_->setText("Changes saved.", juce::dontSendNotification);
-            labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::green.darker(0.2f));
+            if (errors > 0) {
+                labelAplicado_->setText("SAVE FAILED: " + errorDetails.joinIntoString("; "), juce::dontSendNotification);
+                labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::red);
+            } else {
+                labelAplicado_->setText(juce::String(saved) + " fields saved.", juce::dontSendNotification);
+                labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::green.darker(0.2f));
+            }
             labelAplicado_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
             addAndMakeVisible(*labelAplicado_);
             relayoutEExibir();
-            juce::Timer::callAfterDelay(2000, [this] {
-                labelAplicado_.reset();
-                relayoutEExibir();
+            juce::Component::SafePointer<FichaConteudo> safeThis(this);
+            juce::Timer::callAfterDelay(3000, [safeThis] {
+                if (!safeThis) return;
+                safeThis->labelAplicado_.reset();
+                safeThis->relayoutEExibir();
             });
         };
         addAndMakeVisible(*botaoAplicar_);
+
+        construirSecaoPreservacao(itemId);
 
         relayoutEExibir();
     }
@@ -486,11 +556,361 @@ public:
         y += tk.espacoMedio;
 
         setSize(largura, y + tk.espacoPainel);
+
+        // --- PRESERVATION section layout ---
+        if (preservation_.titulo) {
+            y += tk.espacoMedio * 2;
+            preservation_.titulo->setBounds(x, y, larguraUtil, 20);
+            y += 20 + tk.espacoPequeno;
+
+            if (preservation_.labelPersistentId) {
+                preservation_.labelPersistentId->setBounds(x, y, larguraUtil - 80, 18);
+                if (preservation_.botaoCopiarId)
+                    preservation_.botaoCopiarId->setBounds(x + larguraUtil - 75, y, 75, 18);
+                y += 18 + tk.espacoPequeno;
+            }
+            if (preservation_.labelStatusGeral) {
+                preservation_.labelStatusGeral->setBounds(x, y, larguraUtil, 18);
+                y += 18 + tk.espacoPequeno;
+            }
+            if (preservation_.labelSha256) {
+                preservation_.labelSha256->setBounds(x, y, larguraUtil, 16);
+                y += 16 + tk.espacoPequeno;
+            }
+            if (preservation_.labelUltimaVerificacao) {
+                preservation_.labelUltimaVerificacao->setBounds(x, y, larguraUtil, 16);
+                y += 16 + tk.espacoPequeno;
+            }
+            if (preservation_.labelVerificando) {
+                preservation_.labelVerificando->setBounds(x, y, larguraUtil, 16);
+                y += 16 + tk.espacoPequeno;
+            }
+            // Botões de ação
+            int bx = x;
+            if (preservation_.botaoVerificarFixity) {
+                preservation_.botaoVerificarFixity->setBounds(bx, y, 150, 26);
+                bx += 156;
+            }
+            if (preservation_.botaoExportJson) {
+                preservation_.botaoExportJson->setBounds(bx, y, 100, 26);
+                bx += 106;
+            }
+            if (preservation_.botaoExportCsv) {
+                preservation_.botaoExportCsv->setBounds(bx, y, 100, 26);
+            }
+            if (preservation_.botaoVerificarFixity || preservation_.botaoExportJson)
+                y += 26 + tk.espacoMedio;
+
+            // Rights
+            if (preservation_.tituloRights) {
+                preservation_.tituloRights->setBounds(x, y, larguraUtil, 18);
+                y += 18 + tk.espacoPequeno;
+                if (preservation_.comboRights) {
+                    preservation_.comboRights->setBounds(x, y, larguraUtil, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+                if (preservation_.editorHolder) {
+                    preservation_.editorHolder->setBounds(x, y, larguraUtil, 22);
+                    y += 22 + tk.espacoPequeno;
+                }
+                if (preservation_.editorLicense) {
+                    preservation_.editorLicense->setBounds(x, y, larguraUtil, 22);
+                    y += 22 + tk.espacoPequeno;
+                }
+                if (preservation_.editorNotes) {
+                    preservation_.editorNotes->setBounds(x, y, larguraUtil, 44);
+                    y += 44 + tk.espacoPequeno;
+                }
+                if (preservation_.botaoSalvarRights) {
+                    preservation_.botaoSalvarRights->setBounds(x, y, 80, 24);
+                    y += 24 + tk.espacoMedio;
+                }
+            }
+
+            // Event History
+            if (preservation_.tituloEventos) {
+                preservation_.tituloEventos->setBounds(x, y, larguraUtil, 18);
+                y += 18 + tk.espacoPequeno;
+                for (auto& lbl : preservation_.linhasEvento) {
+                    lbl->setBounds(x, y, larguraUtil, 16);
+                    y += 16 + 2;
+                }
+                y += tk.espacoPequeno;
+            }
+
+            setSize(largura, y + tk.espacoPainel);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // construirSecaoPreservacao — chamada no final de construirParaItem
+    // Somente leitura sobre os dados de preservação. Não altera arquivos.
+    // -----------------------------------------------------------------------
+    void construirSecaoPreservacao(const std::string& itemId) {
+        preservation_ = {}; // reset
+        preservation_.itemId = itemId;
+        const auto& tk = matriz::ui::tema();
+
+        auto status = projeto_.obterPreservationStatus(itemId);
+
+        // Lê arquivo master (para verificação de fixity e caminho)
+        if (auto arq = projeto_.arquivoPrincipal(itemId)) {
+            preservation_.arquivoMasterId      = arq->id;
+            preservation_.arquivoMasterCaminho = arq->caminhoAbsoluto.toStdString();
+        }
+
+        // Título da seção
+        preservation_.titulo = std::make_unique<juce::Label>();
+        preservation_.titulo->setText("PRESERVATION", juce::dontSendNotification);
+        preservation_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        preservation_.titulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(*preservation_.titulo);
+
+        // Persistent ID
+        {
+            // Lê diretamente do banco para não depender de cache
+            std::string pid;
+            try {
+                auto stmt = projeto_.projeto().registro().prepare(
+                    "SELECT IFNULL(persistent_id,'') FROM item WHERE id = ? LIMIT 1");
+                stmt.bind(1, matriz::db::Value::of(itemId));
+                if (stmt.step()) pid = stmt.columnText(0);
+            } catch (...) {}
+
+            preservation_.labelPersistentId = std::make_unique<juce::Label>();
+            preservation_.labelPersistentId->setText(
+                "ID: " + juce::String(pid.empty() ? "(sem identificador)" : pid),
+                juce::dontSendNotification);
+            preservation_.labelPersistentId->setFont(juce::Font(juce::FontOptions(
+                tk.tamanhoFonteCorpo, juce::Font::bold)));
+            preservation_.labelPersistentId->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*preservation_.labelPersistentId);
+
+            preservation_.botaoCopiarId = std::make_unique<juce::TextButton>("Copy ID");
+            preservation_.botaoCopiarId->onClick = [pid] {
+                juce::SystemClipboard::copyTextToClipboard(juce::String(pid));
+            };
+            addAndMakeVisible(*preservation_.botaoCopiarId);
+        }
+
+        // Status geral (IDENTITY | FIXITY | FORMAT | BACKUP | RIGHTS | PROVENANCE)
+        {
+            auto cor = [](const std::string& s) -> juce::String {
+                if (s == "OK")       return "✓ ";
+                if (s == "CRITICAL") return "✕ ";
+                if (s == "WARNING")  return "⚠ ";
+                return "? ";
+            };
+            juce::String statusStr =
+                cor(status.identityStatus)   + "IDENTITY  " +
+                cor(status.fixityStatus)     + "FIXITY  " +
+                cor(status.formatStatus)     + "FORMAT  " +
+                cor(status.provenanceStatus) + "PROVENANCE  " +
+                cor(status.backupStatus)     + "BACKUP  " +
+                cor(status.rightsStatus)     + "RIGHTS";
+
+            juce::Colour cor2 = tk.textoPrimario;
+            if (status.overall == "CRITICAL")     cor2 = tk.perigo;
+            else if (status.overall == "WARNING") cor2 = tk.alerta;
+            else if (status.overall == "OK")      cor2 = tk.estadoQcOk;
+
+            preservation_.labelStatusGeral = std::make_unique<juce::Label>();
+            preservation_.labelStatusGeral->setText(statusStr, juce::dontSendNotification);
+            preservation_.labelStatusGeral->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            preservation_.labelStatusGeral->setColour(juce::Label::textColourId, cor2);
+            addAndMakeVisible(*preservation_.labelStatusGeral);
+        }
+
+        // SHA-256
+        {
+            std::string sha256, verificadoEm;
+            try {
+                auto stmt = projeto_.projeto().registro().prepare(
+                    "SELECT IFNULL(checksum_sha256,''), IFNULL(checksum_verificado_em,'') "
+                    "FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+                stmt.bind(1, matriz::db::Value::of(itemId));
+                if (stmt.step()) {
+                    sha256      = stmt.columnText(0);
+                    verificadoEm = stmt.columnText(1);
+                }
+            } catch (...) {}
+
+            preservation_.labelSha256 = std::make_unique<juce::Label>();
+            juce::String shaDisplay = sha256.empty() ? "SHA-256: (not calculated)"
+                                                     : "SHA-256: " + juce::String(sha256).substring(0, 16) + "...";
+            preservation_.labelSha256->setText(shaDisplay, juce::dontSendNotification);
+            preservation_.labelSha256->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            preservation_.labelSha256->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*preservation_.labelSha256);
+
+            preservation_.labelUltimaVerificacao = std::make_unique<juce::Label>();
+            juce::String vStr = verificadoEm.empty() ? "Last verification: Never"
+                                                     : "Last verification: " + juce::String(verificadoEm);
+            preservation_.labelUltimaVerificacao->setText(vStr, juce::dontSendNotification);
+            preservation_.labelUltimaVerificacao->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            preservation_.labelUltimaVerificacao->setColour(juce::Label::textColourId, tk.textoTerciario);
+            addAndMakeVisible(*preservation_.labelUltimaVerificacao);
+        }
+
+        // Botão "Verify Integrity"
+        if (!preservation_.arquivoMasterId.empty() && !preservation_.arquivoMasterCaminho.empty()) {
+            preservation_.botaoVerificarFixity = std::make_unique<juce::TextButton>("Verify Integrity");
+            preservation_.botaoVerificarFixity->onClick = [this] {
+                if (preservation_.arquivoMasterId.empty()) return;
+                const auto& t = matriz::ui::tema();
+                // Label de progresso
+                preservation_.labelVerificando = std::make_unique<juce::Label>();
+                preservation_.labelVerificando->setText("Verifying...", juce::dontSendNotification);
+                preservation_.labelVerificando->setColour(juce::Label::textColourId, t.alerta);
+                preservation_.labelVerificando->setFont(juce::Font(juce::FontOptions(t.tamanhoFontePequena)));
+                addAndMakeVisible(*preservation_.labelVerificando);
+                relayoutEExibir();
+
+
+                std::string aId  = preservation_.arquivoMasterId;
+                std::string aCam = preservation_.arquivoMasterCaminho;
+                projeto_.verificarFixityAsync(aId, aCam, [this](preservation::ResultadoFixity r) {
+                    if (!preservation_.labelVerificando) return;
+                    preservation_.labelVerificando->setText(
+                        r.success ? juce::String("✓ OK — SHA-256 matches")
+                                  : juce::String("✕ FAILURE — " + juce::String(r.mensagem)),
+                        juce::dontSendNotification);
+                    preservation_.labelVerificando->setColour(
+                        juce::Label::textColourId,
+                        r.success ? tema().estadoQcOk : tema().perigo);
+                    // Reconstrói para atualizar status geral
+                    construirParaItem(preservation_.itemId);
+                });
+            };
+            addAndMakeVisible(*preservation_.botaoVerificarFixity);
+        }
+
+        // Botões Export
+        {
+            preservation_.botaoExportJson = std::make_unique<juce::TextButton>("Export JSON");
+            preservation_.botaoExportJson->onClick = [this, itemId] {
+                juce::String json = projeto_.exportarPreservacaoJson(itemId);
+                juce::FileChooser fc("Export Preservation JSON",
+                    juce::File::getSpecialLocation(juce::File::userDesktopDirectory),
+                    "*.json");
+                if (fc.browseForFileToSave(true)) {
+                    fc.getResult().replaceWithText(json);
+                }
+            };
+            addAndMakeVisible(*preservation_.botaoExportJson);
+
+            preservation_.botaoExportCsv = std::make_unique<juce::TextButton>("Export CSV");
+            preservation_.botaoExportCsv->onClick = [this, itemId] {
+                juce::String csv = projeto_.exportarPreservacaoCsv({ itemId });
+                juce::FileChooser fc("Export Preservation CSV",
+                    juce::File::getSpecialLocation(juce::File::userDesktopDirectory),
+                    "*.csv");
+                if (fc.browseForFileToSave(true)) {
+                    fc.getResult().replaceWithText(csv);
+                }
+            };
+            addAndMakeVisible(*preservation_.botaoExportCsv);
+        }
+
+        // --- RIGHTS ---
+        {
+            preservation_.tituloRights = std::make_unique<juce::Label>();
+            preservation_.tituloRights->setText("RIGHTS", juce::dontSendNotification);
+            preservation_.tituloRights->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            preservation_.tituloRights->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*preservation_.tituloRights);
+
+            preservation_.comboRights = std::make_unique<juce::ComboBox>();
+            preservation_.comboRights->addItem("UNKNOWN",      1);
+            preservation_.comboRights->addItem("PUBLIC_DOMAIN",2);
+            preservation_.comboRights->addItem("COPYRIGHT",    3);
+            preservation_.comboRights->addItem("LICENSED",     4);
+            preservation_.comboRights->addItem("RESTRICTED",   5);
+            addAndMakeVisible(*preservation_.comboRights);
+
+            preservation_.editorHolder = std::make_unique<juce::TextEditor>();
+            preservation_.editorHolder->setTextToShowWhenEmpty("Rights Holder", tk.textoTerciario);
+            preservation_.editorHolder->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            addAndMakeVisible(*preservation_.editorHolder);
+
+            preservation_.editorLicense = std::make_unique<juce::TextEditor>();
+            preservation_.editorLicense->setTextToShowWhenEmpty("License (e.g. CC BY 4.0)", tk.textoTerciario);
+            preservation_.editorLicense->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            addAndMakeVisible(*preservation_.editorLicense);
+
+            preservation_.editorNotes = std::make_unique<juce::TextEditor>();
+            preservation_.editorNotes->setMultiLine(true);
+            preservation_.editorNotes->setTextToShowWhenEmpty("Usage notes / restrictions", tk.textoTerciario);
+            preservation_.editorNotes->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            addAndMakeVisible(*preservation_.editorNotes);
+
+            // Preenche com valores existentes
+            auto dir = projeto_.obterDireitos(itemId);
+            if (dir) {
+                auto selectItem = [&](juce::ComboBox* cb, const std::string& val) {
+                    for (int i = 1; i <= cb->getNumItems(); ++i)
+                        if (cb->getItemText(i - 1).toStdString() == val) { cb->setSelectedItemIndex(i - 1); return; }
+                };
+                selectItem(preservation_.comboRights.get(), dir->rightsStatus);
+                preservation_.editorHolder->setText(dir->rightsHolder, false);
+                preservation_.editorLicense->setText(dir->license, false);
+                preservation_.editorNotes->setText(dir->usageNotes, false);
+            } else {
+                preservation_.comboRights->setSelectedItemIndex(0);
+            }
+
+            preservation_.botaoSalvarRights = std::make_unique<juce::TextButton>("Save");
+            preservation_.botaoSalvarRights->onClick = [this, itemId] {
+                preservation::DireitosPreservacao d;
+                d.rightsStatus = preservation_.comboRights->getText().toStdString();
+                d.rightsHolder = preservation_.editorHolder->getText().toStdString();
+                d.license      = preservation_.editorLicense->getText().toStdString();
+                d.usageNotes   = preservation_.editorNotes->getText().toStdString();
+                projeto_.salvarDireitos(itemId, d);
+                // Reconstrói para refletir novo status
+                construirParaItem(preservation_.itemId);
+            };
+            addAndMakeVisible(*preservation_.botaoSalvarRights);
+        }
+
+        // --- EVENT HISTORY ---
+        {
+            preservation_.tituloEventos = std::make_unique<juce::Label>();
+            preservation_.tituloEventos->setText("EVENT HISTORY", juce::dontSendNotification);
+            preservation_.tituloEventos->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            preservation_.tituloEventos->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*preservation_.tituloEventos);
+
+            auto eventos = projeto_.listarEventosPreservacao(itemId);
+            constexpr int kMaxEventos = 20;
+            int n = std::min(static_cast<int>(eventos.size()), kMaxEventos);
+            for (int i = 0; i < n; ++i) {
+                const auto& ev = eventos[static_cast<size_t>(i)];
+                auto lbl = std::make_unique<juce::Label>();
+                // Formata: "YYYY-MM-DD HH:MM  EVENT_TYPE  ● OUTCOME  agent"
+                juce::String data = juce::String(ev.eventDateTime).substring(0, 16).replace("T", " ");
+                juce::String agente = juce::String(ev.agentNome);
+                if (!ev.agentVersao.empty()) agente += " " + juce::String(ev.agentVersao);
+                juce::String bullet = (ev.outcome == "SUCCESS") ? "● " : (ev.outcome == "FAILURE" ? "✕ " : "⚠ ");
+                juce::String linha  = data + "  " + juce::String(ev.eventType) +
+                                      "  " + bullet + juce::String(ev.outcome);
+                if (agente.isNotEmpty()) linha += "   " + agente;
+                lbl->setText(linha, juce::dontSendNotification);
+                lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                juce::Colour cor = tk.textoSecundario;
+                if (ev.outcome == "FAILURE") cor = tk.perigo;
+                else if (ev.outcome == "WARNING") cor = tk.alerta;
+                lbl->setColour(juce::Label::textColourId, cor);
+                addAndMakeVisible(*lbl);
+                preservation_.linhasEvento.push_back(std::move(lbl));
+            }
+        }
     }
 
     std::function<void()> aoRelayoutNecessario;
     std::function<void()> aoMudarClassificacao;
     std::function<void()> aoMudar;
+    std::function<void(const std::string&)> aoAplicarSucesso;
 
     juce::Component* editorDoCampoParaTeste(const std::string& nivel, int nivelIndice, const std::string& campoId) {
         for (auto& cu : camposUnificados_) {
@@ -1479,8 +1899,40 @@ private:
     int proximoIndiceFaixa_ = 0;
 
     std::unique_ptr<juce::TextButton> botaoAplicar_;
-    std::unique_ptr<juce::Label> labelAplicado_;
-    std::unique_ptr<juce::Label> labelReviewFaltando_;
+    std::unique_ptr<juce::Label>      labelAplicado_;
+    std::unique_ptr<juce::Label>      labelReviewFaltando_;
+
+    // -----------------------------------------------------------------------
+    // Seção PRESERVATION — adicionada ao final da FichaConteudo
+    // -----------------------------------------------------------------------
+    struct SecaoPreservacao {
+        std::unique_ptr<juce::Label>       titulo;
+        std::unique_ptr<juce::Label>       labelPersistentId;
+        std::unique_ptr<juce::TextButton>  botaoCopiarId;
+        std::unique_ptr<juce::Label>       labelStatusGeral;
+        std::unique_ptr<juce::Label>       labelSha256;
+        std::unique_ptr<juce::Label>       labelUltimaVerificacao;
+        std::unique_ptr<juce::TextButton>  botaoVerificarFixity;
+        std::unique_ptr<juce::TextButton>  botaoExportJson;
+        std::unique_ptr<juce::TextButton>  botaoExportCsv;
+        // Rights
+        std::unique_ptr<juce::Label>       tituloRights;
+        std::unique_ptr<juce::ComboBox>    comboRights;
+        std::unique_ptr<juce::TextEditor>  editorHolder;
+        std::unique_ptr<juce::TextEditor>  editorLicense;
+        std::unique_ptr<juce::TextEditor>  editorNotes;
+        std::unique_ptr<juce::TextButton>  botaoSalvarRights;
+        // Event History
+        std::unique_ptr<juce::Label>       tituloEventos;
+        std::vector<std::unique_ptr<juce::Label>> linhasEvento;
+        // Estado de verificação async
+        std::unique_ptr<juce::Label>       labelVerificando;
+        // Identificadores do arquivo master (para verificação)
+        std::string arquivoMasterId;
+        std::string arquivoMasterCaminho;
+        // Item id em uso
+        std::string itemId;
+    } preservation_;
 };
 
 // ---------------------------------------------------------------------------
@@ -2124,6 +2576,7 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
     conteudo_->aoRelayoutNecessario = [this] { conteudo_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness()); };
     conteudo_->aoMudarClassificacao = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
     conteudo_->aoMudar = [this] { if (aoMudar) aoMudar(); };
+    conteudo_->aoAplicarSucesso = [this](const std::string& itemId) { if (aoAplicarSucesso) aoAplicarSucesso(itemId); };
 }
 
 FichaPanelComponent::~FichaPanelComponent() = default;

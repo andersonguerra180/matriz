@@ -217,6 +217,48 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     return out;
 }
 
+std::vector<ProjetoAberto::ItemDetalhe> ProjetoAberto::obterDetalhesItens(const std::set<std::string>& itemIds) const {
+    std::vector<ItemDetalhe> out;
+    if (!projeto_ || itemIds.empty()) return out;
+    out.reserve(itemIds.size());
+
+    auto stmt = projeto_->registro().prepare(
+        "SELECT i.id, i.titulo, "
+        "(SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
+        "FROM item i WHERE i.id = ?");
+
+    for (const auto& id : itemIds) {
+        stmt.reset();
+        stmt.bind(1, matriz::db::Value::of(id));
+        if (!stmt.step()) continue;
+
+        ItemDetalhe d;
+        d.id = stmt.columnText(0);
+        auto titulo = stmt.columnText(1);
+        auto caminho = stmt.columnIsNull(2) ? std::string{} : stmt.columnText(2);
+
+        if (!titulo.empty()) {
+            d.nome = titulo;
+        } else if (!caminho.empty()) {
+            juce::String c(caminho);
+            int slashPos = std::max(c.lastIndexOfChar('/'), c.lastIndexOfChar('\\'));
+            d.nome = (slashPos >= 0 ? c.substring(slashPos + 1) : c).toStdString();
+        }
+
+        if (!caminho.empty()) {
+            juce::String c(caminho);
+            int dotPos = c.lastIndexOfChar('.');
+            if (dotPos >= 0)
+                d.extensao = c.substring(dotPos + 1).toLowerCase().toStdString();
+        }
+
+        d.tamanhoBytes = stmt.columnIsNull(3) ? 0 : static_cast<juce::int64>(stmt.columnInt(3));
+        out.push_back(std::move(d));
+    }
+    return out;
+}
+
 const matriz::ficha::FichaDefinition& ProjetoAberto::definicaoPara(const std::string& tipoMidia) {
     auto it = definicoesCache_.find(tipoMidia);
     if (it != definicoesCache_.end()) return it->second;
@@ -1519,6 +1561,72 @@ std::vector<std::string> ProjetoAberto::reavaliarVaults() {
     } catch (const std::exception&) {
         return {};
     }
+}
+
+// ---------------------------------------------------------------------------
+// Camada de Preservação Digital (OAIS / PREMIS / FAIR)
+// ---------------------------------------------------------------------------
+
+preservation::PreservationStatus ProjetoAberto::obterPreservationStatus(const std::string& itemId) const {
+    if (!projeto_) return {};
+    try { return preservation::obterStatus(projeto_->registro(), itemId); }
+    catch (...) { return {}; }
+}
+
+std::vector<preservation::EventoPreservacao> ProjetoAberto::listarEventosPreservacao(const std::string& itemId) const {
+    if (!projeto_) return {};
+    try { return preservation::listarEventos(projeto_->registro(), itemId); }
+    catch (...) { return {}; }
+}
+
+std::optional<preservation::DireitosPreservacao> ProjetoAberto::obterDireitos(const std::string& itemId) const {
+    if (!projeto_) return std::nullopt;
+    try { return preservation::obterDireitos(projeto_->registro(), itemId); }
+    catch (...) { return std::nullopt; }
+}
+
+void ProjetoAberto::salvarDireitos(const std::string& itemId, const preservation::DireitosPreservacao& d) {
+    if (!projeto_) return;
+    try {
+        preservation::salvarDireitos(projeto_->registro(), itemId, d, "bkr-agent-sistema");
+    } catch (...) {}
+}
+
+void ProjetoAberto::verificarFixityAsync(const std::string& arquivoId,
+                                         const std::string& caminhoAbsoluto,
+                                         std::function<void(preservation::ResultadoFixity)> callback) {
+    if (!projeto_ || !callback) return;
+
+    // Captura o caminho do arquivo do projeto para abrir uma segunda conexão
+    // na thread de background (a conexão principal pertence à message thread).
+    juce::File registroFile = projeto_->pasta().getChildFile("registro.sqlite");
+
+    std::thread([registroFile, arquivoId, caminhoAbsoluto, callback = std::move(callback)]() mutable {
+        preservation::ResultadoFixity resultado;
+        try {
+            db::Database db(registroFile.getFullPathName().toStdString());
+            resultado = preservation::verificarFixity(db, arquivoId, caminhoAbsoluto, "bkr-agent-sistema");
+        } catch (const std::exception& e) {
+            resultado.success  = false;
+            resultado.mensagem = std::string("Erro ao verificar: ") + e.what();
+        }
+        // Devolve resultado na message thread
+        juce::MessageManager::callAsync([resultado, callback = std::move(callback)]() mutable {
+            callback(resultado);
+        });
+    }).detach();
+}
+
+juce::String ProjetoAberto::exportarPreservacaoJson(const std::string& itemId) const {
+    if (!projeto_) return "{}";
+    try { return preservation::exportarJson(projeto_->registro(), itemId); }
+    catch (...) { return "{}"; }
+}
+
+juce::String ProjetoAberto::exportarPreservacaoCsv(const std::vector<std::string>& itemIds) const {
+    if (!projeto_) return {};
+    try { return preservation::exportarCsv(projeto_->registro(), itemIds); }
+    catch (...) { return {}; }
 }
 
 } // namespace matriz::ui

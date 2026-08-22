@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 
 #include "../Model/Project.h"
+#include "../Preservation/Preservation.h"
 #include "../Vault/Volume.h"
 
 namespace matriz::ingest {
@@ -123,6 +124,68 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
          analise.ehPlaceholderNuvem ? Value::null() : Value::of(analise.checksums.sha256),
          analise.ehPlaceholderNuvem ? Value::null() : Value::of(agora),
          Value::of(caracteristicasJson), Value::of(estadoPresenca), Value::of(agora), Value::of(agora)});
+
+    // -----------------------------------------------------------------------
+    // Preservation events — PREMIS hooks pós-ingest.
+    // Erros são silenciados: falha aqui nunca deve bloquear o ingest.
+    // -----------------------------------------------------------------------
+    try {
+        // Garante persistent_id (idempotente — retorna existente sem alterar)
+        preservation::garantirPersistentId(registro, itemId);
+
+        // Evento INGEST
+        preservation::registrarEvento(
+            registro, itemId, resultado.arquivoId,
+            preservation::EventType::Ingest,
+            "File ingested: " + analise.arquivo.getFileName().toStdString(),
+            preservation::Outcome::Success, {},
+            "bkr-agent-sistema");
+
+        // FIXITY_CALCULATED — apenas quando checksum foi de fato calculado
+        if (!analise.ehPlaceholderNuvem && !analise.checksums.sha256.empty()) {
+            preservation::registrarEvento(
+                registro, itemId, resultado.arquivoId,
+                preservation::EventType::FixityCalculated,
+                "SHA-256: " + analise.checksums.sha256,
+                preservation::Outcome::Success, {},
+                "bkr-agent-sistema");
+        }
+
+        // FORMAT_IDENTIFIED — quando ffprobe retornou dados (codec ou container)
+        bool temFormatoTecnico = !analise.leitura.codec.empty()
+                              || analise.leitura.duracaoSegundos.has_value()
+                              || analise.leitura.sampleRate.has_value()
+                              || analise.leitura.larguraPx.has_value();
+        if (!analise.ehPlaceholderNuvem && temFormatoTecnico) {
+            std::string detail = "codec: " + analise.leitura.codec;
+            if (analise.leitura.sampleRate)
+                detail += " | sampleRate: " + std::to_string(*analise.leitura.sampleRate);
+            if (analise.leitura.larguraPx)
+                detail += " | " + std::to_string(*analise.leitura.larguraPx)
+                        + "x" + std::to_string(analise.leitura.alturaPx.value_or(0));
+            preservation::registrarEvento(
+                registro, itemId, resultado.arquivoId,
+                preservation::EventType::FormatIdentified,
+                detail, preservation::Outcome::Success, {},
+                "bkr-agent-ffprobe");
+        }
+
+        // METADATA_EXTRACTED — quando Exiv2 retornou dados EXIF
+        if (!analise.ehPlaceholderNuvem && analise.leitura.exifCamera.has_value()) {
+            std::string detail = "EXIF extracted";
+            if (analise.leitura.exifCamera)
+                detail += " | camera: " + *analise.leitura.exifCamera;
+            if (analise.leitura.exifDataOriginal)
+                detail += " | date: " + *analise.leitura.exifDataOriginal;
+            preservation::registrarEvento(
+                registro, itemId, resultado.arquivoId,
+                preservation::EventType::MetadataExtracted,
+                detail, preservation::Outcome::Success, {},
+                "bkr-agent-exiv2");
+        }
+    } catch (...) {
+        // Preservation hooks são best-effort — ingest não pode falhar por eles
+    }
 
     return resultado;
 }

@@ -719,3 +719,139 @@ UNION ALL SELECT item_id, colecao FROM colecao_nao_baixados
 UNION ALL SELECT item_id, colecao FROM colecao_incompletos
 UNION ALL SELECT item_id, colecao FROM colecao_vulneraveis
 UNION ALL SELECT item_id, colecao FROM colecao_revisao;
+
+-- ---------------------------------------------------------------------------
+-- Camada de Preservação Digital (OAIS / PREMIS / FAIR)
+-- ---------------------------------------------------------------------------
+-- persistent_id é adicionado à tabela item via garantirColuna em Project.cpp
+-- (ALTER TABLE item ADD COLUMN persistent_id TEXT) — não aqui, pois a tabela
+-- item já existe em bancos anteriores e CREATE TABLE IF NOT EXISTS não altera
+-- colunas existentes. A coluna é o identificador apresentável/interoperável
+-- (ex.: "BKR:ASSET:8F72A91C") que coexiste com item.id (UUID técnico interno).
+
+-- Agentes de preservação — quem ou o que executou cada ação
+CREATE TABLE IF NOT EXISTS preservation_agent (
+    id            TEXT PRIMARY KEY,
+    nome          TEXT NOT NULL,
+    tipo          TEXT NOT NULL CHECK (tipo IN ('software','hardware','pessoa','organizacao')),
+    versao        TEXT,
+    identificador TEXT,
+    criado_em     TEXT NOT NULL
+);
+
+-- Unique por nome+versão para evitar duplicação de agentes built-in
+CREATE UNIQUE INDEX IF NOT EXISTS idx_preservation_agent_nome_versao
+    ON preservation_agent(nome, IFNULL(versao, ''));
+
+-- Eventos PREMIS — append-only, jamais apagado ou alterado
+CREATE TABLE IF NOT EXISTS preservation_event (
+    id                   TEXT PRIMARY KEY,
+    arquivo_id           TEXT REFERENCES arquivo(id) ON DELETE CASCADE,
+    item_id              TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    event_type           TEXT NOT NULL,
+    event_date_time      TEXT NOT NULL,
+    event_detail         TEXT,
+    event_outcome        TEXT NOT NULL CHECK (event_outcome IN ('SUCCESS','FAILURE','WARNING')),
+    event_outcome_detail TEXT,
+    agent_id             TEXT REFERENCES preservation_agent(id) ON DELETE SET NULL,
+    criado_em            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_preservation_event_item
+    ON preservation_event(item_id);
+CREATE INDEX IF NOT EXISTS idx_preservation_event_type
+    ON preservation_event(event_type);
+CREATE INDEX IF NOT EXISTS idx_preservation_event_outcome
+    ON preservation_event(item_id, event_type, event_outcome);
+
+-- Direitos — uma linha por item (upsert via salvarDireitos)
+CREATE TABLE IF NOT EXISTS preservation_right (
+    id            TEXT PRIMARY KEY,
+    item_id       TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    rights_status TEXT NOT NULL DEFAULT 'UNKNOWN'
+                  CHECK (rights_status IN ('PUBLIC_DOMAIN','COPYRIGHT','LICENSED','UNKNOWN','RESTRICTED')),
+    rights_holder TEXT,
+    license       TEXT,
+    usage_notes   TEXT,
+    restrictions  TEXT,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL,
+    UNIQUE (item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preservation_right_item
+    ON preservation_right(item_id);
+
+-- View de Preservation Status calculado — nunca digitado manualmente.
+--
+-- backup_status = OK somente quando existe preservation_event BACKUP_VERIFIED
+-- com outcome = SUCCESS. Presença em consolidacao_registro sem evento PREMIS
+-- gera WARNING (backup antigo existente mas não formalmente atestado).
+--
+-- fixity_status = OK somente quando existe FIXITY_CHECK com SUCCESS.
+-- Ter apenas checksum_sha256 calculado no ingest (sem verificação posterior)
+-- gera WARNING — estado honesto: "temos hash, mas nunca reconfirmamos".
+CREATE VIEW IF NOT EXISTS asset_preservation_status AS
+SELECT
+    i.id            AS item_id,
+    i.persistent_id,
+    CASE WHEN i.persistent_id IS NOT NULL THEN 'OK' ELSE 'UNKNOWN' END
+        AS identity_status,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM arquivo a
+            WHERE a.item_id = i.id
+              AND a.checksum_sha256 IS NOT NULL
+              AND a.estado_presenca = 'corrompido')
+            THEN 'CRITICAL'
+        WHEN EXISTS (
+            SELECT 1 FROM preservation_event pe
+            WHERE pe.item_id = i.id
+              AND pe.event_type = 'FIXITY_CHECK'
+              AND pe.event_outcome = 'SUCCESS')
+            THEN 'OK'
+        WHEN EXISTS (
+            SELECT 1 FROM arquivo a
+            WHERE a.item_id = i.id AND a.checksum_sha256 IS NOT NULL)
+            THEN 'WARNING'
+        ELSE 'UNKNOWN'
+    END AS fixity_status,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM arquivo a
+            WHERE a.item_id = i.id
+              AND a.caracteristicas_tecnicas_json IS NOT NULL
+              AND a.caracteristicas_tecnicas_json <> '{}')
+            THEN 'OK'
+        ELSE 'UNKNOWN'
+    END AS format_status,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM preservation_event pe
+            WHERE pe.item_id = i.id
+              AND pe.event_type = 'BACKUP_VERIFIED'
+              AND pe.event_outcome = 'SUCCESS')
+            THEN 'OK'
+        WHEN EXISTS (
+            SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id)
+            THEN 'WARNING'
+        ELSE 'WARNING'
+    END AS backup_status,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM preservation_right pr
+            WHERE pr.item_id = i.id AND pr.rights_status <> 'UNKNOWN')
+            THEN 'OK'
+        WHEN EXISTS (
+            SELECT 1 FROM preservation_right pr WHERE pr.item_id = i.id)
+            THEN 'WARNING'
+        ELSE 'UNKNOWN'
+    END AS rights_status,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM preservation_event pe
+            WHERE pe.item_id = i.id AND pe.event_type = 'INGEST')
+            THEN 'OK'
+        ELSE 'UNKNOWN'
+    END AS provenance_status
+FROM item i;

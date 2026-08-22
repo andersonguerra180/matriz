@@ -38,22 +38,37 @@ private:
     juce::String textoHealth_;
     juce::Colour corHealth_;
 
-    // Metrics
+    // Metrics (12 cards)
     struct Metrica {
         std::string chave;
         juce::String titulo;
         int contagem = 0;
         juce::Rectangle<int> bounds;
         bool hover = false;
+        // Indica se contagem > 0 é um problema (vermelho) ou positivo (verde)
+        bool problematico = false;
     };
     std::vector<Metrica> metricas_;
 
-    int totalAssets_ = 0;
-    int verifiedCount_ = 0;
-    int singleCopyCount_ = 0;
-    int checksumProblemsCount_ = 0;
-    int incompleteCount_ = 0;
-    int reviewCount_ = 0;
+    // Contagens individuais para o banner de health
+    int totalAssets_           = 0;
+    int comPersistentId_       = 0;
+    int comSha256_             = 0;
+    int fixityVerificada_      = 0;
+    int falhaIntegridade_      = 0;
+    int formatoIdentificado_   = 0;
+    int backupVerificado_      = 0;
+    int direitosDesconhecidos_ = 0;
+    int totalEventos_          = 0;
+    int problemasGraves_       = 0;
+    int semBackup_             = 0;
+    int semFixity_             = 0;
+
+    // Compliance metrics
+    int formatosEmRisco_        = 0;
+    int vaultsParaRefresh_      = 0;
+    std::string regra321Status_;
+    juce::String regra321Label_;
 };
 
 } // namespace matriz::ui

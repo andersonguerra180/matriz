@@ -61,6 +61,12 @@ juce_add_binary_data(MatrizI18nAssets
     HEADER_NAME I18nBinaryData.h
     SOURCES i18n/en.yaml i18n/pt_BR.yaml)
 
+# Assets (splash screen, icon) embutidos no binário
+juce_add_binary_data(MatrizAssets
+    NAMESPACE AssetsBinaryData
+    HEADER_NAME AssetsBinaryData.h
+    SOURCES Assets/splash.png Assets/icon.jpeg)
+
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
 # de projeto portátil. "Nenhuma UI além do mínimo para testar" (§16).
@@ -122,6 +128,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/PainelInconsistencias.cpp
+    Source/Preservation/Preservation.cpp
     Source/Vault/Volume.cpp
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
@@ -178,8 +185,17 @@ juce_add_gui_app(matriz
     PRODUCT_NAME "BKR Matriz"
     VERSION 0.1.0
     COMPANY_NAME "BKR"
-    BUNDLE_ID "com.bkr.matriz")
+    BUNDLE_ID "com.bkr.matriz"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_256x256.png"
+    ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_32x32.png")
 juce_generate_juce_header(matriz)
+
+# Replace JUCE-generated icns with our pre-built one (has all required sizes)
+add_custom_command(TARGET matriz POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/Assets/icon.icns"
+        "$<TARGET_BUNDLE_DIR:matriz>/Contents/Resources/AppIcon.icns"
+    COMMENT "Copying pre-built AppIcon.icns into app bundle")
 
 target_sources(matriz PRIVATE
     Source/Main.cpp
@@ -240,6 +256,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/CacheArquivo.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/PainelInconsistencias.cpp
+    Source/Preservation/Preservation.cpp
     Source/Ingest/Miniaturas.cpp
     Source/Ingest/ClassificadorFalaMusica.cpp
     Source/Ingest/Pcm.cpp
@@ -279,6 +296,7 @@ target_compile_definitions(matriz PRIVATE
 target_link_libraries(matriz PRIVATE
     MatrizSchemaAssets
     MatrizI18nAssets
+    MatrizAssets
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     Exiv2::exiv2lib

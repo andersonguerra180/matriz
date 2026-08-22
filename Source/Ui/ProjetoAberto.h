@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -12,6 +13,7 @@
 
 #include "../Ficha/FichaDefinition.h"
 #include "../Model/Project.h"
+#include "../Preservation/Preservation.h"
 
 // Estado do projeto atualmente aberto na UI: dono do matriz::model::Project,
 // cache de FichaDefinition por tipo de mídia (carregadas sob demanda de
@@ -81,6 +83,14 @@ public:
     // medido. NUNCA chamar na message thread durante um lote.
     juce::int64 tamanhoTotalDosMasters() const;
     bool obterItemInfo(const std::string& itemId, std::string& titulo, std::string& tipoMidia, std::string& codigoAcervo) const;
+
+    struct ItemDetalhe {
+        std::string id;
+        std::string nome;
+        std::string extensao;
+        juce::int64 tamanhoBytes = 0;
+    };
+    std::vector<ItemDetalhe> obterDetalhesItens(const std::set<std::string>& itemIds) const;
     std::set<int> indicesExistentes(const std::string& itemId, const std::string& nivel) const;
     void atualizarTipoMidia(const std::string& itemId, const std::string& tipoMidia);
     void aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia);
@@ -400,6 +410,32 @@ public:
     // Devolve o id (novo ou o mesmo).
     std::string salvarColecao(const ColecaoInteligente& colecao);
     void apagarColecao(const std::string& id);
+
+    // -----------------------------------------------------------------
+    // Camada de Preservação Digital (OAIS / PREMIS / FAIR)
+    // -----------------------------------------------------------------
+
+    // Preservation status calculado da view asset_preservation_status.
+    preservation::PreservationStatus obterPreservationStatus(const std::string& itemId) const;
+
+    // Lista de eventos PREMIS do item, cronológica inversa.
+    std::vector<preservation::EventoPreservacao> listarEventosPreservacao(const std::string& itemId) const;
+
+    // Direitos registrados. nullopt se nenhuma linha existe ainda.
+    std::optional<preservation::DireitosPreservacao> obterDireitos(const std::string& itemId) const;
+    void salvarDireitos(const std::string& itemId, const preservation::DireitosPreservacao& d);
+
+    // Verifica fixity em thread background.
+    // callback é chamado de volta na message thread com o resultado.
+    void verificarFixityAsync(const std::string& arquivoId,
+                              const std::string& caminhoAbsoluto,
+                              std::function<void(preservation::ResultadoFixity)> callback);
+
+    // Exporta metadados completos do item como JSON (DIP / FAIR).
+    juce::String exportarPreservacaoJson(const std::string& itemId) const;
+
+    // Exporta vários items como CSV (uma linha de cabeçalho + uma por item).
+    juce::String exportarPreservacaoCsv(const std::vector<std::string>& itemIds) const;
 
 private:
     std::unique_ptr<matriz::model::Project> projeto_;

@@ -329,6 +329,73 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     } catch (...) {
         // Ignora erros caso a tabela ainda não exista em contextos antigos
     }
+
+    // -----------------------------------------------------------------------
+    // Camada de Preservação — migração aditiva (idempotente)
+    // -----------------------------------------------------------------------
+
+    // 1. Coluna persistent_id em item — identificador apresentável/interoperável
+    //    que coexiste com item.id (UUID técnico interno).
+    garantirColuna(registro, "item", "persistent_id", "TEXT");
+
+    // 2. Seed de agentes built-in. INSERT OR IGNORE: idempotente em qualquer
+    //    número de aberturas do projeto.
+    try {
+        registro.run(
+            "INSERT OR IGNORE INTO preservation_agent (id, nome, tipo, criado_em) VALUES "
+            "('bkr-agent-sistema', 'BKR Matriz', 'software', ?)",
+            { db::Value::of(agoraIso8601()) });
+        registro.run(
+            "INSERT OR IGNORE INTO preservation_agent (id, nome, tipo, criado_em) VALUES "
+            "('bkr-agent-ffprobe', 'ffprobe', 'software', ?)",
+            { db::Value::of(agoraIso8601()) });
+        registro.run(
+            "INSERT OR IGNORE INTO preservation_agent (id, nome, tipo, criado_em) VALUES "
+            "('bkr-agent-exiv2', 'Exiv2', 'software', ?)",
+            { db::Value::of(agoraIso8601()) });
+    } catch (...) {}
+
+    // 3. Atribuição bulk de persistent_id para assets existentes.
+    //    Uma única instrução SQL — sem loop, sem N operações individuais.
+    //    O formato é determinístico: "BKR:ASSET:" + primeiros 8 hex do UUID sem hífens.
+    //    Não toca em arquivos. Não recalcula checksums.
+    try {
+        registro.run(
+            "UPDATE item "
+            "SET persistent_id = 'BKR:ASSET:' || UPPER(SUBSTR(REPLACE(id,'-',''), 1, 8)) "
+            "WHERE persistent_id IS NULL",
+            {});
+    } catch (...) {}
+
+    // 4. Um único evento de migração por projeto — registrado somente se ainda
+    //    não existe nenhum evento MIGRATION (idempotente via INSERT OR IGNORE).
+    //    agent_id = 'bkr-agent-sistema' (seed acima garante que existe).
+    //    Não cria um evento por item — operação em lote, O(1) no banco.
+    try {
+        std::string agora = agoraIso8601();
+        registro.run(
+            "INSERT OR IGNORE INTO preservation_event "
+            "(id, item_id, event_type, event_date_time, event_detail, "
+            " event_outcome, event_outcome_detail, agent_id, criado_em) "
+            "SELECT "
+            "  lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-4' || "
+            "  lower(substr(hex(randomblob(2)),2)) || '-' || "
+            "  lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(6))), "
+            "  id, "
+            "  'MIGRATION', "
+            "  ?, "
+            "  'Persistent ID assigned during schema migration to preservation layer — batch operation', "
+            "  'SUCCESS', "
+            "  NULL, "
+            "  'bkr-agent-sistema', "
+            "  ? "
+            "FROM item "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM preservation_event pe "
+            "  WHERE pe.item_id = item.id AND pe.event_type = 'MIGRATION'"
+            ")",
+            { db::Value::of(agora), db::Value::of(agora) });
+    } catch (...) {}
 }
 
 } // namespace
