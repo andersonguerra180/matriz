@@ -215,6 +215,15 @@ target_sources(matriz PRIVATE
     Source/Ui/MetadadosOriginaisComponent.cpp
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/EstatisticasComponent.cpp
+    Source/Ui/AnalyticsTableComponent.cpp
+    Source/Ui/AnalyticsChartComponent.cpp
+    Source/Ui/GeoMapComponent.cpp
+    Source/Ui/CollectionStatsDashboardComponent.cpp
+    Source/Analytics/AssetGeolocation.cpp
+    Source/Analytics/AnalyticsFormatter.cpp
+    Source/Analytics/AnalyticsEngine.cpp
+    Source/Analytics/AnalyticsExport.cpp
+    Source/Analytics/SavedAnalyses.cpp
     Source/Ui/ArvoreBackupComponent.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
@@ -279,18 +288,12 @@ target_sources(matriz PRIVATE
 target_include_directories(matriz PRIVATE Source)
 
 target_compile_definitions(matriz PRIVATE
-    JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=1
+    JUCE_USE_CURL=1
     JUCE_APPLICATION_NAME_STRING="BKR Matriz"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
     MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
-    # Ver nota em matriz_ingest_selftest — a build empacotada (Etapa 10) não
-    # deve definir isto; até lá, o app de desenvolvimento cai pro PATH se não
-    # achar ffmpeg/ffprobe ao lado do executável.
     MATRIZ_DEV_BUILD=1
-    # Necessário pra MessageManager::runDispatchLoopUntil, usado só pelo
-    # selftest headless de ingest (Source/Ui/IngerirArquivosTest.cpp) pra
-    # bombear os callbacks assíncronos do ingest em background.
     JUCE_MODAL_LOOPS_PERMITTED=1)
 
 target_link_libraries(matriz PRIVATE
@@ -307,10 +310,8 @@ target_link_libraries(matriz PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
-    # AudioThumbnail/AudioThumbnailCache: forma de onda da timeline (item 8).
     juce::juce_audio_utils
     juce::juce_dsp
-    # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ AVFoundation>
     $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
@@ -322,3 +323,52 @@ if(APPLE)
 endif()
 
 matriz_aplicar_asan(matriz)
+
+# ------------------------------------------------------------------------------
+# Selftest - Analytics Multidimensional Engine & Benchmarks
+# ------------------------------------------------------------------------------
+juce_add_console_app(matriz_analytics_selftest PRODUCT_NAME "matriz_analytics_selftest")
+juce_generate_juce_header(matriz_analytics_selftest)
+
+target_sources(matriz_analytics_selftest PRIVATE
+    tools/analytics_selftest/main.cpp
+    Source/Analytics/AnalyticsFormatter.cpp
+    Source/Analytics/AnalyticsEngine.cpp
+    Source/Analytics/AssetGeolocation.cpp
+    Source/Analytics/AnalyticsExport.cpp
+    Source/Analytics/SavedAnalyses.cpp
+    Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/ProcessoExterno.cpp
+    Source/Ingest/Loudness.cpp
+    Source/Db/Database.cpp
+    Source/Model/Project.cpp
+    Source/I18n/Strings.cpp
+    Source/App/Preferencias.cpp)
+
+target_include_directories(matriz_analytics_selftest PRIVATE Source)
+
+target_compile_definitions(matriz_analytics_selftest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_APPLICATION_NAME_STRING="MATRIZ analytics selftest"
+    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+    MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
+    MATRIZ_DEV_BUILD=1)
+
+target_link_libraries(matriz_analytics_selftest PRIVATE
+    MatrizSchemaAssets
+    matriz_sqlite3
+    yaml-cpp::yaml-cpp
+    Exiv2::exiv2lib
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_graphics
+    juce::juce_gui_basics
+    juce::juce_audio_basics
+    juce::juce_audio_formats
+    PUBLIC
+    juce::juce_recommended_config_flags)
+
+matriz_aplicar_asan(matriz_analytics_selftest)
+

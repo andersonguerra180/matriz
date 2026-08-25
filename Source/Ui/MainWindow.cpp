@@ -466,8 +466,15 @@ void MainWindow::pedirSalvarProjetoComo() {
                               juce::File destino = resultado.getFileNameWithoutExtension().isEmpty()
                                   ? resultado : resultado.withFileExtension("mtz");
                               if (destino.exists()) destino.deleteRecursively();
-                              if (pastaOriginal.copyDirectoryTo(destino))
+                              if (pastaOriginal.copyDirectoryTo(destino)) {
                                   abrirPasta(destino);
+                                  setName(getName() + "  [Saved As: " + destino.getFileName() + "]");
+                                  juce::Component::SafePointer<MainWindow> safeWin(this);
+                                  auto origName = getName().upToFirstOccurrenceOf("  [Saved", false, false);
+                                  juce::Timer::callAfterDelay(2000, [safeWin, origName] {
+                                      if (safeWin) safeWin->setName(origName);
+                                  });
+                              }
                           });
 }
 

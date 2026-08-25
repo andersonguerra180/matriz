@@ -191,11 +191,63 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         if (!stmt.columnIsNull(10)) r.origem = stmt.columnText(10);
         if (!stmt.columnIsNull(11)) {
             juce::String anoTexto = stmt.columnText(11);
-            if (anoTexto.containsOnly("0123456789")) r.ano = anoTexto.getIntValue();
+            if (anoTexto.containsOnly("0123456789") && anoTexto.isNotEmpty()) r.ano = anoTexto.getIntValue();
         }
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
         r.criadoEm = stmt.columnText(17);
+
+        // Fallback: extract creation year ONLY from dc_created, ano, data_criacao or EXIF original date
+        if (!r.ano.has_value()) {
+            try {
+                auto yrStmt = projeto_->registro().prepare(
+                    "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'ano', 'data_criacao') AND valor IS NOT NULL AND valor != '' LIMIT 1");
+                yrStmt.bind(1, matriz::db::Value::of(r.id));
+                if (yrStmt.step()) {
+                    juce::String val = yrStmt.columnText(0);
+                    for (int i = 0; i + 3 < val.length(); ++i) {
+                        if (std::isdigit(val[i]) && std::isdigit(val[i+1]) &&
+                            std::isdigit(val[i+2]) && std::isdigit(val[i+3])) {
+                            int yVal = val.substring(i, i + 4).getIntValue();
+                            if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            if (!r.ano.has_value()) {
+                try {
+                    auto exifStmt = projeto_->registro().prepare(
+                        "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+                    exifStmt.bind(1, matriz::db::Value::of(r.id));
+                    if (exifStmt.step() && !exifStmt.columnIsNull(0)) {
+                        auto jsonStr = exifStmt.columnText(0);
+                        auto varObj = juce::JSON::parse(jsonStr);
+                        if (varObj.isObject() && varObj.hasProperty("exifDataOriginal")) {
+                            juce::String exifDt = varObj["exifDataOriginal"].toString();
+                            for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                                if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                                    std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                                    int yVal = exifDt.substring(i, i + 4).getIntValue();
+                                    if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                                }
+                            }
+                        }
+                    }
+                } catch (...) {}
+            }
+
+            if (!r.ano.has_value() && !stmt.columnIsNull(12)) {
+                try {
+                    juce::File fileObj(stmt.columnText(12));
+                    if (fileObj.existsAsFile()) {
+                        int yVal = fileObj.getCreationTime().getYear();
+                        if (yVal <= 1970 || yVal > 2025) yVal = fileObj.getLastModificationTime().getYear();
+                        if (yVal > 1800 && yVal <= 2025) r.ano = yVal;
+                    }
+                } catch (...) {}
+            }
+        }
 
         if (!r.titulo.empty()) {
             r.nomeOriginalArquivo = r.titulo;
@@ -377,16 +429,33 @@ std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& 
 
 std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId, const std::string& coluna) const {
     if (!projeto_) return std::nullopt;
-    // Only allow known safe column names to prevent SQL injection
     static const std::set<std::string> kColunasPermitidas = {
-        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo"
+        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo",
+        "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
+        "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
+        "dc_language", "dc_relation", "dc_coverage", "dc_rights"
     };
     if (kColunasPermitidas.find(coluna) == kColunasPermitidas.end()) return std::nullopt;
 
-    auto stmt = projeto_->registro().prepare(
-        "SELECT " + coluna + " FROM item WHERE id = ?");
-    stmt.bind(1, matriz::db::Value::of(itemId));
-    if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+    try {
+        auto stmt = projeto_->registro().prepare("SELECT " + coluna + " FROM item WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step() && !stmt.columnIsNull(0)) {
+            std::string val = stmt.columnText(0);
+            if (!val.empty()) return val;
+        }
+    } catch (...) {}
+
+    try {
+        auto stmt = projeto_->registro().prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        stmt.bind(2, matriz::db::Value::of(coluna));
+        if (stmt.step() && !stmt.columnIsNull(0)) {
+            std::string val = stmt.columnText(0);
+            if (!val.empty()) return val;
+        }
+    } catch (...) {}
+
     return std::nullopt;
 }
 
@@ -427,10 +496,6 @@ std::string ProjetoAberto::descricaoUndoAtual() const {
 
 void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor) {
     if (!projeto_) return;
-    static const std::set<std::string> kColunasPermitidas = {
-        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo"
-    };
-    if (kColunasPermitidas.find(coluna) == kColunasPermitidas.end()) return;
 
     if (!desfazendo_) {
         auto old = lerMetadado(itemId, coluna);
@@ -445,33 +510,28 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
         }
     }
 
-    projeto_->registro().run(
-        "UPDATE item SET " + coluna + " = ?, atualizado_em = ? WHERE id = ?",
-        {matriz::db::Value::of(valor),
-         matriz::db::Value::of(matriz::model::agoraIso8601()),
-         matriz::db::Value::of(itemId)});
+    // Try updating column on item table
+    try {
+        projeto_->registro().run(
+            "UPDATE item SET " + coluna + " = ?, atualizado_em = ? WHERE id = ?",
+            {matriz::db::Value::of(valor),
+             matriz::db::Value::of(matriz::model::agoraIso8601()),
+             matriz::db::Value::of(itemId)});
+    } catch (...) {}
 
+    // Sync to item_campo
     std::string agora = matriz::model::agoraIso8601();
-    auto syncCampo = [&](const std::string& cId) {
+    try {
         projeto_->registro().run(
             "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
             "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
-            "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+            "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
             {matriz::db::Value::of(matriz::model::novoUuid()),
              matriz::db::Value::of(itemId),
-             matriz::db::Value::of(cId),
+             matriz::db::Value::of(coluna),
              matriz::db::Value::of(valor),
              matriz::db::Value::of(agora)});
-    };
-    if (coluna == "titulo") {
-        syncCampo("titulo");
-        syncCampo("maquina");
-    } else if (coluna == "notas_livres") {
-        syncCampo("notas");
-        syncCampo("notas_livres");
-    } else {
-        syncCampo(coluna);
-    }
+    } catch (...) {}
 }
 
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
@@ -776,6 +836,29 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreOrigem(bool incluirTodos) const {
     }
 
     return materializar(raiz, true);
+}
+
+ProjetoAberto::NoArvore ProjetoAberto::podarArvore(const NoArvore& raiz, const std::set<std::string>& idsPermitidos) {
+    NoArvore podado;
+    podado.id = raiz.id;
+    podado.nome = raiz.nome;
+    podado.pastaPaiId = raiz.pastaPaiId;
+    podado.posicaoX = raiz.posicaoX;
+    podado.posicaoY = raiz.posicaoY;
+    podado.ativo = raiz.ativo;
+
+    for (const auto& id : raiz.itemIds)
+        if (idsPermitidos.count(id)) podado.itemIds.insert(id);
+    for (const auto& id : raiz.itemIdsDiretos)
+        if (idsPermitidos.count(id)) podado.itemIdsDiretos.insert(id);
+
+    for (const auto& filho : raiz.filhos) {
+        auto filhoPodado = podarArvore(filho, idsPermitidos);
+        if (!filhoPodado.itemIds.empty() || !filhoPodado.filhos.empty())
+            podado.filhos.push_back(std::move(filhoPodado));
+    }
+
+    return podado;
 }
 
 ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
@@ -1330,14 +1413,86 @@ std::map<std::string, int> ProjetoAberto::contagensPorCollectionType() const {
 std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) const {
     std::set<std::string> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
-        "SELECT c.item_id FROM item_campo c JOIN item i ON i.id = c.item_id "
-        "WHERE i.projeto_id = ? AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ano' "
-        "AND CAST(c.valor AS INTEGER) BETWEEN ? AND ?");
-    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
-    stmt.bind(2, matriz::db::Value::of(anoDe));
-    stmt.bind(3, matriz::db::Value::of(anoAte));
-    while (stmt.step()) out.insert(stmt.columnText(0));
+
+    // 1. Check user-filled creation fields in item_campo (ano, dc_created, data_criacao)
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT c.item_id, c.valor FROM item_campo c JOIN item i ON i.id = c.item_id "
+            "WHERE i.projeto_id = ? AND c.campo_id IN ('ano', 'dc_created', 'data_criacao')");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        while (stmt.step()) {
+            std::string itemId = stmt.columnText(0);
+            std::string val = stmt.columnText(1);
+            if (!val.empty()) {
+                for (size_t i = 0; i + 3 < val.size(); ++i) {
+                    if (std::isdigit(val[i]) && std::isdigit(val[i+1]) && std::isdigit(val[i+2]) && std::isdigit(val[i+3])) {
+                        int yr = std::stoi(val.substr(i, 4));
+                        if (yr >= anoDe && yr <= anoAte) {
+                            out.insert(itemId);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {}
+
+    // 2. Direct column ano in item table
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT id FROM item WHERE projeto_id = ? AND ano IS NOT NULL AND ano >= ? AND ano <= ?");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        stmt.bind(2, matriz::db::Value::of(anoDe));
+        stmt.bind(3, matriz::db::Value::of(anoAte));
+        while (stmt.step()) out.insert(stmt.columnText(0));
+    } catch (...) {}
+
+    // 3. EXIF creation date in arquivo.caracteristicas_tecnicas_json
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT a.item_id, a.caracteristicas_tecnicas_json FROM arquivo a JOIN item i ON i.id = a.item_id "
+            "WHERE i.projeto_id = ? AND a.eh_master = 1 AND a.caracteristicas_tecnicas_json LIKE '%exifDataOriginal%'");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        while (stmt.step()) {
+            std::string itemId = stmt.columnText(0);
+            std::string jsonStr = stmt.columnText(1);
+            auto varObj = juce::JSON::parse(jsonStr);
+            if (varObj.isObject() && varObj.hasProperty("exifDataOriginal")) {
+                juce::String exifDt = varObj["exifDataOriginal"].toString();
+                for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                    if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                        std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                        int yr = exifDt.substring(i, i + 4).getIntValue();
+                        if (yr >= anoDe && yr <= anoAte) {
+                            out.insert(itemId);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {}
+
+    // 4. Physical file creation/modification date
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT a.item_id, a.caminho_absoluto_origem FROM arquivo a JOIN item i ON i.id = a.item_id "
+            "WHERE i.projeto_id = ? AND a.eh_master = 1 AND a.caminho_absoluto_origem IS NOT NULL AND a.caminho_absoluto_origem != ''");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        while (stmt.step()) {
+            std::string itemId = stmt.columnText(0);
+            std::string absPath = stmt.columnText(1);
+            juce::File f(absPath);
+            if (f.existsAsFile()) {
+                int yr = f.getCreationTime().getYear();
+                if (yr <= 1970 || yr > 2025) yr = f.getLastModificationTime().getYear();
+                if (yr >= anoDe && yr <= anoAte) {
+                    out.insert(itemId);
+                }
+            }
+        }
+    } catch (...) {}
+
     return out;
 }
 
@@ -1626,6 +1781,43 @@ juce::String ProjetoAberto::exportarPreservacaoJson(const std::string& itemId) c
 juce::String ProjetoAberto::exportarPreservacaoCsv(const std::vector<std::string>& itemIds) const {
     if (!projeto_) return {};
     try { return preservation::exportarCsv(projeto_->registro(), itemIds); }
+    catch (...) { return {}; }
+}
+
+juce::String ProjetoAberto::exportarFullCsv(const std::vector<std::string>& itemIds) const {
+    if (!projeto_) return {};
+    try { return preservation::exportarFullCsv(projeto_->registro(), itemIds); }
+    catch (...) { return {}; }
+}
+
+bool ProjetoAberto::exportarFullCsvPacote(const std::vector<std::string>& itemIds, const juce::File& destLocation, juce::String& errorOut) const {
+    if (!projeto_) {
+        errorOut = "No active project open";
+        return false;
+    }
+    try { return preservation::exportarFullCsvPacote(projeto_->registro(), itemIds, destLocation, errorOut); }
+    catch (const std::exception& e) { errorOut = e.what(); return false; }
+    catch (...) { errorOut = "Unknown error during export"; return false; }
+}
+
+juce::String ProjetoAberto::exportarXlsXml(const std::vector<std::string>& itemIds) const {
+    if (!projeto_) return {};
+    std::string projName = projeto_->nome();
+    std::string catCode = "BKR-MATRIZ-01";
+    try { return preservation::exportarXlsXml(projeto_->registro(), itemIds, projName, catCode); }
+    catch (...) { return {}; }
+}
+
+juce::String ProjetoAberto::exportarDublinCoreCsv(const std::vector<std::string>& itemIds) const {
+    if (!projeto_) return {};
+    try { return preservation::exportarCsvDublinCore(projeto_->registro(), itemIds); }
+    catch (...) { return {}; }
+}
+
+juce::String ProjetoAberto::exportarFixityManifest(const std::vector<std::string>& itemIds,
+                                                     const std::string& algoritmo) const {
+    if (!projeto_) return {};
+    try { return preservation::exportarFixityManifest(projeto_->registro(), itemIds, algoritmo); }
     catch (...) { return {}; }
 }
 

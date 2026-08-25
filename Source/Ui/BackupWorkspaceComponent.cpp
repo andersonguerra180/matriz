@@ -268,20 +268,25 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnOpenCatalog_);
 
-    btnExportBkm_ = std::make_unique<juce::TextButton>("EXPORT CATALOG (.bkm)");
-    aplicarEstiloBotao(*btnExportBkm_, false);
-    btnExportBkm_->onClick = [this] { exportarBkm(); };
-    addChildComponent(*btnExportBkm_);
+    btnExportXls_ = std::make_unique<juce::TextButton>("EXPORT XLS");
+    aplicarEstiloBotao(*btnExportXls_, false);
+    btnExportXls_->onClick = [this] { exportarXls(); };
+    addChildComponent(*btnExportXls_);
 
-    btnExportPdf_ = std::make_unique<juce::TextButton>("EXPORT PDF");
-    aplicarEstiloBotao(*btnExportPdf_, false);
-    btnExportPdf_->onClick = [this] { exportarPdf(); };
-    addChildComponent(*btnExportPdf_);
-
-    btnExportCsv_ = std::make_unique<juce::TextButton>("EXPORT CSV");
+    btnExportCsv_ = std::make_unique<juce::TextButton>("EXPORT FULL CSV");
     aplicarEstiloBotao(*btnExportCsv_, false);
     btnExportCsv_->onClick = [this] { exportarCsv(); };
     addChildComponent(*btnExportCsv_);
+
+    btnExportDublinCore_ = std::make_unique<juce::TextButton>("EXPORT DC-CSV");
+    aplicarEstiloBotao(*btnExportDublinCore_, false);
+    btnExportDublinCore_->onClick = [this] { exportarDublinCore(); };
+    addChildComponent(*btnExportDublinCore_);
+
+    btnExportChecksums_ = std::make_unique<juce::TextButton>("EXPORT CHECKSUMS");
+    aplicarEstiloBotao(*btnExportChecksums_, false);
+    btnExportChecksums_->onClick = [this] { exportarChecksums(); };
+    addChildComponent(*btnExportChecksums_);
 
     atualizarResumo();
 }
@@ -289,130 +294,167 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 BackupWorkspaceComponent::~BackupWorkspaceComponent() = default;
 
 void BackupWorkspaceComponent::exportarCsv() {
-    juce::FileChooser fc("Export CSV Report...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.csv");
-    if (fc.browseForFileToSave(true)) {
-        juce::File targetFile = fc.getResult();
-        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("csv");
+    juce::FileChooser fc("Export BKR Full CSV Package...", juce::File::getSpecialLocation(juce::File::userHomeDirectory));
+    if (fc.browseForDirectory()) {
+        juce::File targetDir = fc.getResult();
 
-        juce::StringArray lines;
-        lines.add("Asset ID,Filename,Path,Size,Date,Status");
-
-        for (const auto& item : plano_.itens) {
-            juce::String line = juce::String(item.itemId) + "," +
-                                "\"" + item.nomeOriginal + "\"," +
-                                "\"" + item.caminhoRelativoDestino + "\"," +
-                                juce::String(item.tamanhoBytes) + "," +
-                                "\"2026-08-11\"," +
-                                "\"VERIFIED\"";
-            lines.add(line);
+        std::vector<std::string> ids;
+        for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+        if (ids.empty()) {
+            try {
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                while (stmt.step()) ids.push_back(stmt.columnText(0));
+            } catch (...) {}
         }
 
-        targetFile.replaceWithText(lines.joinIntoString("\n"));
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions()
-                .withIconType(juce::MessageBoxIconType::InfoIcon)
-                .withTitle("EXPORT CSV")
-                .withMessage("CSV Report exported successfully to:\n" + targetFile.getFullPathName())
-                .withButton("OK"),
-            static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+        juce::String err;
+        bool ok = projeto_.exportarFullCsvPacote(ids, targetDir, err);
+        if (ok) {
+            juce::File pkgDir = targetDir.getChildFile("BKR_Full_Export");
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::InfoIcon)
+                    .withTitle("EXPORT FULL CSV")
+                    .withMessage("BKR Full CSV Package exported and validated successfully!\n\nPackage location:\n" + pkgDir.getFullPathName() + "\n\nContents:\n- BKR_FULL.csv\n- BKR_FULL.schema.json\n- manifest.json")
+                    .withButton("OK"),
+                static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+        } else {
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::WarningIcon)
+                    .withTitle("EXPORT FULL CSV FAILED")
+                    .withMessage("BKR Full CSV Export failed validation:\n" + err)
+                    .withButton("OK"),
+                static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+        }
     }
 }
 
-void BackupWorkspaceComponent::exportarPdf() {
-    juce::FileChooser fc("Export PDF Report...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.pdf");
+void BackupWorkspaceComponent::exportarXls() {
+    juce::FileChooser fc("Export XLS Spreadsheet...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.xls");
     if (fc.browseForFileToSave(true)) {
         juce::File targetFile = fc.getResult();
-        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("pdf");
+        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("xls");
 
-        juce::StringArray lines;
-        lines.add("===============================================================================");
-        lines.add("BKR MATRIZ - ARCHIVAL BACKUP REPORT (PDF)");
-        lines.add("===============================================================================");
-        lines.add("Project Name: " + juce::String(projeto_.projeto().nome()));
-        lines.add("Backup Path:  " + resolvedDestFolder_.getFullPathName());
-        lines.add("Export Date:  2026-08-11");
-        lines.add("Total Items:  " + juce::String(plano_.itens.size()));
-        lines.add("Total Size:   " + juce::File::descriptionOfSizeInBytes(plano_.espacoNecessarioBytes));
-        lines.add("===============================================================================\n");
-
-        lines.add("--- FOLDER STRUCTURE & ASSET LIST ---");
-        for (const auto& item : plano_.itens) {
-            lines.add("[" + juce::String(item.itemId) + "] " + item.caminhoRelativoDestino +
-                      " (" + juce::File::descriptionOfSizeInBytes(item.tamanhoBytes) + ")");
+        std::vector<std::string> ids;
+        for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+        if (ids.empty()) {
+            try {
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                while (stmt.step()) ids.push_back(stmt.columnText(0));
+            } catch (...) {}
         }
 
-        targetFile.replaceWithText(lines.joinIntoString("\n"));
+        auto xls = projeto_.exportarXlsXml(ids);
+        targetFile.replaceWithText(xls);
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::InfoIcon)
-                .withTitle("EXPORT PDF")
-                .withMessage("PDF Report exported successfully to:\n" + targetFile.getFullPathName())
+                .withTitle("EXPORT XLS")
+                .withMessage("XLS Spreadsheet exported successfully to:\n" + targetFile.getFullPathName())
                 .withButton("OK"),
             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
-    }
-}
-
-void BackupWorkspaceComponent::exportarBkm() {
-    juce::FileChooser fc("Export Published Catalog (.bkm)...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.bkm");
-    if (fc.browseForFileToSave(true)) {
-        juce::File targetFile = fc.getResult();
-        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("bkm");
-        exportarBkmPara(targetFile.getParentDirectory());
     }
 }
 
 void BackupWorkspaceComponent::exportarCsvPara(const juce::File& destFolder) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
-    juce::File targetFile = destFolder.getChildFile(projectName + "_report.csv");
+    juce::File targetFile = destFolder.getChildFile(projectName + "_full_report.csv");
 
-    juce::StringArray lines;
-    lines.add("Asset ID,Filename,Path,Size,Date,Status");
-
-    for (const auto& item : plano_.itens) {
-        juce::String line = juce::String(item.itemId) + "," +
-                            "\"" + item.nomeOriginal + "\"," +
-                            "\"" + item.caminhoRelativoDestino + "\"," +
-                            juce::String(item.tamanhoBytes) + "," +
-                            "\"" + juce::Time::getCurrentTime().toString(true, false) + "\"," +
-                            "\"VERIFIED\"";
-        lines.add(line);
+    std::vector<std::string> ids;
+    for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+    if (ids.empty()) {
+        try {
+            auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+            while (stmt.step()) ids.push_back(stmt.columnText(0));
+        } catch (...) {}
     }
-    targetFile.replaceWithText(lines.joinIntoString("\n"));
+
+    auto csv = projeto_.exportarFullCsv(ids);
+    targetFile.replaceWithText(csv);
 }
 
-void BackupWorkspaceComponent::exportarPdfPara(const juce::File& destFolder) {
+void BackupWorkspaceComponent::exportarXlsPara(const juce::File& destFolder) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
-    juce::File targetFile = destFolder.getChildFile(projectName + "_report.pdf");
+    juce::File targetFile = destFolder.getChildFile(projectName + "_catalog.xls");
 
-    juce::StringArray lines;
-    lines.add("===============================================================================");
-    lines.add("BKR MATRIZ - ARCHIVAL BACKUP REPORT");
-    lines.add("===============================================================================");
-    lines.add("Project Name: " + projectName);
-    lines.add("Backup Path:  " + destFolder.getFullPathName());
-    lines.add("Export Date:  " + juce::Time::getCurrentTime().toString(true, false));
-    lines.add("Total Items:  " + juce::String(plano_.itens.size()));
-    lines.add("Total Size:   " + juce::File::descriptionOfSizeInBytes(plano_.espacoNecessarioBytes));
-    lines.add("===============================================================================\n");
-
-    lines.add("--- FOLDER STRUCTURE & ASSET LIST ---");
-    for (const auto& item : plano_.itens) {
-        lines.add("[" + juce::String(item.itemId) + "] " + item.caminhoRelativoDestino +
-                  " (" + juce::File::descriptionOfSizeInBytes(item.tamanhoBytes) + ")");
+    std::vector<std::string> ids;
+    for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+    if (ids.empty()) {
+        try {
+            auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+            while (stmt.step()) ids.push_back(stmt.columnText(0));
+        } catch (...) {}
     }
-    targetFile.replaceWithText(lines.joinIntoString("\n"));
+
+    auto xls = projeto_.exportarXlsXml(ids);
+    targetFile.replaceWithText(xls);
 }
 
-void BackupWorkspaceComponent::exportarBkmPara(const juce::File& destFolder) {
-    juce::String projectName = juce::String(projeto_.projeto().nome());
-    juce::File targetFile = destFolder.getChildFile(projectName + ".bkm");
+void BackupWorkspaceComponent::exportarDublinCore() {
+    juce::FileChooser fc("Export DC-CSV Report...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.csv");
+    if (fc.browseForFileToSave(true)) {
+        juce::File targetFile = fc.getResult();
+        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("csv");
 
-    // The .bkm is a copy of the project database (read-only catalog snapshot)
-    auto dbFile = projeto_.projeto().pasta().getChildFile("registro.sqlite");
-    if (!dbFile.existsAsFile())
-        dbFile = projeto_.projeto().pasta().getChildFile("projeto.db");
-    if (dbFile.existsAsFile())
-        dbFile.copyFileTo(targetFile);
+        std::vector<std::string> ids;
+        for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+        if (ids.empty()) {
+            try {
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                while (stmt.step()) ids.push_back(stmt.columnText(0));
+            } catch (...) {}
+        }
+
+        auto csv = projeto_.exportarDublinCoreCsv(ids);
+        targetFile.replaceWithText(csv);
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle("EXPORT DC-CSV")
+                .withMessage("DC-CSV Report exported to:\n" + targetFile.getFullPathName())
+                .withButton("OK"),
+            static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+    }
+}
+
+void BackupWorkspaceComponent::exportarChecksums() {
+    juce::FileChooser fc("Export Checksum Manifest...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.sha256");
+    if (fc.browseForFileToSave(true)) {
+        juce::File targetFile = fc.getResult();
+        if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("sha256");
+
+        std::vector<std::string> ids;
+        for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+        auto manifest = projeto_.exportarFixityManifest(ids);
+        targetFile.replaceWithText(manifest.toStdString());
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle("EXPORT CHECKSUMS")
+                .withMessage("Checksum manifest exported to:\n" + targetFile.getFullPathName()
+                             + "\n\nVerify with:  sha256sum -c " + targetFile.getFileName())
+                .withButton("OK"),
+            static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+    }
+}
+
+void BackupWorkspaceComponent::exportarDublinCorePara(const juce::File& destFolder) {
+    juce::String projectName = juce::String(projeto_.projeto().nome());
+    juce::File targetFile = destFolder.getChildFile(projectName + "_dublin_core.csv");
+    std::vector<std::string> ids;
+    for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+    auto csv = projeto_.exportarDublinCoreCsv(ids);
+    targetFile.replaceWithText(csv.toStdString());
+}
+
+void BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder) {
+    juce::String projectName = juce::String(projeto_.projeto().nome());
+    juce::File targetFile = destFolder.getChildFile(projectName + ".sha256");
+    std::vector<std::string> ids;
+    for (const auto& item : plano_.itens) ids.push_back(item.itemId);
+    auto manifest = projeto_.exportarFixityManifest(ids);
+    targetFile.replaceWithText(manifest.toStdString());
 }
 
 void BackupWorkspaceComponent::aplicarEstiloBotao(juce::TextButton& botao, bool primario) {
@@ -592,14 +634,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
         // com sucesso" — dois sinais contraditórios na mesma tela.
         safeThis->progressoValor_ = 1.0;
 
-        // Auto-export CSV, PDF, BKM to backup root folder
+        // Auto-export CSV, XLS, BKM to backup root folder
         if (!resultado.cancelado) {
-            safeThis->labelProgressoStatus_->setText("Exporting CSV, PDF and BKM catalog...", juce::dontSendNotification);
+            safeThis->labelProgressoStatus_->setText("Exporting CSV, XLS, Dublin Core and checksums...", juce::dontSendNotification);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
             if (safeThis) {
                 safeThis->exportarCsvPara(destFolder);
-                safeThis->exportarPdfPara(destFolder);
-                safeThis->exportarBkmPara(destFolder);
+                safeThis->exportarXlsPara(destFolder);
+                safeThis->exportarDublinCorePara(destFolder);
+                safeThis->exportarChecksumsPara(destFolder);
             }
         }
 
@@ -758,34 +801,48 @@ void BackupWorkspaceComponent::resized() {
 
     if (estado_ == Estado::Done) {
         btnDone_->setBounds(botoes.removeFromRight(110));
+        btnDone_->setVisible(true);
+        btnStartBackup_->setVisible(false);
+        btnCancel_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
         if (btnOpenCatalog_) {
             btnOpenCatalog_->setBounds(botoes.removeFromRight(190));
             btnOpenCatalog_->setVisible(true);
         }
-        if (btnExportBkm_) {
-            botoes.removeFromRight(tk.espacoPainel);
-            btnExportBkm_->setBounds(botoes.removeFromRight(170));
-            btnExportBkm_->setVisible(true);
-        }
-        if (btnExportPdf_) {
-            botoes.removeFromRight(tk.espacoPainel);
-            btnExportPdf_->setBounds(botoes.removeFromRight(110));
-            btnExportPdf_->setVisible(true);
-        }
-        if (btnExportCsv_) {
-            botoes.removeFromRight(tk.espacoPainel);
-            btnExportCsv_->setBounds(botoes.removeFromRight(110));
-            btnExportCsv_->setVisible(true);
-        }
     } else {
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
-        if (btnExportBkm_) btnExportBkm_->setVisible(false);
-        if (btnExportPdf_) btnExportPdf_->setVisible(false);
-        if (btnExportCsv_) btnExportCsv_->setVisible(false);
+        btnDone_->setVisible(false);
         btnCancel_->setBounds(botoes.removeFromRight(110));
+        btnCancel_->setVisible(true);
         botoes.removeFromRight(tk.espacoPainel);
         btnStartBackup_->setBounds(botoes.removeFromRight(170));
+        btnStartBackup_->setVisible(true);
+    }
+
+    bool temItens = !plano_.itens.empty();
+    if (btnExportCsv_) {
+        botoes.removeFromRight(tk.espacoPainel);
+        btnExportCsv_->setBounds(botoes.removeFromRight(110));
+        btnExportCsv_->setVisible(true);
+        btnExportCsv_->setEnabled(temItens);
+    }
+    if (btnExportXls_) {
+        botoes.removeFromRight(tk.espacoPainel);
+        btnExportXls_->setBounds(botoes.removeFromRight(110));
+        btnExportXls_->setVisible(true);
+        btnExportXls_->setEnabled(temItens);
+    }
+    if (btnExportDublinCore_) {
+        botoes.removeFromRight(tk.espacoPainel);
+        btnExportDublinCore_->setBounds(botoes.removeFromRight(170));
+        btnExportDublinCore_->setVisible(true);
+        btnExportDublinCore_->setEnabled(temItens);
+    }
+    if (btnExportChecksums_) {
+        botoes.removeFromRight(tk.espacoPainel);
+        btnExportChecksums_->setBounds(botoes.removeFromRight(170));
+        btnExportChecksums_->setVisible(true);
+        btnExportChecksums_->setEnabled(temItens);
     }
 
     // ---- Running / Done: um cartão só, centrado ----

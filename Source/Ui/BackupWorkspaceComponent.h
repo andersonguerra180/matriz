@@ -120,18 +120,21 @@ private:
     std::unique_ptr<juce::TextButton> btnCancel_;
     std::unique_ptr<juce::TextButton> btnDone_;
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;
-    std::unique_ptr<juce::TextButton> btnExportPdf_;
+    std::unique_ptr<juce::TextButton> btnExportXls_;
     std::unique_ptr<juce::TextButton> btnExportCsv_;
-    std::unique_ptr<juce::TextButton> btnExportBkm_;
+    std::unique_ptr<juce::TextButton> btnExportDublinCore_;
+    std::unique_ptr<juce::TextButton> btnExportChecksums_;
 
-    void exportarPdf();
+    void exportarXls();
     void exportarCsv();
-    void exportarBkm();
+    void exportarDublinCore();
+    void exportarChecksums();
 
     // Auto-export to a specific folder (no FileChooser dialog)
     void exportarCsvPara(const juce::File& destFolder);
-    void exportarPdfPara(const juce::File& destFolder);
-    void exportarBkmPara(const juce::File& destFolder);
+    void exportarXlsPara(const juce::File& destFolder);
+    void exportarDublinCorePara(const juce::File& destFolder);
+    void exportarChecksumsPara(const juce::File& destFolder);
 
     // Helpers
     std::set<std::string> obterItensSelecionadosPeloCriterio();

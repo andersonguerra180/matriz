@@ -4,6 +4,8 @@ build-asan/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+*.app/
+BKP/
 
 # Saída do harness de UI headless (MATRIZ --selftest-uitest) — PNGs
 # regenerados a cada execução, não são fonte.

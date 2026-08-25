@@ -2,7 +2,8 @@
 
 #include <JuceHeader.h>
 #include "ProjetoAberto.h"
-#include "PreservationWorkspaceComponent.h"
+#include <set>
+#include <memory>
 
 namespace matriz::ui {
 
@@ -12,6 +13,10 @@ public:
     ~EstatisticasComponent() override = default;
 
     void recarregar();
+    void setSelectedAssets(const std::set<std::string>& assetIds);
+
+    std::function<void(const std::string& itemId)> aoSelecionarItem;
+    std::function<void(const std::set<std::string>& assetIds)> aoAbrirNoGrid;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -19,49 +24,18 @@ public:
 private:
     ProjetoAberto& projeto_;
 
-    struct StatCard {
-        juce::String titulo;
-        juce::String valor;
-        juce::String detalhe;
-        juce::Colour cor;
-    };
+    // Top Summary Indicators
+    struct SummaryKpi {
+        uint64_t totalAssets = 0;
+        juce::int64 totalBytes = 0;
+        std::string primaryFormatName = "Audio";
+        uint64_t primaryFormatCount = 0;
+        double backupHealthPercentage = 0.0;
+        uint64_t vulnerableAssetsCount = 0;
+    } summaryKpi_;
 
-    struct CategoriaStat {
-        juce::String nome;
-        int quantidade = 0;
-        juce::int64 tamanhoBytes = 0;
-        juce::Colour cor;
-    };
-
-    struct ExtensaoStat {
-        juce::String extensao;
-        int quantidade = 0;
-        juce::int64 tamanhoBytes = 0;
-    };
-
-    struct DecadaStat {
-        juce::String decada;
-        int quantidade = 0;
-    };
-
-    struct TagStat {
-        juce::String tag;
-        int quantidade = 0;
-    };
-
-    int totalItens_ = 0;
-    juce::int64 totalBytes_ = 0;
-    int vulneraveis_ = 0;
-    int singleCopy_ = 0;
-    int ausentes_ = 0;
-
-    std::unique_ptr<PreservationWorkspaceComponent> preservationSection_;
-
-    std::vector<StatCard> cards_;
-    std::vector<CategoriaStat> categorias_;
-    std::vector<ExtensaoStat> extensoes_;
-    std::vector<DecadaStat> decadas_;
-    std::vector<TagStat> tags_;
+    void carregarMetricasDoBanco(matriz::db::Database& db);
+    void desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EstatisticasComponent)
 };

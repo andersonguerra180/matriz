@@ -257,6 +257,7 @@ public:
 
     NoArvore arvoreOrigem(bool incluirTodos = false) const;
     NoArvore arvoreAcervo() const;
+    static NoArvore podarArvore(const NoArvore& raiz, const std::set<std::string>& idsPermitidos);
 
     std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId);
     void renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
@@ -436,6 +437,22 @@ public:
 
     // Exporta vários items como CSV (uma linha de cabeçalho + uma por item).
     juce::String exportarPreservacaoCsv(const std::vector<std::string>& itemIds) const;
+
+    // Exporta todos os dados dos arquivos incluindo geolocalização como Full CSV.
+    juce::String exportarFullCsv(const std::vector<std::string>& itemIds) const;
+
+    // Exporta pacote completo BKR Full CSV (BKR_FULL.csv, BKR_FULL.schema.json, manifest.json) com validação.
+    bool exportarFullCsvPacote(const std::vector<std::string>& itemIds, const juce::File& destLocation, juce::String& errorOut) const;
+
+    // Exporta planilha XLS com cabeçalho de projeto e metadados Dublin Core.
+    juce::String exportarXlsXml(const std::vector<std::string>& itemIds) const;
+
+    // Exporta CSV com cabeçalhos Dublin Core (dc.identifier, dc.title, ...).
+    juce::String exportarDublinCoreCsv(const std::vector<std::string>& itemIds) const;
+
+    // Exporta manifesto de checksums em formato sha256sum -c (.txt legível).
+    juce::String exportarFixityManifest(const std::vector<std::string>& itemIds,
+                                         const std::string& algoritmo = "sha256") const;
 
 private:
     std::unique_ptr<matriz::model::Project> projeto_;

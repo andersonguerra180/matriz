@@ -71,33 +71,33 @@ struct Tema {
 inline const Tema& temaBkrDark() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xff353a42);
-        x.painel = juce::Colour(0xff1a1c1e);
-        x.painelAlt = juce::Colour(0xff111214);
-        x.borda = juce::Colour(0xff252930);
-        x.bordaFoco = juce::Colour(0xff4c8dff);
+        x.fundo = juce::Colour(0xfff8f2ec);
+        x.painel = juce::Colour(0xffefe8e0);
+        x.painelAlt = juce::Colour(0xffe6ded5);
+        x.borda = juce::Colour(0xffc8bfb5);
+        x.bordaFoco = juce::Colour(0xff3d7fd6);
 
-        x.textoPrimario = juce::Colour(0xffffffff);
-        x.textoSecundario = juce::Colour(0xffc5cad3);
-        x.textoTerciario = juce::Colour(0xff8b929e);
+        x.textoPrimario = juce::Colour(0xff1a1a1a);
+        x.textoSecundario = juce::Colour(0xff4a4540);
+        x.textoTerciario = juce::Colour(0xff8a8580);
         x.textoSobreAcento = juce::Colour(0xffffffff);
 
-        x.acento = juce::Colour(0xff4c8dff);
-        x.acentoHover = juce::Colour(0xff6ea0ff);
-        x.perigo = juce::Colour(0xffe74c3c);
-        x.alerta = juce::Colour(0xfff1c40f);
+        x.acento = juce::Colour(0xff2a6bc7);
+        x.acentoHover = juce::Colour(0xff1b5ab0);
+        x.perigo = juce::Colour(0xffc0392b);
+        x.alerta = juce::Colour(0xffd35400);
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff8b929e);
-        x.estadoCapturado = juce::Colour(0xff4c8dff);
-        x.estadoQcOk = juce::Colour(0xff2ecc71);
-        x.estadoAlerta = juce::Colour(0xfff1c40f);
-        x.haloSincronizado = juce::Colour(0xff2ecc71);
+        x.estadoNaoDigitalizado = juce::Colour(0xff9a9590);
+        x.estadoCapturado = juce::Colour(0xff2a6bc7);
+        x.estadoQcOk = juce::Colour(0xff27a854);
+        x.estadoAlerta = juce::Colour(0xffd4a017);
+        x.haloSincronizado = juce::Colour(0xff27a854);
 
-        x.campoHumano = juce::Colour(0xffffffff);
-        x.campoHerdado = juce::Colour(0xffa7adb7);
-        x.campoLeituraTecnica = juce::Colour(0xffa7adb7);
-        x.campoSugestaoIa = juce::Colour(0xfff39c12);
-        x.campoSugestaoIaFundo = juce::Colour(0x33f39c12);
+        x.campoHumano = juce::Colour(0xff1a1a1a);
+        x.campoHerdado = juce::Colour(0xff6a6560);
+        x.campoLeituraTecnica = juce::Colour(0xff6a6560);
+        x.campoSugestaoIa = juce::Colour(0xffb87517);
+        x.campoSugestaoIaFundo = juce::Colour(0x22b87517);
 
         x.tamanhoFonteTitulo = 22.0f;
         x.tamanhoFonteSubtitulo = 17.0f;
@@ -125,10 +125,10 @@ inline const Tema& temaBkrDark() {
 inline const Tema& temaBkrLight() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xffc0c0c5);
-        x.painel = juce::Colour(0xfff5f5f7);
-        x.painelAlt = juce::Colour(0xffe5e5ea);
-        x.borda = juce::Colour(0xff9a9aa0);
+        x.fundo = juce::Colour(0xfff8f2ec);
+        x.painel = juce::Colour(0xffefe8e0);
+        x.painelAlt = juce::Colour(0xffe6ded5);
+        x.borda = juce::Colour(0xffc8bfb5);
         x.bordaFoco = juce::Colour(0xff3d7fd6);
 
         x.textoPrimario = juce::Colour(0xff000000);

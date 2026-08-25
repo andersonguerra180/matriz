@@ -724,6 +724,9 @@ void MainComponent::reconstruirLayoutProjeto() {
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();
     };
+    fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
+        if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
+    };
     fichaPanel_->aoMudar = [this] {
         if (mosaico_) mosaico_->recarregar();
         if (arvoreOrigem_) arvoreOrigem_->recarregar();
@@ -1072,11 +1075,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     barraNavegacao_->aoClicarFechar = [this] { fecharProjeto(); };
     addAndMakeVisible(*barraNavegacao_);
 
-    if (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) {
-        mostrarGrid();
-    } else {
-        mostrarHome();
-    }
+    mostrarAnalytics();
 
     verificarVaultsConectados();
     startTimer(5000);
@@ -1102,6 +1101,23 @@ void MainComponent::mostrarHome() {
         homePanel_->aoCatalogar = [this] { mostrarGrid(); };
         homePanel_->aoBackup = [this] { mostrarBackup(); };
         homePanel_->aoPreservacao = [this] { mostrarAnalytics(); };
+        homePanel_->aoClicarAtencao = [this](const std::string& chave) {
+            mostrarCatalog();
+            if (!catalogWorkspace_) return;
+            if (chave == "corrompido") {
+                std::set<std::string> ids;
+                if (projetoAberto_) {
+                    try {
+                        auto& db = projetoAberto_->projeto().registro();
+                        auto stmt = db.prepare("SELECT DISTINCT item_id FROM arquivo WHERE estado_presenca = 'corrompido'");
+                        while (stmt.step()) ids.insert(stmt.columnText(0));
+                    } catch (...) {}
+                }
+                catalogWorkspace_->filtrarPorIds(std::move(ids));
+            } else {
+                catalogWorkspace_->filtrarPorChave(chave);
+            }
+        };
         addAndMakeVisible(*homePanel_);
     } else {
         homePanel_->recarregar();
@@ -1164,6 +1180,12 @@ void MainComponent::mostrarAnalytics() {
 
     if (!analyticsWorkspace_) {
         analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
+        analyticsWorkspace_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+            mostrarGrid();
+            if (catalogWorkspace_) {
+                catalogWorkspace_->filtrarPorIds(ids);
+            }
+        };
         addAndMakeVisible(*analyticsWorkspace_);
     } else {
         analyticsWorkspace_->setVisible(true);
@@ -1306,7 +1328,7 @@ void MainComponent::mostrarPreservation() {
 
         if (chave == "total") {
             catalogWorkspace_->filtrarPorChave("all");
-        } else if (chave == "verified" || chave == "corrompido") {
+        } else if (chave == "verified" || chave == "corrompido" || chave == "falha_integridade") {
             std::set<std::string> ids;
             try {
                 auto& db = projetoAberto_->projeto().registro();
@@ -1317,6 +1339,110 @@ void MainComponent::mostrarPreservation() {
                 while (stmt.step()) ids.insert(stmt.columnText(0));
             } catch (...) {}
             catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "persistent_id") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare("SELECT id FROM item WHERE persistent_id IS NOT NULL");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "fixity_sha256") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare("SELECT DISTINCT item_id FROM arquivo WHERE checksum_sha256 IS NOT NULL");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "sem_fixity") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT id FROM item WHERE NOT EXISTS "
+                    "(SELECT 1 FROM arquivo WHERE arquivo.item_id = item.id AND checksum_sha256 IS NOT NULL)");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "fixity_verificada") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT DISTINCT item_id FROM preservation_event "
+                    "WHERE event_type = 'FIXITY_CHECK' AND event_outcome = 'SUCCESS'");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "formato_identificado") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT DISTINCT item_id FROM arquivo "
+                    "WHERE caracteristicas_tecnicas_json IS NOT NULL AND caracteristicas_tecnicas_json <> '{}'");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "backup_verificado") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT DISTINCT item_id FROM preservation_event "
+                    "WHERE event_type = 'BACKUP_VERIFIED' AND event_outcome = 'SUCCESS'");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "sem_backup") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT id FROM item WHERE NOT EXISTS "
+                    "(SELECT 1 FROM preservation_event pe "
+                    " WHERE pe.item_id = item.id AND pe.event_type = 'BACKUP_VERIFIED' AND pe.event_outcome = 'SUCCESS')");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "direitos_desconhecidos") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare(
+                    "SELECT id FROM item WHERE NOT EXISTS "
+                    "(SELECT 1 FROM preservation_right pr WHERE pr.item_id = item.id AND pr.rights_status <> 'UNKNOWN')");
+                while (stmt.step()) ids.insert(stmt.columnText(0));
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "formato_risco") {
+            std::set<std::string> ids;
+            try {
+                auto& db = projetoAberto_->projeto().registro();
+                auto stmt = db.prepare("SELECT DISTINCT item_id FROM arquivo WHERE caminho_relativo IS NOT NULL");
+                while (stmt.step()) {
+                    auto itemId = stmt.columnText(0);
+                    auto stmtArq = db.prepare("SELECT caminho_relativo FROM arquivo WHERE item_id = ?");
+                    stmtArq.bind(1, matriz::db::Value::of(itemId));
+                    while (stmtArq.step()) {
+                        auto path = stmtArq.columnText(0);
+                        auto dot = path.rfind('.');
+                        if (dot != std::string::npos) {
+                            auto ext = path.substr(dot + 1);
+                            if (matriz::preservation::classificarRiscoFormato(ext) == "AT_RISK") {
+                                ids.insert(itemId);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+            catalogWorkspace_->filtrarPorIds(std::move(ids));
+        } else if (chave == "eventos") {
+            catalogWorkspace_->filtrarPorChave("all");
+        } else if (chave == "regra_321" || chave == "vault_refresh" || chave == "compliance_score") {
+            catalogWorkspace_->filtrarPorChave("all");
         } else {
             catalogWorkspace_->filtrarPorChave(chave);
         }
@@ -1459,6 +1585,14 @@ void MainComponent::salvarProjeto() {
     try {
         projetoAberto_->projeto().registro().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
         projetoAberto_->projeto().indice().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+        if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
+            auto titulo = win->getName();
+            win->setName(titulo + "  [Saved]");
+            juce::Component::SafePointer<juce::DocumentWindow> safeWin(win);
+            juce::Timer::callAfterDelay(1500, [safeWin, titulo] {
+                if (safeWin) safeWin->setName(titulo);
+            });
+        }
     } catch (...) {}
 }
 
@@ -2109,12 +2243,21 @@ bool MainComponent::podeDesfazer() const {
 
 void MainComponent::executarUndo() {
     if (!projetoAberto_) return;
+    auto desc = projetoAberto_->descricaoUndoAtual();
     if (projetoAberto_->desfazer()) {
         if (mosaico_) mosaico_->recarregar();
         if (arvoreOrigem_) arvoreOrigem_->recarregar();
         if (arvoreAcervo_) arvoreAcervo_->recarregar();
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();
+        if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
+            auto titulo = win->getName();
+            win->setName(titulo + "  [Undo: " + juce::String(desc) + "]");
+            juce::Component::SafePointer<juce::DocumentWindow> safeWin(win);
+            juce::Timer::callAfterDelay(1500, [safeWin, titulo] {
+                if (safeWin) safeWin->setName(titulo);
+            });
+        }
     }
 }
 

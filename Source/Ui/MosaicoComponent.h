@@ -44,6 +44,7 @@ public:
     // recarregarSincrono().
     void recarregar();
     void recarregarSincrono();
+    void atualizarItemEmMemoria(const std::string& itemId);
     bool snapshotEmAndamentoParaTeste() const { return poolSnapshot_.getNumJobs() > 0; }
 
     // Chips de filtro (Acréscimos §10.2 — "clicáveis e combináveis"):

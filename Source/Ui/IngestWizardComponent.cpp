@@ -566,11 +566,29 @@ void IngestWizardComponent::iniciarImportacao() {
         for (size_t idx : indices) {
             std::string itemId = matriz::model::novoUuid();
             std::string agora = matriz::model::agoraIso8601();
+
+            auto ext = resultados_[idx].arquivo.getFileExtension();
+            auto cat = matriz::ingest::categoriaPorExtensao(ext);
+            std::string tipoMidia;
+            switch (cat) {
+                case matriz::ingest::CategoriaMidia::Audio:     tipoMidia = "digital_audio"; break;
+                case matriz::ingest::CategoriaMidia::Video:     tipoMidia = "digital_video"; break;
+                case matriz::ingest::CategoriaMidia::Imagem:    tipoMidia = "foto"; break;
+                case matriz::ingest::CategoriaMidia::Documento: tipoMidia = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Texto:     tipoMidia = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Sessao:    tipoMidia = "sessao"; break;
+                default: break;
+            }
+
+            std::string estado = tipoMidia.empty() ? "capturado" : "catalogado";
+            auto tipoVal = tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia);
+
             registro->run(
                 "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
-                "VALUES (?, ?, NULL, ?, NULL, 'capturado', ?, ?)",
+                "VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
                 {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId),
                  matriz::db::Value::of(resultados_[idx].arquivo.getFileName().toStdString()),
+                 tipoVal, matriz::db::Value::of(estado),
                  matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
             itemIds.push_back(itemId);
         }

@@ -12,10 +12,12 @@
 #endif
 
 #include "../Model/Project.h"   // novoUuid(), agoraIso8601()
+#include "../Ingest/LeituraTecnica.h" // categoriaPorExtensao
 
 namespace matriz::preservation {
 
 using matriz::db::Value;
+using matriz::db::Database;
 using matriz::model::novoUuid;
 using matriz::model::agoraIso8601;
 
@@ -566,6 +568,450 @@ juce::String exportarCsv(db::Database& db, const std::vector<std::string>& itemI
     return csv;
 }
 
+namespace {
+
+juce::String gerarFullCsvSchemaJson() {
+    return R"schema({
+  "schema": "BKR_FULL_CSV",
+  "version": "1.0",
+  "encoding": "UTF-8",
+  "delimiter": ",",
+  "field_count": 49,
+  "fields": [
+    {"name": "asset_id", "type": "UUID", "required": true, "description": "Unique UUID of the asset", "namespace": "Identity"},
+    {"name": "persistent_id", "type": "TEXT", "required": false, "description": "Persistent ID when available", "namespace": "Identity"},
+    {"name": "catalog_code", "type": "TEXT", "required": false, "description": "BKR catalog code", "namespace": "Identity"},
+    {"name": "file_title", "type": "TEXT", "required": true, "description": "Filename without extension", "namespace": "File"},
+    {"name": "file_media_type", "type": "TEXT", "required": true, "description": "Media category (Audio, Video, Image, Document, Text)", "namespace": "File"},
+    {"name": "file_path", "type": "TEXT", "required": false, "description": "Absolute file path", "namespace": "File"},
+    {"name": "file_size_bytes", "type": "INTEGER", "required": false, "description": "File size in bytes", "namespace": "File"},
+    {"name": "file_sha256", "type": "TEXT", "required": false, "description": "SHA-256 checksum string", "namespace": "File"},
+    {"name": "file_created_at", "type": "DATETIME", "required": false, "description": "File creation date ISO 8601", "namespace": "File"},
+    {"name": "file_modified_at", "type": "DATETIME", "required": false, "description": "File modification date ISO 8601", "namespace": "File"},
+    {"name": "technical_year", "type": "INTEGER", "required": false, "description": "Technical creation year", "namespace": "Technical"},
+    {"name": "technical_duration_seconds", "type": "REAL", "required": false, "description": "Duration in seconds (decimal)", "namespace": "Technical"},
+    {"name": "technical_format", "type": "TEXT", "required": false, "description": "Technical container/format", "namespace": "Technical"},
+    {"name": "technical_codec", "type": "TEXT", "required": false, "description": "Technical codec name", "namespace": "Technical"},
+    {"name": "technical_sample_rate", "type": "INTEGER", "required": false, "description": "Sample rate in Hz", "namespace": "Technical"},
+    {"name": "technical_bit_depth", "type": "INTEGER", "required": false, "description": "Bit depth", "namespace": "Technical"},
+    {"name": "catalog_content_type", "type": "TEXT", "required": false, "description": "Catalog content type", "namespace": "Catalog"},
+    {"name": "catalog_source_media", "type": "TEXT", "required": false, "description": "Catalog source media", "namespace": "Catalog"},
+    {"name": "catalog_collection_type", "type": "TEXT", "required": false, "description": "Catalog collection type", "namespace": "Catalog"},
+    {"name": "catalog_isrc", "type": "TEXT", "required": false, "description": "Catalog ISRC code", "namespace": "Catalog"},
+    {"name": "catalog_notes", "type": "TEXT", "required": false, "description": "Free notes text", "namespace": "Catalog"},
+    {"name": "catalog_tags", "type": "JSON", "required": false, "description": "Tags JSON array string", "namespace": "Catalog"},
+    {"name": "geo_latitude", "type": "REAL", "required": false, "description": "Geolocation latitude decimal", "namespace": "Geolocation"},
+    {"name": "geo_longitude", "type": "REAL", "required": false, "description": "Geolocation longitude decimal", "namespace": "Geolocation"},
+    {"name": "geo_altitude", "type": "REAL", "required": false, "description": "Geolocation altitude decimal", "namespace": "Geolocation"},
+    {"name": "geo_formatted_address", "type": "TEXT", "required": false, "description": "Formatted address", "namespace": "Geolocation"},
+    {"name": "geo_city", "type": "TEXT", "required": false, "description": "City name", "namespace": "Geolocation"},
+    {"name": "geo_state_province", "type": "TEXT", "required": false, "description": "State or province", "namespace": "Geolocation"},
+    {"name": "geo_country", "type": "TEXT", "required": false, "description": "Country name", "namespace": "Geolocation"},
+    {"name": "geo_country_code", "type": "TEXT", "required": false, "description": "Country ISO code", "namespace": "Geolocation"},
+    {"name": "geo_postal_code", "type": "TEXT", "required": false, "description": "Postal code", "namespace": "Geolocation"},
+    {"name": "geo_source", "type": "TEXT", "required": false, "description": "Geolocation source", "namespace": "Geolocation"},
+    {"name": "geo_accuracy_meters", "type": "REAL", "required": false, "description": "Accuracy in meters decimal", "namespace": "Geolocation"},
+    {"name": "dc_title", "type": "TEXT", "required": false, "description": "Dublin Core Title", "namespace": "DublinCore"},
+    {"name": "dc_creator", "type": "TEXT", "required": false, "description": "Dublin Core Creator", "namespace": "DublinCore"},
+    {"name": "dc_subject", "type": "TEXT", "required": false, "description": "Dublin Core Subject", "namespace": "DublinCore"},
+    {"name": "dc_description", "type": "TEXT", "required": false, "description": "Dublin Core Description", "namespace": "DublinCore"},
+    {"name": "dc_publisher", "type": "TEXT", "required": false, "description": "Dublin Core Publisher", "namespace": "DublinCore"},
+    {"name": "dc_contributor", "type": "TEXT", "required": false, "description": "Dublin Core Contributor", "namespace": "DublinCore"},
+    {"name": "dc_created", "type": "TEXT", "required": false, "description": "Dublin Core Date Created (YYYY-MM-DD)", "namespace": "DublinCore"},
+    {"name": "dc_issued", "type": "TEXT", "required": false, "description": "Dublin Core Date Issued (YYYY-MM-DD)", "namespace": "DublinCore"},
+    {"name": "dc_type", "type": "TEXT", "required": false, "description": "Dublin Core Type", "namespace": "DublinCore"},
+    {"name": "dc_format", "type": "TEXT", "required": false, "description": "Dublin Core Format MIME", "namespace": "DublinCore"},
+    {"name": "dc_identifier", "type": "TEXT", "required": false, "description": "Dublin Core Identifier", "namespace": "DublinCore"},
+    {"name": "dc_source", "type": "TEXT", "required": false, "description": "Dublin Core Source", "namespace": "DublinCore"},
+    {"name": "dc_language", "type": "TEXT", "required": false, "description": "Dublin Core Language", "namespace": "DublinCore"},
+    {"name": "dc_relation", "type": "TEXT", "required": false, "description": "Dublin Core Relation", "namespace": "DublinCore"},
+    {"name": "dc_coverage", "type": "TEXT", "required": false, "description": "Dublin Core Coverage", "namespace": "DublinCore"},
+    {"name": "dc_rights", "type": "TEXT", "required": false, "description": "Dublin Core Rights", "namespace": "DublinCore"}
+  ]
+})schema";
+}
+
+juce::String gerarFullCsvManifestJson(int assetCount, const juce::String& csvSha256) {
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty("schema", "BKR_FULL_CSV");
+    obj->setProperty("version", "1.0");
+    obj->setProperty("exported_at", juce::String(matriz::model::agoraIso8601()));
+    obj->setProperty("asset_count", assetCount);
+    obj->setProperty("encoding", "UTF-8");
+    obj->setProperty("delimiter", ",");
+    obj->setProperty("csv_sha256", csvSha256);
+    return juce::JSON::toString(juce::var(obj.release()), true);
+}
+
+struct FullCsvValidationResult {
+    bool valid = true;
+    std::string error;
+    int assetCount = 0;
+};
+
+FullCsvValidationResult validarFullCsvFile(const juce::File& csvFile, int expectedAssetCount) {
+    FullCsvValidationResult res;
+    if (!csvFile.existsAsFile()) {
+        res.valid = false;
+        res.error = "BKR_FULL.csv file does not exist";
+        return res;
+    }
+
+    juce::String content = csvFile.loadFileAsString();
+    juce::StringArray lines;
+    lines.addLines(content);
+
+    if (lines.size() < 1) {
+        res.valid = false;
+        res.error = "CSV file is empty";
+        return res;
+    }
+
+    auto parseCsvLine = [](const juce::String& line) -> std::vector<juce::String> {
+        std::vector<juce::String> tokens;
+        juce::String cur;
+        bool inQuotes = false;
+        for (int i = 0; i < line.length(); ++i) {
+            juce::juce_wchar c = line[i];
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line[i + 1] == '"') {
+                    cur += '"';
+                    ++i;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (c == ',' && !inQuotes) {
+                tokens.push_back(cur);
+                cur.clear();
+            } else {
+                cur += c;
+            }
+        }
+        tokens.push_back(cur);
+        return tokens;
+    };
+
+    auto headerTokens = parseCsvLine(lines[0]);
+    if (headerTokens.size() != 49) {
+        res.valid = false;
+        res.error = "Header column count mismatch: expected 49, got " + std::to_string(headerTokens.size());
+        return res;
+    }
+
+    std::set<std::string> seenAssetIds;
+    int recordCount = 0;
+
+    for (int i = 1; i < lines.size(); ++i) {
+        if (lines[i].trim().isEmpty()) continue;
+        auto tokens = parseCsvLine(lines[i]);
+        if (tokens.size() != 49) {
+            res.valid = false;
+            res.error = "Row " + std::to_string(i + 1) + " column count mismatch: expected 49, got " + std::to_string(tokens.size());
+            return res;
+        }
+
+        std::string assetId = tokens[0].trim().toStdString();
+        if (assetId.empty()) {
+            res.valid = false;
+            res.error = "Row " + std::to_string(i + 1) + " has empty asset_id";
+            return res;
+        }
+
+        if (seenAssetIds.count(assetId)) {
+            res.valid = false;
+            res.error = "Duplicate asset_id found: " + assetId;
+            return res;
+        }
+        seenAssetIds.insert(assetId);
+
+        // Verify file_size_bytes is integer if present
+        std::string sizeStr = tokens[6].trim().toStdString();
+        if (!sizeStr.empty()) {
+            for (char c : sizeStr) {
+                if (!std::isdigit(c)) {
+                    res.valid = false;
+                    res.error = "Row " + std::to_string(i + 1) + " file_size_bytes is not integer: " + sizeStr;
+                    return res;
+                }
+            }
+        }
+
+        // Verify catalog_tags is valid JSON array if present
+        std::string tagsStr = tokens[21].trim().toStdString();
+        if (!tagsStr.empty()) {
+            auto jsonVar = juce::JSON::parse(tagsStr);
+            if (!jsonVar.isArray()) {
+                res.valid = false;
+                res.error = "Row " + std::to_string(i + 1) + " catalog_tags is not valid JSON array: " + tagsStr;
+                return res;
+            }
+        }
+
+        recordCount++;
+    }
+
+    if (recordCount != expectedAssetCount) {
+        res.valid = false;
+        res.error = "Asset count mismatch: expected " + std::to_string(expectedAssetCount) + ", got " + std::to_string(recordCount);
+        return res;
+    }
+
+    res.assetCount = recordCount;
+    return res;
+}
+
+} // namespace
+
+juce::String exportarFullCsv(db::Database& db, const std::vector<std::string>& itemIds)
+{
+    juce::String csv;
+    // 49 columns in exact official schema order (Section 2)
+    csv += "asset_id,persistent_id,catalog_code,"
+           "file_title,file_media_type,file_path,file_size_bytes,file_sha256,file_created_at,file_modified_at,"
+           "technical_year,technical_duration_seconds,technical_format,technical_codec,technical_sample_rate,technical_bit_depth,"
+           "catalog_content_type,catalog_source_media,catalog_collection_type,catalog_isrc,catalog_notes,catalog_tags,"
+           "geo_latitude,geo_longitude,geo_altitude,geo_formatted_address,geo_city,geo_state_province,geo_country,geo_country_code,geo_postal_code,geo_source,geo_accuracy_meters,"
+           "dc_title,dc_creator,dc_subject,dc_description,dc_publisher,dc_contributor,dc_created,dc_issued,dc_type,dc_format,dc_identifier,dc_source,dc_language,dc_relation,dc_coverage,dc_rights\n";
+
+    auto esc = [](const juce::String& s) -> juce::String {
+        if (s.containsAnyOf(",\"\n\r"))
+            return "\"" + s.replace("\"", "\"\"") + "\"";
+        return s;
+    };
+
+    auto lerCampo = [&](const std::string& itemId, const std::string& campo) -> std::string {
+        try {
+            auto stmt = db.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+            stmt.bind(1, Value::of(itemId));
+            stmt.bind(2, Value::of(campo));
+            if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+        } catch (...) {}
+        return "";
+    };
+
+    for (const auto& id : itemIds) {
+        try {
+            std::string pid = "", codigo = "", titulo = "", tipoMidiaRaw = "", criadoEm = "", atualizadoEm = "";
+            std::string caminhoAbs = "", caminhoRel = "", sha256 = "";
+            juce::int64 tamanhoBytes = -1;
+
+            try {
+                auto stmt = db.prepare(
+                    "SELECT IFNULL(i.persistent_id,''), IFNULL(i.codigo_acervo,''), i.titulo, IFNULL(i.tipo_midia,''), "
+                    "       i.criado_em, i.atualizado_em, IFNULL(a.caminho_absoluto_origem,''), IFNULL(a.caminho_relativo,''), IFNULL(a.tamanho_bytes,-1), IFNULL(a.checksum_sha256,'') "
+                    "FROM item i "
+                    "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+                    "WHERE i.id = ? LIMIT 1");
+                stmt.bind(1, Value::of(id));
+                if (stmt.step()) {
+                    pid = stmt.columnText(0);
+                    codigo = stmt.columnText(1);
+                    titulo = stmt.columnText(2);
+                    tipoMidiaRaw = stmt.columnText(3);
+                    criadoEm = stmt.columnText(4);
+                    atualizadoEm = stmt.columnText(5);
+                    caminhoAbs = stmt.columnText(6);
+                    caminhoRel = stmt.columnText(7);
+                    tamanhoBytes = stmt.columnInt(8);
+                    sha256 = stmt.columnText(9);
+                }
+            } catch (...) {}
+
+            std::string filePath = caminhoAbs.empty() ? caminhoRel : caminhoAbs;
+            juce::File fileObj(filePath);
+
+            // file_title: remove only extension
+            std::string fileTitle;
+            if (!filePath.empty() && fileObj.getFileNameWithoutExtension().isNotEmpty()) {
+                fileTitle = fileObj.getFileNameWithoutExtension().toStdString();
+            } else {
+                fileTitle = titulo;
+                if (fileTitle.rfind('.') != std::string::npos) {
+                    fileTitle = fileTitle.substr(0, fileTitle.rfind('.'));
+                }
+            }
+
+            // Extension & Technical format
+            juce::String ext = fileObj.getFileExtension().toLowerCase().replace(".", "");
+            if (ext.isEmpty() && !caminhoRel.empty()) {
+                int dot = caminhoRel.rfind('.');
+                if (dot != std::string::npos) ext = juce::String(caminhoRel.substr(dot + 1)).toLowerCase();
+            }
+            std::string techFormat = ext.toUpperCase().toStdString();
+
+            // file_media_type (Audio, Video, Image, Document, Text)
+            std::string fileMediaType;
+            auto cat = matriz::ingest::categoriaPorExtensao(ext);
+            if (cat == matriz::ingest::CategoriaMidia::Audio || tipoMidiaRaw == "digital_audio" || tipoMidiaRaw == "audio" || tipoMidiaRaw == "sessao") {
+                fileMediaType = "Audio";
+            } else if (cat == matriz::ingest::CategoriaMidia::Video || tipoMidiaRaw == "digital_video" || tipoMidiaRaw == "video") {
+                fileMediaType = "Video";
+            } else if (cat == matriz::ingest::CategoriaMidia::Imagem || tipoMidiaRaw == "foto" || tipoMidiaRaw == "images") {
+                fileMediaType = "Image";
+            } else if (cat == matriz::ingest::CategoriaMidia::Texto) {
+                fileMediaType = "Text";
+            } else {
+                fileMediaType = "Document";
+            }
+
+            // file_size_bytes
+            std::string fileSizeStr;
+            if (tamanhoBytes >= 0) fileSizeStr = std::to_string(tamanhoBytes);
+            else if (fileObj.existsAsFile()) fileSizeStr = std::to_string(fileObj.getSize());
+
+            // file_created_at & file_modified_at (ISO 8601)
+            std::string fileCreatedAt = criadoEm;
+            std::string fileModifiedAt = atualizadoEm;
+            if (fileObj.existsAsFile()) {
+                fileCreatedAt = fileObj.getCreationTime().formatted("%Y-%m-%dT%H:%M:%S-03:00").toStdString();
+                fileModifiedAt = fileObj.getLastModificationTime().formatted("%Y-%m-%dT%H:%M:%S-03:00").toStdString();
+            }
+
+            // Technical metadata from caracteristicas_tecnicas_json
+            std::string techCodec = "", techDuration = "", techSampleRate = "", techBitDepth = "";
+            try {
+                auto exifStmt = db.prepare("SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+                exifStmt.bind(1, Value::of(id));
+                if (exifStmt.step() && !exifStmt.columnIsNull(0)) {
+                    auto jsonStr = exifStmt.columnText(0);
+                    auto varObj = juce::JSON::parse(jsonStr);
+                    if (varObj.isObject()) {
+                        if (varObj.hasProperty("codec")) techCodec = varObj["codec"].toString().toStdString();
+                        if (varObj.hasProperty("duracaoSegundos")) {
+                            double dur = static_cast<double>(varObj["duracaoSegundos"]);
+                            if (dur > 0.0) techDuration = juce::String(dur, 2).toStdString();
+                        }
+                        if (varObj.hasProperty("sampleRate")) {
+                            int sr = static_cast<int>(varObj["sampleRate"]);
+                            if (sr > 0) techSampleRate = std::to_string(sr);
+                        }
+                        if (varObj.hasProperty("bitDepth")) {
+                            int bd = static_cast<int>(varObj["bitDepth"]);
+                            if (bd > 0) techBitDepth = std::to_string(bd);
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            // technical_year
+            std::string techYear = lerCampo(id, "ano");
+            if (techYear.empty()) techYear = lerCampo(id, "dc_created");
+            if (techYear.length() >= 4) techYear = techYear.substr(0, 4);
+
+            // Catalog fields
+            std::string contentType = lerCampo(id, "content_type");
+            std::string sourceMedia = lerCampo(id, "source_media");
+            std::string collectionType = lerCampo(id, "collection_type");
+            std::string isrc = lerCampo(id, "isrc");
+            std::string notas = lerCampo(id, "notas_livres");
+
+            // catalog_tags as valid JSON array string
+            std::string tagsJson = "";
+            try {
+                juce::Array<juce::var> tagArray;
+                auto tStmt = db.prepare("SELECT tag FROM item_tag WHERE item_id = ? ORDER BY tag");
+                tStmt.bind(1, Value::of(id));
+                while (tStmt.step()) {
+                    tagArray.add(juce::String(tStmt.columnText(0)));
+                }
+                if (tagArray.size() > 0) {
+                    tagsJson = juce::JSON::toString(juce::var(tagArray), false).toStdString();
+                }
+            } catch (...) {}
+
+            // Geolocation fields
+            std::string lat = "", lng = "", alt = "", fmtAddr = "", city = "", state = "", country = "", ccode = "", pcode = "", geoSrc = "", geoAcc = "";
+            try {
+                auto gStmt = db.prepare(
+                    "SELECT latitude, longitude, altitude, formatted_address, city, state_province, country, country_code, postal_code, source, accuracy_meters "
+                    "FROM asset_geolocation WHERE asset_id = ? LIMIT 1");
+                gStmt.bind(1, Value::of(id));
+                if (gStmt.step()) {
+                    if (!gStmt.columnIsNull(0)) lat = juce::String(gStmt.columnReal(0)).toStdString();
+                    if (!gStmt.columnIsNull(1)) lng = juce::String(gStmt.columnReal(1)).toStdString();
+                    if (!gStmt.columnIsNull(2)) alt = juce::String(gStmt.columnReal(2)).toStdString();
+                    if (!gStmt.columnIsNull(3)) fmtAddr = gStmt.columnText(3);
+                    if (!gStmt.columnIsNull(4)) city = gStmt.columnText(4);
+                    if (!gStmt.columnIsNull(5)) state = gStmt.columnText(5);
+                    if (!gStmt.columnIsNull(6)) country = gStmt.columnText(6);
+                    if (!gStmt.columnIsNull(7)) ccode = gStmt.columnText(7);
+                    if (!gStmt.columnIsNull(8)) pcode = gStmt.columnText(8);
+                    if (!gStmt.columnIsNull(9)) geoSrc = gStmt.columnText(9);
+                    if (!gStmt.columnIsNull(10)) geoAcc = juce::String(gStmt.columnReal(10)).toStdString();
+                }
+            } catch (...) {}
+
+            // Dublin Core fields
+            std::string dcTitle = lerCampo(id, "dc_title");
+            std::string dcCreator = lerCampo(id, "dc_creator");
+            std::string dcSubject = lerCampo(id, "dc_subject");
+            std::string dcDescription = lerCampo(id, "dc_description");
+            std::string dcPublisher = lerCampo(id, "dc_publisher");
+            std::string dcContributor = lerCampo(id, "dc_contributor");
+            std::string dcCreated = lerCampo(id, "dc_created");
+            std::string dcIssued = lerCampo(id, "dc_issued");
+            std::string dcType = lerCampo(id, "dc_type");
+            std::string dcFormat = lerCampo(id, "dc_format");
+            std::string dcIdentifier = lerCampo(id, "dc_identifier");
+            std::string dcSource = lerCampo(id, "dc_source");
+            std::string dcLanguage = lerCampo(id, "dc_language");
+            std::string dcRelation = lerCampo(id, "dc_relation");
+            std::string dcCoverage = lerCampo(id, "dc_coverage");
+            std::string dcRights = lerCampo(id, "dc_rights");
+
+            // Build 49 columns row
+            csv += esc(id) + "," + esc(pid) + "," + esc(codigo) + ","
+                 + esc(fileTitle) + "," + esc(fileMediaType) + "," + esc(filePath) + "," + esc(fileSizeStr) + "," + esc(sha256) + "," + esc(fileCreatedAt) + "," + esc(fileModifiedAt) + ","
+                 + esc(techYear) + "," + esc(techDuration) + "," + esc(techFormat) + "," + esc(techCodec) + "," + esc(techSampleRate) + "," + esc(techBitDepth) + ","
+                 + esc(contentType) + "," + esc(sourceMedia) + "," + esc(collectionType) + "," + esc(isrc) + "," + esc(notas) + "," + esc(tagsJson) + ","
+                 + esc(lat) + "," + esc(lng) + "," + esc(alt) + "," + esc(fmtAddr) + "," + esc(city) + "," + esc(state) + "," + esc(country) + "," + esc(ccode) + "," + esc(pcode) + "," + esc(geoSrc) + "," + esc(geoAcc) + ","
+                 + esc(dcTitle) + "," + esc(dcCreator) + "," + esc(dcSubject) + "," + esc(dcDescription) + "," + esc(dcPublisher) + "," + esc(dcContributor) + ","
+                 + esc(dcCreated) + "," + esc(dcIssued) + "," + esc(dcType) + "," + esc(dcFormat) + "," + esc(dcIdentifier) + "," + esc(dcSource) + ","
+                 + esc(dcLanguage) + "," + esc(dcRelation) + "," + esc(dcCoverage) + "," + esc(dcRights) + "\n";
+        } catch (...) {}
+    }
+    return csv;
+}
+
+bool exportarFullCsvPacote(db::Database& db, const std::vector<std::string>& itemIds, const juce::File& destLocation, juce::String& errorOut)
+{
+    try {
+        juce::File pkgDir = destLocation.isDirectory() ? destLocation : destLocation.getParentDirectory().getChildFile("BKR_Full_Export");
+        if (!pkgDir.exists()) pkgDir.createDirectory();
+
+        juce::File csvFile = pkgDir.getChildFile("BKR_FULL.csv");
+        juce::File schemaFile = pkgDir.getChildFile("BKR_FULL.schema.json");
+        juce::File manifestFile = pkgDir.getChildFile("manifest.json");
+
+        juce::String csvContent = exportarFullCsv(db, itemIds);
+        csvFile.replaceWithText(csvContent, false, false, "\n");
+
+        schemaFile.replaceWithText(gerarFullCsvSchemaJson(), false, false, "\n");
+
+        juce::MemoryBlock block;
+        csvFile.loadFileAsData(block);
+        juce::SHA256 sha(block.getData(), block.getSize());
+        juce::String csvSha256 = sha.toHexString();
+
+        juce::String manifestContent = gerarFullCsvManifestJson(static_cast<int>(itemIds.size()), csvSha256);
+        manifestFile.replaceWithText(manifestContent, false, false, "\n");
+
+        // Validate package
+        auto valRes = validarFullCsvFile(csvFile, static_cast<int>(itemIds.size()));
+        if (!valRes.valid) {
+            errorOut = valRes.error;
+            return false;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        errorOut = e.what();
+        return false;
+    } catch (...) {
+        errorOut = "Unknown error during BKR Full CSV package export";
+        return false;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Dublin Core CSV
 // ---------------------------------------------------------------------------
@@ -574,45 +1020,219 @@ juce::String exportarCsvDublinCore(db::Database& db,
                                     const std::vector<std::string>& itemIds)
 {
     juce::String csv;
-    csv += "dc.identifier,dc.title,dc.format,dc.extent,dc.source,dc.date,"
-           "dc.rights\n";
+    csv += "title,creator,subject,description,publisher,contributor,created,issued,type,format,identifier,source,language,relation,coverage,rights\n";
+
+    auto esc = [](const juce::String& s) -> juce::String {
+        if (s.containsAnyOf(",\"\n\r"))
+            return "\"" + s.replace("\"", "\"\"") + "\"";
+        return s;
+    };
+
+    auto lerCampo = [&](const std::string& itemId, const std::string& campo) -> std::string {
+        try {
+            auto stmt = db.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+            stmt.bind(1, Value::of(itemId));
+            stmt.bind(2, Value::of(campo));
+            if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+        } catch (...) {}
+        return "";
+    };
 
     for (const auto& id : itemIds) {
         try {
-            auto stmt = db.prepare(
-                "SELECT IFNULL(i.persistent_id,''), i.titulo, IFNULL(i.tipo_midia,''), "
-                "       IFNULL(a.tamanho_bytes,0), IFNULL(a.checksum_sha256,''), i.criado_em "
-                "FROM item i "
-                "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
-                "WHERE i.id = ? LIMIT 1");
-            stmt.bind(1, Value::of(id));
-            if (!stmt.step()) continue;
+            std::string title = lerCampo(id, "dc_title");
+            std::string creator = lerCampo(id, "dc_creator");
+            std::string subject = lerCampo(id, "dc_subject");
+            std::string description = lerCampo(id, "dc_description");
+            std::string publisher = lerCampo(id, "dc_publisher");
+            std::string contributor = lerCampo(id, "dc_contributor");
+            std::string created = lerCampo(id, "dc_created");
+            std::string issued = lerCampo(id, "dc_issued");
+            std::string type = lerCampo(id, "dc_type");
+            std::string format = lerCampo(id, "dc_format");
+            std::string identifier = lerCampo(id, "dc_identifier");
+            std::string source = lerCampo(id, "dc_source");
+            std::string language = lerCampo(id, "dc_language");
+            std::string relation = lerCampo(id, "dc_relation");
+            std::string coverage = lerCampo(id, "dc_coverage");
+            std::string rights = lerCampo(id, "dc_rights");
 
-            auto esc = [](const juce::String& s) -> juce::String {
-                if (s.containsAnyOf(",\"\n\r"))
-                    return "\"" + s.replace("\"", "\"\"") + "\"";
-                return s;
-            };
-
-            std::string rightsLabel = "UNKNOWN";
             try {
-                auto rStmt = db.prepare(
-                    "SELECT IFNULL(rights_status,'UNKNOWN') FROM preservation_right "
-                    "WHERE item_id = ? LIMIT 1");
-                rStmt.bind(1, Value::of(id));
-                if (rStmt.step()) rightsLabel = rStmt.columnText(0);
+                auto stmt = db.prepare(
+                    "SELECT IFNULL(persistent_id,''), IFNULL(titulo,''), IFNULL(tipo_midia,''), criado_em FROM item WHERE id = ? LIMIT 1");
+                stmt.bind(1, Value::of(id));
+                if (stmt.step()) {
+                    if (identifier.empty()) identifier = stmt.columnText(0);
+                    if (title.empty()) title = stmt.columnText(1);
+                    if (format.empty()) format = stmt.columnText(2);
+                    if (created.empty()) created = stmt.columnText(3);
+                }
             } catch (...) {}
 
-            csv += esc(juce::String(stmt.columnText(0))) + ","
-                 + esc(juce::String(stmt.columnText(1))) + ","
-                 + esc(juce::String(stmt.columnText(2))) + ","
-                 + juce::String(stmt.columnInt(3))        + ","
-                 + esc(juce::String(stmt.columnText(4))) + ","
-                 + esc(juce::String(stmt.columnText(5))) + ","
-                 + esc(juce::String(rightsLabel))          + "\n";
+            csv += esc(title) + "," + esc(creator) + "," + esc(subject) + "," + esc(description) + ","
+                 + esc(publisher) + "," + esc(contributor) + "," + esc(created) + "," + esc(issued) + ","
+                 + esc(type) + "," + esc(format) + "," + esc(identifier) + "," + esc(source) + ","
+                 + esc(language) + "," + esc(relation) + "," + esc(coverage) + "," + esc(rights) + "\n";
         } catch (...) {}
     }
     return csv;
+}
+
+juce::String exportarXlsXml(db::Database& db,
+                            const std::vector<std::string>& itemIds,
+                            const std::string& projectName,
+                            const std::string& catalogCode)
+{
+    auto escHtml = [](const std::string& str) -> juce::String {
+        juce::String s(str);
+        return s.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    };
+
+    juce::String html;
+    html += "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n"
+            "xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n"
+            "xmlns=\"http://www.w3.org/TR/REC-html40\">\n"
+            "<head>\n"
+            "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n"
+            "<meta name=\"ProgId\" content=\"Excel.Sheet\">\n"
+            "<meta name=\"Generator\" content=\"BKR Matriz Archival Engine\">\n"
+            "<!--[if gte mso 9]><xml>\n"
+            " <x:ExcelWorkbook>\n"
+            "  <x:ExcelWorksheets>\n"
+            "   <x:ExcelWorksheet>\n"
+            "    <x:Name>Dublin Core Catalog</x:Name>\n"
+            "    <x:WorksheetOptions>\n"
+            "     <x:DisplayGridlines/>\n"
+            "    </x:WorksheetOptions>\n"
+            "   </x:ExcelWorksheet>\n"
+            "  </x:ExcelWorksheets>\n"
+            " </x:ExcelWorkbook>\n"
+            "</xml><![endif]-->\n"
+            "<style>\n"
+            "  body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #F8FAFC; margin: 0; padding: 20px; }\n"
+            "  .hdr-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif; }\n"
+            "  .hdr-main { background-color: #0F172A; color: #38BDF8; font-size: 16px; font-weight: bold; padding: 14px; border: 1px solid #1E293B; text-transform: uppercase; letter-spacing: 1px; }\n"
+            "  .hdr-sub { background-color: #1E293B; color: #F8FAFC; font-size: 12px; padding: 10px 14px; border: 1px solid #334155; }\n"
+            "  .meta-grid { width: 100%; border-collapse: collapse; font-size: 12px; font-family: 'Segoe UI', Arial, sans-serif; margin-top: 10px; }\n"
+            "  .meta-grid th { background-color: #1E293B; color: #38BDF8; font-weight: bold; text-align: left; padding: 10px 12px; border: 1px solid #334155; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }\n"
+            "  .meta-grid td { padding: 9px 12px; border: 1px solid #CBD5E1; color: #0F172A; font-size: 12px; background-color: #FFFFFF; }\n"
+            "  .meta-grid tr:nth-child(even) td { background-color: #F8FAFC; }\n"
+            "</style>\n"
+            "</head>\n"
+            "<body>\n";
+
+    std::string dateNow = matriz::model::agoraIso8601();
+    juce::int64 totalBytes = 0;
+    for (const auto& id : itemIds) {
+        try {
+            auto stmt = db.prepare("SELECT IFNULL(tamanho_bytes,0) FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+            stmt.bind(1, Value::of(id));
+            if (stmt.step()) totalBytes += stmt.columnInt(0);
+        } catch (...) {}
+    }
+
+    html += "<table class=\"hdr-table\">\n";
+    html += "  <tr>\n";
+    html += "    <td colspan=\"16\" class=\"hdr-main\">BKR MATRIZ — PROJECT / COLLECTION: " + escHtml(projectName) + " &nbsp;|&nbsp; CATALOG: " + escHtml(catalogCode.empty() ? "BKR-MATRIZ-01" : catalogCode) + "</td>\n";
+    html += "  </tr>\n";
+    html += "  <tr>\n";
+    html += "    <td colspan=\"8\" class=\"hdr-sub\"><b>CATALOGING / BACKUP DATE:</b> " + escHtml(dateNow) + "</td>\n";
+    html += "    <td colspan=\"8\" class=\"hdr-sub\"><b>TOTAL ASSETS:</b> " + juce::String(itemIds.size()) + " &nbsp;|&nbsp; <b>TOTAL SIZE:</b> " + juce::File::descriptionOfSizeInBytes(totalBytes) + "</td>\n";
+    html += "  </tr>\n";
+    html += "</table>\n";
+
+    html += "<table class=\"meta-grid\">\n";
+    html += "  <thead>\n";
+    html += "    <tr>\n";
+    html += "      <th>TITLE (dc.title)</th>\n";
+    html += "      <th>CREATOR (dc.creator)</th>\n";
+    html += "      <th>SUBJECT (dc.subject)</th>\n";
+    html += "      <th>DESCRIPTION (dc.description)</th>\n";
+    html += "      <th>PUBLISHER (dc.publisher)</th>\n";
+    html += "      <th>CONTRIBUTOR (dc.contributor)</th>\n";
+    html += "      <th>DATE CREATED (dc.created)</th>\n";
+    html += "      <th>DATE ISSUED (dc.issued)</th>\n";
+    html += "      <th>TYPE (dc.type)</th>\n";
+    html += "      <th>FORMAT (dc.format)</th>\n";
+    html += "      <th>IDENTIFIER (dc.identifier)</th>\n";
+    html += "      <th>SOURCE (dc.source)</th>\n";
+    html += "      <th>LANGUAGE (dc.language)</th>\n";
+    html += "      <th>RELATION (dc.relation)</th>\n";
+    html += "      <th>COVERAGE (dc.coverage)</th>\n";
+    html += "      <th>RIGHTS (dc.rights)</th>\n";
+    html += "    </tr>\n";
+    html += "  </thead>\n";
+    html += "  <tbody>\n";
+
+    auto lerCampo = [&](const std::string& itemId, const std::string& campo) -> std::string {
+        try {
+            auto stmt = db.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+            stmt.bind(1, Value::of(itemId));
+            stmt.bind(2, Value::of(campo));
+            if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+        } catch (...) {}
+        return "";
+    };
+
+    for (const auto& id : itemIds) {
+        std::string title = lerCampo(id, "dc_title");
+        std::string creator = lerCampo(id, "dc_creator");
+        std::string subject = lerCampo(id, "dc_subject");
+        std::string description = lerCampo(id, "dc_description");
+        std::string publisher = lerCampo(id, "dc_publisher");
+        std::string contributor = lerCampo(id, "dc_contributor");
+        std::string created = lerCampo(id, "dc_created");
+        std::string issued = lerCampo(id, "dc_issued");
+        std::string type = lerCampo(id, "dc_type");
+        std::string format = lerCampo(id, "dc_format");
+        std::string identifier = lerCampo(id, "dc_identifier");
+        std::string source = lerCampo(id, "dc_source");
+        std::string language = lerCampo(id, "dc_language");
+        std::string relation = lerCampo(id, "dc_relation");
+        std::string coverage = lerCampo(id, "dc_coverage");
+        std::string rights = lerCampo(id, "dc_rights");
+
+        try {
+            auto stmt = db.prepare(
+                "SELECT IFNULL(persistent_id,''), IFNULL(titulo,''), IFNULL(tipo_midia,''), criado_em FROM item WHERE id = ? LIMIT 1");
+            stmt.bind(1, Value::of(id));
+            if (stmt.step()) {
+                if (identifier.empty()) identifier = stmt.columnText(0);
+                if (title.empty()) title = stmt.columnText(1);
+                if (format.empty()) format = stmt.columnText(2);
+                if (created.empty()) created = stmt.columnText(3);
+            }
+        } catch (...) {}
+
+        html += "    <tr>\n";
+        html += "      <td>" + escHtml(title) + "</td>\n";
+        html += "      <td>" + escHtml(creator) + "</td>\n";
+        html += "      <td>" + escHtml(subject) + "</td>\n";
+        html += "      <td>" + escHtml(description) + "</td>\n";
+        html += "      <td>" + escHtml(publisher) + "</td>\n";
+        html += "      <td>" + escHtml(contributor) + "</td>\n";
+        html += "      <td>" + escHtml(created) + "</td>\n";
+        html += "      <td>" + escHtml(issued) + "</td>\n";
+        html += "      <td>" + escHtml(type) + "</td>\n";
+        html += "      <td>" + escHtml(format) + "</td>\n";
+        html += "      <td>" + escHtml(identifier) + "</td>\n";
+        html += "      <td>" + escHtml(source) + "</td>\n";
+        html += "      <td>" + escHtml(language) + "</td>\n";
+        html += "      <td>" + escHtml(relation) + "</td>\n";
+        html += "      <td>" + escHtml(coverage) + "</td>\n";
+        html += "      <td>" + escHtml(rights) + "</td>\n";
+        html += "    </tr>\n";
+    }
+
+    html += "  </tbody>\n";
+    html += "</table>\n";
+    html += "</body>\n</html>";
+
+    return html;
 }
 
 // ---------------------------------------------------------------------------

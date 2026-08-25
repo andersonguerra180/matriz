@@ -1,4 +1,5 @@
 #include "IngestArquivo.h"
+#include "../Analytics/AssetGeolocation.h"
 
 #include <sys/stat.h>
 
@@ -182,6 +183,20 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 preservation::EventType::MetadataExtracted,
                 detail, preservation::Outcome::Success, {},
                 "bkr-agent-exiv2");
+        }
+
+        // GEOLOCATION_EXTRACTED — quando Exiv2 retornou coordenadas GPS válidas
+        if (!analise.ehPlaceholderNuvem && analise.leitura.exifGpsLatitude.has_value() && analise.leitura.exifGpsLongitude.has_value()) {
+            double lat = *analise.leitura.exifGpsLatitude;
+            double lng = *analise.leitura.exifGpsLongitude;
+            if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+                matriz::analytics::AssetGeolocation geo;
+                geo.assetId = itemId;
+                geo.latitude = lat;
+                geo.longitude = lng;
+                geo.source = matriz::analytics::GeoSource::EmbeddedMetadata;
+                matriz::analytics::AssetGeolocationRepository::salvar(registro, geo);
+            }
         }
     } catch (...) {
         // Preservation hooks são best-effort — ingest não pode falhar por eles

@@ -33,7 +33,7 @@ public:
     explicit LeituraTecnicaError(const std::string& message) : std::runtime_error(message) {}
 };
 
-enum class CategoriaMidia { Audio, Video, Imagem, Documento, Texto, Sessao, Desconhecida };
+enum class CategoriaMidia { Audio, Video, Imagem, Arte, Documento, Texto, Sessao, Desconhecida };
 
 CategoriaMidia categoriaPorExtensao(const juce::File& arquivo);
 CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto);
@@ -51,12 +51,9 @@ struct LeituraTecnicaResultado {
     std::optional<double> fps;
 
     // Codec do container já é um formato lossy conhecido (mp3, aac, atrac...).
-    // Distinto da detecção espectral (Source/Ingest/Duplicata.h), que pega o
-    // caso mais difícil: fonte lossy reencodada pra PCM, escondendo o codec.
     bool codecLossyDeclarado = false;
 
-    // EXIF (só populado pra CategoriaMidia::Imagem, e só quando o arquivo
-    // carrega o dado — ausência de EXIF é normal, não é erro).
+    // EXIF (só populado pra CategoriaMidia::Imagem)
     std::optional<std::string> exifDataOriginal;  // ISO 8601, de Exif.Photo.DateTimeOriginal
     std::optional<std::string> exifCamera;         // "Marca Modelo"
     std::optional<std::string> exifLente;
@@ -64,13 +61,27 @@ struct LeituraTecnicaResultado {
     std::optional<double> exifGpsLatitude;
     std::optional<double> exifGpsLongitude;
 
-    // Loudness EBU R128 (item 6.1) — pré-calculado aqui, nunca em tempo
-    // real. Só populado pra áudio legível pelos formatos do JUCE; vídeo
-    // precisaria extrair a trilha com ffmpeg, o que não acontece nesta
-    // etapa (gap declarado, não silencioso).
+    // Loudness EBU R128
     std::optional<double> lufsIntegrado;
     std::optional<double> lra;
     std::optional<double> picoDbfs;
+
+    // Dublin Core / Embedded Metadata Extraídos no Ingest
+    std::optional<std::string> metaTitle;
+    std::optional<std::string> metaCreator;
+    std::optional<std::string> metaContributor;
+    std::optional<std::string> metaSubject;
+    std::optional<std::string> metaDescription;
+    std::optional<std::string> metaPublisher;
+    std::optional<std::string> metaDate;
+    std::optional<std::string> metaType;
+    std::optional<std::string> metaFormat;
+    std::optional<std::string> metaIdentifier;
+    std::optional<std::string> metaRights;
+    std::optional<std::string> metaLanguage;
+    std::optional<std::string> metaSource;
+    std::optional<std::string> metaCoverage;
+    std::optional<int> pageCount;
 };
 
 // Roda ffprobe (áudio/vídeo/imagem) ou o leitor de PDF conforme a categoria

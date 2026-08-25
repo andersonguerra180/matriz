@@ -855,3 +855,36 @@ SELECT
         ELSE 'UNKNOWN'
     END AS provenance_status
 FROM item i;
+
+-- ---------------------------------------------------------------------------
+-- Asset Geolocation — Dado Estruturado de Localização (§14)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS asset_geolocation (
+    asset_id            TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
+    latitude            REAL,
+    longitude           REAL,
+    altitude            REAL,
+    continent           TEXT,
+    country             TEXT,
+    country_code        TEXT,
+    state_province      TEXT,
+    state_code          TEXT,
+    city                TEXT,
+    municipality        TEXT,
+    neighborhood        TEXT,
+    district            TEXT,
+    postal_code         TEXT,
+    street              TEXT,
+    street_number       TEXT,
+    locality            TEXT,
+    formatted_address   TEXT,
+    source              TEXT NOT NULL DEFAULT 'NONE',
+    precision_accuracy  REAL,
+    confidence          REAL,
+    created_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_geo_lat_lng ON asset_geolocation(latitude, longitude);
+CREATE INDEX IF NOT EXISTS idx_geo_country_state_city ON asset_geolocation(country, state_province, city);
+

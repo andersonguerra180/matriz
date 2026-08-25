@@ -89,6 +89,19 @@ void gravarRecentlyIngestedHoras(int horas) {
     arquivo().saveIfNeeded();
 }
 
+const juce::Time& inicioDaSessao() {
+    static const juce::Time t = juce::Time::getCurrentTime();
+    return t;
+}
+
+bool ehRecemIngerido(const std::string& criadoEmIso) {
+    if (criadoEmIso.empty()) return false;
+    auto criado = juce::Time::fromISO8601(juce::String(criadoEmIso));
+    if (lerRecentlyIngestedMode() == RecentlyIngestedMode::ClearOnStart)
+        return criado >= inicioDaSessao();
+    return (juce::Time::getCurrentTime() - criado).inHours() < lerRecentlyIngestedHoras();
+}
+
 std::vector<ProjetoRecente> lerRecentes() {
     std::vector<ProjetoRecente> out;
     auto xml = arquivo().getXmlValue("recentes");

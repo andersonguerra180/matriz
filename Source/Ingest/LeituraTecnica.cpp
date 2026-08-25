@@ -322,6 +322,79 @@ LeituraTecnicaResultado lerDocumentoPdf(const juce::File& arquivo) {
     auto obj = std::make_unique<juce::DynamicObject>();
     obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
 
+    r.metaType = "Text";
+    r.metaFormat = "application/pdf";
+
+    juce::String content = arquivo.loadFileAsString();
+    if (content.isNotEmpty()) {
+        auto parsePdfPdfTag = [&](const juce::String& key) -> std::optional<std::string> {
+            int idx = content.indexOfIgnoreCase(key);
+            if (idx >= 0) {
+                int start = idx + key.length();
+                while (start < content.length() && (content[start] == ' ' || content[start] == '(' || content[start] == '<')) ++start;
+                int end = start;
+                while (end < content.length() && content[end] != ')' && content[end] != '>' && content[end] != '\r' && content[end] != '\n') ++end;
+                if (end > start) return content.substring(start, end).trim().toStdString();
+            }
+            return std::nullopt;
+        };
+
+        r.metaTitle = parsePdfPdfTag("/Title");
+        r.metaCreator = parsePdfPdfTag("/Author");
+        r.metaSubject = parsePdfPdfTag("/Subject");
+        r.metaDescription = parsePdfPdfTag("/Keywords");
+        r.metaPublisher = parsePdfPdfTag("/Producer");
+        if (!r.metaPublisher) r.metaPublisher = parsePdfPdfTag("/Creator");
+        r.metaDate = parsePdfPdfTag("/CreationDate");
+
+        // Count pages: count occurrences of "/Type /Page" or "/Type/Page"
+        int pageCount = 0;
+        int pIdx = 0;
+        while ((pIdx = content.indexOfIgnoreCase(pIdx, "/Type /Page")) >= 0 || (pIdx = content.indexOfIgnoreCase(pIdx, "/Type/Page")) >= 0) {
+            ++pageCount;
+            pIdx += 10;
+        }
+        if (pageCount > 0) r.pageCount = pageCount;
+    }
+
+    r.bruto = juce::var(obj.release());
+    return r;
+}
+
+LeituraTecnicaResultado lerDocumentoDocx(const juce::File& arquivo) {
+    LeituraTecnicaResultado r;
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
+
+    r.metaType = "Text";
+    r.metaFormat = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    try {
+        juce::ZipFile zip(arquivo);
+        int entryIdx = zip.getIndexOfFileName("docProps/core.xml");
+        if (entryIdx >= 0) {
+            std::unique_ptr<juce::InputStream> stream(zip.createStreamForEntry(entryIdx));
+            if (stream != nullptr) {
+                juce::XmlDocument xmlDoc(stream->readEntireStreamAsString());
+                auto root = xmlDoc.getDocumentElement();
+                if (root != nullptr) {
+                    for (auto* child : root->getChildIterator()) {
+                        juce::String tag = child->getTagName().toLowerCase();
+                        juce::String val = child->getAllSubText().trim();
+                        if (val.isEmpty()) continue;
+
+                        if (tag.contains("title")) r.metaTitle = val.toStdString();
+                        else if (tag.contains("creator")) r.metaCreator = val.toStdString();
+                        else if (tag.contains("keywords")) r.metaSubject = val.toStdString();
+                        else if (tag.contains("description")) r.metaDescription = val.toStdString();
+                        else if (tag.contains("created")) r.metaDate = val.toStdString();
+                        else if (tag.contains("lastmodifiedby")) r.metaContributor = val.toStdString();
+                    }
+                }
+            }
+        }
+    } catch (...) {}
+
     r.bruto = juce::var(obj.release());
     return r;
 }
@@ -330,6 +403,14 @@ LeituraTecnicaResultado lerDocumentoTexto(const juce::File& arquivo) {
     LeituraTecnicaResultado r;
     auto obj = std::make_unique<juce::DynamicObject>();
     obj->setProperty("fileSizeBytes", static_cast<juce::int64>(arquivo.getSize()));
+
+    r.metaType = "Text";
+    r.metaFormat = "text/plain";
+
+    juce::String text = arquivo.loadFileAsString();
+    if (text.isNotEmpty()) {
+        r.metaDescription = "Text document (" + std::to_string(juce::StringArray::fromLines(text).size()) + " lines)";
+    }
 
     r.bruto = juce::var(obj.release());
     return r;
@@ -359,10 +440,7 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
     switch (categoriaPorExtensao(arquivo)) {
         case CategoriaMidia::Audio: {
             LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
-            // Loudness EBU R128 pré-calculado aqui (item 6.1). Silencioso se
-            // o formato não for legível pelos decodificadores do JUCE — o
-            // campo fica ausente em vez de zero, e a barra de métricas não
-            // mostra métrica que não foi medida.
+            r.metaType = "Sound";
             if (auto l = medirLoudnessDoArquivo(arquivo)) {
                 r.lufsIntegrado = l->lufsIntegrado;
                 r.lra = l->lra;
@@ -370,17 +448,30 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
             }
             return r;
         }
-        case CategoriaMidia::Video:
-            return lerViaFfprobe(arquivo);
+        case CategoriaMidia::Video: {
+            LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
+            r.metaType = "MovingImage";
+            return r;
+        }
         case CategoriaMidia::Imagem: {
             LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
+            r.metaType = "StillImage";
+            enriquecerComExif(r, arquivo);
+            return r;
+        }
+        case CategoriaMidia::Arte: {
+            LeituraTecnicaResultado r = lerViaFfprobe(arquivo);
+            r.metaType = "Image";
             enriquecerComExif(r, arquivo);
             return r;
         }
         case CategoriaMidia::Sessao:
             return lerDocumentoTexto(arquivo);
-        case CategoriaMidia::Documento:
+        case CategoriaMidia::Documento: {
+            juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+            if (ext == "docx" || ext == "doc") return lerDocumentoDocx(arquivo);
             return lerDocumentoPdf(arquivo);
+        }
         case CategoriaMidia::Texto:
             return lerDocumentoTexto(arquivo);
         case CategoriaMidia::Desconhecida: {

@@ -1,4 +1,5 @@
 #include <JuceHeader.h>
+#include <AssetsBinaryData.h>
 
 #include "App/Preferencias.h"
 #include "Diag/NSExceptionGuard.h"
@@ -75,6 +76,35 @@ void crashHandler(int sig, siginfo_t* info, void* ctx) {
     write(STDERR_FILENO, end, sizeof(end) - 1);
     _exit(128 + sig);
 }
+
+class SplashWindow : public juce::DocumentWindow, private juce::Timer {
+public:
+    SplashWindow() : juce::DocumentWindow("", juce::Colours::transparentBlack, 0) {
+        auto imgData = juce::MemoryBlock(AssetsBinaryData::splash_png, AssetsBinaryData::splash_pngSize);
+        auto img = juce::ImageFileFormat::loadFrom(imgData.getData(), imgData.getSize());
+        if (img.isValid()) {
+            int w = std::min(img.getWidth(), 900);
+            float ratio = static_cast<float>(w) / static_cast<float>(img.getWidth());
+            int h = static_cast<int>(img.getHeight() * ratio);
+            auto* comp = new juce::ImageComponent();
+            comp->setImage(img, juce::RectanglePlacement::stretchToFit);
+            comp->setSize(w, h);
+            setContentOwned(comp, true);
+        } else {
+            setSize(600, 340);
+        }
+        setUsingNativeTitleBar(false);
+        setTitleBarHeight(0);
+        centreWithSize(getWidth(), getHeight());
+        setDropShadowEnabled(true);
+        setAlwaysOnTop(true);
+        setVisible(true);
+        toFront(true);
+        startTimer(2500);
+    }
+    void closeButtonPressed() override { setVisible(false); }
+    void timerCallback() override { stopTimer(); setVisible(false); }
+};
 
 class MatrizApplication : public juce::JUCEApplication {
 public:
@@ -160,6 +190,7 @@ public:
         // somaria ruído ao que o harness já mede.
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
 
+        splash_ = std::make_unique<SplashWindow>();
         janela_ = std::make_unique<matriz::ui::MainWindow>(matriz::i18n::t("janela_principal.titulo"));
     }
 
@@ -167,6 +198,7 @@ public:
         // O vigia morre ANTES do MessageManager: um juce::Timer destruído
         // depois disso toca numa lista de timers que já não existe.
         monitorLoop_.reset();
+        splash_.reset();
         janela_.reset();
         // A janela (e qualquer Component nela) tem que morrer ANTES do
         // LookAndFeel que aponta pra ela — senão fica um ponteiro pendurado
@@ -183,6 +215,7 @@ public:
 private:
     std::unique_ptr<juce::LookAndFeel_V4> lookAndFeel_;
     std::unique_ptr<matriz::diag::MessageLoopMonitor> monitorLoop_;
+    std::unique_ptr<SplashWindow> splash_;
     std::unique_ptr<matriz::ui::MainWindow> janela_;
 };
 

@@ -30,6 +30,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     fichaPanel_ = std::make_unique<FichaPanelComponent>(projeto_);
     fichaPanel_->aoMudar = [this] { recarregar(); };
     fichaPanel_->aoAplicarEmLote = [this] { recarregar(); };
+    fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
+        if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
+    };
     addAndMakeVisible(*fichaPanel_);
 
     campoBusca_ = std::make_unique<juce::TextEditor>();
@@ -161,6 +164,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.all"), "all", 0});
     categorias_.push_back({matriz::i18n::t("catwork.recent"), "recent", 0});
     categorias_.push_back({"Folders", "folders", 0});
+    categorias_.push_back({"Duplicates", "duplicates", 0});
 
     indiceInicioMediaType_ = static_cast<int>(categorias_.size());
     secoesSidebar_.push_back({indiceInicioMediaType_, "MEDIA TYPE"});
@@ -176,7 +180,6 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.no_backup"), "vulneraveis", 0});
     categorias_.push_back({matriz::i18n::t("catwork.single_copy"), "single_copy", 0});
     categorias_.push_back({matriz::i18n::t("catwork.offline"), "ausentes", 0});
-    categorias_.push_back({"Duplicates", "duplicates", 0});
 
     for (size_t i = 0; i < categorias_.size(); ++i) {
         auto btn = std::make_unique<juce::TextButton>(categorias_[i].rotulo);
@@ -264,7 +267,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     if (!mosaico_) return;
 
     const auto& libChave = categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "folders") return;
+    if (libChave == "folders" || libChave == "recent") return;
 
     auto itens = projeto_.listarItens();
     std::set<std::string> filteredIds;
@@ -279,11 +282,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     for (const auto& item : itens) {
         if (libChave == "recent") {
             anyFilter = true;
-            if (item.criadoEm.empty()) continue;
-            int horas = matriz::app::lerRecentlyIngestedHoras();
-            auto agora = juce::Time::getCurrentTime();
-            auto criado = juce::Time::fromISO8601(juce::String(item.criadoEm));
-            if ((agora - criado).inHours() >= horas) continue;
+            if (!matriz::app::ehRecemIngerido(item.criadoEm)) continue;
         }
 
         if (tipoMidiaSelecionado_.has_value()) {
@@ -429,13 +428,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     int total = static_cast<int>(itens.size());
 
     int recentes = 0, audio = 0, video = 0, img = 0, doc = 0, sessao = 0;
-    int horasLimite = matriz::app::lerRecentlyIngestedHoras();
-    auto agora = juce::Time::getCurrentTime();
     for (const auto& item : itens) {
-        if (!item.criadoEm.empty()) {
-            auto criado = juce::Time::fromISO8601(juce::String(item.criadoEm));
-            if ((agora - criado).inHours() < horasLimite) ++recentes;
-        }
+        if (matriz::app::ehRecemIngerido(item.criadoEm)) ++recentes;
         auto ext = juce::String(item.extensaoArquivo).toLowerCase();
         auto cat = matriz::ingest::categoriaPorExtensao(ext);
         switch (cat) {
@@ -477,20 +471,32 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     definirContagem(0, total);
     definirContagem(1, recentes);
     definirContagem(2, total);
-    definirContagem(3, audio);
-    definirContagem(4, video);
-    definirContagem(5, img);
-    definirContagem(6, doc);
-    definirContagem(7, sessao);
-    definirContagem(8, revisao);
-    definirContagem(9, vulneraveis);
-    definirContagem(10, single_copy);
-    definirContagem(11, ausentes);
-    definirContagem(12, duplicatesCount);
+    definirContagem(3, duplicatesCount);
+    definirContagem(4, audio);
+    definirContagem(5, video);
+    definirContagem(6, img);
+    definirContagem(7, doc);
+    definirContagem(8, sessao);
+    definirContagem(9, revisao);
+    definirContagem(10, vulneraveis);
+    definirContagem(11, single_copy);
+    definirContagem(12, ausentes);
 }
 
 void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     const auto& chave = categorias_[static_cast<size_t>(indice)].chave;
+
+    if (chave == "duplicates") {
+        categoriaSelecionada_ = 0;
+        statusSelecionado_ = std::nullopt;
+        if (mosaicoViewport_) mosaicoViewport_->setVisible(false);
+        if (painelDuplicatas_) {
+            painelDuplicatas_->setVisible(true);
+            painelDuplicatas_->recarregar();
+        }
+        atualizarBotoesSidebar();
+        return;
+    }
 
     if (indice < indiceInicioMediaType_) {
         categoriaSelecionada_ = indice;
@@ -500,16 +506,6 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
         else
             tipoMidiaSelecionado_ = chave;
     } else {
-        if (chave == "duplicates") {
-            statusSelecionado_ = std::nullopt;
-            if (mosaicoViewport_) mosaicoViewport_->setVisible(false);
-            if (painelDuplicatas_) {
-                painelDuplicatas_->setVisible(true);
-                painelDuplicatas_->recarregar();
-            }
-            atualizarBotoesSidebar();
-            return;
-        }
         if (statusSelecionado_.has_value() && *statusSelecionado_ == chave)
             statusSelecionado_ = std::nullopt;
         else
@@ -524,9 +520,10 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     if (mosaicoViewport_) mosaicoViewport_->setVisible(true);
     mosaico_->definirSubpastas({});
     pastaNavegarAtual_ = std::nullopt;
+    caminhoNavegacao_.clear();
 
     const auto& libChave = categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "folders") {
+    if (libChave == "folders" || libChave == "recent") {
         navegarParaPastaOrigem(std::nullopt);
         return;
     }
@@ -554,6 +551,16 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
 
 void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string> nomePasta) {
     auto raiz = projeto_.arvoreOrigem(true);
+
+    const auto& libChave = categorias_.empty()
+        ? std::string()
+        : categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
+    if (libChave == "recent") {
+        std::set<std::string> recentes;
+        for (const auto& item : projeto_.listarItens())
+            if (matriz::app::ehRecemIngerido(item.criadoEm)) recentes.insert(item.id);
+        raiz = ProjetoAberto::podarArvore(raiz, recentes);
+    }
 
     if (!nomePasta.has_value()) {
         caminhoNavegacao_.clear();
@@ -626,6 +633,15 @@ void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string
     mosaico_->definirFiltroItens(alvo->itemIdsDiretos);
     mosaico_->recarregar();
     resized();
+}
+
+void CatalogWorkspaceComponent::revalidarPastaAtual() {
+    if (caminhoNavegacao_.empty()) {
+        navegarParaPastaOrigem(std::nullopt);
+    } else {
+        auto ultimo = caminhoNavegacao_.back();
+        navegarParaPastaOrigem(ultimo);
+    }
 }
 
 void CatalogWorkspaceComponent::selecionarItem(const std::string& itemId) {
@@ -717,6 +733,17 @@ void CatalogWorkspaceComponent::recarregar() {
     construirFiltroAnos();
     construirFiltroContent();
     construirFiltroCollection();
+    atualizarBotoesSidebar();
+
+    const auto& libChave = categorias_.empty()
+        ? std::string()
+        : categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
+    if (libChave == "folders" || libChave == "recent") {
+        revalidarPastaAtual();
+    } else {
+        aplicarFiltrosAdicionais();
+    }
+
     resized();
     if (mosaico_) mosaico_->recarregar();
     if (painelDuplicatas_ && painelDuplicatas_->isVisible()) painelDuplicatas_->recarregar();
@@ -836,8 +863,14 @@ void CatalogWorkspaceComponent::resized() {
     if (!botoesAnos_.empty()) {
         secaoHeaderBounds_.push_back({"DATE", sidebar.removeFromTop(20).reduced(8, 0)});
         sidebar.removeFromTop(2);
-        for (auto& btn : botoesAnos_)
-            btn->setBounds(sidebar.removeFromTop(22).reduced(4, 0));
+        for (size_t i = 0; i < botoesAnos_.size(); i += 2) {
+            auto rowArea = sidebar.removeFromTop(22).reduced(4, 0);
+            int halfW = rowArea.getWidth() / 2;
+            botoesAnos_[i]->setBounds(rowArea.removeFromLeft(halfW).reduced(2, 0));
+            if (i + 1 < botoesAnos_.size()) {
+                botoesAnos_[i + 1]->setBounds(rowArea.reduced(2, 0));
+            }
+        }
     }
 
     if (!botoesContent_.empty()) {

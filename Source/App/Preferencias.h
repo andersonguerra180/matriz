@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <string>
 
 // Preferências de nível de aplicativo — nada disso mora dentro de uma pasta
 // de projeto (P5): idioma da interface e a lista de projetos recentes
@@ -34,6 +35,10 @@ RecentlyIngestedMode lerRecentlyIngestedMode();
 void gravarRecentlyIngestedMode(RecentlyIngestedMode modo);
 int lerRecentlyIngestedHoras();
 void gravarRecentlyIngestedHoras(int horas);
+
+const juce::Time& inicioDaSessao();
+
+bool ehRecemIngerido(const std::string& criadoEmIso);
 
 struct ProjetoRecente {
     juce::String pasta;

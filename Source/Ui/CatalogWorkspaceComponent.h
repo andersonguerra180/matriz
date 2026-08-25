@@ -56,6 +56,7 @@ private:
     void selecionarCategoria(int indice);
     void atualizarBotoesSidebar();
     void navegarParaPastaOrigem(std::optional<std::string> nomePasta);
+    void revalidarPastaAtual();
     void abrirWorkbench(const std::string& itemId);
     void fecharWorkbench();
     void abrirMenuContexto(std::vector<std::string> itemIds);

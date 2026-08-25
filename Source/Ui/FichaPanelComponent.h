@@ -39,6 +39,7 @@ public:
     // árvore, chips de filtro). MainComponent usa isto pra recarregar tudo.
     std::function<void()> aoAplicarEmLote;
     std::function<void()> aoMudar;
+    std::function<void(const std::string& itemId)> aoAplicarSucesso;
 
     // Introspecção pra teste (Parte 2 da correção crítica — perda de
     // dado): acesso ao editor de um campo específico pra simular digitação

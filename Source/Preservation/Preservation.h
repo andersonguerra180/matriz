@@ -203,6 +203,22 @@ juce::String exportarJson(db::Database& db, const std::string& itemId);
 juce::String exportarCsv(db::Database& db,
                           const std::vector<std::string>& itemIds);
 
+// Exporta todos os metadados dos arquivos incluindo geolocalização como Full CSV.
+juce::String exportarFullCsv(db::Database& db,
+                             const std::vector<std::string>& itemIds);
+
+// Exporta o pacote BKR Full CSV (BKR_FULL.csv, BKR_FULL.schema.json, manifest.json) com validação automática.
+bool exportarFullCsvPacote(db::Database& db,
+                            const std::vector<std::string>& itemIds,
+                            const juce::File& destLocation,
+                            juce::String& errorOut);
+
+// Exporta planilha XLS com cabeçalho de projeto/catalogação e metadados Dublin Core.
+juce::String exportarXlsXml(db::Database& db,
+                            const std::vector<std::string>& itemIds,
+                            const std::string& projectName = "BKR Matriz Catalog",
+                            const std::string& catalogCode = "BKR-MATRIZ-01");
+
 // Exporta CSV com cabeçalhos Dublin Core (dc.identifier, dc.title, ...).
 juce::String exportarCsvDublinCore(db::Database& db,
                                     const std::vector<std::string>& itemIds);

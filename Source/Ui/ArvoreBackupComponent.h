@@ -5,10 +5,12 @@
 
 namespace matriz::ui {
 
+class TreeDetailContent;
+
 class ArvoreBackupComponent : public juce::Component {
 public:
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
-    ~ArvoreBackupComponent() override = default;
+    ~ArvoreBackupComponent() override;
 
     void recarregar();
     void moverItemParaPasta(const std::string& itemId, const std::string& novaPasta);
@@ -42,6 +44,7 @@ private:
         juce::Rectangle<int> bounds;
         bool ativo = true;
         bool selecionado = false;
+        std::set<std::string> itemIdsDiretos;
     };
 
     ProjetoAberto& projeto_;
@@ -83,6 +86,12 @@ private:
     juce::Point<float> socketDragPos_;
 
     bool minimapDragging_ = false;
+
+    static constexpr int kDetailPanelWidth = 280;
+    std::unique_ptr<juce::Viewport> detailViewport_;
+    std::unique_ptr<TreeDetailContent> detailContent_;
+    std::string selectedFolderId_;
+    void atualizarPainelDetalhe(const std::string& folderId);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArvoreBackupComponent)
 };

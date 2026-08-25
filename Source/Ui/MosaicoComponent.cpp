@@ -76,6 +76,36 @@ void MosaicoComponent::recarregar() {
     });
 }
 
+void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
+    if (itemId.empty()) return;
+
+    ++geracaoSnapshot_;
+    snapshotPendente_ = false;
+
+    auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
+                           [&](const ItemResumo& r) { return r.id == itemId; });
+    if (it == itensTodos_.end()) return;
+
+    auto tit = projeto_.lerMetadado(itemId, "titulo");
+    if (tit.has_value()) {
+        it->titulo = *tit;
+        if (!tit->empty()) it->nomeOriginalArquivo = *tit;
+    }
+    auto anoStr = projeto_.lerMetadado(itemId, "ano");
+    if (anoStr.has_value() && !anoStr->empty()) {
+        juce::String s(*anoStr);
+        if (s.containsOnly("0123456789")) it->ano = s.getIntValue();
+    } else {
+        it->ano.reset();
+    }
+    auto ct = projeto_.lerMetadado(itemId, "content_type");
+    it->contentType = ct.has_value() && !ct->empty() ? ct : std::nullopt;
+    auto col = projeto_.lerMetadado(itemId, "collection_type");
+    it->collectionType = col.has_value() && !col->empty() ? col : std::nullopt;
+
+    aplicarFiltrosEOrdenacao();
+}
+
 void MosaicoComponent::recarregarSincrono() {
     // Só pro harness headless e pro stress test, que precisam do resultado
     // na mesma pilha de chamada. Em produção nada chama isto — é justamente

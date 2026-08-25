@@ -72,23 +72,38 @@ void MetadadosOriginaisComponent::reconstruir(const std::string& itemId) {
     auto texto = [&](const char* chave) { return dados[chave].toString(); };
     auto tem = [&](const char* chave) { return dados.hasProperty(chave); };
 
-    // Ordem curada, não a ordem do JSON: o que o operador procura primeiro
-    // (o que é este arquivo, quanto dura, que tamanho tem) vem antes do
-    // detalhe de codec.
+    // Fixed Read-Only Technical Properties (extracted automatically from file)
+    juce::File fArquivo(arquivo->caminhoAbsoluto);
+    if (fArquivo.existsAsFile()) {
+        juce::String ext = fArquivo.getFileExtension().trimCharactersAtStart(".").toUpperCase();
+        if (ext.isNotEmpty()) {
+            linhas_.push_back({"File Type", ext});
+        }
+    }
+
+    if (tem("codec")) linhas_.push_back({"Codec", texto("codec")});
+
+    if (tem("sampleRate"))
+        linhas_.push_back({"Sample Rate", comSeparador(static_cast<juce::int64>(dados["sampleRate"])) + " Hz"});
+
+    if (tem("bitDepth"))
+        linhas_.push_back({"Bit Depth", texto("bitDepth") + " bits"});
+
+    if (tem("fps"))
+        linhas_.push_back({"Frame Rate", texto("fps") + " fps"});
+
+    if (tem("larguraPx") && tem("alturaPx"))
+        linhas_.push_back({"Image Dimensions", texto("larguraPx") + " x " + texto("alturaPx") + " px"});
+
     if (tem("duracaoSegundos")) {
         juce::String d = formatarDuracao(static_cast<double>(dados["duracaoSegundos"]));
-        if (d.isNotEmpty()) linhas_.push_back({matriz::i18n::t("metadados.duracao"), d});
+        if (d.isNotEmpty()) linhas_.push_back({"Duration", d});
     }
-    if (tem("larguraPx") && tem("alturaPx"))
-        linhas_.push_back({matriz::i18n::t("metadados.dimensoes"),
-                            texto("larguraPx") + " x " + texto("alturaPx") + " px"});
-    if (tem("codec")) linhas_.push_back({matriz::i18n::t("metadados.codec"), texto("codec")});
-    if (tem("sampleRate"))
-        linhas_.push_back({matriz::i18n::t("metadados.sample_rate"),
-                            comSeparador(static_cast<juce::int64>(dados["sampleRate"])) + " Hz"});
-    if (tem("bitDepth")) linhas_.push_back({matriz::i18n::t("metadados.bit_depth"), texto("bitDepth") + " bits"});
-    if (tem("canais")) linhas_.push_back({matriz::i18n::t("metadados.canais"), texto("canais")});
-    if (tem("fps")) linhas_.push_back({matriz::i18n::t("metadados.fps"), texto("fps")});
+
+    if (fArquivo.existsAsFile()) {
+        juce::String tam = formatarBytes(fArquivo.getSize());
+        if (tam.isNotEmpty()) linhas_.push_back({"File Size", tam});
+    }
 
     // Codec lossy é um FATO de preservação, não um detalhe: um "master" que
     // já nasceu de MP3 precisa aparecer aqui em vez de passar batido.
@@ -115,7 +130,6 @@ void MetadadosOriginaisComponent::reconstruir(const std::string& itemId) {
                 linhas_.push_back({prop.name.toString(), prop.value.toString()});
     }
 
-    juce::File fArquivo(arquivo->caminhoAbsoluto);
     if (fArquivo.existsAsFile()) {
         juce::String tam = formatarBytes(fArquivo.getSize());
         if (tam.isNotEmpty() && linhas_.size() < static_cast<size_t>(kMaxLinhasVisiveis))
@@ -168,12 +182,12 @@ void MetadadosOriginaisComponent::paint(juce::Graphics& g) {
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
     g.drawText((colapsada_ ? juce::String("+  ") : juce::String("-  ")) +
-                   juce::String("AUTO + FIXED"),
+                   juce::String("FILE DATA"),
                cabecalho, juce::Justification::centredLeft);
 
     g.setColour(tk.textoTerciario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-    g.drawText(juce::String("extracted from file"), cabecalho, juce::Justification::centredRight);
+    g.drawText(juce::String("read automatically"), cabecalho, juce::Justification::centredRight);
 
     g.setColour(tk.borda);
     g.fillRect(0, getHeight() - 1, getWidth(), 1);

@@ -7,6 +7,133 @@
 
 namespace matriz::ui {
 
+// ── Detail panel content ─────────────────────────────────────────────
+
+namespace {
+
+juce::String formatarTamanhoArquivo(juce::int64 bytes) {
+    if (bytes <= 0) return "0 B";
+    if (bytes < 1024) return juce::String(bytes) + " B";
+    if (bytes < 1024 * 1024) return juce::String(bytes / 1024) + " KB";
+    if (bytes < 1024LL * 1024 * 1024)
+        return juce::String(static_cast<double>(bytes) / (1024.0 * 1024.0), 1) + " MB";
+    return juce::String(static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
+}
+
+} // namespace
+
+class TreeDetailContent : public juce::Component {
+public:
+    struct SubfolderEntry {
+        juce::String nome;
+        int contagemItens = 0;
+    };
+    struct FileEntry {
+        std::string id;
+        juce::String nome;
+        juce::String extensao;
+        juce::int64 tamanhoBytes = 0;
+    };
+
+    juce::String folderName;
+    std::vector<SubfolderEntry> subfolders;
+    std::vector<FileEntry> files;
+    std::function<void(const std::string&)> aoClicarArquivo;
+    int hoverFileIndex_ = -1;
+
+    void recalcularAltura() {
+        int h = 52;
+        if (!subfolders.empty()) h += 28 + static_cast<int>(subfolders.size()) * 24;
+        if (!files.empty()) h += 28 + static_cast<int>(files.size()) * 24;
+        h += 16;
+        setSize(getWidth(), std::max(h, getParentHeight()));
+    }
+
+    int fileIndexAtY(int mouseY) const {
+        int y = 8 + 24 + 4;
+        if (!subfolders.empty()) y += 20 + static_cast<int>(subfolders.size()) * 24 + 4;
+        if (files.empty()) return -1;
+        y += 20;
+        int idx = (mouseY - y) / 24;
+        if (idx < 0 || idx >= static_cast<int>(files.size())) return -1;
+        if (mouseY < y) return -1;
+        return idx;
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        int idx = fileIndexAtY(e.getPosition().y);
+        if (idx >= 0 && idx < static_cast<int>(files.size()) && aoClicarArquivo)
+            aoClicarArquivo(files[static_cast<size_t>(idx)].id);
+    }
+
+    void mouseMove(const juce::MouseEvent& e) override {
+        int idx = fileIndexAtY(e.getPosition().y);
+        if (idx != hoverFileIndex_) { hoverFileIndex_ = idx; repaint(); }
+    }
+
+    void mouseExit(const juce::MouseEvent&) override {
+        if (hoverFileIndex_ != -1) { hoverFileIndex_ = -1; repaint(); }
+    }
+
+    void paint(juce::Graphics& g) override {
+        g.fillAll(tema().painel);
+        g.setColour(tema().borda);
+        g.drawLine(0.0f, 0.0f, 0.0f, static_cast<float>(getHeight()), 1.0f);
+
+        auto area = getLocalBounds().reduced(12, 8);
+
+        g.setColour(tema().textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.drawText(folderName, area.removeFromTop(24), juce::Justification::centredLeft, true);
+
+        g.setColour(tema().borda);
+        g.drawHorizontalLine(area.getY(), static_cast<float>(area.getX()), static_cast<float>(area.getRight()));
+        area.removeFromTop(4);
+
+        if (!subfolders.empty()) {
+            g.setColour(tema().textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.drawText("SUBFOLDERS", area.removeFromTop(20), juce::Justification::centredLeft);
+
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            for (const auto& sf : subfolders) {
+                auto row = area.removeFromTop(24);
+                g.setColour(tema().textoPrimario);
+                g.drawText(juce::String(juce::CharPointer_UTF8("\xf0\x9f\x93\x81 ")) + sf.nome,
+                           row.removeFromLeft(row.getWidth() - 50),
+                           juce::Justification::centredLeft, true);
+                g.setColour(tema().textoTerciario);
+                g.drawText(juce::String(sf.contagemItens) + " items",
+                           row, juce::Justification::centredRight);
+            }
+            area.removeFromTop(4);
+        }
+
+        if (!files.empty()) {
+            g.setColour(tema().textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.drawText("FILES", area.removeFromTop(20), juce::Justification::centredLeft);
+
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            for (const auto& f : files) {
+                auto row = area.removeFromTop(24);
+                g.setColour(tema().textoPrimario);
+                auto nameArea = row.removeFromLeft(row.getWidth() - 60);
+                juce::String displayName = f.nome.isNotEmpty() ? f.nome : ("file." + f.extensao);
+                g.drawText(displayName, nameArea, juce::Justification::centredLeft, true);
+                g.setColour(tema().textoTerciario);
+                g.drawText(formatarTamanhoArquivo(f.tamanhoBytes), row, juce::Justification::centredRight);
+            }
+        }
+
+        if (subfolders.empty() && files.empty()) {
+            g.setColour(tema().textoTerciario);
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.drawText("Empty folder", area, juce::Justification::centredLeft);
+        }
+    }
+};
+
 namespace {
 
 void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, const juce::String& valorInicial,
@@ -122,8 +249,19 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnZoomFit_->onClick = [this] { zoom_ = 1.0f; panOffset_ = {0.0f, 0.0f}; repaint(); };
     addAndMakeVisible(*btnZoomFit_);
 
+    detailContent_ = std::make_unique<TreeDetailContent>();
+    detailViewport_ = std::make_unique<juce::Viewport>();
+    detailViewport_->setViewedComponent(detailContent_.get(), false);
+    detailViewport_->setScrollBarsShown(true, false);
+    detailViewport_->setVisible(false);
+    addAndMakeVisible(*detailViewport_);
+
     setWantsKeyboardFocus(true);
     recarregar();
+}
+
+ArvoreBackupComponent::~ArvoreBackupComponent() {
+    detailViewport_->setViewedComponent(nullptr, false);
 }
 
 void ArvoreBackupComponent::recarregar() {
@@ -144,6 +282,7 @@ void ArvoreBackupComponent::recalcularNodes() {
                 node.pastaPaiId = no.pastaPaiId;
                 node.contagemItens = static_cast<int>(no.itemIds.size());
                 node.ativo = no.ativo;
+                node.itemIdsDiretos = no.itemIdsDiretos;
 
                 int defaultX = 40 + nivel * 240;
                 int defaultY = 80 + index * 110;
@@ -269,10 +408,11 @@ bool ArvoreBackupComponent::ehDescendente(const std::string& noPaiId, const std:
 void ArvoreBackupComponent::autoArranjar() {
     if (nodes_.empty()) return;
 
-    static constexpr int kNodeW = 190;
-    static constexpr int kNodeH = 84;
-    static constexpr int kMarginX = 40;
-    static constexpr int kMarginY = 80;
+    static constexpr int kBaseNodeW = 190;
+    static constexpr int kBaseNodeH = 84;
+    static constexpr int kMargin = 40;
+    static constexpr int kToolbarH = 50;
+    static constexpr int kMinGap = 20;
 
     std::map<std::string, std::vector<std::string>> filhosDe;
     std::set<std::string> temPai;
@@ -307,29 +447,54 @@ void ArvoreBackupComponent::autoArranjar() {
             return s;
         };
     for (auto& r : raizes) totalLeaves += contarFolhas(r);
+    totalLeaves = std::max(1, totalLeaves);
 
-    int availW = std::max(400, getWidth());
-    int availH = std::max(300, getHeight());
+    float viewW = static_cast<float>(std::max(400, getWidth())) / zoom_;
+    float viewH = static_cast<float>(std::max(300, getHeight() - kToolbarH)) / zoom_;
 
-    int gapX = (maxDepth > 0) ? std::max(10, (availW - kMarginX * 2 - (maxDepth + 1) * kNodeW) / std::max(1, maxDepth)) : 60;
-    gapX = std::min(gapX, 80);
-    int gapY = std::max(4, (availH - kMarginY - kMarginX - totalLeaves * kNodeH) / std::max(1, totalLeaves));
-    gapY = std::min(gapY, 40);
+    int cols = maxDepth + 1;
+    float widthBudget = viewW - kMargin * 2.0f;
+    float heightBudget = viewH - kMargin;
+
+    float nodeScale = 1.0f;
+    int nodeW = kBaseNodeW;
+    int nodeH = kBaseNodeH;
+    int gapX = kMinGap;
+    int gapY = kMinGap;
+
+    float neededW = cols * kBaseNodeW + std::max(0, cols - 1) * kMinGap;
+    float neededH = totalLeaves * kBaseNodeH + std::max(0, totalLeaves - 1) * kMinGap;
+
+    if (neededW > widthBudget || neededH > heightBudget) {
+        float scX = widthBudget / neededW;
+        float scY = heightBudget / neededH;
+        nodeScale = std::max(0.7f, std::min({scX, scY, 1.0f}));
+        nodeW = static_cast<int>(kBaseNodeW * nodeScale);
+        nodeH = static_cast<int>(kBaseNodeH * nodeScale);
+    }
+
+    float totalNodeW = cols * nodeW;
+    float remainW = widthBudget - totalNodeW;
+    gapX = (cols > 1) ? std::max(kMinGap, static_cast<int>(remainW / (cols - 1))) : kMinGap;
+
+    float totalNodeH = totalLeaves * nodeH;
+    float remainH = heightBudget - totalNodeH;
+    gapY = (totalLeaves > 1) ? std::max(kMinGap, static_cast<int>(remainH / (totalLeaves - 1))) : kMinGap;
 
     std::map<std::string, int> subtreeHeight;
     std::function<int(const std::string&)> calcularAltura =
         [&](const std::string& id) -> int {
             auto& filhos = filhosDe[id];
             if (filhos.empty()) {
-                subtreeHeight[id] = kNodeH;
-                return kNodeH;
+                subtreeHeight[id] = nodeH;
+                return nodeH;
             }
             int total = 0;
             for (size_t i = 0; i < filhos.size(); ++i) {
                 if (i > 0) total += gapY;
                 total += calcularAltura(filhos[i]);
             }
-            subtreeHeight[id] = std::max(total, kNodeH);
+            subtreeHeight[id] = std::max(total, nodeH);
             return subtreeHeight[id];
         };
     for (auto& r : raizes) calcularAltura(r);
@@ -344,7 +509,7 @@ void ArvoreBackupComponent::autoArranjar() {
             }
             int cursorY = yTop;
             for (size_t i = 0; i < filhos.size(); ++i) {
-                posicionar(filhos[i], x + kNodeW + gapX, cursorY);
+                posicionar(filhos[i], x + nodeW + gapX, cursorY);
                 cursorY += subtreeHeight[filhos[i]] + gapY;
             }
             int firstChildY = posicoes[filhos.front()].y;
@@ -353,34 +518,21 @@ void ArvoreBackupComponent::autoArranjar() {
             posicoes[id] = {x, centeredY};
         };
 
-    int cursorY = kMarginY;
+    int cursorY = kToolbarH + kMargin;
     for (auto& r : raizes) {
-        posicionar(r, kMarginX, cursorY);
+        posicionar(r, kMargin, cursorY);
         cursorY += subtreeHeight[r] + gapY;
     }
-
-    int maxRight = 0, maxBottom = 0;
-    for (auto& [id, pos] : posicoes) {
-        maxRight = std::max(maxRight, pos.x + kNodeW);
-        maxBottom = std::max(maxBottom, pos.y + kNodeH);
-    }
-
-    float scaleX = (maxRight + kMarginX > availW) ? static_cast<float>(availW - kMarginX) / static_cast<float>(maxRight + kMarginX) : 1.0f;
-    float scaleY = (maxBottom + kMarginX > availH) ? static_cast<float>(availH - kMarginX) / static_cast<float>(maxBottom + kMarginX) : 1.0f;
-    float scale = std::min(scaleX, scaleY);
-    scale = std::max(scale, 0.3f);
-    scale = std::min(scale, 1.0f);
 
     for (auto& n : nodes_) {
         auto it = posicoes.find(n.id);
         if (it != posicoes.end()) {
-            int x = static_cast<int>(it->second.x * scale);
-            int y = static_cast<int>(it->second.y * scale);
-            n.bounds = juce::Rectangle<int>(x, y, kNodeW, kNodeH);
-            projeto_.atualizarPosicaoPastaAcervo(n.id, x, y);
+            n.bounds = juce::Rectangle<int>(it->second.x, it->second.y, nodeW, nodeH);
+            projeto_.atualizarPosicaoPastaAcervo(n.id, it->second.x, it->second.y);
         }
     }
 
+    panOffset_ = {0.0f, 0.0f};
     repaint();
 }
 
@@ -652,6 +804,12 @@ void ArvoreBackupComponent::resized() {
     if (btnZoomFit_) btnZoomFit_->setBounds(area.removeFromLeft(36));
     area.removeFromLeft(2);
     if (btnZoomIn_) btnZoomIn_->setBounds(area.removeFromLeft(30));
+
+    if (detailViewport_ && detailViewport_->isVisible()) {
+        auto panelArea = getLocalBounds().withTrimmedTop(44).removeFromRight(kDetailPanelWidth);
+        detailViewport_->setBounds(panelArea);
+        detailContent_->setSize(panelArea.getWidth() - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
+    }
 }
 
 void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
@@ -728,6 +886,12 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     if (!hitNode) {
         panning_ = true;
         panStart_ = e.getPosition();
+        atualizarPainelDetalhe("");
+    } else {
+        std::string selId;
+        for (const auto& n : nodes_)
+            if (n.selecionado) { selId = n.id; break; }
+        atualizarPainelDetalhe(selId);
     }
 
     repaint();
@@ -852,6 +1016,52 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
             if (nodes_[static_cast<size_t>(i)].selecionado) { iniciarEdicaoInline(i); return true; }
     }
     return false;
+}
+
+void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId) {
+    if (folderId.empty() || folderId == selectedFolderId_) {
+        if (folderId.empty() && !selectedFolderId_.empty()) {
+            selectedFolderId_.clear();
+            detailViewport_->setVisible(false);
+            resized();
+        }
+        return;
+    }
+    selectedFolderId_ = folderId;
+
+    const FolderNode* selected = nullptr;
+    for (const auto& n : nodes_)
+        if (n.id == folderId) { selected = &n; break; }
+    if (!selected) { detailViewport_->setVisible(false); return; }
+
+    detailContent_->folderName = selected->nome;
+
+    detailContent_->subfolders.clear();
+    for (const auto& n : nodes_) {
+        if (n.pastaPaiId == folderId) {
+            TreeDetailContent::SubfolderEntry sf;
+            sf.nome = n.nome;
+            sf.contagemItens = n.contagemItens;
+            detailContent_->subfolders.push_back(sf);
+        }
+    }
+
+    detailContent_->files.clear();
+    if (!selected->itemIdsDiretos.empty()) {
+        auto detalhes = projeto_.obterDetalhesItens(selected->itemIdsDiretos);
+        for (const auto& d : detalhes) {
+            TreeDetailContent::FileEntry fe;
+            fe.nome = d.nome;
+            fe.extensao = d.extensao;
+            fe.tamanhoBytes = d.tamanhoBytes;
+            detailContent_->files.push_back(fe);
+        }
+    }
+
+    detailViewport_->setVisible(true);
+    resized();
+    detailContent_->recalcularAltura();
+    detailContent_->repaint();
 }
 
 } // namespace matriz::ui
