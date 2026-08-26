@@ -586,8 +586,16 @@ void BackupWorkspaceComponent::atualizarResumo() {
     plano_.itens = std::move(filtrados);
     plano_.espacoNecessarioBytes = sz;
 
-    juce::String summary = "Assets: " + juce::String(static_cast<int>(plano_.itens.size())) +
-                           " | Space: " + juce::File::descriptionOfSizeInBytes(totalSz);
+    juce::String summary = "Assets: " + juce::String(static_cast<int>(plano_.itens.size()));
+    if (itemIds.size() > plano_.itens.size()) {
+        summary += " (of " + juce::String(static_cast<int>(itemIds.size())) + " in catalog)";
+    }
+    summary += " | Space: " + juce::File::descriptionOfSizeInBytes(totalSz);
+
+    int semArquivo = static_cast<int>(itemIds.size() - plano_.itens.size());
+    if (semArquivo > 0) {
+        summary += "  -  (" + juce::String(semArquivo) + " metadata items have no physical files)";
+    }
 
     // Botão desabilitado sem explicação é indistinguível de botão ausente —
     // o motivo vai junto do resumo sempre que o backup não puder rodar.

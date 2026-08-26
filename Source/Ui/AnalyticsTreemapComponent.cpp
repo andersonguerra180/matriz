@@ -182,6 +182,50 @@ void AnalyticsTreemapComponent::construirArvoreDoBanco(matriz::db::Database& db)
         rootNode_->children.push_back(std::move(catNode));
     }
 
+    // Sort category children (extensions) by aggregateSize descending and assign tom-sobre-tom colors
+    for (auto& catChild : rootNode_->children) {
+        std::sort(catChild->children.begin(), catChild->children.end(),
+                  [](const std::unique_ptr<AnalyticsTreemapNode>& a, const std::unique_ptr<AnalyticsTreemapNode>& b) {
+                      return a->aggregateSize > b->aggregateSize;
+                  });
+
+        juce::Colour baseCatColor = obterCorCategoria(catChild->mediaType);
+        size_t totalExts = catChild->children.size();
+
+        auto calcularTomSobreTom = [](const juce::Colour& baseColor, size_t extIndex, size_t totalCount) -> juce::Colour {
+            if (totalCount <= 1) return baseColor;
+
+            static const float brightnessFactors[] = {
+                1.00f,  // 0: Base category shade
+                1.25f,  // 1: Brighter tint
+                0.75f,  // 2: Deeper/Darker shade
+                1.42f,  // 3: High bright tint
+                0.60f,  // 4: Deep shade
+                1.14f,  // 5: Soft bright
+                0.86f,  // 6: Soft dark
+                1.32f,  // 7: Very bright
+                0.70f   // 8: Medium dark
+            };
+
+            float factor = brightnessFactors[extIndex % 9];
+            float hueShift = (((static_cast<int>(extIndex) % 3) - 1)) * 0.012f;
+
+            return baseColor.withRotatedHue(hueShift).withMultipliedBrightness(factor);
+        };
+
+        for (size_t i = 0; i < totalExts; ++i) {
+            auto& extNode = catChild->children[i];
+            juce::Colour extColor = calcularTomSobreTom(baseCatColor, i, totalExts);
+            extNode->customColor = extColor;
+            extNode->hasCustomColor = true;
+
+            for (auto& leafNode : extNode->children) {
+                leafNode->customColor = extColor;
+                leafNode->hasCustomColor = true;
+            }
+        }
+    }
+
     rootNode_->aggregateSize = totalTamanhoNoCatalogo_;
     noAtual_ = rootNode_.get();
     noHover_ = nullptr;
@@ -467,15 +511,15 @@ void AnalyticsTreemapComponent::desenharNo(juce::Graphics& g, AnalyticsTreemapNo
         g.setColour(tk.painel.withAlpha(0.85f));
         g.fillRect(node->bounds);
 
-        // Window border follows the GRID legend category color scheme
-        juce::Colour catColor = obterCorCategoria(node->mediaType);
-        g.setColour(catColor);
+        // Window border follows custom extension shade or category color scheme
+        juce::Colour nodeColor = node->hasCustomColor ? node->customColor : obterCorCategoria(node->mediaType);
+        g.setColour(nodeColor);
         g.drawRect(node->bounds, 2.0f);
 
         // Folder Title Header (SpaceMonger style)
         if (node != noAtual_ && node->bounds.getHeight() > 18.0f && node->bounds.getWidth() > 30.0f) {
             auto headerR = juce::Rectangle<float>(node->bounds.getX(), node->bounds.getY(), node->bounds.getWidth(), std::min(16.0f, node->bounds.getHeight()));
-            g.setColour(catColor.darker(0.5f).withAlpha(0.9f));
+            g.setColour(nodeColor.darker(0.45f).withAlpha(0.92f));
             g.fillRect(headerR);
 
             g.setColour(juce::Colours::white);
@@ -488,8 +532,8 @@ void AnalyticsTreemapComponent::desenharNo(juce::Graphics& g, AnalyticsTreemapNo
             desenharNo(g, child.get(), depth + 1, clipArea);
         }
     } else {
-        // Leaf Asset Rectangle
-        juce::Colour baseColor = obterCorCategoria(node->mediaType);
+        // Leaf Asset Rectangle using tom-sobre-tom shade
+        juce::Colour baseColor = node->hasCustomColor ? node->customColor : obterCorCategoria(node->mediaType);
         if (node == noHover_) baseColor = baseColor.brighter(0.35f);
 
         g.setColour(baseColor);

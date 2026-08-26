@@ -23,6 +23,8 @@ struct AnalyticsTreemapNode {
     std::string extension;
     bool isDirectory = false;
     bool isLeaf = true;
+    juce::Colour customColor;
+    bool hasCustomColor = false;
 
     AnalyticsTreemapNode* parent = nullptr;
     std::vector<std::unique_ptr<AnalyticsTreemapNode>> children;
