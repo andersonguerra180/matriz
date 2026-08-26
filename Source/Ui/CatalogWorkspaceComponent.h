@@ -45,6 +45,20 @@ private:
         int contagem = 0;
     };
 
+    struct ContagensResultado {
+        int total = 0;
+        int duplicatesCount = 0;
+        int audio = 0;
+        int video = 0;
+        int img = 0;
+        int doc = 0;
+        int sessao = 0;
+        int revisao = 0;
+        int vulneraveis = 0;
+        int single_copy = 0;
+        int ausentes = 0;
+    };
+
     void construirSidebar();
     void construirFiltroAnos();
     void construirFiltroContent();
@@ -52,6 +66,7 @@ private:
     void aplicarFiltroAno();
     void aplicarFiltrosAdicionais();
     void atualizarContagens();
+    void aplicarContagens(const ContagensResultado& res);
     void selecionarCategoria(int indice);
     void atualizarBotoesSidebar();
     void navegarParaPastaOrigem(std::optional<std::string> nomePasta);
@@ -111,6 +126,10 @@ private:
     juce::ThreadPool poolMiniaturas_{juce::ThreadPoolOptions{}.withThreadName("MatrizMiniGen")
                                      .withNumberOfThreads(1)
                                      .withDesiredThreadPriority(juce::Thread::Priority::low)};
+
+    juce::ThreadPool poolContagens_{juce::ThreadPoolOptions{}.withThreadName("MatrizContagens")
+                                    .withNumberOfThreads(1)
+                                    .withDesiredThreadPriority(juce::Thread::Priority::low)};
 
     static constexpr int kLarguraSidebar = 200;
     static constexpr int kLarguraFicha = 280;

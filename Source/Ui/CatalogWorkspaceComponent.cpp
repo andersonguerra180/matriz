@@ -139,6 +139,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
 
 CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     stopTimer();
+    poolContagens_.removeAllJobs(true, 1000);
     poolMiniaturas_.removeAllJobs(true, 30000);
 }
 
@@ -416,38 +417,55 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
 
 
 void CatalogWorkspaceComponent::atualizarContagens() {
-    auto itens = projeto_.listarItens();
-    int total = static_cast<int>(itens.size());
+    poolContagens_.removeAllJobs(true, 100);
 
-    int audio = 0, video = 0, img = 0, doc = 0, sessao = 0;
-    for (const auto& item : itens) {
-        auto ext = juce::String(item.extensaoArquivo).toLowerCase();
-        auto cat = matriz::ingest::categoriaPorExtensao(ext);
-        switch (cat) {
-            case matriz::ingest::CategoriaMidia::Audio: ++audio; break;
-            case matriz::ingest::CategoriaMidia::Video: ++video; break;
-            case matriz::ingest::CategoriaMidia::Imagem: ++img; break;
-            case matriz::ingest::CategoriaMidia::Sessao: ++sessao; break;
-            case matriz::ingest::CategoriaMidia::Documento: ++doc; break;
-            case matriz::ingest::CategoriaMidia::Texto: ++doc; break;
-            default: break;
+    juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
+    ProjetoAberto* proj = &projeto_;
+
+    poolContagens_.addJob([safeThis, proj]() {
+        ContagensResultado res;
+        try {
+            auto itens = proj->listarItens();
+            res.total = static_cast<int>(itens.size());
+
+            for (const auto& item : itens) {
+                auto ext = juce::String(item.extensaoArquivo).toLowerCase();
+                auto cat = matriz::ingest::categoriaPorExtensao(ext);
+                switch (cat) {
+                    case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
+                    case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
+                    case matriz::ingest::CategoriaMidia::Imagem: ++res.img; break;
+                    case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
+                    case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
+                    case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
+                    default: break;
+                }
+            }
+
+            auto colecoes = proj->listarColecoesEmbutidas();
+            for (const auto& c : colecoes) {
+                if (c.chave == "revisao") res.revisao = c.contagem;
+                else if (c.chave == "vulneraveis") res.vulneraveis = c.contagem;
+                else if (c.chave == "single_copy") res.single_copy = c.contagem;
+                else if (c.chave == "ausentes") res.ausentes = c.contagem;
+            }
+
+            for (const auto& g : proj->listarGruposDuplicados()) {
+                res.duplicatesCount += static_cast<int>(g.itens.size());
+            }
+        } catch (...) {
+            return;
         }
-    }
 
-    auto colecoes = projeto_.listarColecoesEmbutidas();
-    int revisao = 0, vulneraveis = 0, single_copy = 0, ausentes = 0;
-    for (const auto& c : colecoes) {
-        if (c.chave == "revisao") revisao = c.contagem;
-        else if (c.chave == "vulneraveis") vulneraveis = c.contagem;
-        else if (c.chave == "single_copy") single_copy = c.contagem;
-        else if (c.chave == "ausentes") ausentes = c.contagem;
-    }
+        juce::MessageManager::callAsync([safeThis, res]() {
+            if (safeThis) {
+                safeThis->aplicarContagens(res);
+            }
+        });
+    });
+}
 
-    int duplicatesCount = 0;
-    for (const auto& g : projeto_.listarGruposDuplicados()) {
-        duplicatesCount += static_cast<int>(g.itens.size());
-    }
-
+void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) {
     auto definirContagem = [&](int idx, int count) {
         if (idx < static_cast<int>(categorias_.size())) {
             categorias_[static_cast<size_t>(idx)].contagem = count;
@@ -459,18 +477,18 @@ void CatalogWorkspaceComponent::atualizarContagens() {
         }
     };
 
-    definirContagem(0, total);
-    definirContagem(1, total);        // Folders
-    definirContagem(2, duplicatesCount);
-    definirContagem(3, audio);
-    definirContagem(4, video);
-    definirContagem(5, img);
-    definirContagem(6, doc);
-    definirContagem(7, sessao);
-    definirContagem(8, revisao);
-    definirContagem(9, vulneraveis);
-    definirContagem(10, single_copy);
-    definirContagem(11, ausentes);
+    definirContagem(0, res.total);
+    definirContagem(1, res.total);        // Folders
+    definirContagem(2, res.duplicatesCount);
+    definirContagem(3, res.audio);
+    definirContagem(4, res.video);
+    definirContagem(5, res.img);
+    definirContagem(6, res.doc);
+    definirContagem(7, res.sessao);
+    definirContagem(8, res.revisao);
+    definirContagem(9, res.vulneraveis);
+    definirContagem(10, res.single_copy);
+    definirContagem(11, res.ausentes);
 }
 
 void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
