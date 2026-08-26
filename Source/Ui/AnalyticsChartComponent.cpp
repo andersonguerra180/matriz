@@ -17,7 +17,7 @@ void AnalyticsChartComponent::paint(juce::Graphics& g) {
     if (result_.rowKeys.empty()) {
         g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo)));
-        g.drawText("Nenhum dado retornado para exibir gráfico.", getLocalBounds(), juce::Justification::centred);
+        g.drawText("No data returned to display chart.", getLocalBounds(), juce::Justification::centred);
         return;
     }
 

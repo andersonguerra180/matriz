@@ -69,22 +69,22 @@ void gravarEscalaFonte(float escala) {
     arquivo().saveIfNeeded();
 }
 
-RecentlyIngestedMode lerRecentlyIngestedMode() {
+IntakeMode lerIntakeMode() {
     auto v = arquivo().getValue("recently_ingested_mode", "time");
-    return v == "clear_on_start" ? RecentlyIngestedMode::ClearOnStart : RecentlyIngestedMode::Time;
+    return v == "clear_on_start" ? IntakeMode::ClearOnStart : IntakeMode::Time;
 }
 
-void gravarRecentlyIngestedMode(RecentlyIngestedMode modo) {
+void gravarIntakeMode(IntakeMode modo) {
     arquivo().setValue("recently_ingested_mode",
-        modo == RecentlyIngestedMode::ClearOnStart ? "clear_on_start" : "time");
+        modo == IntakeMode::ClearOnStart ? "clear_on_start" : "time");
     arquivo().saveIfNeeded();
 }
 
-int lerRecentlyIngestedHoras() {
+int lerIntakeHoras() {
     return arquivo().getIntValue("recently_ingested_horas", 3);
 }
 
-void gravarRecentlyIngestedHoras(int horas) {
+void gravarIntakeHoras(int horas) {
     arquivo().setValue("recently_ingested_horas", horas);
     arquivo().saveIfNeeded();
 }
@@ -97,9 +97,9 @@ const juce::Time& inicioDaSessao() {
 bool ehRecemIngerido(const std::string& criadoEmIso) {
     if (criadoEmIso.empty()) return false;
     auto criado = juce::Time::fromISO8601(juce::String(criadoEmIso));
-    if (lerRecentlyIngestedMode() == RecentlyIngestedMode::ClearOnStart)
+    if (lerIntakeMode() == IntakeMode::ClearOnStart)
         return criado >= inicioDaSessao();
-    return (juce::Time::getCurrentTime() - criado).inHours() < lerRecentlyIngestedHoras();
+    return (juce::Time::getCurrentTime() - criado).inHours() < lerIntakeHoras();
 }
 
 std::vector<ProjetoRecente> lerRecentes() {

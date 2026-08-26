@@ -42,6 +42,7 @@ class BarraFerramentasComponent;
 class TransportComponent;
 class BarraAcoesFicha;
 class CatalogoComponent;
+class IntakeWorkspaceComponent;
 struct EstadoLote;
 
 // juce::DragAndDropContainer: precisa envolver tanto a origem (mosaico,
@@ -84,6 +85,7 @@ public:
     int totalInconsistencias() const;
 
     void mostrarHome();
+    void mostrarIntake();
     void mostrarCatalog();
     void mostrarGrid();
     void mostrarAnalytics();
@@ -368,6 +370,7 @@ private:
     std::unique_ptr<HomePanelComponent> homePanel_;
     std::unique_ptr<IngestWizardComponent> ingestWizard_;
     std::unique_ptr<BarraNavegacaoComponent> barraNavegacao_;
+    std::unique_ptr<IntakeWorkspaceComponent> intakeWorkspace_; // INTAKE (Quarentena)
     std::unique_ptr<CatalogWorkspaceComponent> catalogWorkspace_; // GRID
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // ANALYTICS (Statistics + Preservation)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // TREE (n8n Node Graph Editor)

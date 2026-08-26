@@ -18,6 +18,7 @@
 #include "ArvoreComponent.h"
 #include "BarraFerramentasComponent.h"
 #include "CatalogoComponent.h"
+#include "IntakeWorkspaceComponent.h"
 #include "FichaPanelComponent.h"
 #include "FiltrosComponent.h"
 #include "MosaicoComponent.h"
@@ -784,9 +785,7 @@ void MainComponent::reconstruirLayoutProjeto() {
         
         std::set<std::string> ids;
         juce::String sql = "SELECT id FROM item";
-        if (filtro == "recent") {
-            sql += " ORDER BY data_criacao DESC LIMIT 50";
-        } else if (!tipos.empty()) {
+        if (!tipos.empty()) {
             sql += " WHERE tipo_midia IN (";
             for (size_t i = 0; i < tipos.size(); ++i) {
                 sql += "'" + juce::String(tipos[i]) + "'";
@@ -1057,6 +1056,7 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 }
 
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
+    intakeWorkspace_.reset();
     catalogWorkspace_.reset();
     analyticsWorkspace_.reset();
     treeWorkspace_.reset();
@@ -1067,6 +1067,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     barraNavegacao_ = std::make_unique<BarraNavegacaoComponent>();
     barraNavegacao_->aoMudarTab = [this](BarraNavegacaoComponent::Tab tab) {
         if (tab == BarraNavegacaoComponent::Tab::Home) mostrarHome();
+        else if (tab == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
         else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
@@ -1090,6 +1091,7 @@ void MainComponent::mostrarHome() {
         barraNavegacao_->setVisible(true);
     }
 
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
@@ -1128,6 +1130,37 @@ void MainComponent::mostrarHome() {
     repaint();
 }
 
+void MainComponent::mostrarIntake() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Catalog;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Intake);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!intakeWorkspace_) {
+        intakeWorkspace_ = std::make_unique<IntakeWorkspaceComponent>(*projetoAberto_);
+        intakeWorkspace_->aoPedirIngerirArquivos = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
+        intakeWorkspace_->aoConfirmarParaGrid = [this] {
+            if (catalogWorkspace_) catalogWorkspace_->recarregar();
+        };
+        addAndMakeVisible(*intakeWorkspace_);
+    } else {
+        intakeWorkspace_->setVisible(true);
+        intakeWorkspace_->recarregar();
+    }
+
+    resized();
+    repaint();
+}
+
 void MainComponent::mostrarCatalog() {
     mostrarGrid();
 }
@@ -1142,6 +1175,7 @@ void MainComponent::mostrarGrid() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1174,6 +1208,7 @@ void MainComponent::mostrarAnalytics() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1206,6 +1241,7 @@ void MainComponent::mostrarTree() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1232,10 +1268,8 @@ void MainComponent::mostrarIngestWizard() {
 
     juce::Component::SafePointer<MainComponent> safeThis(this);
     chooser->launchAsync(
-        juce::FileBrowserComponent::openMode
-            | juce::FileBrowserComponent::canSelectFiles
-            | juce::FileBrowserComponent::canSelectDirectories
-            | juce::FileBrowserComponent::canSelectMultipleItems,
+        juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectDirectories |
+            juce::FileBrowserComponent::canSelectMultipleItems,
         [safeThis, chooser](const juce::FileChooser& fc) {
             if (!safeThis) return;
             auto results = fc.getResults();
@@ -1244,9 +1278,7 @@ void MainComponent::mostrarIngestWizard() {
             juce::Array<juce::File> arquivos;
             for (auto& f : results) arquivos.add(f);
             safeThis->ingerirArquivos(arquivos);
-
-            if (safeThis->telaAtiva_ != TelaAtiva::Catalog)
-                safeThis->mostrarCatalog();
+            safeThis->mostrarIntake();
         });
 }
 
@@ -1260,6 +1292,7 @@ void MainComponent::mostrarBackup() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
@@ -1619,6 +1652,7 @@ void MainComponent::fecharProjeto() {
     // testes headless).
     if (ingestEmAndamento()) return;
     stopTimer();
+    intakeWorkspace_.reset();
     catalogWorkspace_.reset();
     analyticsWorkspace_.reset();
     treeWorkspace_.reset();
@@ -1880,8 +1914,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
             auto tipoVal = tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia);
 
             registro->run(
-                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
-                "VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, em_quarentena, criado_em, atualizado_em) "
+                "VALUES (?, ?, NULL, ?, ?, ?, 1, ?, ?)",
                 {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId),
                  matriz::db::Value::of(arquivo.getFileNameWithoutExtension().toStdString()),
                  tipoVal, matriz::db::Value::of(estado),
@@ -1918,6 +1952,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     ingestsTotalLote_ += static_cast<int>(arquivos.size());
     *pendentes_ += static_cast<int>(arquivos.size());
     atualizarLabelProgresso();
+    mostrarIntake();
+    if (intakeWorkspace_) intakeWorkspace_->recarregar();
     if (mosaico_) mosaico_->recarregar();
 
     // Um lote novo rearma o token — cancelar um lote não pode deixar todos
@@ -2020,9 +2056,13 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         arquivoIdGravado = resultado.arquivoId;
 
                         // Sequencial permanente SÓ no sucesso (critério 6).
+                        // Busca o maior sufixo numérico existente para este prefixo no banco,
+                        // evitando conflitos causados por itens excluídos ou lacunas de id.
                         int proximoNumero = 1;
-                        auto stmtContagem =
-                            registro->prepare("SELECT COUNT(*) FROM item WHERE codigo_acervo IS NOT NULL");
+                        auto stmtContagem = registro->prepare(
+                            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+                            "FROM item WHERE codigo_acervo LIKE ?");
+                        stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
                         if (stmtContagem.step())
                             proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
                         juce::String codigo =
@@ -2034,7 +2074,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         // (ProjetoAberto::atualizarTipoMidia), que é decisão
                         // humana. Marcar como catalogado aqui faria a coleção
                         // "Incompletos" (§10) e a faixa de orientação mentirem.
-                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = NULL WHERE id = ?",
+                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo' WHERE id = ?",
                                       {matriz::db::Value::of(codigo.toStdString()),
                                        matriz::db::Value::of(itemId)});
 
@@ -2122,6 +2162,7 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
         // atualizações de contador — o operador lê o número subindo.
         atualizarLabelProgresso();
         if (mosaico_) mosaico_->recarregar();  // Thread de Snapshot
+        if (intakeWorkspace_) intakeWorkspace_->recarregar();
         if (filtros_) filtros_->recarregar();  // agregações em background
         atualizarPainelDeApoio();
     }
@@ -2345,6 +2386,11 @@ void MainComponent::resized() {
 
     if (homePanel_ && homePanel_->isVisible()) {
         homePanel_->setBounds(area);
+        return;
+    }
+
+    if (intakeWorkspace_ && intakeWorkspace_->isVisible()) {
+        intakeWorkspace_->setBounds(area);
         return;
     }
 

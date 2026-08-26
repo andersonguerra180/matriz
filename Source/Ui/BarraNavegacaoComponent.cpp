@@ -7,6 +7,7 @@ namespace matriz::ui {
 BarraNavegacaoComponent::BarraNavegacaoComponent() {
     tabs_ = {
         { Tab::Home, "HOME", {}, false },
+        { Tab::Intake, "INTAKE", {}, false },
         { Tab::Grid, "GRID", {}, false },
         { Tab::Analytics, "ANALYTICS", {}, false },
         { Tab::Tree, "TREE", {}, false },

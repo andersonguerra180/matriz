@@ -235,6 +235,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "item", "source_media", "TEXT");
     garantirColuna(registro, "item", "collection_type", "TEXT");
     garantirColuna(registro, "item", "isrc", "TEXT");
+    garantirColuna(registro, "item", "em_quarentena", "INTEGER NOT NULL DEFAULT 0");
 
     // Asset Geolocation Table Migration
     registro.execScript(
@@ -324,16 +325,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             "SELECT DISTINCT m.item_id AS item_id, 'revisao' AS colecao "
             "FROM marcador m "
             "WHERE IFNULL(m.status, 'aberto') = 'aberto' "
-            "  AND (m.tipo_id IN ('revisar', 'dropout')) "
-            "UNION "
-            "SELECT i.id AS item_id, 'revisao' AS colecao "
-            "FROM item i "
-            "WHERE i.estado NOT IN ('duplicata') AND ( "
-            "   (i.ano IS NULL OR TRIM(i.ano) = '') "
-            "   OR (i.content_type IS NULL OR TRIM(i.content_type) = '') "
-            "   OR (i.source_media IS NULL OR TRIM(i.source_media) = '') "
-            "   OR (i.collection_type IS NULL OR TRIM(i.collection_type) = '') "
-            ")");
+            "  AND (m.tipo_id IN ('revisar', 'dropout'))");
     } catch (...) {}
 
     // Backfill busca_fts se estiver vazia

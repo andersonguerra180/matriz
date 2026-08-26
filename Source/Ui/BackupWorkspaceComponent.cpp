@@ -76,7 +76,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     comboSource_ = std::make_unique<juce::ComboBox>();
     comboSource_->addItem("All assets in archive", 1);
-    comboSource_->addItem("Recently ingested assets", 2);
+    comboSource_->addItem("Intake assets", 2);
     comboSource_->addItem("Selected assets (" + juce::String(static_cast<int>(selectedItemIds_.size())) + ")", 3);
     comboSource_->addItem("Assets with no backup yet", 4);
     comboSource_->addItem("From collection", 5);
@@ -630,7 +630,7 @@ std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriter
     if (whatOption_ == WhatOption::Everything) {
         auto stmt = db.prepare("SELECT id FROM item");
         while (stmt.step()) out.insert(stmt.columnText(0));
-    } else if (whatOption_ == WhatOption::RecentlyIngested) {
+    } else if (whatOption_ == WhatOption::Intake) {
         auto stmt = db.prepare("SELECT id FROM item WHERE criado_em >= datetime('now', '-24 hours')");
         while (stmt.step()) out.insert(stmt.columnText(0));
     } else if (whatOption_ == WhatOption::SelectedAssets) {

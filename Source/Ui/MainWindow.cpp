@@ -378,7 +378,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             lblGeminiInfo_->setColour(juce::Label::textColourId, tk.textoTerciario);
             addAndMakeVisible(*lblGeminiInfo_);
 
-            lblRecent_ = std::make_unique<juce::Label>("", "RECENTLY INGESTED:");
+            lblRecent_ = std::make_unique<juce::Label>("", "INTAKE:");
             lblRecent_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
             lblRecent_->setColour(juce::Label::textColourId, tk.textoSecundario);
             addAndMakeVisible(*lblRecent_);
@@ -386,8 +386,8 @@ void MainWindow::mostrarPreferenciasDialogo() {
             comboRecentMode_ = std::make_unique<juce::ComboBox>();
             comboRecentMode_->addItem("TIME (auto-expire after hours)", 1);
             comboRecentMode_->addItem("CLEAR LIST on app start", 2);
-            auto curMode = matriz::app::lerRecentlyIngestedMode();
-            comboRecentMode_->setSelectedId(curMode == matriz::app::RecentlyIngestedMode::ClearOnStart ? 2 : 1, juce::dontSendNotification);
+            auto curMode = matriz::app::lerIntakeMode();
+            comboRecentMode_->setSelectedId(curMode == matriz::app::IntakeMode::ClearOnStart ? 2 : 1, juce::dontSendNotification);
             comboRecentMode_->onChange = [this] {
                 bool isTime = comboRecentMode_->getSelectedId() == 1;
                 spinRecentHoras_->setEnabled(isTime);
@@ -402,11 +402,11 @@ void MainWindow::mostrarPreferenciasDialogo() {
 
             spinRecentHoras_ = std::make_unique<juce::Slider>(juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft);
             spinRecentHoras_->setRange(1, 72, 1);
-            spinRecentHoras_->setValue(matriz::app::lerRecentlyIngestedHoras(), juce::dontSendNotification);
+            spinRecentHoras_->setValue(matriz::app::lerIntakeHoras(), juce::dontSendNotification);
             spinRecentHoras_->setColour(juce::Slider::textBoxTextColourId, tk.textoPrimario);
             spinRecentHoras_->setColour(juce::Slider::textBoxBackgroundColourId, tk.painelAlt);
             spinRecentHoras_->setColour(juce::Slider::textBoxOutlineColourId, tk.borda);
-            bool isTimeCur = curMode != matriz::app::RecentlyIngestedMode::ClearOnStart;
+            bool isTimeCur = curMode != matriz::app::IntakeMode::ClearOnStart;
             spinRecentHoras_->setEnabled(isTimeCur);
             if (!isTimeCur) lblRecentHoras_->setAlpha(0.4f);
             addAndMakeVisible(*spinRecentHoras_);
@@ -418,10 +418,10 @@ void MainWindow::mostrarPreferenciasDialogo() {
                 matriz::app::gravarGeminiApiKey(txtGeminiKey_->getText().trim());
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
                 auto modo = comboRecentMode_->getSelectedId() == 2
-                    ? matriz::app::RecentlyIngestedMode::ClearOnStart
-                    : matriz::app::RecentlyIngestedMode::Time;
-                matriz::app::gravarRecentlyIngestedMode(modo);
-                matriz::app::gravarRecentlyIngestedHoras(static_cast<int>(spinRecentHoras_->getValue()));
+                    ? matriz::app::IntakeMode::ClearOnStart
+                    : matriz::app::IntakeMode::Time;
+                matriz::app::gravarIntakeMode(modo);
+                matriz::app::gravarIntakeHoras(static_cast<int>(spinRecentHoras_->getValue()));
                 matriz::ui::recarregarTema();
                 if (janela_) janela_->exitModalState(0);
             };

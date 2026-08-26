@@ -140,6 +140,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ficha/FichaDefinition.cpp
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
+    Source/Analytics/AssetGeolocation.cpp
     Source/Model/Project.cpp)
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -234,6 +235,7 @@ target_sources(matriz PRIVATE
     Source/Ui/AudioWorkspace.cpp
     Source/Ui/BackupWorkspaceComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
+    Source/Ui/IntakeWorkspaceComponent.cpp
     Source/Ui/HierarquiaEditorComponent.cpp
     Source/Ui/TagChipsEditor.cpp
     Source/Ui/FichaPanelComponent.cpp

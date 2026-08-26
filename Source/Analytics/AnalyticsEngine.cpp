@@ -12,35 +12,35 @@ std::string AnalyticsEngine::buildDimensionExpression(DimensionType dim, TimeGra
         case DimensionType::None:
             return "'TOTAL'";
         case DimensionType::MediaType:
-            return "COALESCE(" + tableAlias + ".tipo_midia, 'Sem Classificação')";
+            return "COALESCE(" + tableAlias + ".tipo_midia, 'Unclassified')";
         case DimensionType::Extension:
             return "COALESCE(LOWER(SUBSTR(a.caminho_relativo, INSTR(a.caminho_relativo, '.'))), 'sem_extensao')";
         case DimensionType::Collection:
-            return "COALESCE(ap.nome, 'Sem Coleção')";
+            return "COALESCE(ap.nome, 'No Collection')";
         case DimensionType::Year: {
             if (gran == TimeGranularity::YearMonth) {
-                return "COALESCE(STRFTIME('%Y-%m', " + tableAlias + ".criado_em), 'Sem Data')";
+                return "COALESCE(STRFTIME('%Y-%m', " + tableAlias + ".criado_em), 'No Date')";
             } else if (gran == TimeGranularity::Month) {
-                return "COALESCE(STRFTIME('%m', " + tableAlias + ".criado_em), 'Sem Data')";
+                return "COALESCE(STRFTIME('%m', " + tableAlias + ".criado_em), 'No Date')";
             } else if (gran == TimeGranularity::Day) {
-                return "COALESCE(STRFTIME('%Y-%m-%d', " + tableAlias + ".criado_em), 'Sem Data')";
+                return "COALESCE(STRFTIME('%Y-%m-%d', " + tableAlias + ".criado_em), 'No Date')";
             }
-            return "COALESCE(CAST((SELECT valor FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'ano' LIMIT 1) AS TEXT), 'Sem Ano')";
+            return "COALESCE(CAST((SELECT valor FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'ano' LIMIT 1) AS TEXT), 'No Year')";
         }
         case DimensionType::Codec:
-            return "COALESCE(JSON_EXTRACT(a.caracteristicas_tecnicas_json, '$.codec'), 'Desconhecido')";
+            return "COALESCE(JSON_EXTRACT(a.caracteristicas_tecnicas_json, '$.codec'), 'Unknown')";
         case DimensionType::SampleRate:
             return "COALESCE(CAST(JSON_EXTRACT(a.caracteristicas_tecnicas_json, '$.sample_rate') AS TEXT), 'N/A')";
         case DimensionType::BitDepth:
             return "COALESCE(CAST(JSON_EXTRACT(a.caracteristicas_tecnicas_json, '$.bit_depth') AS TEXT), 'N/A')";
         case DimensionType::Content:
-            return "COALESCE((SELECT valor FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'content_type' LIMIT 1), 'Geral')";
+            return "COALESCE((SELECT valor FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'content_type' LIMIT 1), 'General')";
         case DimensionType::IsrcStatus:
-            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'isrc' AND TRIM(IFNULL(valor, '')) <> '') THEN 'Com ISRC' ELSE 'Sem ISRC' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'isrc' AND TRIM(IFNULL(valor, '')) <> '') THEN 'Has ISRC' ELSE 'No ISRC' END";
         case DimensionType::PreservationStatus:
             return "COALESCE(aps.fixity_status, 'UNKNOWN')";
         case DimensionType::MetadataStatus:
-            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id) THEN 'Com Metadata' ELSE 'Sem Metadata' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id) THEN 'Has Metadata' ELSE 'No Metadata' END";
         case DimensionType::AssetOrigin:
             return "COALESCE((SELECT valor FROM item_campo WHERE item_id = " + tableAlias + ".id AND campo_id = 'origem' LIMIT 1), 'Digital')";
         case DimensionType::IngestionDate: {
@@ -54,28 +54,28 @@ std::string AnalyticsEngine::buildDimensionExpression(DimensionType dim, TimeGra
             return "STRFTIME('%Y', " + tableAlias + ".criado_em)";
         }
         case DimensionType::Folder:
-            return "COALESCE(ap.nome, 'Não organizado')";
+            return "COALESCE(ap.nome, 'Unorganized')";
         case DimensionType::Tag:
-            return "COALESCE(it_sub.tag, 'Sem Tag')";
+            return "COALESCE(it_sub.tag, 'No Tag')";
         case DimensionType::AssetState:
             return tableAlias + ".estado";
         case DimensionType::HasError:
-            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_err WHERE a_err.item_id = " + tableAlias + ".id AND a_err.estado_presenca = 'corrompido') THEN 'Com Erro' ELSE 'Sem Erro' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_err WHERE a_err.item_id = " + tableAlias + ".id AND a_err.estado_presenca = 'corrompido') THEN 'Has Error' ELSE 'No Error' END";
         case DimensionType::HasThumbnail:
-            return "CASE WHEN EXISTS (SELECT 1 FROM cache_arquivo ca JOIN arquivo a_t ON a_t.id = ca.arquivo_id WHERE a_t.item_id = " + tableAlias + ".id AND ca.miniatura IS NOT NULL) THEN 'Com Thumbnail' ELSE 'Sem Thumbnail' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM cache_arquivo ca JOIN arquivo a_t ON a_t.id = ca.arquivo_id WHERE a_t.item_id = " + tableAlias + ".id AND ca.miniatura IS NOT NULL) THEN 'Has Thumbnail' ELSE 'No Thumbnail' END";
         case DimensionType::HasSidecar:
         case DimensionType::HasXmp:
-            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_xmp WHERE a_xmp.item_id = " + tableAlias + ".id AND LOWER(a_xmp.caminho_relativo) LIKE '%.xmp') THEN 'Com XMP/Sidecar' ELSE 'Sem XMP/Sidecar' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_xmp WHERE a_xmp.item_id = " + tableAlias + ".id AND LOWER(a_xmp.caminho_relativo) LIKE '%.xmp') THEN 'Has XMP/Sidecar' ELSE 'No XMP/Sidecar' END";
         case DimensionType::HasMetadata:
-            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id) THEN 'Com Metadata' ELSE 'Sem Metadata' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM item_campo WHERE item_id = " + tableAlias + ".id) THEN 'Has Metadata' ELSE 'No Metadata' END";
         case DimensionType::IsDuplicate:
-            return "CASE WHEN " + tableAlias + ".estado = 'duplicata' THEN 'Duplicado' ELSE 'Único' END";
+            return "CASE WHEN " + tableAlias + ".estado = 'duplicata' THEN 'Duplicate' ELSE 'Unique' END";
         case DimensionType::HasHash:
-            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_h WHERE a_h.item_id = " + tableAlias + ".id AND a_h.checksum_sha256 IS NOT NULL) THEN 'Com Hash' ELSE 'Sem Hash' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM arquivo a_h WHERE a_h.item_id = " + tableAlias + ".id AND a_h.checksum_sha256 IS NOT NULL) THEN 'Has Hash' ELSE 'No Hash' END";
         case DimensionType::IsPreserved:
-            return "CASE WHEN EXISTS (SELECT 1 FROM item_publicacao ip JOIN publicacao p ON p.id = ip.publicacao_id WHERE ip.item_id = " + tableAlias + ".id AND p.status = 'concluida') THEN 'Preservado' ELSE 'Não Preservado' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM item_publicacao ip JOIN publicacao p ON p.id = ip.publicacao_id WHERE ip.item_id = " + tableAlias + ".id AND p.status = 'concluida') THEN 'Preserved' ELSE 'Not Preserved' END";
         case DimensionType::IsParcialPreserved:
-            return "CASE WHEN EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = " + tableAlias + ".id) THEN 'Preservação Parcial' ELSE 'Sem Preservação Parcial' END";
+            return "CASE WHEN EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = " + tableAlias + ".id) THEN 'Partial Preservation' ELSE 'No Partial Preservation' END";
     }
     return "'TOTAL'";
 }

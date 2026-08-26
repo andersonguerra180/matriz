@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS item (
                                       'publicado', 'arquivado', 'duplicata',
                                       'nao_digitalizado', 'capturado', 'qc_ok', 'alerta')),
     notas_livres    TEXT,
+    em_quarentena   INTEGER NOT NULL DEFAULT 0 CHECK (em_quarentena IN (0, 1)),
     criado_em       TEXT NOT NULL,
     atualizado_em   TEXT NOT NULL,
     UNIQUE (projeto_id, codigo_acervo)
@@ -684,32 +685,12 @@ WHERE NOT EXISTS (
     JOIN publicacao p ON p.id = ip.publicacao_id
     WHERE ip.item_id = i.id AND p.status = 'concluida');
 
--- Revisão: tem marcador aberto do tipo "revisar" ou "dropout" OR has missing metadata.
+-- Revisão: tem marcador aberto do tipo "revisar" ou "dropout".
 CREATE VIEW IF NOT EXISTS colecao_revisao AS
 SELECT DISTINCT m.item_id AS item_id, 'revisao' AS colecao
 FROM marcador m
 WHERE IFNULL(m.status, 'aberto') = 'aberto'
-  AND (m.tipo_id IN ('revisar', 'dropout'))
-UNION
-SELECT i.id AS item_id, 'revisao' AS colecao
-FROM item i
-CROSS JOIN projeto p
-WHERE (p.modo = 'catalogo' AND (
-      (i.tipo_midia IS NULL OR TRIM(i.tipo_midia) = '')
-      OR (i.titulo IS NULL OR TRIM(i.titulo) = '')
-      OR (i.caminho_catalogo IS NULL OR TRIM(i.caminho_catalogo) = '')
-      OR (i.ano IS NULL OR TRIM(i.ano) = '')
-      OR (i.content_type IS NULL OR TRIM(i.content_type) = '')
-      OR (i.collection_type IS NULL OR TRIM(i.collection_type) = '')
-      OR (i.notas_livres IS NULL OR TRIM(i.notas_livres) = '')
-      OR (NOT EXISTS (SELECT 1 FROM item_tag t WHERE t.item_id = i.id))
-      OR (i.tipo_midia = 'audio' AND (i.isrc IS NULL OR TRIM(i.isrc) = ''))
-      OR (i.tipo_midia IN ('video', 'image', 'document', 'texto', 'sessao', 'documento', 'foto', 'digital_video') AND (i.source_media IS NULL OR TRIM(i.source_media) = ''))
-   ))
-   OR (p.modo = 'preservacao' AND (
-      (i.tipo_midia IS NULL OR TRIM(i.tipo_midia) = '')
-      OR (i.titulo IS NULL OR TRIM(i.titulo) = '')
-   ));
+  AND (m.tipo_id IN ('revisar', 'dropout'));
 
 -- União de todas, pra a UI consultar um lugar só.
 CREATE VIEW IF NOT EXISTS colecao_embutida AS

@@ -30,11 +30,11 @@ void gravarTema(const juce::String& tema);
 float lerEscalaFonte();
 void gravarEscalaFonte(float escala);
 
-enum class RecentlyIngestedMode { Time, ClearOnStart };
-RecentlyIngestedMode lerRecentlyIngestedMode();
-void gravarRecentlyIngestedMode(RecentlyIngestedMode modo);
-int lerRecentlyIngestedHoras();
-void gravarRecentlyIngestedHoras(int horas);
+enum class IntakeMode { Time, ClearOnStart };
+IntakeMode lerIntakeMode();
+void gravarIntakeMode(IntakeMode modo);
+int lerIntakeHoras();
+void gravarIntakeHoras(int horas);
 
 const juce::Time& inicioDaSessao();
 

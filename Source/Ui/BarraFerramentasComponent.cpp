@@ -137,7 +137,6 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
 
     // Horizontal filters
     btnAllAssets_ = std::make_unique<juce::TextButton>("ALL ASSETS");
-    btnRecent_ = std::make_unique<juce::TextButton>("RECENT");
     btnAudio_ = std::make_unique<juce::TextButton>("AUDIO");
     btnVideo_ = std::make_unique<juce::TextButton>("VIDEO");
     btnImage_ = std::make_unique<juce::TextButton>("IMAGE");
@@ -145,7 +144,6 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
 
     std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
         { btnAllAssets_.get(), "all" },
-        { btnRecent_.get(), "recent" },
         { btnAudio_.get(), "audio" },
         { btnVideo_.get(), "video" },
         { btnImage_.get(), "image" },
@@ -196,7 +194,6 @@ void BarraFerramentasComponent::atualizarBotoesFiltroHorizontal() {
     const auto& tk = tema();
     std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
         { btnAllAssets_.get(), "all" },
-        { btnRecent_.get(), "recent" },
         { btnAudio_.get(), "audio" },
         { btnVideo_.get(), "video" },
         { btnImage_.get(), "image" },
@@ -291,14 +288,13 @@ void BarraFerramentasComponent::resized() {
     campoBusca_->setBounds(buscaBox);
 
     // --- BOTTOM ROW ---
-    // Lay out the 6 horizontal filter buttons side-by-side
-    int nFilters = 6;
+    // Lay out the 5 horizontal filter buttons side-by-side
+    int nFilters = 5;
     int filterW = 120;
     int gap = tk.espacoMedio;
     int startX = areaBottom.getX();
     
     btnAllAssets_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
-    btnRecent_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnAudio_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnVideo_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnImage_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;

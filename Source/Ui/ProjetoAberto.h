@@ -78,6 +78,9 @@ public:
     std::unique_ptr<matriz::model::Project> destacarProjeto() { return std::move(projeto_); }
 
     std::vector<ItemResumo> listarItens() const;
+    std::vector<ItemResumo> listarItensEmQuarentena() const;
+    void confirmarItemGrid(const std::string& itemId);
+    void confirmarLoteGrid(const std::vector<std::string>& itemIds);
     // Soma o tamanho do master de cada item. Roda um SUM com função de
     // janela sobre `arquivo` inteiro — 619 ms com 5.000 itens sob carga,
     // medido. NUNCA chamar na message thread durante um lote.

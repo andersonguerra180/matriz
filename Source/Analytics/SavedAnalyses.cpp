@@ -89,7 +89,7 @@ std::vector<std::pair<std::string, AnalyticsQuery>> SavedAnalyses::obterPresetsP
         q.measure = {MeasureField::AssetCount, AggregationType::Count};
         q.dimensionA = DimensionType::MediaType;
         q.dimensionB = std::nullopt;
-        q.savedName = "Contagem por Tipo de Mídia";
+        q.savedName = "Count by Media Type";
         presets.push_back({q.savedName, q});
     }
     {
@@ -97,7 +97,7 @@ std::vector<std::pair<std::string, AnalyticsQuery>> SavedAnalyses::obterPresetsP
         q.measure = {MeasureField::FileSize, AggregationType::Sum};
         q.dimensionA = DimensionType::Collection;
         q.dimensionB = DimensionType::MediaType;
-        q.savedName = "Storage por Coleção × Tipo";
+        q.savedName = "Storage by Collection × Type";
         presets.push_back({q.savedName, q});
     }
     {
@@ -105,7 +105,7 @@ std::vector<std::pair<std::string, AnalyticsQuery>> SavedAnalyses::obterPresetsP
         q.measure = {MeasureField::AssetCount, AggregationType::Count};
         q.dimensionA = DimensionType::MediaType;
         q.dimensionB = DimensionType::PreservationStatus;
-        q.savedName = "Tipo × Status de Preservação";
+        q.savedName = "Type × Preservation Status";
         presets.push_back({q.savedName, q});
     }
     {
@@ -113,7 +113,7 @@ std::vector<std::pair<std::string, AnalyticsQuery>> SavedAnalyses::obterPresetsP
         q.measure = {MeasureField::DurationMs, AggregationType::Avg};
         q.dimensionA = DimensionType::MediaType;
         q.dimensionB = std::nullopt;
-        q.savedName = "Duração Média por Tipo";
+        q.savedName = "Average Duration by Type";
         presets.push_back({q.savedName, q});
     }
     {
@@ -121,7 +121,7 @@ std::vector<std::pair<std::string, AnalyticsQuery>> SavedAnalyses::obterPresetsP
         q.measure = {MeasureField::AssetCount, AggregationType::Count};
         q.dimensionA = DimensionType::MediaType;
         q.dimensionB = DimensionType::MetadataStatus;
-        q.savedName = "Arquivos sem Metadata por Tipo";
+        q.savedName = "Files without Metadata by Type";
         presets.push_back({q.savedName, q});
     }
 

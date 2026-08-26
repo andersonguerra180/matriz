@@ -25,7 +25,6 @@ public:
     ~CatalogWorkspaceComponent() override;
 
     void recarregar();
-    void filtrarRecentes();
     void filtrarPorChave(const std::string& chave);
     void filtrarPorIds(std::set<std::string> ids);
     std::set<std::string> itensSelecionados() const;

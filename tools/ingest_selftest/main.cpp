@@ -1770,6 +1770,7 @@ void testarColecoesInteligentes(const juce::File& dir) {
     std::cout << "== Smart collections as SQL views ==\n";
 
     juce::File pastaProjeto = dir.getChildFile("projeto_colecoes");
+    if (pastaProjeto.exists()) pastaProjeto.deleteRecursively();
 
     matriz::model::NovoProjetoParams params;
     params.nome = "Colecoes Teste";

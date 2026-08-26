@@ -80,6 +80,15 @@ public:
     void definirModoAgrupamento(ModoAgrupamento modo);
     ModoAgrupamento modoAgrupamentoAtual() const { return modoAgrupamento_; }
 
+    void definirModoQuarentena(bool modo) {
+        if (modoQuarentena_ != modo) {
+            modoQuarentena_ = modo;
+            repaint();
+        }
+    }
+    bool modoQuarentenaAtual() const { return modoQuarentena_; }
+    std::function<void(const std::string& itemId)> aoConfirmarEntradaGrid;
+
     // Busca (Acréscimos §10.1): código/título, campo de ficha e assunto —
     // consulta o banco via ProjetoAberto::buscarItens a cada chamada (OCR/
     // transcrição não existem ainda, gap declarado). "" limpa a busca.
@@ -246,6 +255,9 @@ private:
     Ordenacao ordenacao_ = Ordenacao::Codigo;
     std::optional<std::set<std::string>> filtroItens_; // seleção da árvore, ver definirFiltroItens
 
+    juce::Rectangle<int> boundsBotaoAdicionarGrid(int indice) const;
+    bool modoQuarentena_ = false;
+    bool recarregarAoTerminarSnapshot_ = false;
     int colunas_ = 1;
     std::string selecionadoId_;       // âncora — última célula clicada (single-click), o que a ficha mostra
     std::set<std::string> selecionados_; // seleção múltipla completa (§3.3 — clique/Shift/Cmd)

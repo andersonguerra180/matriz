@@ -144,9 +144,6 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
 
 void CatalogWorkspaceComponent::timerCallback() {
     atualizarContagens();
-    auto libChave = categorias_.empty() ? std::string() : categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "recent" && mosaico_)
-        mosaico_->recarregar();
 }
 
 void CatalogWorkspaceComponent::construirSidebar() {
@@ -162,7 +159,6 @@ void CatalogWorkspaceComponent::construirSidebar() {
 
     secoesSidebar_.push_back({static_cast<int>(categorias_.size()), "LIBRARY"});
     categorias_.push_back({matriz::i18n::t("catwork.all"), "all", 0});
-    categorias_.push_back({matriz::i18n::t("catwork.recent"), "recent", 0});
     categorias_.push_back({"Folders", "folders", 0});
     categorias_.push_back({"Duplicates", "duplicates", 0});
 
@@ -267,7 +263,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     if (!mosaico_) return;
 
     const auto& libChave = categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "folders" || libChave == "recent") return;
+    if (libChave == "folders") return;
 
     auto itens = projeto_.listarItens();
     std::set<std::string> filteredIds;
@@ -280,10 +276,6 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     }
 
     for (const auto& item : itens) {
-        if (libChave == "recent") {
-            anyFilter = true;
-            if (!matriz::app::ehRecemIngerido(item.criadoEm)) continue;
-        }
 
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
@@ -427,9 +419,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     auto itens = projeto_.listarItens();
     int total = static_cast<int>(itens.size());
 
-    int recentes = 0, audio = 0, video = 0, img = 0, doc = 0, sessao = 0;
+    int audio = 0, video = 0, img = 0, doc = 0, sessao = 0;
     for (const auto& item : itens) {
-        if (matriz::app::ehRecemIngerido(item.criadoEm)) ++recentes;
         auto ext = juce::String(item.extensaoArquivo).toLowerCase();
         auto cat = matriz::ingest::categoriaPorExtensao(ext);
         switch (cat) {
@@ -469,18 +460,17 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     };
 
     definirContagem(0, total);
-    definirContagem(1, recentes);
-    definirContagem(2, total);
-    definirContagem(3, duplicatesCount);
-    definirContagem(4, audio);
-    definirContagem(5, video);
-    definirContagem(6, img);
-    definirContagem(7, doc);
-    definirContagem(8, sessao);
-    definirContagem(9, revisao);
-    definirContagem(10, vulneraveis);
-    definirContagem(11, single_copy);
-    definirContagem(12, ausentes);
+    definirContagem(1, total);        // Folders
+    definirContagem(2, duplicatesCount);
+    definirContagem(3, audio);
+    definirContagem(4, video);
+    definirContagem(5, img);
+    definirContagem(6, doc);
+    definirContagem(7, sessao);
+    definirContagem(8, revisao);
+    definirContagem(9, vulneraveis);
+    definirContagem(10, single_copy);
+    definirContagem(11, ausentes);
 }
 
 void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
@@ -523,7 +513,7 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     caminhoNavegacao_.clear();
 
     const auto& libChave = categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "folders" || libChave == "recent") {
+    if (libChave == "folders") {
         navegarParaPastaOrigem(std::nullopt);
         return;
     }
@@ -555,12 +545,6 @@ void CatalogWorkspaceComponent::navegarParaPastaOrigem(std::optional<std::string
     const auto& libChave = categorias_.empty()
         ? std::string()
         : categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "recent") {
-        std::set<std::string> recentes;
-        for (const auto& item : projeto_.listarItens())
-            if (matriz::app::ehRecemIngerido(item.criadoEm)) recentes.insert(item.id);
-        raiz = ProjetoAberto::podarArvore(raiz, recentes);
-    }
 
     if (!nomePasta.has_value()) {
         caminhoNavegacao_.clear();
@@ -738,7 +722,7 @@ void CatalogWorkspaceComponent::recarregar() {
     const auto& libChave = categorias_.empty()
         ? std::string()
         : categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
-    if (libChave == "folders" || libChave == "recent") {
+    if (libChave == "folders") {
         revalidarPastaAtual();
     } else {
         aplicarFiltrosAdicionais();
@@ -749,9 +733,6 @@ void CatalogWorkspaceComponent::recarregar() {
     if (painelDuplicatas_ && painelDuplicatas_->isVisible()) painelDuplicatas_->recarregar();
 }
 
-void CatalogWorkspaceComponent::filtrarRecentes() {
-    selecionarCategoria(1);
-}
 
 void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
     for (size_t i = 0; i < categorias_.size(); ++i) {

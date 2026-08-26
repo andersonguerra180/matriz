@@ -59,42 +59,42 @@ std::string AnalyticsFormatter::formatValue(double rawValue, MeasureField field,
 
 std::string AnalyticsFormatter::formatDimensionLabel(DimensionType dim) {
     switch (dim) {
-        case DimensionType::None: return "Nenhuma";
-        case DimensionType::MediaType: return "Tipo de Mídia";
-        case DimensionType::Extension: return "Extensão";
-        case DimensionType::Collection: return "Coleção";
-        case DimensionType::Year: return "Ano";
+        case DimensionType::None: return "None";
+        case DimensionType::MediaType: return "Media Type";
+        case DimensionType::Extension: return "Extension";
+        case DimensionType::Collection: return "Collection";
+        case DimensionType::Year: return "Year";
         case DimensionType::Codec: return "Codec";
         case DimensionType::SampleRate: return "Sample Rate";
         case DimensionType::BitDepth: return "Bit Depth";
-        case DimensionType::Content: return "Conteúdo";
+        case DimensionType::Content: return "Content";
         case DimensionType::IsrcStatus: return "Status ISRC";
-        case DimensionType::PreservationStatus: return "Status de Preservação";
-        case DimensionType::MetadataStatus: return "Status de Metadata";
-        case DimensionType::AssetOrigin: return "Origem do Asset";
-        case DimensionType::IngestionDate: return "Data de Ingestão";
-        case DimensionType::Folder: return "Pasta do Acervo";
+        case DimensionType::PreservationStatus: return "Preservation Status";
+        case DimensionType::MetadataStatus: return "Metadata Status";
+        case DimensionType::AssetOrigin: return "Asset Origin";
+        case DimensionType::IngestionDate: return "Ingestion Date";
+        case DimensionType::Folder: return "Archive Folder";
         case DimensionType::Tag: return "Tag";
-        case DimensionType::AssetState: return "Estado do Asset";
-        case DimensionType::HasError: return "Status de Erro";
-        case DimensionType::HasThumbnail: return "Existência de Thumbnail";
-        case DimensionType::HasSidecar: return "Existência de Sidecar";
-        case DimensionType::HasXmp: return "Existência de XMP";
-        case DimensionType::HasMetadata: return "Existência de Metadata";
-        case DimensionType::IsDuplicate: return "Duplicado";
-        case DimensionType::HasHash: return "Existência de Hash SHA-256";
-        case DimensionType::IsPreserved: return "Preservado";
-        case DimensionType::IsParcialPreserved: return "Preservação Parcial";
+        case DimensionType::AssetState: return "Asset State";
+        case DimensionType::HasError: return "Error Status";
+        case DimensionType::HasThumbnail: return "Has Thumbnail";
+        case DimensionType::HasSidecar: return "Has Sidecar";
+        case DimensionType::HasXmp: return "Has XMP";
+        case DimensionType::HasMetadata: return "Has Metadata";
+        case DimensionType::IsDuplicate: return "Duplicate";
+        case DimensionType::HasHash: return "Has SHA-256 Hash";
+        case DimensionType::IsPreserved: return "Preserved";
+        case DimensionType::IsParcialPreserved: return "Partial Preservation";
     }
-    return "Desconhecido";
+    return "Unknown";
 }
 
 std::string AnalyticsFormatter::formatTimeGranularityLabel(TimeGranularity gran) {
     switch (gran) {
-        case TimeGranularity::Year: return "Ano (YYYY)";
-        case TimeGranularity::YearMonth: return "Mês/Ano (YYYY-MM)";
-        case TimeGranularity::Month: return "Mês (MM)";
-        case TimeGranularity::Day: return "Dia (YYYY-MM-DD)";
+        case TimeGranularity::Year: return "Year (YYYY)";
+        case TimeGranularity::YearMonth: return "Month/Year (YYYY-MM)";
+        case TimeGranularity::Month: return "Month (MM)";
+        case TimeGranularity::Day: return "Day (YYYY-MM-DD)";
     }
     return "";
 }

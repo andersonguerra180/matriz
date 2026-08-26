@@ -16,7 +16,7 @@ void AnalyticsTableComponent::updateResult(const matriz::analytics::AnalyticsRes
     header.removeAllColumns();
 
     // Column 1: Dimension A
-    header.addColumn(result_.dimensionALabel.empty() ? "Dimensão" : result_.dimensionALabel, 1, 200, 100, 400);
+    header.addColumn(result_.dimensionALabel.empty() ? "Dimension" : result_.dimensionALabel, 1, 200, 100, 400);
 
     // Columns for Dimension B
     int colId = 2;
@@ -113,7 +113,7 @@ void AnalyticsTableComponent::paint(juce::Graphics& g) {
     if (result_.rowKeys.empty()) {
         g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo)));
-        g.drawText("Nenhum dado retornado para os critérios da consulta.", getLocalBounds(), juce::Justification::centred);
+        g.drawText("No data returned for the query criteria.", getLocalBounds(), juce::Justification::centred);
         return;
     }
 
@@ -130,7 +130,7 @@ void AnalyticsTableComponent::paint(juce::Graphics& g) {
         auto inner = statsBox.reduced(12, 8);
         g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText("ESTATÍSTICAS DESCRITIVAS DO ACERVO (1D)", inner.removeFromTop(14), juce::Justification::centredLeft);
+        g.drawText("DESCRIPTIVE STATISTICS (1D)", inner.removeFromTop(14), juce::Justification::centredLeft);
 
         auto row = inner;
         int statW = row.getWidth() / 7;
@@ -147,10 +147,10 @@ void AnalyticsTableComponent::paint(juce::Graphics& g) {
 
         drawStat("COUNT", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.count, matriz::analytics::MeasureField::AssetCount, matriz::analytics::AggregationType::Count));
         drawStat("TOTAL", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.sum, result_.query.measure.field, matriz::analytics::AggregationType::Sum));
-        drawStat("MÉDIA", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.mean, result_.query.measure.field, matriz::analytics::AggregationType::Avg));
+        drawStat("MEAN", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.mean, result_.query.measure.field, matriz::analytics::AggregationType::Avg));
         drawStat("MEDIANA", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.median, result_.query.measure.field, matriz::analytics::AggregationType::Median));
-        drawStat("MÍNIMO", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.min, result_.query.measure.field, matriz::analytics::AggregationType::Min));
-        drawStat("MÁXIMO", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.max, result_.query.measure.field, matriz::analytics::AggregationType::Max));
+        drawStat("MIN", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.min, result_.query.measure.field, matriz::analytics::AggregationType::Min));
+        drawStat("MAX", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.max, result_.query.measure.field, matriz::analytics::AggregationType::Max));
         drawStat("STDDEV (S)", matriz::analytics::AnalyticsFormatter::formatValue(result_.stats1D.stddevSamp, result_.query.measure.field, matriz::analytics::AggregationType::StdDevSamp));
     }
 }

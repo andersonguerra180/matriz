@@ -52,7 +52,7 @@ private:
     // Selection criteria
     enum class WhatOption {
         Everything,
-        RecentlyIngested,
+        Intake,
         SelectedAssets,
         NeedsBackup,
         Collection

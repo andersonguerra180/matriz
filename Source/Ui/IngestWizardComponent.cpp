@@ -584,8 +584,8 @@ void IngestWizardComponent::iniciarImportacao() {
             auto tipoVal = tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia);
 
             registro->run(
-                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
-                "VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, em_quarentena, criado_em, atualizado_em) "
+                "VALUES (?, ?, NULL, ?, ?, ?, 1, ?, ?)",
                 {matriz::db::Value::of(itemId), matriz::db::Value::of(projetoId),
                  matriz::db::Value::of(resultados_[idx].arquivo.getFileName().toStdString()),
                  tipoVal, matriz::db::Value::of(estado),
@@ -635,9 +635,14 @@ void IngestWizardComponent::iniciarImportacao() {
                     auto resultado = matriz::ingest::gravarArquivoAnalisado(
                         *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
 
+                    // Sequencial permanente SÓ no sucesso (critério 6).
+                    // Busca o maior sufixo numérico existente para este prefixo no banco,
+                    // evitando conflitos causados por itens excluídos ou lacunas de id.
                     int proximoNumero = 1;
-                    auto stmtContagem =
-                        registro->prepare("SELECT COUNT(*) FROM item WHERE codigo_acervo IS NOT NULL");
+                    auto stmtContagem = registro->prepare(
+                        "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+                        "FROM item WHERE codigo_acervo LIKE ?");
+                    stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
                     if (stmtContagem.step())
                         proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
                     juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);

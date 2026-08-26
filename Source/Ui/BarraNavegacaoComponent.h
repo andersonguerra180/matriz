@@ -10,6 +10,7 @@ class BarraNavegacaoComponent : public juce::Component {
 public:
     enum class Tab {
         Home,
+        Intake,
         Grid,
         Analytics,
         Tree,

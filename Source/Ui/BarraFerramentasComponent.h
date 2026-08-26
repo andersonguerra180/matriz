@@ -75,7 +75,6 @@ private:
 
     // Horizontal filters
     std::unique_ptr<juce::TextButton> btnAllAssets_;
-    std::unique_ptr<juce::TextButton> btnRecent_;
     std::unique_ptr<juce::TextButton> btnAudio_;
     std::unique_ptr<juce::TextButton> btnVideo_;
     std::unique_ptr<juce::TextButton> btnImage_;

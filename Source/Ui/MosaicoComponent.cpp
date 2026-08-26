@@ -36,7 +36,11 @@ void MosaicoComponent::recarregar() {
     // Um snapshot por vez. Sem isto, um lote de 5.000 arquivos enfileirava um
     // job a cada 700 ms enquanto o anterior ainda rodava, e cada job carrega
     // um vetor de 5.000 ItemResumo — dezenas de cópias vivas ao mesmo tempo.
-    if (snapshotPendente_) return;
+    if (snapshotPendente_) {
+        recarregarAoTerminarSnapshot_ = true;
+        return;
+    }
+    recarregarAoTerminarSnapshot_ = false;
     snapshotPendente_ = true;
     {
         const juce::ScopedLock sl(cacheLock_);
@@ -54,11 +58,12 @@ void MosaicoComponent::recarregar() {
     const int geracao = ++geracaoSnapshot_;
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
     ProjetoAberto* projeto = &projeto_;
+    bool isQuarentena = modoQuarentena_;
 
-    poolSnapshot_.addJob([safeThis, projeto, geracao]() {
+    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
         std::vector<ItemResumo> itens;
         try {
-            itens = projeto->listarItens();
+            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens();
         } catch (const std::exception&) {
             return;  // projeto fechado no meio: nada a entregar
         }
@@ -72,6 +77,11 @@ void MosaicoComponent::recarregar() {
             self->itensTodos_ = std::move(itens);
             self->aplicarFiltrosEOrdenacao();
             if (self->aoMudarConteudoVisivel) self->aoMudarConteudoVisivel();
+            // A reload was requested while this snapshot was in flight — honour it now.
+            if (self->recarregarAoTerminarSnapshot_) {
+                self->recarregarAoTerminarSnapshot_ = false;
+                self->recarregar();
+            }
         });
     });
 }
@@ -116,7 +126,7 @@ void MosaicoComponent::recarregarSincrono() {
     }
     ++geracaoSnapshot_;  // invalida qualquer snapshot em voo
     snapshotPendente_ = false;
-    itensTodos_ = projeto_.listarItens();
+    itensTodos_ = modoQuarentena_ ? projeto_.listarItensEmQuarentena() : projeto_.listarItens();
     aplicarFiltrosEOrdenacao();
 }
 
@@ -650,6 +660,14 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     if (editorInline_) cancelarEdicaoInline();
 
     const std::string& id = itensFiltrados_[static_cast<size_t>(indice)].id;
+
+    if (modoQuarentena_) {
+        auto btnMais = boundsBotaoAdicionarGrid(indice);
+        if (btnMais.contains(e.getPosition())) {
+            if (aoConfirmarEntradaGrid) aoConfirmarEntradaGrid(id);
+            return;
+        }
+    }
 
     clicouNaTituloDeItemSelecionado_ = false;
     stopTimer();
@@ -1360,6 +1378,21 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                                           juce::PathStrokeType::rounded));
             }
 
+            // Button "+" in top-right for confirming quarantine item into GRID
+            if (modoQuarentena_) {
+                constexpr int kTamMais = 22;
+                int offRight = selecionado ? 30 : 6;
+                juce::Rectangle<float> btnMais(static_cast<float>(areaImagem.getRight() - kTamMais - offRight),
+                                               static_cast<float>(areaImagem.getY() + 6),
+                                               static_cast<float>(kTamMais),
+                                               static_cast<float>(kTamMais));
+                g.setColour(juce::Colour(0xff22c55e)); // Green badge
+                g.fillRoundedRectangle(btnMais, 11.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                g.drawText("+", btnMais, juce::Justification::centred);
+            }
+
             juce::String nomeExibicaoGrid = item.titulo.empty() ? juce::String(item.nomeOriginalArquivo) : juce::String(item.titulo);
             auto areaTexto = bounds.withTop(areaImagem.getBottom() + 2).reduced(6, 0);
             g.setColour(tk.textoPrimario);
@@ -1449,6 +1482,14 @@ void MosaicoComponent::cancelarEdicaoInline() {
     editorInline_->onFocusLost = nullptr;
     removeChildComponent(editorInline_.get());
     editorInline_.reset();
+}
+
+juce::Rectangle<int> MosaicoComponent::boundsBotaoAdicionarGrid(int indice) const {
+    auto bounds = boundsDaCelula(indice);
+    int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
+    juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
+    constexpr int kTam = 26;
+    return juce::Rectangle<int>(areaImagem.getRight() - kTam - 4, areaImagem.getY() + 2, kTam, kTam);
 }
 
 } // namespace matriz::ui
