@@ -2035,14 +2035,39 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 {
                     const std::lock_guard<std::mutex> lock(*escritaRegistro);
 
+                    bool duplicadoPorChecksum = false;
+                    bool duplicadoPorMetadados = false;
                     auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, analise.checksums.sha256);
                     if (conhecido) {
-                        matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
-                        juce::String nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
-                                             " - already in the archive, not copied again.";
-                        // codigo_acervo fica NULL: o conteúdo já tem um código (o
-                        // do item original, citado na nota) e um sequencial só é
-                        // gasto por conteúdo novo (§5, critério 6).
+                        duplicadoPorChecksum = true;
+                    } else {
+                        double dur = analise.leitura.duracaoSegundos.value_or(0.0);
+                        int w = analise.leitura.larguraPx.value_or(0);
+                        int h = analise.leitura.alturaPx.value_or(0);
+                        std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
+                        std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h);
+                        if (conhecido) {
+                            duplicadoPorMetadados = true;
+                        }
+                    }
+
+                    if (conhecido) {
+                        juce::String nota;
+                        if (duplicadoPorChecksum) {
+                            matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
+                            nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
+                                   " - already in the archive, not copied again.";
+                        } else {
+                            PapelInfo papelInfo = papelPorCategoria(categoria);
+                            auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
+                                                                                     papelInfo.papel,
+                                                                                     papelInfo.ehMaster);
+                            arquivoIdGravado = resultado.arquivoId;
+                            nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
+                                   " (matched name, format, duration/dimensions). Flagged as duplicate.";
+                        }
+
                         registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
                                       {matriz::db::Value::of(nota.toStdString()),
                                        matriz::db::Value::of(itemId)});

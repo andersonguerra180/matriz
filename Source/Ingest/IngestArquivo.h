@@ -112,6 +112,13 @@ std::optional<AssetConhecido> buscarAssetConhecido(matriz::db::Database& registr
 std::optional<AssetConhecido> buscarAssetPorChecksum(matriz::db::Database& registro,
                                                       const std::string& sha256);
 
+std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& registro,
+                                                       const std::string& titulo,
+                                                       const std::string& ext,
+                                                       double duracao,
+                                                       int largura,
+                                                       int altura);
+
 
 // Registra que o mesmo conteúdo de `arquivoId` também foi encontrado em
 // `caminhoAbsoluto` — nunca copia nada, só amplia "quantas cópias existem e

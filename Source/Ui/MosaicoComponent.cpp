@@ -1498,8 +1498,13 @@ juce::Rectangle<int> MosaicoComponent::boundsBotaoAdicionarGrid(int indice) cons
     auto bounds = boundsDaCelula(indice);
     int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
     juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
-    constexpr int kTam = 26;
-    return juce::Rectangle<int>(areaImagem.getRight() - kTam - 4, areaImagem.getY() + 2, kTam, kTam);
+    
+    const std::string& id = itensFiltrados_[static_cast<size_t>(indice)].id;
+    bool selecionado = selecionados_.count(id) > 0;
+    
+    constexpr int kTamMais = 22;
+    int offRight = selecionado ? 30 : 6;
+    return juce::Rectangle<int>(areaImagem.getRight() - kTamMais - offRight, areaImagem.getY() + 6, kTamMais, kTamMais);
 }
 
 } // namespace matriz::ui

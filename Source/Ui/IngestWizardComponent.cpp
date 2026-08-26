@@ -480,9 +480,16 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
                         } catch (...) {}
                     }
 
-                    // Duplicate check (read-only query)
                     auto conhecido = matriz::ingest::buscarAssetPorChecksum(
                         *registro, resultado.analise.checksums.sha256);
+                    if (!conhecido) {
+                        double dur = resultado.analise.leitura.duracaoSegundos.value_or(0.0);
+                        int w = resultado.analise.leitura.larguraPx.value_or(0);
+                        int h = resultado.analise.leitura.alturaPx.value_or(0);
+                        std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
+                        std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h);
+                    }
                     if (conhecido) {
                         resultado.ehDuplicata = true;
                         resultado.itemIdExistente = conhecido->codigoAcervo;
@@ -615,13 +622,38 @@ void IngestWizardComponent::iniciarImportacao() {
                 const std::lock_guard<std::mutex> lock(*escritaRegistro);
 
                 if (res.ehDuplicata) {
-                    auto conhecido = matriz::ingest::buscarAssetPorChecksum(
-                        *registro, res.analise.checksums.sha256);
+                    bool duplicadoPorChecksum = false;
+                    bool duplicadoPorMetadados = false;
+                    auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, res.analise.checksums.sha256);
                     if (conhecido) {
-                        matriz::ingest::registrarLocalizacaoConhecida(
-                            *registro, conhecido->arquivoId, res.arquivo);
-                        juce::String nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
-                                             " - already in the archive.";
+                        duplicadoPorChecksum = true;
+                    } else {
+                        double dur = res.analise.leitura.duracaoSegundos.value_or(0.0);
+                        int w = res.analise.leitura.larguraPx.value_or(0);
+                        int h = res.analise.leitura.alturaPx.value_or(0);
+                        std::string tit = res.arquivo.getFileNameWithoutExtension().toStdString();
+                        std::string ext = res.arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h);
+                        if (conhecido) {
+                            duplicadoPorMetadados = true;
+                        }
+                    }
+
+                    if (conhecido) {
+                        juce::String nota;
+                        if (duplicadoPorChecksum) {
+                            matriz::ingest::registrarLocalizacaoConhecida(
+                                *registro, conhecido->arquivoId, res.arquivo);
+                            nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
+                                   " - already in the archive.";
+                        } else {
+                            PapelInfo papelInfo = papelPorCategoria(res.categoria);
+                            auto resultado = matriz::ingest::gravarArquivoAnalisado(
+                                *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
+                            nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
+                                   " (matched name, format, duration/dimensions). Flagged as duplicate.";
+                        }
+
                         registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
                                       {matriz::db::Value::of(nota.toStdString()),
                                        matriz::db::Value::of(itemId)});

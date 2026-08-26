@@ -255,4 +255,79 @@ void registrarLocalizacaoConhecida(matriz::db::Database& registro, const std::st
          Value::of(caminhoAbsoluto.getFullPathName().toStdString()), Value::of(matriz::model::agoraIso8601())});
 }
 
+std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& registro,
+                                                       const std::string& titulo,
+                                                       const std::string& ext,
+                                                       double duracao,
+                                                       int largura,
+                                                       int altura) {
+    auto stmt = registro.prepare(
+        "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json "
+        "FROM item i "
+        "JOIN arquivo a ON a.item_id = i.id "
+        "WHERE a.eh_master = 1 AND ("
+        "  LOWER(i.titulo) = ? "
+        "  OR (? > 0.0 AND ABS(CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) - ?) < 0.1) "
+        "  OR (? > 0 AND ? > 0 AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) = ? AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) = ?)"
+        ")");
+
+    std::string tituloLower = juce::String(titulo).toLowerCase().toStdString();
+    stmt.bind(1, Value::of(tituloLower));
+    stmt.bind(2, Value::of(duracao));
+    stmt.bind(3, Value::of(duracao));
+    stmt.bind(4, Value::of(largura));
+    stmt.bind(5, Value::of(altura));
+    stmt.bind(6, Value::of(largura));
+    stmt.bind(7, Value::of(altura));
+
+    while (stmt.step()) {
+        int coincidences = 0;
+
+        // Coincidência 1: Nome (case-insensitive)
+        std::string candTitulo = stmt.columnText(3);
+        if (juce::String(candTitulo).equalsIgnoreCase(juce::String(titulo))) {
+            coincidences++;
+        }
+
+        // Coincidência 2: Extensão/Formato (case-insensitive)
+        std::string candCaminho = stmt.columnText(4);
+        juce::String candExt = juce::File(candCaminho).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase();
+        juce::String queryExt = juce::String(ext).toLowerCase();
+        if (candExt == queryExt) {
+            coincidences++;
+        }
+
+        // Coincidências 3 e 4: Duração e Dimensões (lidos do JSON)
+        std::string jsonStr = stmt.columnText(5);
+        auto jsonVar = juce::JSON::parse(jsonStr);
+        if (auto* obj = jsonVar.getDynamicObject()) {
+            // Duração
+            if (duracao > 0.0 && obj->hasProperty("duracaoSegundos")) {
+                double candDur = obj->getProperty("duracaoSegundos");
+                if (std::abs(candDur - duracao) < 0.1) {
+                    coincidences++;
+                }
+            }
+            // Dimensões
+            if (largura > 0 && altura > 0 && obj->hasProperty("larguraPx") && obj->hasProperty("alturaPx")) {
+                int candW = obj->getProperty("larguraPx");
+                int candH = obj->getProperty("alturaPx");
+                if (candW == largura && candH == altura) {
+                    coincidences++;
+                }
+            }
+        }
+
+        if (coincidences >= 3) {
+            AssetConhecido conhecido;
+            conhecido.arquivoId = stmt.columnText(0);
+            conhecido.itemId = stmt.columnText(1);
+            conhecido.codigoAcervo = stmt.columnText(2);
+            return conhecido;
+        }
+    }
+
+    return std::nullopt;
+}
+
 } // namespace matriz::ingest
