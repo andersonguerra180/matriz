@@ -3,6 +3,8 @@
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
 #include "../Consolidacao/MetadadoEmbutido.h"
+#include "../Vault/Resolucao.h"
+#include "../Preservation/Preservation.h"
 
 namespace matriz::ui {
 
@@ -368,8 +370,23 @@ void BackupWorkspaceComponent::exportarCsv() {
             } catch (...) {}
         }
 
+        struct ProgressThread : public juce::ThreadWithProgressWindow {
+            ProgressThread(const juce::String& title, std::function<void(ProgressThread*)> work)
+                : juce::ThreadWithProgressWindow(title, true, true), work_(work) {}
+            void run() override { if (work_) work_(this); }
+            std::function<void(ProgressThread*)> work_;
+        };
+
         juce::String err;
-        bool ok = projeto_.exportarFullCsvPacote(ids, targetDir, err);
+        bool ok = false;
+        ProgressThread thread("EXPORT METADATA - CSV (FULL)", [this, &ids, &targetDir, &ok, &err](ProgressThread* t) {
+            t->setStatusMessage("Generating BKR Full CSV Package...");
+            t->setProgress(0.4);
+            ok = projeto_.exportarFullCsvPacote(ids, targetDir, err);
+            t->setProgress(1.0);
+        });
+        thread.runThread();
+
         if (ok) {
             juce::File pkgDir = targetDir.getChildFile("BKR_Full_Export");
             juce::AlertWindow::showAsync(
@@ -406,7 +423,22 @@ void BackupWorkspaceComponent::exportarXls() {
             } catch (...) {}
         }
 
-        auto xls = projeto_.exportarXlsXml(ids);
+        struct ProgressThread : public juce::ThreadWithProgressWindow {
+            ProgressThread(const juce::String& title, std::function<void(ProgressThread*)> work)
+                : juce::ThreadWithProgressWindow(title, true, true), work_(work) {}
+            void run() override { if (work_) work_(this); }
+            std::function<void(ProgressThread*)> work_;
+        };
+
+        juce::String xls;
+        ProgressThread thread("EXPORT METADATA - XLS", [this, &ids, &xls](ProgressThread* t) {
+            t->setStatusMessage("Generating XLS Spreadsheet (" + juce::String(static_cast<int>(ids.size())) + " items)...");
+            t->setProgress(0.5);
+            xls = projeto_.exportarXlsXml(ids);
+            t->setProgress(1.0);
+        });
+        thread.runThread();
+
         targetFile.replaceWithText(xls);
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
@@ -467,7 +499,22 @@ void BackupWorkspaceComponent::exportarDublinCore() {
             } catch (...) {}
         }
 
-        auto csv = projeto_.exportarDublinCoreCsv(ids);
+        struct ProgressThread : public juce::ThreadWithProgressWindow {
+            ProgressThread(const juce::String& title, std::function<void(ProgressThread*)> work)
+                : juce::ThreadWithProgressWindow(title, true, true), work_(work) {}
+            void run() override { if (work_) work_(this); }
+            std::function<void(ProgressThread*)> work_;
+        };
+
+        juce::String csv;
+        ProgressThread thread("EXPORT METADATA - CSV (DUBLIN CORE)", [this, &ids, &csv](ProgressThread* t) {
+            t->setStatusMessage("Generating Dublin Core CSV (" + juce::String(static_cast<int>(ids.size())) + " items)...");
+            t->setProgress(0.5);
+            csv = projeto_.exportarDublinCoreCsv(ids);
+            t->setProgress(1.0);
+        });
+        thread.runThread();
+
         targetFile.replaceWithText(csv);
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
@@ -479,21 +526,73 @@ void BackupWorkspaceComponent::exportarDublinCore() {
     }
 }
 
+juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::function<void(int, int)>& onProgress) {
+    juce::String manifest;
+    int total = static_cast<int>(plano_.itens.size());
+    int feito = 0;
+
+    for (const auto& item : plano_.itens) {
+        if (onProgress) onProgress(feito, total);
+
+        juce::String hash;
+        try {
+            auto stmt = projeto_.projeto().registro().prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(item.arquivoId));
+            if (stmt.step() && !stmt.columnIsNull(0)) {
+                hash = stmt.columnText(0);
+            }
+        } catch (...) {}
+
+        if (hash.isEmpty()) {
+            auto resolvido = matriz::vault::resolverArquivo(projeto_.projeto().registro(), item.arquivoId, projeto_.projeto().pasta());
+            juce::File srcFile = resolvido ? *resolvido : projeto_.projeto().pasta().getChildFile(item.nomeOriginal);
+            if (srcFile.existsAsFile()) {
+                hash = juce::SHA256(srcFile).toHexString().toLowerCase();
+            }
+        }
+
+        juce::String relPath = item.caminhoRelativoDestino;
+        if (relPath.isEmpty()) relPath = item.nomeOriginal;
+
+        if (hash.isEmpty()) hash = "0000000000000000000000000000000000000000000000000000000000000000";
+        manifest += hash + "  " + relPath + "\n";
+        feito++;
+    }
+
+    if (onProgress) onProgress(total, total);
+    return manifest;
+}
+
 void BackupWorkspaceComponent::exportarChecksums() {
     juce::FileChooser fc("Export Checksum Manifest...", juce::File::getSpecialLocation(juce::File::userHomeDirectory), "*.sha256");
     if (fc.browseForFileToSave(true)) {
         juce::File targetFile = fc.getResult();
         if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("sha256");
 
-        std::vector<std::string> ids;
-        for (const auto& item : plano_.itens) ids.push_back(item.itemId);
-        auto manifest = projeto_.exportarFixityManifest(ids);
-        targetFile.replaceWithText(manifest.toStdString());
+        struct ProgressThread : public juce::ThreadWithProgressWindow {
+            ProgressThread(const juce::String& title, std::function<void(ProgressThread*)> work)
+                : juce::ThreadWithProgressWindow(title, true, true), work_(work) {}
+            void run() override { if (work_) work_(this); }
+            std::function<void(ProgressThread*)> work_;
+        };
+
+        juce::String manifest;
+        ProgressThread thread("EXPORT METADATA - CHECKSUMS", [this, &manifest](ProgressThread* t) {
+            manifest = gerarManifestChecksumsBackup([t](int feito, int total) {
+                if (total > 0) {
+                    t->setStatusMessage("Generating SHA-256 Checksum: " + juce::String(feito + 1) + " of " + juce::String(total) + "...");
+                    t->setProgress(static_cast<double>(feito) / total);
+                }
+            });
+        });
+        thread.runThread();
+
+        targetFile.replaceWithText(manifest);
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::InfoIcon)
                 .withTitle("EXPORT CHECKSUMS")
-                .withMessage("Checksum manifest exported to:\n" + targetFile.getFullPathName()
+                .withMessage("Checksum manifest (" + juce::String(static_cast<int>(plano_.itens.size())) + " files) exported to:\n" + targetFile.getFullPathName()
                              + "\n\nVerify with:  sha256sum -c " + targetFile.getFileName())
                 .withButton("OK"),
             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
@@ -512,10 +611,8 @@ void BackupWorkspaceComponent::exportarDublinCorePara(const juce::File& destFold
 void BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
     juce::File targetFile = destFolder.getChildFile(projectName + ".sha256");
-    std::vector<std::string> ids;
-    for (const auto& item : plano_.itens) ids.push_back(item.itemId);
-    auto manifest = projeto_.exportarFixityManifest(ids);
-    targetFile.replaceWithText(manifest.toStdString());
+    juce::String manifest = gerarManifestChecksumsBackup(nullptr);
+    targetFile.replaceWithText(manifest);
 }
 
 void BackupWorkspaceComponent::aplicarEstiloBotao(juce::TextButton& botao, bool primario) {

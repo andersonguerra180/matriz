@@ -137,6 +137,7 @@ private:
     void exportarXlsPara(const juce::File& destFolder);
     void exportarDublinCorePara(const juce::File& destFolder);
     void exportarChecksumsPara(const juce::File& destFolder);
+    juce::String gerarManifestChecksumsBackup(const std::function<void(int, int)>& onProgress = nullptr);
 
     // Helpers
     std::set<std::string> obterItensSelecionadosPeloCriterio();
