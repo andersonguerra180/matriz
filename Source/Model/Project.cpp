@@ -419,6 +419,13 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             ")",
             { db::Value::of(agora), db::Value::of(agora) });
     } catch (...) {}
+
+    // 5. Garantir que os índices de performance para acervos grandes existam
+    try {
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao)");
+    } catch (...) {}
 }
 
 } // namespace

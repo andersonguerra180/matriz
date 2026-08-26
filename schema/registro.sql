@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS item (
 CREATE INDEX IF NOT EXISTS idx_item_projeto ON item(projeto_id);
 CREATE INDEX IF NOT EXISTS idx_item_tipo_midia ON item(tipo_midia);
 CREATE INDEX IF NOT EXISTS idx_item_estado ON item(estado);
+CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em);
 
 -- ---------------------------------------------------------------------------
 -- Tags — cada tag é armazenada separadamente para busca (§ metadata spec).
@@ -298,6 +299,8 @@ CREATE TABLE IF NOT EXISTS arquivo (
 CREATE INDEX IF NOT EXISTS idx_arquivo_item ON arquivo(item_id);
 CREATE INDEX IF NOT EXISTS idx_arquivo_checksum_sha256 ON arquivo(checksum_sha256);
 CREATE INDEX IF NOT EXISTS idx_arquivo_caminho_absoluto_origem ON arquivo(caminho_absoluto_origem);
+CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master);
+CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao);
 
 -- ---------------------------------------------------------------------------
 -- Sinalizador de reconciliação em curso (§8).
