@@ -1131,6 +1131,22 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     const auto& tk = matriz::ui::tema();
     g.fillAll(tk.fundo);
 
+    static const juce::Font font14Bold(juce::FontOptions(14.0f, juce::Font::bold));
+    static const juce::Font font13Bold(juce::FontOptions(13.0f, juce::Font::bold));
+    static const juce::Font font11Bold(juce::FontOptions(11.0f, juce::Font::bold));
+    static const juce::Font font11Normal(juce::FontOptions(11.0f));
+    static const juce::Font font10Bold(juce::FontOptions(10.0f, juce::Font::bold));
+    static const juce::Font font95Normal(juce::FontOptions(9.5f));
+    static const juce::Font font9Bold(juce::FontOptions(9.0f, juce::Font::bold));
+
+    static const juce::Path checkmarkPath = []() {
+        juce::Path p;
+        p.startNewSubPath(0.24f, 0.50f);
+        p.lineTo(0.42f, 0.70f);
+        p.lineTo(0.78f, 0.30f);
+        return p;
+    }();
+
     if (arrastandoArquivo_) {
         g.setColour(tk.acento.withAlpha(0.12f));
         g.fillRect(g.getClipBounds());
@@ -1193,7 +1209,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             g.setColour(tk.painelAlt);
             g.fillRect(areaCabecalho);
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            g.setFont(font11Bold);
             g.drawText(grupo.rotulo, areaCabecalho.reduced(tema().espacoMedio, 0), juce::Justification::centredLeft);
         }
 
@@ -1243,12 +1259,9 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(tk.acento);
                     g.fillRoundedRectangle(checkRect, 3.0f);
                     g.setColour(tk.textoSobreAcento);
-                    juce::Path tique;
-                    tique.startNewSubPath(checkRect.getX() + kCheckDiam * 0.24f, checkRect.getCentreY());
-                    tique.lineTo(checkRect.getX() + kCheckDiam * 0.42f, checkRect.getY() + kCheckDiam * 0.70f);
-                    tique.lineTo(checkRect.getX() + kCheckDiam * 0.78f, checkRect.getY() + kCheckDiam * 0.30f);
-                    g.strokePath(tique, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
-                                                               juce::PathStrokeType::rounded));
+                    g.strokePath(checkmarkPath, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                                                       juce::PathStrokeType::rounded),
+                                 juce::AffineTransform::scale(static_cast<float>(kCheckDiam)).translated(checkRect.getX(), checkRect.getY()));
                 } else {
                     g.setColour(sobHover ? tk.textoTerciario : tk.borda);
                     g.drawRoundedRectangle(checkRect, 3.0f, 1.2f);
@@ -1281,7 +1294,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 auto extBadge = areaExt.withSizeKeepingCentre(extW, 20);
                 g.fillRoundedRectangle(extBadge.toFloat(), 10.0f);
                 g.setColour(corCat);
-                g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+                g.setFont(font10Bold);
                 g.drawText(ext, extBadge, juce::Justification::centred);
 
                 auto areaTexto = linha.reduced(4, 0);
@@ -1289,14 +1302,14 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
                 juce::String nomeExibicaoList = item.titulo.empty() ? juce::String(item.nomeOriginalArquivo) : juce::String(item.titulo);
                 g.setColour(tk.textoPrimario);
-                g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+                g.setFont(font13Bold);
                 g.drawText(nomeExibicaoList, areaTexto.removeFromTop(metadeAltura),
                            juce::Justification::centredLeft, true);
 
                 juce::String info2 = item.extensaoArquivo.empty() ? juce::String("FILE") : juce::String(item.extensaoArquivo).toUpperCase();
                 if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                g.setFont(font11Normal);
                 g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
 
                 continue;
@@ -1330,7 +1343,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(badge.toFloat(), 8.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+                g.setFont(font9Bold);
                 g.drawText(ext, badge, juce::Justification::centred);
             }
 
@@ -1342,7 +1355,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+                g.setFont(font9Bold);
                 g.drawText(durText, durBadge, juce::Justification::centred);
             }
 
@@ -1370,12 +1383,9 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(tk.acento);
                 g.fillRoundedRectangle(marca, 4.0f);
                 g.setColour(tk.textoSobreAcento);
-                juce::Path tique;
-                tique.startNewSubPath(marca.getX() + kDiametroMarca * 0.24f, marca.getCentreY());
-                tique.lineTo(marca.getX() + kDiametroMarca * 0.42f, marca.getY() + kDiametroMarca * 0.70f);
-                tique.lineTo(marca.getX() + kDiametroMarca * 0.78f, marca.getY() + kDiametroMarca * 0.30f);
-                g.strokePath(tique, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
-                                                          juce::PathStrokeType::rounded));
+                g.strokePath(checkmarkPath, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
+                                                                   juce::PathStrokeType::rounded),
+                             juce::AffineTransform::scale(static_cast<float>(kDiametroMarca)).translated(marca.getX(), marca.getY()));
             }
 
             // Button "+" in top-right for confirming quarantine item into GRID
@@ -1389,14 +1399,14 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colour(0xff22c55e)); // Green badge
                 g.fillRoundedRectangle(btnMais, 11.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                g.setFont(font14Bold);
                 g.drawText("+", btnMais, juce::Justification::centred);
             }
 
             juce::String nomeExibicaoGrid = item.titulo.empty() ? juce::String(item.nomeOriginalArquivo) : juce::String(item.titulo);
             auto areaTexto = bounds.withTop(areaImagem.getBottom() + 2).reduced(6, 0);
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(font11Bold);
             g.drawText(nomeExibicaoGrid, areaTexto.removeFromTop(textAreaH / 2),
                        juce::Justification::centredLeft, true);
 
@@ -1404,7 +1414,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             juce::String info2 = item.extensaoArquivo.empty() ? "FILE" : juce::String(item.extensaoArquivo).toUpperCase();
             if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(9.5f)));
+            g.setFont(font95Normal);
             g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
         }
     }
