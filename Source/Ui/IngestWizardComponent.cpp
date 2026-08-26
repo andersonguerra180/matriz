@@ -488,7 +488,7 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
                         int h = resultado.analise.leitura.alturaPx.value_or(0);
                         std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize());
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), "", pastaProjeto);
                     }
                     if (conhecido) {
                         resultado.ehDuplicata = true;
@@ -633,7 +633,7 @@ void IngestWizardComponent::iniciarImportacao() {
                         int h = res.analise.leitura.alturaPx.value_or(0);
                         std::string tit = res.arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = res.arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize());
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), "", pastaProjeto);
                         if (conhecido) {
                             duplicadoPorMetadados = true;
                         }

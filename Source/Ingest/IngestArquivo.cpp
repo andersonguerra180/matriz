@@ -6,6 +6,8 @@
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
 #include "../Vault/Volume.h"
+#include "../Vault/Resolucao.h"
+#include "LeituraTecnica.h"
 
 namespace matriz::ingest {
 
@@ -262,7 +264,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        int largura,
                                                        int altura,
                                                        juce::int64 tamanhoBytes,
-                                                       const std::string& excludeItemId) {
+                                                       const std::string& excludeItemId,
+                                                       const juce::File& pastaProjeto) {
     auto stmt = registro.prepare(
         "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
         "FROM item i "
@@ -314,6 +317,23 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
 
         // Coincidências 4 e 5: Duração e Dimensões (lidos do JSON)
         std::string jsonStr = stmt.columnText(5);
+        if ((jsonStr == "{}" || jsonStr.empty()) && pastaProjeto != juce::File()) {
+            std::string candArqId = stmt.columnText(0);
+            auto resolvido = matriz::vault::resolverArquivo(registro, candArqId, pastaProjeto);
+            if (resolvido && resolvido->existsAsFile()) {
+                try {
+                    auto categoria = categoriaPorExtensao(*resolvido);
+                    auto analise = analisarArquivo(*resolvido);
+                    juce::var varJson = construirCaracteristicasJson(analise.leitura);
+                    std::string novoJson = juce::JSON::toString(varJson, true).toStdString();
+                    
+                    registro.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE id = ?",
+                                 {matriz::db::Value::of(novoJson),
+                                  matriz::db::Value::of(candArqId)});
+                    jsonStr = novoJson;
+                } catch (...) {}
+            }
+        }
         auto jsonVar = juce::JSON::parse(jsonStr);
         if (auto* obj = jsonVar.getDynamicObject()) {
             // Duração

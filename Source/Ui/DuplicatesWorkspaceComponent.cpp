@@ -268,7 +268,8 @@ void DuplicatesWorkspaceComponent::run() {
         // Find if this item has any metadata duplicates in the database that are NOT the item itself
         // and which were ingested before it (or just has a lexicographically smaller ID to avoid double-listing).
         auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
-            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.itemId);
+            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.itemId,
+            projeto_.projeto().pasta());
 
         if (matchOpt && matchOpt->itemId < item.itemId) {
             // Found a duplicate match group! Let's load the original's details from database.
