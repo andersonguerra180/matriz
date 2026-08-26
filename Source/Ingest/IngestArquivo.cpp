@@ -261,9 +261,10 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        double duracao,
                                                        int largura,
                                                        int altura,
+                                                       juce::int64 tamanhoBytes,
                                                        const std::string& excludeItemId) {
     auto stmt = registro.prepare(
-        "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json "
+        "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
         "FROM item i "
         "JOIN arquivo a ON a.item_id = i.id "
         "WHERE a.eh_master = 1 "
@@ -271,6 +272,7 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
         "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
         "  AND ("
         "    LOWER(i.titulo) = ? "
+        "    OR a.tamanho_bytes = ? "
         "    OR (? > 0.0 AND ABS(CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) - ?) < 0.1) "
         "    OR (? > 0 AND ? > 0 AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) = ? AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) = ?)"
         "  )");
@@ -279,12 +281,13 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
     stmt.bind(1, Value::of(excludeItemId));
     stmt.bind(2, Value::of(excludeItemId));
     stmt.bind(3, Value::of(tituloLower));
-    stmt.bind(4, Value::of(duracao));
+    stmt.bind(4, Value::of(static_cast<long long>(tamanhoBytes)));
     stmt.bind(5, Value::of(duracao));
-    stmt.bind(6, Value::of(largura));
-    stmt.bind(7, Value::of(altura));
-    stmt.bind(8, Value::of(largura));
-    stmt.bind(9, Value::of(altura));
+    stmt.bind(6, Value::of(duracao));
+    stmt.bind(7, Value::of(largura));
+    stmt.bind(8, Value::of(altura));
+    stmt.bind(9, Value::of(largura));
+    stmt.bind(10, Value::of(altura));
 
     while (stmt.step()) {
         int coincidences = 0;
@@ -303,7 +306,13 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
             coincidences++;
         }
 
-        // Coincidências 3 e 4: Duração e Dimensões (lidos do JSON)
+        // Coincidência 3: Tamanho (bytes)
+        juce::int64 candTamanho = stmt.columnInt(6);
+        if (candTamanho == tamanhoBytes) {
+            coincidences++;
+        }
+
+        // Coincidências 4 e 5: Duração e Dimensões (lidos do JSON)
         std::string jsonStr = stmt.columnText(5);
         auto jsonVar = juce::JSON::parse(jsonStr);
         if (auto* obj = jsonVar.getDynamicObject()) {

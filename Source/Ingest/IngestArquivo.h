@@ -118,6 +118,7 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        double duracao,
                                                        int largura,
                                                        int altura,
+                                                       juce::int64 tamanhoBytes,
                                                        const std::string& excludeItemId = "");
 
 

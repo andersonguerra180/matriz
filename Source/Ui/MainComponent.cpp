@@ -2082,7 +2082,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         int h = analise.leitura.alturaPx.value_or(0);
                         std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h);
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize());
                         if (conhecido) {
                             duplicadoPorMetadados = true;
                         }

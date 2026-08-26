@@ -208,12 +208,13 @@ void DuplicatesWorkspaceComponent::run() {
         int largura = 0;
         int altura = 0;
         std::string caminhoRelativo;
+        juce::int64 tamanhoBytes = 0;
     };
     std::vector<ItemInfo> items;
 
     try {
         auto stmt = db.prepare(
-            "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json "
+            "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
             "FROM item i "
             "JOIN arquivo a ON a.item_id = i.id "
             "WHERE a.eh_master = 1 "
@@ -230,6 +231,7 @@ void DuplicatesWorkspaceComponent::run() {
             std::string path = stmt.columnText(3);
             info.caminhoRelativo = path;
             info.ext = juce::File(path).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
+            info.tamanhoBytes = stmt.columnInt(5);
 
             std::string jsonStr = stmt.columnText(4);
             auto jsonVar = juce::JSON::parse(jsonStr);
@@ -266,7 +268,7 @@ void DuplicatesWorkspaceComponent::run() {
         // Find if this item has any metadata duplicates in the database that are NOT the item itself
         // and which were ingested before it (or just has a lexicographically smaller ID to avoid double-listing).
         auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
-            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.itemId);
+            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.itemId);
 
         if (matchOpt && matchOpt->itemId < item.itemId) {
             // Found a duplicate match group! Let's load the original's details from database.
