@@ -260,25 +260,31 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        const std::string& ext,
                                                        double duracao,
                                                        int largura,
-                                                       int altura) {
+                                                       int altura,
+                                                       const std::string& excludeItemId) {
     auto stmt = registro.prepare(
         "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json "
         "FROM item i "
         "JOIN arquivo a ON a.item_id = i.id "
-        "WHERE a.eh_master = 1 AND ("
-        "  LOWER(i.titulo) = ? "
-        "  OR (? > 0.0 AND ABS(CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) - ?) < 0.1) "
-        "  OR (? > 0 AND ? > 0 AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) = ? AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) = ?)"
-        ")");
+        "WHERE a.eh_master = 1 "
+        "  AND (? = '' OR i.id != ?) "
+        "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
+        "  AND ("
+        "    LOWER(i.titulo) = ? "
+        "    OR (? > 0.0 AND ABS(CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) - ?) < 0.1) "
+        "    OR (? > 0 AND ? > 0 AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) = ? AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) = ?)"
+        "  )");
 
     std::string tituloLower = juce::String(titulo).toLowerCase().toStdString();
-    stmt.bind(1, Value::of(tituloLower));
-    stmt.bind(2, Value::of(duracao));
-    stmt.bind(3, Value::of(duracao));
-    stmt.bind(4, Value::of(largura));
-    stmt.bind(5, Value::of(altura));
+    stmt.bind(1, Value::of(excludeItemId));
+    stmt.bind(2, Value::of(excludeItemId));
+    stmt.bind(3, Value::of(tituloLower));
+    stmt.bind(4, Value::of(duracao));
+    stmt.bind(5, Value::of(duracao));
     stmt.bind(6, Value::of(largura));
     stmt.bind(7, Value::of(altura));
+    stmt.bind(8, Value::of(largura));
+    stmt.bind(9, Value::of(altura));
 
     while (stmt.step()) {
         int coincidences = 0;

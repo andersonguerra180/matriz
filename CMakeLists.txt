@@ -236,6 +236,7 @@ target_sources(matriz PRIVATE
     Source/Ui/BackupWorkspaceComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
+    Source/Ui/DuplicatesWorkspaceComponent.cpp
     Source/Ui/HierarquiaEditorComponent.cpp
     Source/Ui/TagChipsEditor.cpp
     Source/Ui/FichaPanelComponent.cpp

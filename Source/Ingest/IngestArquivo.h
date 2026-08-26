@@ -117,7 +117,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        const std::string& ext,
                                                        double duracao,
                                                        int largura,
-                                                       int altura);
+                                                       int altura,
+                                                       const std::string& excludeItemId = "");
 
 
 // Registra que o mesmo conteúdo de `arquivoId` também foi encontrado em

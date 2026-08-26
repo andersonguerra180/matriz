@@ -12,6 +12,7 @@ public:
         Home,
         Intake,
         Grid,
+        Duplicates,
         Analytics,
         Tree,
         Backup

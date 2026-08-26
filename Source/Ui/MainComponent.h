@@ -22,6 +22,7 @@
 #include "EstatisticasComponent.h"
 #include "ArvoreBackupComponent.h"
 #include "FloatingPreviewWindow.h"
+#include "DuplicatesWorkspaceComponent.h"
 
 // Layout de três painéis (§11.1): mosaico | visualizador+transporte+tira |
 // ficha. Sem abas, sem janela flutuante. Nesta etapa (B.1.1-B.1.3): mosaico
@@ -88,6 +89,7 @@ public:
     void mostrarIntake();
     void mostrarCatalog();
     void mostrarGrid();
+    void mostrarDuplicates();
     void mostrarAnalytics();
     void mostrarTree();
     void mostrarBackup();
@@ -372,6 +374,7 @@ private:
     std::unique_ptr<BarraNavegacaoComponent> barraNavegacao_;
     std::unique_ptr<IntakeWorkspaceComponent> intakeWorkspace_; // INTAKE (Quarentena)
     std::unique_ptr<CatalogWorkspaceComponent> catalogWorkspace_; // GRID
+    std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // ANALYTICS (Statistics + Preservation)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // TREE (n8n Node Graph Editor)
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP

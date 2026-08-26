@@ -1058,6 +1058,7 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
+    duplicatesWorkspace_.reset();
     analyticsWorkspace_.reset();
     treeWorkspace_.reset();
     homePanel_.reset();
@@ -1069,6 +1070,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         if (tab == BarraNavegacaoComponent::Tab::Home) mostrarHome();
         else if (tab == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
+        else if (tab == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
         else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
@@ -1093,6 +1095,7 @@ void MainComponent::mostrarHome() {
 
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1141,6 +1144,7 @@ void MainComponent::mostrarIntake() {
 
     if (homePanel_) homePanel_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1176,6 +1180,7 @@ void MainComponent::mostrarGrid() {
 
     if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
@@ -1198,6 +1203,34 @@ void MainComponent::mostrarGrid() {
     repaint();
 }
 
+void MainComponent::mostrarDuplicates() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Catalog;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Duplicates);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!duplicatesWorkspace_) {
+        duplicatesWorkspace_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_);
+        addAndMakeVisible(*duplicatesWorkspace_);
+    } else {
+        duplicatesWorkspace_->setVisible(true);
+        duplicatesWorkspace_->recarregar();
+    }
+
+    resized();
+    repaint();
+}
+
 void MainComponent::mostrarAnalytics() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Preservation;
@@ -1210,6 +1243,7 @@ void MainComponent::mostrarAnalytics() {
     if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
 
@@ -1243,6 +1277,7 @@ void MainComponent::mostrarTree() {
     if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
 
@@ -1294,6 +1329,7 @@ void MainComponent::mostrarBackup() {
     if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
 
@@ -2421,6 +2457,11 @@ void MainComponent::resized() {
 
     if (catalogWorkspace_ && catalogWorkspace_->isVisible()) {
         catalogWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible()) {
+        duplicatesWorkspace_->setBounds(area);
         return;
     }
 

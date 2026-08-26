@@ -9,6 +9,7 @@ BarraNavegacaoComponent::BarraNavegacaoComponent() {
         { Tab::Home, "HOME", {}, false },
         { Tab::Intake, "INTAKE", {}, false },
         { Tab::Grid, "GRID", {}, false },
+        { Tab::Duplicates, "DUPLICATES", {}, false },
         { Tab::Analytics, "ANALYTICS", {}, false },
         { Tab::Tree, "TREE", {}, false },
         { Tab::Backup, "BACKUP", {}, false }
@@ -54,10 +55,15 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
     for (const auto& tab : tabs_) {
         bool ativo = (tab.tab == selectedTab_);
         
+        // Draw button-like background
         if (ativo) {
+            g.setColour(tk.painelAlt);
+            g.fillRoundedRectangle(tab.bounds.reduced(6, 6).toFloat(), tk.raioPequeno);
             g.setColour(tk.acento);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         } else if (tab.hover) {
+            g.setColour(tk.painelAlt.withAlpha(0.6f));
+            g.fillRoundedRectangle(tab.bounds.reduced(6, 6).toFloat(), tk.raioPequeno);
             g.setColour(tk.textoPrimario);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         } else {
@@ -70,7 +76,7 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
         // Active indicator line
         if (ativo) {
             g.setColour(tk.acento);
-            g.fillRect(tab.bounds.getX() + 8, getHeight() - 3, tab.bounds.getWidth() - 16, 3);
+            g.fillRect(tab.bounds.getX() + 16, getHeight() - 3, tab.bounds.getWidth() - 32, 3);
         }
     }
 }
@@ -108,13 +114,16 @@ void BarraNavegacaoComponent::mouseDown(const juce::MouseEvent& e) {
 void BarraNavegacaoComponent::mouseMove(const juce::MouseEvent& e) {
     auto pos = e.getPosition();
     bool mudou = false;
+    bool hoverAny = false;
     for (auto& tab : tabs_) {
         bool hover = tab.bounds.contains(pos);
+        if (hover) hoverAny = true;
         if (tab.hover != hover) {
             tab.hover = hover;
             mudou = true;
         }
     }
+    setMouseCursor(hoverAny ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     if (mudou) repaint();
 }
 
@@ -126,6 +135,7 @@ void BarraNavegacaoComponent::mouseExit(const juce::MouseEvent&) {
             mudou = true;
         }
     }
+    setMouseCursor(juce::MouseCursor::NormalCursor);
     if (mudou) repaint();
 }
 
