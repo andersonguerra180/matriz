@@ -268,30 +268,91 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnOpenCatalog_);
 
-    btnExportXls_ = std::make_unique<juce::TextButton>("EXPORT XLS");
-    aplicarEstiloBotao(*btnExportXls_, false);
-    btnExportXls_->onClick = [this] { exportarXls(); };
-    addChildComponent(*btnExportXls_);
-
-    btnExportCsv_ = std::make_unique<juce::TextButton>("EXPORT FULL CSV");
-    aplicarEstiloBotao(*btnExportCsv_, false);
-    btnExportCsv_->onClick = [this] { exportarCsv(); };
-    addChildComponent(*btnExportCsv_);
-
-    btnExportDublinCore_ = std::make_unique<juce::TextButton>("EXPORT DC-CSV");
-    aplicarEstiloBotao(*btnExportDublinCore_, false);
-    btnExportDublinCore_->onClick = [this] { exportarDublinCore(); };
-    addChildComponent(*btnExportDublinCore_);
-
-    btnExportChecksums_ = std::make_unique<juce::TextButton>("EXPORT CHECKSUMS");
-    aplicarEstiloBotao(*btnExportChecksums_, false);
-    btnExportChecksums_->onClick = [this] { exportarChecksums(); };
-    addChildComponent(*btnExportChecksums_);
+    btnExportJanela_ = std::make_unique<juce::TextButton>("EXPORT METADATA");
+    aplicarEstiloBotao(*btnExportJanela_, false);
+    btnExportJanela_->onClick = [this] { mostrarJanelaExportar(); };
+    addChildComponent(*btnExportJanela_);
 
     atualizarResumo();
 }
 
 BackupWorkspaceComponent::~BackupWorkspaceComponent() = default;
+
+void BackupWorkspaceComponent::mostrarJanelaExportar() {
+    struct JanelaExportarMetadata : public juce::DialogWindow {
+        JanelaExportarMetadata(const juce::String& title, juce::Colour bg)
+            : juce::DialogWindow(title, bg, true) {}
+
+        void closeButtonPressed() override {
+            setVisible(false);
+            exitModalState(0);
+        }
+    };
+
+    auto janela = std::make_shared<JanelaExportarMetadata>("EXPORT METADATA", tema().painel);
+
+    struct PainelExportar : public juce::Component {
+        PainelExportar(BackupWorkspaceComponent& parent, std::shared_ptr<juce::DialogWindow> win)
+            : win_(std::move(win)) {
+            const auto& tk = tema();
+
+            lblTitulo_ = std::make_unique<juce::Label>("", "EXPORT METADATA");
+            lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+            lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+            lblTitulo_->setJustificationType(juce::Justification::centred);
+            addAndMakeVisible(*lblTitulo_);
+
+            auto criarBotao = [&](const juce::String& text, std::function<void()> cb) {
+                auto b = std::make_unique<juce::TextButton>(text);
+                parent.aplicarEstiloBotao(*b, false);
+                b->onClick = [this, cb] {
+                    if (win_) win_->exitModalState(0);
+                    if (cb) cb();
+                };
+                addAndMakeVisible(*b);
+                return b;
+            };
+
+            btnCsvFull_ = criarBotao("CSV (FULL)", [&parent] { parent.exportarCsv(); });
+            btnXls_ = criarBotao("XLS", [&parent] { parent.exportarXls(); });
+            btnDublinCore_ = criarBotao("CSV (DUBLIN CORE)", [&parent] { parent.exportarDublinCore(); });
+            btnChecksums_ = criarBotao("CHECKSUMS", [&parent] { parent.exportarChecksums(); });
+
+            setSize(460, 310);
+        }
+
+        void resized() override {
+            auto area = getLocalBounds().reduced(24, 20);
+            lblTitulo_->setBounds(area.removeFromTop(32));
+            area.removeFromTop(14);
+
+            int btnH = 38;
+            btnCsvFull_->setBounds(area.removeFromTop(btnH));
+            area.removeFromTop(10);
+            btnXls_->setBounds(area.removeFromTop(btnH));
+            area.removeFromTop(10);
+            btnDublinCore_->setBounds(area.removeFromTop(btnH));
+            area.removeFromTop(10);
+            btnChecksums_->setBounds(area.removeFromTop(btnH));
+        }
+
+    private:
+        std::shared_ptr<juce::DialogWindow> win_;
+        std::unique_ptr<juce::Label> lblTitulo_;
+        std::unique_ptr<juce::TextButton> btnCsvFull_;
+        std::unique_ptr<juce::TextButton> btnXls_;
+        std::unique_ptr<juce::TextButton> btnDublinCore_;
+        std::unique_ptr<juce::TextButton> btnChecksums_;
+    };
+
+    auto painel = std::make_unique<PainelExportar>(*this, janela);
+
+    janela->setContentOwned(painel.release(), true);
+    janela->setResizable(false, false);
+    janela->centreWithSize(460, 310);
+    janela->setVisible(true);
+    janela->enterModalState(true);
+}
 
 void BackupWorkspaceComponent::exportarCsv() {
     juce::FileChooser fc("Export BKR Full CSV Package...", juce::File::getSpecialLocation(juce::File::userHomeDirectory));
@@ -820,29 +881,11 @@ void BackupWorkspaceComponent::resized() {
     }
 
     bool temItens = !plano_.itens.empty();
-    if (btnExportCsv_) {
+    if (btnExportJanela_) {
         botoes.removeFromRight(tk.espacoPainel);
-        btnExportCsv_->setBounds(botoes.removeFromRight(110));
-        btnExportCsv_->setVisible(true);
-        btnExportCsv_->setEnabled(temItens);
-    }
-    if (btnExportXls_) {
-        botoes.removeFromRight(tk.espacoPainel);
-        btnExportXls_->setBounds(botoes.removeFromRight(110));
-        btnExportXls_->setVisible(true);
-        btnExportXls_->setEnabled(temItens);
-    }
-    if (btnExportDublinCore_) {
-        botoes.removeFromRight(tk.espacoPainel);
-        btnExportDublinCore_->setBounds(botoes.removeFromRight(170));
-        btnExportDublinCore_->setVisible(true);
-        btnExportDublinCore_->setEnabled(temItens);
-    }
-    if (btnExportChecksums_) {
-        botoes.removeFromRight(tk.espacoPainel);
-        btnExportChecksums_->setBounds(botoes.removeFromRight(170));
-        btnExportChecksums_->setVisible(true);
-        btnExportChecksums_->setEnabled(temItens);
+        btnExportJanela_->setBounds(botoes.removeFromRight(180));
+        btnExportJanela_->setVisible(true);
+        btnExportJanela_->setEnabled(temItens);
     }
 
     // ---- Running / Done: um cartão só, centrado ----

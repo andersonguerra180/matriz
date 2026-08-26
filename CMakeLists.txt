@@ -215,6 +215,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MetadadosOriginaisComponent.cpp
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/EstatisticasComponent.cpp
+    Source/Ui/AnalyticsTreemapComponent.cpp
     Source/Ui/AnalyticsTableComponent.cpp
     Source/Ui/AnalyticsChartComponent.cpp
     Source/Ui/GeoMapComponent.cpp

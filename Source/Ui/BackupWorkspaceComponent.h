@@ -124,7 +124,9 @@ private:
     std::unique_ptr<juce::TextButton> btnExportCsv_;
     std::unique_ptr<juce::TextButton> btnExportDublinCore_;
     std::unique_ptr<juce::TextButton> btnExportChecksums_;
+    std::unique_ptr<juce::TextButton> btnExportJanela_;
 
+    void mostrarJanelaExportar();
     void exportarXls();
     void exportarCsv();
     void exportarDublinCore();

@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "ProjetoAberto.h"
+#include "AnalyticsTreemapComponent.h"
 #include <set>
 #include <memory>
 
@@ -23,6 +24,7 @@ public:
 
 private:
     ProjetoAberto& projeto_;
+    AnalyticsTreemapComponent treemapComponent_;
 
     // Top Summary Indicators
     struct SummaryKpi {

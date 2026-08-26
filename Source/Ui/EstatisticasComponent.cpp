@@ -27,6 +27,20 @@ juce::String formatSizeHuman(juce::int64 bytes) {
 
 EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
+    addAndMakeVisible(treemapComponent_);
+
+    treemapComponent_.aoSelecionarItem = [this](const std::string& itemId) {
+        if (aoSelecionarItem) {
+            aoSelecionarItem(itemId);
+        }
+    };
+
+    treemapComponent_.aoAbrirNoGrid = [this](const std::set<std::string>& assetIds) {
+        if (aoAbrirNoGrid) {
+            aoAbrirNoGrid(assetIds);
+        }
+    };
+
     recarregar();
 }
 
@@ -36,6 +50,7 @@ void EstatisticasComponent::setSelectedAssets(const std::set<std::string>&) {
 void EstatisticasComponent::recarregar() {
     matriz::db::Database& db = projeto_.projeto().registro();
     carregarMetricasDoBanco(db);
+    treemapComponent_.recarregarDoBanco(db);
     repaint();
 }
 
@@ -87,16 +102,16 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.fundo);
 
-    auto area = getLocalBounds().reduced(20, 16);
+    auto area = getLocalBounds().reduced(16, 12);
 
     // Section Header Title
     g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-    g.drawText("Collection Analytics Overview", area.removeFromTop(24), juce::Justification::left);
-    area.removeFromTop(12);
+    g.drawText("Collection Analytics - SpaceMonger Treemap Explorer", area.removeFromTop(22), juce::Justification::left);
+    area.removeFromTop(8);
 
-    // Top 4 KPI Cards Area (Top 80px)
-    auto topKpiArea = area.removeFromTop(80);
+    // Top 4 KPI Cards Area (Top 70px)
+    auto topKpiArea = area.removeFromTop(70);
     desenharTopKpiCards(g, topKpiArea);
 }
 
@@ -118,14 +133,14 @@ void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::R
         g.setColour(tk.borda);
         g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.0f);
 
-        auto inner = r.reduced(10, 8);
+        auto inner = r.reduced(10, 6);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(title, inner.removeFromTop(14), juce::Justification::left);
+        g.drawText(title, inner.removeFromTop(12), juce::Justification::left);
 
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
-        g.drawText(val, inner.removeFromTop(24), juce::Justification::left);
+        g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+        g.drawText(val, inner.removeFromTop(20), juce::Justification::left);
 
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(10.0f)));
@@ -140,6 +155,13 @@ void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::R
 }
 
 void EstatisticasComponent::resized() {
+    auto area = getLocalBounds().reduced(16, 12);
+    area.removeFromTop(22); // Header
+    area.removeFromTop(8);  // Gap
+    area.removeFromTop(70); // KPI cards
+    area.removeFromTop(12); // Gap
+
+    treemapComponent_.setBounds(area);
 }
 
 } // namespace matriz::ui

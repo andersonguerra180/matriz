@@ -79,6 +79,8 @@ void crashHandler(int sig, siginfo_t* info, void* ctx) {
 
 class SplashWindow : public juce::DocumentWindow, private juce::Timer {
 public:
+    std::function<void()> onFinished;
+
     SplashWindow() : juce::DocumentWindow("", juce::Colours::transparentBlack, 0) {
         auto imgData = juce::MemoryBlock(AssetsBinaryData::splash_png, AssetsBinaryData::splash_pngSize);
         auto img = juce::ImageFileFormat::loadFrom(imgData.getData(), imgData.getSize());
@@ -100,10 +102,21 @@ public:
         setAlwaysOnTop(true);
         setVisible(true);
         toFront(true);
-        startTimer(2500);
+        startTimer(2200);
     }
-    void closeButtonPressed() override { setVisible(false); }
-    void timerCallback() override { stopTimer(); setVisible(false); }
+    void closeButtonPressed() override { finish(); }
+    void timerCallback() override { finish(); }
+
+private:
+    void finish() {
+        stopTimer();
+        setVisible(false);
+        if (onFinished) {
+            auto cb = std::move(onFinished);
+            onFinished = nullptr;
+            cb();
+        }
+    }
 };
 
 class MatrizApplication : public juce::JUCEApplication {
@@ -133,14 +146,6 @@ public:
 
         matriz::i18n::carregar(matriz::app::lerLocale());
 
-        // LookAndFeel global a partir dos MESMOS tokens que os Components
-        // customizados usam (Tokens.h) — sem isto, todo widget nativo não
-        // pintado à mão (TextEditor, TextButton, ComboBox, PopupMenu,
-        // AlertWindow) cai no esquema escuro padrão do LookAndFeel_V4,
-        // mesmo com o tema claro dos painéis customizados: caixa de busca e
-        // botões de aba ficavam pretos no meio de um fundo cinza claro.
-        // Setado antes de qualquer coisa, inclusive dos modos de selftest,
-        // pra as capturas de tela do harness também saírem coerentes.
         const auto& tk = matriz::ui::tema();
         juce::LookAndFeel_V4::ColourScheme esquema{tk.fundo,        tk.painel,      tk.painel,
                                                       tk.borda,       tk.textoPrimario, tk.acento,
@@ -149,49 +154,44 @@ public:
         lookAndFeel_->setColourScheme(esquema);
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel_.get());
 
-        // Modo oculto de verificação headless (B.2): `MATRIZ
-        // --selftest-mosaico-10k` roda o benchmark de virtualização do
-        // mosaico e sai, sem abrir janela nenhuma.
         if (commandLine.contains("--selftest-mosaico-10k")) {
             setApplicationReturnValue(matriz::ui::rodarStressTestMosaico10k());
             quit();
             return;
         }
         if (commandLine.contains("--selftest-ingerir-arquivos")) {
-            // Medida independente da que o próprio teste faz: se as duas
-            // discordarem, o problema está na medição, não no software.
             monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
             setApplicationReturnValue(matriz::ui::rodarTestIngerirArquivos());
             monitorLoop_.reset();
             quit();
             return;
         }
-        // Harness de UI headless (correção crítica, Parte 1): renderiza
-        // telas pra PNG em test-output/ e dirige interação sintética real
-        // (foco de teclado, drop de arquivo) via peer off-screen.
         if (commandLine.contains("--selftest-uitest")) {
             setApplicationReturnValue(matriz::ui::rodarUiSelfTest());
             quit();
             return;
         }
-        // Teste de estresse de diálogo (§3, critério 21): abre e descarta os
-        // overlays 500 vezes seguidas bombeando mensagens, pra rodar sob
-        // AddressSanitizer/Guard Malloc atrás de acesso a memória liberada.
         if (commandLine.contains("--selftest-modal-loop")) {
             setApplicationReturnValue(matriz::ui::rodarModalLoopSelfTest());
             quit();
             return;
         }
 
-        // Vigia da message thread (§0): a partir daqui, qualquer callback
-        // acima de 16 ms e qualquer travamento do loop acima de 300 ms vão
-        // parar em ~/Library/Logs/MATRIZ/perf.log com a call stack. Fora dos
-        // modos de selftest — ali o processo é headless e curto, e o log só
-        // somaria ruído ao que o harness já mede.
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
 
-        splash_ = std::make_unique<SplashWindow>();
         janela_ = std::make_unique<matriz::ui::MainWindow>(matriz::i18n::t("janela_principal.titulo"));
+        janela_->setVisible(false);
+
+        splash_ = std::make_unique<SplashWindow>();
+        splash_->onFinished = [this] {
+            if (janela_) {
+                if (auto* tela = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+                    janela_->setBounds(tela->userBounds.toNearestInt());
+                janela_->setVisible(true);
+                janela_->toFront(true);
+            }
+            splash_.reset();
+        };
     }
 
     void shutdown() override {

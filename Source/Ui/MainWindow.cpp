@@ -31,7 +31,8 @@ enum ComandoMenu {
     kCmdConsolidar,
     kCmdPreferenciasGerais,
     kCmdAudioDevice,
-    kCmdUndo
+    kCmdUndo,
+    kCmdRecenteBase = 2000
 };
 } // namespace
 
@@ -54,7 +55,7 @@ MainWindow::MainWindow(const juce::String& nome)
         setBounds(tela->userBounds.toNearestInt());
     else
         centreWithSize(1200, 800);
-    setVisible(true);
+    setVisible(false);
 }
 
 MainWindow::~MainWindow() {
@@ -82,6 +83,23 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdNovoProjeto, "New Project (.mtz)...", podeTrocarProjeto);
         menu.addItem(kCmdAbrirProjeto, "Open Project (.mtz)...", podeTrocarProjeto);
         menu.addItem(kCmdAbrirCatalogo, "Open Catalog (.bkm)...", podeTrocarProjeto);
+
+        juce::PopupMenu recentMenu;
+        auto recentes = matriz::app::lerRecentes();
+        if (!recentes.empty()) {
+            int rIdx = 0;
+            for (const auto& r : recentes) {
+                juce::String label = r.nome.isEmpty() ? r.pasta : r.nome;
+                if (!r.pasta.isEmpty() && r.pasta != label)
+                    label += " (" + r.pasta + ")";
+                recentMenu.addItem(kCmdRecenteBase + rIdx, label);
+                rIdx++;
+            }
+        } else {
+            recentMenu.addItem(1, "No Recent Files", false);
+        }
+        menu.addSubMenu("Open Recent Files", recentMenu, podeTrocarProjeto);
+
         menu.addSeparator();
         bool temProjetoMtz = conteudo_->temProjetoAberto();
         menu.addItem(kCmdSalvarProjeto, "Save Project (Cmd+S)", temProjetoMtz);
@@ -126,7 +144,27 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdConsolidar: pedirConsolidar(); break;
         case kCmdPreferenciasGerais: mostrarPreferenciasDialogo(); break;
         case kCmdAudioDevice: mostrarAudioDeviceDialogo(); break;
-        default: break;
+        default: {
+            if (menuItemID >= kCmdRecenteBase && menuItemID < kCmdRecenteBase + 100) {
+                auto recentes = matriz::app::lerRecentes();
+                int idx = menuItemID - kCmdRecenteBase;
+                if (idx >= 0 && idx < static_cast<int>(recentes.size())) {
+                    juce::File pastaRecente(recentes[idx].pasta);
+                    if (pastaRecente.isDirectory() || pastaRecente.existsAsFile()) {
+                        abrirPasta(pastaRecente);
+                    } else {
+                        juce::AlertWindow::showAsync(
+                            juce::MessageBoxOptions()
+                                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                .withTitle("Project Not Found")
+                                .withMessage("Recent project location not found:\n" + recentes[idx].pasta)
+                                .withButton("OK"),
+                            nullptr);
+                    }
+                }
+            }
+            break;
+        }
     }
 }
 
