@@ -170,6 +170,10 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
 }
 
 void DuplicatesWorkspaceComponent::recarregar() {
+    if (isThreadRunning() || estado_ == State::Results) {
+        return; // Don't interrupt active scan or clear results on view reload
+    }
+    
     // Reset view
     estado_ = State::Idle;
     gruposDetectados_.clear();
