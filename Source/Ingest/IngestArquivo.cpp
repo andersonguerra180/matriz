@@ -340,14 +340,26 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
 
         juce::String candExt = juce::File(candCaminho).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase();
         juce::String queryExt = juce::String(ext).toLowerCase();
-        if (candExt == queryExt) {
+        bool extMatches = (candExt == queryExt);
+        if (extMatches) {
             coincidences++;
         }
 
         // Coincidência 3: Tamanho (bytes)
         juce::int64 candTamanho = stmt.columnInt(6);
-        if (candTamanho == tamanhoBytes) {
+        bool sizeMatches = (candTamanho == tamanhoBytes);
+        if (sizeMatches) {
             coincidences++;
+        }
+
+        // Strict Duplicate Rule for compressed files/images:
+        // If format and exact size in bytes match, they are 100% duplicates (excluding uncompressed PCM wav/aif/aiff)
+        if (extMatches && sizeMatches) {
+            bool isImage = (queryExt == "jpg" || queryExt == "jpeg" || queryExt == "png" || queryExt == "gif" || queryExt == "tiff" || queryExt == "bmp" || queryExt == "webp" || queryExt == "psd");
+            bool isCompressedMedia = (queryExt == "mp3" || queryExt == "mp4" || queryExt == "mov" || queryExt == "m4a" || queryExt == "flac" || queryExt == "mkv" || queryExt == "ogg");
+            if (isImage || isCompressedMedia) {
+                coincidences = 3; // Force match!
+            }
         }
 
         // Coincidências 4 e 5: Duração e Dimensões (lidos do JSON)
