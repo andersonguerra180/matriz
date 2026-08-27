@@ -53,7 +53,7 @@ void gravarGeminiApiKey(const juce::String& key) {
     arquivo().saveIfNeeded();
 }
 
-juce::String lerTema() { return arquivo().getValue("tema", "dark"); }
+juce::String lerTema() { return arquivo().getValue("tema", "light"); }
 
 void gravarTema(const juce::String& tema) {
     arquivo().setValue("tema", tema);
@@ -97,9 +97,7 @@ const juce::Time& inicioDaSessao() {
 bool ehRecemIngerido(const std::string& criadoEmIso) {
     if (criadoEmIso.empty()) return false;
     auto criado = juce::Time::fromISO8601(juce::String(criadoEmIso));
-    if (lerIntakeMode() == IntakeMode::ClearOnStart)
-        return criado >= inicioDaSessao();
-    return (juce::Time::getCurrentTime() - criado).inHours() < lerIntakeHoras();
+    return criado >= inicioDaSessao();
 }
 
 std::vector<ProjetoRecente> lerRecentes() {

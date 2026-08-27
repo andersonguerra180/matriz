@@ -71,31 +71,31 @@ struct Tema {
 inline const Tema& temaBkrDark() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xfff8f2ec);
-        x.painel = juce::Colour(0xffefe8e0);
-        x.painelAlt = juce::Colour(0xffe6ded5);
-        x.borda = juce::Colour(0xffc8bfb5);
-        x.bordaFoco = juce::Colour(0xff3d7fd6);
+        x.fundo = juce::Colour(0xff181818);          // Dark charcoal background
+        x.painel = juce::Colour(0xff222222);         // Slightly lighter panel
+        x.painelAlt = juce::Colour(0xff2d2d2d);      // Alternative panel
+        x.borda = juce::Colour(0xff1c1c1c);          // Dark border
+        x.bordaFoco = juce::Colour(0xffe6a100);      // Lightroom amber focus
 
-        x.textoPrimario = juce::Colour(0xff1a1a1a);
-        x.textoSecundario = juce::Colour(0xff4a4540);
-        x.textoTerciario = juce::Colour(0xff8a8580);
-        x.textoSobreAcento = juce::Colour(0xffffffff);
+        x.textoPrimario = juce::Colour(0xffe0e0e0);   // Light text
+        x.textoSecundario = juce::Colour(0xffa0a0a0); // Muted text
+        x.textoTerciario = juce::Colour(0xff707070);  // Darker gray text
+        x.textoSobreAcento = juce::Colour(0xff181818); // Dark text on amber accent
 
-        x.acento = juce::Colour(0xff2a6bc7);
-        x.acentoHover = juce::Colour(0xff1b5ab0);
+        x.acento = juce::Colour(0xffe6a100);         // Lightroom signature amber/gold
+        x.acentoHover = juce::Colour(0xffffb732);    // Brighter amber
         x.perigo = juce::Colour(0xffc0392b);
-        x.alerta = juce::Colour(0xffd35400);
+        x.alerta = juce::Colour(0xffe67e22);
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff9a9590);
-        x.estadoCapturado = juce::Colour(0xff2a6bc7);
-        x.estadoQcOk = juce::Colour(0xff27a854);
-        x.estadoAlerta = juce::Colour(0xffd4a017);
-        x.haloSincronizado = juce::Colour(0xff27a854);
+        x.estadoNaoDigitalizado = juce::Colour(0xff707070);
+        x.estadoCapturado = juce::Colour(0xff3d7fd6);
+        x.estadoQcOk = juce::Colour(0xff3f9142);
+        x.estadoAlerta = juce::Colour(0xffb87517);
+        x.haloSincronizado = juce::Colour(0xff1f8f84);
 
-        x.campoHumano = juce::Colour(0xff1a1a1a);
-        x.campoHerdado = juce::Colour(0xff6a6560);
-        x.campoLeituraTecnica = juce::Colour(0xff6a6560);
+        x.campoHumano = juce::Colour(0xffe0e0e0);
+        x.campoHerdado = juce::Colour(0xffa0a0a0);
+        x.campoLeituraTecnica = juce::Colour(0xffa0a0a0);
         x.campoSugestaoIa = juce::Colour(0xffb87517);
         x.campoSugestaoIaFundo = juce::Colour(0x22b87517);
 

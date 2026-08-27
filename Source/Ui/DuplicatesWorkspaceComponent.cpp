@@ -519,7 +519,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbSizeUnit_->setVisible(false);
     addAndMakeVisible(*cbSizeUnit_);
 
-    lblStatus_ = std::make_unique<juce::Label>("lblStatus", "This tool analyzes all assets in the active catalog and identifies possible duplicates based on matching file attributes.");
+    lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblStatus_);
 
@@ -562,7 +562,7 @@ void DuplicatesWorkspaceComponent::recarregar() {
     // Reset view
     estado_ = State::Idle;
     gruposDetectados_.clear();
-    lblStatus_->setText("This tool analyzes all assets in the active catalog and identifies possible duplicates based on matching file attributes.", juce::dontSendNotification);
+    lblStatus_->setText("", juce::dontSendNotification);
     btnScan_->setButtonText("SCAN FOR DUPLICATES");
     btnScan_->setEnabled(true);
     viewport_->setVisible(false);

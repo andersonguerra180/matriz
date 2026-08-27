@@ -360,68 +360,11 @@ void MainWindow::mostrarPreferenciasDialogo() {
             comboTema_->setSelectedId(temaAtual == "light" ? 2 : 1, juce::dontSendNotification);
             addAndMakeVisible(*comboTema_);
 
-            lblGemini_ = std::make_unique<juce::Label>("", "Google Gemini API Key (AI Scan):");
-            lblGemini_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-            lblGemini_->setColour(juce::Label::textColourId, tk.textoSecundario);
-            addAndMakeVisible(*lblGemini_);
-
-            txtGeminiKey_ = std::make_unique<juce::TextEditor>();
-            txtGeminiKey_->setText(matriz::app::lerGeminiApiKey(), false);
-            txtGeminiKey_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
-            txtGeminiKey_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-            txtGeminiKey_->setColour(juce::TextEditor::outlineColourId, tk.borda);
-            txtGeminiKey_->setTextToShowWhenEmpty("Enter Gemini API key...", tk.textoTerciario);
-            addAndMakeVisible(*txtGeminiKey_);
-
-            lblGeminiInfo_ = std::make_unique<juce::Label>("", "Required for AI SCAN contextual analysis. Stored locally in preferences.");
-            lblGeminiInfo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            lblGeminiInfo_->setColour(juce::Label::textColourId, tk.textoTerciario);
-            addAndMakeVisible(*lblGeminiInfo_);
-
-            lblRecent_ = std::make_unique<juce::Label>("", "INTAKE:");
-            lblRecent_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-            lblRecent_->setColour(juce::Label::textColourId, tk.textoSecundario);
-            addAndMakeVisible(*lblRecent_);
-
-            comboRecentMode_ = std::make_unique<juce::ComboBox>();
-            comboRecentMode_->addItem("TIME (auto-expire after hours)", 1);
-            comboRecentMode_->addItem("CLEAR LIST on app start", 2);
-            auto curMode = matriz::app::lerIntakeMode();
-            comboRecentMode_->setSelectedId(curMode == matriz::app::IntakeMode::ClearOnStart ? 2 : 1, juce::dontSendNotification);
-            comboRecentMode_->onChange = [this] {
-                bool isTime = comboRecentMode_->getSelectedId() == 1;
-                spinRecentHoras_->setEnabled(isTime);
-                lblRecentHoras_->setAlpha(isTime ? 1.0f : 0.4f);
-            };
-            addAndMakeVisible(*comboRecentMode_);
-
-            lblRecentHoras_ = std::make_unique<juce::Label>("", "Hours:");
-            lblRecentHoras_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-            lblRecentHoras_->setColour(juce::Label::textColourId, tk.textoSecundario);
-            addAndMakeVisible(*lblRecentHoras_);
-
-            spinRecentHoras_ = std::make_unique<juce::Slider>(juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft);
-            spinRecentHoras_->setRange(1, 72, 1);
-            spinRecentHoras_->setValue(matriz::app::lerIntakeHoras(), juce::dontSendNotification);
-            spinRecentHoras_->setColour(juce::Slider::textBoxTextColourId, tk.textoPrimario);
-            spinRecentHoras_->setColour(juce::Slider::textBoxBackgroundColourId, tk.painelAlt);
-            spinRecentHoras_->setColour(juce::Slider::textBoxOutlineColourId, tk.borda);
-            bool isTimeCur = curMode != matriz::app::IntakeMode::ClearOnStart;
-            spinRecentHoras_->setEnabled(isTimeCur);
-            if (!isTimeCur) lblRecentHoras_->setAlpha(0.4f);
-            addAndMakeVisible(*spinRecentHoras_);
-
             btnSave_ = std::make_unique<juce::TextButton>("SAVE & APPLY");
             btnSave_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnSave_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
             btnSave_->onClick = [this] {
-                matriz::app::gravarGeminiApiKey(txtGeminiKey_->getText().trim());
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
-                auto modo = comboRecentMode_->getSelectedId() == 2
-                    ? matriz::app::IntakeMode::ClearOnStart
-                    : matriz::app::IntakeMode::Time;
-                matriz::app::gravarIntakeMode(modo);
-                matriz::app::gravarIntakeHoras(static_cast<int>(spinRecentHoras_->getValue()));
                 matriz::ui::recarregarTema();
                 if (janela_) janela_->exitModalState(0);
             };
@@ -435,31 +378,17 @@ void MainWindow::mostrarPreferenciasDialogo() {
             };
             addAndMakeVisible(*btnClose_);
 
-            setSize(480, 320);
+            setSize(400, 200);
         }
 
         void resized() override {
             auto area = getLocalBounds().reduced(16);
             lblTitulo_->setBounds(area.removeFromTop(30));
-            area.removeFromTop(12);
+            area.removeFromTop(8);
 
-            lblTema_->setBounds(area.removeFromTop(22));
+            lblTema_->setBounds(area.removeFromTop(20));
             comboTema_->setBounds(area.removeFromTop(28));
-            area.removeFromTop(12);
-
-            lblGemini_->setBounds(area.removeFromTop(22));
-            txtGeminiKey_->setBounds(area.removeFromTop(28));
-            lblGeminiInfo_->setBounds(area.removeFromTop(20));
-            area.removeFromTop(12);
-
-            lblRecent_->setBounds(area.removeFromTop(22));
-            comboRecentMode_->setBounds(area.removeFromTop(28));
-            area.removeFromTop(4);
-            auto horasRow = area.removeFromTop(28);
-            lblRecentHoras_->setBounds(horasRow.removeFromLeft(50));
-            spinRecentHoras_->setBounds(horasRow.removeFromLeft(120));
-            area.removeFromTop(12);
-
+            
             auto bottomRow = area.removeFromBottom(36);
             btnClose_->setBounds(bottomRow.removeFromRight(100));
             bottomRow.removeFromRight(8);
@@ -471,13 +400,6 @@ void MainWindow::mostrarPreferenciasDialogo() {
         std::unique_ptr<juce::Label> lblTitulo_;
         std::unique_ptr<juce::Label> lblTema_;
         std::unique_ptr<juce::ComboBox> comboTema_;
-        std::unique_ptr<juce::Label> lblGemini_;
-        std::unique_ptr<juce::TextEditor> txtGeminiKey_;
-        std::unique_ptr<juce::Label> lblGeminiInfo_;
-        std::unique_ptr<juce::Label> lblRecent_;
-        std::unique_ptr<juce::ComboBox> comboRecentMode_;
-        std::unique_ptr<juce::Label> lblRecentHoras_;
-        std::unique_ptr<juce::Slider> spinRecentHoras_;
         std::unique_ptr<juce::TextButton> btnSave_;
         std::unique_ptr<juce::TextButton> btnClose_;
     };
