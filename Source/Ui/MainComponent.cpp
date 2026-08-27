@@ -352,8 +352,8 @@ struct PapelInfo {
 PapelInfo papelPorCategoria(matriz::ingest::CategoriaMidia categoria) {
     if (categoria == matriz::ingest::CategoriaMidia::Audio || categoria == matriz::ingest::CategoriaMidia::Video)
         return {"preservation_master", true};
-    if (categoria == matriz::ingest::CategoriaMidia::Imagem) return {"foto_suporte", false};
-    return {"documento", false};
+    if (categoria == matriz::ingest::CategoriaMidia::Imagem) return {"foto_suporte", true};
+    return {"documento", true};
 }
 
 } // namespace

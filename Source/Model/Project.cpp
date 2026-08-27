@@ -545,6 +545,11 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
         registro->run("DELETE FROM item WHERE NOT EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = item.id)", {});
     } catch (...) {}
 
+    // Ensure all primary files for images and documents are marked as eh_master = 1 so duplicate scan can analyze them
+    try {
+        registro->run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
+    } catch (...) {}
+
     return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));
 }
 

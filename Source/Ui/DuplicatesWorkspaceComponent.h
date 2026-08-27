@@ -36,6 +36,9 @@ private:
         double duracao = 0.0;
         int largura = 0;
         int altura = 0;
+        juce::int64 tamanhoBytes = 0;
+        std::string orientation;
+        std::string colorSpace;
         std::string caminhoRelativo;
         
         // Match flags
@@ -43,6 +46,9 @@ private:
         bool extCoincide = false;
         bool duracaoCoincide = false;
         bool dimCoincide = false;
+        bool tamanhoCoincide = false;
+        bool orientationCoincide = false;
+        bool colorSpaceCoincide = false;
     };
 
     struct DuplicateGroup {

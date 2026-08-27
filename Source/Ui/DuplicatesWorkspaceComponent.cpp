@@ -222,7 +222,7 @@ public:
         int y = 10;
         
         for (auto* card : cards_) {
-            int cardHeight = card->isExpanded() ? 460 : 160;
+            int cardHeight = card->isExpanded() ? 490 : 190;
             card->setBounds(10, y, getWidth() - 20, cardHeight);
             y += cardHeight + 10;
         }
@@ -243,7 +243,7 @@ public:
     void recalculateHeight() {
         int totalHeight = 20;
         for (auto* card : cards_) {
-            totalHeight += (card->isExpanded() ? 460 : 160) + 10;
+            totalHeight += (card->isExpanded() ? 490 : 190) + 10;
         }
         setSize(getWidth(), totalHeight);
         resized();
@@ -328,18 +328,18 @@ private:
 
                 // Text fields shifted by 74 pixels
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-                g.setColour(m.nomeCoincide ? juce::Colour(0xff22c55e) : tk.textoPrimario);
+                g.setColour(m.nomeCoincide ? juce::Colour(0xffef4444) : tk.textoPrimario);
                 g.drawText("Title: " + m.titulo, x + 74, 36, colW - 74, 18, juce::Justification::left, true);
 
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
                 g.setColour(tk.textoSecundario);
                 g.drawText("Code: " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo), x + 74, 56, colW - 74, 16, juce::Justification::left);
                 
-                g.setColour(m.extCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
+                g.setColour(m.extCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
                 g.drawText("Format: " + juce::String(m.ext).toUpperCase(), x + 74, 72, colW - 74, 16, juce::Justification::left);
 
                 if (m.duracao > 0.0) {
-                    g.setColour(m.duracaoCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
+                    g.setColour(m.duracaoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
                     int min = static_cast<int>(m.duracao) / 60;
                     int sec = static_cast<int>(m.duracao) % 60;
                     g.drawText("Duration: " + juce::String::formatted("%02d:%02d", min, sec), x + 74, 88, colW - 74, 16, juce::Justification::left);
@@ -349,16 +349,36 @@ private:
                 }
 
                 if (m.largura > 0 && m.altura > 0) {
-                    g.setColour(m.dimCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
+                    g.setColour(m.dimCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
                     g.drawText("Dimensions: " + juce::String(m.largura) + "x" + juce::String(m.altura), x + 74, 104, colW - 74, 16, juce::Justification::left);
                 } else {
                     g.setColour(tk.textoTerciario);
                     g.drawText("Dimensions: N/A", x + 74, 104, colW - 74, 16, juce::Justification::left);
                 }
 
+                g.setColour(m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+                double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
+                g.drawText("File Size: " + juce::String::formatted("%.1f KB", kb), x + 74, 120, colW - 74, 16, juce::Justification::left);
+
+                juce::String extraInfo = "";
+                if (!m.orientation.empty()) {
+                    extraInfo += "Orientation: " + juce::String(m.orientation);
+                }
+                if (!m.colorSpace.empty()) {
+                    if (!extraInfo.isEmpty()) extraInfo += " | ";
+                    extraInfo += "Color Space: " + juce::String(m.colorSpace);
+                }
+                if (!extraInfo.isEmpty()) {
+                    g.setColour((m.orientationCoincide && m.colorSpaceCoincide) ? juce::Colour(0xffef4444) : tk.textoSecundario);
+                    g.drawText(extraInfo, x + 74, 136, colW - 74, 16, juce::Justification::left, true);
+                } else {
+                    g.setColour(tk.textoTerciario);
+                    g.drawText("EXIF Orientation & ColorSpace: N/A", x + 74, 136, colW - 74, 16, juce::Justification::left);
+                }
+
                 g.setColour(tk.textoTerciario);
                 g.setFont(juce::Font(juce::FontOptions(9.0f)));
-                g.drawText("Path: " + m.caminhoRelativo, x, 126, colW, 14, juce::Justification::left, true);
+                g.drawText("Path: " + m.caminhoRelativo, x, 158, colW, 14, juce::Justification::left, true);
             };
 
             // Draw original details with its thumbnail
@@ -370,7 +390,7 @@ private:
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
-                g.drawHorizontalLine(150, 10.0f, getWidth() - 10.0f);
+                g.drawHorizontalLine(180, 10.0f, getWidth() - 10.0f);
             }
         }
 
@@ -381,8 +401,8 @@ private:
             
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
-                if (previewOriginal_) previewOriginal_->setBounds(15, 165, previewW, 280);
-                if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, 165, previewW, 280);
+                if (previewOriginal_) previewOriginal_->setBounds(15, 195, previewW, 280);
+                if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, 195, previewW, 280);
             }
         }
         
@@ -516,6 +536,8 @@ void DuplicatesWorkspaceComponent::run() {
         double duracao = 0.0;
         int largura = 0;
         int altura = 0;
+        std::string orientation;
+        std::string colorSpace;
         std::string caminhoRelativo;
         juce::int64 tamanhoBytes = 0;
     };
@@ -554,6 +576,16 @@ void DuplicatesWorkspaceComponent::run() {
                 if (obj->hasProperty("alturaPx")) {
                     info.altura = obj->getProperty("alturaPx");
                 }
+                if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                    if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                        if (exif->hasProperty("Exif.Image.Orientation")) {
+                            info.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
+                        }
+                        if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                            info.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+                        }
+                    }
+                }
             }
             items.push_back(info);
         }
@@ -590,6 +622,9 @@ void DuplicatesWorkspaceComponent::run() {
             group.duplicata.duracao = item.duracao;
             group.duplicata.largura = item.largura;
             group.duplicata.altura = item.altura;
+            group.duplicata.tamanhoBytes = item.tamanhoBytes;
+            group.duplicata.orientation = item.orientation;
+            group.duplicata.colorSpace = item.colorSpace;
             group.duplicata.caminhoRelativo = item.caminhoRelativo;
 
             group.original.itemId = matchOpt->itemId;
@@ -598,7 +633,7 @@ void DuplicatesWorkspaceComponent::run() {
             // Query original properties
             try {
                 auto stmt = db.prepare(
-                    "SELECT i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json "
+                    "SELECT i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
                     "FROM item i JOIN arquivo a ON a.item_id = i.id "
                     "WHERE i.id = ? AND a.eh_master = 1 LIMIT 1");
                 stmt.bind(1, matriz::db::Value::of(matchOpt->itemId));
@@ -607,6 +642,7 @@ void DuplicatesWorkspaceComponent::run() {
                     std::string origPath = stmt.columnText(1);
                     group.original.caminhoRelativo = origPath;
                     group.original.ext = juce::File(origPath).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
+                    group.original.tamanhoBytes = stmt.columnInt(3);
                     
                     std::string origJson = stmt.columnText(2);
                     auto jsonVar = juce::JSON::parse(origJson);
@@ -620,6 +656,16 @@ void DuplicatesWorkspaceComponent::run() {
                         if (obj->hasProperty("alturaPx")) {
                             group.original.altura = obj->getProperty("alturaPx");
                         }
+                        if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                            if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                                if (exif->hasProperty("Exif.Image.Orientation")) {
+                                    group.original.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
+                                }
+                                if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                                    group.original.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+                                }
+                            }
+                        }
                     }
                 }
             } catch (...) {}
@@ -629,6 +675,9 @@ void DuplicatesWorkspaceComponent::run() {
             group.duplicata.extCoincide = group.original.extCoincide = (group.original.ext == group.duplicata.ext);
             group.duplicata.duracaoCoincide = group.original.duracaoCoincide = (group.original.duracao > 0 && group.duplicata.duracao > 0 && std::abs(group.original.duracao - group.duplicata.duracao) < 0.1);
             group.duplicata.dimCoincide = group.original.dimCoincide = (group.original.largura > 0 && group.duplicata.largura > 0 && group.original.largura == group.duplicata.largura && group.original.altura == group.duplicata.altura);
+            group.duplicata.tamanhoCoincide = group.original.tamanhoCoincide = (group.original.tamanhoBytes == group.duplicata.tamanhoBytes);
+            group.duplicata.orientationCoincide = group.original.orientationCoincide = (group.original.orientation == group.duplicata.orientation);
+            group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
 
             gruposDetectados_.push_back(group);
         }
