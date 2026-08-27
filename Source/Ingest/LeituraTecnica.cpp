@@ -21,19 +21,30 @@ const std::set<juce::String>& extensoesVideo() {
     return s;
 }
 const std::set<juce::String>& extensoesImagem() {
-    static const std::set<juce::String> s = {"jpg", "jpeg", "png", "tif", "tiff", "bmp", "heic", "heif", "webp", "gif", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2", "pef", "srw", "cr3", "svg", "ico", "psd", "psb", "ai", "eps", "exr", "hdr"};
+    static const std::set<juce::String> s = {"jpg", "jpeg", "png", "tif", "tiff", "bmp", "heic", "heif", "webp", "gif", "dng", "cr2", "nef", "arw", "raf", "orf", "rw2", "pef", "srw", "cr3", "ico", "psd", "psb", "exr", "hdr"};
     return s;
 }
 const std::set<juce::String>& extensoesDocumento() {
-    static const std::set<juce::String> s = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "keynote", "epub"};
+    static const std::set<juce::String> s = {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "keynote", "epub"};
     return s;
 }
 const std::set<juce::String>& extensoesSessao() {
-    static const std::set<juce::String> s = {"rpp", "ptx", "ptf", "als", "flp", "logic", "logicx", "cpr", "npr", "rxdoc", "pd", "pproj"};
+    static const std::set<juce::String> s = {
+        "rpp", "ptx", "ptf", "als", "flp", "logic", "logicx", "cpr", "npr", "rxdoc", "pd", "pproj",
+        "prproj", "prel", "ppj", "plb", "psq", "prtl",
+        "aep", "aepx", "aet", "mgjson",
+        "ai", "ait", "eps", "svg", "pdf",
+        "indd", "indt", "indl", "indb", "idml", "idms", "inx",
+        "pts", "wfm", "aan",
+        "rpp-bak", "rpp-undo",
+        "alp", "alc", "adg", "adv", "agr", "amxd", "ams", "abl", "ablbundle", "asd", "ask",
+        "fcpbundle", "fcpxml", "fcpxmld", "fcpevent", "fcproject", "fcp", "fcarch", "cboard",
+        "json", "bkrgs"
+    };
     return s;
 }
 const std::set<juce::String>& extensoesTexto() {
-    static const std::set<juce::String> s = {"txt", "md", "markdown", "csv", "log", "rtf", "json", "xml", "yaml", "yml", "html", "htm", "srt", "ass", "ssa", "vtt", "lrc", "ini", "cfg", "conf", "tex", "bib"};
+    static const std::set<juce::String> s = {"txt", "md", "markdown", "csv", "log", "rtf", "xml", "yaml", "yml", "html", "htm", "srt", "ass", "ssa", "vtt", "lrc", "ini", "cfg", "conf", "tex", "bib"};
     return s;
 }
 
@@ -538,8 +549,11 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
             enriquecerComExif(r, arquivo);
             return r;
         }
-        case CategoriaMidia::Sessao:
+        case CategoriaMidia::Sessao: {
+            juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+            if (ext == "pdf") return lerDocumentoPdf(arquivo);
             return lerDocumentoTexto(arquivo);
+        }
         case CategoriaMidia::Documento: {
             juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
             if (ext == "docx" || ext == "doc") return lerDocumentoDocx(arquivo);
@@ -560,6 +574,35 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
 
 std::string paraJson(const LeituraTecnicaResultado& r) {
     return juce::JSON::toString(r.bruto, true).toStdString();
+}
+
+juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
+    juce::String ext = extensaoSemPonto.toLowerCase().trim();
+    if (ext == "als" || ext == "alp" || ext == "alc" || ext == "adg" || ext == "adv" || ext == "agr" || ext == "amxd" || ext == "ams" || ext == "abl" || ext == "ablbundle" || ext == "asd" || ext == "ask")
+        return "ableton live.png";
+    if (ext == "prproj" || ext == "pproj" || ext == "prel" || ext == "ppj" || ext == "plb" || ext == "psq" || ext == "prtl")
+        return "adobepremiere.png";
+    if (ext == "aep" || ext == "aepx" || ext == "aet" || ext == "mgjson")
+        return "adobeaftereffects.png";
+    if (ext == "ai" || ext == "ait" || ext == "eps" || ext == "svg" || ext == "pdf")
+        return "adobeillustrator.png";
+    if (ext == "indd" || ext == "indt" || ext == "indl" || ext == "indb" || ext == "idml" || ext == "idms" || ext == "inx")
+        return "adobeindesign.png";
+    if (ext == "ptx" || ext == "ptf" || ext == "pts" || ext == "wfm" || ext == "aan")
+        return "pro tools.png";
+    if (ext == "rpp" || ext == "rpp-bak" || ext == "rpp-undo")
+        return "reaper.png";
+    if (ext == "rxdoc")
+        return "izotope.png";
+    if (ext == "fcpbundle" || ext == "fcpxml" || ext == "fcpxmld" || ext == "fcpevent" || ext == "fcproject" || ext == "fcp" || ext == "fcarch" || ext == "cboard")
+        return "finalcut.png";
+    if (ext == "json")
+        return "capcut.png";
+    if (ext == "bkrgs")
+        return "groovesculptor.png";
+    if (ext == "logic" || ext == "logicx")
+        return "logic.png";
+    return "";
 }
 
 } // namespace matriz::ingest

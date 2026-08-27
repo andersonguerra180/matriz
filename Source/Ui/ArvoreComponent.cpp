@@ -1,6 +1,7 @@
 #include "ArvoreComponent.h"
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
+#include "../Ingest/LeituraTecnica.h"
 
 #include "../I18n/Strings.h"
 #include "Tokens.h"
@@ -324,14 +325,8 @@ juce::Image ArvoreComponent::miniaturaParaItem(const std::string& itemId) {
         if (auto arq = projeto_.arquivoPrincipal(itemId)) {
             juce::File f(arq->caminhoAbsoluto);
             juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-            juce::String logoFile;
-            if (ext == "rpp") logoFile = "reaper.png";
-            else if (ext == "ptx" || ext == "ptf") logoFile = "pro tools.png";
-            else if (ext == "logic" || ext == "logicx") logoFile = "logic.png";
-            else if (ext == "als") logoFile = "ableton live.png";
-            else if (ext == "rxdoc") logoFile = "izotope.png";
-            else if (ext == "pd") logoFile = "puredata.png";
-            else if (ext == "pproj") logoFile = "premiere.png";
+            juce::String logoFile = matriz::ingest::obterLogoSessaoPorExtensao(ext);
+            if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
             if (logoFile.isNotEmpty()) {
                 juce::File logoImgFile = obterPastaAssets().getChildFile(logoFile);

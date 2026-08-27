@@ -673,7 +673,7 @@ void testarCategoriaPorExtensao() {
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.wav")) == matriz::ingest::CategoriaMidia::Audio, "wav -> Audio");
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.mp4")) == matriz::ingest::CategoriaMidia::Video, "mp4 -> Video");
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.jpg")) == matriz::ingest::CategoriaMidia::Imagem, "jpg -> Imagem");
-    check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.pdf")) == matriz::ingest::CategoriaMidia::Documento, "pdf -> Documento");
+    check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.pdf")) == matriz::ingest::CategoriaMidia::Sessao, "pdf -> Sessao");
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.xyz")) == matriz::ingest::CategoriaMidia::Desconhecida, "xyz -> Desconhecida");
 }
 
@@ -696,7 +696,7 @@ void testarCategoriaSemExtensaoPorAssinatura(const juce::File& dir) {
     juce::File pdfMock = dir.getChildFile("mock_pdf");
     uint8_t pdfHeader[] = { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34 };
     pdfMock.replaceWithData(pdfHeader, sizeof(pdfHeader));
-    check(matriz::ingest::categoriaPorExtensao(pdfMock) == matriz::ingest::CategoriaMidia::Documento, "signature PDF -> Documento");
+    check(matriz::ingest::categoriaPorExtensao(pdfMock) == matriz::ingest::CategoriaMidia::Sessao, "signature PDF -> Sessao");
     
     // Mock WAV (RIFF ... WAVE)
     juce::File wavMock = dir.getChildFile("mock_wav");

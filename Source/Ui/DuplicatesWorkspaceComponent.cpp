@@ -349,12 +349,15 @@ private:
                     g.drawText("Duration: N/A", x + 74, 88, colW - 74, 16, juce::Justification::left);
                 }
 
-                if (m.largura > 0 && m.altura > 0) {
+                if (m.lufs != 0.0) {
+                    g.setColour(m.lufsCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+                    g.drawText("LUFS-I: " + juce::String::formatted("%.2f LUFS", m.lufs), x + 74, 104, colW - 74, 16, juce::Justification::left);
+                } else if (m.largura > 0 && m.altura > 0) {
                     g.setColour(m.dimCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
                     g.drawText("Dimensions: " + juce::String(m.largura) + "x" + juce::String(m.altura), x + 74, 104, colW - 74, 16, juce::Justification::left);
                 } else {
                     g.setColour(tk.textoTerciario);
-                    g.drawText("Dimensions: N/A", x + 74, 104, colW - 74, 16, juce::Justification::left);
+                    g.drawText("Dimensions/LUFS-I: N/A", x + 74, 104, colW - 74, 16, juce::Justification::left);
                 }
 
                 g.setColour(m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
@@ -608,6 +611,7 @@ void DuplicatesWorkspaceComponent::run() {
         double duracao = 0.0;
         int largura = 0;
         int altura = 0;
+        double lufs = 0.0;
         std::string orientation;
         std::string colorSpace;
         std::string caminhoRelativo;
@@ -647,6 +651,9 @@ void DuplicatesWorkspaceComponent::run() {
                 }
                 if (obj->hasProperty("alturaPx")) {
                     info.altura = obj->getProperty("alturaPx");
+                }
+                if (obj->hasProperty("lufsIntegrado")) {
+                    info.lufs = obj->getProperty("lufsIntegrado");
                 }
                 if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
                     if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
@@ -751,6 +758,7 @@ void DuplicatesWorkspaceComponent::run() {
             group.duplicata.duracao = item.duracao;
             group.duplicata.largura = item.largura;
             group.duplicata.altura = item.altura;
+            group.duplicata.lufs = item.lufs;
             group.duplicata.tamanhoBytes = item.tamanhoBytes;
             group.duplicata.orientation = item.orientation;
             group.duplicata.colorSpace = item.colorSpace;
@@ -785,6 +793,9 @@ void DuplicatesWorkspaceComponent::run() {
                         if (obj->hasProperty("alturaPx")) {
                             group.original.altura = obj->getProperty("alturaPx");
                         }
+                        if (obj->hasProperty("lufsIntegrado")) {
+                            group.original.lufs = obj->getProperty("lufsIntegrado");
+                        }
                         if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
                             if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
                                 if (exif->hasProperty("Exif.Image.Orientation")) {
@@ -807,6 +818,7 @@ void DuplicatesWorkspaceComponent::run() {
             group.duplicata.tamanhoCoincide = group.original.tamanhoCoincide = (group.original.tamanhoBytes == group.duplicata.tamanhoBytes);
             group.duplicata.orientationCoincide = group.original.orientationCoincide = (group.original.orientation == group.duplicata.orientation);
             group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
+            group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
 
             gruposDetectados_.push_back(group);
         }

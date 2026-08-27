@@ -36,6 +36,7 @@ private:
         double duracao = 0.0;
         int largura = 0;
         int altura = 0;
+        double lufs = 0.0;
         juce::int64 tamanhoBytes = 0;
         std::string orientation;
         std::string colorSpace;
@@ -49,6 +50,7 @@ private:
         bool tamanhoCoincide = false;
         bool orientationCoincide = false;
         bool colorSpaceCoincide = false;
+        bool lufsCoincide = false;
     };
 
     struct DuplicateGroup {
