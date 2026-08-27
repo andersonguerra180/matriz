@@ -1023,7 +1023,7 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
             if (auto arq = projeto->arquivoPrincipal(itemId)) {
                 juce::File f(arq->caminhoAbsoluto);
                 juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-                juce::String logoFile = matriz::ingest::obterLogoSessaoPorExtensao(ext);
+                juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
                 if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
                 if (logoFile.isNotEmpty()) {

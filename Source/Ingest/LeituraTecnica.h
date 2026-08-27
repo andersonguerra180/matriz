@@ -39,6 +39,7 @@ CategoriaMidia categoriaPorExtensao(const juce::File& arquivo);
 CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto);
 juce::String detectarExtensaoPorAssinatura(const juce::File& arquivo);
 juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto);
+juce::String obterLogoParaExtensao(const juce::String& extensaoSemPonto);
 
 struct LeituraTecnicaResultado {
     juce::var bruto; // objeto completo retornado por ffprobe (+ "exif" quando Exiv2 encontra dados), vira arquivo.caracteristicas_tecnicas_json

@@ -25,7 +25,7 @@ const std::set<juce::String>& extensoesImagem() {
     return s;
 }
 const std::set<juce::String>& extensoesDocumento() {
-    static const std::set<juce::String> s = {"doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "keynote", "epub"};
+    static const std::set<juce::String> s = {"pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "pages", "numbers", "keynote", "epub"};
     return s;
 }
 const std::set<juce::String>& extensoesSessao() {
@@ -33,7 +33,7 @@ const std::set<juce::String>& extensoesSessao() {
         "rpp", "ptx", "ptf", "als", "flp", "logic", "logicx", "cpr", "npr", "rxdoc", "pd", "pproj",
         "prproj", "prel", "ppj", "plb", "psq", "prtl",
         "aep", "aepx", "aet", "mgjson",
-        "ai", "ait", "eps", "svg", "pdf",
+        "ai", "ait", "eps", "svg",
         "indd", "indt", "indl", "indb", "idml", "idms", "inx",
         "pts", "wfm", "aan",
         "rpp-bak", "rpp-undo",
@@ -549,11 +549,8 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
             enriquecerComExif(r, arquivo);
             return r;
         }
-        case CategoriaMidia::Sessao: {
-            juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
-            if (ext == "pdf") return lerDocumentoPdf(arquivo);
+        case CategoriaMidia::Sessao:
             return lerDocumentoTexto(arquivo);
-        }
         case CategoriaMidia::Documento: {
             juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
             if (ext == "docx" || ext == "doc") return lerDocumentoDocx(arquivo);
@@ -584,7 +581,7 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "adobepremiere.png";
     if (ext == "aep" || ext == "aepx" || ext == "aet" || ext == "mgjson")
         return "adobeaftereffects.png";
-    if (ext == "ai" || ext == "ait" || ext == "eps" || ext == "svg" || ext == "pdf")
+    if (ext == "ai" || ext == "ait" || ext == "eps" || ext == "svg")
         return "adobeillustrator.png";
     if (ext == "indd" || ext == "indt" || ext == "indl" || ext == "indb" || ext == "idml" || ext == "idms" || ext == "inx")
         return "adobeindesign.png";
@@ -603,6 +600,13 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
     if (ext == "logic" || ext == "logicx")
         return "logic.png";
     return "";
+}
+
+juce::String obterLogoParaExtensao(const juce::String& extensaoSemPonto) {
+    juce::String ext = extensaoSemPonto.toLowerCase().trim();
+    if (ext == "pdf")
+        return "pdf.jpeg";
+    return obterLogoSessaoPorExtensao(ext);
 }
 
 } // namespace matriz::ingest

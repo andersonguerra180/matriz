@@ -247,7 +247,7 @@ void PreviewComponent::construirParaItem() {
         case matriz::ingest::CategoriaMidia::Sessao: {
             labelSemPreview_->setText("", juce::dontSendNotification);
             juce::String ext = arquivoFile.getFileExtension().toLowerCase().replace(".", "");
-            juce::String logoFile = matriz::ingest::obterLogoSessaoPorExtensao(ext);
+            juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
             if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
             if (logoFile.isNotEmpty()) {
@@ -275,8 +275,11 @@ void PreviewComponent::construirParaItem() {
         case matriz::ingest::CategoriaMidia::Documento: {
             auto ext = arquivoFile.getFileExtension().toLowerCase();
             if (ext == ".pdf") {
-                labelSemPreview_->setText("PDF preview not available.\nUse an external viewer to open this file.",
-                                          juce::dontSendNotification);
+                labelSemPreview_->setText("", juce::dontSendNotification);
+                juce::File logoImgFile = obterPastaAssets().getChildFile("pdf.jpeg");
+                if (logoImgFile.existsAsFile()) {
+                    imagemPrincipal_ = juce::ImageFileFormat::loadFrom(logoImgFile);
+                }
             } else {
                 juce::String conteudo = arquivoFile.loadFileAsString();
                 if (conteudo.containsNonWhitespaceChars() && conteudo.length() < 200000) {

@@ -26,7 +26,7 @@ void runCategoryAndExtractorUnitTest() {
     jassert(categoriaPorExtensao("mov") == CategoriaMidia::Video);
     jassert(categoriaPorExtensao("jpg") == CategoriaMidia::Imagem);
     jassert(categoriaPorExtensao("png") == CategoriaMidia::Imagem);
-    jassert(categoriaPorExtensao("pdf") == CategoriaMidia::Sessao);
+    jassert(categoriaPorExtensao("pdf") == CategoriaMidia::Documento);
     jassert(categoriaPorExtensao("docx") == CategoriaMidia::Documento);
     jassert(categoriaPorExtensao("txt") == CategoriaMidia::Texto);
 
