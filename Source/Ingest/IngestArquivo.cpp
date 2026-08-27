@@ -282,6 +282,28 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
         "  )");
 
     std::string tituloLower = juce::String(titulo).toLowerCase().toStdString();
+    
+    double origLufs = 0.0;
+    double origPeak = 0.0;
+    int origSampleRate = 0;
+    int origChannels = 0;
+    if (!excludeItemId.empty()) {
+        try {
+            auto stmtOrig = registro.prepare(
+                "SELECT a.caracteristicas_tecnicas_json FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+            stmtOrig.bind(1, Value::of(excludeItemId));
+            if (stmtOrig.step()) {
+                auto jsonVar = juce::JSON::parse(stmtOrig.columnText(0));
+                if (auto* obj = jsonVar.getDynamicObject()) {
+                    if (obj->hasProperty("lufsIntegrado")) origLufs = obj->getProperty("lufsIntegrado");
+                    if (obj->hasProperty("picoDbfs")) origPeak = obj->getProperty("picoDbfs");
+                    if (obj->hasProperty("sampleRate")) origSampleRate = obj->getProperty("sampleRate");
+                    if (obj->hasProperty("canais")) origChannels = obj->getProperty("canais");
+                }
+            }
+        } catch (...) {}
+    }
+
     stmt.bind(1, Value::of(excludeItemId));
     stmt.bind(2, Value::of(excludeItemId));
     stmt.bind(3, Value::of(tituloLower));
@@ -349,19 +371,52 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
         }
         auto jsonVar = juce::JSON::parse(jsonStr);
         if (auto* obj = jsonVar.getDynamicObject()) {
-            // Duração
-            if (duracao > 0.0 && obj->hasProperty("duracaoSegundos")) {
+            juce::String queryExt = juce::String(ext).toLowerCase();
+            bool isImage = (queryExt == "jpg" || queryExt == "jpeg" || queryExt == "png" || queryExt == "gif" || queryExt == "tiff" || queryExt == "bmp" || queryExt == "webp" || queryExt == "psd");
+            bool isAudio = (queryExt == "wav" || queryExt == "mp3" || queryExt == "flac" || queryExt == "aif" || queryExt == "aiff" || queryExt == "m4a");
+
+            // Duração (só comparamos para arquivos de áudio ou vídeo, imagens estáticas nunca comparam duração)
+            if (!isImage && duracao > 0.0 && obj->hasProperty("duracaoSegundos")) {
                 double candDur = obj->getProperty("duracaoSegundos");
                 if (std::abs(candDur - duracao) < 0.1) {
                     coincidences++;
                 }
             }
-            // Dimensões
+            // Dimensões (só comparamos para imagens ou vídeos)
             if (largura > 0 && altura > 0 && obj->hasProperty("larguraPx") && obj->hasProperty("alturaPx")) {
                 int candW = obj->getProperty("larguraPx");
                 int candH = obj->getProperty("alturaPx");
                 if (candW == largura && candH == altura) {
                     coincidences++;
+                }
+            }
+
+            // Para arquivos de áudio, se as propriedades técnicas detalhadas ou a assinatura de áudio forem diferentes,
+            // forçamos a rejeição (coincidences = 0) para evitar falsos positivos
+            if (isAudio) {
+                if (origSampleRate > 0 && obj->hasProperty("sampleRate")) {
+                    int candSR = obj->getProperty("sampleRate");
+                    if (candSR != origSampleRate) {
+                        coincidences = 0;
+                    }
+                }
+                if (origChannels > 0 && obj->hasProperty("canais")) {
+                    int candCh = obj->getProperty("canais");
+                    if (candCh != origChannels) {
+                        coincidences = 0;
+                    }
+                }
+                if (std::abs(origLufs) > 0.0 && obj->hasProperty("lufsIntegrado")) {
+                    double candLufs = obj->getProperty("lufsIntegrado");
+                    if (std::abs(candLufs - origLufs) > 0.05) {
+                        coincidences = 0;
+                    }
+                }
+                if (std::abs(origPeak) > 0.0 && obj->hasProperty("picoDbfs")) {
+                    double candPeak = obj->getProperty("picoDbfs");
+                    if (std::abs(candPeak - origPeak) > 0.05) {
+                        coincidences = 0;
+                    }
                 }
             }
         }
