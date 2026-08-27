@@ -287,6 +287,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
     double origPeak = 0.0;
     int origSampleRate = 0;
     int origChannels = 0;
+    juce::String origOrientationStr;
+    juce::String origColorSpaceStr;
     if (!excludeItemId.empty()) {
         try {
             auto stmtOrig = registro.prepare(
@@ -299,6 +301,17 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                     if (obj->hasProperty("picoDbfs")) origPeak = obj->getProperty("picoDbfs");
                     if (obj->hasProperty("sampleRate")) origSampleRate = obj->getProperty("sampleRate");
                     if (obj->hasProperty("canais")) origChannels = obj->getProperty("canais");
+                    
+                    if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                        if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                            if (exif->hasProperty("Exif.Image.Orientation")) {
+                                origOrientationStr = exif->getProperty("Exif.Image.Orientation").toString();
+                            }
+                            if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                                origColorSpaceStr = exif->getProperty("Exif.Photo.ColorSpace").toString();
+                            }
+                        }
+                    }
                 }
             }
         } catch (...) {}
@@ -352,12 +365,11 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
             coincidences++;
         }
 
-        // Strict Duplicate Rule for compressed files/images:
+        // Strict Duplicate Rule for compressed media files:
         // If format and exact size in bytes match, they are 100% duplicates (excluding uncompressed PCM wav/aif/aiff)
         if (extMatches && sizeMatches) {
-            bool isImage = (queryExt == "jpg" || queryExt == "jpeg" || queryExt == "png" || queryExt == "gif" || queryExt == "tiff" || queryExt == "bmp" || queryExt == "webp" || queryExt == "psd");
             bool isCompressedMedia = (queryExt == "mp3" || queryExt == "mp4" || queryExt == "mov" || queryExt == "m4a" || queryExt == "flac" || queryExt == "mkv" || queryExt == "ogg");
-            if (isImage || isCompressedMedia) {
+            if (isCompressedMedia) {
                 coincidences = 3; // Force match!
             }
         }
@@ -387,47 +399,78 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
             bool isImage = (queryExt == "jpg" || queryExt == "jpeg" || queryExt == "png" || queryExt == "gif" || queryExt == "tiff" || queryExt == "bmp" || queryExt == "webp" || queryExt == "psd");
             bool isAudio = (queryExt == "wav" || queryExt == "mp3" || queryExt == "flac" || queryExt == "aif" || queryExt == "aiff" || queryExt == "m4a");
 
-            // Duração (só comparamos para arquivos de áudio ou vídeo, imagens estáticas nunca comparam duração)
-            if (!isImage && duracao > 0.0 && obj->hasProperty("duracaoSegundos")) {
-                double candDur = obj->getProperty("duracaoSegundos");
-                if (std::abs(candDur - duracao) < 0.1) {
-                    coincidences++;
+            if (isImage) {
+                // Strict duplicate rules for images: size, dimensions, screen orientation, and color space must ALL match
+                bool sizeMatches = (candTamanho == tamanhoBytes);
+                
+                int candW = obj->hasProperty("larguraPx") ? static_cast<int>(obj->getProperty("larguraPx")) : 0;
+                int candH = obj->hasProperty("alturaPx") ? static_cast<int>(obj->getProperty("alturaPx")) : 0;
+                bool dimensionsMatch = (candW == largura && candH == altura && largura > 0 && altura > 0);
+                
+                juce::String candOrientation;
+                juce::String candColorSpace;
+                if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                    if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                        if (exif->hasProperty("Exif.Image.Orientation")) {
+                            candOrientation = exif->getProperty("Exif.Image.Orientation").toString();
+                        }
+                        if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                            candColorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString();
+                        }
+                    }
                 }
-            }
-            // Dimensões (só comparamos para imagens ou vídeos)
-            if (largura > 0 && altura > 0 && obj->hasProperty("larguraPx") && obj->hasProperty("alturaPx")) {
-                int candW = obj->getProperty("larguraPx");
-                int candH = obj->getProperty("alturaPx");
-                if (candW == largura && candH == altura) {
-                    coincidences++;
+                
+                bool orientationMatches = (candOrientation == origOrientationStr);
+                bool colorSpaceMatches = (candColorSpace == origColorSpaceStr);
+                
+                if (sizeMatches && dimensionsMatch && orientationMatches && colorSpaceMatches) {
+                    coincidences = 3; // Force match!
+                } else {
+                    coincidences = 0; // Forced reject!
                 }
-            }
+            } else {
+                // Duração (só comparamos para arquivos de áudio ou vídeo, imagens estáticas nunca comparam duração)
+                if (duracao > 0.0 && obj->hasProperty("duracaoSegundos")) {
+                    double candDur = obj->getProperty("duracaoSegundos");
+                    if (std::abs(candDur - duracao) < 0.1) {
+                        coincidences++;
+                    }
+                }
+                // Dimensões (só comparamos para vídeos)
+                if (largura > 0 && altura > 0 && obj->hasProperty("larguraPx") && obj->hasProperty("alturaPx")) {
+                    int candW = obj->getProperty("larguraPx");
+                    int candH = obj->getProperty("alturaPx");
+                    if (candW == largura && candH == altura) {
+                        coincidences++;
+                    }
+                }
 
-            // Para arquivos de áudio, se as propriedades técnicas detalhadas ou a assinatura de áudio forem diferentes,
-            // forçamos a rejeição (coincidences = 0) para evitar falsos positivos
-            if (isAudio) {
-                if (origSampleRate > 0 && obj->hasProperty("sampleRate")) {
-                    int candSR = obj->getProperty("sampleRate");
-                    if (candSR != origSampleRate) {
-                        coincidences = 0;
+                // Para arquivos de áudio, se as propriedades técnicas detalhadas ou a assinatura de áudio forem diferentes,
+                // forçamos a rejeição (coincidences = 0) para evitar falsos positivos
+                if (isAudio) {
+                    if (origSampleRate > 0 && obj->hasProperty("sampleRate")) {
+                        int candSR = obj->getProperty("sampleRate");
+                        if (candSR != origSampleRate) {
+                            coincidences = 0;
+                        }
                     }
-                }
-                if (origChannels > 0 && obj->hasProperty("canais")) {
-                    int candCh = obj->getProperty("canais");
-                    if (candCh != origChannels) {
-                        coincidences = 0;
+                    if (origChannels > 0 && obj->hasProperty("canais")) {
+                        int candCh = obj->getProperty("canais");
+                        if (candCh != origChannels) {
+                            coincidences = 0;
+                        }
                     }
-                }
-                if (std::abs(origLufs) > 0.0 && obj->hasProperty("lufsIntegrado")) {
-                    double candLufs = obj->getProperty("lufsIntegrado");
-                    if (std::abs(candLufs - origLufs) > 0.05) {
-                        coincidences = 0;
+                    if (std::abs(origLufs) > 0.0 && obj->hasProperty("lufsIntegrado")) {
+                        double candLufs = obj->getProperty("lufsIntegrado");
+                        if (std::abs(candLufs - origLufs) > 0.05) {
+                            coincidences = 0;
+                        }
                     }
-                }
-                if (std::abs(origPeak) > 0.0 && obj->hasProperty("picoDbfs")) {
-                    double candPeak = obj->getProperty("picoDbfs");
-                    if (std::abs(candPeak - origPeak) > 0.05) {
-                        coincidences = 0;
+                    if (std::abs(origPeak) > 0.0 && obj->hasProperty("picoDbfs")) {
+                        double candPeak = obj->getProperty("picoDbfs");
+                        if (std::abs(candPeak - origPeak) > 0.05) {
+                            coincidences = 0;
+                        }
                     }
                 }
             }
