@@ -2068,6 +2068,15 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 // FASE 2 — banco. Sob lock: o handle SQLite é um só, e a
                 // numeração do acervo precisa de exclusão mútua pra dois
                 // arquivos não gastarem o mesmo sequencial.
+                // Auto-classify tipo_midia based on extension category so it maps to the correct Grid filter tabs
+                std::string tipoMidia = "";
+                if (categoria == matriz::ingest::CategoriaMidia::Audio) tipoMidia = "digital_audio";
+                else if (categoria == matriz::ingest::CategoriaMidia::Video) tipoMidia = "digital_video";
+                else if (categoria == matriz::ingest::CategoriaMidia::Imagem) tipoMidia = "foto";
+                else if (categoria == matriz::ingest::CategoriaMidia::Documento) tipoMidia = "documento";
+                else if (categoria == matriz::ingest::CategoriaMidia::Texto) tipoMidia = "documento";
+                else if (categoria == matriz::ingest::CategoriaMidia::Sessao) tipoMidia = "sessao";
+
                 std::string arquivoIdGravado;
                 {
                     const std::lock_guard<std::mutex> lock(*escritaRegistro);
@@ -2106,8 +2115,9 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                    " (matched name, format, duration/dimensions). Flagged as duplicate.";
                         }
 
-                        registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                        registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ?, tipo_midia = ? WHERE id = ?",
                                       {matriz::db::Value::of(nota.toStdString()),
+                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
                                        matriz::db::Value::of(itemId)});
                         duplicata = true;
                         sucesso = true;
@@ -2137,8 +2147,9 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         // (ProjetoAberto::atualizarTipoMidia), que é decisão
                         // humana. Marcar como catalogado aqui faria a coleção
                         // "Incompletos" (§10) e a faixa de orientação mentirem.
-                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo' WHERE id = ?",
+                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = ? WHERE id = ?",
                                       {matriz::db::Value::of(codigo.toStdString()),
+                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
                                        matriz::db::Value::of(itemId)});
 
                         matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
