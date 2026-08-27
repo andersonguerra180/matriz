@@ -2081,82 +2081,38 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 {
                     const std::lock_guard<std::mutex> lock(*escritaRegistro);
 
-                    bool duplicadoPorChecksum = false;
-                    bool duplicadoPorMetadados = false;
-                    auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, analise.checksums.sha256);
-                    if (conhecido) {
-                        duplicadoPorChecksum = true;
-                    } else {
-                        double dur = analise.leitura.duracaoSegundos.value_or(0.0);
-                        int w = analise.leitura.larguraPx.value_or(0);
-                        int h = analise.leitura.alturaPx.value_or(0);
-                        std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
-                        std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        std::string relPath = matriz::vault::caminhoRelativoAoVolume(arquivo);
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto);
-                        if (conhecido) {
-                            duplicadoPorMetadados = true;
-                        }
-                    }
+                    PapelInfo papelInfo = papelPorCategoria(categoria);
+                    auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
+                                                                              papelInfo.papel,
+                                                                              papelInfo.ehMaster);
+                    arquivoIdGravado = resultado.arquivoId;
 
-                    if (conhecido) {
-                        juce::String nota;
-                        if (duplicadoPorChecksum) {
-                            matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
-                            nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
-                                   " - already in the archive, not copied again.";
-                            // Delete the temporary item because the file is now registered under the existing conocido item
-                            registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
-                        } else {
-                            PapelInfo papelInfo = papelPorCategoria(categoria);
-                            auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
-                                                                                     papelInfo.papel,
-                                                                                     papelInfo.ehMaster);
-                            arquivoIdGravado = resultado.arquivoId;
-                            nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
-                                   " (matched name, format, duration/dimensions). Flagged as duplicate.";
+                    // Sequencial permanente SÓ no sucesso (critério 6).
+                    // Busca o maior sufixo numérico existente para este prefixo no banco,
+                    // evitando conflitos causados por itens excluídos ou lacunas de id.
+                    int proximoNumero = 1;
+                    auto stmtContagem = registro->prepare(
+                        "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+                        "FROM item WHERE codigo_acervo LIKE ?");
+                    stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
+                    if (stmtContagem.step())
+                        proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+                    juce::String codigo =
+                        prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
 
-                            registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ?, tipo_midia = ? WHERE id = ?",
-                                          {matriz::db::Value::of(nota.toStdString()),
-                                           tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
-                                           matriz::db::Value::of(itemId)});
-                        }
-                        duplicata = true;
-                        sucesso = true;
-                    } else {
-                        PapelInfo papelInfo = papelPorCategoria(categoria);
-                        auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
-                                                                                 papelInfo.papel,
-                                                                                 papelInfo.ehMaster);
-                        arquivoIdGravado = resultado.arquivoId;
+                    // 'novo', não 'catalogado': o arquivo entrou e foi lido,
+                    // mas tipo_midia ainda é NULL — ninguém classificou
+                    // nada. Quem move pra 'catalogado' é a classificação
+                    // (ProjetoAberto::atualizarTipoMidia), que é decisão
+                    // humana. Marcar como catalogado aqui faria a coleção
+                    // "Incompletos" (§10) e a faixa de orientação mentirem.
+                    registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = ? WHERE id = ?",
+                                  {matriz::db::Value::of(codigo.toStdString()),
+                                   tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
+                                   matriz::db::Value::of(itemId)});
 
-                        // Sequencial permanente SÓ no sucesso (critério 6).
-                        // Busca o maior sufixo numérico existente para este prefixo no banco,
-                        // evitando conflitos causados por itens excluídos ou lacunas de id.
-                        int proximoNumero = 1;
-                        auto stmtContagem = registro->prepare(
-                            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
-                            "FROM item WHERE codigo_acervo LIKE ?");
-                        stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
-                        if (stmtContagem.step())
-                            proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
-                        juce::String codigo =
-                            prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
-
-                        // 'novo', não 'catalogado': o arquivo entrou e foi lido,
-                        // mas tipo_midia ainda é NULL — ninguém classificou
-                        // nada. Quem move pra 'catalogado' é a classificação
-                        // (ProjetoAberto::atualizarTipoMidia), que é decisão
-                        // humana. Marcar como catalogado aqui faria a coleção
-                        // "Incompletos" (§10) e a faixa de orientação mentirem.
-                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'novo', tipo_midia = ? WHERE id = ?",
-                                      {matriz::db::Value::of(codigo.toStdString()),
-                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
-                                       matriz::db::Value::of(itemId)});
-
-                        matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
-                        sucesso = true;
-                    }
+                    matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
+                    sucesso = true;
                 }
 
                 if (!arquivoIdGravado.empty()) {
