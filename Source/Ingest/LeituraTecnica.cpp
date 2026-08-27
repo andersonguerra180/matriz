@@ -128,6 +128,9 @@ void parseId3Tags(const juce::File& arquivo, juce::DynamicObject* tagsObj) {
 
 LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
     juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
+    if (ext.isEmpty()) {
+        ext = detectarExtensaoPorAssinatura(arquivo);
+    }
     if (extensoesAudio().count(ext) > 0) {
         juce::AudioFormatManager formatManager;
         formatManager.registerBasicFormats();
@@ -418,8 +421,78 @@ LeituraTecnicaResultado lerDocumentoTexto(const juce::File& arquivo) {
 
 } // namespace
 
+juce::String detectarExtensaoPorAssinatura(const juce::File& arquivo) {
+    if (!arquivo.existsAsFile()) return {};
+    
+    std::unique_ptr<juce::FileInputStream> stream(arquivo.createInputStream());
+    if (stream == nullptr) return {};
+    
+    uint8_t header[16] = {0};
+    int lidos = stream->read(header, 16);
+    if (lidos < 4) return {};
+    
+    // JPEG: FF D8 FF
+    if (header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF) {
+        return "jpg";
+    }
+    
+    // PNG: 89 50 4E 47
+    if (header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47) {
+        return "png";
+    }
+    
+    // GIF: "GIF8" (47 49 46 38)
+    if (header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x38) {
+        return "gif";
+    }
+    
+    // TIFF: "II*" (49 49 2A 00) or "MM*" (4D 4D 00 2A)
+    if ((header[0] == 0x49 && header[1] == 0x49 && header[2] == 0x2A && header[3] == 0x00) ||
+        (header[0] == 0x4D && header[1] == 0x4D && header[2] == 0x00 && header[3] == 0x2A)) {
+        return "tiff";
+    }
+    
+    // PDF: "%PDF" (25 50 44 46)
+    if (header[0] == 0x25 && header[1] == 0x50 && header[2] == 0x44 && header[3] == 0x46) {
+        return "pdf";
+    }
+    
+    // WAV: "RIFF" (52 49 46 46) ... "WAVE" at offset 8
+    if (header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46 &&
+        lidos >= 12 &&
+        header[8] == 0x57 && header[9] == 0x41 && header[10] == 0x56 && header[11] == 0x45) {
+        return "wav";
+    }
+    
+    // AIFF: "FORM" (46 4F 52 4D) ... "AIFF" at offset 8
+    if (header[0] == 0x46 && header[1] == 0x4F && header[2] == 0x52 && header[3] == 0x4D &&
+        lidos >= 12 &&
+        header[8] == 0x41 && header[9] == 0x49 && header[10] == 0x46 && header[11] == 0x46) {
+        return "aif";
+    }
+    
+    // MP3: ID3 tag ("ID3" at 0-2) or Frame Sync (FF FB / FF F3)
+    if (header[0] == 0x49 && header[1] == 0x44 && header[2] == 0x33) {
+        return "mp3";
+    }
+    if (header[0] == 0xFF && (header[1] & 0xE0) == 0xE0) {
+        return "mp3";
+    }
+    
+    // MP4/MOV: Look for "ftyp" at offset 4
+    if (lidos >= 8 && header[4] == 0x66 && header[5] == 0x74 && header[6] == 0x79 && header[7] == 0x70) {
+        return "mp4";
+    }
+    
+    return {};
+}
+
 CategoriaMidia categoriaPorExtensao(const juce::File& arquivo) {
-    return categoriaPorExtensao(arquivo.getFileExtension().trimCharactersAtStart("."));
+    juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".");
+    if (ext.isEmpty()) {
+        ext = detectarExtensaoPorAssinatura(arquivo);
+    }
+    return categoriaPorExtensao(ext);
 }
 
 CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto) {

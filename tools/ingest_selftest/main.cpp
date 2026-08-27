@@ -677,6 +677,34 @@ void testarCategoriaPorExtensao() {
     check(matriz::ingest::categoriaPorExtensao(juce::File("/tmp/x.xyz")) == matriz::ingest::CategoriaMidia::Desconhecida, "xyz -> Desconhecida");
 }
 
+void testarCategoriaSemExtensaoPorAssinatura(const juce::File& dir) {
+    std::cout << "== Category detection without extension by signature ==\n";
+    
+    // Mock JPEG (FF D8 FF E0)
+    juce::File jpgMock = dir.getChildFile("mock_jpeg");
+    uint8_t jpgHeader[] = { 0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46 };
+    jpgMock.replaceWithData(jpgHeader, sizeof(jpgHeader));
+    check(matriz::ingest::categoriaPorExtensao(jpgMock) == matriz::ingest::CategoriaMidia::Imagem, "signature JPEG -> Imagem");
+    
+    // Mock PNG (89 50 4E 47)
+    juce::File pngMock = dir.getChildFile("mock_png");
+    uint8_t pngHeader[] = { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+    pngMock.replaceWithData(pngHeader, sizeof(pngHeader));
+    check(matriz::ingest::categoriaPorExtensao(pngMock) == matriz::ingest::CategoriaMidia::Imagem, "signature PNG -> Imagem");
+    
+    // Mock PDF (%PDF)
+    juce::File pdfMock = dir.getChildFile("mock_pdf");
+    uint8_t pdfHeader[] = { 0x25, 0x50, 0x44, 0x46, 0x2D, 0x31, 0x2E, 0x34 };
+    pdfMock.replaceWithData(pdfHeader, sizeof(pdfHeader));
+    check(matriz::ingest::categoriaPorExtensao(pdfMock) == matriz::ingest::CategoriaMidia::Documento, "signature PDF -> Documento");
+    
+    // Mock WAV (RIFF ... WAVE)
+    juce::File wavMock = dir.getChildFile("mock_wav");
+    uint8_t wavHeader[] = { 0x52, 0x49, 0x46, 0x46, 0x24, 0x00, 0x00, 0x00, 0x57, 0x41, 0x56, 0x45 };
+    wavMock.replaceWithData(wavHeader, sizeof(wavHeader));
+    check(matriz::ingest::categoriaPorExtensao(wavMock) == matriz::ingest::CategoriaMidia::Audio, "signature WAV -> Audio");
+}
+
 void testarMascaraDeNomenclatura() {
     std::cout << "== Naming mask ==\n";
 
@@ -2083,6 +2111,7 @@ int main() {
     tmpDir.createDirectory();
 
     testarCategoriaPorExtensao();
+    testarCategoriaSemExtensaoPorAssinatura(tmpDir);
     testarChecksum(tmpDir);
     testarLeituraTecnicaAudio(tmpDir);
     testarLeituraTecnicaImagem(tmpDir);
