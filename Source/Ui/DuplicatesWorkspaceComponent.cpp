@@ -270,6 +270,21 @@ private:
                 owner_.resolverDuplicata(static_cast<int>(index_), false);
             };
             addAndMakeVisible(*btnDismiss_);
+
+            // Load thumbnails from cache/database
+            auto& proj = owner_.projeto_;
+            if (auto caminhoOrig = proj.caminhoMiniaturaPrincipal(grupo_.original.itemId)) {
+                juce::File f(caminhoOrig->toStdString());
+                if (f.existsAsFile()) {
+                    thumbOriginal_ = juce::ImageFileFormat::loadFrom(f);
+                }
+            }
+            if (auto caminhoDup = proj.caminhoMiniaturaPrincipal(grupo_.duplicata.itemId)) {
+                juce::File f(caminhoDup->toStdString());
+                if (f.existsAsFile()) {
+                    thumbDuplicata_ = juce::ImageFileFormat::loadFrom(f);
+                }
+            }
         }
 
         void mouseDoubleClick(const juce::MouseEvent&) override {
@@ -289,50 +304,68 @@ private:
             int w = getWidth() - 20;
             int colW = w / 2 - 20;
 
-            auto drawColumn = [&](juce::Graphics& g, int x, const DuplicateMatch& m, const DuplicateMatch& other, bool isDup) {
+            auto drawColumn = [&](juce::Graphics& g, int x, const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
                 g.setColour(tk.textoPrimario);
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
                 g.drawText(isDup ? "POSSIBLE DUPLICATE" : "EXISTING ORIGINAL", x, 12, colW, 20, juce::Justification::left);
 
+                // Draw thumbnail rectangle
+                juce::Rectangle<int> thumbRect(x, 36, 64, 64);
+                if (thumb.isValid()) {
+                    g.drawImageWithin(thumb, thumbRect.getX(), thumbRect.getY(), thumbRect.getWidth(), thumbRect.getHeight(),
+                                      juce::RectanglePlacement::centred, false);
+                } else {
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(thumbRect.toFloat(), tk.raioPequeno);
+                    g.setColour(tk.textoTerciario);
+                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                    juce::String extension = juce::String(m.ext).toUpperCase();
+                    g.drawText(extension, thumbRect, juce::Justification::centred);
+                }
+                
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(thumbRect.toFloat(), tk.raioPequeno, 1.0f);
+
+                // Text fields shifted by 74 pixels
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
                 g.setColour(m.nomeCoincide ? juce::Colour(0xff22c55e) : tk.textoPrimario);
-                g.drawText("Title: " + m.titulo, x, 36, colW, 18, juce::Justification::left, true);
+                g.drawText("Title: " + m.titulo, x + 74, 36, colW - 74, 18, juce::Justification::left, true);
 
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
                 g.setColour(tk.textoSecundario);
-                g.drawText("Code: " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo), x, 56, colW, 16, juce::Justification::left);
+                g.drawText("Code: " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo), x + 74, 56, colW - 74, 16, juce::Justification::left);
                 
                 g.setColour(m.extCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
-                g.drawText("Format: " + juce::String(m.ext).toUpperCase(), x, 72, colW, 16, juce::Justification::left);
+                g.drawText("Format: " + juce::String(m.ext).toUpperCase(), x + 74, 72, colW - 74, 16, juce::Justification::left);
 
                 if (m.duracao > 0.0) {
                     g.setColour(m.duracaoCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
                     int min = static_cast<int>(m.duracao) / 60;
                     int sec = static_cast<int>(m.duracao) % 60;
-                    g.drawText("Duration: " + juce::String::formatted("%02d:%02d", min, sec), x, 88, colW, 16, juce::Justification::left);
+                    g.drawText("Duration: " + juce::String::formatted("%02d:%02d", min, sec), x + 74, 88, colW - 74, 16, juce::Justification::left);
                 } else {
                     g.setColour(tk.textoTerciario);
-                    g.drawText("Duration: N/A", x, 88, colW, 16, juce::Justification::left);
+                    g.drawText("Duration: N/A", x + 74, 88, colW - 74, 16, juce::Justification::left);
                 }
 
                 if (m.largura > 0 && m.altura > 0) {
                     g.setColour(m.dimCoincide ? juce::Colour(0xff22c55e) : tk.textoSecundario);
-                    g.drawText("Dimensions: " + juce::String(m.largura) + "x" + juce::String(m.altura), x, 104, colW, 16, juce::Justification::left);
+                    g.drawText("Dimensions: " + juce::String(m.largura) + "x" + juce::String(m.altura), x + 74, 104, colW - 74, 16, juce::Justification::left);
                 } else {
                     g.setColour(tk.textoTerciario);
-                    g.drawText("Dimensions: N/A", x, 104, colW, 16, juce::Justification::left);
+                    g.drawText("Dimensions: N/A", x + 74, 104, colW - 74, 16, juce::Justification::left);
                 }
 
                 g.setColour(tk.textoTerciario);
                 g.setFont(juce::Font(juce::FontOptions(9.0f)));
-                g.drawText("Path: " + m.caminhoRelativo, x, 124, colW, 14, juce::Justification::left, true);
+                g.drawText("Path: " + m.caminhoRelativo, x, 126, colW, 14, juce::Justification::left, true);
             };
 
-            // Draw original details
-            drawColumn(g, 15, grupo_.original, grupo_.duplicata, false);
+            // Draw original details with its thumbnail
+            drawColumn(g, 15, grupo_.original, grupo_.duplicata, false, thumbOriginal_);
 
-            // Draw duplicate details
-            drawColumn(g, w / 2 + 5, grupo_.duplicata, grupo_.original, true);
+            // Draw duplicate details with its thumbnail
+            drawColumn(g, w / 2 + 5, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
             
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
@@ -389,6 +422,8 @@ private:
         
         std::unique_ptr<SingleFilePreviewComponent> previewOriginal_;
         std::unique_ptr<SingleFilePreviewComponent> previewDuplicata_;
+        juce::Image thumbOriginal_;
+        juce::Image thumbDuplicata_;
     };
 
     DuplicatesWorkspaceComponent& owner_;
@@ -464,6 +499,8 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     viewport_->setVisible(false);
     
     startTimer(100); // Poll scan progress
+    resized();
+    repaint();
     startThread(juce::Thread::Priority::normal);
 }
 
@@ -729,23 +766,27 @@ void DuplicatesWorkspaceComponent::resized() {
     auto areaHeader = area.removeFromTop(40);
     
     if (estado_ == State::Results) {
-        btnScan_->setVisible(false);
+        btnScan_->setVisible(true);
+        btnScan_->setButtonText("RE-SCAN");
         btnValidateAll_->setVisible(true);
         btnDismissAll_->setVisible(true);
         
         auto areaControle = area.removeFromTop(40);
         lblStatus_->setJustificationType(juce::Justification::centredLeft);
-        lblStatus_->setBounds(areaControle.removeFromLeft(areaControle.getWidth() - 380));
+        lblStatus_->setBounds(areaControle.removeFromLeft(areaControle.getWidth() - 510));
         
         btnValidateAll_->setBounds(areaControle.removeFromRight(180));
         areaControle.removeFromRight(10);
         btnDismissAll_->setBounds(areaControle.removeFromRight(180));
+        areaControle.removeFromRight(10);
+        btnScan_->setBounds(areaControle.removeFromRight(120));
         
         viewport_->setBounds(area);
         viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
     } else {
         btnScan_->setVisible(true);
+        btnScan_->setButtonText("SCAN FOR DUPLICATES");
         btnValidateAll_->setVisible(false);
         btnDismissAll_->setVisible(false);
         lblStatus_->setJustificationType(juce::Justification::centred);
