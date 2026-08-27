@@ -15,10 +15,19 @@ public:
         : projeto_(proj), itemId_(itemId), ext_(ext), onPlay_(onPlayCallback) {
         
         auto& db = projeto_.projeto().registro();
-        auto fileOpt = matriz::vault::resolverArquivo(db, itemId_, projeto_.projeto().pasta());
-        if (fileOpt && fileOpt->existsAsFile()) {
-            file_ = *fileOpt;
-            
+        // resolverArquivo expects arquivo.id, not item.id — look up the master arquivo first
+        try {
+            auto stmtArq = db.prepare(
+                "SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+            stmtArq.bind(1, matriz::db::Value::of(itemId_));
+            if (stmtArq.step()) {
+                std::string arquivoId = stmtArq.columnText(0);
+                auto fileOpt = matriz::vault::resolverArquivo(db, arquivoId, projeto_.projeto().pasta());
+                if (fileOpt && fileOpt->existsAsFile())
+                    file_ = *fileOpt;
+            }
+        } catch (...) {}
+        if (file_ != juce::File()) {
             juce::String extension = juce::String(ext_).toLowerCase();
             isImage_ = (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "gif" || extension == "tiff");
             isDoc_ = (extension == "pdf" || extension == "txt" || extension == "doc" || extension == "docx" || extension == "json" || extension == "xml");
@@ -224,14 +233,10 @@ private:
                 owner_.resolverDuplicata(static_cast<int>(index_), false);
             };
             addAndMakeVisible(*btnDismiss_);
+        }
 
-            btnTogglePreview_ = std::make_unique<juce::TextButton>("SHOW PREVIEW");
-            btnTogglePreview_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
-            btnTogglePreview_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
-            btnTogglePreview_->onClick = [this] {
-                toggleExpanded();
-            };
-            addAndMakeVisible(*btnTogglePreview_);
+        void mouseDoubleClick(const juce::MouseEvent&) override {
+            toggleExpanded();
         }
 
         void paint(juce::Graphics& g) override {
@@ -303,7 +308,6 @@ private:
             int w = getWidth();
             btnValidate_->setBounds(w - 180, 20, 160, 32);
             btnDismiss_->setBounds(w - 180, 60, 160, 32);
-            btnTogglePreview_->setBounds(w - 180, 100, 160, 32);
             
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
@@ -318,8 +322,6 @@ private:
             isExpanded_ = !isExpanded_;
             
             if (isExpanded_) {
-                btnTogglePreview_->setButtonText("HIDE PREVIEW");
-                
                 // Create previews
                 previewOriginal_ = std::make_unique<SingleFilePreviewComponent>(
                     owner_.projeto_, grupo_.original.itemId, grupo_.original.ext,
@@ -331,7 +333,6 @@ private:
                     [this] { if (previewOriginal_) previewOriginal_->pause(); });
                 addAndMakeVisible(*previewDuplicata_);
             } else {
-                btnTogglePreview_->setButtonText("SHOW PREVIEW");
                 previewOriginal_.reset();
                 previewDuplicata_.reset();
             }
@@ -348,7 +349,6 @@ private:
         
         std::unique_ptr<juce::TextButton> btnValidate_;
         std::unique_ptr<juce::TextButton> btnDismiss_;
-        std::unique_ptr<juce::TextButton> btnTogglePreview_;
         
         std::unique_ptr<SingleFilePreviewComponent> previewOriginal_;
         std::unique_ptr<SingleFilePreviewComponent> previewDuplicata_;
