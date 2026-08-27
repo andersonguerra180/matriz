@@ -264,6 +264,7 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        int largura,
                                                        int altura,
                                                        juce::int64 tamanhoBytes,
+                                                       const std::string& caminhoRelativo,
                                                        const std::string& excludeItemId,
                                                        const juce::File& pastaProjeto) {
     auto stmt = registro.prepare(
@@ -303,6 +304,17 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
 
         // Coincidência 2: Extensão/Formato (case-insensitive)
         std::string candCaminho = stmt.columnText(4);
+        
+        // Heuristic: If they are in the same folder but have different filenames, they are different files
+        if (!caminhoRelativo.empty()) {
+            juce::File fileA(caminhoRelativo);
+            juce::File fileB(candCaminho);
+            if (fileA.getParentDirectory().getFullPathName() == fileB.getParentDirectory().getFullPathName() &&
+                !fileA.getFileName().equalsIgnoreCase(fileB.getFileName())) {
+                continue;
+            }
+        }
+
         juce::String candExt = juce::File(candCaminho).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase();
         juce::String queryExt = juce::String(ext).toLowerCase();
         if (candExt == queryExt) {

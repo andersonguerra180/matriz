@@ -11,6 +11,7 @@
 #include "../Ficha/OrigemPadrao.h"
 #include "../Ingest/CacheArquivo.h"
 #include "../Vault/Reconciliacao.h"
+#include "../Vault/Volume.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Ingest/Miniaturas.h"
@@ -2082,7 +2083,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         int h = analise.leitura.alturaPx.value_or(0);
                         std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), "", pastaProjeto);
+                        std::string relPath = matriz::vault::caminhoRelativoAoVolume(arquivo);
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto);
                         if (conhecido) {
                             duplicadoPorMetadados = true;
                         }

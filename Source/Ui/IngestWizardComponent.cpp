@@ -4,6 +4,7 @@
 #include "../I18n/Strings.h"
 #include "../Ingest/Miniaturas.h"
 #include "../Model/Project.h"
+#include "../Vault/Volume.h"
 
 namespace {
 
@@ -488,7 +489,8 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
                         int h = resultado.analise.leitura.alturaPx.value_or(0);
                         std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), "", pastaProjeto);
+                        std::string relPath = matriz::vault::caminhoRelativoAoVolume(arquivo);
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto);
                     }
                     if (conhecido) {
                         resultado.ehDuplicata = true;
@@ -633,7 +635,8 @@ void IngestWizardComponent::iniciarImportacao() {
                         int h = res.analise.leitura.alturaPx.value_or(0);
                         std::string tit = res.arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = res.arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), "", pastaProjeto);
+                        std::string relPath = matriz::vault::caminhoRelativoAoVolume(res.arquivo);
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), relPath, "", pastaProjeto);
                         if (conhecido) {
                             duplicadoPorMetadados = true;
                         }

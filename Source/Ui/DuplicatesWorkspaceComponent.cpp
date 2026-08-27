@@ -9,10 +9,12 @@
 namespace matriz::ui {
 
 // A unified side-by-side preview component for a single file (image, document, audio or video)
-class SingleFilePreviewComponent : public juce::Component {
+class SingleFilePreviewComponent : public juce::Component, private juce::Timer {
 public:
     SingleFilePreviewComponent(ProjetoAberto& proj, const std::string& itemId, const std::string& ext, std::function<void()> onPlayCallback)
         : projeto_(proj), itemId_(itemId), ext_(ext), onPlay_(onPlayCallback) {
+        
+        spectrum_.assign(24, 0.0f);
         
         auto& db = projeto_.projeto().registro();
         // resolverArquivo expects arquivo.id, not item.id — look up the master arquivo first
@@ -69,12 +71,15 @@ public:
                         int ms = static_cast<int>((pos - static_cast<int>(pos)) * 100);
                         lblTimecode_->setText(juce::String::formatted("%02d:%02d.%02d", min, sec, ms), juce::dontSendNotification);
                     };
+                    
+                    startTimerHz(30); // 30Hz refresh rate for timecode & spectrum animation
                 }
             }
         }
     }
     
     ~SingleFilePreviewComponent() override {
+        stopTimer();
         if (player_) {
             player_->parar();
         }
@@ -132,8 +137,23 @@ public:
                     int centerX = getWidth() / 2;
                     int centerY = getHeight() / 2 - 20;
                     g.drawEllipse(centerX - 40, centerY - 40, 80, 80, 2.0f);
-                    g.setFont(juce::Font(juce::FontOptions(24.0f)));
-                    g.drawText("AUDIO", centerX - 50, centerY - 15, 100, 30, juce::Justification::centred);
+                    
+                    // Draw simulated spectrum analyzer bars in bottom half of preview area
+                    juce::Rectangle<int> areaSpect = getLocalBounds().reduced(15).withHeight(120).withY(getHeight() - 170);
+                    int numBars = static_cast<int>(spectrum_.size());
+                    float barW = static_cast<float>(areaSpect.getWidth()) / numBars;
+                    for (int i = 0; i < numBars; ++i) {
+                        float val = spectrum_[static_cast<size_t>(i)];
+                        float h = val * areaSpect.getHeight();
+                        juce::Rectangle<float> bar(
+                            static_cast<float>(areaSpect.getX()) + i * barW + 1.0f,
+                            static_cast<float>(areaSpect.getBottom()) - h,
+                            barW - 2.0f,
+                            h
+                        );
+                        g.setColour(tk.acento.withAlpha(0.3f + 0.7f * val));
+                        g.fillRoundedRectangle(bar, 1.5f);
+                    }
                 }
             }
         }
@@ -156,6 +176,22 @@ public:
     }
     
 private:
+    void timerCallback() override {
+        if (player_ && player_->estaTocando()) {
+            for (size_t i = 0; i < spectrum_.size(); ++i) {
+                float r = static_cast<float>(std::rand()) / static_cast<float>(RAND_MAX);
+                float bandFactor = 1.0f - (static_cast<float>(i) / spectrum_.size()) * 0.6f;
+                float target = r * bandFactor;
+                spectrum_[i] = spectrum_[i] * 0.6f + target * 0.4f;
+            }
+        } else {
+            for (size_t i = 0; i < spectrum_.size(); ++i) {
+                spectrum_[i] *= 0.8f;
+            }
+        }
+        repaint();
+    }
+
     ProjetoAberto& projeto_;
     std::string itemId_;
     std::string ext_;
@@ -168,6 +204,7 @@ private:
     std::unique_ptr<VideoPlayerComponent> player_;
     std::unique_ptr<juce::TextButton> btnPlay_;
     std::unique_ptr<juce::Label> lblTimecode_;
+    std::vector<float> spectrum_;
 };
 
 // Card component and list view container
@@ -369,6 +406,18 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     lblStatus_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblStatus_);
 
+    btnValidateAll_ = std::make_unique<juce::TextButton>("VALIDATE ALL DUPLICATES");
+    btnValidateAll_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
+    btnValidateAll_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    btnValidateAll_->onClick = [this] { resolverTudo(true); };
+    addChildComponent(*btnValidateAll_);
+
+    btnDismissAll_ = std::make_unique<juce::TextButton>("DISMISS ALL DUPLICATES");
+    btnDismissAll_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnDismissAll_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnDismissAll_->onClick = [this] { resolverTudo(false); };
+    addChildComponent(*btnDismissAll_);
+
     viewport_ = std::make_unique<juce::Viewport>();
     viewport_->setScrollBarThickness(10);
     viewport_->setScrollBarsShown(true, false);
@@ -491,7 +540,7 @@ void DuplicatesWorkspaceComponent::run() {
         // Find if this item has any metadata duplicates in the database that are NOT the item itself
         // and which were ingested before it (or just has a lexicographically smaller ID to avoid double-listing).
         auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
-            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.itemId,
+            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
             projeto_.projeto().pasta());
 
         if (matchOpt && matchOpt->itemId < item.itemId) {
@@ -613,6 +662,54 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     repaint();
 }
 
+void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
+    if (gruposDetectados_.empty()) return;
+    
+    juce::String msg = ehDuplicataReal
+        ? "Are you sure you want to validate all " + juce::String(gruposDetectados_.size()) + " duplicate groups as duplicates? This will update their state to 'duplicata'."
+        : "Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again.";
+        
+    bool confirm = juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::QuestionIcon,
+        ehDuplicataReal ? "Validate All Duplicates" : "Dismiss All Duplicates",
+        msg,
+        "Yes", "No",
+        this
+    );
+    
+    if (!confirm) return;
+    
+    auto& db = projeto_.projeto().registro();
+    
+    try {
+        db.run("BEGIN TRANSACTION", {});
+        for (const auto& group : gruposDetectados_) {
+            if (ehDuplicataReal) {
+                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user in batch. [USER_VERIFIED_DUPLICATE]";
+                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()),
+                        matriz::db::Value::of(group.duplicata.itemId)});
+            } else {
+                juce::String nota = "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]";
+                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()),
+                        matriz::db::Value::of(group.duplicata.itemId)});
+            }
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+    }
+    
+    gruposDetectados_.clear();
+    estado_ = State::Clean;
+    lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+    viewport_->setVisible(false);
+    
+    resized();
+    repaint();
+}
+
 void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.fundo);
@@ -631,22 +728,28 @@ void DuplicatesWorkspaceComponent::resized() {
     // Title label
     auto areaHeader = area.removeFromTop(40);
     
-    lblStatus_->setBounds(area.removeFromTop(40));
-
-    if (estado_ == State::Idle) {
-        btnScan_->setVisible(true);
-        viewport_->setVisible(false);
-        btnScan_->setBounds(getLocalBounds().withSizeKeepingCentre(240, 48));
-    } else if (estado_ == State::Scanning) {
-        btnScan_->setVisible(true);
-        viewport_->setVisible(false);
-        btnScan_->setBounds(getLocalBounds().withSizeKeepingCentre(240, 48));
-    } else if (estado_ == State::Results) {
+    if (estado_ == State::Results) {
         btnScan_->setVisible(false);
+        btnValidateAll_->setVisible(true);
+        btnDismissAll_->setVisible(true);
+        
+        auto areaControle = area.removeFromTop(40);
+        lblStatus_->setJustificationType(juce::Justification::centredLeft);
+        lblStatus_->setBounds(areaControle.removeFromLeft(areaControle.getWidth() - 380));
+        
+        btnValidateAll_->setBounds(areaControle.removeFromRight(180));
+        areaControle.removeFromRight(10);
+        btnDismissAll_->setBounds(areaControle.removeFromRight(180));
+        
         viewport_->setBounds(area);
+        viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
-    } else if (estado_ == State::Clean) {
+    } else {
         btnScan_->setVisible(true);
+        btnValidateAll_->setVisible(false);
+        btnDismissAll_->setVisible(false);
+        lblStatus_->setJustificationType(juce::Justification::centred);
+        lblStatus_->setBounds(area.removeFromTop(40));
         viewport_->setVisible(false);
         btnScan_->setBounds(getLocalBounds().withSizeKeepingCentre(240, 48));
     }

@@ -69,9 +69,13 @@ private:
 
     std::vector<DuplicateGroup> gruposDetectados_;
 
+    void resolverTudo(bool ehDuplicataReal);
+
     // UI Elements
     std::unique_ptr<juce::TextButton> btnScan_;
     std::unique_ptr<juce::Label> lblStatus_;
+    std::unique_ptr<juce::TextButton> btnValidateAll_;
+    std::unique_ptr<juce::TextButton> btnDismissAll_;
     
     // Results list viewport
     class ListaResultadosComponent;

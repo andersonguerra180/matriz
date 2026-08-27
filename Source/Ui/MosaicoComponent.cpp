@@ -692,8 +692,14 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
             auto celulaReduzida = celula.reduced(4);
             auto areaImagem = celulaReduzida.withHeight(celulaReduzida.getHeight() - 34);
             constexpr int kDiam = 18;
-            juce::Rectangle<int> areaCheck(areaImagem.getRight() - kDiam - 4,
-                                            areaImagem.getY() + 4, kDiam + 8, kDiam + 8);
+            juce::Rectangle<int> areaCheck;
+            if (modoQuarentena_) {
+                areaCheck = juce::Rectangle<int>(areaImagem.getRight() - kDiam - 5,
+                                                 areaImagem.getBottom() - kDiam - 5, kDiam + 8, kDiam + 8);
+            } else {
+                areaCheck = juce::Rectangle<int>(areaImagem.getRight() - kDiam - 4,
+                                                 areaImagem.getY() + 4, kDiam + 8, kDiam + 8);
+            }
             naCheckbox = areaCheck.contains(e.getPosition());
         }
     }
@@ -1347,11 +1353,12 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText(ext, badge, juce::Justification::centred);
             }
 
-            // Duration badge (bottom-right of thumbnail like 04:35, 12:18)
+            // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
             juce::String durText = (item.extensaoArquivo == "mp4" || item.extensaoArquivo == "mov" || item.extensaoArquivo == "avi" || item.extensaoArquivo == "mkv") ? "12:18"
                                  : (item.extensaoArquivo == "wav" || item.extensaoArquivo == "mp3" || item.extensaoArquivo == "flac") ? "04:35" : "";
             if (durText.isNotEmpty()) {
-                juce::Rectangle<int> durBadge(areaImagem.getRight() - 44, areaImagem.getBottom() - 20, 40, 16);
+                int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - 44);
+                juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, 40, 16);
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
@@ -1373,11 +1380,13 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawRoundedRectangle(bounds.reduced(3).toFloat(), tk.raioMedio, 1.5f);
             }
 
-            // Checkmark on selected items
+            // Checkmark on selected items (drawn at bottom-right in quarantine mode to avoid +, otherwise top-right)
             if (selecionado) {
                 constexpr int kDiametroMarca = 20;
+                float marcaY = modoQuarentena_ ? static_cast<float>(areaImagem.getBottom() - kDiametroMarca - 5)
+                                               : static_cast<float>(areaImagem.getY() + 5);
                 juce::Rectangle<float> marca(static_cast<float>(areaImagem.getRight() - kDiametroMarca - 5),
-                                              static_cast<float>(areaImagem.getY() + 5),
+                                              marcaY,
                                               static_cast<float>(kDiametroMarca),
                                               static_cast<float>(kDiametroMarca));
                 g.setColour(tk.acento);
@@ -1388,11 +1397,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                              juce::AffineTransform::scale(static_cast<float>(kDiametroMarca)).translated(marca.getX(), marca.getY()));
             }
 
-            // Button "+" in top-right for confirming quarantine item into GRID
+            // Button "+" in top-right for confirming quarantine item into GRID (fixed position)
             if (modoQuarentena_) {
                 constexpr int kTamMais = 22;
-                int offRight = selecionado ? 30 : 6;
-                juce::Rectangle<float> btnMais(static_cast<float>(areaImagem.getRight() - kTamMais - offRight),
+                juce::Rectangle<float> btnMais(static_cast<float>(areaImagem.getRight() - kTamMais - 6),
                                                static_cast<float>(areaImagem.getY() + 6),
                                                static_cast<float>(kTamMais),
                                                static_cast<float>(kTamMais));
@@ -1499,12 +1507,8 @@ juce::Rectangle<int> MosaicoComponent::boundsBotaoAdicionarGrid(int indice) cons
     int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
     juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
     
-    const std::string& id = itensFiltrados_[static_cast<size_t>(indice)].id;
-    bool selecionado = selecionados_.count(id) > 0;
-    
     constexpr int kTamMais = 22;
-    int offRight = selecionado ? 30 : 6;
-    return juce::Rectangle<int>(areaImagem.getRight() - kTamMais - offRight, areaImagem.getY() + 6, kTamMais, kTamMais);
+    return juce::Rectangle<int>(areaImagem.getRight() - kTamMais - 6, areaImagem.getY() + 6, kTamMais, kTamMais);
 }
 
 } // namespace matriz::ui
