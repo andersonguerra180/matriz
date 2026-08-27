@@ -2105,6 +2105,8 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                             matriz::ingest::registrarLocalizacaoConhecida(*registro, conhecido->arquivoId, arquivo);
                             nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
                                    " - already in the archive, not copied again.";
+                            // Delete the temporary item because the file is now registered under the existing conocido item
+                            registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                         } else {
                             PapelInfo papelInfo = papelPorCategoria(categoria);
                             auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
@@ -2113,12 +2115,12 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                             arquivoIdGravado = resultado.arquivoId;
                             nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
                                    " (matched name, format, duration/dimensions). Flagged as duplicate.";
-                        }
 
-                        registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ?, tipo_midia = ? WHERE id = ?",
-                                      {matriz::db::Value::of(nota.toStdString()),
-                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
-                                       matriz::db::Value::of(itemId)});
+                            registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ?, tipo_midia = ? WHERE id = ?",
+                                          {matriz::db::Value::of(nota.toStdString()),
+                                           tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
+                                           matriz::db::Value::of(itemId)});
+                        }
                         duplicata = true;
                         sucesso = true;
                     } else {
