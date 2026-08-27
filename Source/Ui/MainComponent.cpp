@@ -2174,10 +2174,20 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 auto fim = std::chrono::system_clock::now();
                 matriz::app::registrarLogOperacao(pastaProjeto, "ingest_error", itemId, workerId, inicio, fim, 0, e.what());
 
-                // Failed item does NOT get a code and is removed from the catalog
+                // Failed item does NOT get a code and is removed from the catalog.
+                // We retry a few times in case of database locks.
                 try {
                     const std::lock_guard<std::mutex> lock(*escritaRegistro);
-                    registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+                    int retries = 5;
+                    while (retries-- > 0) {
+                        try {
+                            registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+                            break;
+                        } catch (...) {
+                            if (retries == 0) throw;
+                            juce::Thread::sleep(50);
+                        }
+                    }
                 } catch (...) {}
             }
 

@@ -540,6 +540,11 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
         // Safe fallback in case of errors
     }
 
+    // Self-healing database cleanup of zombie/ghost items (items with no files)
+    try {
+        registro->run("DELETE FROM item WHERE NOT EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = item.id)", {});
+    } catch (...) {}
+
     return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));
 }
 
