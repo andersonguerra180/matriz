@@ -714,38 +714,98 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     if (grupoIdx < 0 || grupoIdx >= static_cast<int>(gruposDetectados_.size())) return;
     
     auto group = gruposDetectados_[static_cast<size_t>(grupoIdx)];
-    auto& db = projeto_.projeto().registro();
     
-    try {
-        if (ehDuplicataReal) {
-            // Confirm/Validate as duplicate: set state to 'duplicata' and append [USER_VERIFIED_DUPLICATE]
-            juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user. [USER_VERIFIED_DUPLICATE]";
-            db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                   {matriz::db::Value::of(nota.toStdString()),
-                    matriz::db::Value::of(group.duplicata.itemId)});
-        } else {
-            // Dismiss/Not duplicate: keep current state (e.g. 'capturado') and write [USER_VERIFIED_NOT_DUPLICATE]
+    if (!ehDuplicataReal) {
+        // Dismiss/Not duplicate: keep current state and write [USER_VERIFIED_NOT_DUPLICATE]
+        auto& db = projeto_.projeto().registro();
+        try {
             juce::String nota = "Dismissed as duplicate by user. [USER_VERIFIED_NOT_DUPLICATE]";
             db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
                    {matriz::db::Value::of(nota.toStdString()),
                     matriz::db::Value::of(group.duplicata.itemId)});
-        }
-    } catch (...) {}
+        } catch (...) {}
 
-    // Remove resolved group from local list
-    gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
-    
-    if (gruposDetectados_.empty()) {
-        estado_ = State::Clean;
-        lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
-        viewport_->setVisible(false);
-    } else {
-        lblStatus_->setText("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
-        listaComponent_->updateList(gruposDetectados_);
+        // Remove resolved group from local list
+        gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
+        
+        if (gruposDetectados_.empty()) {
+            estado_ = State::Clean;
+            lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+            viewport_->setVisible(false);
+        } else {
+            lblStatus_->setText("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
+            listaComponent_->updateList(gruposDetectados_);
+        }
+        resized();
+        repaint();
+        return;
     }
-    
-    resized();
-    repaint();
+
+    // Validation path: Show prompt to ask which file to keep
+    juce::MessageBoxOptions options = juce::MessageBoxOptions()
+        .withIconType(juce::MessageBoxIconType::QuestionIcon)
+        .withTitle("Resolve Duplicate Match")
+        .withMessage("How would you like to handle this duplicate pair?\n\n"
+                     "1. Keep Original: " + juce::String(group.original.titulo) + "\n"
+                     "2. Keep Duplicate: " + juce::String(group.duplicata.titulo) + "\n"
+                     "3. Keep Both representations in the archive")
+        .withButton("Keep Original (1)")
+        .withButton("Keep Duplicate (2)")
+        .withButton("Keep Both")
+        .withAssociatedComponent(this);
+
+    juce::AlertWindow::showAsync(options, [this, grupoIdx, group](int buttonResult) {
+        if (buttonResult == 0) return; // User closed without selecting
+
+        auto& db = projeto_.projeto().registro();
+        try {
+            db.run("BEGIN TRANSACTION", {});
+            
+            if (buttonResult == 1) { // Keep Original (1) -> Delete Duplicate (2)
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+                db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+                db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+            }
+            else if (buttonResult == 2) { // Keep Duplicate (2) -> Delete Original (1)
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
+                db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
+                db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.original.itemId)});
+                
+                juce::String nota = "Kept as unique item after duplicate resolution. Original was deleted.";
+                db.run("UPDATE item SET estado = 'novo', notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()),
+                        matriz::db::Value::of(group.duplicata.itemId)});
+            }
+            else if (buttonResult == 3) { // Keep Both (3) -> Set state to 'duplicata'
+                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user. [USER_VERIFIED_DUPLICATE]";
+                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()),
+                        matriz::db::Value::of(group.duplicata.itemId)});
+            }
+            
+            db.run("COMMIT", {});
+        } catch (...) {
+            try { db.run("ROLLBACK", {}); } catch (...) {}
+        }
+
+        // Run UI update on MessageThread context
+        juce::MessageManager::callAsync([this, grupoIdx]() {
+            if (grupoIdx >= 0 && grupoIdx < static_cast<int>(gruposDetectados_.size())) {
+                gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
+                
+                if (gruposDetectados_.empty()) {
+                    estado_ = State::Clean;
+                    lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+                    viewport_->setVisible(false);
+                } else {
+                    lblStatus_->setText("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
+                    listaComponent_->updateList(gruposDetectados_);
+                }
+                resized();
+                repaint();
+            }
+        });
+    });
 }
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
