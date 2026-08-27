@@ -305,12 +305,13 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
         // Coincidência 2: Extensão/Formato (case-insensitive)
         std::string candCaminho = stmt.columnText(4);
         
-        // Heuristic: If they are in the same folder but have different filenames, they are different files
+        // Heuristic: If they are in the same folder (same parent directory), they are excluded
+        // from duplicate file matching (either they are different files in the same folder,
+        // or they are the exact same physical file registered twice in the database).
         if (!caminhoRelativo.empty()) {
             juce::File fileA(caminhoRelativo);
             juce::File fileB(candCaminho);
-            if (fileA.getParentDirectory().getFullPathName() == fileB.getParentDirectory().getFullPathName() &&
-                !fileA.getFileName().equalsIgnoreCase(fileB.getFileName())) {
+            if (fileA.getParentDirectory().getFullPathName() == fileB.getParentDirectory().getFullPathName()) {
                 continue;
             }
         }
