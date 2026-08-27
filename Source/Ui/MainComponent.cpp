@@ -497,7 +497,10 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirPreview(itemId); };
     mosaico_->aoClicarEstadoVazio = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
-    mosaico_->aoMudarSelecao = [this] { atualizarPainelDeApoio(); };
+    mosaico_->aoMudarSelecao = [this] {
+        projetoAberto_->definirItensSelecionadosNoGrid(mosaico_->itensSelecionados());
+        atualizarPainelDeApoio();
+    };
     mosaico_->aoMudarConteudoVisivel = [this] {
         atualizarPainelDeApoio();
         atualizarBarraMetricas();

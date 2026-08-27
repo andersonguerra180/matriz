@@ -5,6 +5,7 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "VideoPlayerComponent.h"
 #include "../Vault/Resolucao.h"
+#include "ModalMitigacao.h"
 
 namespace matriz::ui {
 
@@ -457,6 +458,64 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnScan_->onClick = [this] { iniciarScan(); };
     addAndMakeVisible(*btnScan_);
 
+    lblScope_ = std::make_unique<juce::Label>("lblScope", "Scan:");
+    lblScope_->setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(*lblScope_);
+
+    cbScope_ = std::make_unique<juce::ComboBox>("cbScope");
+    cbScope_->addItem("ALL FILES", 1);
+    cbScope_->addItem("SELECTED FILES", 2);
+    cbScope_->setSelectedId(1);
+    addAndMakeVisible(*cbScope_);
+
+    lblFileType_ = std::make_unique<juce::Label>("lblFileType", "Type:");
+    lblFileType_->setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(*lblFileType_);
+
+    cbFileType_ = std::make_unique<juce::ComboBox>("cbFileType");
+    cbFileType_->addItem("ALL FILES", 1);
+    cbFileType_->addItem("IMAGE", 2);
+    cbFileType_->addItem("VIDEO", 3);
+    cbFileType_->addItem("AUDIO", 4);
+    cbFileType_->addItem("DOCS", 5);
+    cbFileType_->addItem("SESSIONS", 6);
+    cbFileType_->addItem("OTHER", 7);
+    cbFileType_->setSelectedId(1);
+    addAndMakeVisible(*cbFileType_);
+
+    lblFileSize_ = std::make_unique<juce::Label>("lblFileSize", "Size:");
+    lblFileSize_->setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(*lblFileSize_);
+
+    cbSizeFilter_ = std::make_unique<juce::ComboBox>("cbSizeFilter");
+    cbSizeFilter_->addItem("No Size Filter", 1);
+    cbSizeFilter_->addItem("Size is bigger than", 2);
+    cbSizeFilter_->addItem("Size is smaller than", 3);
+    cbSizeFilter_->addItem("Size equals", 4);
+    cbSizeFilter_->setSelectedId(1);
+    cbSizeFilter_->onChange = [this] {
+        bool showValue = cbSizeFilter_->getSelectedId() > 1;
+        txtSizeValue_->setVisible(showValue);
+        cbSizeUnit_->setVisible(showValue);
+        resized();
+    };
+    addAndMakeVisible(*cbSizeFilter_);
+
+    txtSizeValue_ = std::make_unique<juce::TextEditor>("txtSizeValue");
+    txtSizeValue_->setInputRestrictions(0, "0123456789.");
+    txtSizeValue_->setText("100"); // default value e.g. 100
+    txtSizeValue_->setVisible(false);
+    addAndMakeVisible(*txtSizeValue_);
+
+    cbSizeUnit_ = std::make_unique<juce::ComboBox>("cbSizeUnit");
+    cbSizeUnit_->addItem("Bytes", 1);
+    cbSizeUnit_->addItem("KB", 2);
+    cbSizeUnit_->addItem("MB", 3);
+    cbSizeUnit_->addItem("GB", 4);
+    cbSizeUnit_->setSelectedId(3); // default MB
+    cbSizeUnit_->setVisible(false);
+    addAndMakeVisible(*cbSizeUnit_);
+
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "This tool analyzes all assets in the active catalog and identifies possible duplicates based on matching file attributes.");
     lblStatus_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblStatus_);
@@ -511,6 +570,19 @@ void DuplicatesWorkspaceComponent::recarregar() {
 void DuplicatesWorkspaceComponent::iniciarScan() {
     if (isThreadRunning()) return;
     
+    // Capture filter selections from UI safely on main thread before starting the thread
+    activeFilters_.scope = cbScope_->getSelectedId();
+    activeFilters_.selecionadosNoGrid = projeto_.obterItensSelecionadosNoGrid();
+    activeFilters_.fileType = cbFileType_->getSelectedId();
+    activeFilters_.sizeFilter = cbSizeFilter_->getSelectedId();
+    
+    double userValue = txtSizeValue_->getText().getDoubleValue();
+    int unitId = cbSizeUnit_->getSelectedId();
+    if (unitId == 1)      activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue);
+    else if (unitId == 2) activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue * 1024.0);
+    else if (unitId == 3) activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue * 1024.0 * 1024.0);
+    else if (unitId == 4) activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue * 1024.0 * 1024.0 * 1024.0);
+
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
     gruposDetectados_.clear();
@@ -587,6 +659,63 @@ void DuplicatesWorkspaceComponent::run() {
                     }
                 }
             }
+
+            // Filter 1: Scope
+            if (activeFilters_.scope == 2) {
+                if (activeFilters_.selecionadosNoGrid.count(info.itemId) == 0) {
+                    continue;
+                }
+            }
+
+            // Filter 2: File Type
+            if (activeFilters_.fileType > 1) {
+                auto cat = matriz::ingest::categoriaPorExtensao(info.ext);
+                bool match = false;
+                switch (activeFilters_.fileType) {
+                    case 2: // IMAGE
+                        match = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                        break;
+                    case 3: // VIDEO
+                        match = (cat == matriz::ingest::CategoriaMidia::Video);
+                        break;
+                    case 4: // AUDIO
+                        match = (cat == matriz::ingest::CategoriaMidia::Audio);
+                        break;
+                    case 5: // DOCS
+                        match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                        break;
+                    case 6: // SESSIONS
+                        match = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                        break;
+                    case 7: // OTHER
+                        match = (cat != matriz::ingest::CategoriaMidia::Imagem &&
+                                 cat != matriz::ingest::CategoriaMidia::Video &&
+                                 cat != matriz::ingest::CategoriaMidia::Audio &&
+                                 cat != matriz::ingest::CategoriaMidia::Documento &&
+                                 cat != matriz::ingest::CategoriaMidia::Texto &&
+                                 cat != matriz::ingest::CategoriaMidia::Sessao);
+                        break;
+                }
+                if (!match) continue;
+            }
+
+            // Filter 3: File Size
+            if (activeFilters_.sizeFilter > 1) {
+                bool match = false;
+                switch (activeFilters_.sizeFilter) {
+                    case 2: // Size is bigger than
+                        match = (info.tamanhoBytes > activeFilters_.sizeLimitBytes);
+                        break;
+                    case 3: // Size is smaller than
+                        match = (info.tamanhoBytes < activeFilters_.sizeLimitBytes);
+                        break;
+                    case 4: // Size equals
+                        match = (info.tamanhoBytes == activeFilters_.sizeLimitBytes);
+                        break;
+                }
+                if (!match) continue;
+            }
+
             items.push_back(info);
         }
     } catch (...) {
@@ -742,20 +871,21 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     }
 
     // Validation path: Show prompt to ask which file to keep
-    juce::MessageBoxOptions options = juce::MessageBoxOptions()
-        .withIconType(juce::MessageBoxIconType::QuestionIcon)
-        .withTitle("Resolve Duplicate Match")
-        .withMessage("How would you like to handle this duplicate pair?\n\n"
-                     "1. Keep Original: " + juce::String(group.original.titulo) + "\n"
-                     "2. Keep Duplicate: " + juce::String(group.duplicata.titulo) + "\n"
-                     "3. Keep Both representations in the archive")
-        .withButton("Keep Original (1)")
-        .withButton("Keep Duplicate (2)")
-        .withButton("Keep Both")
-        .withAssociatedComponent(this);
+    auto janela = std::make_shared<juce::AlertWindow>(
+        "Resolve Duplicate Match",
+        "How would you like to handle this duplicate pair?\n\n"
+        "File 1 (Original): " + juce::String(group.original.titulo) + "\n"
+        "File 2 (Duplicate): " + juce::String(group.duplicata.titulo),
+        juce::MessageBoxIconType::QuestionIcon
+    );
+    janela->addButton("KEEP FILE 1", 1);
+    janela->addButton("KEEP FILE 2", 2);
+    janela->addButton("KEEP BOTH", 3);
+    janela->addButton("RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
 
-    juce::AlertWindow::showAsync(options, [this, grupoIdx, group](int buttonResult) {
-        if (buttonResult == 0) return; // User closed without selecting
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([this, janela, grupoIdx, group](int buttonResult) {
+        retirarPeerDaTela(*janela);
+        if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
 
         auto& db = projeto_.projeto().registro();
         try {
@@ -805,7 +935,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                 repaint();
             }
         });
-    });
+    }));
 }
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
@@ -862,7 +992,7 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
 
     if (estado_ == State::Idle) {
         g.setColour(tk.borda.withAlpha(0.3f));
-        auto r = getLocalBounds().reduced(20).withHeight(getHeight() - 100);
+        auto r = getLocalBounds().reduced(20).withTrimmedTop(60).withHeight(getHeight() - 120);
         g.drawRoundedRectangle(r.toFloat(), tk.raioMedio, 1.5f);
     }
 }
@@ -871,9 +1001,29 @@ void DuplicatesWorkspaceComponent::resized() {
     const auto& tk = tema();
     auto area = getLocalBounds().reduced(20);
 
-    // Title label
-    auto areaHeader = area.removeFromTop(40);
+    // Filter toolbar at the top
+    auto areaFilter = area.removeFromTop(32);
     
+    lblScope_->setBounds(areaFilter.removeFromLeft(40));
+    cbScope_->setBounds(areaFilter.removeFromLeft(130));
+    areaFilter.removeFromLeft(15);
+    
+    lblFileType_->setBounds(areaFilter.removeFromLeft(40));
+    cbFileType_->setBounds(areaFilter.removeFromLeft(120));
+    areaFilter.removeFromLeft(15);
+    
+    lblFileSize_->setBounds(areaFilter.removeFromLeft(40));
+    cbSizeFilter_->setBounds(areaFilter.removeFromLeft(160));
+    
+    if (txtSizeValue_->isVisible()) {
+        areaFilter.removeFromLeft(8);
+        txtSizeValue_->setBounds(areaFilter.removeFromLeft(60));
+        areaFilter.removeFromLeft(8);
+        cbSizeUnit_->setBounds(areaFilter.removeFromLeft(70));
+    }
+    
+    area.removeFromTop(10); // Spacing below filter bar
+
     if (estado_ == State::Results) {
         btnScan_->setVisible(true);
         btnScan_->setButtonText("RE-SCAN");

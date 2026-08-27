@@ -457,6 +457,9 @@ public:
     juce::String exportarFixityManifest(const std::vector<std::string>& itemIds,
                                          const std::string& algoritmo = "sha256") const;
 
+    const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
+    void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
+
 private:
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
@@ -465,6 +468,7 @@ private:
     std::vector<UndoGroup> pilhaUndo_;
     std::optional<UndoGroup> grupoAberto_;
     bool desfazendo_ = false;
+    std::set<std::string> selecionadosNoGrid_;
 };
 
 } // namespace matriz::ui

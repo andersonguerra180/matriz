@@ -75,6 +75,14 @@ private:
 
     std::vector<DuplicateGroup> gruposDetectados_;
 
+    struct ScanFilters {
+        int scope = 1;
+        std::set<std::string> selecionadosNoGrid;
+        int fileType = 1;
+        int sizeFilter = 1;
+        juce::int64 sizeLimitBytes = 0;
+    } activeFilters_;
+
     void resolverTudo(bool ehDuplicataReal);
 
     // UI Elements
@@ -82,6 +90,16 @@ private:
     std::unique_ptr<juce::Label> lblStatus_;
     std::unique_ptr<juce::TextButton> btnValidateAll_;
     std::unique_ptr<juce::TextButton> btnDismissAll_;
+
+    // Filter Bar UI Elements
+    std::unique_ptr<juce::Label> lblScope_;
+    std::unique_ptr<juce::ComboBox> cbScope_;
+    std::unique_ptr<juce::Label> lblFileType_;
+    std::unique_ptr<juce::ComboBox> cbFileType_;
+    std::unique_ptr<juce::Label> lblFileSize_;
+    std::unique_ptr<juce::ComboBox> cbSizeFilter_;
+    std::unique_ptr<juce::TextEditor> txtSizeValue_;
+    std::unique_ptr<juce::ComboBox> cbSizeUnit_;
     
     // Results list viewport
     class ListaResultadosComponent;
