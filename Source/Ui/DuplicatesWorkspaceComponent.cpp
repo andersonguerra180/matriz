@@ -3,10 +3,165 @@
 #include "Tokens.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "VideoPlayerComponent.h"
+#include "../Vault/Resolucao.h"
 
 namespace matriz::ui {
 
-// Card component for a single duplicate match group
+// A unified side-by-side preview component for a single file (image, document, audio or video)
+class SingleFilePreviewComponent : public juce::Component {
+public:
+    SingleFilePreviewComponent(ProjetoAberto& proj, const std::string& itemId, const std::string& ext, std::function<void()> onPlayCallback)
+        : projeto_(proj), itemId_(itemId), ext_(ext), onPlay_(onPlayCallback) {
+        
+        auto& db = projeto_.projeto().registro();
+        auto fileOpt = matriz::vault::resolverArquivo(db, itemId_, projeto_.projeto().pasta());
+        if (fileOpt && fileOpt->existsAsFile()) {
+            file_ = *fileOpt;
+            
+            juce::String extension = juce::String(ext_).toLowerCase();
+            isImage_ = (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "gif" || extension == "tiff");
+            isDoc_ = (extension == "pdf" || extension == "txt" || extension == "doc" || extension == "docx" || extension == "json" || extension == "xml");
+            
+            if (isImage_) {
+                image_ = juce::ImageFileFormat::loadFrom(file_);
+            } else if (isDoc_) {
+                if (extension == "txt" || extension == "json" || extension == "xml") {
+                    docText_ = file_.loadFileAsString();
+                } else {
+                    docText_ = "Document: " + file_.getFileName() + "\n(Binary preview not supported)";
+                }
+            } else {
+                // Audio or Video
+                player_ = std::make_unique<VideoPlayerComponent>();
+                if (player_->carregar(file_)) {
+                    addAndMakeVisible(*player_);
+                    
+                    btnPlay_ = std::make_unique<juce::TextButton>("PLAY");
+                    btnPlay_->onClick = [this] {
+                        if (player_->estaTocando()) {
+                            player_->pausar();
+                            btnPlay_->setButtonText("PLAY");
+                        } else {
+                            if (onPlay_) onPlay_(); // Stop/pause the other player
+                            player_->tocar();
+                            btnPlay_->setButtonText("PAUSE");
+                        }
+                    };
+                    addAndMakeVisible(*btnPlay_);
+                    
+                    lblTimecode_ = std::make_unique<juce::Label>("tc", "00:00.00");
+                    lblTimecode_->setColour(juce::Label::textColourId, tema().textoSecundario);
+                    addAndMakeVisible(*lblTimecode_);
+                    
+                    player_->aoPosicaoMudar = [this](double pos) {
+                        int min = static_cast<int>(pos) / 60;
+                        int sec = static_cast<int>(pos) % 60;
+                        int ms = static_cast<int>((pos - static_cast<int>(pos)) * 100);
+                        lblTimecode_->setText(juce::String::formatted("%02d:%02d.%02d", min, sec, ms), juce::dontSendNotification);
+                    };
+                }
+            }
+        }
+    }
+    
+    ~SingleFilePreviewComponent() override {
+        if (player_) {
+            player_->parar();
+        }
+        player_.reset();
+    }
+    
+    void play() {
+        if (player_ && !player_->estaTocando()) {
+            player_->tocar();
+            if (btnPlay_) btnPlay_->setButtonText("PAUSE");
+        }
+    }
+    
+    void pause() {
+        if (player_ && player_->estaTocando()) {
+            player_->pausar();
+            if (btnPlay_) btnPlay_->setButtonText("PLAY");
+        }
+    }
+    
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        g.setColour(tk.painelAlt);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioPequeno);
+        
+        if (file_ == juce::File()) {
+            g.setColour(tk.textoTerciario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            g.drawText("File offline or not found", getLocalBounds(), juce::Justification::centred);
+            return;
+        }
+        
+        if (isImage_) {
+            if (image_.isValid()) {
+                g.drawImageWithin(image_, 10, 10, getWidth() - 20, getHeight() - 20,
+                                  juce::RectanglePlacement::centred, false);
+            } else {
+                g.setColour(tk.textoTerciario);
+                g.drawText("Invalid Image File", getLocalBounds(), juce::Justification::centred);
+            }
+        } else if (isDoc_) {
+            g.setColour(tk.textoPrimario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            g.drawFittedText(docText_, getLocalBounds().reduced(15), juce::Justification::topLeft, 12);
+        } else {
+            // Audio or Video
+            if (!player_) {
+                g.setColour(tk.textoTerciario);
+                g.drawText("Player not available", getLocalBounds(), juce::Justification::centred);
+            } else {
+                juce::String extension = juce::String(ext_).toLowerCase();
+                bool isAudioOnly = (extension == "wav" || extension == "mp3" || extension == "aif" || extension == "aiff" || extension == "flac" || extension == "m4a");
+                if (isAudioOnly) {
+                    g.setColour(tk.textoTerciario.withAlpha(0.2f));
+                    int centerX = getWidth() / 2;
+                    int centerY = getHeight() / 2 - 20;
+                    g.drawEllipse(centerX - 40, centerY - 40, 80, 80, 2.0f);
+                    g.setFont(juce::Font(juce::FontOptions(24.0f)));
+                    g.drawText("AUDIO", centerX - 50, centerY - 15, 100, 30, juce::Justification::centred);
+                }
+            }
+        }
+    }
+    
+    void resized() override {
+        if (player_) {
+            juce::String extension = juce::String(ext_).toLowerCase();
+            bool isAudioOnly = (extension == "wav" || extension == "mp3" || extension == "aif" || extension == "aiff" || extension == "flac" || extension == "m4a");
+            
+            if (isAudioOnly) {
+                player_->setBounds(0, 0, 0, 0);
+            } else {
+                player_->setBounds(10, 10, getWidth() - 20, getHeight() - 60);
+            }
+            
+            if (btnPlay_) btnPlay_->setBounds(10, getHeight() - 42, 80, 32);
+            if (lblTimecode_) lblTimecode_->setBounds(100, getHeight() - 42, 120, 32);
+        }
+    }
+    
+private:
+    ProjetoAberto& projeto_;
+    std::string itemId_;
+    std::string ext_;
+    std::function<void()> onPlay_;
+    juce::File file_;
+    bool isImage_ = false;
+    bool isDoc_ = false;
+    juce::Image image_;
+    juce::String docText_;
+    std::unique_ptr<VideoPlayerComponent> player_;
+    std::unique_ptr<juce::TextButton> btnPlay_;
+    std::unique_ptr<juce::Label> lblTimecode_;
+};
+
+// Card component and list view container
 class DuplicatesWorkspaceComponent::ListaResultadosComponent : public juce::Component {
 public:
     explicit ListaResultadosComponent(DuplicatesWorkspaceComponent& owner) : owner_(owner) {}
@@ -21,8 +176,9 @@ public:
         int y = 10;
         
         for (auto* card : cards_) {
-            card->setBounds(10, y, getWidth() - 20, 160);
-            y += 170;
+            int cardHeight = card->isExpanded() ? 460 : 160;
+            card->setBounds(10, y, getWidth() - 20, cardHeight);
+            y += cardHeight + 10;
         }
     }
 
@@ -30,20 +186,28 @@ public:
         cards_.clear();
         
         for (size_t i = 0; i < grupos.size(); ++i) {
-            auto* card = new CardComponent(owner_, i, grupos[i]);
+            auto* card = new CardComponent(owner_, i, grupos[i], *this);
             cards_.add(card);
             addAndMakeVisible(card);
         }
         
-        setSize(getWidth(), grupos.size() * 170 + 20);
+        recalculateHeight();
+    }
+
+    void recalculateHeight() {
+        int totalHeight = 20;
+        for (auto* card : cards_) {
+            totalHeight += (card->isExpanded() ? 460 : 160) + 10;
+        }
+        setSize(getWidth(), totalHeight);
         resized();
     }
 
 private:
     class CardComponent : public juce::Component {
     public:
-        CardComponent(DuplicatesWorkspaceComponent& owner, size_t index, const DuplicateGroup& grupo)
-            : owner_(owner), index_(index), grupo_(grupo) {
+        CardComponent(DuplicatesWorkspaceComponent& owner, size_t index, const DuplicateGroup& grupo, ListaResultadosComponent& parent)
+            : owner_(owner), index_(index), grupo_(grupo), parent_(parent) {
             
             btnValidate_ = std::make_unique<juce::TextButton>("VALIDATE AS DUPLICATE");
             btnValidate_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
@@ -60,6 +224,14 @@ private:
                 owner_.resolverDuplicata(static_cast<int>(index_), false);
             };
             addAndMakeVisible(*btnDismiss_);
+
+            btnTogglePreview_ = std::make_unique<juce::TextButton>("SHOW PREVIEW");
+            btnTogglePreview_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+            btnTogglePreview_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+            btnTogglePreview_->onClick = [this] {
+                toggleExpanded();
+            };
+            addAndMakeVisible(*btnTogglePreview_);
         }
 
         void paint(juce::Graphics& g) override {
@@ -119,20 +291,67 @@ private:
 
             // Draw duplicate details
             drawColumn(g, w / 2 + 5, grupo_.duplicata, grupo_.original, true);
+            
+            // Draw horizontal dividing line if expanded
+            if (isExpanded_) {
+                g.setColour(tk.borda);
+                g.drawHorizontalLine(150, 10.0f, getWidth() - 10.0f);
+            }
         }
 
         void resized() override {
             int w = getWidth();
             btnValidate_->setBounds(w - 180, 20, 160, 32);
             btnDismiss_->setBounds(w - 180, 60, 160, 32);
+            btnTogglePreview_->setBounds(w - 180, 100, 160, 32);
+            
+            if (isExpanded_) {
+                int previewW = w / 2 - 25;
+                if (previewOriginal_) previewOriginal_->setBounds(15, 165, previewW, 280);
+                if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, 165, previewW, 280);
+            }
+        }
+        
+        bool isExpanded() const { return isExpanded_; }
+        
+        void toggleExpanded() {
+            isExpanded_ = !isExpanded_;
+            
+            if (isExpanded_) {
+                btnTogglePreview_->setButtonText("HIDE PREVIEW");
+                
+                // Create previews
+                previewOriginal_ = std::make_unique<SingleFilePreviewComponent>(
+                    owner_.projeto_, grupo_.original.itemId, grupo_.original.ext,
+                    [this] { if (previewDuplicata_) previewDuplicata_->pause(); });
+                addAndMakeVisible(*previewOriginal_);
+                
+                previewDuplicata_ = std::make_unique<SingleFilePreviewComponent>(
+                    owner_.projeto_, grupo_.duplicata.itemId, grupo_.duplicata.ext,
+                    [this] { if (previewOriginal_) previewOriginal_->pause(); });
+                addAndMakeVisible(*previewDuplicata_);
+            } else {
+                btnTogglePreview_->setButtonText("SHOW PREVIEW");
+                previewOriginal_.reset();
+                previewDuplicata_.reset();
+            }
+            
+            parent_.recalculateHeight();
         }
 
     private:
         DuplicatesWorkspaceComponent& owner_;
         size_t index_;
         DuplicateGroup grupo_;
+        ListaResultadosComponent& parent_;
+        bool isExpanded_ = false;
+        
         std::unique_ptr<juce::TextButton> btnValidate_;
         std::unique_ptr<juce::TextButton> btnDismiss_;
+        std::unique_ptr<juce::TextButton> btnTogglePreview_;
+        
+        std::unique_ptr<SingleFilePreviewComponent> previewOriginal_;
+        std::unique_ptr<SingleFilePreviewComponent> previewDuplicata_;
     };
 
     DuplicatesWorkspaceComponent& owner_;
