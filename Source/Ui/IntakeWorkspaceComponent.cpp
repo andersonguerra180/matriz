@@ -31,30 +31,35 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnIngerir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnIngerir_->setColour(juce::TextButton::textColourOffId, tk.acento);
     btnIngerir_->onClick = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
+    btnIngerir_->setTooltip("Import new files into the intake quarantine");
     addAndMakeVisible(*btnIngerir_);
 
     btnConfirmarSelecao_ = std::make_unique<juce::TextButton>("+ Confirm Selected to GRID");
     btnConfirmarSelecao_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e));
     btnConfirmarSelecao_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     btnConfirmarSelecao_->onClick = [this] { confirmarSelecaoParaGrid(); };
+    btnConfirmarSelecao_->setTooltip("Move selected items from intake to active catalog GRID");
     addAndMakeVisible(*btnConfirmarSelecao_);
 
     btnConfirmarTodos_ = std::make_unique<juce::TextButton>("+ Confirm All to GRID");
     btnConfirmarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnConfirmarTodos_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff22c55e));
     btnConfirmarTodos_->onClick = [this] { confirmarTodosParaGrid(); };
+    btnConfirmarTodos_->setTooltip("Move all items in intake to active catalog GRID");
     addAndMakeVisible(*btnConfirmarTodos_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>("Select All");
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnSelecionarTodos_->onClick = [this] { if (mosaico_) mosaico_->selecionarTodos(); };
+    btnSelecionarTodos_->setTooltip("Select all items in the intake list");
     addAndMakeVisible(*btnSelecionarTodos_);
 
     btnLimparSelecao_ = std::make_unique<juce::TextButton>("Deselect");
     btnLimparSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
     btnLimparSelecao_->onClick = [this] { if (mosaico_) mosaico_->limparSelecao(); };
+    btnLimparSelecao_->setTooltip("Deselect all items");
     addAndMakeVisible(*btnLimparSelecao_);
 
     mosaico_ = std::make_unique<MosaicoComponent>(projeto_);

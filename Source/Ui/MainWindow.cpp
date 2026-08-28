@@ -340,7 +340,8 @@ void MainWindow::mostrarPreferenciasDialogo() {
     auto janela = std::make_shared<juce::DialogWindow>("Preferences & Theme", tema().painel, true);
 
     struct PainelPreferencias : public juce::Component {
-        PainelPreferencias(std::shared_ptr<juce::DialogWindow> win) : janela_(std::move(win)) {
+        PainelPreferencias(std::shared_ptr<juce::DialogWindow> win, MainWindow* mainWin)
+            : janela_(std::move(win)), mainWin_(mainWin) {
             const auto& tk = tema();
 
             lblTitulo_ = std::make_unique<juce::Label>("", "Application Preferences");
@@ -360,12 +361,21 @@ void MainWindow::mostrarPreferenciasDialogo() {
             comboTema_->setSelectedId(temaAtual == "light" ? 2 : 1, juce::dontSendNotification);
             addAndMakeVisible(*comboTema_);
 
+            toggleTooltips_ = std::make_unique<juce::ToggleButton>("Show tooltips (hints on hover)");
+            toggleTooltips_->setToggleState(matriz::app::lerTooltipsHabilitados(), juce::dontSendNotification);
+            toggleTooltips_->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*toggleTooltips_);
+
             btnSave_ = std::make_unique<juce::TextButton>("SAVE & APPLY");
             btnSave_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnSave_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
             btnSave_->onClick = [this] {
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
+                matriz::app::gravarTooltipsHabilitados(toggleTooltips_->getToggleState());
                 matriz::ui::recarregarTema();
+                if (mainWin_ && mainWin_->conteudo_) {
+                    mainWin_->conteudo_->atualizarTooltips();
+                }
                 if (janela_) janela_->exitModalState(0);
             };
             addAndMakeVisible(*btnSave_);
@@ -378,7 +388,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             };
             addAndMakeVisible(*btnClose_);
 
-            setSize(400, 200);
+            setSize(400, 240);
         }
 
         void resized() override {
@@ -388,6 +398,9 @@ void MainWindow::mostrarPreferenciasDialogo() {
 
             lblTema_->setBounds(area.removeFromTop(20));
             comboTema_->setBounds(area.removeFromTop(28));
+            area.removeFromTop(12);
+
+            toggleTooltips_->setBounds(area.removeFromTop(28));
             
             auto bottomRow = area.removeFromBottom(36);
             btnClose_->setBounds(bottomRow.removeFromRight(100));
@@ -397,17 +410,19 @@ void MainWindow::mostrarPreferenciasDialogo() {
 
     private:
         std::shared_ptr<juce::DialogWindow> janela_;
+        MainWindow* mainWin_;
         std::unique_ptr<juce::Label> lblTitulo_;
         std::unique_ptr<juce::Label> lblTema_;
         std::unique_ptr<juce::ComboBox> comboTema_;
+        std::unique_ptr<juce::ToggleButton> toggleTooltips_;
         std::unique_ptr<juce::TextButton> btnSave_;
         std::unique_ptr<juce::TextButton> btnClose_;
     };
 
-    auto painel = std::make_unique<PainelPreferencias>(janela);
+    auto painel = std::make_unique<PainelPreferencias>(janela, this);
     janela->setContentOwned(painel.release(), true);
     janela->setResizable(false, false);
-    janela->centreWithSize(480, 430);
+    janela->centreWithSize(400, 280);
     janela->setVisible(true);
     janela->enterModalState(true, juce::ModalCallbackFunction::create([janela](int) {
         janela->setVisible(false);

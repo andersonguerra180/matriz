@@ -459,6 +459,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     
     btnScan_ = std::make_unique<juce::TextButton>("SCAN FOR DUPLICATES");
     btnScan_->onClick = [this] { iniciarScan(); };
+    btnScan_->setTooltip("Start duplicate detection scan based on attributes");
     addAndMakeVisible(*btnScan_);
 
     lblScope_ = std::make_unique<juce::Label>("lblScope", "Scan:");
@@ -469,6 +470,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbScope_->addItem("ALL FILES", 1);
     cbScope_->addItem("SELECTED FILES", 2);
     cbScope_->setSelectedId(1);
+    cbScope_->setTooltip("Choose search scope (all database files vs selected grid items)");
     addAndMakeVisible(*cbScope_);
 
     lblFileType_ = std::make_unique<juce::Label>("lblFileType", "Type:");
@@ -484,6 +486,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbFileType_->addItem("SESSIONS", 6);
     cbFileType_->addItem("OTHER", 7);
     cbFileType_->setSelectedId(1);
+    cbFileType_->setTooltip("Filter candidates by media type");
     addAndMakeVisible(*cbFileType_);
 
     lblFileSize_ = std::make_unique<juce::Label>("lblFileSize", "Size:");
@@ -496,6 +499,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbSizeFilter_->addItem("Size is smaller than", 3);
     cbSizeFilter_->addItem("Size equals", 4);
     cbSizeFilter_->setSelectedId(1);
+    cbSizeFilter_->setTooltip("Filter candidates by file size rules");
     cbSizeFilter_->onChange = [this] {
         bool showValue = cbSizeFilter_->getSelectedId() > 1;
         txtSizeValue_->setVisible(showValue);
@@ -508,6 +512,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     txtSizeValue_->setInputRestrictions(0, "0123456789.");
     txtSizeValue_->setText("100"); // default value e.g. 100
     txtSizeValue_->setVisible(false);
+    txtSizeValue_->setTooltip("File size value threshold");
     addAndMakeVisible(*txtSizeValue_);
 
     cbSizeUnit_ = std::make_unique<juce::ComboBox>("cbSizeUnit");
@@ -517,6 +522,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbSizeUnit_->addItem("GB", 4);
     cbSizeUnit_->setSelectedId(3); // default MB
     cbSizeUnit_->setVisible(false);
+    cbSizeUnit_->setTooltip("File size unit");
     addAndMakeVisible(*cbSizeUnit_);
 
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
@@ -527,12 +533,14 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnValidateAll_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
     btnValidateAll_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     btnValidateAll_->onClick = [this] { resolverTudo(true); };
+    btnValidateAll_->setTooltip("Validate all detected duplicates, keeping original versions");
     addChildComponent(*btnValidateAll_);
 
     btnDismissAll_ = std::make_unique<juce::TextButton>("DISMISS ALL DUPLICATES");
     btnDismissAll_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnDismissAll_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnDismissAll_->onClick = [this] { resolverTudo(false); };
+    btnDismissAll_->setTooltip("Dismiss all duplicate alerts, keeping both files");
     addChildComponent(*btnDismissAll_);
 
     viewport_ = std::make_unique<juce::Viewport>();

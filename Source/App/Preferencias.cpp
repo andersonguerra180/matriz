@@ -60,6 +60,15 @@ void gravarTema(const juce::String& tema) {
     arquivo().saveIfNeeded();
 }
 
+bool lerTooltipsHabilitados() {
+    return arquivo().getBoolValue("tooltips_habilitados", true);
+}
+
+void gravarTooltipsHabilitados(bool habilitado) {
+    arquivo().setValue("tooltips_habilitados", habilitado);
+    arquivo().saveIfNeeded();
+}
+
 float lerEscalaFonte() {
     return static_cast<float>(arquivo().getDoubleValue("escala_fonte", 1.0));
 }

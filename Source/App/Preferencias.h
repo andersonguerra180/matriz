@@ -26,6 +26,9 @@ void gravarGeminiApiKey(const juce::String& key);
 juce::String lerTema();
 void gravarTema(const juce::String& tema);
 
+bool lerTooltipsHabilitados();
+void gravarTooltipsHabilitados(bool habilitado);
+
 // Font size scale factor (0.8 - 1.5). Default 1.0.
 float lerEscalaFonte();
 void gravarEscalaFonte(float escala);

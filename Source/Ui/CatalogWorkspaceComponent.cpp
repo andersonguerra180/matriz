@@ -44,6 +44,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) mosaico_->definirBusca(campoBusca_->getText());
         if (btnLimparBusca_) btnLimparBusca_->setVisible(campoBusca_->getText().isNotEmpty());
     };
+    campoBusca_->setTooltip("Search assets by title, metadata fields, or tags");
     addAndMakeVisible(*campoBusca_);
 
     btnLimparBusca_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xc3\x97"));
@@ -53,6 +54,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         campoBusca_->setText("", true);
         btnLimparBusca_->setVisible(false);
     };
+    btnLimparBusca_->setTooltip("Clear search term");
     // addChildComponent, não addAndMakeVisible: o segundo força visible=true e
     // desfaz o estado inicial escondido.
     addChildComponent(*btnLimparBusca_);
@@ -68,6 +70,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     sliderTamanho_->onValueChange = [this] {
         if (mosaico_) mosaico_->definirTamanhoContinuo(sliderTamanho_->getValue());
     };
+    sliderTamanho_->setTooltip("Adjust thumbnail display size");
     addAndMakeVisible(*sliderTamanho_);
 
     lblTamanho_ = std::make_unique<juce::Label>("", "SIZE");
@@ -102,12 +105,14 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnSelecionarTodos_->onClick = [this] { if (mosaico_) mosaico_->selecionarTodos(); };
+    btnSelecionarTodos_->setTooltip("Select all items currently showing in the grid");
     addAndMakeVisible(*btnSelecionarTodos_);
 
     btnLimparSelecao_ = std::make_unique<juce::TextButton>("Deselect");
     btnLimparSelecao_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnLimparSelecao_->onClick = [this] { if (mosaico_) mosaico_->limparSelecao(); };
+    btnLimparSelecao_->setTooltip("Clear current grid selection");
     addAndMakeVisible(*btnLimparSelecao_);
 
     painelDuplicatas_ = std::make_unique<PainelDuplicatasComponent>(projeto_);

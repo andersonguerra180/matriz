@@ -359,9 +359,19 @@ PapelInfo papelPorCategoria(matriz::ingest::CategoriaMidia categoria) {
 } // namespace
 
 MainComponent::MainComponent() {
-    tooltips_ = std::make_unique<juce::TooltipWindow>(this, 600);
+    atualizarTooltips();
     addChildComponent(overlay_);
     reconstruirTelaInicial();
+}
+
+void MainComponent::atualizarTooltips() {
+    if (matriz::app::lerTooltipsHabilitados()) {
+        if (!tooltips_) {
+            tooltips_ = std::make_unique<juce::TooltipWindow>(this, 600);
+        }
+    } else {
+        tooltips_ = nullptr;
+    }
 }
 
 MainComponent::~MainComponent() {

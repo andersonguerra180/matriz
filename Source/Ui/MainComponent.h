@@ -58,6 +58,8 @@ public:
     MainComponent();
     ~MainComponent() override;
 
+    void atualizarTooltips();
+
     void abrirProjeto(std::unique_ptr<matriz::model::Project> projeto);
     void salvarProjeto();
     juce::File pastaProjeto() const;

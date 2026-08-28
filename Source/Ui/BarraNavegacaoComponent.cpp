@@ -139,4 +139,25 @@ void BarraNavegacaoComponent::mouseExit(const juce::MouseEvent&) {
     if (mudou) repaint();
 }
 
+juce::String BarraNavegacaoComponent::getTooltip() {
+    auto pos = getMouseXYRelative();
+    for (const auto& tab : tabs_) {
+        if (tab.bounds.contains(pos)) {
+            switch (tab.tab) {
+                case Tab::Home: return "Go to Welcome Screen, recent projects, and main actions";
+                case Tab::Intake: return "Manage recently ingested files awaiting verification to GRID";
+                case Tab::Grid: return "Browse, filter, and edit Dublin Core metadata of all assets";
+                case Tab::Duplicates: return "Scan and resolve duplicate files in active catalog";
+                case Tab::Analytics: return "View statistics, charts, and preservation metrics of catalog";
+                case Tab::Tree: return "Explore assets structure via vault directories tree";
+                case Tab::Backup: return "Plan, check conflicts, and consolidate backup publication package";
+            }
+        }
+    }
+    if (botaoFechar_ && botaoFechar_->getBounds().contains(pos)) {
+        return "Close project and return to start screen";
+    }
+    return "";
+}
+
 } // namespace matriz::ui

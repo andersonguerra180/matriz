@@ -121,6 +121,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addAndMakeVisible(*listVaults_);
 
     btnBrowseVault_ = std::make_unique<juce::TextButton>("Choose Custom Folder...");
+    btnBrowseVault_->setTooltip("Select a custom folder destination for the backup");
     aplicarEstiloBotao(*btnBrowseVault_, false);
     btnBrowseVault_->onClick = [this] {
         auto chooser = std::make_shared<juce::FileChooser>(matriz::i18n::t("consolidacao.escolher_destino"));
@@ -161,6 +162,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addAndMakeVisible(*labelOrg_);
 
     togglePreservarEstrutura_ = std::make_unique<juce::ToggleButton>("Preserve Original Folder Structure");
+    togglePreservarEstrutura_->setTooltip("Toggle keeping original source subfolder paths in the backup folder");
     togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
     togglePreservarEstrutura_->onClick = [this] {
         bool preserve = togglePreservarEstrutura_->getToggleState();
@@ -177,6 +179,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     comboOrg_->addItem("By media type + year", 4);
     comboOrg_->addItem("Custom (visual editor)", 5);
     comboOrg_->setSelectedId(1, juce::dontSendNotification);
+    comboOrg_->setTooltip("Choose directory naming/organization structure pattern");
     comboOrg_->onChange = [this] {
         if (btnEditarHierarquia_)
             btnEditarHierarquia_->setVisible(comboOrg_->getSelectedId() == 5);
@@ -189,6 +192,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnEditarHierarquia_ = std::make_unique<juce::TextButton>("OPEN VISUAL EDITOR");
     btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
     btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    btnEditarHierarquia_->setTooltip("Open visual interactive editor to design folder naming tree");
     btnEditarHierarquia_->onClick = [this] {
         new HierarquiaEditorWindow(hierarquiaCustom_, [this](const matriz::consolidacao::HierarquiaBackup& h) {
             hierarquiaCustom_ = h;
@@ -205,14 +209,17 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addAndMakeVisible(*labelOpcoes_);
 
     toggleVerificarChecksum_ = std::make_unique<juce::ToggleButton>("Verify checksum after copy (SHA-256)");
+    toggleVerificarChecksum_->setTooltip("Enable reading back copied files to verify SHA-256 integrity");
     toggleVerificarChecksum_->setToggleState(true, juce::dontSendNotification);
     addAndMakeVisible(*toggleVerificarChecksum_);
 
     toggleGerarCatalogo_ = std::make_unique<juce::ToggleButton>("Generate BKR Backup Catalog Database (SQLite)");
+    toggleGerarCatalogo_->setTooltip("Enable SQLite database summary file generation in target folder");
     toggleGerarCatalogo_->setToggleState(true, juce::dontSendNotification);
     addAndMakeVisible(*toggleGerarCatalogo_);
 
     toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>("Embed metadata into backup files (EXIF/XMP/iXML)");
+    toggleEmbutirMetadados_->setTooltip("Enable embedding Dublin Core and technical tags directly into media headers");
     toggleEmbutirMetadados_->setToggleState(true, juce::dontSendNotification);
     addAndMakeVisible(*toggleEmbutirMetadados_);
 
@@ -240,12 +247,14 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     // === BUTTONS ===
     btnStartBackup_ = std::make_unique<juce::TextButton>("MAKE BACKUP");
     aplicarEstiloBotao(*btnStartBackup_, true);
+    btnStartBackup_->setTooltip("Begin backup creation process");
     btnStartBackup_->onClick = [this] { iniciarBackup(); };
     addAndMakeVisible(*btnStartBackup_);
 
     btnCancel_ = std::make_unique<juce::TextButton>("CANCEL");
     aplicarEstiloBotao(*btnCancel_, false);
     btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    btnCancel_->setTooltip("Abort current backup task safely or return to Home");
     btnCancel_->onClick = [this] {
         if (executando_) {
             cancelamento_->pedir();
@@ -257,6 +266,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     btnDone_ = std::make_unique<juce::TextButton>("DONE");
     aplicarEstiloBotao(*btnDone_, false);
+    btnDone_->setTooltip("Return to Home screen");
     btnDone_->onClick = [this] {
         if (aoConcluir) aoConcluir();
         else if (aoVoltarHome) aoVoltarHome();
@@ -265,6 +275,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     btnOpenCatalog_ = std::make_unique<juce::TextButton>("OPEN BACKUP CATALOG");
     aplicarEstiloBotao(*btnOpenCatalog_, true);
+    btnOpenCatalog_->setTooltip("Load generated catalog database as read-only view");
     btnOpenCatalog_->onClick = [this] {
         if (aoAbrirCatalogo) aoAbrirCatalogo(resolvedDestFolder_);
     };
@@ -272,6 +283,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     btnExportJanela_ = std::make_unique<juce::TextButton>("EXPORT METADATA");
     aplicarEstiloBotao(*btnExportJanela_, false);
+    btnExportJanela_->setTooltip("Export metadata catalog as CSV/JSON/PDF");
     btnExportJanela_->onClick = [this] { mostrarJanelaExportar(); };
     addChildComponent(*btnExportJanela_);
 

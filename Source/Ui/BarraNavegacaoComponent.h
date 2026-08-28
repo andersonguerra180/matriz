@@ -6,7 +6,7 @@
 
 namespace matriz::ui {
 
-class BarraNavegacaoComponent : public juce::Component {
+class BarraNavegacaoComponent : public juce::Component, public juce::TooltipClient {
 public:
     enum class Tab {
         Home,
@@ -26,6 +26,8 @@ public:
 
     std::function<void(Tab)> aoMudarTab;
     std::function<void()> aoClicarFechar;
+
+    juce::String getTooltip() override;
 
     void paint(juce::Graphics&) override;
     void resized() override;
