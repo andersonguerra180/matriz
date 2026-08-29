@@ -144,6 +144,7 @@ private:
     juce::ReferenceCountedArray<BufferAudio> buffersVivos_;
     BufferAudio::Ptr bufferAtual_;
     std::atomic<BufferAudio*> bufferParaAudio_{nullptr};
+    BufferAudio::Ptr bufferEmUso_;
 
     std::atomic<bool> tocando_{false};
     std::atomic<double> posicaoAmostras_{0.0};

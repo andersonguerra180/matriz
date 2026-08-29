@@ -106,7 +106,7 @@ void BarraMetricasComponent::reconstruirCampos(const juce::var& tecnica, const s
         juce::var largura = propriedade(tecnica, "larguraPx");
         juce::var altura = propriedade(tecnica, "alturaPx");
         if (!largura.isVoid() && !altura.isVoid())
-            adicionar("metricas.resolucao", largura.toString() + juce::String::fromUTF8("×") + altura.toString());
+            adicionar("metricas.resolucao", largura.toString() + "x" + altura.toString());
         juce::var fps = propriedade(tecnica, "fps");
         if (!fps.isVoid()) adicionar("metricas.fps", juce::String(static_cast<double>(fps), 3) + " fps");
     }
@@ -115,7 +115,7 @@ void BarraMetricasComponent::reconstruirCampos(const juce::var& tecnica, const s
         juce::var largura = propriedade(tecnica, "larguraPx");
         juce::var altura = propriedade(tecnica, "alturaPx");
         if (!largura.isVoid() && !altura.isVoid())
-            adicionar("metricas.dimensao", largura.toString() + juce::String::fromUTF8("×") + altura.toString());
+            adicionar("metricas.dimensao", largura.toString() + "x" + altura.toString());
         juce::var bitDepth = propriedade(tecnica, "bitDepth");
         if (!bitDepth.isVoid()) adicionar("metricas.profundidade", bitDepth.toString() + " bit");
     }

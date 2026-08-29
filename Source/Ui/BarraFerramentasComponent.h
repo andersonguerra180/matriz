@@ -33,6 +33,7 @@ public:
     std::function<void(bool)> aoAlternarEstruturaOrigem;
     std::function<void(bool)> aoAlternarEstruturaBackup;
     std::function<void(const std::string&)> aoMudarFiltroHorizontal;
+    std::function<void(const std::string&)> aoMudarFiltroStatus;
 
     // Contagem "X de Y arquivos" no meio da barra — é o feedback de que o
     // filtro/busca fez alguma coisa, sem o operador ter que contar célula.
@@ -49,6 +50,7 @@ public:
 
     // Actively select one of the horizontal filters from the code
     void definirFiltroHorizontalAtivo(const std::string& chave);
+    void definirFiltroStatusAtivo(const std::string& status);
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -59,6 +61,7 @@ private:
     void aplicarEstiloBotao(juce::TextButton& botao, bool primario) const;
     void marcarTamanhoAtivo(int indice);
     void atualizarBotoesFiltroHorizontal();
+    void atualizarBotoesFiltroStatus();
 
     std::unique_ptr<juce::TextButton> botaoAdicionar_;
     std::unique_ptr<juce::TextButton> botaoNavegar_;
@@ -80,6 +83,13 @@ private:
     std::unique_ptr<juce::TextButton> btnImage_;
     std::unique_ptr<juce::TextButton> btnDocument_;
     std::string filtroHorizontalAtivo_ = "all";
+
+    // Status filters (ALL, ONLINE, OFFLINE)
+    std::unique_ptr<juce::Label> lblStatusFilter_;
+    std::unique_ptr<juce::TextButton> btnStatusAll_;
+    std::unique_ptr<juce::TextButton> btnStatusOnline_;
+    std::unique_ptr<juce::TextButton> btnStatusOffline_;
+    std::string filtroStatusAtivo_ = "all";
 
     int tamanhoAtivo_ = 1; // médio, mesmo padrão de MosaicoComponent
     bool detalhesAbertos_ = false;

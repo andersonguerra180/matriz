@@ -65,11 +65,13 @@ public:
     // --- Zoom (item 8.1) ---
     void aplicarZoom(double fator, double centroSegundos);
     void zoomArquivoInteiro();
+    void mostrarBotaoZoom(bool mostrar);
     double janelaVisivelSegundos() const { return fimVisivel_ - inicioVisivel_; }
 
     // Régua em timecode em vez de mm:ss (item 8.1).
     void definirMostrarTimecode(bool sim);
     bool mostrandoTimecode() const { return mostrarTimecode_; }
+    juce::String formatarPosicao(double segundos) const;
 
     // --- Marcadores (item 8.2) ---
     // Crava no ponto atual e abre o campo inline pro operador escrever o que
@@ -121,7 +123,6 @@ private:
     int indiceMarcadorNoX(int x) const;
     void abrirEditorInline(int indiceMarcador);
     void fecharEditorInline(bool gravando);
-    juce::String formatarPosicao(double segundos) const;
     void sincronizarMarcadoresParaNotas();
 
     ProjetoAberto& projeto_;
@@ -139,7 +140,7 @@ private:
     double inicioVisivel_ = 0.0, fimVisivel_ = 0.0;
     bool mostrarTimecode_ = false;
 
-    ModoRoda modoRoda_ = ModoRoda::Jog;
+    ModoRoda modoRoda_ = ModoRoda::Shuttle;
     double velocidadeShuttle_ = 0.0;
 
     struct Marcador {

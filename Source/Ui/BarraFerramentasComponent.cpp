@@ -162,6 +162,36 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     }
     atualizarBotoesFiltroHorizontal();
 
+    // Status filter buttons (ALL, ONLINE, OFFLINE)
+    lblStatusFilter_ = std::make_unique<juce::Label>();
+    lblStatusFilter_->setText("STATUS:", juce::dontSendNotification);
+    lblStatusFilter_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lblStatusFilter_->setColour(juce::Label::textColourId, tema().textoTerciario);
+    lblStatusFilter_->setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(*lblStatusFilter_);
+
+    btnStatusAll_ = std::make_unique<juce::TextButton>("ALL");
+    btnStatusOnline_ = std::make_unique<juce::TextButton>("ONLINE");
+    btnStatusOffline_ = std::make_unique<juce::TextButton>("OFFLINE");
+
+    std::vector<std::pair<juce::TextButton*, std::string>> statusFilters = {
+        { btnStatusAll_.get(), "all" },
+        { btnStatusOnline_.get(), "online" },
+        { btnStatusOffline_.get(), "offline" }
+    };
+
+    for (const auto& sf : statusFilters) {
+        aplicarEstiloBotao(*sf.first, false);
+        std::string s = sf.second;
+        sf.first->onClick = [this, s] {
+            filtroStatusAtivo_ = s;
+            atualizarBotoesFiltroStatus();
+            if (aoMudarFiltroStatus) aoMudarFiltroStatus(s);
+        };
+        addAndMakeVisible(*sf.first);
+    }
+    atualizarBotoesFiltroStatus();
+
     definirContagem(0, 0, false);
 }
 
@@ -190,6 +220,11 @@ void BarraFerramentasComponent::definirFiltroHorizontalAtivo(const std::string& 
     atualizarBotoesFiltroHorizontal();
 }
 
+void BarraFerramentasComponent::definirFiltroStatusAtivo(const std::string& status) {
+    filtroStatusAtivo_ = status;
+    atualizarBotoesFiltroStatus();
+}
+
 void BarraFerramentasComponent::atualizarBotoesFiltroHorizontal() {
     const auto& tk = tema();
     std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
@@ -204,6 +239,26 @@ void BarraFerramentasComponent::atualizarBotoesFiltroHorizontal() {
         bool ativo = (hf.second == filtroHorizontalAtivo_);
         hf.first->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
         hf.first->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoPrimario);
+    }
+}
+
+void BarraFerramentasComponent::atualizarBotoesFiltroStatus() {
+    const auto& tk = tema();
+    std::vector<std::pair<juce::TextButton*, std::string>> statusFilters = {
+        { btnStatusAll_.get(), "all" },
+        { btnStatusOnline_.get(), "online" },
+        { btnStatusOffline_.get(), "offline" }
+    };
+    for (const auto& sf : statusFilters) {
+        if (!sf.first) continue;
+        bool ativo = (sf.second == filtroStatusAtivo_);
+        if (sf.second == "offline" && ativo) {
+            sf.first->setColour(juce::TextButton::buttonColourId, juce::Colour(0xfff97316)); // bright orange
+            sf.first->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        } else {
+            sf.first->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
+            sf.first->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoPrimario);
+        }
     }
 }
 
@@ -288,9 +343,8 @@ void BarraFerramentasComponent::resized() {
     campoBusca_->setBounds(buscaBox);
 
     // --- BOTTOM ROW ---
-    // Lay out the 5 horizontal filter buttons side-by-side
-    int nFilters = 5;
-    int filterW = 120;
+    // Lay out the 5 horizontal filter buttons on the left
+    int filterW = 110;
     int gap = tk.espacoMedio;
     int startX = areaBottom.getX();
     
@@ -299,6 +353,17 @@ void BarraFerramentasComponent::resized() {
     btnVideo_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnImage_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnDocument_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight());
+
+    // Lay out Status filter buttons on the right side
+    auto statusRight = areaBottom;
+    int statusBtnW = 74;
+    btnStatusOffline_->setBounds(statusRight.removeFromRight(statusBtnW));
+    statusRight.removeFromRight(tk.espacoPequeno);
+    btnStatusOnline_->setBounds(statusRight.removeFromRight(statusBtnW));
+    statusRight.removeFromRight(tk.espacoPequeno);
+    btnStatusAll_->setBounds(statusRight.removeFromRight(56));
+    statusRight.removeFromRight(tk.espacoPequeno);
+    lblStatusFilter_->setBounds(statusRight.removeFromRight(65));
 }
 
 } // namespace matriz::ui

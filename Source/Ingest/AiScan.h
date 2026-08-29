@@ -66,7 +66,8 @@ using AoProgressoScan = std::function<void(int feito, int total, const juce::Str
 // NÃO CHAME ISTO DA MESSAGE THREAD. Faz I/O de rede bloqueante por item e
 // roda ffmpeg; a UI congela. Use um Thread/ThreadPoolJob e devolva o
 // resultado por MessageManager::callAsync.
-AiScanRelatorio executarAiScan(matriz::db::Database& registro,
+AiScanRelatorio executarAiScan(matriz::db::Database& indice,
+                               matriz::db::Database& registro,
                                const juce::String& apiKey,
                                const std::vector<std::string>& itemIds,
                                const juce::File& pastaProjeto,
@@ -76,8 +77,8 @@ AiScanRelatorio executarAiScan(matriz::db::Database& registro,
 
 // Reindexa em busca_fts tudo que já está em ai_scan_resultado. Recupera scans
 // gravados antes da indexação existir. Devolve quantas linhas indexou.
-int reindexarAiScanNaBusca(matriz::db::Database& registro);
+int reindexarAiScanNaBusca(matriz::db::Database& indice, matriz::db::Database& registro);
 
-std::vector<AiScanResult> resultadosDoItem(matriz::db::Database& registro, const std::string& itemId);
+std::vector<AiScanResult> resultadosDoItem(matriz::db::Database& indice, const std::string& itemId);
 
 } // namespace matriz::ingest

@@ -19,6 +19,7 @@
 #include "ArvoreComponent.h"
 #include "BarraFerramentasComponent.h"
 #include "CatalogoComponent.h"
+#include "CatalogHubComponent.h"
 #include "IntakeWorkspaceComponent.h"
 #include "FichaPanelComponent.h"
 #include "FiltrosComponent.h"
@@ -27,6 +28,12 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "NavegadorArquivosDialogo.h"
 #include "PreviewComponent.h"
+#include "BarraProgressoGlobalComponent.h"
+#include "ProgressoGlobal.h"
+#include "InitialRelinkDialog.h"
+#include "OfflineAssetRelinkDialog.h"
+#include "../Vault/AssetRelinkEngine.h"
+#include "../Vault/Resolucao.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
@@ -506,6 +513,7 @@ void MainComponent::reconstruirLayoutProjeto() {
     mosaico_ = std::make_unique<MosaicoComponent>(*projetoAberto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirPreview(itemId); };
+    mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirDialogoRelinkOffline(itemId); };
     mosaico_->aoClicarEstadoVazio = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
     mosaico_->aoMudarSelecao = [this] {
         projetoAberto_->definirItensSelecionadosNoGrid(mosaico_->itensSelecionados());
@@ -551,6 +559,14 @@ void MainComponent::reconstruirLayoutProjeto() {
         ativarPainel(PainelAtivo::Source);
         if (mosaico_) mosaico_->definirFiltroItens(std::move(itemIds));
     };
+    arvoreOrigem_->aoMostrarConteudoNaGrade = [this](const std::set<std::string>& itemIds) {
+        mostrarGrid();
+        if (catalogWorkspace_) catalogWorkspace_->definirSelecaoItens(itemIds);
+        else if (mosaico_) {
+            mosaico_->definirFiltroItens(itemIds);
+            mosaico_->definirSelecao(itemIds);
+        }
+    };
     arvoreOrigem_->aoMudarSubpastas = [this](std::vector<SubpastaInfo> subs) {
         if (mosaico_) mosaico_->definirSubpastas(std::move(subs));
     };
@@ -564,6 +580,14 @@ void MainComponent::reconstruirLayoutProjeto() {
     arvoreAcervo_->aoSelecionarNo = [this](std::optional<std::set<std::string>> itemIds) {
         ativarPainel(PainelAtivo::BackupTree);
         if (mosaico_) mosaico_->definirFiltroItens(std::move(itemIds));
+    };
+    arvoreAcervo_->aoMostrarConteudoNaGrade = [this](const std::set<std::string>& itemIds) {
+        mostrarGrid();
+        if (catalogWorkspace_) catalogWorkspace_->definirSelecaoItens(itemIds);
+        else if (mosaico_) {
+            mosaico_->definirFiltroItens(itemIds);
+            mosaico_->definirSelecao(itemIds);
+        }
     };
     arvoreAcervo_->aoMudarSubpastas = [this](std::vector<SubpastaInfo> subs) {
         if (mosaico_) mosaico_->definirSubpastas(std::move(subs));
@@ -820,6 +844,16 @@ void MainComponent::reconstruirLayoutProjeto() {
         mosaico_->definirFiltroItens(ids);
         mosaico_->recarregar();
     };
+    barraFerramentas_->aoMudarFiltroStatus = [this](const std::string& status) {
+        if (!mosaico_) return;
+        if (status == "online") {
+            mosaico_->alternarFiltroDisponibilidade(MosaicoComponent::FiltroDisponibilidade::Online);
+        } else if (status == "offline") {
+            mosaico_->alternarFiltroDisponibilidade(MosaicoComponent::FiltroDisponibilidade::Offline);
+        } else {
+            mosaico_->alternarFiltroDisponibilidade(MosaicoComponent::FiltroDisponibilidade::All);
+        }
+    };
     addAndMakeVisible(*barraFerramentas_);
 
     transport_ = std::make_unique<TransportComponent>();
@@ -1039,6 +1073,7 @@ bool MainComponent::abrirCatalogo(const juce::File& pasta) {
 
     catalogo_ = std::move(novo);
     reconstruirLayoutCatalogo(pasta);
+    if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     return true;
 }
 
@@ -1070,6 +1105,7 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 }
 
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
+    catalogHubWorkspace_.reset();
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
     duplicatesWorkspace_.reset();
@@ -1077,11 +1113,16 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     treeWorkspace_.reset();
     homePanel_.reset();
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
-    
+
+    bool isCatalog = (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo);
+    juce::String nomeProj = juce::String::fromUTF8(projetoAberto_->projeto().nome().c_str());
+
     // Create navigation bar
     barraNavegacao_ = std::make_unique<BarraNavegacaoComponent>();
+    barraNavegacao_->setProjectInfo(nomeProj, isCatalog);
+    barraNavegacao_->setHasParentCatalog(!isCatalog && catalogoPai_.exists());
     barraNavegacao_->aoMudarTab = [this](BarraNavegacaoComponent::Tab tab) {
-        if (tab == BarraNavegacaoComponent::Tab::Home) mostrarHome();
+        if (tab == BarraNavegacaoComponent::Tab::Catalog) mostrarCatalogHub();
         else if (tab == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
         else if (tab == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
@@ -1089,24 +1130,71 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
     };
-    barraNavegacao_->aoClicarFechar = [this] { fecharProjeto(); };
+    barraNavegacao_->aoClicarFechar = [this] {
+        if (catalogoPai_.exists()) retornarAoCatalogo();
+        else fecharProjeto();
+    };
     addAndMakeVisible(*barraNavegacao_);
 
-    mostrarAnalytics();
+    barraProgressoGlobal_ = std::make_unique<BarraProgressoGlobalComponent>();
+    addAndMakeVisible(*barraProgressoGlobal_);
+
+    if (isCatalog) {
+        mostrarCatalogHub();
+    } else {
+        mostrarGrid();
+    }
 
     verificarVaultsConectados();
+    verificarPresencaInicialAssets();
+    if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     startTimer(5000);
 }
 
-void MainComponent::mostrarHome() {
+void MainComponent::abrirColecaoDoCatalogo(const juce::File& pastaColecao) {
     if (!projetoAberto_) return;
-    telaAtiva_ = TelaAtiva::Home;
+    catalogoPai_ = pastaProjeto();
+
+    auto projColecao = matriz::model::Project::abrir(pastaColecao);
+    if (!projColecao) {
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::WarningIcon)
+                .withTitle("Failed to Open Collection")
+                .withMessage("Could not open collection at:\n" + pastaColecao.getFullPathName())
+                .withButton("OK"),
+            nullptr);
+        return;
+    }
+    abrirProjeto(std::move(projColecao));
+}
+
+void MainComponent::retornarAoCatalogo() {
+    if (!catalogoPai_.exists()) {
+        fecharProjeto();
+        return;
+    }
+    juce::File destino = catalogoPai_;
+    catalogoPai_ = juce::File();
+
+    auto catalogoProj = matriz::model::Project::abrir(destino);
+    if (catalogoProj) {
+        abrirProjeto(std::move(catalogoProj));
+    } else {
+        fecharProjeto();
+    }
+}
+
+void MainComponent::mostrarCatalogHub() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Catalog;
 
     if (barraNavegacao_) {
-        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Home);
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Catalog);
         barraNavegacao_->setVisible(true);
     }
 
+    if (homePanel_) homePanel_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
@@ -1114,37 +1202,27 @@ void MainComponent::mostrarHome() {
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
 
-    if (!homePanel_) {
-        homePanel_ = std::make_unique<HomePanelComponent>(*projetoAberto_);
-        homePanel_->aoIngerir = [this] { mostrarIngestWizard(); };
-        homePanel_->aoCatalogar = [this] { mostrarGrid(); };
-        homePanel_->aoBackup = [this] { mostrarBackup(); };
-        homePanel_->aoPreservacao = [this] { mostrarAnalytics(); };
-        homePanel_->aoClicarAtencao = [this](const std::string& chave) {
-            mostrarCatalog();
-            if (!catalogWorkspace_) return;
-            if (chave == "corrompido") {
-                std::set<std::string> ids;
-                if (projetoAberto_) {
-                    try {
-                        auto& db = projetoAberto_->projeto().registro();
-                        auto stmt = db.prepare("SELECT DISTINCT item_id FROM arquivo WHERE estado_presenca = 'corrompido'");
-                        while (stmt.step()) ids.insert(stmt.columnText(0));
-                    } catch (...) {}
-                }
-                catalogWorkspace_->filtrarPorIds(std::move(ids));
-            } else {
-                catalogWorkspace_->filtrarPorChave(chave);
-            }
+    if (!catalogHubWorkspace_) {
+        catalogHubWorkspace_ = std::make_unique<CatalogHubComponent>(*projetoAberto_);
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        catalogHubWorkspace_->aoAbrirColecao = [safeThis](const juce::File& pastaColecao) {
+            if (safeThis) safeThis->abrirColecaoDoCatalogo(pastaColecao);
         };
-        addAndMakeVisible(*homePanel_);
+        catalogHubWorkspace_->aoBackupConsolidado = [safeThis] {
+            if (safeThis) safeThis->mostrarBackup();
+        };
+        addAndMakeVisible(*catalogHubWorkspace_);
     } else {
-        homePanel_->recarregar();
-        homePanel_->setVisible(true);
+        catalogHubWorkspace_->setVisible(true);
+        catalogHubWorkspace_->recarregar();
     }
 
     resized();
     repaint();
+}
+
+void MainComponent::mostrarHome() {
+    mostrarGrid();
 }
 
 void MainComponent::mostrarIntake() {
@@ -1157,6 +1235,7 @@ void MainComponent::mostrarIntake() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
@@ -1166,6 +1245,9 @@ void MainComponent::mostrarIntake() {
     if (!intakeWorkspace_) {
         intakeWorkspace_ = std::make_unique<IntakeWorkspaceComponent>(*projetoAberto_);
         intakeWorkspace_->aoPedirIngerirArquivos = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
+        intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
+            ingerirArquivos(arqs);
+        };
         intakeWorkspace_->aoConfirmarParaGrid = [this] {
             if (catalogWorkspace_) catalogWorkspace_->recarregar();
         };
@@ -1193,6 +1275,7 @@ void MainComponent::mostrarGrid() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
@@ -1227,6 +1310,7 @@ void MainComponent::mostrarDuplicates() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
@@ -1255,6 +1339,7 @@ void MainComponent::mostrarAnalytics() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
@@ -1264,6 +1349,12 @@ void MainComponent::mostrarAnalytics() {
     if (!analyticsWorkspace_) {
         analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
         analyticsWorkspace_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+            mostrarGrid();
+            if (catalogWorkspace_) {
+                catalogWorkspace_->filtrarPorIds(ids);
+            }
+        };
+        analyticsWorkspace_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
             mostrarGrid();
             if (catalogWorkspace_) {
                 catalogWorkspace_->filtrarPorIds(ids);
@@ -1289,6 +1380,7 @@ void MainComponent::mostrarTree() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
@@ -1297,6 +1389,15 @@ void MainComponent::mostrarTree() {
 
     if (!treeWorkspace_) {
         treeWorkspace_ = std::make_unique<ArvoreBackupComponent>(*projetoAberto_);
+        treeWorkspace_->aoMostrarConteudoNaGrade = [this](const std::set<std::string>& itemIds) {
+            mostrarGrid();
+            if (catalogWorkspace_) {
+                catalogWorkspace_->definirSelecaoItens(itemIds);
+            } else if (mosaico_) {
+                mosaico_->definirFiltroItens(itemIds);
+                mosaico_->definirSelecao(itemIds);
+            }
+        };
         addAndMakeVisible(*treeWorkspace_);
     } else {
         treeWorkspace_->setVisible(true);
@@ -1341,6 +1442,7 @@ void MainComponent::mostrarBackup() {
     }
 
     if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
     if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
     if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
@@ -1357,7 +1459,7 @@ void MainComponent::mostrarBackup() {
         juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->mostrarGrid(); });
     };
     backupWorkspace_->aoVoltarHome = [safeThis] {
-        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->mostrarHome(); });
+        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->mostrarGrid(); });
     };
     backupWorkspace_->aoAbrirCatalogo = [safeThis](const juce::File& pastaBackup) {
         juce::MessageManager::callAsync([safeThis, pastaBackup] { if (safeThis) safeThis->abrirCatalogo(pastaBackup); });
@@ -1629,6 +1731,7 @@ void MainComponent::aoTerminarReavaliacaoDeVaults(const std::vector<std::string>
     }
 
     textoProgressoIngest_ = matriz::i18n::t("vault.reconciliando");
+    ProgressoGlobal::obterInstancia().iniciarTarefa("vault_reconcile", "Reconciling Vaults", 0, nullptr, "Scanning connected volumes...");
 
     matriz::db::Database* registro = &projetoAberto_->projeto().registro();
     juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -1657,6 +1760,7 @@ void MainComponent::concluirReconciliacao(const matriz::vault::ResumoReconciliac
     // Aviso discreto na faixa, nunca um modal (§8): reconectar um disco não
     // é um evento que exige resposta do operador.
     textoProgressoIngest_ = resumo.comoTexto();
+    ProgressoGlobal::obterInstancia().concluirTarefa("vault_reconcile", resumo.comoTexto());
 
     if (mosaico_) mosaico_->recarregar();
     if (filtros_) filtros_->recarregar();
@@ -1666,8 +1770,7 @@ void MainComponent::concluirReconciliacao(const matriz::vault::ResumoReconciliac
 void MainComponent::salvarProjeto() {
     if (!projetoAberto_) return;
     try {
-        projetoAberto_->projeto().registro().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
-        projetoAberto_->projeto().indice().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+        projetoAberto_->salvar();
         if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
             auto titulo = win->getName();
             win->setName(titulo + "  [Saved]");
@@ -1692,15 +1795,27 @@ void MainComponent::fecharProjeto() {
         catalogoBusca_.reset();
         catalogoFechar_.reset();
         reconstruirTelaInicial();
+        if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
         return;
     }
 
-    // Um lote em background ainda segura uma referência a registro_ —
-    // destruir o projeto agora deixaria o job com uma referência
-    // pendurada. O menu já desabilita esta ação durante o ingest; esta
-    // checagem é o cinto de segurança pra qualquer outro chamador (ex.:
-    // testes headless).
     if (ingestEmAndamento()) return;
+
+    if (projetoAberto_ && projetoAberto_->isDirty()) {
+        int res = juce::AlertWindow::showYesNoCancelBox(
+            juce::AlertWindow::QuestionIcon,
+            "Unsaved Changes",
+            "This project has unsaved changes (such as relinked asset paths).\n\nDo you want to save your changes before closing?",
+            "Save", "Don't Save", "Cancel");
+        if (res == 1) { // Save
+            salvarProjeto();
+        } else if (res == 2) { // Don't Save
+            projetoAberto_->descartarAlteracoesEmMemoria();
+        } else { // Cancel
+            return;
+        }
+    }
+
     stopTimer();
     intakeWorkspace_.reset();
     catalogWorkspace_.reset();
@@ -1709,11 +1824,121 @@ void MainComponent::fecharProjeto() {
     homePanel_.reset();
     ingestWizard_.reset();
     barraNavegacao_.reset();
+    barraProgressoGlobal_.reset();
     backupWorkspace_.reset();
     preservationWorkspace_.reset();
+    catalogoPai_ = juce::File();
     telaAtiva_ = TelaAtiva::Inicial;
     projetoAberto_.reset();
     reconstruirTelaInicial();
+    if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
+}
+
+void MainComponent::verificarPresencaInicialAssets() {
+    if (!projetoAberto_) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    juce::File pastaProj = pastaProjeto();
+
+    poolVaults_.addJob([safeThis, proj, pastaProj]() {
+        matriz::vault::AssetPresenceReport report;
+        try {
+            report = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(
+                proj->projeto().registro(), pastaProj, proj->inMemoryRelinkedPaths());
+        } catch (...) {}
+
+        juce::MessageManager::callAsync([safeThis, report]() {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            if (report.totalAssets > 0 && report.onlineAssets == 0 && report.offlineAssets > 0) {
+                self->mostrarDialogoRelinkInicial(report);
+            }
+        });
+    });
+}
+
+void MainComponent::mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report) {
+    if (!projetoAberto_) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+
+    InitialRelinkDialog::showModal(
+        report.sampleMissingExpectedPath,
+        juce::String(report.sampleMissingTitle),
+        [safeThis, report](const juce::File& fileSelected) {
+            if (!safeThis || !safeThis->projetoAberto_) return;
+            std::map<std::string, std::string> inMemRelocated;
+            auto res = matriz::vault::AssetRelinkEngine::relocarColecaoEmMemoria(
+                safeThis->projetoAberto_->projeto().registro(),
+                safeThis->pastaProjeto(),
+                report.sampleMissingExpectedPath,
+                fileSelected,
+                inMemRelocated);
+
+            safeThis->projetoAberto_->aplicarBatchRelinkEmMemoria(inMemRelocated);
+
+            if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+            if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+
+            juce::String msg = "ASSET RELOCATION\n\nResolved: " + juce::String(res.resolvedCount) +
+                               "\nNot Found: " + juce::String(res.notFoundCount) +
+                               "\nOffline: " + juce::String(res.offlineCount) +
+                               "\n\nNote: Changes are currently held in memory. Use File -> Save (Cmd+S) to persist.";
+
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::InfoIcon,
+                "Relocation Summary",
+                msg,
+                "OK");
+        },
+        [] {});
+}
+
+void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
+    if (!projetoAberto_) return;
+    std::string titulo, tipoMidia, codigoAcervo;
+    projetoAberto_->obterItemInfo(itemId, titulo, tipoMidia, codigoAcervo);
+
+    juce::String expectedPath;
+    juce::String storageName = "Local Storage";
+
+    try {
+        auto stmt = projetoAberto_->projeto().registro().prepare(
+            "SELECT a.caminho_relativo, COALESCE(a.caminho_absoluto_origem, ''), COALESCE(v.nome, 'Local Storage'), COALESCE(v.localizacao, '') "
+            "FROM arquivo a "
+            "LEFT JOIN vault v ON v.id = a.vault_id "
+            "WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step()) {
+            std::string camRel = stmt.columnText(0);
+            std::string camAbs = stmt.columnText(1);
+            storageName = stmt.columnText(2);
+            std::string locVault = stmt.columnText(3);
+            auto expFile = matriz::vault::caminhoEsperado(projetoAberto_->projeto().pasta(), locVault, camRel, camAbs);
+            expectedPath = expFile != juce::File() ? expFile.getFullPathName() : (camAbs.empty() ? camRel : camAbs);
+        }
+    } catch (...) {}
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    OfflineAssetRelinkDialog::showModal(
+        projetoAberto_->projeto().registro(),
+        itemId,
+        juce::String(titulo),
+        expectedPath,
+        storageName,
+        [safeThis, itemId](const juce::File& fileSelected) {
+            if (!safeThis || !safeThis->projetoAberto_) return;
+            try {
+                auto stmt = safeThis->projetoAberto_->projeto().registro().prepare(
+                    "SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+                stmt.bind(1, matriz::db::Value::of(itemId));
+                if (stmt.step()) {
+                    std::string masterArqId = stmt.columnText(0);
+                    safeThis->projetoAberto_->aplicarRelinkEmMemoria(masterArqId, fileSelected.getFullPathName().toStdString());
+                    if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+                    if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+                }
+            } catch (...) {}
+        });
 }
 
 bool MainComponent::temPainelInconsistencias() const {
@@ -1761,71 +1986,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
 
-    auto arqs = std::make_shared<std::vector<juce::File>>(std::move(arquivos));
-    int totalArqs = static_cast<int>(arqs->size());
-
-    bool ehCatalogo = projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo;
-
-    std::vector<juce::String> opcoesSourceMedia;
-    std::vector<juce::String> opcoesCollection;
-
-    if (ehCatalogo) {
-        opcoesSourceMedia = {
-            "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "DAT", "MD",
-            "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
-            "35mm", "16mm", "Super8mm",
-            "Camera", "Cellphone", "Scanner", "Internet", "Email", "Cloud"
-        };
-        opcoesCollection = {
-            "Album", "EP", "Single", "Sample Pack", "Soundtrack",
-            "Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate",
-            "Photo", "Artwork", "Album Cover", "Poster", "Documentation",
-            "Book", "Contract", "Manual", "Report", "Reference",
-            "Project", "Archive"
-        };
-    } else {
-        opcoesSourceMedia = {
-            "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "DAT", "MD",
-            "Laser Disc", "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette",
-            "2\" Tape", "1\" Tape", "1/2\" Tape", "1/4\" Tape",
-            "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
-            "35mm", "16mm", "Super8mm",
-            "Camera", "Cellphone", "Scanner", "Internet", "Email", "Cloud"
-        };
-        opcoesCollection = {
-            "Family Archive", "Personal Collection", "Studio Collection",
-            "Museum Collection", "Gallery Collection", "Institutional Archive",
-            "Corporate Archive", "Press Archive", "Research Archive",
-            "Estate Collection", "Private Collection", "Donor Collection",
-            "Historical Archive", "Educational Collection",
-            "Religious Archive", "Government Archive",
-            "Film Archive", "Sound Archive", "Photo Archive",
-            "Library Collection", "Manuscript Collection"
-        };
-    }
-
-    PainelOverlay::Config cfg;
-    cfg.titulo = "Pre-Ingest Metadata";
-    cfg.mensagem = juce::String(totalArqs) + " file(s) ready to ingest.\nOptionally set metadata to apply to all items:";
-    cfg.campos = {
-        {"source_media", "SOURCE MEDIA", "", "", opcoesSourceMedia},
-        {"collection",   "COLLECTION",   "", "", opcoesCollection}
-    };
-    cfg.botoes = {
-        {"Ingest",         1, true,  false},
-        {"Skip Metadata",  2, false, false},
-        {"Cancel",         0, false, true}
-    };
-
-    overlay_.mostrar(std::move(cfg), [this, arqs](PainelOverlay::Resultado r) {
-        if (r.botaoId == 0) return;
-        std::string sourceMedia, collection;
-        if (r.botaoId == 1) {
-            sourceMedia = r.valores["source_media"].trim().toStdString();
-            collection  = r.valores["collection"].trim().toStdString();
-        }
-        processarLoteEmBackground(*arqs, sourceMedia, collection);
-    });
+    processarLoteEmBackground(std::move(arquivos), "", "");
 }
 
 // Navegador estilo Finder embutido (item 3) — segunda porta de entrada,
@@ -2002,6 +2163,14 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     ingestsTotalLote_ += static_cast<int>(arquivos.size());
     *pendentes_ += static_cast<int>(arquivos.size());
     atualizarLabelProgresso();
+
+    ProgressoGlobal::obterInstancia().iniciarTarefa(
+        "ingest",
+        "Ingest",
+        static_cast<int>(arquivos.size()),
+        [this] { cancelarLoteIngest(); },
+        "Processing " + juce::String(arquivos.size()) + " files...");
+
     mostrarIntake();
     if (intakeWorkspace_) intakeWorkspace_->recarregar();
     if (mosaico_) mosaico_->recarregar();
@@ -2054,8 +2223,10 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     estadoLote->cancelado = true;
                     estadoLote->naoProcessados.push_back(itemId);
                 }
-                // Sem callAsync por arquivo — ver a nota em
-                // finalizarUnidadeDeLote. Quem observa o fim é o timer.
+                try {
+                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+                } catch (...) {}
                 registrarUnidadeConcluida(pendentes);
                 return;
             }
@@ -2285,12 +2456,14 @@ void MainComponent::cancelarLoteIngest() {
     // e precisa ver que o clique valeu, mesmo que ainda faltem alguns
     // callbacks de arquivos em curso chegarem.
     textoProgressoIngest_ = matriz::i18n::t("ingest.cancelando");
+    ProgressoGlobal::obterInstancia().atualizarDetalhe("ingest", "Cancelling batch...");
 }
 
 void MainComponent::mostrarResumoCancelado(int processados, int total) {
     textoProgressoIngest_ = matriz::i18n::t("ingest.cancelado")
                                 .replace("{feito}", juce::String(processados))
                                 .replace("{total}", juce::String(total));
+    ProgressoGlobal::obterInstancia().concluirTarefa("ingest", textoProgressoIngest_);
 }
 
 void MainComponent::atualizarLabelProgresso() {
@@ -2308,6 +2481,11 @@ void MainComponent::atualizarLabelProgresso() {
     textoProgressoIngest_ = matriz::i18n::t("ingest.progresso")
                                 .replace("{feito}", juce::String(concluidos))
                                 .replace("{total}", juce::String(total));
+
+    ProgressoGlobal::obterInstancia().atualizarProgresso(
+        "ingest",
+        concluidos,
+        juce::String(concluidos) + " of " + juce::String(total) + " files ingested");
 }
 
 void MainComponent::garantirLabelProgressoIngest() {
@@ -2319,6 +2497,7 @@ void MainComponent::mostrarResumoLote(int novos, int duplicatas, int erros) {
         texto += " | " + matriz::i18n::t("ingest.resumo_duplicatas").replace("{n}", juce::String(duplicatas));
     if (erros > 0) texto += " | " + matriz::i18n::t("ingest.resumo_erros").replace("{n}", juce::String(erros));
     textoProgressoIngest_ = texto;
+    ProgressoGlobal::obterInstancia().concluirTarefa("ingest", texto);
     atualizarPainelDeApoio();
     atualizarEtapaDoFluxo();
 }
@@ -2437,6 +2616,20 @@ void MainComponent::resized() {
         } else {
             barraNavegacao_->setVisible(false);
         }
+    }
+
+    if (projetoAberto_ && barraProgressoGlobal_) {
+        if (telaAtiva_ != TelaAtiva::Inicial) {
+            barraProgressoGlobal_->setBounds(area.removeFromBottom(BarraProgressoGlobalComponent::kAlturaFixa));
+            barraProgressoGlobal_->setVisible(true);
+        } else {
+            barraProgressoGlobal_->setVisible(false);
+        }
+    }
+
+    if (catalogHubWorkspace_ && catalogHubWorkspace_->isVisible()) {
+        catalogHubWorkspace_->setBounds(area);
+        return;
     }
 
     if (homePanel_ && homePanel_->isVisible()) {

@@ -44,6 +44,14 @@ bool VideoPlayerComponent::estaTocando() const { return vpIsPlaying(static_cast<
 double VideoPlayerComponent::posicaoAtual() const { return vpPosition(static_cast<VPHandle>(bridge_)); }
 double VideoPlayerComponent::duracao() const { return vpDuration(static_cast<VPHandle>(bridge_)); }
 
+void VideoPlayerComponent::definirTimecodeVisivel(bool visivel) {
+    vpSetTimecodeVisible(static_cast<VPHandle>(bridge_), visivel);
+}
+
+void VideoPlayerComponent::atualizarTimecodeTexto(const juce::String& timecodeStr) {
+    vpSetTimecodeText(static_cast<VPHandle>(bridge_), timecodeStr.toRawUTF8());
+}
+
 void VideoPlayerComponent::paint(juce::Graphics& g) {
     if (!carregado_) {
         g.fillAll(tema().fundo);

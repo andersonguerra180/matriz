@@ -24,6 +24,7 @@ public:
     void criarPastaDeTopoNivel();
 
     std::function<void(std::optional<std::set<std::string>> itemIdsFiltrados)> aoSelecionarNo;
+    std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
     std::function<void()> aoMudarOrganizacao;
 
     void definirIncluirSubpastas(bool incluir);

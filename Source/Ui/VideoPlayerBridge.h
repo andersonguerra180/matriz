@@ -18,6 +18,8 @@ double vpPosition(VPHandle h);
 double vpDuration(VPHandle h);
 void* vpGetNSView(VPHandle h);
 void vpResize(VPHandle h, int w, int h2);
+void vpSetTimecodeVisible(VPHandle h, bool visible);
+void vpSetTimecodeText(VPHandle h, const char* text);
 
 #ifdef __cplusplus
 }

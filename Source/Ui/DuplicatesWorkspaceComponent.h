@@ -41,6 +41,9 @@ private:
         std::string orientation;
         std::string colorSpace;
         std::string caminhoRelativo;
+        std::string fullPath;
+        std::string collectionNome;
+        std::string collectionCaminho;
         
         // Match flags
         bool nomeCoincide = false;

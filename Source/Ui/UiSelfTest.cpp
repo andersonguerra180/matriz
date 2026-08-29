@@ -20,6 +20,7 @@
 #include "ProjetoAberto.h"
 #include "AudioWorkspace.h"
 #include "../Ingest/CacheArquivo.h"
+#include "../Vault/AssetRelinkEngine.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "TagChipsEditor.h"
 
@@ -1920,6 +1921,178 @@ int rodarUiSelfTest() {
             checar(emIngles == "Open an existing project..." && depoisDePedirPtBr == emIngles,
                    "the key the start screen uses resolves to English and no locale changes it (\"" + emIngles +
                        "\" / \"" + depoisDePedirPtBr + "\")");
+        }
+
+        // ==============================================================================
+        // ASSET LOCATION, OFFLINE STATE & RELINKING TEST SUITE
+        // ==============================================================================
+
+        // 1. Root inference tests
+        {
+            juce::String oldRoot, newRoot;
+            bool ok = matriz::vault::AssetRelinkEngine::inferirNovaRaiz(
+                "/Volumes/OldHD/AudioProjects/Album1/Audio/Master.wav",
+                "/Volumes/NewFastSSD/Audio/Master.wav",
+                oldRoot, newRoot);
+            checar(ok, "Root inference succeeds when trailing segments match");
+            checar(oldRoot == "/Volumes/OldHD/AudioProjects/Album1", "Old root correctly extracted: " + oldRoot);
+            checar(newRoot == "/Volumes/NewFastSSD", "New root correctly extracted: " + newRoot);
+
+            // Windows style backslashes
+            ok = matriz::vault::AssetRelinkEngine::inferirNovaRaiz(
+                "D:\\Archive\\Music\\Vocal.wav",
+                "/Volumes/Storage/Music/Vocal.wav",
+                oldRoot, newRoot);
+            checar(ok, "Root inference works across mixed path separators");
+        }
+
+        // 2. Batch relocation & in-memory presence test
+        {
+            juce::File pastaProjRelink = tmpRoot.getChildFile("ProjetoRelinkTest");
+            pastaProjRelink.createDirectory();
+            matriz::model::NovoProjetoParams params;
+            params.nome = "RelinkTest";
+            params.prefixoNomenclatura = "REL";
+            params.modo = matriz::model::Modo::Preservacao;
+            auto proj = matriz::model::Project::criar(pastaProjRelink, params);
+            checar(proj != nullptr, "Created project for relink tests");
+
+            auto pa = std::make_unique<ProjetoAberto>(std::move(proj));
+
+            // Create two real files in a simulated storage location
+            juce::File storageNova = tmpRoot.getChildFile("NewStorage").getChildFile("Stems");
+            storageNova.createDirectory();
+            juce::File stem1 = storageNova.getChildFile("Drums.wav"); stem1.replaceWithText("DRUMS_DATA");
+            juce::File stem2 = storageNova.getChildFile("Bass.wav");  stem2.replaceWithText("BASS_DATA");
+
+            std::string agora = matriz::model::agoraIso8601();
+            std::string itemDrums = matriz::model::novoUuid();
+            std::string itemBass = matriz::model::novoUuid();
+            std::string arqDrums = matriz::model::novoUuid();
+            std::string arqBass = matriz::model::novoUuid();
+            std::string vaultId = matriz::model::novoUuid();
+
+            pa->projeto().registro().run(
+                "INSERT INTO vault (id, projeto_id, nome, tipo, uuid_volume, raiz_relativa, localizacao, status, criado_em) "
+                "VALUES (?, ?, 'Old Storage', 'local', '', '', '/Volumes/OldStorage', 'offline', ?)",
+                {matriz::db::Value::of(vaultId), matriz::db::Value::of(pa->projeto().projetoId()), matriz::db::Value::of(agora)});
+
+            pa->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'REL-01', 'Drums', 'fita_rolo', 'capturado', ?, ?)",
+                {matriz::db::Value::of(itemDrums), matriz::db::Value::of(pa->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            pa->projeto().registro().run(
+                "INSERT INTO arquivo (id, item_id, vault_id, eh_master, caminho_relativo, caminho_absoluto_origem, tamanho_bytes, checksum_sha256, papel, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, 1, 'Stems/Drums.wav', '/Volumes/OldStorage/Stems/Drums.wav', ?, ?, 'master', ?, ?)",
+                {matriz::db::Value::of(arqDrums), matriz::db::Value::of(itemDrums), matriz::db::Value::of(vaultId),
+                 matriz::db::Value::of(static_cast<juce::int64>(stem1.getSize())),
+                 matriz::db::Value::of(juce::SHA256(stem1).toHexString().toLowerCase().toStdString()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            pa->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'REL-02', 'Bass', 'fita_rolo', 'capturado', ?, ?)",
+                {matriz::db::Value::of(itemBass), matriz::db::Value::of(pa->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            pa->projeto().registro().run(
+                "INSERT INTO arquivo (id, item_id, vault_id, eh_master, caminho_relativo, caminho_absoluto_origem, tamanho_bytes, checksum_sha256, papel, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, 1, 'Stems/Bass.wav', '/Volumes/OldStorage/Stems/Bass.wav', ?, ?, 'master', ?, ?)",
+                {matriz::db::Value::of(arqBass), matriz::db::Value::of(itemBass), matriz::db::Value::of(vaultId),
+                 matriz::db::Value::of(static_cast<juce::int64>(stem2.getSize())),
+                 matriz::db::Value::of(juce::SHA256(stem2).toHexString().toLowerCase().toStdString()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // Asset validation test on itemDrums
+            auto vRepOk = matriz::vault::AssetRelinkEngine::validarAsset(
+                pa->projeto().registro(), itemDrums, stem1);
+            checar(vRepOk.isValid, "Validation succeeds for matching drums stem");
+
+            juce::File wrongExt = tmpRoot.getChildFile("Drums.mp3"); wrongExt.replaceWithText("DRUMS_DATA");
+            auto vRepWrongExt = matriz::vault::AssetRelinkEngine::validarAsset(
+                pa->projeto().registro(), itemDrums, wrongExt);
+            checar(!vRepWrongExt.isValid, "Validation fails for wrong extension");
+
+            // Initial presence check without relink -> should be OFFLINE
+            auto reportAntes = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(
+                pa->projeto().registro(), pastaProjRelink, pa->inMemoryRelinkedPaths());
+            checar(reportAntes.totalAssets == 2, "Presence check finds 2 master assets");
+            checar(reportAntes.offlineAssets == 2, "Both assets are offline initially");
+            checar(reportAntes.onlineAssets == 0, "Zero online assets initially");
+
+            // In-memory relink via root inference
+            std::map<std::string, std::string> inMemRelocated;
+            auto resBatch = matriz::vault::AssetRelinkEngine::relocarColecaoEmMemoria(
+                pa->projeto().registro(), pastaProjRelink,
+                "/Volumes/OldStorage/Stems/Drums.wav",
+                stem1, inMemRelocated);
+            checar(resBatch.resolvedCount == 2, "Batch relocation resolved both assets: " + juce::String(resBatch.resolvedCount));
+            checar(resBatch.notFoundCount == 0, "No missing assets in batch");
+
+            // Apply batch in-memory
+            pa->aplicarBatchRelinkEmMemoria(inMemRelocated);
+            checar(pa->isDirty(), "ProjetoAberto is marked DIRTY after in-memory relink");
+
+            // Presence check with in-memory overrides -> should be ONLINE
+            auto reportDepois = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(
+                pa->projeto().registro(), pastaProjRelink, pa->inMemoryRelinkedPaths());
+            checar(reportDepois.onlineAssets == 2, "Both assets are now ONLINE in memory");
+            checar(reportDepois.offlineAssets == 0, "Zero offline assets after in-memory relink");
+
+            // Verify MosaicoComponent availability filtering
+            MosaicoComponent mosaico(*pa);
+            mosaico.recarregarSincrono();
+            checar(mosaico.totalItensCarregados() == 2, "Mosaico has 2 items");
+
+            mosaico.alternarFiltroDisponibilidade(MosaicoComponent::FiltroDisponibilidade::Online);
+            checar(mosaico.totalItensVisiveis() == 2, "Filter ONLINE shows 2 items");
+
+            mosaico.alternarFiltroDisponibilidade(MosaicoComponent::FiltroDisponibilidade::Offline);
+            checar(mosaico.totalItensVisiveis() == 0, "Filter OFFLINE shows 0 items");
+
+            // 4. CRITICAL TWO-STAGE PERSISTENCE TEST:
+            // Test 4A: Discard changes -> Verify original state preserved on disk
+            pa->descartarAlteracoesEmMemoria();
+            checar(!pa->isDirty(), "ProjetoAberto is NOT dirty after discarding changes");
+
+            // Reopen from disk without save
+            pa.reset();
+            auto projReaberto1 = matriz::model::Project::abrir(pastaProjRelink);
+            checar(projReaberto1 != nullptr, "Reopened project from disk");
+            {
+                auto stmt = projReaberto1->registro().prepare(
+                    "SELECT caminho_absoluto_origem FROM arquivo WHERE id = ?");
+                stmt.bind(1, matriz::db::Value::of(arqDrums));
+                stmt.step();
+                std::string pathOnDisk = stmt.columnText(0);
+                checar(pathOnDisk == "/Volumes/OldStorage/Stems/Drums.wav",
+                       "Discarding in-memory changes preserved original path on disk: " + juce::String(pathOnDisk));
+            }
+
+            // Test 4B: Re-apply relink + SAVE -> Verify persisted on disk
+            pa = std::make_unique<ProjetoAberto>(std::move(projReaberto1));
+            pa->aplicarRelinkEmMemoria(arqDrums, stem1.getFullPathName().toStdString());
+            pa->aplicarRelinkEmMemoria(arqBass, stem2.getFullPathName().toStdString());
+            checar(pa->isDirty(), "Project is dirty after relinking");
+
+            pa->salvar();
+            checar(!pa->isDirty(), "Project is NOT dirty after salvar()");
+
+            // Reopen again and verify persistence on disk
+            pa.reset();
+            auto projReaberto2 = matriz::model::Project::abrir(pastaProjRelink);
+            checar(projReaberto2 != nullptr, "Reopened project after saving");
+            {
+                auto stmt = projReaberto2->registro().prepare(
+                    "SELECT caminho_absoluto_origem FROM arquivo WHERE id = ?");
+                stmt.bind(1, matriz::db::Value::of(arqDrums));
+                stmt.step();
+                std::string pathOnDisk = stmt.columnText(0);
+                checar(pathOnDisk == stem1.getFullPathName().toStdString(),
+                       "Explicit save successfully persisted new path to registro.sqlite: " + juce::String(pathOnDisk));
+            }
         }
 
     } catch (const std::exception& e) {

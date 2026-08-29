@@ -17,6 +17,7 @@ namespace {
 enum MenuIndices { kMenuArquivo = 0, kMenuEditar = 1, kMenuProjeto = 2, kMenuPreferencias = 3, kMenuAjuda = 4 };
 enum ComandoMenu {
     kCmdNovoProjeto = 1,
+    kCmdNovoCatalogo,
     kCmdAbrirProjeto,
     kCmdAbrirCatalogo,
     kCmdFecharProjeto,
@@ -71,8 +72,7 @@ MainWindow::~MainWindow() {
 void MainWindow::closeButtonPressed() { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
 juce::StringArray MainWindow::getMenuBarNames() {
-    return {matriz::i18n::t("menu.arquivo"), "Edit", matriz::i18n::t("menu.projeto"),
-            matriz::i18n::t("menu.preferencias"), matriz::i18n::t("menu.ajuda")};
+    return {"File", "Edit", "Project", "Preferences", "Help"};
 }
 
 juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
@@ -80,10 +80,21 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
     if (topLevelMenuIndex == kMenuArquivo) {
         bool podeTrocarProjeto = !conteudo_->ingestEmAndamento();
         bool temProjeto = conteudo_->temProjetoAberto() || conteudo_->temCatalogoAberto();
-        menu.addItem(kCmdNovoProjeto, "New Project (.mtz)...", podeTrocarProjeto);
-        menu.addItem(kCmdAbrirProjeto, "Open Project (.mtz)...", podeTrocarProjeto);
-        menu.addItem(kCmdAbrirCatalogo, "Open Catalog (.bkm)...", podeTrocarProjeto);
+        bool isCatalog = (conteudo_->projetoAberto() && conteudo_->projetoAberto()->projeto().modo() == matriz::model::Modo::Catalogo);
 
+        // New Submenu
+        juce::PopupMenu newMenu;
+        newMenu.addItem(kCmdNovoProjeto, "Collection (.mtz)...", podeTrocarProjeto);
+        newMenu.addItem(kCmdNovoCatalogo, "Catalog (.bkm)...", podeTrocarProjeto);
+        menu.addSubMenu("New", newMenu, podeTrocarProjeto);
+
+        // Open Submenu
+        juce::PopupMenu openMenu;
+        openMenu.addItem(kCmdAbrirProjeto, "Collection (.mtz)...", podeTrocarProjeto);
+        openMenu.addItem(kCmdAbrirCatalogo, "Catalog (.bkm)...", podeTrocarProjeto);
+        menu.addSubMenu("Open", openMenu, podeTrocarProjeto);
+
+        // Recent Files Submenu
         juce::PopupMenu recentMenu;
         auto recentes = matriz::app::lerRecentes();
         if (!recentes.empty()) {
@@ -101,15 +112,33 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addSubMenu("Open Recent Files", recentMenu, podeTrocarProjeto);
 
         menu.addSeparator();
-        bool temProjetoMtz = conteudo_->temProjetoAberto();
-        menu.addItem(kCmdSalvarProjeto, "Save Project (Cmd+S)", temProjetoMtz);
-        menu.addItem(kCmdSalvarProjetoComo, "Save Project As... (Cmd+Shift+S)", temProjetoMtz);
-        menu.addItem(kCmdFecharProjeto, "Close Project", temProjeto && podeTrocarProjeto);
-        menu.addItem(kCmdInfoProjeto, "Project Info...", temProjetoMtz);
+        juce::String saveText = "Save (Cmd+S)";
+        juce::String saveAsText = "Save As... (Cmd+Shift+S)";
+        juce::String closeText = "Close";
+        juce::String infoText = "Project Info...";
+
+        if (temProjeto) {
+            if (isCatalog) {
+                saveText = "Save Catalog (Cmd+S)";
+                saveAsText = "Save Catalog As... (Cmd+Shift+S)";
+                closeText = "Close Catalog";
+                infoText = "Catalog Info...";
+            } else {
+                saveText = "Save Collection (Cmd+S)";
+                saveAsText = "Save Collection As... (Cmd+Shift+S)";
+                closeText = "Close Collection";
+                infoText = "Collection Info...";
+            }
+        }
+
+        menu.addItem(kCmdSalvarProjeto, saveText, temProjeto);
+        menu.addItem(kCmdSalvarProjetoComo, saveAsText, temProjeto);
+        menu.addItem(kCmdFecharProjeto, closeText, temProjeto && podeTrocarProjeto);
+        menu.addItem(kCmdInfoProjeto, infoText, temProjeto);
         menu.addSeparator();
-        menu.addItem(kCmdIngerirArquivos, matriz::i18n::t("menu.arquivo_ingerir_arquivos"), conteudo_->temProjetoAberto());
+        menu.addItem(kCmdIngerirArquivos, "Add Files...", conteudo_->temProjetoAberto() && !isCatalog);
         menu.addSeparator();
-        menu.addItem(kCmdSair, matriz::i18n::t("menu.arquivo_sair"));
+        menu.addItem(kCmdSair, "Quit");
     } else if (topLevelMenuIndex == kMenuEditar) {
         bool podeUndo = conteudo_->temProjetoAberto() && conteudo_->podeDesfazer();
         menu.addItem(kCmdUndo, "Undo (Cmd+Z)", podeUndo, false, nullptr);
@@ -128,7 +157,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
 void MainWindow::menuItemSelected(int menuItemID, int) {
     switch (menuItemID) {
-        case kCmdNovoProjeto: pedirNovoProjetoViaMenu(); break;
+        case kCmdNovoProjeto: pedirNovoProjeto(matriz::model::Modo::Preservacao); break;
+        case kCmdNovoCatalogo: pedirNovoCatalogo(); break;
         case kCmdAbrirProjeto: pedirAbrirProjeto(); break;
         case kCmdAbrirCatalogo: pedirAbrirCatalogo(); break;
         case kCmdSalvarProjeto: conteudo_->salvarProjeto(); break;
@@ -175,6 +205,15 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoPedirIngerirArquivos = [this] { pedirIngerirArquivos(); };
     conteudo_->aoSalvarComo = [this] { pedirSalvarProjetoComo(); };
     conteudo_->aoPedirBackup = [this] { pedirConsolidar(); };
+    conteudo_->aoMudarEstadoProjeto = [this] {
+        menuItemsChanged();
+        if (conteudo_->temProjetoAberto()) {
+            auto pNome = juce::String::fromUTF8(conteudo_->projetoAberto()->projeto().nome().c_str());
+            setName(pNome.isEmpty() ? "BKR Matriz" : (pNome + " — BKR Matriz"));
+        } else {
+            setName("BKR Matriz");
+        }
+    };
 }
 
 void MainWindow::pedirNovoProjetoViaMenu() {
@@ -236,8 +275,12 @@ void MainWindow::abrirPasta(const juce::File& pasta) {
     }
 }
 
+void MainWindow::pedirNovoCatalogo() {
+    pedirNovoProjeto(matriz::model::Modo::Catalogo);
+}
+
 void MainWindow::pedirAbrirProjeto() {
-    auto chooser = std::make_shared<juce::FileChooser>(matriz::i18n::t("dialogo_abrir_projeto.titulo"));
+    auto chooser = std::make_shared<juce::FileChooser>("Open Collection (.mtz)");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectFiles,
                           [this, chooser](const juce::FileChooser& fc) {
                               juce::File pasta = fc.getResult();
@@ -252,7 +295,7 @@ void MainWindow::pedirAbrirCatalogo() {
                           [this, chooser](const juce::FileChooser& fc) {
                               juce::File file = fc.getResult();
                               if (file == juce::File()) return;
-                              conteudo_->abrirCatalogo(file);
+                              abrirPasta(file);
                           });
 }
 

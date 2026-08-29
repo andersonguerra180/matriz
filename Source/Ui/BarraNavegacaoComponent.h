@@ -9,7 +9,7 @@ namespace matriz::ui {
 class BarraNavegacaoComponent : public juce::Component, public juce::TooltipClient {
 public:
     enum class Tab {
-        Home,
+        Catalog,
         Intake,
         Grid,
         Duplicates,
@@ -20,6 +20,9 @@ public:
 
     BarraNavegacaoComponent();
     ~BarraNavegacaoComponent() override;
+
+    void setProjectInfo(const juce::String& projectName, bool isCatalog);
+    void setHasParentCatalog(bool hasParent);
 
     void setSelectedTab(Tab tab);
     Tab getSelectedTab() const { return selectedTab_; }
@@ -36,6 +39,8 @@ public:
     void mouseExit(const juce::MouseEvent&) override;
 
 private:
+    void reconstruirTabs();
+
     struct ItemTab {
         Tab tab;
         juce::String label;
@@ -44,7 +49,11 @@ private:
     };
 
     std::vector<ItemTab> tabs_;
-    Tab selectedTab_ = Tab::Home;
+    Tab selectedTab_ = Tab::Grid;
+
+    juce::String brandText_{"COLLECTION"};
+    bool isCatalog_ = false;
+    bool hasParentCatalog_ = false;
 
     std::unique_ptr<juce::TextButton> botaoFechar_;
 };

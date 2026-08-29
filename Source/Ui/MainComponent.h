@@ -8,6 +8,7 @@
 #include "../App/Cancelamento.h"
 #include "AcoesItem.h"
 #include "../Vault/Reconciliacao.h"
+#include "../Vault/AssetRelinkEngine.h"
 #include "AudioWorkspace.h"
 #include "OverlayComponent.h"
 #include "ProjetoAberto.h"
@@ -23,6 +24,7 @@
 #include "ArvoreBackupComponent.h"
 #include "FloatingPreviewWindow.h"
 #include "DuplicatesWorkspaceComponent.h"
+#include "BarraProgressoGlobalComponent.h"
 
 // Layout de três painéis (§11.1): mosaico | visualizador+transporte+tira |
 // ficha. Sem abas, sem janela flutuante. Nesta etapa (B.1.1-B.1.3): mosaico
@@ -42,6 +44,7 @@ class LinhaProjetoRecente;
 class BarraFerramentasComponent;
 class TransportComponent;
 class BarraAcoesFicha;
+class CatalogHubComponent;
 class CatalogoComponent;
 class IntakeWorkspaceComponent;
 struct EstadoLote;
@@ -88,6 +91,7 @@ public:
     int totalInconsistencias() const;
 
     void mostrarHome();
+    void mostrarCatalogHub();
     void mostrarIntake();
     void mostrarCatalog();
     void mostrarGrid();
@@ -95,6 +99,9 @@ public:
     void mostrarAnalytics();
     void mostrarTree();
     void mostrarBackup();
+
+    void abrirColecaoDoCatalogo(const juce::File& pastaColecao);
+    void retornarAoCatalogo();
 
     // Overlay de diálogo interno (§3) — substitui os modais nativos, que
     // criavam peer próprio e crashavam sendo repintados durante a destruição.
@@ -206,6 +213,9 @@ private:
     // ThreadPool.
     void timerCallback() override;
     void verificarVaultsConectados();
+    void verificarPresencaInicialAssets();
+    void mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report);
+    void abrirDialogoRelinkOffline(const std::string& itemId);
     void atualizarCacheDeTamanhoTotal();
     void aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados);
     void concluirReconciliacao(const matriz::vault::ResumoReconciliacao& resumo);
@@ -238,6 +248,7 @@ private:
     TelaAtiva telaAtiva_ = TelaAtiva::Inicial;
 
     std::unique_ptr<ProjetoAberto> projetoAberto_;
+    juce::File catalogoPai_;
     bool arrastandoArquivo_ = false;
 
     std::unique_ptr<juce::Label> telaInicialTitulo_;
@@ -372,6 +383,7 @@ private:
 
     // Workflow layer (5 Primary Sibling Workspaces)
     std::unique_ptr<HomePanelComponent> homePanel_;
+    std::unique_ptr<CatalogHubComponent> catalogHubWorkspace_;
     std::unique_ptr<IngestWizardComponent> ingestWizard_;
     std::unique_ptr<BarraNavegacaoComponent> barraNavegacao_;
     std::unique_ptr<IntakeWorkspaceComponent> intakeWorkspace_; // INTAKE (Quarentena)
@@ -382,6 +394,7 @@ private:
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     std::unique_ptr<PreservationWorkspaceComponent> preservationWorkspace_;
     std::unique_ptr<FloatingPreviewWindow> activePreviewWindow_;
+    std::unique_ptr<BarraProgressoGlobalComponent> barraProgressoGlobal_;
     bool mostrarEstruturaOrigem_ = false;
     bool mostrarEstruturaBackup_ = false;
 
@@ -404,6 +417,10 @@ public:
     // "Fazer backup" da barra de ferramentas — mesma ação do menu
     // Projeto > Fazer backup organizado, agora também visível na tela.
     std::function<void()> aoPedirBackup;
+
+    // Disparado sempre que o estado do projeto/catálogo muda (aberto, fechado, trocado)
+    // para que a barra de menus do macOS/desktop atualize itens habilitados e títulos.
+    std::function<void()> aoMudarEstadoProjeto;
 
     // Se definido, substitui o AlertWindow padrão de resumo ao final de um
     // lote de ingest — único jeito de rodar o fluxo real em

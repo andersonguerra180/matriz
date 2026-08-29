@@ -19,6 +19,9 @@ public:
     double posicaoAtual() const;
     double duracao() const;
 
+    void definirTimecodeVisivel(bool visivel);
+    void atualizarTimecodeTexto(const juce::String& timecodeStr);
+
     std::function<void(double posicaoSegundos)> aoPosicaoMudar;
 
     void paint(juce::Graphics&) override;

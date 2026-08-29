@@ -72,7 +72,6 @@ TimelineComponent::TimelineComponent(ProjetoAberto& projeto) : projeto_(projeto)
     criar(botaoInicio_, "transporte.inicio", [this] { irParaInicio(); });
     criar(botaoPlayStop_, "transporte.play", [this] { alternarPlayStop(); });
     criar(botaoFim_, "transporte.fim", [this] { irParaFim(); });
-    criar(botaoModoRoda_, "transporte.jog", [this] { alternarModoRoda(); });
     criar(botaoZoomTudo_, "timeline.zoom_tudo", [this] { zoomArquivoInteiro(); });
     criar(botaoTimecode_, "timeline.timecode", [this] { definirMostrarTimecode(!mostrarTimecode_); });
     criar(botaoMarcador_, "timeline.marcador", [this] { inserirMarcadorNaPosicaoAtual(); });
@@ -240,19 +239,41 @@ void TimelineComponent::aplicarZoom(double fator, double centroSegundos) {
     repaint();
 }
 
+void TimelineComponent::mostrarBotaoZoom(bool mostrar) {
+    if (botaoZoomTudo_) {
+        botaoZoomTudo_->setVisible(mostrar);
+        resized();
+    }
+}
+
 void TimelineComponent::definirMostrarTimecode(bool sim) {
     mostrarTimecode_ = sim;
     repaint();
 }
 
-juce::String TimelineComponent::formatarPosicao(double segundos) const {
-    if (!mostrarTimecode_) return matriz::ui::formatarMinutagem(static_cast<int64_t>(segundos * 1000.0));
-    // Timecode HH:MM:SS:FF a 25 fps — o padrão de trabalho de arquivo em
-    // material europeu/brasileiro; fps real de vídeo entra quando a timeline
-    // de vídeo tiver o próprio fps declarado (item 11.5 do SPEC).
+static juce::String formatarTempoRegua(double segundos) {
+    if (segundos < 0 || std::isnan(segundos)) segundos = 0;
     int total = static_cast<int>(segundos);
+    int horas = total / 3600;
+    int minutos = (total % 3600) / 60;
+    int segs = total % 60;
+    if (horas > 0) {
+        return juce::String::formatted("%02d:%02d:%02d", horas, minutos, segs);
+    }
+    return juce::String::formatted("%02d:%02d", minutos, segs);
+}
+
+juce::String TimelineComponent::formatarPosicao(double segundos) const {
+    if (segundos < 0 || std::isnan(segundos)) segundos = 0;
+    if (!mostrarTimecode_) return matriz::ui::formatarMinutagem(static_cast<int64_t>(segundos * 1000.0));
+    int total = static_cast<int>(segundos);
+    int horas = total / 3600;
+    int minutos = (total % 3600) / 60;
+    int segs = total % 60;
     int frames = static_cast<int>((segundos - total) * 25.0);
-    return juce::String::formatted("%02d:%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60, frames);
+    if (frames < 0) frames = 0;
+    if (frames > 24) frames = 24;
+    return juce::String::formatted("%02d:%02d:%02d:%02d", horas, minutos, segs, frames);
 }
 
 // --- marcadores ---------------------------------------------------------------
@@ -390,7 +411,7 @@ void TimelineComponent::paint(juce::Graphics& g) {
         for (double t = std::ceil(inicioVisivel_ / passo) * passo; t <= fimVisivel_; t += passo) {
             int x = xDoSegundo(t);
             g.drawVerticalLine(x, static_cast<float>(regua.getBottom() - 5), static_cast<float>(regua.getBottom()));
-            g.drawText(formatarPosicao(t), x + 2, regua.getY(), 80, regua.getHeight() - 4,
+            g.drawText(formatarTempoRegua(t), x + 2, regua.getY(), 48, regua.getHeight() - 4,
                         juce::Justification::centredLeft, false);
         }
     }
@@ -439,8 +460,9 @@ void TimelineComponent::paint(juce::Graphics& g) {
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
     juce::String estado = formatarPosicao(pos) + " / " + formatarPosicao(duracao_);
-    if (modoRoda_ == ModoRoda::Shuttle && velocidadeShuttle_ != 0.0)
-        estado += "   " + juce::String(velocidadeShuttle_, 1) + juce::String::fromUTF8("×");
+    if (modoRoda_ == ModoRoda::Shuttle && std::abs(velocidadeShuttle_ - 1.0) > 0.05) {
+        estado += "   " + juce::String(velocidadeShuttle_, 1) + "x";
+    }
     g.drawText(estado, getLocalBounds().removeFromBottom(kAlturaTransporte).reduced(6, 0),
                 juce::Justification::centredRight, false);
 }
@@ -448,13 +470,14 @@ void TimelineComponent::paint(juce::Graphics& g) {
 void TimelineComponent::resized() {
     auto barra = getLocalBounds().removeFromBottom(kAlturaTransporte).reduced(4, 3);
     auto botao = [&barra](juce::TextButton* b, int largura) {
-        if (b) b->setBounds(barra.removeFromLeft(largura));
-        barra.removeFromLeft(3);
+        if (b && b->isVisible()) {
+            b->setBounds(barra.removeFromLeft(largura));
+            barra.removeFromLeft(3);
+        }
     };
     botao(botaoInicio_.get(), 40);
     botao(botaoPlayStop_.get(), 64);
     botao(botaoFim_.get(), 40);
-    botao(botaoModoRoda_.get(), 76);
     botao(botaoZoomTudo_.get(), 76);
     botao(botaoTimecode_.get(), 88);
     botao(botaoMarcador_.get(), 96);

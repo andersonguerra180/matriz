@@ -63,7 +63,8 @@ enum class StatusEmbedding {
     NoMetadata
 };
 
-MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId);
+MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId,
+                                           matriz::db::Database* indice = nullptr);
 
 StatusEmbedding embutirMetadadosNoArquivo(const juce::File& destino, const MetadadoParaEmbutir& meta);
 

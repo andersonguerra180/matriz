@@ -169,7 +169,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         "(SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
         "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "i.content_type, i.collection_type, i.criado_em "
+        "i.content_type, i.collection_type, i.criado_em, "
+        "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
         "FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
     while (stmt.step()) {
         ItemResumo r;
@@ -196,6 +198,23 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
         r.criadoEm = stmt.columnText(17);
+
+        std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
+        std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
+        std::string camRel = stmt.columnIsNull(9) ? "" : stmt.columnText(9);
+        std::string camAbs = stmt.columnIsNull(12) ? "" : stmt.columnText(12);
+
+        bool fileExists = false;
+        if (!masterArqId.empty()) {
+            auto it = inMemoryRelinkedPaths_.find(masterArqId);
+            if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+                fileExists = juce::File(it->second).existsAsFile();
+            } else {
+                auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
+                fileExists = res.has_value() && res->existsAsFile();
+            }
+        }
+        r.offline = !fileExists;
 
         // Fallback: extract creation year ONLY from dc_created, ano, data_criacao or EXIF original date
         if (!r.ano.has_value()) {
@@ -288,7 +307,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         "(SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
         "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "i.content_type, i.collection_type, i.criado_em "
+        "i.content_type, i.collection_type, i.criado_em, "
+        "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
         "FROM item i WHERE i.em_quarentena = 1 ORDER BY i.criado_em DESC, i.id");
     while (stmt.step()) {
         ItemResumo r;
@@ -315,6 +336,23 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
         r.criadoEm = stmt.columnText(17);
+
+        std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
+        std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
+        std::string camRel = stmt.columnIsNull(9) ? "" : stmt.columnText(9);
+        std::string camAbs = stmt.columnIsNull(12) ? "" : stmt.columnText(12);
+
+        bool fileExists = false;
+        if (!masterArqId.empty()) {
+            auto it = inMemoryRelinkedPaths_.find(masterArqId);
+            if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+                fileExists = juce::File(it->second).existsAsFile();
+            } else {
+                auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
+                fileExists = res.has_value() && res->existsAsFile();
+            }
+        }
+        r.offline = !fileExists;
 
         if (!r.titulo.empty()) {
             r.nomeOriginalArquivo = r.titulo;
@@ -1132,21 +1170,114 @@ void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const
 
 std::optional<juce::String> ProjetoAberto::caminhoDeOrigem(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
-    auto stmt = projeto_->registro().prepare(
-        "SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? AND caminho_absoluto_origem IS NOT NULL "
-        "ORDER BY eh_master DESC, id LIMIT 1");
-    stmt.bind(1, matriz::db::Value::of(itemId));
-    if (!stmt.step()) return std::nullopt;
-    juce::String caminho = stmt.columnText(0);
-    return caminho.isEmpty() ? std::nullopt : std::optional(caminho);
+
+    // 1. Try resolving via arquivo table with vault resolution
+    try {
+        auto stmt = projeto_->registro().prepare(
+            std::string("SELECT ") + matriz::vault::colunasDeResolucao() +
+            " FROM arquivo a " + matriz::vault::joinDeResolucao() +
+            " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step()) {
+            std::string locVault = stmt.columnText(0);
+            std::string camRel = stmt.columnText(1);
+            std::string camAbs = stmt.columnText(2);
+
+            auto f = matriz::vault::resolverCaminho(projeto_->pasta(), locVault, camRel, camAbs);
+            if (f && f->existsAsFile()) {
+                return f->getFullPathName();
+            }
+            auto fEsp = matriz::vault::caminhoEsperado(projeto_->pasta(), locVault, camRel, camAbs);
+            if (fEsp != juce::File() && fEsp.getFullPathName().isNotEmpty()) {
+                return fEsp.getFullPathName();
+            }
+            if (!camAbs.empty()) {
+                return juce::String(camAbs);
+            }
+        }
+    } catch (...) {}
+
+    // 2. Try simple caminho_absoluto_origem query directly
+    try {
+        auto stmt2 = projeto_->registro().prepare(
+            "SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? AND caminho_absoluto_origem IS NOT NULL AND caminho_absoluto_origem != '' "
+            "ORDER BY eh_master DESC, id LIMIT 1");
+        stmt2.bind(1, matriz::db::Value::of(itemId));
+        if (stmt2.step()) {
+            juce::String c = stmt2.columnText(0);
+            if (c.isNotEmpty()) return c;
+        }
+    } catch (...) {}
+
+    // 3. Try localizacao_conhecida
+    try {
+        auto stmtLoc = projeto_->registro().prepare(
+            "SELECT lc.caminho_absoluto FROM localizacao_conhecida lc "
+            "JOIN arquivo a ON a.id = lc.arquivo_id WHERE a.item_id = ? "
+            "ORDER BY lc.criado_em DESC LIMIT 1");
+        stmtLoc.bind(1, matriz::db::Value::of(itemId));
+        if (stmtLoc.step()) {
+            juce::String c = stmtLoc.columnText(0);
+            if (c.isNotEmpty()) return c;
+        }
+    } catch (...) {}
+
+    // 4. Try caminho_catalogo in item table
+    try {
+        auto stmtItem = projeto_->registro().prepare("SELECT caminho_catalogo FROM item WHERE id = ?");
+        stmtItem.bind(1, matriz::db::Value::of(itemId));
+        if (stmtItem.step()) {
+            juce::String camCat = stmtItem.columnText(0);
+            if (camCat.isNotEmpty()) return camCat;
+        }
+    } catch (...) {}
+
+    // 5. Try item_campo metadata
+    try {
+        auto stmtCampo = projeto_->registro().prepare(
+            "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('caminho', 'caminho_absoluto', 'caminho_origem', 'path') LIMIT 1");
+        stmtCampo.bind(1, matriz::db::Value::of(itemId));
+        if (stmtCampo.step()) {
+            juce::String val = stmtCampo.columnText(0);
+            if (val.isNotEmpty()) return val;
+        }
+    } catch (...) {}
+
+    // 6. Try relative path resolution directly against disk / volumes
+    try {
+        auto stmtRel = projeto_->registro().prepare(
+            "SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND caminho_relativo IS NOT NULL AND caminho_relativo != '' "
+            "ORDER BY eh_master DESC, id LIMIT 1");
+        stmtRel.bind(1, matriz::db::Value::of(itemId));
+        if (stmtRel.step()) {
+            juce::String rel = stmtRel.columnText(0);
+            if (rel.isNotEmpty()) {
+                if (juce::File::isAbsolutePath(rel)) {
+                    juce::File f(rel);
+                    if (f.existsAsFile() || f.isDirectory()) return f.getFullPathName();
+                }
+                juce::File inProj = projeto_->pasta().getChildFile(rel);
+                if (inProj.existsAsFile() || inProj.isDirectory()) return inProj.getFullPathName();
+
+                juce::File inVol = juce::File("/Volumes").getChildFile(rel);
+                if (inVol.existsAsFile() || inVol.isDirectory()) return inVol.getFullPathName();
+                
+                return rel;
+            }
+        }
+    } catch (...) {}
+
+    return std::nullopt;
 }
 
 std::set<std::string> ProjetoAberto::itensComMesmoConteudo(const std::string& itemId) const {
     std::set<std::string> out;
     if (!projeto_) return out;
     auto stmt = projeto_->registro().prepare(
-        "SELECT DISTINCT a2.item_id FROM arquivo a1 JOIN arquivo a2 ON a2.checksum_sha256 = a1.checksum_sha256 "
-        "WHERE a1.item_id = ? AND a1.checksum_sha256 IS NOT NULL AND a1.checksum_sha256 <> ''");
+        "SELECT DISTINCT a2.item_id FROM arquivo a1 "
+        "JOIN arquivo a2 ON a2.checksum_sha256 = a1.checksum_sha256 AND a2.tamanho_bytes = a1.tamanho_bytes "
+        "WHERE a1.item_id = ? AND a1.checksum_sha256 IS NOT NULL AND a1.checksum_sha256 <> '' "
+        "AND a1.tamanho_bytes > 0 AND a2.tamanho_bytes > 0");
     stmt.bind(1, matriz::db::Value::of(itemId));
     while (stmt.step()) out.insert(stmt.columnText(0));
 
@@ -1504,6 +1635,172 @@ std::map<std::string, int> ProjetoAberto::contagensPorCollectionType() const {
         if (!v.empty()) out[v]++;
     }
     return out;
+}
+
+std::vector<ProjetoAberto::ColecaoDisponivel> ProjetoAberto::listarColecoesDisponiveis() const {
+    std::vector<ColecaoDisponivel> out;
+    if (!projeto_) return out;
+
+    std::map<std::string, int> contagens;
+    int semColecao = 0;
+
+    auto stmt = projeto_->registro().prepare(
+        "SELECT collection_type, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY collection_type");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    while (stmt.step()) {
+        std::string v = stmt.columnIsNull(0) ? std::string() : stmt.columnText(0);
+        int count = stmt.columnInt(1);
+        if (v.empty()) {
+            semColecao += count;
+        } else {
+            contagens[v] += count;
+        }
+    }
+
+    for (const auto& [nome, cnt] : contagens) {
+        out.push_back({nome, juce::String(nome), cnt});
+    }
+    if (semColecao > 0) {
+        out.push_back({"Unknown", "Unknown", semColecao});
+    }
+    return out;
+}
+
+std::set<std::string> ProjetoAberto::itensDaColecao(const std::string& chave) const {
+    std::set<std::string> out;
+    if (!projeto_) return out;
+
+    if (chave == "Unknown" || chave.empty()) {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT id FROM item WHERE projeto_id = ? AND (collection_type IS NULL OR collection_type = '')");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        while (stmt.step()) {
+            out.insert(stmt.columnText(0));
+        }
+    } else {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT id FROM item WHERE projeto_id = ? AND collection_type = ?");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        stmt.bind(2, matriz::db::Value::of(chave));
+        while (stmt.step()) {
+            out.insert(stmt.columnText(0));
+        }
+    }
+    return out;
+}
+
+std::vector<ProjetoAberto::ColecaoLink> ProjetoAberto::listarColecoesLinkadas() const {
+    std::vector<ColecaoLink> out;
+    if (!projeto_) return out;
+
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT id, caminho_projeto, nome, IFNULL(grupo, ''), criado_em FROM catalog_colecao_link ORDER BY nome ASC");
+        while (stmt.step()) {
+            ColecaoLink link;
+            link.id = stmt.columnText(0);
+            link.caminhoProjeto = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            link.nome = juce::String::fromUTF8(stmt.columnText(2).c_str());
+            link.grupo = juce::String::fromUTF8(stmt.columnText(3).c_str());
+            link.criadoEm = juce::String::fromUTF8(stmt.columnText(4).c_str());
+
+            juce::File pasta(link.caminhoProjeto);
+            juce::File dbFile = pasta.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                link.valido = true;
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    auto countStmt = colDb.prepare("SELECT COUNT(*) FROM item");
+                    if (countStmt.step()) link.totalAssets = static_cast<uint64_t>(countStmt.columnInt(0));
+
+                    auto sizeStmt = colDb.prepare("SELECT IFNULL(SUM(tamanho_bytes), 0) FROM arquivo");
+                    if (sizeStmt.step()) link.totalBytes = static_cast<juce::int64>(sizeStmt.columnInt(0));
+                } catch (...) {}
+            } else {
+                link.valido = false;
+            }
+
+            out.push_back(link);
+        }
+    } catch (...) {}
+    return out;
+}
+
+bool ProjetoAberto::linkarColecao(const juce::File& pastaProjeto, const juce::String& grupo) {
+    if (!projeto_ || !pastaProjeto.isDirectory()) return false;
+    juce::File dbFile = pastaProjeto.getChildFile("registro.sqlite");
+    if (!dbFile.existsAsFile()) return false;
+
+    juce::String nome = pastaProjeto.getFileName();
+    try {
+        matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+        auto nameStmt = colDb.prepare("SELECT nome FROM projeto LIMIT 1");
+        if (nameStmt.step() && !nameStmt.columnIsNull(0)) {
+            juce::String dbNome = juce::String::fromUTF8(nameStmt.columnText(0).c_str());
+            if (dbNome.isNotEmpty()) nome = dbNome;
+        }
+    } catch (...) {}
+
+    std::string id = matriz::model::novoUuid();
+    std::string caminho = pastaProjeto.getFullPathName().toStdString();
+    std::string nomeStr = nome.toStdString();
+    std::string grupoStr = grupo.toStdString();
+    std::string agora = juce::Time::getCurrentTime().formatted("%Y-%m-%dT%H:%M:%SZ").toStdString();
+
+    try {
+        projeto_->registro().run(
+            "INSERT INTO catalog_colecao_link (id, caminho_projeto, nome, grupo, criado_em) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(caminho_projeto) DO UPDATE SET nome = excluded.nome, grupo = excluded.grupo",
+            {matriz::db::Value::of(id),
+             matriz::db::Value::of(caminho),
+             matriz::db::Value::of(nomeStr),
+             matriz::db::Value::of(grupoStr),
+             matriz::db::Value::of(agora)});
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjetoAberto::desvincularColecao(const std::string& linkId) {
+    if (!projeto_ || linkId.empty()) return false;
+    try {
+        projeto_->registro().run("DELETE FROM catalog_colecao_link WHERE id = ?", {matriz::db::Value::of(linkId)});
+        dirty_ = true;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjetoAberto::relocarColecaoLink(const std::string& linkId, const juce::File& novaPastaProjeto) {
+    if (!projeto_ || linkId.empty() || !novaPastaProjeto.exists()) return false;
+    juce::File dbFile = novaPastaProjeto.getChildFile("registro.sqlite");
+    if (!dbFile.existsAsFile()) return false;
+
+    try {
+        std::string caminho = novaPastaProjeto.getFullPathName().toStdString();
+        projeto_->registro().run(
+            "UPDATE catalog_colecao_link SET caminho_projeto = ? WHERE id = ?",
+            {matriz::db::Value::of(caminho), matriz::db::Value::of(linkId)});
+        dirty_ = true;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjetoAberto::atualizarGrupoColecao(const std::string& linkId, const juce::String& novoGrupo) {
+    if (!projeto_ || linkId.empty()) return false;
+    try {
+        projeto_->registro().run(
+            "UPDATE catalog_colecao_link SET grupo = ? WHERE id = ?",
+            {matriz::db::Value::of(novoGrupo.toStdString()), matriz::db::Value::of(linkId)});
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) const {
@@ -1915,6 +2212,60 @@ juce::String ProjetoAberto::exportarFixityManifest(const std::vector<std::string
     if (!projeto_) return {};
     try { return preservation::exportarFixityManifest(projeto_->registro(), itemIds, algoritmo); }
     catch (...) { return {}; }
+}
+
+void ProjetoAberto::aplicarRelinkEmMemoria(const std::string& arquivoId, const std::string& newPath) {
+    inMemoryRelinkedPaths_[arquivoId] = newPath;
+    dirty_ = true;
+}
+
+void ProjetoAberto::aplicarBatchRelinkEmMemoria(const std::map<std::string, std::string>& newPaths) {
+    for (const auto& [arqId, p] : newPaths) {
+        inMemoryRelinkedPaths_[arqId] = p;
+    }
+    dirty_ = true;
+}
+
+void ProjetoAberto::salvar() {
+    if (!projeto_) return;
+    try {
+        auto& db = projeto_->registro();
+        for (const auto& [arqId, newPath] : inMemoryRelinkedPaths_) {
+            auto stmt = db.prepare("UPDATE arquivo SET caminho_absoluto_origem = ?, atualizado_em = ? WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(newPath));
+            stmt.bind(2, matriz::db::Value::of(matriz::model::agoraIso8601()));
+            stmt.bind(3, matriz::db::Value::of(arqId));
+            stmt.step();
+
+            auto stmtLoc = db.prepare("INSERT OR IGNORE INTO localizacao_conhecida (id, arquivo_id, caminho_absoluto, criado_em) VALUES (?, ?, ?, ?)");
+            stmtLoc.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
+            stmtLoc.bind(2, matriz::db::Value::of(arqId));
+            stmtLoc.bind(3, matriz::db::Value::of(newPath));
+            stmtLoc.bind(4, matriz::db::Value::of(matriz::model::agoraIso8601()));
+            stmtLoc.step();
+        }
+
+        db.run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+        projeto_->indice().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
+
+        inMemoryRelinkedPaths_.clear();
+        dirty_ = false;
+    } catch (...) {}
+}
+
+void ProjetoAberto::descartarAlteracoesEmMemoria() {
+    inMemoryRelinkedPaths_.clear();
+    dirty_ = false;
+}
+
+std::optional<juce::File> ProjetoAberto::resolverArquivoComMemoria(const std::string& arquivoId) const {
+    auto it = inMemoryRelinkedPaths_.find(arquivoId);
+    if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+        juce::File f(it->second);
+        if (f.existsAsFile()) return f;
+    }
+    if (!projeto_) return std::nullopt;
+    return matriz::vault::resolverArquivo(projeto_->registro(), arquivoId, projeto_->pasta());
 }
 
 } // namespace matriz::ui

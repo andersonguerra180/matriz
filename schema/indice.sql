@@ -275,3 +275,20 @@ CREATE TABLE IF NOT EXISTS sugestao_campo (
 
 CREATE INDEX IF NOT EXISTS idx_sugestao_campo_item ON sugestao_campo(item_id);
 CREATE INDEX IF NOT EXISTS idx_sugestao_campo_pendente ON sugestao_campo(item_id, confirmado);
+
+-- ---------------------------------------------------------------------------
+-- AI Scan — resultados de análise contextual com IA (Gemini).
+-- Vive no índice (P2: dados de modelo são descartáveis e reconstruíveis).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS ai_scan_resultado (
+    id              TEXT PRIMARY KEY,
+    item_id         TEXT NOT NULL,
+    modelo          TEXT NOT NULL,
+    tipo_analise    TEXT NOT NULL,
+    contexto_json   TEXT NOT NULL,
+    resumo          TEXT,
+    confianca       REAL,
+    analisado_em    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_scan_resultado_item ON ai_scan_resultado(item_id);

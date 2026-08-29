@@ -16,6 +16,8 @@
 // Source/Ingest/LeituraTecnica.cpp sobre PDFium/MuPDF: sem caminho
 // FetchContent+CMake+Windows viável).
 
+#include "DocumentPreviewComponent.h"
+
 namespace matriz::ui {
 
 class PreviewComponent : public juce::Component, private juce::Timer {
@@ -33,6 +35,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
     void construirParaItem();
@@ -43,14 +46,12 @@ private:
     matriz::ingest::CategoriaMidia categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
 
     std::unique_ptr<juce::Label> cabecalhoTitulo_;
-    std::unique_ptr<juce::TextButton> botaoAnterior_;
-    std::unique_ptr<juce::TextButton> botaoProximo_;
-    std::unique_ptr<juce::TextButton> botaoFechar_;
 
     juce::Image imagemPrincipal_;
     std::unique_ptr<juce::Label> labelMetadados_;
     std::unique_ptr<juce::Label> labelSemPreview_;
     std::unique_ptr<juce::TextEditor> textViewer_;
+    std::unique_ptr<DocumentPreviewComponent> documentPreview_;
 
     std::unique_ptr<TimelineComponent> timeline_;
     std::unique_ptr<VideoPlayerComponent> videoPlayer_;

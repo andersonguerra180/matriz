@@ -35,14 +35,30 @@ public:
         juce::int64 tamanhoBytes = 0;
     };
 
+    TreeDetailContent() {
+        btnShowInGrid = std::make_unique<juce::TextButton>("SHOW CONTENT IN GRID");
+        btnShowInGrid->setColour(juce::TextButton::buttonColourId, tema().acento);
+        btnShowInGrid->setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
+        btnShowInGrid->onClick = [this] { if (aoMostrarNaGrade) aoMostrarNaGrade(); };
+        addAndMakeVisible(*btnShowInGrid);
+    }
+
     juce::String folderName;
     std::vector<SubfolderEntry> subfolders;
     std::vector<FileEntry> files;
     std::function<void(const std::string&)> aoClicarArquivo;
+    std::function<void()> aoMostrarNaGrade;
+    std::unique_ptr<juce::TextButton> btnShowInGrid;
     int hoverFileIndex_ = -1;
 
+    void resized() override {
+        if (btnShowInGrid) {
+            btnShowInGrid->setBounds(12, 38, getWidth() - 24, 26);
+        }
+    }
+
     void recalcularAltura() {
-        int h = 52;
+        int h = 84;
         if (!subfolders.empty()) h += 28 + static_cast<int>(subfolders.size()) * 24;
         if (!files.empty()) h += 28 + static_cast<int>(files.size()) * 24;
         h += 16;
@@ -50,7 +66,7 @@ public:
     }
 
     int fileIndexAtY(int mouseY) const {
-        int y = 8 + 24 + 4;
+        int y = 8 + 24 + 4 + 36;
         if (!subfolders.empty()) y += 20 + static_cast<int>(subfolders.size()) * 24 + 4;
         if (files.empty()) return -1;
         y += 20;
@@ -85,6 +101,8 @@ public:
         g.setColour(tema().textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
         g.drawText(folderName, area.removeFromTop(24), juce::Justification::centredLeft, true);
+
+        area.removeFromTop(36); // Space for btnShowInGrid
 
         g.setColour(tema().borda);
         g.drawHorizontalLine(area.getY(), static_cast<float>(area.getX()), static_cast<float>(area.getRight()));
@@ -851,6 +869,24 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 bool temPai = !nodes_[i].pastaPaiId.empty();
                 int idx = static_cast<int>(i);
 
+                std::set<std::string> allItemIds = nodes_[i].itemIdsDiretos;
+                std::function<void(const std::string&)> coletarFilhos = [&](const std::string& parentId) {
+                    for (const auto& other : nodes_) {
+                        if (other.pastaPaiId == parentId) {
+                            allItemIds.insert(other.itemIdsDiretos.begin(), other.itemIdsDiretos.end());
+                            coletarFilhos(other.id);
+                        }
+                    }
+                };
+                coletarFilhos(pId);
+
+                menu.addItem("SHOW CONTENT IN GRID", [this, allItemIds] {
+                    if (aoMostrarConteudoNaGrade) {
+                        aoMostrarConteudoNaGrade(allItemIds);
+                    }
+                });
+                menu.addSeparator();
+
                 menu.addItem("+ New Subfolder", [this, pId] {
                     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
                     pedirTextoBackup("NEW SUBFOLDER", "Enter subfolder name:", "New Subfolder",
@@ -1051,12 +1087,30 @@ void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId) 
         auto detalhes = projeto_.obterDetalhesItens(selected->itemIdsDiretos);
         for (const auto& d : detalhes) {
             TreeDetailContent::FileEntry fe;
+            fe.id = d.id;
             fe.nome = d.nome;
             fe.extensao = d.extensao;
             fe.tamanhoBytes = d.tamanhoBytes;
             detailContent_->files.push_back(fe);
         }
     }
+
+    std::set<std::string> allItemIds = selected->itemIdsDiretos;
+    std::function<void(const std::string&)> coletarFilhos = [&](const std::string& parentId) {
+        for (const auto& other : nodes_) {
+            if (other.pastaPaiId == parentId) {
+                allItemIds.insert(other.itemIdsDiretos.begin(), other.itemIdsDiretos.end());
+                coletarFilhos(other.id);
+            }
+        }
+    };
+    coletarFilhos(folderId);
+
+    detailContent_->aoMostrarNaGrade = [this, allItemIds] {
+        if (aoMostrarConteudoNaGrade) {
+            aoMostrarConteudoNaGrade(allItemIds);
+        }
+    };
 
     detailViewport_->setVisible(true);
     resized();

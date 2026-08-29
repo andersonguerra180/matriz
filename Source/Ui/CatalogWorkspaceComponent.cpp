@@ -11,6 +11,8 @@
 #include "ArvoreBackupComponent.h"
 #include "EstatisticasComponent.h"
 #include "PainelDuplicatasComponent.h"
+#include "OfflineAssetRelinkDialog.h"
+#include "../Vault/Resolucao.h"
 
 namespace matriz::ui {
 
@@ -20,8 +22,17 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirWorkbench(itemId); };
+    mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirRelinkOffline(itemId); };
     mosaico_->aoPedirMenuContexto = [this](std::vector<std::string> itemIds) {
         abrirMenuContexto(std::move(itemIds));
+    };
+    mosaico_->aoMudarSelecao = [this] {
+        if (categoriaSelecionada_ >= 0 && categoriaSelecionada_ < static_cast<int>(categorias_.size())) {
+            if (categorias_[static_cast<size_t>(categoriaSelecionada_)].chave == "selected") {
+                aplicarFiltrosAdicionais();
+            }
+        }
+        atualizarContagens();
     };
     mosaicoViewport_ = std::make_unique<juce::Viewport>();
     mosaicoViewport_->setViewedComponent(mosaico_.get(), false);
@@ -158,13 +169,12 @@ void CatalogWorkspaceComponent::construirSidebar() {
     secoesSidebar_.clear();
     anosDisponiveis_.clear();
     botoesAnos_.clear();
-    contentDisponiveis_.clear();
-    botoesContent_.clear();
     collectionDisponiveis_.clear();
     botoesCollection_.clear();
 
     secoesSidebar_.push_back({static_cast<int>(categorias_.size()), "LIBRARY"});
     categorias_.push_back({matriz::i18n::t("catwork.all"), "all", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.selected"), "selected", 0});
     categorias_.push_back({"Folders", "folders", 0});
     categorias_.push_back({"Duplicates", "duplicates", 0});
 
@@ -193,7 +203,6 @@ void CatalogWorkspaceComponent::construirSidebar() {
     }
 
     construirFiltroAnos();
-    construirFiltroContent();
     construirFiltroCollection();
     atualizarContagens();
     selecionarCategoria(0);
@@ -250,14 +259,6 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             ativo ? tema().textoPrimario : tema().textoSecundario);
     }
 
-    for (size_t i = 0; i < botoesContent_.size(); ++i) {
-        bool ativo = contentSelecionado_.has_value() && contentDisponiveis_[i].first == *contentSelecionado_;
-        botoesContent_[i]->setColour(juce::TextButton::buttonColourId,
-            ativo ? tema().acento.withAlpha(0.2f) : juce::Colours::transparentBlack);
-        botoesContent_[i]->setColour(juce::TextButton::textColourOffId,
-            ativo ? tema().textoPrimario : tema().textoSecundario);
-    }
-
     for (size_t i = 0; i < botoesCollection_.size(); ++i) {
         bool ativo = collectionSelecionado_.has_value() && collectionDisponiveis_[i].first == *collectionSelecionado_;
         botoesCollection_[i]->setColour(juce::TextButton::buttonColourId,
@@ -268,12 +269,19 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
     if (!mosaico_) return;
 
-    const auto& libChave = categorias_[static_cast<size_t>(categoriaSelecionada_)].chave;
+    const auto& libChave = (categoriaSelecionada_ >= 0 && categoriaSelecionada_ < static_cast<int>(categorias_.size()))
+        ? categorias_[static_cast<size_t>(categoriaSelecionada_)].chave : std::string();
     if (libChave == "folders") return;
 
     auto itens = projeto_.listarItens();
     std::set<std::string> filteredIds;
     bool anyFilter = false;
+
+    std::set<std::string> selectedIds;
+    if (libChave == "selected") {
+        anyFilter = true;
+        selectedIds = mosaico_ ? mosaico_->itensSelecionados() : std::set<std::string>{};
+    }
 
     std::set<std::string> statusIds;
     if (statusSelecionado_.has_value()) {
@@ -282,6 +290,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     }
 
     for (const auto& item : itens) {
+        if (libChave == "selected") {
+            if (selectedIds.find(item.id) == selectedIds.end()) continue;
+        }
 
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
@@ -310,15 +321,6 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
         }
 
-        if (contentSelecionado_.has_value()) {
-            anyFilter = true;
-            if (*contentSelecionado_ == "Unknown") {
-                if (item.contentType.has_value() && !item.contentType->empty()) continue;
-            } else {
-                if (!item.contentType.has_value() || *item.contentType != *contentSelecionado_) continue;
-            }
-        }
-
         if (collectionSelecionado_.has_value()) {
             anyFilter = true;
             if (*collectionSelecionado_ == "Unknown") {
@@ -338,46 +340,6 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     }
 
     mosaico_->recarregar();
-}
-
-void CatalogWorkspaceComponent::construirFiltroContent() {
-    for (auto& b : botoesContent_) removeChildComponent(b.get());
-    botoesContent_.clear();
-    contentDisponiveis_.clear();
-
-    auto itens = projeto_.listarItens();
-    std::map<std::string, int> contagemPorContent;
-    int semContent = 0;
-    for (const auto& item : itens) {
-        if (item.contentType.has_value() && !item.contentType->empty())
-            contagemPorContent[*item.contentType]++;
-        else
-            semContent++;
-    }
-
-    for (const auto& pair : contagemPorContent)
-        contentDisponiveis_.push_back(pair);
-    if (semContent > 0)
-        contentDisponiveis_.push_back({"Unknown", semContent});
-
-    for (size_t i = 0; i < contentDisponiveis_.size(); ++i) {
-        auto& [content, contagem] = contentDisponiveis_[i];
-        juce::String label = (content == "Unknown") ? "Unknown" : juce::String(content);
-        label += " (" + juce::String(contagem) + ")";
-        auto btn = std::make_unique<juce::TextButton>(label);
-        btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-        btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
-        btn->onClick = [this, content = content] {
-            if (contentSelecionado_.has_value() && *contentSelecionado_ == content) {
-                contentSelecionado_ = std::nullopt;
-            } else {
-                contentSelecionado_ = content;
-            }
-            aplicarFiltrosAdicionais();
-        };
-        addAndMakeVisible(*btn);
-        botoesContent_.push_back(std::move(btn));
-    }
 }
 
 void CatalogWorkspaceComponent::construirFiltroCollection() {
@@ -482,18 +444,21 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         }
     };
 
+    int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
+
     definirContagem(0, res.total);
-    definirContagem(1, res.total);        // Folders
-    definirContagem(2, res.duplicatesCount);
-    definirContagem(3, res.audio);
-    definirContagem(4, res.video);
-    definirContagem(5, res.img);
-    definirContagem(6, res.doc);
-    definirContagem(7, res.sessao);
-    definirContagem(8, res.revisao);
-    definirContagem(9, res.vulneraveis);
-    definirContagem(10, res.single_copy);
-    definirContagem(11, res.ausentes);
+    definirContagem(1, selCount);
+    definirContagem(2, res.total);        // Folders
+    definirContagem(3, res.duplicatesCount);
+    definirContagem(4, res.audio);
+    definirContagem(5, res.video);
+    definirContagem(6, res.img);
+    definirContagem(7, res.doc);
+    definirContagem(8, res.sessao);
+    definirContagem(9, res.revisao);
+    definirContagem(10, res.vulneraveis);
+    definirContagem(11, res.single_copy);
+    definirContagem(12, res.ausentes);
 }
 
 void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
@@ -678,6 +643,52 @@ void CatalogWorkspaceComponent::fecharWorkbench() {
     recarregar();
 }
 
+void CatalogWorkspaceComponent::abrirRelinkOffline(const std::string& itemId) {
+    std::string titulo, tipoMidia, codigoAcervo;
+    projeto_.obterItemInfo(itemId, titulo, tipoMidia, codigoAcervo);
+
+    juce::String expectedPath;
+    juce::String storageName = "Local Storage";
+
+    try {
+        auto stmt = projeto_.projeto().registro().prepare(
+            "SELECT a.caminho_relativo, COALESCE(a.caminho_absoluto_origem, ''), COALESCE(v.nome, 'Local Storage'), COALESCE(v.localizacao, '') "
+            "FROM arquivo a "
+            "LEFT JOIN vault v ON v.id = a.vault_id "
+            "WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step()) {
+            std::string camRel = stmt.columnText(0);
+            std::string camAbs = stmt.columnText(1);
+            storageName = stmt.columnText(2);
+            std::string locVault = stmt.columnText(3);
+            auto expFile = matriz::vault::caminhoEsperado(projeto_.projeto().pasta(), locVault, camRel, camAbs);
+            expectedPath = expFile != juce::File() ? expFile.getFullPathName() : (camAbs.empty() ? camRel : camAbs);
+        }
+    } catch (...) {}
+
+    juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
+    OfflineAssetRelinkDialog::showModal(
+        projeto_.projeto().registro(),
+        itemId,
+        juce::String(titulo),
+        expectedPath,
+        storageName,
+        [safeThis, itemId](const juce::File& fileSelected) {
+            if (!safeThis) return;
+            try {
+                auto stmt = safeThis->projeto_.projeto().registro().prepare(
+                    "SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+                stmt.bind(1, matriz::db::Value::of(itemId));
+                if (stmt.step()) {
+                    std::string masterArqId = stmt.columnText(0);
+                    safeThis->projeto_.aplicarRelinkEmMemoria(masterArqId, fileSelected.getFullPathName().toStdString());
+                    if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+                }
+            } catch (...) {}
+        });
+}
+
 void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemIds) {
     if (itemIds.empty()) return;
 
@@ -738,7 +749,6 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
 void CatalogWorkspaceComponent::recarregar() {
     atualizarContagens();
     construirFiltroAnos();
-    construirFiltroContent();
     construirFiltroCollection();
     atualizarBotoesSidebar();
 
@@ -791,6 +801,37 @@ void CatalogWorkspaceComponent::renomearSelecionados() {
 
 void CatalogWorkspaceComponent::removerSelecionadosDoBackup() {
     if (mosaico_) mosaico_->removerSelecaoDoBackup();
+}
+
+void CatalogWorkspaceComponent::selecionarFiltroSelecionados() {
+    for (size_t i = 0; i < categorias_.size(); ++i) {
+        if (categorias_[i].chave == "selected") {
+            selecionarCategoria(static_cast<int>(i));
+            break;
+        }
+    }
+}
+
+void CatalogWorkspaceComponent::selecionarFiltroTodos() {
+    for (size_t i = 0; i < categorias_.size(); ++i) {
+        if (categorias_[i].chave == "all") {
+            selecionarCategoria(static_cast<int>(i));
+            break;
+        }
+    }
+}
+
+void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>& itemIds) {
+    categoriaSelecionada_ = 0;
+    tipoMidiaSelecionado_ = std::nullopt;
+    anoSelecionado_ = std::nullopt;
+    collectionSelecionado_ = std::nullopt;
+    statusSelecionado_ = std::nullopt;
+    if (mosaico_) {
+        mosaico_->definirFiltroItens(itemIds);
+        mosaico_->definirSelecao(itemIds);
+    }
+    repaint();
 }
 
 void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
@@ -877,15 +918,8 @@ void CatalogWorkspaceComponent::resized() {
         }
     }
 
-    if (!botoesContent_.empty()) {
-        secaoHeaderBounds_.push_back({"CONTENT", sidebar.removeFromTop(20).reduced(8, 0)});
-        sidebar.removeFromTop(2);
-        for (auto& btn : botoesContent_)
-            btn->setBounds(sidebar.removeFromTop(22).reduced(4, 0));
-    }
-
     if (!botoesCollection_.empty()) {
-        secaoHeaderBounds_.push_back({"COLLECTION", sidebar.removeFromTop(20).reduced(8, 0)});
+        secaoHeaderBounds_.push_back({"CONTENT", sidebar.removeFromTop(20).reduced(8, 0)});
         sidebar.removeFromTop(2);
         for (auto& btn : botoesCollection_)
             btn->setBounds(sidebar.removeFromTop(22).reduced(4, 0));

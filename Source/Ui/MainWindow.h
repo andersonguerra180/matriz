@@ -25,6 +25,7 @@ private:
     // projeto já aberto (não existe tela de cartões nesse momento) — pergunta
     // o modo com um diálogo mínimo antes de seguir pro fluxo de sempre.
     void pedirNovoProjetoViaMenu();
+    void pedirNovoCatalogo();
     void pedirAbrirProjeto();
     void pedirAbrirCatalogo();
     void abrirPasta(const juce::File& pasta);

@@ -201,6 +201,12 @@ void MosaicoComponent::definirModoAgrupamento(ModoAgrupamento modo) {
     aplicarFiltrosEOrdenacao();
 }
 
+void MosaicoComponent::alternarFiltroDisponibilidade(FiltroDisponibilidade f) {
+    if (filtroDisponibilidade_ == f) return;
+    filtroDisponibilidade_ = f;
+    aplicarFiltrosEOrdenacao();
+}
+
 void MosaicoComponent::limparFiltros() {
     filtrosTipoMidia_.clear();
     filtrosEstado_.clear();
@@ -208,6 +214,7 @@ void MosaicoComponent::limparFiltros() {
     filtrosOrigem_.clear();
     filtrosContentType_.clear();
     filtrosCollectionType_.clear();
+    filtroDisponibilidade_ = FiltroDisponibilidade::All;
     filtroFaixaAno_.reset();
     buscaTexto_.clear();
     buscaResultado_.reset();
@@ -387,6 +394,8 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         if (!filtrosOrigem_.empty() && !filtrosOrigem_.count(juce::String(item.origem.value_or(std::string())))) continue;
         if (!filtrosContentType_.empty() && !filtrosContentType_.count(juce::String(item.contentType.value_or(std::string())))) continue;
         if (!filtrosCollectionType_.empty() && !filtrosCollectionType_.count(juce::String(item.collectionType.value_or(std::string())))) continue;
+        if (filtroDisponibilidade_ == FiltroDisponibilidade::Online && item.offline) continue;
+        if (filtroDisponibilidade_ == FiltroDisponibilidade::Offline && !item.offline) continue;
         // Faixa de ano: item sem ano preenchido nunca entra numa faixa —
         // faixa é sobre o que se sabe, não sobre o que falta.
         if (filtroFaixaAno_ && (!item.ano || *item.ano < filtroFaixaAno_->first || *item.ano > filtroFaixaAno_->second))
@@ -498,6 +507,19 @@ void MosaicoComponent::limparSelecao() {
     selecionados_.clear();
     selecionadoId_.clear();
     indiceAncoraShift_ = -1;
+    repaint();
+    if (aoMudarSelecao) aoMudarSelecao();
+}
+
+void MosaicoComponent::definirSelecao(const std::set<std::string>& itemIds) {
+    selecionados_ = itemIds;
+    if (!selecionados_.empty()) {
+        selecionadoId_ = *selecionados_.begin();
+        indiceAncoraShift_ = 0;
+    } else {
+        selecionadoId_.clear();
+        indiceAncoraShift_ = -1;
+    }
     repaint();
     if (aoMudarSelecao) aoMudarSelecao();
 }
@@ -987,8 +1009,15 @@ void MosaicoComponent::mouseDoubleClick(const juce::MouseEvent& e) {
         }
     }
 
-    const std::string& id = itensFiltrados_[static_cast<size_t>(indice)].id;
-    if (aoAbrirPreview) aoAbrirPreview(id);
+    const auto& item = itensFiltrados_[static_cast<size_t>(indice)];
+    if (item.offline) {
+        if (aoAbrirRelinkOffline) {
+            aoAbrirRelinkOffline(item.id);
+            return;
+        }
+    }
+
+    if (aoAbrirPreview) aoAbrirPreview(item.id);
 }
 
 const juce::Image* MosaicoComponent::miniaturaCache(const std::string& itemId) {
@@ -1310,9 +1339,20 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
                 juce::String info2 = item.extensaoArquivo.empty() ? juce::String("FILE") : juce::String(item.extensaoArquivo).toUpperCase();
                 if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
-                g.setColour(tk.textoTerciario);
+                if (item.offline) info2 += "  |  OFFLINE";
+                g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
                 g.setFont(font11Normal);
                 g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
+
+                if (item.offline) {
+                    juce::Rectangle<int> offBadgeList = areaExt.withX(areaExt.getX() - 65).withWidth(58).withSizeKeepingCentre(58, 18);
+                    g.setColour(juce::Colour(0xd0000000));
+                    g.fillRoundedRectangle(offBadgeList.toFloat(), 4.0f);
+                    g.setColour(juce::Colour(0xfff97316));
+                    g.drawRoundedRectangle(offBadgeList.toFloat(), 4.0f, 1.0f);
+                    g.setFont(font9Bold);
+                    g.drawText("OFFLINE", offBadgeList, juce::Justification::centred);
+                }
 
                 continue;
             }
@@ -1335,6 +1375,19 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(corCat.withAlpha(0.10f));
                 g.fillRoundedRectangle(areaImagem.toFloat(), tk.raioPequeno);
                 desenharPlaceholderCategoria(g, areaImagem, item.extensaoArquivo);
+            }
+
+            // OFFLINE badge on thumbnail
+            if (item.offline) {
+                int offBadgeW = 68;
+                int offBadgeH = 18;
+                juce::Rectangle<int> offBadge(areaImagem.getCentreX() - offBadgeW / 2, areaImagem.getCentreY() - offBadgeH / 2, offBadgeW, offBadgeH);
+                g.setColour(juce::Colour(0xd0000000));
+                g.fillRoundedRectangle(offBadge.toFloat(), 4.0f);
+                g.setColour(juce::Colour(0xfff97316));
+                g.drawRoundedRectangle(offBadge.toFloat(), 4.0f, 1.2f);
+                g.setFont(font9Bold);
+                g.drawText("OFFLINE", offBadge, juce::Justification::centred);
             }
 
             // Extension badge (top-left)
@@ -1417,7 +1470,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             // Subtitle: file type + folder
             juce::String info2 = item.extensaoArquivo.empty() ? "FILE" : juce::String(item.extensaoArquivo).toUpperCase();
             if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
-            g.setColour(tk.textoTerciario);
+            if (item.offline) info2 += "  |  OFFLINE";
+            g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
             g.setFont(font95Normal);
             g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
         }

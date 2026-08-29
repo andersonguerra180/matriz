@@ -58,7 +58,7 @@ private:
         Collection
     };
     WhatOption whatOption_ = WhatOption::Everything;
-    std::vector<ProjetoAberto::ColecaoEmbutida> colecoes_;
+    std::vector<ProjetoAberto::ColecaoDisponivel> colecoes_;
     int selectedCollectionIdx_ = 0;
 
     // Target Selection
@@ -81,6 +81,31 @@ private:
 
     // UI elements — ALL visible at once in Config state
     std::unique_ptr<juce::Label> labelTitulo_;
+
+    // === CONFIG CONTAINER & VIEWPORT ===
+    class ConfigContainerComponent;
+    std::unique_ptr<juce::Viewport> configViewport_;
+    std::unique_ptr<ConfigContainerComponent> configContainer_;
+    juce::Rectangle<int> cartaoPrevia_;
+
+    struct CatalogBackupItem {
+        juce::String name;
+        juce::String path;
+        juce::int64 sizeBytes = 0;
+        uint64_t totalAssets = 0;
+        uint64_t backedUpAssets = 0;
+        uint64_t missingAssets = 0;
+        uint64_t needsAttention = 0;
+        juce::String status = "READY";
+    };
+
+    class CatalogBackupContainerComponent;
+    std::unique_ptr<juce::Viewport> catalogBackupViewport_;
+    std::unique_ptr<CatalogBackupContainerComponent> catalogBackupContainer_;
+    std::vector<CatalogBackupItem> catalogBackupItems_;
+    CatalogBackupItem catalogBackupTotal_;
+
+    void carregarColecoesBackupCatalogo();
 
     // === SOURCE section ===
     std::unique_ptr<juce::Label> labelSource_;

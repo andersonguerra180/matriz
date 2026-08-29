@@ -625,7 +625,6 @@ void IngestWizardComponent::iniciarImportacao() {
 
                 if (res.ehDuplicata) {
                     bool duplicadoPorChecksum = false;
-                    bool duplicadoPorMetadados = false;
                     auto conhecido = matriz::ingest::buscarAssetPorChecksum(*registro, res.analise.checksums.sha256);
                     if (conhecido) {
                         duplicadoPorChecksum = true;
@@ -637,9 +636,6 @@ void IngestWizardComponent::iniciarImportacao() {
                         std::string ext = res.arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
                         std::string relPath = matriz::vault::caminhoRelativoAoVolume(res.arquivo);
                         conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), relPath, "", pastaProjeto);
-                        if (conhecido) {
-                            duplicadoPorMetadados = true;
-                        }
                     }
 
                     if (conhecido) {
@@ -650,16 +646,43 @@ void IngestWizardComponent::iniciarImportacao() {
                             nota = "Same content as " + juce::String(conhecido->codigoAcervo) +
                                    " - already in the archive.";
                         } else {
-                            PapelInfo papelInfo = papelPorCategoria(res.categoria);
-                            auto resultado = matriz::ingest::gravarArquivoAnalisado(
-                                *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
                             nota = "Possible duplicate of " + juce::String(conhecido->codigoAcervo) +
                                    " (matched name, format, duration/dimensions). Flagged as duplicate.";
                         }
 
-                        registro->run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                                      {matriz::db::Value::of(nota.toStdString()),
+                        PapelInfo papelInfo = papelPorCategoria(res.categoria);
+                        auto resultado = matriz::ingest::gravarArquivoAnalisado(
+                            *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
+
+                        int proximoNumero = 1;
+                        auto stmtContagem = registro->prepare(
+                            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+                            "FROM item WHERE codigo_acervo LIKE ?");
+                        stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
+                        if (stmtContagem.step())
+                            proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+                        juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
+
+                        std::string tipoMidia = "";
+                        if (res.categoria == matriz::ingest::CategoriaMidia::Audio) tipoMidia = "digital_audio";
+                        else if (res.categoria == matriz::ingest::CategoriaMidia::Video) tipoMidia = "digital_video";
+                        else if (res.categoria == matriz::ingest::CategoriaMidia::Imagem) tipoMidia = "foto";
+                        else if (res.categoria == matriz::ingest::CategoriaMidia::Documento) tipoMidia = "documento";
+                        else if (res.categoria == matriz::ingest::CategoriaMidia::Texto) tipoMidia = "documento";
+                        else if (res.categoria == matriz::ingest::CategoriaMidia::Sessao) tipoMidia = "sessao";
+
+                        registro->run("UPDATE item SET codigo_acervo = ?, estado = 'duplicata', tipo_midia = ?, notas_livres = ? WHERE id = ?",
+                                      {matriz::db::Value::of(codigo.toStdString()),
+                                       tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia),
+                                       matriz::db::Value::of(nota.toStdString()),
                                        matriz::db::Value::of(itemId)});
+
+                        matriz::ingest::gravarCache(*registro, resultado.arquivoId, res.cache);
+
+                        matriz::ingest::gerarEGravarMiniaturaPrincipal(
+                            *indice, pastaProjeto, itemId, resultado.arquivoId,
+                            res.arquivo, res.categoria, res.analise.leitura.duracaoSegundos);
+
                         duplicata = true;
                         sucesso = true;
                     }

@@ -235,7 +235,8 @@ int embutirMarcadoresNoBackup(matriz::db::Database& registro, const juce::File& 
     return enriquecidos;
 }
 
-MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId) {
+MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const std::string& itemId,
+                                           matriz::db::Database* indice) {
     MetadadoParaEmbutir meta;
     std::string itemAno;
     std::string itemNotas;
@@ -260,12 +261,14 @@ MetadadoParaEmbutir coletarMetadadosDoItem(matriz::db::Database& registro, const
     meta.descricao = !itemNotas.empty() ? itemNotas : lerCampo("descricao");
     if (meta.descricao.empty()) meta.descricao = lerCampo("notas");
 
-    try {
-        auto sAi = registro.prepare(
-            "SELECT resumo FROM ai_scan_resultado WHERE item_id = ? ORDER BY analisado_em DESC LIMIT 1");
-        sAi.bind(1, Value::of(itemId));
-        if (sAi.step()) meta.resumoAi = sAi.columnText(0);
-    } catch (...) {}
+    if (indice != nullptr) {
+        try {
+            auto sAi = indice->prepare(
+                "SELECT resumo FROM ai_scan_resultado WHERE item_id = ? ORDER BY analisado_em DESC LIMIT 1");
+            sAi.bind(1, Value::of(itemId));
+            if (sAi.step()) meta.resumoAi = sAi.columnText(0);
+        } catch (...) {}
+    }
 
     meta.artista = lerCampo("artista_principal");
     if (meta.artista.empty()) meta.artista = lerCampo("artista");

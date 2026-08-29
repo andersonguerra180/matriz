@@ -519,18 +519,32 @@ void ArvoreComponent::mouseDown(const juce::MouseEvent& e) {
         if (e.mods.isPopupMenu() && item.ehPasta && aba_ == Aba::Acervo && !item.noPasta->id.empty()) {
             selecionado_ = item.noPasta;
             repaint();
+
+            std::set<std::string> ids = item.noPasta->itemIds;
+            std::function<void(const ProjetoAberto::NoArvore&)> coletar = [&](const ProjetoAberto::NoArvore& n) {
+                ids.insert(n.itemIds.begin(), n.itemIds.end());
+                for (const auto& f : n.filhos) coletar(f);
+            };
+            coletar(*item.noPasta);
+
             juce::PopupMenu menu;
-            enum { kNovaSub = 1, kRenomear, kApagar };
+            enum { kMostrarGrade = 100, kNovaSub = 1, kRenomear, kApagar };
+            menu.addItem(kMostrarGrade, matriz::i18n::t("arvore.mostrar_conteudo_grade"));
+            menu.addSeparator();
             menu.addItem(kNovaSub, matriz::i18n::t("arvore.menu_nova_subpasta"));
             menu.addItem(kRenomear, matriz::i18n::t("arvore.menu_renomear"));
             menu.addItem(kApagar, matriz::i18n::t("arvore.menu_apagar"));
             std::string pastaId = item.noPasta->id;
             juce::String nomeAtual = item.noPasta ? juce::String(item.noPasta->nome) : juce::String();
             juce::Component::SafePointer<ArvoreComponent> safeThis(this);
-            menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, pastaId, nomeAtual](int resultado) {
+            menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, pastaId, nomeAtual, ids](int resultado) {
                 if (!safeThis) return;
                 auto* self = safeThis.getComponent();
-                if (resultado == 1) {
+                if (resultado == kMostrarGrade) {
+                    if (self->aoMostrarConteudoNaGrade) self->aoMostrarConteudoNaGrade(ids);
+                    return;
+                }
+                if (resultado == kNovaSub) {
                     juce::Component::SafePointer<ArvoreComponent> s2(self);
                     pedirTexto(matriz::i18n::t("arvore.nome_nova_pasta_titulo"), matriz::i18n::t("arvore.nome_nova_pasta_mensagem"),
                                "", [s2, pastaId](std::optional<juce::String> nome) {
@@ -539,7 +553,7 @@ void ArvoreComponent::mouseDown(const juce::MouseEvent& e) {
                                    s2->recarregar();
                                    if (s2->aoMudarOrganizacao) s2->aoMudarOrganizacao();
                                });
-                } else if (resultado == 2) {
+                } else if (resultado == kRenomear) {
                     juce::Component::SafePointer<ArvoreComponent> s2(self);
                     pedirTexto(matriz::i18n::t("arvore.renomear_pasta_titulo"), matriz::i18n::t("arvore.renomear_pasta_mensagem"),
                                nomeAtual, [s2, pastaId](std::optional<juce::String> nome) {
@@ -599,7 +613,7 @@ void ArvoreComponent::mouseDown(const juce::MouseEvent& e) {
         }
     }
 
-    if (e.mods.isPopupMenu() && aba_ == Aba::Acervo && !linha.ehPseudoTodos && !linha.no->id.empty()) {
+    if (e.mods.isPopupMenu() && !linha.ehPseudoTodos && linha.no != nullptr) {
         abrirMenuContexto(indice);
         return;
     }
@@ -717,25 +731,46 @@ void ArvoreComponent::mouseDrag(const juce::MouseEvent& e) {
 }
 
 void ArvoreComponent::abrirMenuContexto(int indiceLinha) {
-    std::string pastaId = linhas_[static_cast<size_t>(indiceLinha)].no->id;
+    if (indiceLinha < 0 || static_cast<size_t>(indiceLinha) >= linhas_.size()) return;
+    const auto& l = linhas_[static_cast<size_t>(indiceLinha)];
+    if (!l.no) return;
+
+    std::string pastaId = l.no->id;
+    juce::String nomeAtual = l.no->nome;
+
+    std::set<std::string> ids = l.no->itemIds;
+    std::function<void(const ProjetoAberto::NoArvore&)> coletar = [&](const ProjetoAberto::NoArvore& n) {
+        ids.insert(n.itemIds.begin(), n.itemIds.end());
+        for (const auto& f : n.filhos) coletar(f);
+    };
+    coletar(*l.no);
 
     juce::PopupMenu menu;
-    enum { kNovaSub = 1, kRenomear, kApagar };
-    menu.addItem(kNovaSub, matriz::i18n::t("arvore.menu_nova_subpasta"));
-    menu.addItem(kRenomear, matriz::i18n::t("arvore.menu_renomear"));
-    menu.addItem(kApagar, matriz::i18n::t("arvore.menu_apagar"));
+    enum { kMostrarGrade = 100, kNovaSub = 1, kRenomear, kApagar };
 
-    juce::String nomeAtual;
-    if (indiceLinha >= 0 && static_cast<size_t>(indiceLinha) < linhas_.size()) {
-        const auto& l = linhas_[static_cast<size_t>(indiceLinha)];
-        if (l.no) nomeAtual = l.no->nome;
+    menu.addItem(kMostrarGrade, matriz::i18n::t("arvore.mostrar_conteudo_grade"));
+
+    bool podeGerenciar = (aba_ == Aba::Acervo && !pastaId.empty());
+    if (podeGerenciar) {
+        menu.addSeparator();
+        menu.addItem(kNovaSub, matriz::i18n::t("arvore.menu_nova_subpasta"));
+        menu.addItem(kRenomear, matriz::i18n::t("arvore.menu_renomear"));
+        menu.addItem(kApagar, matriz::i18n::t("arvore.menu_apagar"));
     }
 
     juce::Component::SafePointer<ArvoreComponent> safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, pastaId, nomeAtual](int resultado) {
+    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, pastaId, nomeAtual, ids](int resultado) {
         if (!safeThis) return;
         auto* self = safeThis.getComponent();
-        if (resultado == 1) {
+
+        if (resultado == kMostrarGrade) {
+            if (self->aoMostrarConteudoNaGrade) {
+                self->aoMostrarConteudoNaGrade(ids);
+            }
+            return;
+        }
+
+        if (resultado == kNovaSub) {
             juce::Component::SafePointer<ArvoreComponent> s2(self);
             pedirTexto(matriz::i18n::t("arvore.nome_nova_pasta_titulo"), matriz::i18n::t("arvore.nome_nova_pasta_mensagem"),
                        "", [s2, pastaId](std::optional<juce::String> nome) {
@@ -744,7 +779,7 @@ void ArvoreComponent::abrirMenuContexto(int indiceLinha) {
                            s2->recarregar();
                            if (s2->aoMudarOrganizacao) s2->aoMudarOrganizacao();
                        });
-        } else if (resultado == 2) {
+        } else if (resultado == kRenomear) {
             juce::Component::SafePointer<ArvoreComponent> s2(self);
             pedirTexto(matriz::i18n::t("arvore.renomear_pasta_titulo"), matriz::i18n::t("arvore.renomear_pasta_mensagem"),
                        nomeAtual, [s2, pastaId](std::optional<juce::String> nome) {
@@ -753,7 +788,7 @@ void ArvoreComponent::abrirMenuContexto(int indiceLinha) {
                            s2->recarregar();
                            if (s2->aoMudarOrganizacao) s2->aoMudarOrganizacao();
                        });
-        } else if (resultado == 3) {
+        } else if (resultado == kApagar) {
             auto janela = std::make_shared<juce::AlertWindow>(matriz::i18n::t("arvore.apagar_confirmar_titulo"),
                                                                 matriz::i18n::t("arvore.apagar_confirmar_mensagem"),
                                                                 juce::MessageBoxIconType::WarningIcon);

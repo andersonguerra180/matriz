@@ -3,6 +3,7 @@
 #include <ctime>
 
 #include "BinaryData.h"
+#include "../Ingest/LeituraTecnica.h"
 
 namespace matriz::model {
 
@@ -107,51 +108,58 @@ void migrarItemParaCodigoOpcional(matriz::db::Database& registro) {
     // é o execScript logo depois desta função (CREATE ... IF NOT EXISTS).
 }
 
-// A primeira versão de `ai_scan_resultado` restringia tipo_analise a
-// ('visual','documento','video') por CHECK. Áudio passou a ser analisável, e
-// CHECK não se altera por ALTER TABLE — a tabela tem de ser reconstruída. Os
-// resultados já gravados são preservados na cópia.
-void migrarAiScanSemCheck(matriz::db::Database& registro) {
-    std::string sqlAtual;
+// Migra ai_scan_resultado do banco de registro para o banco de índice (P2: IA nunca escreve no registro).
+void migrarAiScanParaIndice(matriz::db::Database& registro, matriz::db::Database& indice) {
     try {
         auto stmt = registro.prepare(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ai_scan_resultado'");
-        if (!stmt.step()) return; // tabela ainda não existe: o schema cria já correta
-        sqlAtual = stmt.columnText(0);
+        if (!stmt.step()) return; // não existe no registro: nada a migrar
     } catch (...) {
         return;
     }
 
-    if (sqlAtual.find("CHECK (tipo_analise IN") == std::string::npos) return;
-
-    registro.exec("PRAGMA foreign_keys = OFF");
-    registro.run("BEGIN TRANSACTION", {});
     try {
-        registro.exec(
-            "CREATE TABLE ai_scan_migracao_tmp ("
+        // Garante que a tabela existe no índice
+        indice.exec(
+            "CREATE TABLE IF NOT EXISTS ai_scan_resultado ("
             "  id TEXT PRIMARY KEY,"
-            "  item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,"
+            "  item_id TEXT NOT NULL,"
             "  modelo TEXT NOT NULL,"
             "  tipo_analise TEXT NOT NULL,"
             "  contexto_json TEXT NOT NULL,"
             "  resumo TEXT,"
             "  confianca REAL,"
             "  analisado_em TEXT NOT NULL)");
-        registro.exec(
-            "INSERT INTO ai_scan_migracao_tmp "
+
+        // Lê todos os dados existentes no registro
+        auto sel = registro.prepare(
             "SELECT id, item_id, modelo, tipo_analise, contexto_json, resumo, confianca, analisado_em "
             "FROM ai_scan_resultado");
-        registro.exec("DROP TABLE ai_scan_resultado");
-        registro.exec("ALTER TABLE ai_scan_migracao_tmp RENAME TO ai_scan_resultado");
-        registro.run("COMMIT", {});
-    } catch (...) {
-        registro.run("ROLLBACK", {});
-        registro.exec("PRAGMA foreign_keys = ON");
-        throw;
-    }
-    registro.exec("PRAGMA foreign_keys = ON");
-    // Índice e triggers caíram junto com o DROP; o execScript logo abaixo os
-    // recria (CREATE ... IF NOT EXISTS).
+
+        indice.run("BEGIN TRANSACTION", {});
+        try {
+            while (sel.step()) {
+                indice.run(
+                    "INSERT OR REPLACE INTO ai_scan_resultado "
+                    "(id, item_id, modelo, tipo_analise, contexto_json, resumo, confianca, analisado_em) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    {matriz::db::Value::of(sel.columnText(0)), matriz::db::Value::of(sel.columnText(1)),
+                     matriz::db::Value::of(sel.columnText(2)), matriz::db::Value::of(sel.columnText(3)),
+                     matriz::db::Value::of(sel.columnText(4)),
+                     sel.columnIsNull(5) ? matriz::db::Value::null() : matriz::db::Value::of(sel.columnText(5)),
+                     sel.columnIsNull(6) ? matriz::db::Value::null() : matriz::db::Value::of(sel.columnReal(6)),
+                     matriz::db::Value::of(sel.columnText(7))});
+            }
+            indice.run("COMMIT", {});
+        } catch (...) {
+            indice.run("ROLLBACK", {});
+        }
+
+        // Remove triggers e a tabela do banco de registro
+        try { registro.exec("DROP TRIGGER IF EXISTS trg_ai_scan_busca_insert"); } catch (...) {}
+        try { registro.exec("DROP TRIGGER IF EXISTS trg_ai_scan_busca_delete"); } catch (...) {}
+        try { registro.exec("DROP TABLE IF EXISTS ai_scan_resultado"); } catch (...) {}
+    } catch (...) {}
 }
 
 void migrarConsolidacaoRegistro(matriz::db::Database& registro) {
@@ -190,7 +198,7 @@ void migrarConsolidacaoRegistro(matriz::db::Database& registro) {
 
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     migrarItemParaCodigoOpcional(registro);
-    migrarAiScanSemCheck(registro);
+    migrarAiScanParaIndice(registro, indice);
     migrarConsolidacaoRegistro(registro);
     registro.execScript(readBinarySql(BinaryData::registro_sql, BinaryData::registro_sqlSize));
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
@@ -298,6 +306,18 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     } catch (...) {
         // Migration from old campos is best-effort — may not exist
     }
+
+    try {
+        registro.execScript(
+            "CREATE TABLE IF NOT EXISTS catalog_colecao_link ("
+            "  id TEXT PRIMARY KEY,"
+            "  caminho_projeto TEXT NOT NULL UNIQUE,"
+            "  nome TEXT NOT NULL,"
+            "  grupo TEXT DEFAULT '',"
+            "  criado_em TEXT NOT NULL"
+            ");"
+        );
+    } catch (...) {}
 
     try {
         registro.run(
@@ -540,14 +560,114 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
         // Safe fallback in case of errors
     }
 
-    // Self-healing database cleanup of zombie/ghost items (items with no files)
+    // 1. Remove empty/invalid ghost arquivo rows where no paths exist
     try {
-        registro->run("DELETE FROM item WHERE NOT EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = item.id)", {});
+        registro->run(
+            "DELETE FROM arquivo WHERE (caminho_relativo IS NULL OR caminho_relativo = '') "
+            "AND (caminho_absoluto_origem IS NULL OR caminho_absoluto_origem = '')", {});
     } catch (...) {}
 
-    // Ensure all primary files for images and documents are marked as eh_master = 1 so duplicate scan can analyze them
+    // 2. Self-healing database cleanup of zombie/ghost items from interrupted ingests.
+    // Clean up items that have NO arquivo row, NO archive code (never completed analysis),
+    // unless they are intentionally non-digitized placeholders ('nao_digitalizado').
+    try {
+        registro->run(
+            "DELETE FROM item WHERE id IN ("
+            "  SELECT i.id FROM item i"
+            "  WHERE NOT EXISTS (SELECT 1 FROM arquivo a WHERE a.item_id = i.id)"
+            "    AND (i.codigo_acervo IS NULL OR i.codigo_acervo = '')"
+            "    AND i.estado != 'nao_digitalizado'"
+            ")", {});
+    } catch (...) {}
+
+    // 3. Ensure master flag is set if an item has files but no eh_master = 1
+    try {
+        registro->run(
+            "UPDATE arquivo SET eh_master = 1 WHERE id IN ("
+            "  SELECT a.id FROM arquivo a "
+            "  JOIN (SELECT item_id FROM arquivo GROUP BY item_id HAVING SUM(eh_master) = 0) sub "
+            "  ON sub.item_id = a.item_id "
+            "  GROUP BY a.item_id"
+            ")", {});
+    } catch (...) {}
+
+    // 4. Ensure all primary files for images and documents are marked as eh_master = 1
     try {
         registro->run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
+    } catch (...) {}
+
+    // 5. Self-heal missing/unknown tipo_midia based on file extension
+    try {
+        auto stmtTipo = registro->prepare(
+            "SELECT i.id, i.titulo, a.caminho_relativo, a.caminho_absoluto_origem "
+            "FROM item i "
+            "JOIN arquivo a ON a.item_id = i.id "
+            "WHERE (i.tipo_midia IS NULL OR i.tipo_midia = '' OR i.tipo_midia = 'desconhecido') "
+            "ORDER BY a.eh_master DESC, a.id ASC");
+        struct ItemFix {
+            std::string id;
+            std::string tipo;
+        };
+        std::vector<ItemFix> fixes;
+        while (stmtTipo.step()) {
+            std::string id = stmtTipo.columnText(0);
+            std::string tit = stmtTipo.columnText(1);
+            std::string rel = stmtTipo.columnText(2);
+            std::string abs = stmtTipo.columnText(3);
+
+            juce::String path(abs);
+            if (path.isEmpty()) path = juce::String(rel);
+            if (path.isEmpty()) path = juce::String(tit);
+
+            auto cat = matriz::ingest::categoriaPorExtensao(juce::File(path));
+            std::string tipo;
+            switch (cat) {
+                case matriz::ingest::CategoriaMidia::Audio:     tipo = "digital_audio"; break;
+                case matriz::ingest::CategoriaMidia::Video:     tipo = "digital_video"; break;
+                case matriz::ingest::CategoriaMidia::Imagem:    tipo = "foto"; break;
+                case matriz::ingest::CategoriaMidia::Documento: tipo = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Texto:     tipo = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Sessao:    tipo = "sessao"; break;
+                default: break;
+            }
+            if (!tipo.empty()) {
+                fixes.push_back({id, tipo});
+            }
+        }
+        for (const auto& f : fixes) {
+            registro->run("UPDATE item SET tipo_midia = ? WHERE id = ?",
+                          {matriz::db::Value::of(f.tipo), matriz::db::Value::of(f.id)});
+        }
+    } catch (...) {}
+
+    // 6. Self-heal missing caminho_absoluto_origem from caminho_relativo if file exists
+    try {
+        auto stmtCaminho = registro->prepare(
+            "SELECT a.id, a.caminho_relativo FROM arquivo a "
+            "WHERE (a.caminho_absoluto_origem IS NULL OR a.caminho_absoluto_origem = '') "
+            "AND (a.caminho_relativo IS NOT NULL AND a.caminho_relativo != '')");
+        struct PathFix {
+            std::string arquivoId;
+            std::string absolutePath;
+        };
+        std::vector<PathFix> pathFixes;
+        while (stmtCaminho.step()) {
+            std::string arqId = stmtCaminho.columnText(0);
+            juce::String rel = stmtCaminho.columnText(1);
+            juce::File f(rel);
+            if (juce::File::isAbsolutePath(rel) && f.existsAsFile()) {
+                pathFixes.push_back({arqId, f.getFullPathName().toStdString()});
+            } else {
+                juce::File inProj = pastaProjeto.getChildFile(rel);
+                if (inProj.existsAsFile()) {
+                    pathFixes.push_back({arqId, inProj.getFullPathName().toStdString()});
+                }
+            }
+        }
+        for (const auto& pf : pathFixes) {
+            registro->run("UPDATE arquivo SET caminho_absoluto_origem = ? WHERE id = ?",
+                          {matriz::db::Value::of(pf.absolutePath), matriz::db::Value::of(pf.arquivoId)});
+        }
     } catch (...) {}
 
     return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));

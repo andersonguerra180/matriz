@@ -81,7 +81,11 @@ target_sources(matriz_selftest PRIVATE
     Source/Db/Database.cpp
     Source/Model/Project.cpp
     Source/I18n/Strings.cpp
-    Source/App/Preferencias.cpp)
+    Source/App/Preferencias.cpp
+    Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/Loudness.cpp
+    Source/Ingest/ProcessoExterno.cpp
+    Source/Ingest/Checksum.cpp)
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -98,8 +102,12 @@ target_link_libraries(matriz_selftest PRIVATE
     MatrizI18nAssets
     matriz_sqlite3
     yaml-cpp::yaml-cpp
+    Exiv2::exiv2lib
     juce::juce_core
     juce::juce_data_structures
+    juce::juce_audio_formats
+    juce::juce_graphics
+    juce::juce_events
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -132,6 +140,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Vault/Volume.cpp
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
+    Source/Vault/AssetRelinkEngine.cpp
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
@@ -211,6 +220,8 @@ target_sources(matriz PRIVATE
     Source/Ui/BarraFerramentasComponent.cpp
     Source/Ui/BarraGuiaComponent.cpp
     Source/Ui/BarraNavegacaoComponent.cpp
+    Source/Ui/BarraProgressoGlobalComponent.cpp
+    Source/Ui/ProgressoGlobal.cpp
     Source/Ui/BarraSelecaoComponent.cpp
     Source/Ui/FiltrosComponent.cpp
     Source/Ui/MetadadosOriginaisComponent.cpp
@@ -234,11 +245,13 @@ target_sources(matriz PRIVATE
     Source/Ui/OverlayComponent.cpp
     Source/Ui/AudioWorkspace.cpp
     Source/Ui/BackupWorkspaceComponent.cpp
+    Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
     Source/Ui/DuplicatesWorkspaceComponent.cpp
     Source/Ui/HierarquiaEditorComponent.cpp
     Source/Ui/TagChipsEditor.cpp
+    Source/Ui/OriginalSourceMedium.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/HomePanelComponent.cpp
     Source/Ui/IngestWizardComponent.cpp
@@ -256,10 +269,14 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogoComponent.cpp
     Source/Ui/ConsolidacaoDialogo.cpp
     Source/Ui/SelecionarTipoMidiaDialogo.cpp
+    Source/Ui/InitialRelinkDialog.cpp
+    Source/Ui/OfflineAssetRelinkDialog.cpp
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
     Source/Ui/VideoPlayerComponent.cpp
     Source/Ui/VideoPlayerBridge.mm
+    Source/Ui/DocumentPreviewComponent.cpp
+    Source/Ui/DocumentPreviewBridge.mm
     Source/Audio/MotorReproducao.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
@@ -267,6 +284,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/Loudness.cpp
     Source/Ingest/Checksum.cpp
     Source/Ingest/CacheArquivo.cpp
+    Source/Ingest/AiScan.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/PainelInconsistencias.cpp
     Source/Preservation/Preservation.cpp
@@ -277,6 +295,7 @@ target_sources(matriz PRIVATE
     Source/Vault/Volume.cpp
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
+    Source/Vault/AssetRelinkEngine.cpp
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
@@ -319,6 +338,10 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ AVFoundation>
     $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
+    $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
+    $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>
+    $<$<PLATFORM_ID:Darwin>:-framework\ WebKit>
+    $<$<PLATFORM_ID:Darwin>:-framework\ QuickLookUI>
     PUBLIC
     juce::juce_recommended_config_flags)
 

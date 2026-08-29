@@ -98,17 +98,6 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     auto linhaResponsavel = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_responsavel"),
                                                                 std::move(responsavelEditor));
 
-    // ISRC só faz sentido no modo Catálogo (SPEC §5.2: "código de registrante
-    // ISRC (uso catálogo)") — no modo Acervo/Preservação o campo nem aparece,
-    // em vez de ficar vazio e sem sentido no formulário.
-    std::unique_ptr<LinhaFormulario> linhaIsrc;
-    juce::TextEditor* isrcEditorPtr = nullptr;
-    if (modo == matriz::model::Modo::Catalogo) {
-        auto isrcEditor = std::make_unique<juce::TextEditor>();
-        isrcEditorPtr = isrcEditor.get();
-        linhaIsrc = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_isrc"), std::move(isrcEditor));
-    }
-
     auto pastaBotao = std::make_unique<juce::TextButton>(matriz::i18n::t("dialogo_novo_projeto.botao_escolher_pasta"));
     auto pastaLabel = std::make_shared<juce::Label>();
     pastaLabel->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
@@ -136,8 +125,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     pastaLabel->setBounds(0, 58, 420, 16);
     linhaPasta->setSize(420, 76);
 
-    for (auto* linha : {linhaNome.get(), linhaPasta.get(), linhaInstituicao.get(), linhaResponsavel.get(),
-                         linhaIsrc.get()})
+    for (auto* linha : {linhaNome.get(), linhaPasta.get(), linhaInstituicao.get(), linhaResponsavel.get()})
         if (linha) janela->addCustomComponent(linha);
 
     janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_criar"), 1, juce::KeyPress(juce::KeyPress::returnKey));
@@ -147,7 +135,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     // AlertWindow não assume posse dos componentes que recebe.
     struct EstadoVivo {
         std::shared_ptr<juce::AlertWindow> janela;
-        std::unique_ptr<LinhaFormulario> nome, instituicao, responsavel, isrc, pasta;
+        std::unique_ptr<LinhaFormulario> nome, instituicao, responsavel, pasta;
         std::shared_ptr<juce::Label> pastaLabel;
     };
     auto estado = std::make_shared<EstadoVivo>();
@@ -156,13 +144,12 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     estado->pastaLabel = pastaLabel;
     estado->instituicao = std::move(linhaInstituicao);
     estado->responsavel = std::move(linhaResponsavel);
-    estado->isrc = std::move(linhaIsrc);
     estado->pasta = std::move(linhaPasta);
 
     janela->enterModalState(
         true,
         juce::ModalCallbackFunction::create([estado, aoConcluir, modo, nomeEditorPtr, instituicaoEditorPtr,
-                                              responsavelEditorPtr, isrcEditorPtr, pastaEscolhida,
+                                              responsavelEditorPtr, pastaEscolhida,
                                               seletorPasta](int resultadoBotao) {
             // §3: tira o peer da tela antes de qualquer coisa — a validação
             // abaixo pode abrir OUTRO diálogo (erro de nome/pasta), e dois
@@ -197,7 +184,6 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
             r.params.prefixoNomenclatura = prefixo.toStdString();
             r.params.instituicaoOuSelo = instituicaoEditorPtr->getText().trim().toStdString();
             r.params.responsavel = responsavelEditorPtr->getText().trim().toStdString();
-            r.params.isrcRegistrante = isrcEditorPtr ? isrcEditorPtr->getText().trim().toStdString() : std::string();
 
             aoConcluir(r);
         }));

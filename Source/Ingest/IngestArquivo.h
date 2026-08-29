@@ -110,7 +110,8 @@ std::optional<AssetConhecido> buscarAssetConhecido(matriz::db::Database& registr
 // Como buscarAssetConhecido, mas com o checksum JÁ calculado — evita reler o
 // arquivo inteiro uma segunda vez no caminho concorrente.
 std::optional<AssetConhecido> buscarAssetPorChecksum(matriz::db::Database& registro,
-                                                      const std::string& sha256);
+                                                      const std::string& sha256,
+                                                      juce::int64 tamanhoBytes = 0);
 
 std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& registro,
                                                        const std::string& titulo,

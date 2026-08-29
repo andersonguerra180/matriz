@@ -112,25 +112,10 @@ MetadadosPreview extrairMetadadosPreview(const juce::String& json) {
 } // namespace
 
 PreviewComponent::PreviewComponent(ProjetoAberto& projeto) : projeto_(projeto) {
-    // Leitores de áudio agora vivem dentro da TimelineComponent, junto com o
-    // transporte - este Component não decodifica mais nada por conta própria.
-
     cabecalhoTitulo_ = std::make_unique<juce::Label>();
     cabecalhoTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     cabecalhoTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
     addAndMakeVisible(*cabecalhoTitulo_);
-
-    botaoAnterior_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x97\x80")); // ◀
-    botaoAnterior_->onClick = [this] { if (aoNavegar) aoNavegar(-1); };
-    addAndMakeVisible(*botaoAnterior_);
-
-    botaoProximo_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x96\xb6")); // ▶
-    botaoProximo_->onClick = [this] { if (aoNavegar) aoNavegar(1); };
-    addAndMakeVisible(*botaoProximo_);
-
-    botaoFechar_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xc3\x97")); // ×
-    botaoFechar_->onClick = [this] { if (aoFechar) aoFechar(); };
-    addAndMakeVisible(*botaoFechar_);
 
     labelMetadados_ = std::make_unique<juce::Label>();
     labelMetadados_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
@@ -153,6 +138,7 @@ PreviewComponent::~PreviewComponent() { stopTimer(); }
 void PreviewComponent::mostrarItem(const std::string& itemId) {
     timeline_.reset();
     videoPlayer_.reset();
+    documentPreview_.reset();
 
     itemId_ = itemId;
     construirParaItem();
@@ -163,6 +149,7 @@ void PreviewComponent::mostrarItem(const std::string& itemId) {
 void PreviewComponent::construirParaItem() {
     timeline_.reset();
     videoPlayer_.reset();
+    documentPreview_.reset();
     textViewer_.reset();
     imagemPrincipal_ = {};
     labelSemPreview_->setText("", juce::dontSendNotification);
@@ -220,6 +207,7 @@ void PreviewComponent::construirParaItem() {
                 labelSemPreview_->setText(matriz::i18n::t("preview.video_sem_player"), juce::dontSendNotification);
             } else {
                 timeline_ = std::make_unique<TimelineComponent>(projeto_);
+                timeline_->mostrarBotaoZoom(false);
                 timeline_->aoMudarMarcadores = [this] { if (aoMudarMarcadores) aoMudarMarcadores(); };
                 timeline_->aoMedirNivel = [this](float e, float d) { if (aoMedirNivel) aoMedirNivel(e, d); };
                 addAndMakeVisible(*timeline_);
@@ -232,6 +220,7 @@ void PreviewComponent::construirParaItem() {
             // simples que havia aqui: forma de onda, cursor, zoom, régua,
             // transporte, jog/shuttle e marcadores.
             timeline_ = std::make_unique<TimelineComponent>(projeto_);
+            timeline_->mostrarBotaoZoom(true);
             timeline_->aoMudarMarcadores = [this] { if (aoMudarMarcadores) aoMudarMarcadores(); };
             timeline_->aoMedirNivel = [this](float e, float d) { if (aoMedirNivel) aoMedirNivel(e, d); };
             addAndMakeVisible(*timeline_);
@@ -258,44 +247,13 @@ void PreviewComponent::construirParaItem() {
             }
             break;
         }
-        case matriz::ingest::CategoriaMidia::Texto: {
-            juce::String conteudo = arquivoFile.loadFileAsString();
-            if (conteudo.length() > 50000) conteudo = conteudo.substring(0, 50000) + "\n\n[truncated]";
-            textViewer_ = std::make_unique<juce::TextEditor>();
-            textViewer_->setMultiLine(true, true);
-            textViewer_->setReadOnly(true);
-            textViewer_->setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), tema().tamanhoFonteCorpo, juce::Font::plain)));
-            textViewer_->setColour(juce::TextEditor::backgroundColourId, tema().painel);
-            textViewer_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
-            textViewer_->setColour(juce::TextEditor::outlineColourId, tema().borda);
-            textViewer_->setText(conteudo, false);
-            addAndMakeVisible(*textViewer_);
-            break;
-        }
+        case matriz::ingest::CategoriaMidia::Texto:
         case matriz::ingest::CategoriaMidia::Documento: {
-            auto ext = arquivoFile.getFileExtension().toLowerCase();
-            if (ext == ".pdf") {
-                labelSemPreview_->setText("", juce::dontSendNotification);
-                juce::File logoImgFile = obterPastaAssets().getChildFile("pdf.jpeg");
-                if (logoImgFile.existsAsFile()) {
-                    imagemPrincipal_ = juce::ImageFileFormat::loadFrom(logoImgFile);
-                }
-            } else {
-                juce::String conteudo = arquivoFile.loadFileAsString();
-                if (conteudo.containsNonWhitespaceChars() && conteudo.length() < 200000) {
-                    if (conteudo.length() > 50000) conteudo = conteudo.substring(0, 50000) + "\n\n[truncated]";
-                    textViewer_ = std::make_unique<juce::TextEditor>();
-                    textViewer_->setMultiLine(true, true);
-                    textViewer_->setReadOnly(true);
-                    textViewer_->setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), tema().tamanhoFonteCorpo, juce::Font::plain)));
-                    textViewer_->setColour(juce::TextEditor::backgroundColourId, tema().painel);
-                    textViewer_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
-                    textViewer_->setColour(juce::TextEditor::outlineColourId, tema().borda);
-                    textViewer_->setText(conteudo, false);
-                    addAndMakeVisible(*textViewer_);
-                } else {
-                    labelSemPreview_->setText("Binary document - use an external viewer.", juce::dontSendNotification);
-                }
+            documentPreview_ = std::make_unique<DocumentPreviewComponent>();
+            addAndMakeVisible(*documentPreview_);
+            if (!documentPreview_->carregar(arquivoFile)) {
+                documentPreview_.reset();
+                labelSemPreview_->setText(matriz::i18n::t("preview.sem_visualizacao"), juce::dontSendNotification);
             }
             break;
         }
@@ -319,6 +277,25 @@ void PreviewComponent::timerCallback() {
         if (std::abs(posTimeline - posVideo) > 0.08) {
             videoPlayer_->irPara(posTimeline);
         }
+    }
+
+    if (timeline_) {
+        bool showTC = timeline_->mostrandoTimecode();
+        double pos = videoPlayer_ ? videoPlayer_->posicaoAtual() : timeline_->posicaoSegundos();
+        juce::String tcStr = timeline_->formatarPosicao(pos);
+        if (videoPlayer_) {
+            videoPlayer_->definirTimecodeVisivel(showTC);
+            videoPlayer_->atualizarTimecodeTexto(tcStr);
+        }
+        if (imagemPrincipal_.isValid()) {
+            repaint();
+        }
+    }
+}
+
+void PreviewComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
+    if (timeline_) {
+        timeline_->mouseWheelMove(e, wheel);
     }
 }
 
@@ -356,6 +333,19 @@ void PreviewComponent::paint(juce::Graphics& g) {
         
         area = area.reduced(tema().espacoGrande);
         g.drawImage(imagemPrincipal_, area.toFloat(), juce::RectanglePlacement::centred);
+
+        if (timeline_ && timeline_->mostrandoTimecode()) {
+            int tcW = 240;
+            int tcH = 48;
+            juce::Rectangle<int> tcRect((getWidth() - tcW) / 2, area.getBottom() - tcH - 12, tcW, tcH);
+            g.setColour(juce::Colours::black.withAlpha(0.92f));
+            g.fillRoundedRectangle(tcRect.toFloat(), 3.0f);
+
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(26.0f, juce::Font::bold)));
+            double pos = timeline_->posicaoSegundos();
+            g.drawText(timeline_->formatarPosicao(pos), tcRect, juce::Justification::centred, false);
+        }
     }
 
     g.setColour(tema().textoTerciario);
@@ -367,10 +357,6 @@ void PreviewComponent::paint(juce::Graphics& g) {
 void PreviewComponent::resized() {
     auto area = getLocalBounds();
     auto topo = area.removeFromTop(48).reduced(tema().espacoMedio, 8);
-    botaoFechar_->setBounds(topo.removeFromRight(32));
-    botaoProximo_->setBounds(topo.removeFromRight(32));
-    botaoAnterior_->setBounds(topo.removeFromRight(32));
-    topo.removeFromRight(tema().espacoMedio);
     cabecalhoTitulo_->setBounds(topo);
 
     if (labelSemPreview_->getText().isNotEmpty() && !imagemPrincipal_.isValid()) {
@@ -382,15 +368,20 @@ void PreviewComponent::resized() {
     auto areaMetadados = area.removeFromBottom(80).reduced(tema().espacoGrande, tema().espacoMedio);
     labelMetadados_->setBounds(areaMetadados);
 
+    juce::Rectangle<int> videoArea = area;
     if (timeline_) {
         auto areaTimeline = area.removeFromBottom(145).reduced(tema().espacoMedio, tema().espacoPequeno);
         timeline_->setBounds(areaTimeline);
+        videoArea = area;
     }
     if (videoPlayer_) {
-        videoPlayer_->setBounds(area.reduced(tema().espacoMedio, tema().espacoPequeno));
+        videoPlayer_->setBounds(videoArea.reduced(tema().espacoMedio, tema().espacoPequeno));
+    }
+    if (documentPreview_) {
+        documentPreview_->setBounds(videoArea.reduced(tema().espacoMedio, tema().espacoPequeno));
     }
     if (textViewer_) {
-        textViewer_->setBounds(area.reduced(tema().espacoMedio, tema().espacoPequeno));
+        textViewer_->setBounds(videoArea.reduced(tema().espacoMedio, tema().espacoPequeno));
     }
 }
 

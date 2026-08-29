@@ -330,7 +330,16 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kMostrarNaOrigem: {
             auto caminho = projeto.caminhoDeOrigem(itemIds.front());
-            if (!caminho) break;
+            if (!caminho || caminho->isEmpty()) {
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::InfoIcon)
+                        .withTitle(matriz::i18n::t("acoes.origem_ausente_titulo"))
+                        .withMessage("O arquivo de origem não possui caminho registrado.")
+                        .withButton(matriz::i18n::t("comum.ok")),
+                    static_cast<juce::ModalComponentManager::Callback*>(nullptr));
+                break;
+            }
             juce::File arquivo(*caminho);
             // Se o volume de origem não está montado, revealToUser abriria
             // uma janela vazia sem explicar nada.
@@ -348,7 +357,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kCopiarCaminho: {
             auto caminho = projeto.caminhoDeOrigem(itemIds.front());
-            if (caminho) juce::SystemClipboard::copyTextToClipboard(*caminho);
+            if (caminho && !caminho->isEmpty()) juce::SystemClipboard::copyTextToClipboard(*caminho);
             break;
         }
 
@@ -381,7 +390,8 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
     janela->addComboBox("modo", {
         matriz::i18n::t("renomear_lote.adicionar_depois"),
         matriz::i18n::t("renomear_lote.adicionar_antes"),
-        matriz::i18n::t("renomear_lote.substituir")
+        matriz::i18n::t("renomear_lote.substituir"),
+        matriz::i18n::t("renomear_lote.inserir_entre_prefixo_e_nome")
     });
     janela->addTextEditor("texto", "", matriz::i18n::t("renomear_lote.campo_texto"));
     janela->addTextEditor("procurar", "", matriz::i18n::t("renomear_lote.campo_procurar"));
@@ -398,7 +408,7 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
 
     combo->onChange = [campoTexto, campoProcurar, campoSubstituirPor, combo] {
         int modo = combo->getSelectedItemIndex();
-        campoTexto->setVisible(modo <= 1);
+        campoTexto->setVisible(modo != 2);
         campoProcurar->setVisible(modo == 2);
         campoSubstituirPor->setVisible(modo == 2);
     };
@@ -425,11 +435,30 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
             } else if (modo == 1) {
                 juce::String texto = janela->getTextEditorContents("texto");
                 nome = texto + nome;
-            } else {
+            } else if (modo == 2) {
                 juce::String procurar = janela->getTextEditorContents("procurar");
                 juce::String substituirPor = janela->getTextEditorContents("substituir_por");
                 if (procurar.isNotEmpty())
                     nome = nome.replace(procurar, substituirPor);
+            } else if (modo == 3) {
+                juce::String texto = janela->getTextEditorContents("texto").trim();
+                if (texto.isNotEmpty()) {
+                    juce::String cod(codigo);
+                    if (cod.isNotEmpty() && nome.startsWithIgnoreCase(cod)) {
+                        juce::String resto = nome.substring(cod.length());
+                        while (resto.startsWith("-") || resto.startsWith("_") || resto.startsWith(" ")) {
+                            resto = resto.substring(1);
+                        }
+                        if (resto.isNotEmpty())
+                            nome = cod + "-" + texto + "-" + resto;
+                        else
+                            nome = cod + "-" + texto;
+                    } else if (cod.isNotEmpty()) {
+                        nome = cod + "-" + texto + "-" + nome;
+                    } else {
+                        nome = texto + "-" + nome;
+                    }
+                }
             }
             p->renomearItens({itemId}, nome.toStdString());
         }

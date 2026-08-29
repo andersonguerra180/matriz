@@ -215,31 +215,49 @@ ResultadoIngestArquivo ingerirArquivo(matriz::db::Database& registro, const juce
 }
 
 std::optional<AssetConhecido> buscarAssetPorChecksum(matriz::db::Database& registro,
-                                                      const std::string& sha256) {
+                                                      const std::string& sha256,
+                                                      juce::int64 tamanhoBytes) {
     if (sha256.empty()) return std::nullopt;
 
-    auto stmt = registro.prepare(
-        "SELECT a.id, i.id, i.codigo_acervo FROM arquivo a JOIN item i ON i.id = a.item_id "
-        "WHERE a.checksum_sha256 = ? LIMIT 1");
-    stmt.bind(1, Value::of(sha256));
-    if (!stmt.step()) return std::nullopt;
+    if (tamanhoBytes > 0) {
+        auto stmt = registro.prepare(
+            "SELECT a.id, i.id, i.codigo_acervo FROM arquivo a JOIN item i ON i.id = a.item_id "
+            "WHERE a.checksum_sha256 = ? AND a.tamanho_bytes = ? LIMIT 1");
+        stmt.bind(1, Value::of(sha256));
+        stmt.bind(2, Value::of(static_cast<long long>(tamanhoBytes)));
+        if (!stmt.step()) return std::nullopt;
 
-    AssetConhecido conhecido;
-    conhecido.arquivoId = stmt.columnText(0);
-    conhecido.itemId = stmt.columnText(1);
-    conhecido.codigoAcervo = stmt.columnText(2);
-    return conhecido;
+        AssetConhecido conhecido;
+        conhecido.arquivoId = stmt.columnText(0);
+        conhecido.itemId = stmt.columnText(1);
+        conhecido.codigoAcervo = stmt.columnText(2);
+        return conhecido;
+    } else {
+        auto stmt = registro.prepare(
+            "SELECT a.id, i.id, i.codigo_acervo FROM arquivo a JOIN item i ON i.id = a.item_id "
+            "WHERE a.checksum_sha256 = ? LIMIT 1");
+        stmt.bind(1, Value::of(sha256));
+        if (!stmt.step()) return std::nullopt;
+
+        AssetConhecido conhecido;
+        conhecido.arquivoId = stmt.columnText(0);
+        conhecido.itemId = stmt.columnText(1);
+        conhecido.codigoAcervo = stmt.columnText(2);
+        return conhecido;
+    }
 }
 
 std::optional<AssetConhecido> buscarAssetConhecido(matriz::db::Database& registro, const juce::File& arquivoOrigem) {
     if (!arquivoOrigem.existsAsFile()) return std::nullopt;
 
+    juce::int64 sz = arquivoOrigem.getSize();
     Checksums cs = calcularChecksums(arquivoOrigem);
 
     auto stmt = registro.prepare(
         "SELECT a.id, i.id, i.codigo_acervo FROM arquivo a JOIN item i ON i.id = a.item_id "
-        "WHERE a.checksum_sha256 = ? LIMIT 1");
+        "WHERE a.checksum_sha256 = ? AND a.tamanho_bytes = ? LIMIT 1");
     stmt.bind(1, Value::of(cs.sha256));
+    stmt.bind(2, Value::of(static_cast<long long>(sz)));
     if (!stmt.step()) return std::nullopt;
 
     AssetConhecido a;
@@ -267,6 +285,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        const std::string& caminhoRelativo,
                                                        const std::string& excludeItemId,
                                                        const juce::File& pastaProjeto) {
+    if (tamanhoBytes <= 0) return std::nullopt;
+
     auto stmt = registro.prepare(
         "SELECT a.id, i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
         "FROM item i "
@@ -274,12 +294,11 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
         "WHERE a.eh_master = 1 "
         "  AND (? = '' OR i.id != ?) "
         "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
-        "  AND ("
-        "    LOWER(i.titulo) = ? "
-        "    OR a.tamanho_bytes = ? "
-        "    OR (? > 0.0 AND ABS(CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) - ?) < 0.1) "
-        "    OR (? > 0 AND ? > 0 AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.larguraPx') AS INTEGER) = ? AND CAST(json_extract(a.caracteristicas_tecnicas_json, '$.alturaPx') AS INTEGER) = ?)"
-        "  )");
+        "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_DUPLICATE]%') "
+        "  AND i.estado != 'duplicata' "
+        "  AND a.tamanho_bytes = ? "
+        "  AND a.tamanho_bytes > 0 "
+        "ORDER BY i.id ASC");
 
     std::string tituloLower = juce::String(titulo).toLowerCase().toStdString();
     
@@ -319,14 +338,7 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
 
     stmt.bind(1, Value::of(excludeItemId));
     stmt.bind(2, Value::of(excludeItemId));
-    stmt.bind(3, Value::of(tituloLower));
-    stmt.bind(4, Value::of(static_cast<long long>(tamanhoBytes)));
-    stmt.bind(5, Value::of(duracao));
-    stmt.bind(6, Value::of(duracao));
-    stmt.bind(7, Value::of(largura));
-    stmt.bind(8, Value::of(altura));
-    stmt.bind(9, Value::of(largura));
-    stmt.bind(10, Value::of(altura));
+    stmt.bind(3, Value::of(static_cast<long long>(tamanhoBytes)));
 
     while (stmt.step()) {
         int coincidences = 0;
@@ -339,18 +351,6 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
 
         // Coincidência 2: Extensão/Formato (case-insensitive)
         std::string candCaminho = stmt.columnText(4);
-        
-        // Heuristic: If they are in the same folder (same parent directory), they are excluded
-        // from duplicate file matching (either they are different files in the same folder,
-        // or they are the exact same physical file registered twice in the database).
-        if (!caminhoRelativo.empty()) {
-            juce::File fileA(caminhoRelativo);
-            juce::File fileB(candCaminho);
-            if (fileA.getParentDirectory().getFullPathName() == fileB.getParentDirectory().getFullPathName()) {
-                continue;
-            }
-        }
-
         juce::String candExt = juce::File(candCaminho).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase();
         juce::String queryExt = juce::String(ext).toLowerCase();
         bool extMatches = (candExt == queryExt);
@@ -358,12 +358,13 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
             coincidences++;
         }
 
-        // Coincidência 3: Tamanho (bytes)
+        // Coincidência 3: Tamanho (bytes) - INELEGÍVEL / OBRIGATÓRIO
         juce::int64 candTamanho = stmt.columnInt(6);
-        bool sizeMatches = (candTamanho == tamanhoBytes);
-        if (sizeMatches) {
-            coincidences++;
+        bool sizeMatches = (candTamanho == tamanhoBytes && tamanhoBytes > 0);
+        if (!sizeMatches) {
+            continue;
         }
+        coincidences++;
 
         // Strict Duplicate Rule for compressed media files:
         // If format and exact size in bytes match, they are 100% duplicates (excluding uncompressed PCM wav/aif/aiff)
@@ -420,11 +421,13 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                     }
                 }
                 
-                bool orientationMatches = (candOrientation == origOrientationStr);
-                bool colorSpaceMatches = (candColorSpace == origColorSpaceStr);
+                bool orientationMatches = (origOrientationStr.isEmpty() || candOrientation.isEmpty() || candOrientation == origOrientationStr);
+                bool colorSpaceMatches = (origColorSpaceStr.isEmpty() || candColorSpace.isEmpty() || candColorSpace == origColorSpaceStr);
                 
-                if (sizeMatches && dimensionsMatch && orientationMatches && colorSpaceMatches) {
+                if (sizeMatches && (dimensionsMatch || (largura == 0 && altura == 0)) && orientationMatches && colorSpaceMatches) {
                     coincidences = 3; // Force match!
+                } else if (sizeMatches && extMatches) {
+                    coincidences = 3;
                 } else {
                     coincidences = 0; // Forced reject!
                 }
@@ -445,8 +448,6 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                     }
                 }
 
-                // Para arquivos de áudio, se as propriedades técnicas detalhadas ou a assinatura de áudio forem diferentes,
-                // forçamos a rejeição (coincidences = 0) para evitar falsos positivos
                 if (isAudio) {
                     if (origSampleRate > 0 && obj->hasProperty("sampleRate")) {
                         int candSR = obj->getProperty("sampleRate");
@@ -473,6 +474,11 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                         }
                     }
                 }
+            }
+        } else {
+            // Document, session, other
+            if (extMatches && sizeMatches) {
+                coincidences = 3;
             }
         }
 

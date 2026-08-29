@@ -6,19 +6,20 @@
 #include "VideoPlayerComponent.h"
 #include "../Vault/Resolucao.h"
 #include "ModalMitigacao.h"
+#include "ProgressoGlobal.h"
 
 namespace matriz::ui {
 
 // A unified side-by-side preview component for a single file (image, document, audio or video)
 class SingleFilePreviewComponent : public juce::Component, private juce::Timer {
 public:
-    SingleFilePreviewComponent(ProjetoAberto& proj, const std::string& itemId, const std::string& ext, std::function<void()> onPlayCallback)
+    SingleFilePreviewComponent(ProjetoAberto& proj, const std::string& itemId, const std::string& ext, std::function<void()> onPlayCallback,
+                               const std::string& fullPath = {}, const std::string& colPasta = {})
         : projeto_(proj), itemId_(itemId), ext_(ext), onPlay_(onPlayCallback) {
         
         spectrum_.assign(24, 0.0f);
         
         auto& db = projeto_.projeto().registro();
-        // resolverArquivo expects arquivo.id, not item.id — look up the master arquivo first
         try {
             auto stmtArq = db.prepare(
                 "SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
@@ -30,6 +31,30 @@ public:
                     file_ = *fileOpt;
             }
         } catch (...) {}
+
+        if (file_ == juce::File() && !colPasta.empty()) {
+            juce::File colDir(colPasta);
+            juce::File colDbFile = colDir.getChildFile("registro.sqlite");
+            if (colDbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(colDbFile.getFullPathName().toStdString());
+                    auto stmtArq = colDb.prepare("SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+                    stmtArq.bind(1, matriz::db::Value::of(itemId_));
+                    if (stmtArq.step()) {
+                        std::string arquivoId = stmtArq.columnText(0);
+                        auto fileOpt = matriz::vault::resolverArquivo(colDb, arquivoId, colDir);
+                        if (fileOpt && fileOpt->existsAsFile())
+                            file_ = *fileOpt;
+                    }
+                } catch (...) {}
+            }
+        }
+
+        if (file_ == juce::File() && !fullPath.empty()) {
+            juce::File fp(fullPath);
+            if (fp.existsAsFile()) file_ = fp;
+        }
+
         if (file_ != juce::File()) {
             juce::String extension = juce::String(ext_).toLowerCase();
             isImage_ = (extension == "jpg" || extension == "jpeg" || extension == "png" || extension == "gif" || extension == "tiff");
@@ -175,6 +200,40 @@ public:
             if (lblTimecode_) lblTimecode_->setBounds(100, getHeight() - 42, 120, 32);
         }
     }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        if (e.mods.isPopupMenu()) {
+            juce::PopupMenu menu;
+            menu.addItem(1, "SHOW SOURCE");
+            menu.addItem(2, "COPY PATH");
+            std::string itemId = itemId_;
+            juce::Component::SafePointer<SingleFilePreviewComponent> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, itemId](int res) {
+                if (!safeThis) return;
+                if (res == 1) {
+                    auto caminhoOpt = safeThis->projeto_.caminhoDeOrigem(itemId);
+                    if (caminhoOpt && caminhoOpt->isNotEmpty()) {
+                        juce::File f(*caminhoOpt);
+                        if (f.existsAsFile() || f.isDirectory()) f.revealToUser();
+                        else {
+                            juce::AlertWindow::showAsync(
+                                juce::MessageBoxOptions()
+                                    .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                    .withTitle("Source Not Found")
+                                    .withMessage("The source file was not found at:\n" + *caminhoOpt)
+                                    .withButton("OK"),
+                                nullptr);
+                        }
+                    }
+                } else if (res == 2) {
+                    auto caminhoOpt = safeThis->projeto_.caminhoDeOrigem(itemId);
+                    if (caminhoOpt && caminhoOpt->isNotEmpty()) {
+                        juce::SystemClipboard::copyTextToClipboard(*caminhoOpt);
+                    }
+                }
+            });
+        }
+    }
     
 private:
     void timerCallback() override {
@@ -279,11 +338,96 @@ private:
                 if (f.existsAsFile()) {
                     thumbOriginal_ = juce::ImageFileFormat::loadFrom(f);
                 }
+            } else if (!grupo_.original.collectionCaminho.empty()) {
+                juce::File colDir(grupo_.original.collectionCaminho);
+                juce::File indFile = colDir.getChildFile("indice.sqlite");
+                if (indFile.existsAsFile()) {
+                    try {
+                        matriz::db::Database indDb(indFile.getFullPathName().toStdString());
+                        auto stmt = indDb.prepare("SELECT caminho_arquivo FROM miniatura WHERE item_id = ? AND eh_principal = 1 LIMIT 1");
+                        stmt.bind(1, matriz::db::Value::of(grupo_.original.itemId));
+                        if (stmt.step()) {
+                            juce::File thumbF = colDir.getChildFile(stmt.columnText(0));
+                            if (thumbF.existsAsFile()) thumbOriginal_ = juce::ImageFileFormat::loadFrom(thumbF);
+                        }
+                    } catch (...) {}
+                }
             }
+
             if (auto caminhoDup = proj.caminhoMiniaturaPrincipal(grupo_.duplicata.itemId)) {
                 juce::File f(caminhoDup->toStdString());
                 if (f.existsAsFile()) {
                     thumbDuplicata_ = juce::ImageFileFormat::loadFrom(f);
+                }
+            } else if (!grupo_.duplicata.collectionCaminho.empty()) {
+                juce::File colDir(grupo_.duplicata.collectionCaminho);
+                juce::File indFile = colDir.getChildFile("indice.sqlite");
+                if (indFile.existsAsFile()) {
+                    try {
+                        matriz::db::Database indDb(indFile.getFullPathName().toStdString());
+                        auto stmt = indDb.prepare("SELECT caminho_arquivo FROM miniatura WHERE item_id = ? AND eh_principal = 1 LIMIT 1");
+                        stmt.bind(1, matriz::db::Value::of(grupo_.duplicata.itemId));
+                        if (stmt.step()) {
+                            juce::File thumbF = colDir.getChildFile(stmt.columnText(0));
+                            if (thumbF.existsAsFile()) thumbDuplicata_ = juce::ImageFileFormat::loadFrom(thumbF);
+                        }
+                    } catch (...) {}
+                }
+            }
+        }
+
+        void mouseDown(const juce::MouseEvent& e) override {
+            if (e.mods.isPopupMenu()) {
+                int w = getWidth() - 20;
+                juce::Rectangle<int> origThumbRect(15, 36, 64, 64);
+                juce::Rectangle<int> dupThumbRect(w / 2 + 5, 36, 64, 64);
+
+                std::string targetItemId;
+                if (origThumbRect.contains(e.getPosition()) || (e.x < getWidth() / 2 && e.y < 180)) {
+                    targetItemId = grupo_.original.itemId;
+                } else if (dupThumbRect.contains(e.getPosition()) || (e.x >= getWidth() / 2 && e.y < 180)) {
+                    targetItemId = grupo_.duplicata.itemId;
+                }
+
+                if (!targetItemId.empty()) {
+                    juce::PopupMenu menu;
+                    menu.addItem(1, "SHOW SOURCE");
+                    menu.addItem(2, "COPY PATH");
+                    juce::Component::SafePointer<CardComponent> safeThis(this);
+                    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, targetItemId](int res) {
+                        if (!safeThis) return;
+                        if (res == 1) {
+                            auto caminhoOpt = safeThis->owner_.projeto_.caminhoDeOrigem(targetItemId);
+                            if (caminhoOpt && caminhoOpt->isNotEmpty()) {
+                                juce::File f(*caminhoOpt);
+                                if (f.existsAsFile() || f.isDirectory()) {
+                                    f.revealToUser();
+                                } else {
+                                    juce::AlertWindow::showAsync(
+                                        juce::MessageBoxOptions()
+                                            .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                            .withTitle("Source Not Found")
+                                            .withMessage("The source file was not found at:\n" + *caminhoOpt)
+                                            .withButton("OK"),
+                                        nullptr);
+                                }
+                            } else {
+                                juce::AlertWindow::showAsync(
+                                    juce::MessageBoxOptions()
+                                        .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                        .withTitle("Source Not Found")
+                                        .withMessage("No source path recorded for this item.")
+                                        .withButton("OK"),
+                                    nullptr);
+                            }
+                        } else if (res == 2) {
+                            auto caminhoOpt = safeThis->owner_.projeto_.caminhoDeOrigem(targetItemId);
+                            if (caminhoOpt && caminhoOpt->isNotEmpty()) {
+                                juce::SystemClipboard::copyTextToClipboard(*caminhoOpt);
+                            }
+                        }
+                    });
+                    return;
                 }
             }
         }
@@ -306,9 +450,15 @@ private:
             int colW = w / 2 - 20;
 
             auto drawColumn = [&](juce::Graphics& g, int x, const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
+                if (!m.collectionNome.empty()) {
+                    g.setColour(tk.acento);
+                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                    g.drawText("COLLECTION: " + juce::String(m.collectionNome).toUpperCase(), x, 2, colW, 14, juce::Justification::left, true);
+                }
+
                 g.setColour(tk.textoPrimario);
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
-                g.drawText(isDup ? "POSSIBLE DUPLICATE" : "EXISTING ORIGINAL", x, 12, colW, 20, juce::Justification::left);
+                g.drawText(isDup ? "POSSIBLE DUPLICATE" : "EXISTING ORIGINAL", x, 16, colW, 18, juce::Justification::left);
 
                 // Draw thumbnail rectangle
                 juce::Rectangle<int> thumbRect(x, 36, 64, 64);
@@ -382,7 +532,8 @@ private:
 
                 g.setColour(tk.textoTerciario);
                 g.setFont(juce::Font(juce::FontOptions(9.0f)));
-                g.drawText("Path: " + m.caminhoRelativo, x, 158, colW, 14, juce::Justification::left, true);
+                juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
+                g.drawText("Path: " + displayPath, x, 158, colW, 14, juce::Justification::left, true);
             };
 
             // Draw original details with its thumbnail
@@ -419,12 +570,14 @@ private:
                 // Create previews
                 previewOriginal_ = std::make_unique<SingleFilePreviewComponent>(
                     owner_.projeto_, grupo_.original.itemId, grupo_.original.ext,
-                    [this] { if (previewDuplicata_) previewDuplicata_->pause(); });
+                    [this] { if (previewDuplicata_) previewDuplicata_->pause(); },
+                    grupo_.original.fullPath, grupo_.original.collectionCaminho);
                 addAndMakeVisible(*previewOriginal_);
                 
                 previewDuplicata_ = std::make_unique<SingleFilePreviewComponent>(
                     owner_.projeto_, grupo_.duplicata.itemId, grupo_.duplicata.ext,
-                    [this] { if (previewOriginal_) previewOriginal_->pause(); });
+                    [this] { if (previewOriginal_) previewOriginal_->pause(); },
+                    grupo_.duplicata.fullPath, grupo_.duplicata.collectionCaminho);
                 addAndMakeVisible(*previewDuplicata_);
             } else {
                 previewOriginal_.reset();
@@ -600,6 +753,10 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     btnScan_->setEnabled(false);
     btnScan_->setButtonText("SCANNING...");
     viewport_->setVisible(false);
+
+    ProgressoGlobal::obterInstancia().iniciarTarefa(
+        "duplicates_scan", "Scanning Duplicates", 0, [this] { signalThreadShouldExit(); },
+        "Analyzing catalog for duplicate assets...");
     
     startTimer(100); // Poll scan progress
     resized();
@@ -609,6 +766,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 
 void DuplicatesWorkspaceComponent::run() {
     auto& db = projeto_.projeto().registro();
+    bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
     // 1. Get all candidate items for duplicate detection
     struct ItemInfo {
@@ -623,118 +781,130 @@ void DuplicatesWorkspaceComponent::run() {
         std::string orientation;
         std::string colorSpace;
         std::string caminhoRelativo;
+        std::string fullPath;
+        std::string collectionNome;
+        std::string collectionCaminho;
         juce::int64 tamanhoBytes = 0;
     };
     std::vector<ItemInfo> items;
 
-    try {
-        auto stmt = db.prepare(
-            "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
-            "FROM item i "
-            "JOIN arquivo a ON a.item_id = i.id "
-            "WHERE a.eh_master = 1 "
-            "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
-            "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_DUPLICATE]%') "
-            "  AND i.estado != 'duplicata'");
+    auto carregarItensDeDb = [&](matriz::db::Database& database, const juce::File& pastaProjeto, const std::string& colNome, const std::string& colCaminho) {
+        try {
+            auto stmt = database.prepare(
+                "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem "
+                "FROM item i "
+                "JOIN arquivo a ON a.item_id = i.id "
+                "WHERE a.eh_master = 1 "
+                "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
+                "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_DUPLICATE]%') "
+                "  AND i.estado != 'duplicata'");
 
-        while (stmt.step()) {
-            if (threadShouldExit()) return;
-            ItemInfo info;
-            info.itemId = stmt.columnText(0);
-            info.codigoAcervo = stmt.columnText(1);
-            info.titulo = stmt.columnText(2);
-            std::string path = stmt.columnText(3);
-            info.caminhoRelativo = path;
-            info.ext = juce::File(path).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
-            info.tamanhoBytes = stmt.columnInt(5);
+            while (stmt.step()) {
+                if (threadShouldExit()) return;
+                ItemInfo info;
+                info.itemId = stmt.columnText(0);
+                info.codigoAcervo = stmt.columnText(1);
+                info.titulo = stmt.columnText(2);
+                std::string path = stmt.columnText(3);
+                info.caminhoRelativo = path;
+                info.ext = juce::File(path).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
+                info.tamanhoBytes = stmt.columnInt(5);
+                info.collectionNome = colNome;
+                info.collectionCaminho = colCaminho;
 
-            std::string jsonStr = stmt.columnText(4);
-            auto jsonVar = juce::JSON::parse(jsonStr);
-            if (auto* obj = jsonVar.getDynamicObject()) {
-                if (obj->hasProperty("duracaoSegundos")) {
-                    info.duracao = obj->getProperty("duracaoSegundos");
+                std::string absOrig = stmt.columnText(6);
+                if (!absOrig.empty()) {
+                    info.fullPath = absOrig;
+                } else if (pastaProjeto.exists()) {
+                    info.fullPath = pastaProjeto.getChildFile(path).getFullPathName().toStdString();
                 }
-                if (obj->hasProperty("larguraPx")) {
-                    info.largura = obj->getProperty("larguraPx");
-                }
-                if (obj->hasProperty("alturaPx")) {
-                    info.altura = obj->getProperty("alturaPx");
-                }
-                if (obj->hasProperty("lufsIntegrado")) {
-                    info.lufs = obj->getProperty("lufsIntegrado");
-                }
-                if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
-                    if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
-                        if (exif->hasProperty("Exif.Image.Orientation")) {
-                            info.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
-                        }
-                        if (exif->hasProperty("Exif.Photo.ColorSpace")) {
-                            info.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+
+                std::string jsonStr = stmt.columnText(4);
+                auto jsonVar = juce::JSON::parse(jsonStr);
+                if (auto* obj = jsonVar.getDynamicObject()) {
+                    if (obj->hasProperty("duracaoSegundos")) {
+                        info.duracao = obj->getProperty("duracaoSegundos");
+                    }
+                    if (obj->hasProperty("larguraPx")) {
+                        info.largura = obj->getProperty("larguraPx");
+                    }
+                    if (obj->hasProperty("alturaPx")) {
+                        info.altura = obj->getProperty("alturaPx");
+                    }
+                    if (obj->hasProperty("lufsIntegrado")) {
+                        info.lufs = obj->getProperty("lufsIntegrado");
+                    }
+                    if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                        if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                            if (exif->hasProperty("Exif.Image.Orientation")) {
+                                info.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
+                            }
+                            if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                                info.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+                            }
                         }
                     }
                 }
-            }
 
-            // Filter 1: Scope
-            if (activeFilters_.scope == 2) {
-                if (activeFilters_.selecionadosNoGrid.count(info.itemId) == 0) {
-                    continue;
+                // Filter 1: Scope
+                if (activeFilters_.scope == 2) {
+                    if (activeFilters_.selecionadosNoGrid.count(info.itemId) == 0) {
+                        continue;
+                    }
                 }
-            }
 
-            // Filter 2: File Type
-            if (activeFilters_.fileType > 1) {
-                auto cat = matriz::ingest::categoriaPorExtensao(info.ext);
-                bool match = false;
-                switch (activeFilters_.fileType) {
-                    case 2: // IMAGE
-                        match = (cat == matriz::ingest::CategoriaMidia::Imagem);
-                        break;
-                    case 3: // VIDEO
-                        match = (cat == matriz::ingest::CategoriaMidia::Video);
-                        break;
-                    case 4: // AUDIO
-                        match = (cat == matriz::ingest::CategoriaMidia::Audio);
-                        break;
-                    case 5: // DOCS
-                        match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-                        break;
-                    case 6: // SESSIONS
-                        match = (cat == matriz::ingest::CategoriaMidia::Sessao);
-                        break;
-                    case 7: // OTHER
-                        match = (cat != matriz::ingest::CategoriaMidia::Imagem &&
-                                 cat != matriz::ingest::CategoriaMidia::Video &&
-                                 cat != matriz::ingest::CategoriaMidia::Audio &&
-                                 cat != matriz::ingest::CategoriaMidia::Documento &&
-                                 cat != matriz::ingest::CategoriaMidia::Texto &&
-                                 cat != matriz::ingest::CategoriaMidia::Sessao);
-                        break;
+                // Filter 2: File Type
+                if (activeFilters_.fileType > 1) {
+                    auto cat = matriz::ingest::categoriaPorExtensao(info.ext);
+                    bool match = false;
+                    switch (activeFilters_.fileType) {
+                        case 2: match = (cat == matriz::ingest::CategoriaMidia::Imagem); break;
+                        case 3: match = (cat == matriz::ingest::CategoriaMidia::Video); break;
+                        case 4: match = (cat == matriz::ingest::CategoriaMidia::Audio); break;
+                        case 5: match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto); break;
+                        case 6: match = (cat == matriz::ingest::CategoriaMidia::Sessao); break;
+                        case 7: match = (cat != matriz::ingest::CategoriaMidia::Imagem &&
+                                         cat != matriz::ingest::CategoriaMidia::Video &&
+                                         cat != matriz::ingest::CategoriaMidia::Audio &&
+                                         cat != matriz::ingest::CategoriaMidia::Documento &&
+                                         cat != matriz::ingest::CategoriaMidia::Texto &&
+                                         cat != matriz::ingest::CategoriaMidia::Sessao); break;
+                    }
+                    if (!match) continue;
                 }
-                if (!match) continue;
-            }
 
-            // Filter 3: File Size
-            if (activeFilters_.sizeFilter > 1) {
-                bool match = false;
-                switch (activeFilters_.sizeFilter) {
-                    case 2: // Size is bigger than
-                        match = (info.tamanhoBytes > activeFilters_.sizeLimitBytes);
-                        break;
-                    case 3: // Size is smaller than
-                        match = (info.tamanhoBytes < activeFilters_.sizeLimitBytes);
-                        break;
-                    case 4: // Size equals
-                        match = (info.tamanhoBytes == activeFilters_.sizeLimitBytes);
-                        break;
+                // Filter 3: File Size
+                if (activeFilters_.sizeFilter > 1) {
+                    bool match = false;
+                    switch (activeFilters_.sizeFilter) {
+                        case 2: match = (info.tamanhoBytes > activeFilters_.sizeLimitBytes); break;
+                        case 3: match = (info.tamanhoBytes < activeFilters_.sizeLimitBytes); break;
+                        case 4: match = (info.tamanhoBytes == activeFilters_.sizeLimitBytes); break;
+                    }
+                    if (!match) continue;
                 }
-                if (!match) continue;
-            }
 
-            items.push_back(info);
+                items.push_back(info);
+            }
+        } catch (...) {}
+    };
+
+    if (isCatalogMode) {
+        auto colecoes = projeto_.listarColecoesLinkadas();
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbF = colDir.getChildFile("registro.sqlite");
+            if (dbF.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbF.getFullPathName().toStdString());
+                    carregarItensDeDb(colDb, colDir, c.nome.toStdString(), c.caminhoProjeto.toStdString());
+                } catch (...) {}
+            }
         }
-    } catch (...) {
-        return;
+        carregarItensDeDb(db, projeto_.projeto().pasta(), "", "");
+    } else {
+        carregarItensDeDb(db, projeto_.projeto().pasta(), "", "");
     }
 
     if (items.empty()) {
@@ -743,92 +913,159 @@ void DuplicatesWorkspaceComponent::run() {
     }
 
     // 2. Perform cross-matching for duplicates
-    for (size_t i = 0; i < items.size(); ++i) {
-        if (threadShouldExit()) return;
+    if (isCatalogMode) {
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (threadShouldExit()) return;
+            progressoScan_ = static_cast<double>(i) / static_cast<double>(items.size());
 
-        progressoScan_ = static_cast<double>(i) / static_cast<double>(items.size());
+            const auto& a = items[i];
+            for (size_t j = i + 1; j < items.size(); ++j) {
+                if (threadShouldExit()) return;
+                const auto& b = items[j];
 
-        const auto& item = items[i];
-        
-        // Find if this item has any metadata duplicates in the database that are NOT the item itself
-        // and which were ingested before it (or just has a lexicographically smaller ID to avoid double-listing).
-        auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
-            db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
-            projeto_.projeto().pasta());
+                bool nomeIgual = juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo));
+                bool extIgual = (a.ext == b.ext);
+                bool duracaoIgual = (a.duracao > 0 && b.duracao > 0 && std::abs(a.duracao - b.duracao) < 0.1);
+                bool dimIgual = (a.largura > 0 && b.largura > 0 && a.largura == b.largura && a.altura == b.altura);
+                bool tamanhoIgual = (a.tamanhoBytes > 0 && a.tamanhoBytes == b.tamanhoBytes);
+                bool lufsIgual = (a.lufs != 0.0 && b.lufs != 0.0 && std::abs(a.lufs - b.lufs) < 0.1);
+                bool orientationIgual = (!a.orientation.empty() && a.orientation == b.orientation);
+                bool colorSpaceIgual = (!a.colorSpace.empty() && a.colorSpace == b.colorSpace);
 
-        if (matchOpt && matchOpt->itemId < item.itemId) {
-            // Found a duplicate match group! Let's load the original's details from database.
-            DuplicateGroup group;
-            group.duplicata.itemId = item.itemId;
-            group.duplicata.codigoAcervo = item.codigoAcervo;
-            group.duplicata.titulo = item.titulo;
-            group.duplicata.ext = item.ext;
-            group.duplicata.duracao = item.duracao;
-            group.duplicata.largura = item.largura;
-            group.duplicata.altura = item.altura;
-            group.duplicata.lufs = item.lufs;
-            group.duplicata.tamanhoBytes = item.tamanhoBytes;
-            group.duplicata.orientation = item.orientation;
-            group.duplicata.colorSpace = item.colorSpace;
-            group.duplicata.caminhoRelativo = item.caminhoRelativo;
+                bool isDupMatch = (nomeIgual && extIgual) ||
+                                  (tamanhoIgual && extIgual) ||
+                                  (duracaoIgual && lufsIgual && extIgual) ||
+                                  (dimIgual && tamanhoIgual);
 
-            group.original.itemId = matchOpt->itemId;
-            group.original.codigoAcervo = matchOpt->codigoAcervo;
+                if (isDupMatch) {
+                    DuplicateGroup group;
+                    group.original.itemId = a.itemId;
+                    group.original.codigoAcervo = a.codigoAcervo;
+                    group.original.titulo = a.titulo;
+                    group.original.ext = a.ext;
+                    group.original.duracao = a.duracao;
+                    group.original.largura = a.largura;
+                    group.original.altura = a.altura;
+                    group.original.lufs = a.lufs;
+                    group.original.tamanhoBytes = a.tamanhoBytes;
+                    group.original.orientation = a.orientation;
+                    group.original.colorSpace = a.colorSpace;
+                    group.original.caminhoRelativo = a.caminhoRelativo;
+                    group.original.fullPath = a.fullPath;
+                    group.original.collectionNome = a.collectionNome;
+                    group.original.collectionCaminho = a.collectionCaminho;
+
+                    group.duplicata.itemId = b.itemId;
+                    group.duplicata.codigoAcervo = b.codigoAcervo;
+                    group.duplicata.titulo = b.titulo;
+                    group.duplicata.ext = b.ext;
+                    group.duplicata.duracao = b.duracao;
+                    group.duplicata.largura = b.largura;
+                    group.duplicata.altura = b.altura;
+                    group.duplicata.lufs = b.lufs;
+                    group.duplicata.tamanhoBytes = b.tamanhoBytes;
+                    group.duplicata.orientation = b.orientation;
+                    group.duplicata.colorSpace = b.colorSpace;
+                    group.duplicata.caminhoRelativo = b.caminhoRelativo;
+                    group.duplicata.fullPath = b.fullPath;
+                    group.duplicata.collectionNome = b.collectionNome;
+                    group.duplicata.collectionCaminho = b.collectionCaminho;
+
+                    group.original.nomeCoincide = group.duplicata.nomeCoincide = nomeIgual;
+                    group.original.extCoincide = group.duplicata.extCoincide = extIgual;
+                    group.original.duracaoCoincide = group.duplicata.duracaoCoincide = duracaoIgual;
+                    group.original.dimCoincide = group.duplicata.dimCoincide = dimIgual;
+                    group.original.tamanhoCoincide = group.duplicata.tamanhoCoincide = tamanhoIgual;
+                    group.original.orientationCoincide = group.duplicata.orientationCoincide = orientationIgual;
+                    group.original.colorSpaceCoincide = group.duplicata.colorSpaceCoincide = colorSpaceIgual;
+                    group.original.lufsCoincide = group.duplicata.lufsCoincide = lufsIgual;
+
+                    gruposDetectados_.push_back(group);
+                }
+            }
+        }
+    } else {
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (threadShouldExit()) return;
+            progressoScan_ = static_cast<double>(i) / static_cast<double>(items.size());
+
+            const auto& item = items[i];
             
-            // Query original properties
-            try {
-                auto stmt = db.prepare(
-                    "SELECT i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
-                    "FROM item i JOIN arquivo a ON a.item_id = i.id "
-                    "WHERE i.id = ? AND a.eh_master = 1 LIMIT 1");
-                stmt.bind(1, matriz::db::Value::of(matchOpt->itemId));
-                if (stmt.step()) {
-                    group.original.titulo = stmt.columnText(0);
-                    std::string origPath = stmt.columnText(1);
-                    group.original.caminhoRelativo = origPath;
-                    group.original.ext = juce::File(origPath).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
-                    group.original.tamanhoBytes = stmt.columnInt(3);
-                    
-                    std::string origJson = stmt.columnText(2);
-                    auto jsonVar = juce::JSON::parse(origJson);
-                    if (auto* obj = jsonVar.getDynamicObject()) {
-                        if (obj->hasProperty("duracaoSegundos")) {
-                            group.original.duracao = obj->getProperty("duracaoSegundos");
-                        }
-                        if (obj->hasProperty("larguraPx")) {
-                            group.original.largura = obj->getProperty("larguraPx");
-                        }
-                        if (obj->hasProperty("alturaPx")) {
-                            group.original.altura = obj->getProperty("alturaPx");
-                        }
-                        if (obj->hasProperty("lufsIntegrado")) {
-                            group.original.lufs = obj->getProperty("lufsIntegrado");
-                        }
-                        if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
-                            if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
-                                if (exif->hasProperty("Exif.Image.Orientation")) {
-                                    group.original.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
-                                }
-                                if (exif->hasProperty("Exif.Photo.ColorSpace")) {
-                                    group.original.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+            auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
+                db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
+                projeto_.projeto().pasta());
+
+            if (matchOpt && matchOpt->itemId < item.itemId) {
+                DuplicateGroup group;
+                group.duplicata.itemId = item.itemId;
+                group.duplicata.codigoAcervo = item.codigoAcervo;
+                group.duplicata.titulo = item.titulo;
+                group.duplicata.ext = item.ext;
+                group.duplicata.duracao = item.duracao;
+                group.duplicata.largura = item.largura;
+                group.duplicata.altura = item.altura;
+                group.duplicata.lufs = item.lufs;
+                group.duplicata.tamanhoBytes = item.tamanhoBytes;
+                group.duplicata.orientation = item.orientation;
+                group.duplicata.colorSpace = item.colorSpace;
+                group.duplicata.caminhoRelativo = item.caminhoRelativo;
+
+                group.original.itemId = matchOpt->itemId;
+                group.original.codigoAcervo = matchOpt->codigoAcervo;
+                
+                try {
+                    auto stmt = db.prepare(
+                        "SELECT i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes "
+                        "FROM item i JOIN arquivo a ON a.item_id = i.id "
+                        "WHERE i.id = ? AND a.eh_master = 1 LIMIT 1");
+                    stmt.bind(1, matriz::db::Value::of(matchOpt->itemId));
+                    if (stmt.step()) {
+                        group.original.titulo = stmt.columnText(0);
+                        std::string origPath = stmt.columnText(1);
+                        group.original.caminhoRelativo = origPath;
+                        group.original.ext = juce::File(origPath).getFileExtension().replaceCharacter('.', ' ').trim().toLowerCase().toStdString();
+                        group.original.tamanhoBytes = stmt.columnInt(3);
+                        
+                        std::string origJson = stmt.columnText(2);
+                        auto jsonVar = juce::JSON::parse(origJson);
+                        if (auto* obj = jsonVar.getDynamicObject()) {
+                            if (obj->hasProperty("duracaoSegundos")) {
+                                group.original.duracao = obj->getProperty("duracaoSegundos");
+                            }
+                            if (obj->hasProperty("larguraPx")) {
+                                group.original.largura = obj->getProperty("larguraPx");
+                            }
+                            if (obj->hasProperty("alturaPx")) {
+                                group.original.altura = obj->getProperty("alturaPx");
+                            }
+                            if (obj->hasProperty("lufsIntegrado")) {
+                                group.original.lufs = obj->getProperty("lufsIntegrado");
+                            }
+                            if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
+                                if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                                    if (exif->hasProperty("Exif.Image.Orientation")) {
+                                        group.original.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
+                                    }
+                                    if (exif->hasProperty("Exif.Photo.ColorSpace")) {
+                                        group.original.colorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString().toStdString();
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            } catch (...) {}
+                } catch (...) {}
 
-            // Set matches
-            group.duplicata.nomeCoincide = group.original.nomeCoincide = juce::String(group.original.titulo).equalsIgnoreCase(juce::String(group.duplicata.titulo));
-            group.duplicata.extCoincide = group.original.extCoincide = (group.original.ext == group.duplicata.ext);
-            group.duplicata.duracaoCoincide = group.original.duracaoCoincide = (group.original.duracao > 0 && group.duplicata.duracao > 0 && std::abs(group.original.duracao - group.duplicata.duracao) < 0.1);
-            group.duplicata.dimCoincide = group.original.dimCoincide = (group.original.largura > 0 && group.duplicata.largura > 0 && group.original.largura == group.duplicata.largura && group.original.altura == group.duplicata.altura);
-            group.duplicata.tamanhoCoincide = group.original.tamanhoCoincide = (group.original.tamanhoBytes == group.duplicata.tamanhoBytes);
-            group.duplicata.orientationCoincide = group.original.orientationCoincide = (group.original.orientation == group.duplicata.orientation);
-            group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
-            group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
+                group.duplicata.nomeCoincide = group.original.nomeCoincide = juce::String(group.original.titulo).equalsIgnoreCase(juce::String(group.duplicata.titulo));
+                group.duplicata.extCoincide = group.original.extCoincide = (group.original.ext == group.duplicata.ext);
+                group.duplicata.duracaoCoincide = group.original.duracaoCoincide = (group.original.duracao > 0 && group.duplicata.duracao > 0 && std::abs(group.original.duracao - group.duplicata.duracao) < 0.1);
+                group.duplicata.dimCoincide = group.original.dimCoincide = (group.original.largura > 0 && group.duplicata.largura > 0 && group.original.largura == group.duplicata.largura && group.original.altura == group.duplicata.altura);
+                group.duplicata.tamanhoCoincide = group.original.tamanhoCoincide = (group.original.tamanhoBytes == group.duplicata.tamanhoBytes);
+                group.duplicata.orientationCoincide = group.original.orientationCoincide = (group.original.orientation == group.duplicata.orientation);
+                group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
+                group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
 
-            gruposDetectados_.push_back(group);
+                gruposDetectados_.push_back(group);
+            }
         }
     }
 
@@ -842,19 +1079,26 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             btnScan_->setEnabled(true);
             btnScan_->setButtonText("SCAN FOR DUPLICATES");
             
+            juce::String msgFinal;
             if (gruposDetectados_.empty()) {
                 estado_ = State::Clean;
-                lblStatus_->setText("No duplicates found. Your archive is 100% clean!", juce::dontSendNotification);
+                msgFinal = "No duplicates found. Your archive is 100% clean!";
+                lblStatus_->setText(msgFinal, juce::dontSendNotification);
             } else {
                 estado_ = State::Results;
-                lblStatus_->setText("Scan completed. Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
+                msgFinal = "Scan completed. Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.";
+                lblStatus_->setText(msgFinal, juce::dontSendNotification);
                 viewport_->setVisible(true);
                 listaComponent_->updateList(gruposDetectados_);
             }
+            ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", msgFinal);
             resized();
             repaint();
         } else {
             lblStatus_->setText("Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
+            ProgressoGlobal::obterInstancia().atualizarFracao(
+                "duplicates_scan", progressoScan_,
+                "Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
         }
     }
 }

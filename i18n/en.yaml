@@ -31,21 +31,21 @@ tela_inicial:
   titulo: "What do you want to organize?"
   subtitulo: "Pick one and drag your files in. You can always change your mind later by creating another project."
   botao_abrir: "Open an existing project…"
-  cartao_archive_titulo: "ARCHIVE"
-  cartao_archive_descricao: "Photos, video, documents, tape, scanned paper — mixed material you want to keep and be able to find again."
-  cartao_archive_publico: "e.g. the drive with everything you piled up"
+  cartao_archive_titulo: "COLLECTION"
+  cartao_archive_descricao: "Photos, video, documents, tape, masters — a single project or artwork unit you want to organize and preserve."
+  cartao_archive_publico: "e.g. albums, films, raw footage, artwork collections"
   cartao_catalog_titulo: "CATALOG"
-  cartao_catalog_descricao: "Records, tracks, masters and samples — material that organizes itself by artist and release."
-  cartao_catalog_publico: "e.g. the studio project drive"
+  cartao_catalog_descricao: "Group of Collections — navigate multiple collections and export consolidated backups."
+  cartao_catalog_publico: "e.g. artist catalog, studio discography, multi-project hub"
   recentes_titulo: "Pick up where you left off"
-  recente_modo_archive: "Mixed files"
-  recente_modo_catalog: Music
+  recente_modo_archive: "Collection"
+  recente_modo_catalog: "Catalog"
 
 dialogo_novo_projeto:
   titulo: New project
   campo_nome: "Project name"
-  campo_modo_preservacao: "New mixed-files project"
-  campo_modo_catalogo: "New music project"
+  campo_modo_preservacao: "New Collection project"
+  campo_modo_catalogo: "New Catalog project"
   campo_prefixo: Naming prefix
   campo_instituicao: "Institution or label (optional)"
   campo_responsavel: "Responsible party (optional)"

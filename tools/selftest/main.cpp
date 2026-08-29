@@ -256,8 +256,8 @@ void testarI18n() {
     // O rótulo do modo deixou de ser o jargão "Archive"/"Acervo" e passou a
     // dizer o que a pessoa tem em mãos ("mixed files") — mudança deliberada
     // de vocabulário, não regressão.
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New mixed-files project",
-          "preservation mode is called \"New mixed-files project\"");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New Collection project",
+          "preservation mode is called \"New Collection project\"");
     check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
           "a missing key returns [key], never throws and never hangs");
 
@@ -266,7 +266,7 @@ void testarI18n() {
     matriz::i18n::carregar("pt_BR");
     check(matriz::i18n::t("menu.arquivo") == "File",
           "asking for pt_BR changes nothing: the interface stays in English");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New mixed-files project",
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New Collection project",
           "no Portuguese string survives after asking for pt_BR");
 
     matriz::i18n::carregar("en");

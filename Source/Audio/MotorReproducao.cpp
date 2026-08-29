@@ -111,6 +111,7 @@ MotorReproducao::~MotorReproducao() {
         jassertfalse;
     }
     bufferParaAudio_.store(nullptr);
+    bufferEmUso_ = nullptr;
 }
 
 void MotorReproducao::aplicarBufferCarregado(const BufferAudio::Ptr& novo) {
@@ -299,6 +300,7 @@ void MotorReproducao::audioDeviceAboutToStart(juce::AudioIODevice* dispositivo) 
 void MotorReproducao::audioDeviceStopped() {
     matriz::diag::breadcrumb("audioDeviceStopped");
     tocando_.store(false);
+    bufferEmUso_ = nullptr;
 }
 
 void MotorReproducao::audioDeviceIOCallbackWithContext(const float* const*, int, float* const* saida,
@@ -309,21 +311,24 @@ void MotorReproducao::audioDeviceIOCallbackWithContext(const float* const*, int,
     for (int c = 0; c < canaisSaida; ++c)
         if (saida[c] != nullptr) juce::FloatVectorOperations::clear(saida[c], amostras);
 
-    BufferAudio* buffer = bufferParaAudio_.load();
-    if (buffer == nullptr || !tocando_.load()) {
+    BufferAudio* raw = bufferParaAudio_.load();
+    if (raw != bufferEmUso_.get())
+        bufferEmUso_ = raw;
+
+    if (bufferEmUso_ == nullptr || !tocando_.load()) {
         picoE_.store(0.0f);
         picoD_.store(0.0f);
         return;
     }
 
-    const auto& audio = buffer->audio;
+    const auto& audio = bufferEmUso_->audio;
     const int totalAmostras = audio.getNumSamples();
     const int canaisFonte = audio.getNumChannels();
     if (totalAmostras <= 0 || canaisFonte <= 0) return;
 
     // Razão entre a taxa do arquivo e a da placa: sem isso um arquivo de
     // 44,1 kHz numa placa a 48 kHz tocaria mais agudo e mais rápido.
-    const double razaoTaxa = buffer->taxaAmostragem / (taxaSaida_ > 0.0 ? taxaSaida_ : 48000.0);
+    const double razaoTaxa = bufferEmUso_->taxaAmostragem / (taxaSaida_ > 0.0 ? taxaSaida_ : 48000.0);
 
     double posicao = posicaoAmostras_.load();
     double velocidadeAlvo = velocidade_.load();
@@ -334,7 +339,7 @@ void MotorReproducao::audioDeviceIOCallbackWithContext(const float* const*, int,
     const bool emJog = jogAtivo_.load();
     if (emJog) {
         double distancia = jogAlvoAmostras_.load() - posicao;
-        double janela = kSuavizacaoMs * 0.001 * buffer->taxaAmostragem;
+        double janela = kSuavizacaoMs * 0.001 * bufferEmUso_->taxaAmostragem;
         velocidadeAlvo = juce::jlimit(-16.0, 16.0, janela > 0.0 ? distancia / janela : 0.0);
     }
 
@@ -343,8 +348,8 @@ void MotorReproducao::audioDeviceIOCallbackWithContext(const float* const*, int,
     double suave = velocidadeSuave_.load();
     const double coef = std::exp(-1.0 / (kSuavizacaoMs * 0.001 * (taxaSaida_ > 0.0 ? taxaSaida_ : 48000.0)));
 
-    const double loopIni = loopInicio_.load() * buffer->taxaAmostragem;
-    const double loopFim = loopFim_.load() * buffer->taxaAmostragem;
+    const double loopIni = loopInicio_.load() * bufferEmUso_->taxaAmostragem;
+    const double loopFim = loopFim_.load() * bufferEmUso_->taxaAmostragem;
     const bool comLoop = loopAtivo_.load() && loopFim > loopIni;
 
     float picoE = 0.0f, picoD = 0.0f;

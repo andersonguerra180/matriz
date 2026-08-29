@@ -34,6 +34,8 @@ public:
 
     std::vector<juce::String> obterListaPastas() const;
 
+    std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
+
 private:
     struct FolderNode {
         std::string id;

@@ -35,6 +35,10 @@ public:
     void renomearSelecionados();
     void removerSelecionadosDoBackup();
 
+    void selecionarFiltroSelecionados();
+    void selecionarFiltroTodos();
+    void definirSelecaoItens(const std::set<std::string>& itemIds);
+
     std::function<void()> aoVoltar;
     std::function<void(std::string folderId)> aoAgruparEIrParaTree;
 
@@ -61,7 +65,6 @@ private:
 
     void construirSidebar();
     void construirFiltroAnos();
-    void construirFiltroContent();
     void construirFiltroCollection();
     void aplicarFiltroAno();
     void aplicarFiltrosAdicionais();
@@ -73,6 +76,7 @@ private:
     void revalidarPastaAtual();
     void abrirWorkbench(const std::string& itemId);
     void fecharWorkbench();
+    void abrirRelinkOffline(const std::string& itemId);
     void abrirMenuContexto(std::vector<std::string> itemIds);
     void selecionarItem(const std::string& itemId);
     void timerCallback() override;
@@ -114,10 +118,6 @@ private:
     std::vector<std::pair<int, int>> anosDisponiveis_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesAnos_;
     std::optional<int> anoSelecionado_;
-
-    std::vector<std::pair<std::string, int>> contentDisponiveis_;
-    std::vector<std::unique_ptr<juce::TextButton>> botoesContent_;
-    std::optional<std::string> contentSelecionado_;
 
     std::vector<std::pair<std::string, int>> collectionDisponiveis_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesCollection_;

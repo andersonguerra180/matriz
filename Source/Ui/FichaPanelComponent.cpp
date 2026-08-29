@@ -1,6 +1,7 @@
 #include "FichaPanelComponent.h"
 
 #include "MetadadosOriginaisComponent.h"
+#include "OriginalSourceMedium.h"
 #include "TagChipsEditor.h"
 #include "../Analytics/AssetGeolocation.h"
 
@@ -336,9 +337,8 @@ public:
         {
             juce::StringArray faltando;
             if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add("YEAR");
-            if (projeto_.lerMetadado(itemId, "content_type").value_or("").empty()) faltando.add("CONTENT");
             if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add("SOURCE MEDIA");
-            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add("COLLECTION");
+            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add("CONTENT");
             if (faltando.size() > 0) {
                 labelReviewFaltando_ = std::make_unique<juce::Label>();
                 labelReviewFaltando_->setText("Needs review: " + faltando.joinIntoString(", "),
@@ -528,7 +528,16 @@ public:
             cu->badge->setBounds(x + larguraUtil - 95, y, 95, 16);
             y += 18;
 
-            if (cu->ehTags) {
+            if (cu->ehOriginalSourceMedium) {
+                if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(cu->editor.get())) {
+                    int prefH = osm->getPreferredHeight();
+                    osm->setBounds(x, y, larguraUtil, prefH);
+                    y += prefH + tk.espacoPequeno;
+                } else {
+                    cu->editor->setBounds(x, y, larguraUtil, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+            } else if (cu->ehTags) {
                 if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
                     chips->setBounds(x, y, larguraUtil, chips->getPreferredHeight());
                     y += chips->getPreferredHeight() + tk.espacoPequeno;
@@ -906,6 +915,7 @@ private:
         bool ehAutoFixed = false;
         bool ehNotes = false;
         bool ehTags = false;
+        bool ehOriginalSourceMedium = false;
         std::unique_ptr<juce::Label> rotulo;
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Component> editor;
@@ -1064,7 +1074,6 @@ private:
         juce::String valName = tituloStd;
         juce::String valPath = projeto_.lerMetadado(itemId, "caminho_catalogo").value_or(arquivo ? arquivo->caminhoAbsoluto.toStdString() : "");
         juce::String valYear = projeto_.lerMetadado(itemId, "ano").value_or("");
-        juce::String valContent = projeto_.lerMetadado(itemId, "content_type").value_or("");
         juce::String valSourceMedia = projeto_.lerMetadado(itemId, "source_media").value_or("");
         juce::String valCollection = projeto_.lerMetadado(itemId, "collection_type").value_or("");
         juce::String valIsrc = projeto_.lerMetadado(itemId, "isrc").value_or("");
@@ -1393,6 +1402,38 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
+        auto addEditableOriginalSourceMedium = [this, &tk, itemId](const std::string& rawValue) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = "source_media";
+            linha->colunaDb = "source_media";
+            linha->ehOriginalSourceMedium = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("ORIGINAL SOURCE MEDIUM", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto osm = std::make_unique<OriginalSourceMediumEditorComponent>();
+            osm->setValueString(rawValue);
+            osm->onChange = [this, itemId, rawOsm = osm.get()] {
+                projeto_.salvarMetadado(itemId, "source_media", rawOsm->getValueString());
+                if (aoMudar) aoMudar();
+                if (aoRelayoutNecessario) aoRelayoutNecessario();
+            };
+            addAndMakeVisible(*osm);
+            linha->editor = std::move(osm);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
             addEditableText("path", "PATH", valPath, "caminho_catalogo");
@@ -1404,14 +1445,12 @@ private:
             addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
             if (channelsStr.isNotEmpty())
                 addAutoFixed("channels", "CHANNELS", channelsStr);
-            addEditableDropdown("content", "CONTENT", valContent,
-                                {"Music", "Sample", "Sound Effect", "Field Recording", "Dialog", "Dubbing Track", "Test Tone"},
-                                "content_type");
             addEditableText("isrc", "ISRC", valIsrc, "isrc");
-            addEditableDropdown("collection", "SOURCE MEDIA", valCollection,
-                                {"Album", "EP", "Single", "Sample Pack", "Soundtrack", "Multi-Track", "STEM", "CD", "DVD", "DAT", "MD",
-                                 "Laser Disc", "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette", "2\" Tape",
-                                 "1\" Tape", "1/2\" Tape", "1/4\" Tape", "MIDI"},
+            addEditableOriginalSourceMedium(valSourceMedia.toStdString());
+            addEditableDropdown("collection", "CONTENT", valCollection,
+                                {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
+                                 "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+                                 "Artist Catalog", "Artist Backup"},
                                 "collection_type");
             addEditableNotes(valNotes);
             addEditableTags(tagsList);
@@ -1425,15 +1464,10 @@ private:
             addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
             addAutoFixed("sample_rate", "SAMPLE RATE", sampleRateStr);
             addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
-            addEditableDropdown("content", "CONTENT", valContent,
-                                {"Film", "Video", "Social Media", "CellPhone Footage"},
-                                "content_type");
-            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
-                                {"Hard Drive", "SD", "CF", "Flash Drive", "Internet", "MiniDV", "Hi8", "Betacam",
-                                 "VHS", "Betamax", "35mm", "16mm", "Super8mm", "Flipbook"},
-                                "source_media");
-            addEditableDropdown("collection", "COLLECTION", valCollection,
-                                {"Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate", "WEB", "3D", "Animation"},
+            addEditableOriginalSourceMedium(valSourceMedia.toStdString());
+            addEditableDropdown("collection", "CONTENT", valCollection,
+                                {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
+                                 "Corporate Video", "Commercial", "Live Performance", "NLE Project"},
                                 "collection_type");
             addEditableNotes(valNotes);
             addEditableTags(tagsList);
@@ -1444,14 +1478,9 @@ private:
             addAutoFixed("format", "FORMAT", ext);
             addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
             addAutoFixed("color_space", "COLOR SPACE", colorSpaceStr);
-            addEditableDropdown("content", "CONTENT", valContent,
-                                {"Photo", "Artwork", "Illustration", "Screenshot", "Scan", "Slide", "Cover Art", "Poster", "Flyer", "Logo"},
-                                "content_type");
-            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
-                                {"Camera", "Cellphone", "Scanner", "Internet", "Screenshot", "Hard Drive", "SD", "CF", "Flash Drive", "35mm", "PinHole"},
-                                "source_media");
-            addEditableDropdown("collection", "COLLECTION", valCollection,
-                                {"Photo", "Artwork", "Album Cover", "Poster", "Documentation", "Archive", "Family", "Project", "Reference"},
+            addEditableOriginalSourceMedium(valSourceMedia.toStdString());
+            addEditableDropdown("collection", "CONTENT", valCollection,
+                                {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"},
                                 "collection_type");
             addEditableNotes(valNotes);
             addEditableTags(tagsList);
@@ -1460,14 +1489,9 @@ private:
             addAutoFixed("format", "FORMAT", ext);
             addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
             addAutoFixed("pages", "PAGES", pagesStr);
-            addEditableDropdown("content", "CONTENT", valContent,
-                                {"Document", "Book", "Article", "Contract", "Manual", "Report", "Letter", "Invoice", "Spreadsheet", "Presentation", "Script", "Technical Document", "Session"},
-                                "content_type");
-            addEditableDropdown("source_media", "SOURCE MEDIA", valSourceMedia,
-                                {"Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "Internet", "Email", "Cloud", "Scanner"},
-                                "source_media");
-            addEditableDropdown("collection", "COLLECTION", valCollection,
-                                {"Book", "Archive", "Project", "Contract", "Legal", "Financial", "Technical", "Research", "Press", "Documentation", "Manual", "Catalog", "Reference"},
+            addEditableOriginalSourceMedium(valSourceMedia.toStdString());
+            addEditableDropdown("collection", "CONTENT", valCollection,
+                                {"Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"},
                                 "collection_type");
             addEditableNotes(valNotes);
             addEditableTags(tagsList);
@@ -2114,7 +2138,16 @@ public:
             linha->badge->setBounds(x + larguraUtil - 90, y, 90, 16);
             y += 18;
 
-            if (linha->ehNotes) {
+            if (linha->ehOriginalSourceMedium) {
+                if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
+                    int prefH = osm->getPreferredHeight();
+                    linha->editor->setBounds(x, y, larguraUtil, prefH);
+                    y += prefH + tk.espacoPequeno;
+                } else {
+                    linha->editor->setBounds(x, y, larguraUtil, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+            } else if (linha->ehNotes) {
                 linha->editor->setBounds(x, y, larguraUtil, 64);
                 y += 64 + tk.espacoPequeno;
             } else {
@@ -2179,12 +2212,12 @@ private:
         bool ehNotes = false;
         bool ehTags = false;
         bool ehDropdown = false;
+        bool ehOriginalSourceMedium = false;
         std::vector<std::string> opcoes;
     };
 
     struct SnapshotItem {
         std::string ano;
-        std::string content_type;
         std::string source_media;
         std::string collection_type;
         std::string isrc;
@@ -2390,17 +2423,45 @@ private:
             linha->editor = std::move(ed);
         };
 
+        auto addOriginalSourceMediumLote = [this, &tk]() {
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = "source_media";
+            linha->colunaDb = "source_media";
+            linha->ehOriginalSourceMedium = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("ORIGINAL SOURCE MEDIUM", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[BATCH OVERRIDE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto osm = std::make_unique<OriginalSourceMediumEditorComponent>();
+            osm->onChange = [this, linha] {
+                linha->tocado = true;
+                atualizarPrevia();
+                relayoutEExibir();
+            };
+            addAndMakeVisible(*osm);
+            linha->editor = std::move(osm);
+        };
+
         // Specific fields per category (§ metadata spec)
         // Hidden in batch: NAME, PATH, and all AUTO + FIXED fields.
         switch (cat) {
             case MediaCategory::Audio: {
                 addEditableTextLote("year", "YEAR", "ano");
-                addDropdownLote("content", "CONTENT", "content_type", {
-                    "Music", "Sample", "Sound Effect", "Field Recording", "Dialog", "Dubbing Track", "Test Tone"
-                });
-                addDropdownLote("collection", "COLLECTION", "collection_type", {
-                    "Album", "EP", "Single", "Sample Pack", "Soundtrack", "CD", "DVD", "DAT", "MD", "Laser Disc",
-                    "12\" Vinyl", "10\" Vinyl", "7\" Vinyl", "Cassette", "2\" Tape", "1\" Tape", "1/2\" Tape", "1/4\" Tape", "MIDI"
+                addOriginalSourceMediumLote();
+                addDropdownLote("collection", "CONTENT", "collection_type", {
+                    "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
+                    "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+                    "Artist Catalog", "Artist Backup"
                 });
                 addTagsLote();
                 addEditableTextLote("isrc", "ISRC", "isrc");
@@ -2409,15 +2470,10 @@ private:
             }
             case MediaCategory::Video: {
                 addEditableTextLote("year", "YEAR", "ano");
-                addDropdownLote("content", "CONTENT", "content_type", {
-                    "Film", "Video", "Social Media", "CellPhone Footage"
-                });
-                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
-                    "Hard Drive", "SD", "CF", "Flash Drive", "Internet", "MiniDV", "Hi8", "Betacam", "VHS", "Betamax",
-                    "35mm", "16mm", "Super8mm", "Flipbook"
-                });
-                addDropdownLote("collection", "COLLECTION", "collection_type", {
-                    "Raw Footage", "Film", "DOC", "Home-Video", "Videoclip", "Corporate", "WEB", "3D", "Animation"
+                addOriginalSourceMediumLote();
+                addDropdownLote("collection", "CONTENT", "collection_type", {
+                    "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
+                    "Corporate Video", "Commercial", "Live Performance", "NLE Project"
                 });
                 addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
@@ -2425,14 +2481,9 @@ private:
             }
             case MediaCategory::Image: {
                 addEditableTextLote("year", "YEAR", "ano");
-                addDropdownLote("content", "CONTENT", "content_type", {
-                    "Photo", "Artwork", "Illustration", "Screenshot", "Scan", "Slide", "Cover Art", "Poster", "Flyer", "Logo"
-                });
-                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
-                    "Camera", "Cellphone", "Scanner", "Internet", "Screenshot", "Hard Drive", "SD", "CF", "Flash Drive", "35mm", "PinHole"
-                });
-                addDropdownLote("collection", "COLLECTION", "collection_type", {
-                    "Photo", "Artwork", "Album Cover", "Poster", "Documentation", "Archive", "Family", "Project", "Reference"
+                addOriginalSourceMediumLote();
+                addDropdownLote("collection", "CONTENT", "collection_type", {
+                    "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"
                 });
                 addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
@@ -2440,14 +2491,9 @@ private:
             }
             case MediaCategory::Docs: {
                 addEditableTextLote("year", "YEAR", "ano");
-                addDropdownLote("content", "CONTENT", "content_type", {
-                    "Document", "Book", "Article", "Contract", "Manual", "Report", "Letter", "Invoice", "Spreadsheet", "Presentation", "Script", "Technical Document"
-                });
-                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
-                    "Hard Drive", "SD", "CF", "Flash Drive", "CD", "DVD", "Internet", "Email", "Cloud", "Scanner"
-                });
-                addDropdownLote("collection", "COLLECTION", "collection_type", {
-                    "Book", "Archive", "Project", "Contract", "Legal", "Financial", "Technical", "Research", "Press", "Documentation", "Manual", "Catalog", "Reference"
+                addOriginalSourceMediumLote();
+                addDropdownLote("collection", "CONTENT", "collection_type", {
+                    "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"
                 });
                 addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
@@ -2456,14 +2502,15 @@ private:
             case MediaCategory::Mixed:
             default: {
                 addEditableTextLote("year", "YEAR", "ano");
-                addDropdownLote("content", "CONTENT", "content_type", {
-                    "Music", "Video", "Photo", "Artwork", "Document", "Book", "Sample", "Raw Footage", "Archive"
-                });
-                addDropdownLote("source_media", "SOURCE MEDIA", "source_media", {
-                    "Hard Drive", "SD", "CF", "Flash Drive", "Internet", "Scanner", "CD", "DVD", "Camera"
-                });
-                addDropdownLote("collection", "COLLECTION", "collection_type", {
-                    "Album", "Archive", "Project", "Film", "Photo", "Documentation", "Reference"
+                addOriginalSourceMediumLote();
+                addDropdownLote("collection", "CONTENT", "collection_type", {
+                    "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
+                    "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+                    "Artist Catalog", "Artist Backup", "Raw Footage", "Home Video", "Music Video",
+                    "Film", "Documentary", "Corporate Video", "Commercial", "Live Performance",
+                    "NLE Project", "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
+                    "Image Edit Project", "Documentation", "Book", "Contract", "Manual", "Report",
+                    "Reference", "Technical Documentation"
                 });
                 addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
@@ -2494,6 +2541,11 @@ private:
     }
 
     juce::String lerValorLinha(const LinhaLote& linha) const {
+        if (linha.ehOriginalSourceMedium) {
+            if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha.editor.get())) {
+                return juce::String::fromUTF8(osm->getValueString().c_str());
+            }
+        }
         if (auto* cb = dynamic_cast<juce::ComboBox*>(linha.editor.get())) {
             int id = cb->getSelectedId();
             if (id > 0 && id <= static_cast<int>(linha.opcoes.size()))
@@ -2541,7 +2593,6 @@ private:
         for (const auto& id : itemIds_) {
             SnapshotItem snap;
             snap.ano = projeto_.lerMetadado(id, "ano").value_or("");
-            snap.content_type = projeto_.lerMetadado(id, "content_type").value_or("");
             snap.source_media = projeto_.lerMetadado(id, "source_media").value_or("");
             snap.collection_type = projeto_.lerMetadado(id, "collection_type").value_or("");
             snap.isrc = projeto_.lerMetadado(id, "isrc").value_or("");
@@ -2615,7 +2666,6 @@ private:
         for (const auto& [id, snap] : undoSnapshot_) {
             try {
                 projeto_.salvarMetadado(id, "ano", snap.ano);
-                projeto_.salvarMetadado(id, "content_type", snap.content_type);
                 projeto_.salvarMetadado(id, "source_media", snap.source_media);
                 projeto_.salvarMetadado(id, "collection_type", snap.collection_type);
                 projeto_.salvarMetadado(id, "isrc", snap.isrc);

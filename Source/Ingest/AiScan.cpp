@@ -284,11 +284,11 @@ bool gerarProxyAudio(const juce::File& origem, const juce::File& destino, double
 
 // ---------------------------------------------------------------------------
 
-int reindexarAiScanNaBusca(matriz::db::Database& registro) {
+int reindexarAiScanNaBusca(matriz::db::Database& indice, matriz::db::Database& registro) {
     int indexados = 0;
     std::vector<std::pair<std::string, std::string>> linhas;
 
-    auto stmt = registro.prepare(
+    auto stmt = indice.prepare(
         "SELECT item_id, resumo FROM ai_scan_resultado WHERE resumo IS NOT NULL AND resumo <> ''");
     while (stmt.step()) linhas.emplace_back(stmt.columnText(0), stmt.columnText(1));
 
@@ -311,7 +311,8 @@ int reindexarAiScanNaBusca(matriz::db::Database& registro) {
     return indexados;
 }
 
-AiScanRelatorio executarAiScan(matriz::db::Database& registro,
+AiScanRelatorio executarAiScan(matriz::db::Database& indice,
+                                matriz::db::Database& registro,
                                 const juce::String& apiKey,
                                 const std::vector<std::string>& itemIds,
                                 const juce::File& pastaProjeto,
@@ -609,7 +610,7 @@ AiScanRelatorio executarAiScan(matriz::db::Database& registro,
             // duplica a linha de busca.
             std::string resumoAnterior;
             {
-                auto sAnt = registro.prepare("SELECT resumo FROM ai_scan_resultado WHERE id = ?");
+                auto sAnt = indice.prepare("SELECT resumo FROM ai_scan_resultado WHERE id = ?");
                 sAnt.bind(1, Value::of(scanId));
                 if (sAnt.step()) resumoAnterior = sAnt.columnText(0);
             }
@@ -617,7 +618,7 @@ AiScanRelatorio executarAiScan(matriz::db::Database& registro,
                 registro.run("DELETE FROM busca_fts WHERE item_id = ? AND conteudo = ?",
                               {Value::of(itemId), Value::of(resumoAnterior)});
 
-            registro.run(
+            indice.run(
                 "INSERT OR REPLACE INTO ai_scan_resultado "
                 "(id, item_id, modelo, tipo_analise, contexto_json, resumo, confianca, analisado_em) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -646,9 +647,9 @@ AiScanRelatorio executarAiScan(matriz::db::Database& registro,
     return rel;
 }
 
-std::vector<AiScanResult> resultadosDoItem(matriz::db::Database& registro, const std::string& itemId) {
+std::vector<AiScanResult> resultadosDoItem(matriz::db::Database& indice, const std::string& itemId) {
     std::vector<AiScanResult> out;
-    auto stmt = registro.prepare(
+    auto stmt = indice.prepare(
         "SELECT id, item_id, modelo, tipo_analise, contexto_json, resumo, confianca, analisado_em "
         "FROM ai_scan_resultado WHERE item_id = ? ORDER BY analisado_em DESC");
     stmt.bind(1, Value::of(itemId));

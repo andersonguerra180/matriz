@@ -57,6 +57,7 @@ struct ItemResumo {
     std::string nomeOriginalArquivo;
     std::string pastaNome; // Name of the acervo_pasta folder the item belongs to
     juce::int64 tamanhoBytes = 0;
+    bool offline = false;
 };
 
 class ProjetoAbertoError : public std::runtime_error {
@@ -362,6 +363,31 @@ public:
     std::map<std::string, int> contagensPorContentType() const;
     std::map<std::string, int> contagensPorCollectionType() const;
 
+    struct ColecaoDisponivel {
+        std::string chave;
+        juce::String rotulo;
+        int contagem = 0;
+    };
+    std::vector<ColecaoDisponivel> listarColecoesDisponiveis() const;
+    std::set<std::string> itensDaColecao(const std::string& chave) const;
+
+    // Catalog - Linked Collections (§ E.3)
+    struct ColecaoLink {
+        std::string id;
+        juce::String caminhoProjeto;
+        juce::String nome;
+        juce::String grupo;
+        juce::String criadoEm;
+        uint64_t totalAssets = 0;
+        juce::int64 totalBytes = 0;
+        bool valido = false;
+    };
+    std::vector<ColecaoLink> listarColecoesLinkadas() const;
+    bool linkarColecao(const juce::File& pastaProjeto, const juce::String& grupo = {});
+    bool desvincularColecao(const std::string& linkId);
+    bool relocarColecaoLink(const std::string& linkId, const juce::File& novaPastaProjeto);
+    bool atualizarGrupoColecao(const std::string& linkId, const juce::String& novoGrupo);
+
     // Ids de item cujo campo "ano" (nível raiz) cai em [anoDe, anoAte].
     // Item sem "ano" preenchido nunca entra (faixa é sobre o que se sabe).
     std::set<std::string> itensPorFaixaAno(int anoDe, int anoAte) const;
@@ -460,9 +486,22 @@ public:
     const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
     void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
 
+    // In-memory relinking and two-stage persistence
+    bool isDirty() const { return dirty_; }
+    void setDirty(bool d) { dirty_ = d; }
+    const std::map<std::string, std::string>& inMemoryRelinkedPaths() const { return inMemoryRelinkedPaths_; }
+    void aplicarRelinkEmMemoria(const std::string& arquivoId, const std::string& newPath);
+    void aplicarBatchRelinkEmMemoria(const std::map<std::string, std::string>& newPaths);
+    void salvar();
+    void descartarAlteracoesEmMemoria();
+    std::optional<juce::File> resolverArquivoComMemoria(const std::string& arquivoId) const;
+
 private:
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
+
+    std::map<std::string, std::string> inMemoryRelinkedPaths_;
+    bool dirty_ = false;
 
     static constexpr int kMaxUndo = 10;
     std::vector<UndoGroup> pilhaUndo_;

@@ -553,36 +553,6 @@ CREATE TABLE IF NOT EXISTS item_entidade (
 );
 
 -- ---------------------------------------------------------------------------
--- AI Scan — resultados persistidos de análise contextual com IA (Gemini).
--- Armazenados no registro (não no índice) porque são decisão do operador
--- (ele escolheu executar o scan) e precisam sobreviver a rebuild do índice.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS ai_scan_resultado (
-    id              TEXT PRIMARY KEY,
-    item_id         TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
-    modelo          TEXT NOT NULL,       -- e.g. "gemini-2.0-flash"
-    -- 'visual' | 'audio' | 'video' | 'documento'. Sem CHECK: a lista de tipos
-    -- analisáveis cresce junto com a API, e um CHECK aqui transforma cada tipo
-    -- novo numa exceção em tempo de execução no meio de um scan longo.
-    tipo_analise    TEXT NOT NULL,
-    contexto_json   TEXT NOT NULL,       -- JSON array of detected concepts/tags
-    resumo          TEXT,                -- human-readable summary
-    confianca       REAL,               -- 0.0-1.0
-    analisado_em    TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_ai_scan_resultado_item ON ai_scan_resultado(item_id);
-
--- FTS index for AI scan results — enables contextual search ("bicycle", "beach", etc.)
-CREATE TRIGGER IF NOT EXISTS trg_ai_scan_busca_insert AFTER INSERT ON ai_scan_resultado FOR EACH ROW BEGIN
-    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.resumo);
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_ai_scan_busca_delete AFTER DELETE ON ai_scan_resultado FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.resumo;
-END;
-
--- ---------------------------------------------------------------------------
 -- Busca Textual Spotlight (FTS5)
 -- ---------------------------------------------------------------------------
 CREATE VIRTUAL TABLE IF NOT EXISTS busca_fts USING fts5(

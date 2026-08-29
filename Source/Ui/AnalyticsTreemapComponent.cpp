@@ -1,5 +1,6 @@
 #include "AnalyticsTreemapComponent.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -516,7 +517,7 @@ void AnalyticsTreemapComponent::desenharNo(juce::Graphics& g, AnalyticsTreemapNo
         g.setColour(nodeColor);
         g.drawRect(node->bounds, 2.0f);
 
-        // Folder Title Header (SpaceMonger style)
+        // Folder Title Header (Treemap Explorer style)
         if (node != noAtual_ && node->bounds.getHeight() > 18.0f && node->bounds.getWidth() > 30.0f) {
             auto headerR = juce::Rectangle<float>(node->bounds.getX(), node->bounds.getY(), node->bounds.getWidth(), std::min(16.0f, node->bounds.getHeight()));
             g.setColour(nodeColor.darker(0.45f).withAlpha(0.92f));
@@ -679,6 +680,26 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
 
         if (aoSelecionarItem && !clicked->assetId.empty()) {
             aoSelecionarItem(clicked->assetId);
+        }
+
+        if (e.getNumberOfClicks() == 2) {
+            // Double click: Show at Source (§ C.1)
+            juce::String targetPath = juce::String(clicked->path);
+            if (!targetPath.isEmpty()) {
+                juce::File arq(targetPath);
+                if (arq.existsAsFile() || arq.isDirectory()) {
+                    arq.revealToUser();
+                } else {
+                    juce::AlertWindow::showAsync(
+                        juce::MessageBoxOptions()
+                            .withIconType(juce::MessageBoxIconType::InfoIcon)
+                            .withTitle(matriz::i18n::t("acoes.origem_ausente_titulo"))
+                            .withMessage(matriz::i18n::t("acoes.origem_ausente_mensagem").replace("{caminho}", targetPath))
+                            .withButton(matriz::i18n::t("comum.ok")),
+                        nullptr);
+                }
+            }
+            return;
         }
 
         if (e.mods.isPopupMenu()) {

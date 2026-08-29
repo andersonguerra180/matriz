@@ -59,6 +59,9 @@ public:
     void alternarFiltroOrigem(const juce::String& origem);
     void alternarFiltroContentType(const juce::String& contentType);
     void alternarFiltroCollectionType(const juce::String& collectionType);
+    enum class FiltroDisponibilidade { All, Online, Offline };
+    void alternarFiltroDisponibilidade(FiltroDisponibilidade f);
+    FiltroDisponibilidade filtroDisponibilidadeAtivo() const { return filtroDisponibilidade_; }
     void limparFiltros(); // chips + busca + faixa de ano — não mexe no filtro de pasta da árvore (eixo independente)
     const std::set<juce::String>& filtrosTipoMidiaAtivos() const { return filtrosTipoMidia_; }
     const std::set<juce::String>& filtrosEstadoAtivos() const { return filtrosEstado_; }
@@ -117,6 +120,7 @@ public:
     // numa edição em lote logo em seguida.
     void selecionarTodos();
     void limparSelecao();
+    void definirSelecao(const std::set<std::string>& itemIds);
 
     // Disparado sempre que o conjunto selecionado muda, por qualquer
     // caminho (clique, Shift, Cmd, selecionarTodos, limparSelecao) — a
@@ -199,6 +203,8 @@ public:
     // Clique duplo abre o preview no mesmo espaço (§3.4) — clique único só
     // seleciona (permite Shift/Cmd sem entrar em preview no meio do gesto).
     std::function<void(const std::string& itemId)> aoAbrirPreview;
+    // Double click on offline item opens relink dialog instead of normal preview player
+    std::function<void(const std::string& itemId)> aoAbrirRelinkOffline;
     // Estado vazio inteiro é clicável, além de alvo de drop (§3.2) — abre o
     // mesmo seletor de arquivo/pasta que o botão "Add material".
     std::function<void()> aoClicarEstadoVazio;
@@ -248,6 +254,7 @@ private:
     std::vector<GrupoMosaico> grupos_;
     std::set<juce::String> filtrosTipoMidia_, filtrosEstado_, filtrosExtensao_, filtrosOrigem_;
     std::set<juce::String> filtrosContentType_, filtrosCollectionType_;
+    FiltroDisponibilidade filtroDisponibilidade_ = FiltroDisponibilidade::All;
     std::optional<std::pair<int, int>> filtroFaixaAno_;                                          // ver definirFiltroFaixaAno
     ModoAgrupamento modoAgrupamento_ = ModoAgrupamento::Automatico;
     juce::String buscaTexto_;
