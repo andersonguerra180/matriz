@@ -192,50 +192,42 @@ SmartHealthReport parseSmartctlJson(const juce::String& jsonText) {
 
 SmartHealthReport consultarSaudeSmart(const std::string& bsdDeviceNode, const juce::File& mountPoint) {
     juce::File smartctl = encontrarSmartctl();
-    if (!smartctl.existsAsFile()) {
-        SmartHealthReport rep;
-        rep.state = HealthState::Unavailable;
-        rep.stateLabel = "UNAVAILABLE";
-        rep.stateColour = juce::Colour(0xff71717a);
-        rep.unavailableMessage = "SMART data unavailable through the current storage interface.";
-        return rep;
+    if (smartctl.existsAsFile()) {
+        juce::String bsd = extrairDiscoFisicoBase(juce::String(bsdDeviceNode));
+        if (bsd.isEmpty() && mountPoint.exists()) {
+            auto id = obterIdentidadeHardwareVolume(mountPoint);
+            bsd = extrairDiscoFisicoBase(juce::String(id.bsdDeviceNode));
+        }
+
+        if (bsd.isNotEmpty()) {
+            juce::StringArray args;
+            args.add(smartctl.getFullPathName());
+            args.add("-j");
+            args.add("-a");
+            args.add(bsd);
+
+            juce::ChildProcess proc;
+            if (proc.start(args, juce::ChildProcess::wantStdOut)) {
+                juce::String output = proc.readAllProcessOutput();
+                proc.waitForProcessToFinish(3000);
+                auto rep = parseSmartctlJson(output);
+                if (rep.state != HealthState::Unavailable) {
+                    return rep;
+                }
+            }
+        }
     }
 
-    juce::String bsd = extrairDiscoFisicoBase(juce::String(bsdDeviceNode));
-    if (bsd.isEmpty() && mountPoint.exists()) {
-        auto id = obterIdentidadeHardwareVolume(mountPoint);
-        bsd = extrairDiscoFisicoBase(juce::String(id.bsdDeviceNode));
-    }
-
-    if (bsd.isEmpty()) {
-        SmartHealthReport rep;
-        rep.state = HealthState::Unavailable;
-        rep.stateLabel = "UNAVAILABLE";
-        rep.stateColour = juce::Colour(0xff71717a);
-        rep.unavailableMessage = "SMART data unavailable through the current storage interface.";
-        return rep;
-    }
-
-    juce::StringArray args;
-    args.add(smartctl.getFullPathName());
-    args.add("-j");
-    args.add("-a");
-    args.add(bsd);
-
-    juce::ChildProcess proc;
-    if (!proc.start(args, juce::ChildProcess::wantStdOut)) {
-        SmartHealthReport rep;
-        rep.state = HealthState::Unavailable;
-        rep.stateLabel = "UNAVAILABLE";
-        rep.stateColour = juce::Colour(0xff71717a);
-        rep.unavailableMessage = "SMART data unavailable through the current storage interface.";
-        return rep;
-    }
-
-    juce::String output = proc.readAllProcessOutput();
-    proc.waitForProcessToFinish(3000);
-
-    return parseSmartctlJson(output);
+#if defined(__APPLE__)
+    return obterSaudeSmartNativoMac(mountPoint, bsdDeviceNode);
+#else
+    SmartHealthReport rep;
+    rep.state = HealthState::Unavailable;
+    rep.stateLabel = "UNAVAILABLE";
+    rep.stateColour = juce::Colour(0xff71717a);
+    rep.unavailableMessage = "SMART telemetry is not supported on this storage interface.";
+    return rep;
+#endif
 }
 
 void gravarLogSmart(matriz::db::Database& db, const std::string& vaultId, const SmartHealthReport& report) {

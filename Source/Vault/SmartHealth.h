@@ -35,7 +35,10 @@ struct SmartHealthReport {
 // Evaluates SMART health from a smartctl JSON output string
 SmartHealthReport parseSmartctlJson(const juce::String& jsonText);
 
-// Dispatches smartctl command against the physical device node and parses output
+// Native in-process macOS DiskArbitration / IOKit SMART health query (no external tools required)
+SmartHealthReport obterSaudeSmartNativoMac(const juce::File& path, const std::string& bsdNode);
+
+// Dispatches smartctl command if present, with seamless native IOKit/DiskArbitration fallback
 SmartHealthReport consultarSaudeSmart(const std::string& bsdDeviceNode, const juce::File& mountPoint);
 
 // Loads the latest persistent SMART reading from the database, or runs an on-demand scan if none exists
