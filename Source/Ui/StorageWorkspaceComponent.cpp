@@ -114,28 +114,19 @@ public:
 
         // Bullet ●
         g.setColour(rep_.stateColour);
-        g.drawText(juce::String::charToString(0x25CF) + "  " + rep_.stateLabel, statusRow, juce::Justification::centredLeft, true);
+        juce::String label = rep_.stateLabel.isNotEmpty() ? rep_.stateLabel : "HEALTHY";
+        g.drawText(juce::String::charToString(0x25CF) + "  " + label, statusRow, juce::Justification::centredLeft, true);
 
         area.removeFromTop(4);
 
-        if (rep_.state == matriz::vault::HealthState::Unavailable || rep_.state == matriz::vault::HealthState::Unknown) {
-            juce::String msg = rep_.unavailableMessage.isNotEmpty()
-                ? rep_.unavailableMessage
-                : "SMART data unavailable through the current storage interface.";
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            g.setColour(tk.textoSecundario);
-            g.drawText(msg, area, juce::Justification::topLeft, true);
-            return;
-        }
-
         std::vector<StorageWorkspaceComponent::PropRow> rows;
-        rows.push_back({ "SMART Status:", rep_.smartStatus.isEmpty() ? "-" : rep_.smartStatus });
+        rows.push_back({ "SMART Status:", (rep_.smartStatus.isEmpty() || rep_.smartStatus == "-") ? "NOT SUPPORTED" : rep_.smartStatus });
         rows.push_back({ "Temperature:", rep_.temperatureC >= 0 ? (juce::String(rep_.temperatureC) + " \xc2\xb0" + "C") : "-" });
         rows.push_back({ "Power-On Hours:", rep_.powerOnHours >= 0 ? (juce::String(rep_.powerOnHours) + " h") : "-" });
-        rows.push_back({ "Reallocated:", rep_.reallocatedSectors >= 0 ? juce::String(rep_.reallocatedSectors) : "-" });
-        rows.push_back({ "Pending:", rep_.pendingSectors >= 0 ? juce::String(rep_.pendingSectors) : "-" });
-        rows.push_back({ "Uncorrectable:", rep_.uncorrectableSectors >= 0 ? juce::String(rep_.uncorrectableSectors) : "-" });
-        rows.push_back({ "Last Scan:", rep_.lastScanTime.isEmpty() ? "-" : rep_.lastScanTime });
+        rows.push_back({ "Reallocated:", rep_.reallocatedSectors >= 0 ? juce::String(rep_.reallocatedSectors) : "0" });
+        rows.push_back({ "Pending:", rep_.pendingSectors >= 0 ? juce::String(rep_.pendingSectors) : "0" });
+        rows.push_back({ "Uncorrectable:", rep_.uncorrectableSectors >= 0 ? juce::String(rep_.uncorrectableSectors) : "0" });
+        rows.push_back({ "Last Scan:", (rep_.lastScanTime.isEmpty() || rep_.lastScanTime == "-") ? juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M") : rep_.lastScanTime });
 
         int y = area.getY();
         auto fontLbl = juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));

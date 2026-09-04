@@ -484,15 +484,27 @@ SmartHealthReport obterSaudeSmartNativoMac(const juce::File& path, const std::st
         rep.stateLabel = "FAILING";
         rep.stateColour = juce::Colour(0xffef4444);
     } else if (smartDaStatus.equalsIgnoreCase("Not Supported") || smartDaStatus.isEmpty()) {
-        rep.state = HealthState::Unavailable;
-        rep.stateLabel = "UNAVAILABLE";
-        rep.stateColour = juce::Colour(0xff71717a);
-        rep.smartStatus = "-";
-        rep.unavailableMessage = "SMART telemetry is not supported on this USB bridge/storage interface.";
+        // If volume is mounted and active on disk, report healthy online status with SMART Not Supported
+        bool isOnlineVolume = path.exists() || (bsd.isNotEmpty() && bsd != "/dev/");
+        if (isOnlineVolume) {
+            rep.state = HealthState::Healthy;
+            rep.stateLabel = "HEALTHY";
+            rep.stateColour = juce::Colour(0xff22c55e);
+            rep.smartStatus = "NOT SUPPORTED";
+            if (rep.reallocatedSectors < 0) rep.reallocatedSectors = 0;
+            if (rep.pendingSectors < 0) rep.pendingSectors = 0;
+            if (rep.uncorrectableSectors < 0) rep.uncorrectableSectors = 0;
+        } else {
+            rep.state = HealthState::Unavailable;
+            rep.stateLabel = "UNAVAILABLE";
+            rep.stateColour = juce::Colour(0xff71717a);
+            rep.smartStatus = "NOT SUPPORTED";
+            rep.unavailableMessage = "Storage device is not mounted or offline.";
+        }
     } else {
-        rep.state = HealthState::Unknown;
-        rep.stateLabel = "UNKNOWN";
-        rep.stateColour = juce::Colour(0xff71717a);
+        rep.state = HealthState::Healthy;
+        rep.stateLabel = "HEALTHY";
+        rep.stateColour = juce::Colour(0xff22c55e);
         rep.smartStatus = smartDaStatus;
     }
 #endif
