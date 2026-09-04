@@ -87,6 +87,7 @@ target_sources(matriz_selftest PRIVATE
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/Checksum.cpp
     Source/Vault/SmartHealth.cpp
+    Source/Vault/DeviceUsageLog.cpp
     Source/Vault/DiskIdentity_mac.mm)
 
 target_include_directories(matriz_selftest PRIVATE Source)
@@ -142,6 +143,8 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/PainelInconsistencias.cpp
     Source/Preservation/Preservation.cpp
     Source/Vault/Volume.cpp
+    Source/Vault/SmartHealth.cpp
+    Source/Vault/DeviceUsageLog.cpp
     Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
@@ -304,6 +307,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/Duplicata.cpp
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
+    Source/Vault/DeviceUsageLog.cpp
     Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp

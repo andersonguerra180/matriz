@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include "ProjetoAberto.h"
+#include "../Vault/DeviceUsageLog.h"
 
 namespace matriz::ui {
 
@@ -63,37 +64,19 @@ private:
         std::string ultimoBackup;
     };
 
-    struct SourceItemLog {
-        std::string arquivoId;
-        std::string itemId;
-        juce::String nomeArquivo;
-        juce::String papel;
-        juce::String formato;
-        juce::int64 tamanhoBytes = 0;
-        juce::String criadoEm;
-        juce::String titulo;
-    };
-
-    struct BackupEventLog {
-        std::string id;
-        std::string vaultId;
-        juce::String modo;
-        int itensCopiados = 0;
-        int itensFalha = 0;
-        bool cancelado = false;
-        juce::String criadoEm;
-    };
-
 private:
     // TableListBoxModel overrides for History table
     int getNumRows() override;
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
+    void cellDoubleClicked(int rowNumber, int columnId, const juce::MouseEvent& mouseEvent) override;
 
     void carregarDados();
     void selecionarDevice(const std::string& vaultId, bool isSourceSelection);
     void salvarNomeVault();
     void salvarCategoriaVault(const std::string& novaCategoria);
+    void abrirPastaLogs();
+    void abrirRelatorioMd(const std::string& caminho);
 
     ProjetoAberto& projeto_;
     bool isCatalog_ = false;
@@ -103,8 +86,7 @@ private:
 
     std::string selectedVaultId_;
     bool selectedIsSource_ = true;
-    std::vector<SourceItemLog> selectedSourceLogs_;
-    std::vector<BackupEventLog> selectedBackupLogs_;
+    std::vector<matriz::vault::DeviceUsageEntry> selectedUsageLogs_;
 
     juce::String lastStorageError_;
     juce::String lastStorageErrorDetails_;
@@ -148,6 +130,7 @@ private:
 
     // History Log Table
     std::unique_ptr<juce::Label> lblHistoryTitle_;
+    std::unique_ptr<juce::TextButton> btnOpenLogFolder_;
     std::unique_ptr<juce::TableListBox> tableHistory_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StorageWorkspaceComponent)

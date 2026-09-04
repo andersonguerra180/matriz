@@ -140,7 +140,6 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdSalvarProjeto, saveText, temProjeto);
         menu.addItem(kCmdSalvarProjetoComo, saveAsText, temProjeto);
         menu.addItem(kCmdFecharProjeto, closeText, temProjeto && podeTrocarProjeto);
-        menu.addItem(kCmdInfoProjeto, infoText, temProjeto);
         menu.addSeparator();
         menu.addItem(kCmdIngerirArquivos, "Add Files...", conteudo_->temProjetoAberto() && !isCatalog);
         menu.addSeparator();
@@ -152,7 +151,6 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdRenomearItem, "Rename Item(s)... (R)", conteudo_->temProjetoAberto());
         menu.addItem(kCmdRemoverDoBackup, "Remove Selected from Backup (C)", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuProjeto) {
-        menu.addItem(kCmdConfiguracoes, matriz::i18n::t("menu.projeto_configuracoes"), conteudo_->temProjetoAberto());
         menu.addItem(kCmdConsolidar, matriz::i18n::t("consolidacao.titulo"), conteudo_->temProjetoAberto());
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, "Project Log (log.md)...", conteudo_->temProjetoAberto());

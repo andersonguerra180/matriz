@@ -52,16 +52,16 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Catalog, "COLLECTIONS", {}, false });
         tabs_.push_back({ Tab::Duplicates, "DUPLICATES", {}, false });
         tabs_.push_back({ Tab::Analytics, "ANALYTICS", {}, false });
-        tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
         tabs_.push_back({ Tab::Storage, "STORAGE", {}, false });
+        tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
     } else {
         tabs_.push_back({ Tab::Intake, "INTAKE", {}, false });
         tabs_.push_back({ Tab::Grid, "GRID", {}, false });
         tabs_.push_back({ Tab::Duplicates, "DUPLICATES", {}, false });
         tabs_.push_back({ Tab::Analytics, "ANALYTICS", {}, false });
         tabs_.push_back({ Tab::Tree, "TREE", {}, false });
-        tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
         tabs_.push_back({ Tab::Storage, "STORAGE", {}, false });
+        tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
     }
 }
 
