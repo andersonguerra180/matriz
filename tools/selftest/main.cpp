@@ -13,6 +13,7 @@
 #include "Ficha/FichaDefinition.h"
 #include "I18n/Strings.h"
 #include "Model/Project.h"
+#include "Vault/SmartHealth.h"
 
 namespace {
 
@@ -304,6 +305,74 @@ void testarRecentes() {
           "the size cap drops the oldest (3 most recent out of 5 insertions)");
 }
 
+void testarSmartHealth() {
+    std::cout << "== SMART Drive Health Evaluation & JSON Parsing ==\n";
+    using namespace matriz::vault;
+
+    // 1. Healthy ATA Drive Payload
+    juce::String healthyJson = R"({
+        "smartctl": { "exit_status": 0 },
+        "smart_status": { "passed": true },
+        "temperature": { "current": 34 },
+        "power_on_time": { "hours": 18432 },
+        "ata_smart_attributes": {
+            "table": [
+                { "id": 5, "raw": { "value": 0 } },
+                { "id": 197, "raw": { "value": 0 } },
+                { "id": 198, "raw": { "value": 0 } }
+            ]
+        }
+    })";
+    auto repH = parseSmartctlJson(healthyJson);
+    check(repH.state == HealthState::Healthy, "healthy payload produces HEALTHY state");
+    check(repH.smartStatus == "PASSED", "SMART status is PASSED");
+    check(repH.temperatureC == 34, "temperature is 34 °C");
+    check(repH.powerOnHours == 18432, "power-on hours is 18432 h");
+    check(repH.reallocatedSectors == 0, "reallocated sectors is 0");
+    check(repH.pendingSectors == 0, "pending sectors is 0");
+    check(repH.uncorrectableSectors == 0, "uncorrectable sectors is 0");
+
+    // 2. Warning Payload (Reallocated sectors present)
+    juce::String warningJson = R"({
+        "smartctl": { "exit_status": 0 },
+        "smart_status": { "passed": true },
+        "temperature": { "current": 36 },
+        "power_on_time": { "hours": 8120 },
+        "ata_smart_attributes": {
+            "table": [
+                { "id": 5, "raw": { "value": 12 } },
+                { "id": 197, "raw": { "value": 0 } },
+                { "id": 198, "raw": { "value": 0 } }
+            ]
+        }
+    })";
+    auto repW = parseSmartctlJson(warningJson);
+    check(repW.state == HealthState::Warning, "reallocated sectors trigger WARNING state");
+    check(repW.reallocatedSectors == 12, "reallocated count is 12");
+
+    // 3. Failing Payload
+    juce::String failingJson = R"({
+        "smartctl": { "exit_status": 8 },
+        "smart_status": { "passed": false },
+        "temperature": { "current": 42 }
+    })";
+    auto repF = parseSmartctlJson(failingJson);
+    check(repF.state == HealthState::Failing, "failed SMART status triggers FAILING state");
+    check(repF.smartStatus == "FAILED", "smartStatus is FAILED");
+
+    // 4. Unavailable Payload (e.g. exit_status bit 1 - device open failed)
+    juce::String unavailJson = R"({
+        "smartctl": { "exit_status": 2 }
+    })";
+    auto repU = parseSmartctlJson(unavailJson);
+    check(repU.state == HealthState::Unavailable, "device open failure triggers UNAVAILABLE state");
+    check(repU.unavailableMessage.contains("unavailable"), "unavailable message is informative");
+
+    // 5. Empty / Invalid string
+    auto repEmpty = parseSmartctlJson("");
+    check(repEmpty.state == HealthState::Unavailable, "empty input triggers UNAVAILABLE state");
+}
+
 } // namespace
 
 int main() {
@@ -312,6 +381,7 @@ int main() {
     testarProjetoPortavel();
     testarI18n();
     testarRecentes();
+    testarSmartHealth();
 
     std::cout << "\n" << (failures == 0 ? "ALL TESTS PASSED" : std::to_string(failures) + " FAILURE(S)") << "\n";
     return failures == 0 ? 0 : 1;

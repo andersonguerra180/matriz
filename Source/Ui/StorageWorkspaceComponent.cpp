@@ -2,6 +2,7 @@
 #include "Tokens.h"
 #include "../Vault/Reconciliacao.h"
 #include "../Vault/Volume.h"
+#include "../Vault/SmartHealth.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/Project.h"
 
@@ -93,6 +94,74 @@ public:
 
 private:
     std::vector<StorageWorkspaceComponent::PropRow> props_;
+};
+
+class StorageWorkspaceComponent::DriveHealthComponent : public juce::Component {
+public:
+    void setReport(const matriz::vault::SmartHealthReport& rep) {
+        rep_ = rep;
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto area = getLocalBounds();
+        if (area.isEmpty()) return;
+
+        // Top Status Header: Colored Bullet + Status Text
+        auto statusRow = area.removeFromTop(18);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+
+        // Bullet ●
+        g.setColour(rep_.stateColour);
+        g.drawText(juce::String::charToString(0x25CF) + "  " + rep_.stateLabel, statusRow, juce::Justification::centredLeft, true);
+
+        area.removeFromTop(4);
+
+        if (rep_.state == matriz::vault::HealthState::Unavailable || rep_.state == matriz::vault::HealthState::Unknown) {
+            juce::String msg = rep_.unavailableMessage.isNotEmpty()
+                ? rep_.unavailableMessage
+                : "SMART data unavailable through the current storage interface.";
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            g.setColour(tk.textoSecundario);
+            g.drawText(msg, area, juce::Justification::topLeft, true);
+            return;
+        }
+
+        std::vector<StorageWorkspaceComponent::PropRow> rows;
+        rows.push_back({ "SMART Status:", rep_.smartStatus.isEmpty() ? "-" : rep_.smartStatus });
+        rows.push_back({ "Temperature:", rep_.temperatureC >= 0 ? (juce::String(rep_.temperatureC) + " \xc2\xb0" + "C") : "-" });
+        rows.push_back({ "Power-On Hours:", rep_.powerOnHours >= 0 ? (juce::String(rep_.powerOnHours) + " h") : "-" });
+        rows.push_back({ "Reallocated:", rep_.reallocatedSectors >= 0 ? juce::String(rep_.reallocatedSectors) : "-" });
+        rows.push_back({ "Pending:", rep_.pendingSectors >= 0 ? juce::String(rep_.pendingSectors) : "-" });
+        rows.push_back({ "Uncorrectable:", rep_.uncorrectableSectors >= 0 ? juce::String(rep_.uncorrectableSectors) : "-" });
+        rows.push_back({ "Last Scan:", rep_.lastScanTime.isEmpty() ? "-" : rep_.lastScanTime });
+
+        int y = area.getY();
+        auto fontLbl = juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));
+        auto fontVal = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
+
+        for (size_t i = 0; i < rows.size(); ++i) {
+            juce::Rectangle<int> rowRect(0, y, getWidth(), 18);
+            if (i % 2 == 1) {
+                g.setColour(tk.painelAlt.withAlpha(0.35f));
+                g.fillRoundedRectangle(rowRect.toFloat(), 2.0f);
+            }
+
+            g.setColour(tk.textoSecundario);
+            g.setFont(fontLbl);
+            g.drawText(rows[i].label, rowRect.removeFromLeft(130).reduced(4, 0), juce::Justification::centredLeft, true);
+
+            g.setColour(tk.textoPrimario);
+            g.setFont(fontVal);
+            g.drawText(rows[i].value, rowRect.reduced(4, 0), juce::Justification::centredLeft, true);
+
+            y += 19;
+        }
+    }
+
+private:
+    matriz::vault::SmartHealthReport rep_;
 };
 
 class StorageWorkspaceComponent::ColumnCardsContainer : public juce::Component {
@@ -421,6 +490,21 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
 
     hardwarePropsComp_ = std::make_unique<HardwarePropsComponent>();
     inspectorContainer_->addAndMakeVisible(*hardwarePropsComp_);
+
+    // Drive Health (Compact subordinate section)
+    lblHealthTitle_ = std::make_unique<juce::Label>("lblHealthTitle", "DRIVE HEALTH");
+    lblHealthTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+    lblHealthTitle_->setColour(juce::Label::textColourId, tk.acento);
+    inspectorContainer_->addAndMakeVisible(*lblHealthTitle_);
+
+    btnRefreshHealth_ = std::make_unique<juce::TextButton>("REFRESH");
+    btnRefreshHealth_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnRefreshHealth_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    btnRefreshHealth_->onClick = [this] { atualizarSaudeSmart(true); };
+    inspectorContainer_->addAndMakeVisible(*btnRefreshHealth_);
+
+    driveHealthComp_ = std::make_unique<DriveHealthComponent>();
+    inspectorContainer_->addAndMakeVisible(*driveHealthComp_);
 
     // History Table
     lblHistoryTitle_ = std::make_unique<juce::Label>("lblHistTitle", "ACTIVITY LOG");
@@ -757,7 +841,46 @@ void StorageWorkspaceComponent::selecionarDevice(const std::string& vaultId, boo
         tableHistory_->repaint();
     }
 
+    atualizarSaudeSmart(false);
+
     inspectorContainer_->repaint();
+}
+
+void StorageWorkspaceComponent::atualizarSaudeSmart(bool forcarNovaConsulta) {
+    if (selectedVaultId_.empty() || !driveHealthComp_) return;
+
+    const StorageDevice* selectedDev = nullptr;
+    const auto& currentList = selectedIsSource_ ? sourceDevices_ : backupDevices_;
+    for (const auto& d : currentList) {
+        if (d.id == selectedVaultId_) {
+            selectedDev = &d;
+            break;
+        }
+    }
+
+    if (!selectedDev) {
+        const auto& otherList = selectedIsSource_ ? backupDevices_ : sourceDevices_;
+        for (const auto& d : otherList) {
+            if (d.id == selectedVaultId_) {
+                selectedDev = &d;
+                break;
+            }
+        }
+    }
+
+    if (!selectedDev) return;
+
+    auto& db = projeto_.projeto().registro();
+    matriz::vault::SmartHealthReport rep;
+
+    if (forcarNovaConsulta) {
+        rep = matriz::vault::consultarSaudeSmart(selectedDev->numeroSerie, juce::File(selectedDev->localizacao));
+        matriz::vault::gravarLogSmart(db, selectedDev->id, rep);
+    } else {
+        rep = matriz::vault::obterUltimoLogOuConsultar(db, selectedDev->id, selectedDev->numeroSerie, juce::File(selectedDev->localizacao));
+    }
+
+    driveHealthComp_->setReport(rep);
 }
 
 void StorageWorkspaceComponent::salvarNomeVault() {
@@ -979,6 +1102,17 @@ void StorageWorkspaceComponent::resized() {
     leftInspArea.removeFromTop(4);
     int specsH = 9 * 19 + 6;
     hardwarePropsComp_->setBounds(leftInspArea.removeFromTop(specsH));
+
+    leftInspArea.removeFromTop(10);
+
+    // Drive Health Section (subordinate to Device Inspector)
+    auto healthHdr = leftInspArea.removeFromTop(22);
+    btnRefreshHealth_->setBounds(healthHdr.removeFromRight(65));
+    healthHdr.removeFromRight(6);
+    lblHealthTitle_->setBounds(healthHdr);
+
+    leftInspArea.removeFromTop(4);
+    driveHealthComp_->setBounds(leftInspArea);
 
     // Right Inspector: History Table
     lblHistoryTitle_->setBounds(rightInspArea.removeFromTop(26));

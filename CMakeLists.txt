@@ -85,7 +85,9 @@ target_sources(matriz_selftest PRIVATE
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/ProcessoExterno.cpp
-    Source/Ingest/Checksum.cpp)
+    Source/Ingest/Checksum.cpp
+    Source/Vault/SmartHealth.cpp
+    Source/Vault/DiskIdentity_mac.mm)
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -108,6 +110,8 @@ target_link_libraries(matriz_selftest PRIVATE
     juce::juce_audio_formats
     juce::juce_graphics
     juce::juce_events
+    $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
+    $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -299,6 +303,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/Pcm.cpp
     Source/Ingest/Duplicata.cpp
     Source/Vault/Volume.cpp
+    Source/Vault/SmartHealth.cpp
     Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp

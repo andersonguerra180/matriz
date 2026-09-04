@@ -138,6 +138,14 @@ private:
     std::unique_ptr<juce::Label> lblHardwareTitle_;
     std::unique_ptr<HardwarePropsComponent> hardwarePropsComp_;
 
+    // Drive Health component
+    class DriveHealthComponent;
+    std::unique_ptr<juce::Label> lblHealthTitle_;
+    std::unique_ptr<juce::TextButton> btnRefreshHealth_;
+    std::unique_ptr<DriveHealthComponent> driveHealthComp_;
+
+    void atualizarSaudeSmart(bool forcarNovaConsulta = false);
+
     // History Log Table
     std::unique_ptr<juce::Label> lblHistoryTitle_;
     std::unique_ptr<juce::TableListBox> tableHistory_;
