@@ -48,7 +48,10 @@ juce::String mascaraEfetiva(matriz::db::Database& registro, const std::vector<st
         }
     }
     auto stmtProjeto = registro.prepare("SELECT mascara_nomenclatura FROM projeto LIMIT 1");
-    if (stmtProjeto.step()) return juce::String(stmtProjeto.columnText(0));
+    if (stmtProjeto.step() && !stmtProjeto.columnIsNull(0)) {
+        juce::String m = stmtProjeto.columnText(0);
+        if (m.isNotEmpty()) return m;
+    }
     return "{codigo}-{seq:03}-{titulo}";
 }
 
@@ -60,6 +63,100 @@ std::map<std::string, std::string> camposFichaDoItem(matriz::db::Database& regis
     while (stmt.step())
         if (!stmt.columnIsNull(1)) out[stmt.columnText(0)] = stmt.columnText(1);
     return out;
+}
+
+std::string extrairAnoDeTexto(const juce::String& val) {
+    for (int i = 0; i + 3 < val.length(); ++i) {
+        if (std::isdigit(val[i]) && std::isdigit(val[i+1]) &&
+            std::isdigit(val[i+2]) && std::isdigit(val[i+3])) {
+            int yr = val.substring(i, i + 4).getIntValue();
+            if (yr >= 1800 && yr <= 2099) return std::to_string(yr);
+        }
+    }
+    return {};
+}
+
+std::string resolverAnoEfetivo(matriz::db::Database& registro, const std::string& itemId,
+                               const std::string& arquivoId, const juce::File& arquivoNoProjeto) {
+    // 1. item_campo (manual override "ano")
+    try {
+        auto stmt = registro.prepare(
+            "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'ano' AND valor IS NOT NULL AND valor != '' LIMIT 1");
+        stmt.bind(1, Value::of(itemId));
+        if (stmt.step()) {
+            std::string yr = extrairAnoDeTexto(stmt.columnText(0));
+            if (!yr.empty()) return yr;
+        }
+    } catch (...) {}
+
+    // 2. item.ano column in item table
+    try {
+        auto stmt = registro.prepare("SELECT ano FROM item WHERE id = ? AND ano IS NOT NULL AND ano > 0 LIMIT 1");
+        stmt.bind(1, Value::of(itemId));
+        if (stmt.step()) {
+            int yr = stmt.columnInt(0);
+            if (yr >= 1800 && yr <= 2099) return std::to_string(yr);
+        }
+    } catch (...) {}
+
+    // 3. other date fields in item_campo (dc_created, data_criacao, data)
+    try {
+        auto stmt = registro.prepare(
+            "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'data_criacao', 'data') AND valor IS NOT NULL AND valor != '' LIMIT 1");
+        stmt.bind(1, Value::of(itemId));
+        if (stmt.step()) {
+            std::string yr = extrairAnoDeTexto(stmt.columnText(0));
+            if (!yr.empty()) return yr;
+        }
+    } catch (...) {}
+
+    // 4. EXIF / technical characteristics in arquivo table
+    try {
+        auto stmt = registro.prepare(
+            "SELECT caracteristicas_tecnicas_json, caminho_absoluto_origem FROM arquivo WHERE id = ? OR (item_id = ? AND eh_master = 1) ORDER BY eh_master DESC LIMIT 1");
+        stmt.bind(1, Value::of(arquivoId));
+        stmt.bind(2, Value::of(itemId));
+        if (stmt.step()) {
+            if (!stmt.columnIsNull(0)) {
+                auto varObj = juce::JSON::parse(stmt.columnText(0));
+                if (varObj.isObject()) {
+                    if (varObj.hasProperty("exifDataOriginal")) {
+                        std::string yr = extrairAnoDeTexto(varObj["exifDataOriginal"].toString());
+                        if (!yr.empty()) return yr;
+                    }
+                    if (varObj.hasProperty("creation_time")) {
+                        std::string yr = extrairAnoDeTexto(varObj["creation_time"].toString());
+                        if (!yr.empty()) return yr;
+                    }
+                    if (varObj.hasProperty("date")) {
+                        std::string yr = extrairAnoDeTexto(varObj["date"].toString());
+                        if (!yr.empty()) return yr;
+                    }
+                    if (varObj.hasProperty("year")) {
+                        std::string yr = extrairAnoDeTexto(varObj["year"].toString());
+                        if (!yr.empty()) return yr;
+                    }
+                }
+            }
+            if (!stmt.columnIsNull(1)) {
+                juce::File absOrig(stmt.columnText(1));
+                if (absOrig.existsAsFile()) {
+                    int yr = absOrig.getCreationTime().getYear();
+                    if (yr <= 1970 || yr > 2099) yr = absOrig.getLastModificationTime().getYear();
+                    if (yr >= 1800 && yr <= 2099) return std::to_string(yr);
+                }
+            }
+        }
+    } catch (...) {}
+
+    // 5. Physical file in project
+    if (arquivoNoProjeto.existsAsFile()) {
+        int yr = arquivoNoProjeto.getCreationTime().getYear();
+        if (yr <= 1970 || yr > 2099) yr = arquivoNoProjeto.getLastModificationTime().getYear();
+        if (yr >= 1800 && yr <= 2099) return std::to_string(yr);
+    }
+
+    return {};
 }
 
 // Nome de pasta seguro nos dois sistemas de arquivos: sem separador, sem
@@ -156,11 +253,23 @@ void gravarHierarquiaDoProjeto(matriz::db::Database& registro, const HierarquiaB
 
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquiaPedida,
-                                        const RotuloTipoMidia& rotuloTipoMidia) {
+                                        const RotuloTipoMidia& rotuloTipoMidia,
+                                        const juce::String& prefixoCustomizado) {
     PlanoConsolidacao plano;
     HierarquiaBackup hierarquia = hierarquiaPedida.empty() ? hierarquiaDoProjeto(registro) : hierarquiaPedida;
     auto rotuloTipo = rotuloTipoMidia ? rotuloTipoMidia
                                        : RotuloTipoMidia([](const std::string& t) { return juce::String(t); });
+
+    std::string prefixoEfetivo;
+    if (prefixoCustomizado.trim().isNotEmpty()) {
+        prefixoEfetivo = prefixoCustomizado.trim().toStdString();
+    } else {
+        auto stmtPref = registro.prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
+        if (stmtPref.step() && !stmtPref.columnIsNull(0)) {
+            prefixoEfetivo = stmtPref.columnText(0);
+        }
+    }
+    if (prefixoEfetivo.empty()) prefixoEfetivo = "BKR";
 
     bool usaEstruturaOriginal = std::find(hierarquia.begin(), hierarquia.end(),
                                           NivelHierarquia::EstruturaOriginal) != hierarquia.end();
@@ -204,9 +313,12 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         }
 
         auto cadeia = cadeiaAncestral(registro, ip.pastaId);
-        juce::String mascara = mascaraEfetiva(registro, cadeia);
+        juce::String mascara = prefixoCustomizado.trim().isNotEmpty()
+            ? juce::String("{prefix}_{name}_{number}_{year}")
+            : mascaraEfetiva(registro, cadeia);
 
         matriz::consolidacao::ContextoMascara ctx;
+        ctx.prefixo = prefixoEfetivo;
         ctx.codigoAcervo = ip.codigoAcervo;
         ctx.titulo = titulo;
         ctx.tipoMidia = tipoMidia;
@@ -218,6 +330,23 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         ctx.nomePasta = cadeia.empty() ? std::string() : cadeia.back().second.toStdString();
         ctx.seq = ++seqPorPasta[ip.pastaId];
         ctx.camposFicha = camposFichaDoItem(registro, ip.itemId);
+        bool temAnoNaFicha = false;
+        {
+            auto itAno = ctx.camposFicha.find("ano");
+            if (itAno != ctx.camposFicha.end() && !itAno->second.empty()) {
+                std::string anoTratado = extrairAnoDeTexto(itAno->second);
+                if (!anoTratado.empty()) {
+                    ctx.camposFicha["ano"] = anoTratado;
+                    temAnoNaFicha = true;
+                }
+            }
+            if (!temAnoNaFicha && (mascara.contains("{year}") || mascara.contains("{ano}"))) {
+                std::string anoInferido = resolverAnoEfetivo(registro, ip.itemId, ip.arquivoId, arquivoNoProjeto);
+                if (!anoInferido.empty()) {
+                    ctx.camposFicha["ano"] = anoInferido;
+                }
+            }
+        }
 
         std::string nomeBase = resolverMascara(mascara, ctx);
         juce::String extensao = arquivoNoProjeto.getFileExtension(); // já inclui o "."
@@ -232,8 +361,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     segmentosPasta.add(segmentoSeguro(ctx.nomeAcervo, "Project"));
                     break;
                 case NivelHierarquia::Ano: {
-                    auto it = ctx.camposFicha.find("ano");
-                    juce::String ano = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    juce::String ano = temAnoNaFicha ? juce::String(ctx.camposFicha["ano"]).trim() : juce::String();
                     segmentosPasta.add(segmentoSeguro(ano, "No year"));
                     break;
                 }

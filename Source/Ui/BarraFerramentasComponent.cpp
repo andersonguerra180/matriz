@@ -192,6 +192,18 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     }
     atualizarBotoesFiltroStatus();
 
+    // Mark edited items toggle
+    btnDestacarEditados_ = std::make_unique<juce::TextButton>("MARK EDITED: ON");
+    btnDestacarEditados_->setTooltip("Toggle zebra highlight for edited items (ON/OFF)");
+    btnDestacarEditados_->onClick = [this] {
+        destacarEditados_ = !destacarEditados_;
+        definirDestacarEditados(destacarEditados_);
+        if (aoAlternarDestacarEditados) aoAlternarDestacarEditados(destacarEditados_);
+    };
+    aplicarEstiloBotao(*btnDestacarEditados_, false);
+    addAndMakeVisible(*btnDestacarEditados_);
+    definirDestacarEditados(destacarEditados_);
+
     definirContagem(0, 0, false);
 }
 
@@ -269,6 +281,16 @@ void BarraFerramentasComponent::definirDetalhesAbertos(bool abertos) {
     botaoDetalhes_->setColour(juce::TextButton::buttonColourId, abertos ? tk.acento : tk.painelAlt);
     botaoDetalhes_->setColour(juce::TextButton::textColourOffId, abertos ? tk.textoSobreAcento : tk.textoPrimario);
     botaoDetalhes_->repaint();
+}
+
+void BarraFerramentasComponent::definirDestacarEditados(bool ativo) {
+    destacarEditados_ = ativo;
+    if (!btnDestacarEditados_) return;
+    const auto& tk = tema();
+    btnDestacarEditados_->setButtonText(ativo ? "MARK EDITED: ON" : "MARK EDITED: OFF");
+    btnDestacarEditados_->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
+    btnDestacarEditados_->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoSecundario);
+    btnDestacarEditados_->repaint();
 }
 
 void BarraFerramentasComponent::definirContagem(int visiveis, int total, bool filtroAtivo) {
@@ -352,7 +374,10 @@ void BarraFerramentasComponent::resized() {
     btnAudio_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnVideo_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnImage_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
-    btnDocument_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight());
+    btnDocument_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
+    if (btnDestacarEditados_) {
+        btnDestacarEditados_->setBounds(startX + tk.espacoPequeno, areaBottom.getY(), 135, areaBottom.getHeight());
+    }
 
     // Lay out Status filter buttons on the right side
     auto statusRight = areaBottom;

@@ -145,16 +145,18 @@ juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
     return 0;
 }
 
-std::vector<ItemResumo> ProjetoAberto::listarItens() const {
+std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database& registro,
+                                                            matriz::db::Database& indice,
+                                                            const juce::File& pastaProjeto,
+                                                            const std::map<std::string, std::string>& inMemoryRelinks) {
     std::vector<ItemResumo> out;
-    if (!projeto_) return out;
 
     // Uma consulta só (EXISTS/subquery correlacionados em vez de N+1 —
     // importante com milhares de itens no mosaico, ver B.2). As duas últimas
     // colunas só existem de fato pra tipo_midia="release" (nível raiz,
     // campos artista_principal/titulo de release.yaml) — usadas pra
     // agrupar o mosaico por artista/lançamento no modo Catalog.
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = registro.prepare(
         "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
         "EXISTS(SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.estado_sincronizacao = 'sincronizado'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
@@ -171,7 +173,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "i.content_type, i.collection_type, i.criado_em, "
         "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
+        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "i.isrc, "
+        "COALESCE(i.marcado_publicacao, 0), "
+        "COALESCE(i.metadados_editados, 0) != 0 "
         "FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
     while (stmt.step()) {
         ItemResumo r;
@@ -204,22 +209,55 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         std::string camRel = stmt.columnIsNull(9) ? "" : stmt.columnText(9);
         std::string camAbs = stmt.columnIsNull(12) ? "" : stmt.columnText(12);
 
+        r.masterArquivoId = masterArqId;
+        r.caminhoRelativoArquivo = camRel;
+        r.caminhoAbsolutoOrigem = camAbs;
+        if (!stmt.columnIsNull(20)) r.isrc = stmt.columnText(20);
+        if (!stmt.columnIsNull(21)) r.marcadoPublicacao = stmt.columnInt(21) != 0;
+        if (!stmt.columnIsNull(22)) r.metadadosEditados = stmt.columnInt(22) != 0;
+
         bool fileExists = false;
         if (!masterArqId.empty()) {
-            auto it = inMemoryRelinkedPaths_.find(masterArqId);
-            if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+            auto it = inMemoryRelinks.find(masterArqId);
+            if (it != inMemoryRelinks.end() && !it->second.empty()) {
                 fileExists = juce::File(it->second).existsAsFile();
             } else {
-                auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
+                auto res = matriz::vault::resolverCaminho(pastaProjeto, vaultLoc, camRel, camAbs);
                 fileExists = res.has_value() && res->existsAsFile();
             }
         }
         r.offline = !fileExists;
 
+        // Extract technical characteristics (duration, etc.)
+        try {
+            auto techStmt = registro.prepare(
+                "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
+            techStmt.bind(1, matriz::db::Value::of(r.id));
+            if (techStmt.step() && !techStmt.columnIsNull(0)) {
+                auto jsonStr = techStmt.columnText(0);
+                auto varObj = juce::JSON::parse(jsonStr);
+                if (varObj.isObject()) {
+                    if (varObj.hasProperty("duracaoSegundos")) {
+                        r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
+                    }
+                    if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
+                        juce::String exifDt = varObj["exifDataOriginal"].toString();
+                        for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                            if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                                std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                                int yVal = exifDt.substring(i, i + 4).getIntValue();
+                                if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {}
+
         // Fallback: extract creation year ONLY from dc_created, ano, data_criacao or EXIF original date
         if (!r.ano.has_value()) {
             try {
-                auto yrStmt = projeto_->registro().prepare(
+                auto yrStmt = registro.prepare(
                     "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'ano', 'data_criacao') AND valor IS NOT NULL AND valor != '' LIMIT 1");
                 yrStmt.bind(1, matriz::db::Value::of(r.id));
                 if (yrStmt.step()) {
@@ -234,28 +272,6 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
                 }
             } catch (...) {}
 
-            if (!r.ano.has_value()) {
-                try {
-                    auto exifStmt = projeto_->registro().prepare(
-                        "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
-                    exifStmt.bind(1, matriz::db::Value::of(r.id));
-                    if (exifStmt.step() && !exifStmt.columnIsNull(0)) {
-                        auto jsonStr = exifStmt.columnText(0);
-                        auto varObj = juce::JSON::parse(jsonStr);
-                        if (varObj.isObject() && varObj.hasProperty("exifDataOriginal")) {
-                            juce::String exifDt = varObj["exifDataOriginal"].toString();
-                            for (int i = 0; i + 3 < exifDt.length(); ++i) {
-                                if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
-                                    std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
-                                    int yVal = exifDt.substring(i, i + 4).getIntValue();
-                                    if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
-                                }
-                            }
-                        }
-                    }
-                } catch (...) {}
-            }
-
             if (!r.ano.has_value() && !stmt.columnIsNull(12)) {
                 try {
                     juce::File fileObj(stmt.columnText(12));
@@ -267,6 +283,32 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
                 } catch (...) {}
             }
         }
+
+        // Check thumbnail from indice database
+        try {
+            auto minStmt = indice.prepare(
+                "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
+            minStmt.bind(1, matriz::db::Value::of(r.id));
+            if (minStmt.step() && !minStmt.columnIsNull(0)) {
+                r.miniaturaCaminhoRelativo = minStmt.columnText(0);
+            }
+        } catch (...) {}
+
+        // Extract tags / genres from item_campo
+        try {
+            auto tagStmt = registro.prepare(
+                "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('tags', 'genero', 'estilo', 'palavras_chave') AND valor IS NOT NULL AND valor != ''");
+            tagStmt.bind(1, matriz::db::Value::of(r.id));
+            while (tagStmt.step()) {
+                juce::String tagVal = tagStmt.columnText(0);
+                juce::StringArray parts;
+                parts.addTokens(tagVal, ",;", "\"");
+                for (auto& p : parts) {
+                    juce::String trimmed = p.trim();
+                    if (trimmed.isNotEmpty()) r.tags.push_back(trimmed.toStdString());
+                }
+            }
+        } catch (...) {}
 
         if (!r.titulo.empty()) {
             r.nomeOriginalArquivo = r.titulo;
@@ -286,6 +328,31 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         out.push_back(std::move(r));
     }
     return out;
+}
+
+std::vector<ItemResumo> ProjetoAberto::listarItens() const {
+    if (!projeto_) return {};
+    return listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), inMemoryRelinkedPaths_);
+}
+
+std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pastaColecao) const {
+    juce::File regFile = pastaColecao.getChildFile("registro.sqlite");
+    juce::File indFile = pastaColecao.getChildFile("indice.sqlite");
+    if (!regFile.existsAsFile()) return {};
+
+    try {
+        matriz::db::Database regDb(regFile.getFullPathName().toStdString());
+        if (indFile.existsAsFile()) {
+            matriz::db::Database indDb(indFile.getFullPathName().toStdString());
+            return listarItensDeProjeto(regDb, indDb, pastaColecao);
+        } else {
+            // Temporary in-memory dummy db if indice.sqlite is missing
+            matriz::db::Database dummyInd(":memory:");
+            return listarItensDeProjeto(regDb, dummyInd, pastaColecao);
+        }
+    } catch (...) {
+        return {};
+    }
 }
 
 std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
@@ -309,7 +376,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "i.content_type, i.collection_type, i.criado_em, "
         "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
+        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "COALESCE(i.marcado_publicacao, 0), "
+        "COALESCE(i.metadados_editados, 0) != 0 "
         "FROM item i WHERE i.em_quarentena = 1 ORDER BY i.criado_em DESC, i.id");
     while (stmt.step()) {
         ItemResumo r;
@@ -336,6 +405,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
         r.criadoEm = stmt.columnText(17);
+        if (!stmt.columnIsNull(20)) r.marcadoPublicacao = stmt.columnInt(20) != 0;
+        if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
         std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
@@ -368,6 +439,32 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
 
         if (!stmt.columnIsNull(13)) r.pastaNome = stmt.columnText(13);
         r.tamanhoBytes = stmt.columnIsNull(14) ? 0 : static_cast<juce::int64>(stmt.columnInt(14));
+
+        // Extract technical characteristics (duration, etc.)
+        try {
+            auto techStmt = projeto_->registro().prepare(
+                "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
+            techStmt.bind(1, matriz::db::Value::of(r.id));
+            if (techStmt.step() && !techStmt.columnIsNull(0)) {
+                auto jsonStr = techStmt.columnText(0);
+                auto varObj = juce::JSON::parse(jsonStr);
+                if (varObj.isObject()) {
+                    if (varObj.hasProperty("duracaoSegundos")) {
+                        r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
+                    }
+                    if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
+                        juce::String exifDt = varObj["exifDataOriginal"].toString();
+                        for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                            if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                                std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                                int yVal = exifDt.substring(i, i + 4).getIntValue();
+                                if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (...) {}
 
         out.push_back(std::move(r));
     }
@@ -647,11 +744,18 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
     // Try updating column on item table
     try {
         projeto_->registro().run(
-            "UPDATE item SET " + coluna + " = ?, atualizado_em = ? WHERE id = ?",
+            "UPDATE item SET " + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
             {matriz::db::Value::of(valor),
              matriz::db::Value::of(matriz::model::agoraIso8601()),
              matriz::db::Value::of(itemId)});
-    } catch (...) {}
+    } catch (...) {
+        try {
+            projeto_->registro().run(
+                "UPDATE item SET atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                {matriz::db::Value::of(matriz::model::agoraIso8601()),
+                 matriz::db::Value::of(itemId)});
+        } catch (...) {}
+    }
 
     // Sync to item_campo
     std::string agora = matriz::model::agoraIso8601();
@@ -666,6 +770,8 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
              matriz::db::Value::of(valor),
              matriz::db::Value::of(agora)});
     } catch (...) {}
+
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
 }
 
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
@@ -690,35 +796,123 @@ void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std
              matriz::db::Value::of(itemId),
              matriz::db::Value::of(tag)});
     }
-    // Index tags in FTS
-    projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND conteudo LIKE '#%'",
-                              {matriz::db::Value::of(itemId)});
-    for (const auto& tag : tags) {
-        if (tag.empty()) continue;
+    // Index tags in FTS (both with and without '#')
+    try {
+        projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo LIKE '#%' OR conteudo IN (SELECT tag FROM item_tag WHERE item_id = ?))",
+                                  {matriz::db::Value::of(itemId), matriz::db::Value::of(itemId)});
+        for (const auto& tag : tags) {
+            if (tag.empty()) continue;
+            projeto_->registro().run(
+                "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+                {matriz::db::Value::of(itemId), matriz::db::Value::of(tag)});
+            projeto_->registro().run(
+                "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+                {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
+        }
+    } catch (...) {}
+    try {
         projeto_->registro().run(
-            "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-            {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
-    }
+            "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+            {matriz::db::Value::of(matriz::model::agoraIso8601()),
+             matriz::db::Value::of(itemId)});
+    } catch (...) {}
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "tags");
 }
 
 void ProjetoAberto::adicionarTag(const std::string& itemId, const std::string& tag) {
     if (!projeto_ || tag.empty()) return;
+    juce::String clean = juce::String(tag).trimCharactersAtStart("#").trim();
+    if (clean.isEmpty()) return;
+    std::string cleanStr = clean.toStdString();
     projeto_->registro().run(
         "INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
         {matriz::db::Value::of(matriz::model::novoUuid()),
          matriz::db::Value::of(itemId),
-         matriz::db::Value::of(tag)});
-    projeto_->registro().run(
-        "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-        {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
+         matriz::db::Value::of(cleanStr)});
+    try {
+        projeto_->registro().run(
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+            {matriz::db::Value::of(itemId), matriz::db::Value::of(cleanStr)});
+        projeto_->registro().run(
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+            {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + cleanStr)});
+    } catch (...) {}
+    try {
+        projeto_->registro().run(
+            "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+            {matriz::db::Value::of(matriz::model::agoraIso8601()),
+             matriz::db::Value::of(itemId)});
+    } catch (...) {}
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "tags");
 }
 
 void ProjetoAberto::removerTag(const std::string& itemId, const std::string& tag) {
     if (!projeto_ || tag.empty()) return;
-    projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ? AND tag = ?",
-                              {matriz::db::Value::of(itemId), matriz::db::Value::of(tag)});
-    projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND conteudo = ?",
-                              {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
+    juce::String clean = juce::String(tag).trimCharactersAtStart("#").trim();
+    std::string cleanStr = clean.toStdString();
+    projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ? AND (tag = ? OR tag = ?)",
+                              {matriz::db::Value::of(itemId), matriz::db::Value::of(tag), matriz::db::Value::of(cleanStr)});
+    try {
+        projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo = ? OR conteudo = ? OR conteudo = ?)",
+                                  {matriz::db::Value::of(itemId), matriz::db::Value::of(tag), matriz::db::Value::of(cleanStr), matriz::db::Value::of("#" + cleanStr)});
+    } catch (...) {}
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "tags");
+}
+
+std::vector<std::string> ProjetoAberto::listarPessoas() const {
+    std::vector<std::string> pessoas;
+    if (!projeto_) return pessoas;
+    try {
+        projeto_->registro().execScript(
+            "CREATE TABLE IF NOT EXISTS collection_person ("
+            "  id TEXT PRIMARY KEY,"
+            "  nome TEXT NOT NULL UNIQUE,"
+            "  criado_em TEXT NOT NULL"
+            ");"
+        );
+        auto stmt = projeto_->registro().prepare("SELECT nome FROM collection_person ORDER BY nome COLLATE NOCASE ASC");
+        while (stmt.step()) {
+            pessoas.push_back(stmt.columnText(0));
+        }
+    } catch (...) {}
+    return pessoas;
+}
+
+bool ProjetoAberto::adicionarPessoa(const std::string& nome) {
+    if (!projeto_ || nome.empty()) return false;
+    juce::String clean = juce::String(nome).trim();
+    if (clean.isEmpty()) return false;
+    try {
+        projeto_->registro().execScript(
+            "CREATE TABLE IF NOT EXISTS collection_person ("
+            "  id TEXT PRIMARY KEY,"
+            "  nome TEXT NOT NULL UNIQUE,"
+            "  criado_em TEXT NOT NULL"
+            ");"
+        );
+        auto stmt = projeto_->registro().prepare(
+            "INSERT OR IGNORE INTO collection_person (id, nome, criado_em) VALUES (?, ?, ?)"
+        );
+        stmt.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
+        stmt.bind(2, matriz::db::Value::of(clean.toStdString()));
+        stmt.bind(3, matriz::db::Value::of(matriz::model::agoraIso8601()));
+        stmt.step();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjetoAberto::removerPessoa(const std::string& nome) {
+    if (!projeto_ || nome.empty()) return false;
+    try {
+        auto stmt = projeto_->registro().prepare("DELETE FROM collection_person WHERE nome = ?");
+        stmt.bind(1, matriz::db::Value::of(nome));
+        stmt.step();
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::string& itemId) const {
@@ -1537,29 +1731,133 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto) cons
     if (termo.isEmpty()) return out;
     std::string projetoId = projeto_->projetoId();
 
-    // FTS5 não recebe texto: recebe uma LINGUAGEM de consulta, em que "/",
-    // "-", ":", "(", "*" e aspas são operadores. O que o operador digita é
-    // texto comum — um caminho de pasta, um código "ALLNO-00001" — e ia
-    // direto pro MATCH cru, virando erro de sintaxe que subia como exceção e
-    // derrubava a busca inteira. Aspas transformam tudo numa frase literal
-    // (aspa interna escapa dobrando, como em SQL) e o "*" no fim continua
-    // valendo como prefixo.
-    juce::String ftsQuery = "\"" + termo.replace("\"", "\"\"") + "\"*";
+    juce::StringArray tokens;
+    tokens.addTokens(termo, " \t\r\n,", "\"");
 
-    try {
-        auto stmt = projeto_->registro().prepare(
-            "SELECT DISTINCT b.item_id FROM busca_fts b "
-            "JOIN item i ON i.id = b.item_id "
-            "WHERE i.projeto_id = ? AND busca_fts MATCH ?");
-        stmt.bind(1, matriz::db::Value::of(projetoId));
-        stmt.bind(2, matriz::db::Value::of(ftsQuery.toStdString()));
-        while (stmt.step()) out.insert(stmt.columnText(0));
-    } catch (const std::exception&) {
-        // Busca é interação de digitação: um termo que o tokenizer descarta
-        // por inteiro (só pontuação, por exemplo) devolve "nada encontrado",
-        // nunca uma exceção subindo pela message thread.
-        out.clear();
+    if (tokens.isEmpty()) return out;
+
+    bool primeiroToken = true;
+
+    for (auto token : tokens) {
+        token = token.trim().unquoted();
+        if (token.isEmpty()) continue;
+
+        std::set<std::string> matchesParaToken;
+
+        // 1. FTS5 search for this token
+        juce::String cleanToken = token.trimCharactersAtStart("#").replace("\"", "\"\"");
+        if (cleanToken.isNotEmpty()) {
+            juce::String ftsQuery = "\"" + cleanToken + "\"*";
+            try {
+                auto stmt = projeto_->registro().prepare(
+                    "SELECT DISTINCT b.item_id FROM busca_fts b "
+                    "JOIN item i ON i.id = b.item_id "
+                    "WHERE i.projeto_id = ? AND busca_fts MATCH ?");
+                stmt.bind(1, matriz::db::Value::of(projetoId));
+                stmt.bind(2, matriz::db::Value::of(ftsQuery.toStdString()));
+                while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+            } catch (...) {}
+        }
+
+        // 2. Direct SQL search across all metadata tables and columns (case-insensitive LIKE)
+        std::string pattern = "%" + token.replace("%", "\\%").replace("_", "\\_").toStdString() + "%";
+        std::string cleanPattern = "%" + token.trimCharactersAtStart("#").replace("%", "\\%").replace("_", "\\_").toStdString() + "%";
+
+        // a) item table columns
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT id FROM item "
+                "WHERE projeto_id = ? AND ("
+                "   titulo LIKE ? ESCAPE '\\' OR "
+                "   codigo_acervo LIKE ? ESCAPE '\\' OR "
+                "   persistent_id LIKE ? ESCAPE '\\' OR "
+                "   notas_livres LIKE ? ESCAPE '\\' OR "
+                "   content_type LIKE ? ESCAPE '\\' OR "
+                "   collection_type LIKE ? ESCAPE '\\' OR "
+                "   isrc LIKE ? ESCAPE '\\' OR "
+                "   tipo_midia LIKE ? ESCAPE '\\' OR "
+                "   estado LIKE ? ESCAPE '\\'"
+                ")");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            for (int k = 2; k <= 10; ++k) stmt.bind(k, matriz::db::Value::of(pattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // b) item_campo (all metadata fields: artist, creator, description, year, custom YAML fields, etc.)
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT c.item_id FROM item_campo c "
+                "JOIN item i ON i.id = c.item_id "
+                "WHERE i.projeto_id = ? AND c.valor LIKE ? ESCAPE '\\'");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            stmt.bind(2, matriz::db::Value::of(cleanPattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // c) item_tag (tags)
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT t.item_id FROM item_tag t "
+                "JOIN item i ON i.id = t.item_id "
+                "WHERE i.projeto_id = ? AND t.tag LIKE ? ESCAPE '\\'");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            stmt.bind(2, matriz::db::Value::of(cleanPattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // d) item_observacao (notes)
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT o.item_id FROM item_observacao o "
+                "JOIN item i ON i.id = o.item_id "
+                "WHERE i.projeto_id = ? AND o.texto LIKE ? ESCAPE '\\'");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            stmt.bind(2, matriz::db::Value::of(pattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // e) arquivo (filename, relative path, origin absolute path)
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT a.item_id FROM arquivo a "
+                "JOIN item i ON i.id = a.item_id "
+                "WHERE i.projeto_id = ? AND ("
+                "   a.caminho_relativo LIKE ? ESCAPE '\\' OR "
+                "   a.caminho_absoluto_origem LIKE ? ESCAPE '\\'"
+                ")");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            stmt.bind(2, matriz::db::Value::of(pattern));
+            stmt.bind(3, matriz::db::Value::of(pattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // f) item_assunto / assunto
+        try {
+            auto stmt = projeto_->registro().prepare(
+                "SELECT ia.item_id FROM item_assunto ia "
+                "JOIN assunto s ON s.id = ia.assunto_id "
+                "JOIN item i ON i.id = ia.item_id "
+                "WHERE i.projeto_id = ? AND s.termo LIKE ? ESCAPE '\\'");
+            stmt.bind(1, matriz::db::Value::of(projetoId));
+            stmt.bind(2, matriz::db::Value::of(pattern));
+            while (stmt.step()) matchesParaToken.insert(stmt.columnText(0));
+        } catch (...) {}
+
+        // Intersect with overall result (AND logic across multiple words)
+        if (primeiroToken) {
+            out = std::move(matchesParaToken);
+            primeiroToken = false;
+        } else {
+            std::set<std::string> inter;
+            for (const auto& id : out) {
+                if (matchesParaToken.count(id)) inter.insert(id);
+            }
+            out = std::move(inter);
+        }
+
+        if (out.empty()) break;
     }
+
     return out;
 }
 
@@ -1958,6 +2256,38 @@ bool ProjetoAberto::obterItemInfo(const std::string& itemId, std::string& titulo
     return true;
 }
 
+std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return std::nullopt;
+    std::string tit, tipo, cod;
+    if (!obterItemInfo(itemId, tit, tipo, cod)) return std::nullopt;
+
+    ItemResumo r;
+    r.id = itemId;
+    r.titulo = tit;
+    r.tipoMidia = tipo;
+    r.codigoAcervo = cod;
+
+    auto arq = arquivoPrincipal(itemId);
+    if (arq) {
+        juce::File f(arq->caminhoAbsoluto);
+        r.nomeOriginalArquivo = f.getFileName().toStdString();
+        r.extensaoArquivo = f.getFileExtension().toStdString();
+        r.caminhoAbsolutoOrigem = arq->caminhoAbsoluto.toStdString();
+        r.tamanhoBytes = f.existsAsFile() ? f.getSize() : 0;
+    }
+
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT COALESCE(metadados_editados, 0) != 0 FROM item WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step()) r.metadadosEditados = stmt.columnInt(0) != 0;
+    } catch (...) {}
+
+    r.tags = lerTags(itemId);
+
+    return r;
+}
+
 std::set<int> ProjetoAberto::indicesExistentes(const std::string& itemId, const std::string& nivel) const {
     std::set<int> out;
     if (!projeto_) return out;
@@ -2046,7 +2376,12 @@ std::vector<ProjetoAberto::VaultResumo> ProjetoAberto::listarVaults() const {
     auto stmt = projeto_->registro().prepare(
         "SELECT v.id, v.nome, v.localizacao, v.status, "
         "(SELECT COUNT(DISTINCT a.item_id) FROM arquivo a WHERE a.vault_id = v.id) "
-        "FROM vault v WHERE v.projeto_id = ? ORDER BY v.nome");
+        "FROM vault v "
+        "WHERE v.projeto_id = ? "
+        "  AND v.localizacao NOT LIKE '/System/Volumes/%' "
+        "  AND v.localizacao NOT IN ('/dev', '/net', '/home') "
+        "  AND v.nome NOT IN ('dev', 'Preboot', 'Update', 'VM', 'xarts', 'Hardware') "
+        "ORDER BY v.nome");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
         VaultResumo v;
@@ -2173,12 +2508,76 @@ juce::String ProjetoAberto::exportarPreservacaoJson(const std::string& itemId) c
 
 juce::String ProjetoAberto::exportarPreservacaoCsv(const std::vector<std::string>& itemIds) const {
     if (!projeto_) return {};
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        auto colecoes = listarColecoesLinkadas();
+        juce::String csv;
+        bool headerWritten = false;
+
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    std::vector<std::string> ids;
+                    auto stmt = colDb.prepare("SELECT id FROM item ORDER BY codigo_acervo ASC, id ASC");
+                    while (stmt.step()) ids.push_back(stmt.columnText(0));
+
+                    juce::String part = preservation::exportarCsv(colDb, ids);
+                    if (!headerWritten) {
+                        csv += part;
+                        headerWritten = true;
+                    } else {
+                        int newlinePos = part.indexOfChar('\n');
+                        if (newlinePos >= 0) csv += part.substring(newlinePos + 1);
+                    }
+                } catch (...) {}
+            }
+        }
+        if (csv.isEmpty()) {
+            return preservation::exportarCsv(projeto_->registro(), itemIds);
+        }
+        return csv;
+    }
     try { return preservation::exportarCsv(projeto_->registro(), itemIds); }
     catch (...) { return {}; }
 }
 
 juce::String ProjetoAberto::exportarFullCsv(const std::vector<std::string>& itemIds) const {
     if (!projeto_) return {};
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        auto colecoes = listarColecoesLinkadas();
+        juce::String csv;
+        bool headerWritten = false;
+
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    std::vector<std::string> ids;
+                    auto stmt = colDb.prepare("SELECT id FROM item ORDER BY codigo_acervo ASC, id ASC");
+                    while (stmt.step()) ids.push_back(stmt.columnText(0));
+
+                    juce::String part = preservation::exportarFullCsv(colDb, ids);
+                    if (!headerWritten) {
+                        csv += part;
+                        headerWritten = true;
+                    } else {
+                        int newlinePos = part.indexOfChar('\n');
+                        if (newlinePos >= 0) csv += part.substring(newlinePos + 1);
+                    }
+                } catch (...) {}
+            }
+        }
+        if (csv.isEmpty()) {
+            return preservation::exportarFullCsv(projeto_->registro(), itemIds);
+        }
+        return csv;
+    }
     try { return preservation::exportarFullCsv(projeto_->registro(), itemIds); }
     catch (...) { return {}; }
 }
@@ -2187,6 +2586,33 @@ bool ProjetoAberto::exportarFullCsvPacote(const std::vector<std::string>& itemId
     if (!projeto_) {
         errorOut = "No active project open";
         return false;
+    }
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        try {
+            juce::File pkgDir = destLocation.isDirectory() ? destLocation : destLocation.getParentDirectory().getChildFile("BKR_Full_Export");
+            pkgDir.createDirectory();
+            juce::File csvFile = pkgDir.getChildFile("BKR_FULL.csv");
+            juce::String csvContent = exportarFullCsv(itemIds);
+            csvFile.replaceWithText(csvContent);
+
+            juce::File schemaFile = pkgDir.getChildFile("BKR_FULL.schema.json");
+            juce::String schemaContent = "{\n  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n  \"title\": \"BKR Full Export Schema\",\n  \"type\": \"object\"\n}\n";
+            schemaFile.replaceWithText(schemaContent);
+
+            juce::File manifestFile = pkgDir.getChildFile("manifest.json");
+            auto manifestObj = std::make_unique<juce::DynamicObject>();
+            manifestObj->setProperty("catalog", juce::String(projeto_->nome()));
+            manifestObj->setProperty("exported_at", juce::String(matriz::model::agoraIso8601()));
+            juce::var manifestVar(manifestObj.release());
+            manifestFile.replaceWithText(juce::JSON::toString(manifestVar, true));
+            return true;
+        } catch (const std::exception& e) {
+            errorOut = e.what();
+            return false;
+        } catch (...) {
+            errorOut = "Unknown error during export";
+            return false;
+        }
     }
     try { return preservation::exportarFullCsvPacote(projeto_->registro(), itemIds, destLocation, errorOut); }
     catch (const std::exception& e) { errorOut = e.what(); return false; }
@@ -2197,12 +2623,239 @@ juce::String ProjetoAberto::exportarXlsXml(const std::vector<std::string>& itemI
     if (!projeto_) return {};
     std::string projName = projeto_->nome();
     std::string catCode = "BKR-MATRIZ-01";
+
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        auto escHtml = [](const std::string& str) -> juce::String {
+            juce::String s(str);
+            return s.replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;")
+                    .replace("\"", "&quot;")
+                    .replace("'", "&apos;");
+        };
+
+        auto colecoes = listarColecoesLinkadas();
+        std::string dateNow = matriz::model::agoraIso8601();
+
+        juce::int64 totalBytes = 0;
+        int totalAssets = 0;
+
+        struct ItemRow {
+            std::string title, creator, subject, description, publisher, contributor;
+            std::string created, issued, type, format, identifier, source, language;
+            std::string relation, coverage, rights;
+        };
+        std::vector<ItemRow> allRows;
+
+        auto processDb = [&](matriz::db::Database& db, const std::vector<std::string>& ids) {
+            std::vector<std::string> itemIdsList = ids;
+            if (itemIdsList.empty()) {
+                try {
+                    auto stmt = db.prepare("SELECT id FROM item ORDER BY codigo_acervo ASC, id ASC");
+                    while (stmt.step()) itemIdsList.push_back(stmt.columnText(0));
+                } catch (...) {}
+            }
+
+            for (const auto& id : itemIdsList) {
+                try {
+                    auto stmt = db.prepare("SELECT IFNULL(tamanho_bytes,0) FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+                    stmt.bind(1, matriz::db::Value::of(id));
+                    if (stmt.step()) totalBytes += stmt.columnInt(0);
+                } catch (...) {}
+
+                auto lerCampo = [&](const std::string& itemId, const std::string& campo) -> std::string {
+                    try {
+                        auto stmt = db.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+                        stmt.bind(1, matriz::db::Value::of(itemId));
+                        stmt.bind(2, matriz::db::Value::of(campo));
+                        if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+                    } catch (...) {}
+                    return "";
+                };
+
+                ItemRow row;
+                row.title = lerCampo(id, "dc_title");
+                row.creator = lerCampo(id, "dc_creator");
+                row.subject = lerCampo(id, "dc_subject");
+                row.description = lerCampo(id, "dc_description");
+                row.publisher = lerCampo(id, "dc_publisher");
+                row.contributor = lerCampo(id, "dc_contributor");
+                row.created = lerCampo(id, "dc_created");
+                row.issued = lerCampo(id, "dc_issued");
+                row.type = lerCampo(id, "dc_type");
+                row.format = lerCampo(id, "dc_format");
+                row.identifier = lerCampo(id, "dc_identifier");
+                row.source = lerCampo(id, "dc_source");
+                row.language = lerCampo(id, "dc_language");
+                row.relation = lerCampo(id, "dc_relation");
+                row.coverage = lerCampo(id, "dc_coverage");
+                row.rights = lerCampo(id, "dc_rights");
+
+                try {
+                    auto stmt = db.prepare(
+                        "SELECT IFNULL(persistent_id,''), IFNULL(titulo,''), IFNULL(tipo_midia,''), criado_em FROM item WHERE id = ? LIMIT 1");
+                    stmt.bind(1, matriz::db::Value::of(id));
+                    if (stmt.step()) {
+                        if (row.identifier.empty()) row.identifier = stmt.columnText(0);
+                        if (row.title.empty()) row.title = stmt.columnText(1);
+                        if (row.format.empty()) row.format = stmt.columnText(2);
+                        if (row.created.empty()) row.created = stmt.columnText(3);
+                    }
+                } catch (...) {}
+
+                allRows.push_back(row);
+                totalAssets++;
+            }
+        };
+
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    processDb(colDb, {});
+                } catch (...) {}
+            }
+        }
+
+        // If no linked collections or if root db has items as well
+        if (allRows.empty()) {
+            processDb(projeto_->registro(), itemIds);
+        }
+
+        juce::String html;
+        html += "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n"
+                "xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n"
+                "xmlns=\"http://www.w3.org/TR/REC-html40\">\n"
+                "<head>\n"
+                "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\">\n"
+                "<meta name=\"ProgId\" content=\"Excel.Sheet\">\n"
+                "<meta name=\"Generator\" content=\"BKR Matriz Archival Engine\">\n"
+                "<!--[if gte mso 9]><xml>\n"
+                " <x:ExcelWorkbook>\n"
+                "  <x:ExcelWorksheets>\n"
+                "   <x:ExcelWorksheet>\n"
+                "    <x:Name>Dublin Core Catalog</x:Name>\n"
+                "    <x:WorksheetOptions>\n"
+                "     <x:DisplayGridlines/>\n"
+                "    </x:WorksheetOptions>\n"
+                "   </x:ExcelWorksheet>\n"
+                "  </x:ExcelWorksheets>\n"
+                " </x:ExcelWorkbook>\n"
+                "</xml><![endif]-->\n"
+                "<style>\n"
+                "  body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #F8FAFC; margin: 0; padding: 20px; }\n"
+                "  .hdr-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-family: 'Segoe UI', Arial, sans-serif; }\n"
+                "  .hdr-main { background-color: #0F172A; color: #38BDF8; font-size: 16px; font-weight: bold; padding: 14px; border: 1px solid #1E293B; text-transform: uppercase; letter-spacing: 1px; }\n"
+                "  .hdr-sub { background-color: #1E293B; color: #F8FAFC; font-size: 12px; padding: 10px 14px; border: 1px solid #334155; }\n"
+                "  .meta-grid { width: 100%; border-collapse: collapse; font-size: 12px; font-family: 'Segoe UI', Arial, sans-serif; margin-top: 10px; }\n"
+                "  .meta-grid th { background-color: #1E293B; color: #38BDF8; font-weight: bold; text-align: left; padding: 10px 12px; border: 1px solid #334155; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }\n"
+                "  .meta-grid td { padding: 9px 12px; border: 1px solid #CBD5E1; color: #0F172A; font-size: 12px; background-color: #FFFFFF; }\n"
+                "  .meta-grid tr:nth-child(even) td { background-color: #F8FAFC; }\n"
+                "</style>\n"
+                "</head>\n"
+                "<body>\n";
+
+        html += "<table class=\"hdr-table\">\n";
+        html += "  <tr>\n";
+        html += "    <td colspan=\"16\" class=\"hdr-main\">BKR MATRIZ — PROJECT / COLLECTION: " + escHtml(projName) + " &nbsp;|&nbsp; CATALOG: " + escHtml(catCode) + "</td>\n";
+        html += "  </tr>\n";
+        html += "  <tr>\n";
+        html += "    <td colspan=\"8\" class=\"hdr-sub\"><b>CATALOGING / BACKUP DATE:</b> " + escHtml(dateNow) + "</td>\n";
+        html += "    <td colspan=\"8\" class=\"hdr-sub\"><b>TOTAL ASSETS:</b> " + juce::String(totalAssets) + " &nbsp;|&nbsp; <b>TOTAL SIZE:</b> " + juce::File::descriptionOfSizeInBytes(totalBytes) + "</td>\n";
+        html += "  </tr>\n";
+        html += "</table>\n";
+
+        html += "<table class=\"meta-grid\">\n";
+        html += "  <thead>\n";
+        html += "    <tr>\n";
+        html += "      <th>TITLE (dc.title)</th>\n";
+        html += "      <th>CREATOR (dc.creator)</th>\n";
+        html += "      <th>SUBJECT (dc.subject)</th>\n";
+        html += "      <th>DESCRIPTION (dc.description)</th>\n";
+        html += "      <th>PUBLISHER (dc.publisher)</th>\n";
+        html += "      <th>CONTRIBUTOR (dc.contributor)</th>\n";
+        html += "      <th>DATE CREATED (dc.created)</th>\n";
+        html += "      <th>DATE ISSUED (dc.issued)</th>\n";
+        html += "      <th>TYPE (dc.type)</th>\n";
+        html += "      <th>FORMAT (dc.format)</th>\n";
+        html += "      <th>IDENTIFIER (dc.identifier)</th>\n";
+        html += "      <th>SOURCE (dc.source)</th>\n";
+        html += "      <th>LANGUAGE (dc.language)</th>\n";
+        html += "      <th>RELATION (dc.relation)</th>\n";
+        html += "      <th>COVERAGE (dc.coverage)</th>\n";
+        html += "      <th>RIGHTS (dc.rights)</th>\n";
+        html += "    </tr>\n";
+        html += "  </thead>\n";
+        html += "  <tbody>\n";
+
+        for (const auto& row : allRows) {
+            html += "    <tr>\n";
+            html += "      <td>" + escHtml(row.title) + "</td>\n";
+            html += "      <td>" + escHtml(row.creator) + "</td>\n";
+            html += "      <td>" + escHtml(row.subject) + "</td>\n";
+            html += "      <td>" + escHtml(row.description) + "</td>\n";
+            html += "      <td>" + escHtml(row.publisher) + "</td>\n";
+            html += "      <td>" + escHtml(row.contributor) + "</td>\n";
+            html += "      <td>" + escHtml(row.created) + "</td>\n";
+            html += "      <td>" + escHtml(row.issued) + "</td>\n";
+            html += "      <td>" + escHtml(row.type) + "</td>\n";
+            html += "      <td>" + escHtml(row.format) + "</td>\n";
+            html += "      <td>" + escHtml(row.identifier) + "</td>\n";
+            html += "      <td>" + escHtml(row.source) + "</td>\n";
+            html += "      <td>" + escHtml(row.language) + "</td>\n";
+            html += "      <td>" + escHtml(row.relation) + "</td>\n";
+            html += "      <td>" + escHtml(row.coverage) + "</td>\n";
+            html += "      <td>" + escHtml(row.rights) + "</td>\n";
+            html += "    </tr>\n";
+        }
+
+        html += "  </tbody>\n";
+        html += "</table>\n";
+        html += "</body>\n</html>";
+        return html;
+    }
+
     try { return preservation::exportarXlsXml(projeto_->registro(), itemIds, projName, catCode); }
     catch (...) { return {}; }
 }
 
 juce::String ProjetoAberto::exportarDublinCoreCsv(const std::vector<std::string>& itemIds) const {
     if (!projeto_) return {};
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        auto colecoes = listarColecoesLinkadas();
+        juce::String csv;
+        bool headerWritten = false;
+
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    std::vector<std::string> ids;
+                    auto stmt = colDb.prepare("SELECT id FROM item ORDER BY codigo_acervo ASC, id ASC");
+                    while (stmt.step()) ids.push_back(stmt.columnText(0));
+
+                    juce::String part = preservation::exportarCsvDublinCore(colDb, ids);
+                    if (!headerWritten) {
+                        csv += part;
+                        headerWritten = true;
+                    } else {
+                        int newlinePos = part.indexOfChar('\n');
+                        if (newlinePos >= 0) csv += part.substring(newlinePos + 1);
+                    }
+                } catch (...) {}
+            }
+        }
+        if (csv.isEmpty()) {
+            return preservation::exportarCsvDublinCore(projeto_->registro(), itemIds);
+        }
+        return csv;
+    }
     try { return preservation::exportarCsvDublinCore(projeto_->registro(), itemIds); }
     catch (...) { return {}; }
 }
@@ -2210,6 +2863,28 @@ juce::String ProjetoAberto::exportarDublinCoreCsv(const std::vector<std::string>
 juce::String ProjetoAberto::exportarFixityManifest(const std::vector<std::string>& itemIds,
                                                      const std::string& algoritmo) const {
     if (!projeto_) return {};
+    if (projeto_->modo() == matriz::model::Modo::Catalogo) {
+        auto colecoes = listarColecoesLinkadas();
+        juce::String manifest;
+        for (const auto& c : colecoes) {
+            if (!c.valido) continue;
+            juce::File colDir(c.caminhoProjeto);
+            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                try {
+                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                    std::vector<std::string> ids;
+                    auto stmt = colDb.prepare("SELECT id FROM item");
+                    while (stmt.step()) ids.push_back(stmt.columnText(0));
+                    manifest += preservation::exportarFixityManifest(colDb, ids, algoritmo);
+                } catch (...) {}
+            }
+        }
+        if (manifest.isEmpty()) {
+            return preservation::exportarFixityManifest(projeto_->registro(), itemIds, algoritmo);
+        }
+        return manifest;
+    }
     try { return preservation::exportarFixityManifest(projeto_->registro(), itemIds, algoritmo); }
     catch (...) { return {}; }
 }
@@ -2266,6 +2941,85 @@ std::optional<juce::File> ProjetoAberto::resolverArquivoComMemoria(const std::st
     }
     if (!projeto_) return std::nullopt;
     return matriz::vault::resolverArquivo(projeto_->registro(), arquivoId, projeto_->pasta());
+}
+
+void ProjetoAberto::alternarPublicacaoItens(const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+
+    // Check if all are currently marked
+    bool allMarked = true;
+    for (const auto& id : itemIds) {
+        auto checkStmt = db.prepare("SELECT COALESCE(marcado_publicacao, 0) FROM item WHERE id = ?");
+        checkStmt.bind(1, matriz::db::Value::of(id));
+        if (checkStmt.step()) {
+            if (checkStmt.columnInt(0) == 0) {
+                allMarked = false;
+                break;
+            }
+        } else {
+            allMarked = false;
+            break;
+        }
+    }
+
+    int novoValor = allMarked ? 0 : 1;
+    std::string agora = matriz::model::agoraIso8601();
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds) {
+            auto updateStmt = db.prepare("UPDATE item SET marcado_publicacao = ?, atualizado_em = ? WHERE id = ?");
+            updateStmt.bind(1, matriz::db::Value::of(novoValor));
+            updateStmt.bind(2, matriz::db::Value::of(agora));
+            updateStmt.bind(3, matriz::db::Value::of(id));
+            updateStmt.step();
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+    }
+
+    for (const auto& id : itemIds) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "publicacao");
+    }
+}
+
+void ProjetoAberto::definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado) {
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    int novoValor = marcado ? 1 : 0;
+    std::string agora = matriz::model::agoraIso8601();
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds) {
+            auto updateStmt = db.prepare("UPDATE item SET marcado_publicacao = ?, atualizado_em = ? WHERE id = ?");
+            updateStmt.bind(1, matriz::db::Value::of(novoValor));
+            updateStmt.bind(2, matriz::db::Value::of(agora));
+            updateStmt.bind(3, matriz::db::Value::of(id));
+            updateStmt.step();
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+    }
+
+    for (const auto& id : itemIds) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "publicacao");
+    }
+}
+
+bool ProjetoAberto::itemMarcadoPublicacao(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return false;
+    try {
+        auto checkStmt = projeto_->registro().prepare("SELECT COALESCE(marcado_publicacao, 0) FROM item WHERE id = ?");
+        checkStmt.bind(1, matriz::db::Value::of(itemId));
+        if (checkStmt.step()) {
+            return checkStmt.columnInt(0) != 0;
+        }
+    } catch (...) {}
+    return false;
 }
 
 } // namespace matriz::ui

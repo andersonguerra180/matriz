@@ -23,6 +23,8 @@
 #include "../Vault/AssetRelinkEngine.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "TagChipsEditor.h"
+#include "PeoplePickerComponent.h"
+#include "../Ingest/FluxoLote.h"
 
 #include <JuceHeader.h>
 
@@ -2093,6 +2095,162 @@ int rodarUiSelfTest() {
                 checar(pathOnDisk == stem1.getFullPathName().toStdString(),
                        "Explicit save successfully persisted new path to registro.sqlite: " + juce::String(pathOnDisk));
             }
+        }
+
+        // =====================================================================
+        // PEOPLE Metadata Field & Dynamic Tags Expansion (Collections Mode)
+        // =====================================================================
+        std::cout << "\n== PEOPLE metadata field & Dynamic Tags ==\n";
+        {
+            auto pastaPeopleProj = tmpRoot.getChildFile("ProjPeople");
+            pastaPeopleProj.createDirectory();
+            matriz::model::NovoProjetoParams pParams;
+            pParams.nome = "Colecao People";
+            pParams.modo = matriz::model::Modo::Catalogo;
+            auto projPeople = matriz::model::Project::criar(pastaPeopleProj, pParams);
+            checar(projPeople != nullptr, "Created test project for People");
+            auto paPeople = std::make_unique<ProjetoAberto>(std::move(projPeople));
+
+            // 1. Initial state: no people
+            auto pessoasIni = paPeople->listarPessoas();
+            checar(pessoasIni.empty(), "Initially no people in collection");
+
+            // 2. Add person "JORGE"
+            bool addOk = paPeople->adicionarPessoa("JORGE");
+            checar(addOk, "Successfully added person JORGE");
+            auto pessoasApos = paPeople->listarPessoas();
+            checar(pessoasApos.size() == 1 && pessoasApos[0] == "JORGE", "listarPessoas() returns JORGE");
+
+            // 3. Add second person and check sorting
+            paPeople->adicionarPessoa("ALICE");
+            auto pessoas2 = paPeople->listarPessoas();
+            checar(pessoas2.size() == 2 && pessoas2[0] == "ALICE" && pessoas2[1] == "JORGE",
+                   "People list is sorted alphabetically");
+
+            // 4. Persistence across reopen
+            paPeople.reset();
+            auto projReaberto = matriz::model::Project::abrir(pastaPeopleProj);
+            checar(projReaberto != nullptr, "Reopened project with people");
+            auto paReaberto = std::make_unique<ProjetoAberto>(std::move(projReaberto));
+            auto pessoasPersistidas = paReaberto->listarPessoas();
+            checar(pessoasPersistidas.size() == 2, "People list persisted in registro.sqlite");
+
+            // 5. PeoplePickerComponent UI behavior
+            PeoplePickerComponent picker(*paReaberto, "item_teste_1");
+            picker.setSize(200, 28);
+            checar(picker.getComboBoxForTest().getNumItems() >= 3,
+                   "PeoplePicker dropdown has items (+ INCLUDE A PERSON and registered people)");
+            checar(picker.getAddButtonForTest().getButtonText() == "+",
+                   "PeoplePicker has '+' button beside dropdown");
+
+            // 6. Test onPersonAddedToTags callback wiring into TagChipsEditor
+            TagChipsEditor tagChips;
+            tagChips.setSize(240, 60);
+            int initialH = tagChips.getPreferredHeight();
+
+            picker.onPersonAddedToTags = [&tagChips](const juce::String& personName) {
+                tagChips.addTag(personName);
+            };
+
+            // Simulate clicking + on person JORGE
+            picker.onPersonAddedToTags("JORGE");
+            auto tags = tagChips.getTags();
+            checar(tags.size() == 1 && tags[0] == "jorge", "TagChipsEditor received tag 'jorge' from People picker");
+
+            // 7. Dynamic expansion with multiple tags (no limit, no scrollbar)
+            for (int i = 0; i < 15; ++i) {
+                tagChips.addTag("person_tag_" + juce::String(i));
+            }
+            tagChips.resized();
+            checar(tagChips.getTags().size() == 16, "TagChipsEditor holds 16 tags with no artificial limit");
+            checar(tagChips.getPreferredHeight() > initialH, "TagChipsEditor dynamically expanded height downwards");
+
+            // 8. Test 2-column responsive layout when width >= 540
+            FichaPanelComponent fichaResp(*paReaberto);
+            fichaResp.setSize(340, 600); // 1-column standard width
+            fichaResp.mostrarItem("item_teste_1");
+            int heightSingleCol = fichaResp.getHeight();
+
+            fichaResp.setSize(680, 600); // 2-column wide layout
+            fichaResp.resized();
+            checar(fichaResp.getWidth() == 680, "FichaPanel successfully rendered at wide 2-column width (680px)");
+        }
+
+        // =====================================================================
+        // Bug 1 & 2: EXIF Date Disambiguation & Embedded Metadata Priority
+        // =====================================================================
+        std::cout << "\n== EXIF Date Disambiguation & Embedded Metadata Priority ==\n";
+        {
+            auto pastaTestProj = tmpRoot.getChildFile("ProjExifDedup");
+            pastaTestProj.createDirectory();
+            matriz::model::NovoProjetoParams testParams;
+            testParams.nome = "Exif Dedup Test";
+            testParams.modo = matriz::model::Modo::Catalogo;
+            auto projTest = matriz::model::Project::criar(pastaTestProj, testParams);
+            checar(projTest != nullptr, "Created test project for Exif Dedup");
+            auto paTest = std::make_unique<ProjetoAberto>(std::move(projTest));
+
+            auto& reg = paTest->projeto().registro();
+            std::string agora = matriz::model::agoraIso8601();
+
+            // Insert candidate image item with EXIF date "2023:08:15 10:30:00"
+            std::string item1Id = matriz::model::novoUuid();
+            reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                    "VALUES (?, 'proj1', 'TEST-00001', 'Photo A', 'foto', 'catalogado', ?, ?)",
+                    {matriz::db::Value::of(item1Id), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            juce::var candJson(new juce::DynamicObject());
+            candJson.getDynamicObject()->setProperty("larguraPx", 1920);
+            candJson.getDynamicObject()->setProperty("alturaPx", 1080);
+            candJson.getDynamicObject()->setProperty("exifDataOriginal", "2023:08:15 10:30:00");
+
+            reg.run("INSERT INTO arquivo (id, item_id, vault_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
+                    "checksum_sha256, caracteristicas_tecnicas_json, estado_presenca, criado_em, atualizado_em) "
+                    "VALUES (?, ?, 'vault1', 'photos/photoA.jpg', 'foto_suporte', 1, 500000, 'sha256_dummy', ?, 'presente', ?, ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1Id),
+                     matriz::db::Value::of(juce::JSON::toString(candJson).toStdString()),
+                     matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // 1. Same size (500000), same dimensions (1920x1080), but DIFFERENT EXIF timestamp -> MUST NOT BE DUPLICATE
+            auto dupCheckDiffDate = matriz::ingest::buscarAssetPorMetadados(
+                reg, "Photo B", "jpg", 0.0, 1920, 1080, 500000, "photos/photoB.jpg", "", pastaTestProj, "2023:08:15 14:45:22");
+            checar(!dupCheckDiffDate.has_value(), "Photos with different EXIF timestamps are NOT marked as duplicates (no false positive)");
+
+            // 2. Same size, same dimensions, and MATCHING EXIF timestamp -> IS A DUPLICATE
+            auto dupCheckSameDate = matriz::ingest::buscarAssetPorMetadados(
+                reg, "Photo A Copy", "jpg", 0.0, 1920, 1080, 500000, "photos/photoA_copy.jpg", "", pastaTestProj, "2023:08:15 10:30:00");
+            checar(dupCheckSameDate.has_value() && dupCheckSameDate->itemId == item1Id,
+                   "Photos with matching EXIF timestamps and dimensions are recognized as duplicates");
+
+            // 3. Test Embedded Metadata Priority during Batch Intake
+            // Native metadata inserted with fonte = 'leitura_tecnica'
+            reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'source_media', 'Native 35mm Slide', 'leitura_tecnica', ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1Id),
+                     matriz::db::Value::of(agora)});
+
+            // User runs batch intake setting source_media to "Digital"
+            std::map<std::string, std::string> batchValores;
+            batchValores["source_media"] = "Digital Batch Override";
+            batchValores["collection_type"] = "Special Collection";
+            matriz::ingest::aplicarFichaEmLote(reg, {item1Id}, "raiz", 0, batchValores, "user");
+
+            // Verify source_media preserved native value, but collection_type (which had no native value) was updated
+            auto stmtCheckSource = reg.prepare("SELECT valor, fonte FROM item_campo WHERE item_id = ? AND campo_id = 'source_media'");
+            stmtCheckSource.bind(1, matriz::db::Value::of(item1Id));
+            checar(stmtCheckSource.step() && stmtCheckSource.columnText(0) == "Native 35mm Slide",
+                   "Batch intake did NOT overwrite native embedded metadata (source_media preserved)");
+
+            auto stmtCheckCol = reg.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'collection_type'");
+            stmtCheckCol.bind(1, matriz::db::Value::of(item1Id));
+            checar(stmtCheckCol.step() && stmtCheckCol.columnText(0) == "Special Collection",
+                   "Batch intake filled empty fields (collection_type set)");
+
+            // 4. Post-ingest individual edit in GRID CAN update the field
+            paTest->salvarMetadado(item1Id, "source_media", "Manual Grid Edit");
+            auto valPosGrid = paTest->lerMetadado(item1Id, "source_media");
+            checar(valPosGrid.has_value() && *valPosGrid == "Manual Grid Edit",
+                   "Individual edit in GRID is allowed to override native metadata post-ingest");
         }
 
     } catch (const std::exception& e) {

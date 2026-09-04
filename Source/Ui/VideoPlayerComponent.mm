@@ -6,6 +6,7 @@
 
 #include "VideoPlayerComponent.h"
 #include "Tokens.h"
+#include "ProgressoGlobal.h"
 
 #undef Point
 #undef Component
@@ -40,6 +41,8 @@ VideoPlayerComponent::~VideoPlayerComponent() {
 }
 
 bool VideoPlayerComponent::carregar(const juce::File& arquivo) {
+    ProgressoGlobal::obterInstancia().iniciarTarefa("video_load", "Loading Video", 100, nullptr, arquivo.getFileName());
+
     if (impl_->player) {
         [impl_->player pause];
         impl_->player = nil;
@@ -53,10 +56,16 @@ bool VideoPlayerComponent::carregar(const juce::File& arquivo) {
     NSURL* url = [NSURL fileURLWithPath:
         [NSString stringWithUTF8String:arquivo.getFullPathName().toRawUTF8()]];
     AVPlayerItem* item = [AVPlayerItem playerItemWithURL:url];
-    if (!item) return false;
+    if (!item) {
+        ProgressoGlobal::obterInstancia().concluirTarefa("video_load", "Failed to load video");
+        return false;
+    }
 
     impl_->player = [AVPlayer playerWithPlayerItem:item];
-    if (!impl_->player) return false;
+    if (!impl_->player) {
+        ProgressoGlobal::obterInstancia().concluirTarefa("video_load", "Failed to initialize player");
+        return false;
+    }
 
     impl_->player.actionAtItemEnd = AVPlayerActionAtItemEndPause;
 
@@ -77,6 +86,7 @@ bool VideoPlayerComponent::carregar(const juce::File& arquivo) {
         impl_->duracaoCache = CMTimeGetSeconds(dur);
 
     impl_->carregado = true;
+    ProgressoGlobal::obterInstancia().concluirTarefa("video_load", "Video ready: " + arquivo.getFileName());
     startTimerHz(15);
     resized();
     return true;

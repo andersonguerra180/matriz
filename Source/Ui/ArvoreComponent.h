@@ -13,6 +13,7 @@ struct SubpastaInfo;
 class ArvoreComponent : public juce::Component, public juce::DragAndDropTarget {
 public:
     explicit ArvoreComponent(ProjetoAberto& projeto);
+    ~ArvoreComponent() override;
 
     void recarregar();
     void recarregarSincrono();

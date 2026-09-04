@@ -15,7 +15,8 @@ public:
         Duplicates,
         Analytics,
         Tree,
-        Backup
+        Backup,
+        Storage
     };
 
     BarraNavegacaoComponent();

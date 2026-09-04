@@ -15,6 +15,7 @@ public:
 
     void setTags(const std::vector<std::string>& tags);
     std::vector<std::string> getTags() const;
+    void addTag(const juce::String& text);
 
     std::function<void()> aoMudar;
     std::function<void()> aoRedimensionar;
@@ -61,7 +62,6 @@ private:
     std::unique_ptr<TagInput> input_;
 
     void commitText();
-    void addTag(const juce::String& text);
     void removeTag(int index);
     void removeLastTag();
     juce::String canonicalize(const juce::String& text) const;

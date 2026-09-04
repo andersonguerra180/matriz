@@ -31,6 +31,13 @@ struct RelocationResult {
 
 struct ValidationResult {
     bool isValid = false;
+    bool isIdenticalContent = false;
+    bool isDifferentContent = false;
+    std::string expectedSha;
+    std::string actualSha;
+    juce::int64 expectedSize = 0;
+    juce::int64 actualSize = 0;
+    juce::String warningMessage;
     juce::String errorMessage;
 };
 
@@ -70,6 +77,18 @@ public:
                                                const juce::File& novoArquivo,
                                                std::map<std::string, std::string>& outInMemoryRelocatedPaths,
                                                juce::String& outError);
+
+    // Executes individual relink with smart checksum disposition:
+    // - Checksum match: updates path in-place, preserves Asset ID, logs to project log and PREMIS.
+    // - Checksum mismatch: requires aceitarSubstituicaoComNovoId=true; generates new Asset ID,
+    //   inherits metadata, logs succession (supersedes) to PREMIS and project log.
+    static bool executarRelinkIndividual(matriz::db::Database& db,
+                                         const juce::File& pastaProjeto,
+                                         const std::string& oldItemId,
+                                         const juce::File& novoArquivo,
+                                         bool aceitarSubstituicaoComNovoId,
+                                         std::string& outNovoItemId,
+                                         juce::String& outError);
 
     // Helper to compute SHA-256 for a file
     static juce::String calcularSha256(const juce::File& file);

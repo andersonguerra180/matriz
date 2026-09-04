@@ -4,6 +4,7 @@
 namespace matriz::ui {
 
 TagChipsEditor::~TagChipsEditor() {
+    commitText();
     input_->onFocusLost = nullptr;
     input_->onCommit = nullptr;
     input_->onBackspaceEmpty = nullptr;

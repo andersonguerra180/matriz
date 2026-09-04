@@ -1,5 +1,8 @@
 #include "AssetRelinkEngine.h"
 #include "Resolucao.h"
+#include "../Preservation/Preservation.h"
+#include "../Model/ProjectLog.h"
+#include "../Model/Project.h"
 #include <algorithm>
 
 namespace matriz::vault {
@@ -238,39 +241,26 @@ ValidationResult AssetRelinkEngine::validarAsset(matriz::db::Database& db,
             return res;
         }
 
-        juce::int64 recordedSize = static_cast<juce::int64>(stmt.columnInt(1));
-        std::string recordedSha = stmt.columnText(2);
+        res.expectedSize = static_cast<juce::int64>(stmt.columnInt(1));
+        res.expectedSha = stmt.columnText(2);
         std::string camRel = stmt.columnText(3);
         std::string camAbs = stmt.columnText(4);
 
-        juce::String expectedFname = juce::File(camAbs.empty() ? camRel : camAbs).getFileName();
-        juce::String actualFname = novoArquivo.getFileName();
+        res.actualSize = novoArquivo.getSize();
+        res.actualSha = calcularSha256(novoArquivo).toStdString();
 
-        // 1. Filename & extension check (warning/validation)
-        juce::String expExt = juce::File(expectedFname).getFileExtension().toLowerCase();
-        juce::String actExt = novoArquivo.getFileExtension().toLowerCase();
-        if (expExt != actExt && expExt.isNotEmpty()) {
-            res.errorMessage = "File extension mismatch (expected " + expExt + ", got " + actExt + ").";
-            return res;
+        bool sizeMatches = (res.expectedSize <= 0 || res.actualSize == res.expectedSize);
+        bool shaMatches = (!res.expectedSha.empty() && juce::String(res.actualSha).equalsIgnoreCase(juce::String(res.expectedSha)));
+
+        if (shaMatches && sizeMatches) {
+            res.isIdenticalContent = true;
+            res.isValid = true;
+        } else {
+            // Content differs -> smart replacement candidate
+            res.isDifferentContent = true;
+            res.isValid = true;
+            res.warningMessage = "Selected file content differs from original (checksum mismatch).";
         }
-
-        // 2. Size check if recorded
-        if (recordedSize > 0 && novoArquivo.getSize() != recordedSize) {
-            res.errorMessage = "File size mismatch (expected " + juce::File::descriptionOfSizeInBytes(recordedSize) +
-                               ", selected file is " + juce::File::descriptionOfSizeInBytes(novoArquivo.getSize()) + ").";
-            return res;
-        }
-
-        // 3. SHA-256 checksum check if recorded
-        if (!recordedSha.empty()) {
-            juce::String actualSha = calcularSha256(novoArquivo);
-            if (!actualSha.equalsIgnoreCase(juce::String(recordedSha))) {
-                res.errorMessage = "Checksum mismatch: the content of the selected file does not match the original asset hash.";
-                return res;
-            }
-        }
-
-        res.isValid = true;
     } catch (const std::exception& e) {
         res.errorMessage = "Validation error: " + juce::String(e.what());
     }
@@ -300,6 +290,186 @@ bool AssetRelinkEngine::relocarAssetIndividualEmMemoria(matriz::db::Database& db
     } catch (...) {}
 
     outError = "Could not find master record for item.";
+    return false;
+}
+
+bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
+                                                const juce::File& pastaProjeto,
+                                                const std::string& oldItemId,
+                                                const juce::File& novoArquivo,
+                                                bool aceitarSubstituicaoComNovoId,
+                                                std::string& outNovoItemId,
+                                                juce::String& outError) {
+    auto val = validarAsset(db, oldItemId, novoArquivo);
+    if (!val.isValid) {
+        outError = val.errorMessage;
+        return false;
+    }
+
+    std::string masterArqId;
+    std::string camAbsOld;
+    try {
+        auto sArq = db.prepare("SELECT id, COALESCE(caminho_absoluto_origem, caminho_relativo) FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+        sArq.bind(1, matriz::db::Value::of(oldItemId));
+        if (sArq.step()) {
+            masterArqId = sArq.columnText(0);
+            camAbsOld = sArq.columnText(1);
+        }
+    } catch (...) {}
+
+    if (masterArqId.empty()) {
+        outError = "Master file record not found for item.";
+        return false;
+    }
+
+    juce::String agoraIso = juce::Time::getCurrentTime().formatted("%Y-%m-%dT%H:%M:%SZ");
+    std::string newAbsPath = novoArquivo.getFullPathName().toStdString();
+
+    if (val.isIdenticalContent) {
+        // Relocation of identical asset -> PRESERVES existing Asset ID
+        try {
+            auto stmtUp = db.prepare("UPDATE arquivo SET caminho_absoluto_origem = ?, atualizado_em = ? WHERE id = ?");
+            stmtUp.bind(1, matriz::db::Value::of(newAbsPath));
+            stmtUp.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
+            stmtUp.bind(3, matriz::db::Value::of(masterArqId));
+            stmtUp.step();
+
+            auto stmtLoc = db.prepare("INSERT OR IGNORE INTO localizacao_conhecida (id, arquivo_id, caminho_absoluto, criado_em) VALUES (?, ?, ?, ?)");
+            stmtLoc.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
+            stmtLoc.bind(2, matriz::db::Value::of(masterArqId));
+            stmtLoc.bind(3, matriz::db::Value::of(newAbsPath));
+            stmtLoc.bind(4, matriz::db::Value::of(agoraIso.toStdString()));
+            stmtLoc.step();
+
+            // PREMIS event
+            matriz::preservation::registrarEvento(db, oldItemId, masterArqId,
+                                                  "RELINKED",
+                                                  "Asset relocated with matching checksum",
+                                                  matriz::preservation::Outcome::Success,
+                                                  newAbsPath, "Operator");
+
+            // Project Log
+            matriz::model::ProjectLog pLog(pastaProjeto);
+            juce::StringArray details;
+            details.add("Asset ID: " + juce::String(oldItemId));
+            details.add("Previous Path: " + juce::String(camAbsOld));
+            details.add("New Path: " + juce::String(newAbsPath));
+            details.add("Checksum: " + juce::String(val.actualSha) + " (MATCH)");
+            pLog.appendEntry("Asset Relinked (Relocated)", details);
+
+            outNovoItemId = oldItemId;
+            return true;
+        } catch (const std::exception& e) {
+            outError = "Database error during relink: " + juce::String(e.what());
+            return false;
+        }
+    }
+
+    if (val.isDifferentContent) {
+        if (!aceitarSubstituicaoComNovoId) {
+            outError = "File differs from original. Confirmation required to replace asset and assign new ID.";
+            return false;
+        }
+
+        // Content mismatch replacement -> GENERATES NEW ASSET ID and records succession
+        try {
+            std::string newItemId = matriz::model::novoUuid();
+            std::string newArqId = matriz::model::novoUuid();
+
+            // 1. Fetch old item info
+            auto sItem = db.prepare("SELECT projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, marcado_publicacao FROM item WHERE id = ?");
+            sItem.bind(1, matriz::db::Value::of(oldItemId));
+            if (!sItem.step()) {
+                outError = "Original item record missing.";
+                return false;
+            }
+
+            std::string projId = sItem.columnText(0);
+            std::string tipoMidia = sItem.columnText(1);
+            std::string codAcervo = sItem.columnText(2);
+            std::string estado = sItem.columnText(3);
+            std::string notas = sItem.columnIsNull(4) ? "" : sItem.columnText(4);
+            int quarentena = sItem.columnInt(5);
+            int marcadoPub = sItem.columnInt(6);
+
+            // Archive old item's codigo_acervo to avoid unique constraint conflict
+            std::string archivedCod = codAcervo + "_archived_" + std::to_string(juce::Time::getCurrentTime().toMilliseconds());
+            auto sArch = db.prepare("UPDATE item SET codigo_acervo = ?, estado = 'arquivado', atualizado_em = ? WHERE id = ?");
+            sArch.bind(1, matriz::db::Value::of(archivedCod));
+            sArch.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
+            sArch.bind(3, matriz::db::Value::of(oldItemId));
+            sArch.step();
+
+            // 2. Insert new item with active codigo_acervo
+            auto sInsItem = db.prepare(
+                "INSERT INTO item (id, projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, marcado_publicacao, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            sInsItem.bind(1, matriz::db::Value::of(newItemId));
+            sInsItem.bind(2, matriz::db::Value::of(projId));
+            sInsItem.bind(3, matriz::db::Value::of(tipoMidia));
+            sInsItem.bind(4, matriz::db::Value::of(codAcervo));
+            sInsItem.bind(5, matriz::db::Value::of(estado));
+            sInsItem.bind(6, matriz::db::Value::of(notas));
+            sInsItem.bind(7, matriz::db::Value::of(static_cast<int64_t>(quarentena)));
+            sInsItem.bind(8, matriz::db::Value::of(static_cast<int64_t>(marcadoPub)));
+            sInsItem.bind(9, matriz::db::Value::of(agoraIso.toStdString()));
+            sInsItem.bind(10, matriz::db::Value::of(agoraIso.toStdString()));
+            sInsItem.step();
+
+            // 3. Clone descriptive metadata fields (item_campo)
+            auto sCloneCampos = db.prepare(
+                "INSERT INTO item_campo (id, item_id, campo_id, valor, indice_repeticao, criado_em, atualizado_em) "
+                "SELECT hex(randomblob(16)), ?, campo_id, valor, indice_repeticao, ?, ? FROM item_campo WHERE item_id = ?");
+            sCloneCampos.bind(1, matriz::db::Value::of(newItemId));
+            sCloneCampos.bind(2, matriz::db::Value::of(agoraIso.toStdString()));
+            sCloneCampos.bind(3, matriz::db::Value::of(agoraIso.toStdString()));
+            sCloneCampos.bind(4, matriz::db::Value::of(oldItemId));
+            sCloneCampos.step();
+
+            // 4. Insert new master file record
+            auto sInsArq = db.prepare(
+                "INSERT INTO arquivo (id, item_id, caminho_absoluto_origem, tamanho_bytes, checksum_sha256, eh_master, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, ?, 1, ?, ?)");
+            sInsArq.bind(1, matriz::db::Value::of(newArqId));
+            sInsArq.bind(2, matriz::db::Value::of(newItemId));
+            sInsArq.bind(3, matriz::db::Value::of(newAbsPath));
+            sInsArq.bind(4, matriz::db::Value::of(static_cast<int64_t>(val.actualSize)));
+            sInsArq.bind(5, matriz::db::Value::of(val.actualSha));
+            sInsArq.bind(6, matriz::db::Value::of(agoraIso.toStdString()));
+            sInsArq.bind(7, matriz::db::Value::of(agoraIso.toStdString()));
+            sInsArq.step();
+
+            // 5. PREMIS ledger linking succession
+            matriz::preservation::registrarEvento(db, oldItemId, masterArqId,
+                                                  "RELINKED",
+                                                  "Superseded by replacement asset ID " + newItemId,
+                                                  "SUPERSEDED", newAbsPath, "Operator");
+
+            matriz::preservation::registrarEvento(db, newItemId, newArqId,
+                                                  "RELINKED",
+                                                  "Created via manual relink replacement superseding old Asset ID " + oldItemId,
+                                                  matriz::preservation::Outcome::Success,
+                                                  newAbsPath, "Operator");
+
+            // 6. Project Log
+            matriz::model::ProjectLog pLog(pastaProjeto);
+            juce::StringArray details;
+            details.add("Previous Asset ID: " + juce::String(oldItemId));
+            details.add("New Asset ID: " + juce::String(newItemId));
+            details.add("Previous Path: " + juce::String(camAbsOld));
+            details.add("New Path: " + juce::String(newAbsPath));
+            details.add("New Checksum: " + juce::String(val.actualSha) + " (CONTENT REPLACED)");
+            pLog.appendEntry("Asset Replaced (New Asset ID)", details);
+
+            outNovoItemId = newItemId;
+            return true;
+        } catch (const std::exception& e) {
+            outError = "Database error during replacement: " + juce::String(e.what());
+            return false;
+        }
+    }
+
+    outError = "Unknown validation disposition.";
     return false;
 }
 

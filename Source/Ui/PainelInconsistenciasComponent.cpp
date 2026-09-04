@@ -12,19 +12,16 @@ PainelInconsistenciasComponent::PainelInconsistenciasComponent(ProjetoAberto& pr
 
 std::vector<matriz::ingest::Inconsistencia> PainelInconsistenciasComponent::coletar(ProjetoAberto& projeto) {
     // Só carrega definição de ficha dos tipos que de fato aparecem no
-    // projeto — nunca as 19, a maioria delas irrelevante fora do Archive.
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesPorTipo;
-    std::set<std::string> tiposVistos;
-    for (auto& item : projeto.listarItens()) {
-        if (tiposVistos.count(item.tipoMidia)) continue;
-        tiposVistos.insert(item.tipoMidia);
-        try {
-            definicoesPorTipo.emplace(item.tipoMidia, projeto.definicaoPara(item.tipoMidia));
-        } catch (const std::exception&) {
-            // Ficha ausente/corrompida pra esse tipo — não impede o resto
-            // do painel, só não checa esse tipo específico.
+    try {
+        auto stmt = projeto.projeto().registro().prepare("SELECT DISTINCT tipo_midia FROM item WHERE tipo_midia IS NOT NULL AND tipo_midia <> ''");
+        while (stmt.step()) {
+            std::string tm = stmt.columnText(0);
+            try {
+                definicoesPorTipo.emplace(tm, projeto.definicaoPara(tm));
+            } catch (const std::exception&) {}
         }
-    }
+    } catch (...) {}
 
     auto itens = matriz::ingest::detectarInconsistenciasFicha(projeto.projeto().registro(), definicoesPorTipo);
     auto doDisco = matriz::ingest::verificarArquivosNoDisco(projeto.projeto());

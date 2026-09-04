@@ -41,6 +41,7 @@ public:
 
     std::function<void()> aoFechar;
     std::function<void()> aoMudarMarcadores;
+    std::function<void(int direcao)> aoNavegar;
 
     void paint(juce::Graphics&) override;
     void resized() override;

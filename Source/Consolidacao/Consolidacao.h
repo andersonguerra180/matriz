@@ -96,7 +96,8 @@ using RotuloTipoMidia = std::function<juce::String(const std::string& tipoMidia)
 // (ou o padrão, se não houver nada gravado).
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquia = {},
-                                        const RotuloTipoMidia& rotuloTipoMidia = {});
+                                        const RotuloTipoMidia& rotuloTipoMidia = {},
+                                        const juce::String& prefixoCustomizado = {});
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);

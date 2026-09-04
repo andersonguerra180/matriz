@@ -8,6 +8,7 @@
 #include "../Vault/Volume.h"
 #include "../Vault/Resolucao.h"
 #include "LeituraTecnica.h"
+#include "../Ui/OriginalSourceMedium.h"
 
 namespace matriz::ingest {
 
@@ -29,6 +30,10 @@ juce::var construirCaracteristicasJson(const LeituraTecnicaResultado& leitura) {
     if (leitura.lra) obj->setProperty("lra", *leitura.lra);
     if (leitura.picoDbfs) obj->setProperty("picoDbfs", *leitura.picoDbfs);
     obj->setProperty("codecLossyDeclarado", leitura.codecLossyDeclarado);
+    if (leitura.exifDataOriginal)
+        obj->setProperty("exifDataOriginal", juce::String(*leitura.exifDataOriginal));
+    if (leitura.exifCamera)
+        obj->setProperty("exifCamera", juce::String(*leitura.exifCamera));
     obj->setProperty("bruto", leitura.bruto);
     return juce::var(obj.release());
 }
@@ -36,29 +41,7 @@ juce::var construirCaracteristicasJson(const LeituraTecnicaResultado& leitura) {
 } // namespace
 
 std::string obterOuCriarVaultParaArquivo(matriz::db::Database& registro, const juce::File& arquivo, const std::string& projetoId) {
-    auto volume = matriz::vault::descreverVolume(arquivo);
-    std::string caminhoMontagem = volume.pontoMontagem.getFullPathName().toStdString();
-
-    // O UUID é a chave forte (sobrevive a remontagem em outro caminho, §8);
-    // o ponto de montagem é o fallback pra volumes que não expõem UUID. Sem
-    // o guard de `uuid_volume <> ''` um volume sem UUID casaria com qualquer
-    // outro volume sem UUID.
-    auto stmt = registro.prepare(
-        "SELECT id FROM vault WHERE (uuid_volume <> '' AND uuid_volume = ?) OR localizacao = ? LIMIT 1");
-    stmt.bind(1, Value::of(volume.uuid));
-    stmt.bind(2, Value::of(caminhoMontagem));
-    if (stmt.step()) {
-        return stmt.columnText(0);
-    }
-
-    std::string vaultId = matriz::model::novoUuid();
-    std::string agora = matriz::model::agoraIso8601();
-    registro.run(
-        "INSERT INTO vault (id, projeto_id, nome, tipo, uuid_volume, raiz_relativa, localizacao, status, visto_em, criado_em) "
-        "VALUES (?, ?, ?, 'local', ?, '', ?, 'online', ?, ?)",
-        {Value::of(vaultId), Value::of(projetoId), Value::of(volume.nome),
-         Value::of(volume.uuid), Value::of(caminhoMontagem), Value::of(agora), Value::of(agora)});
-    return vaultId;
+    return matriz::vault::obterOuCriarVaultParaDestino(registro, arquivo, projetoId);
 }
 
 bool verificarSePlaceholderNuvem(const juce::File& f) {
@@ -204,6 +187,96 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
         // Preservation hooks são best-effort — ingest não pode falhar por eles
     }
 
+    // -----------------------------------------------------------------------
+    // Native embedded metadata persistence — grava os campos nativos do arquivo
+    // com fonte = 'leitura_tecnica' para que prevaleçam durante o INTAKE.
+    // -----------------------------------------------------------------------
+    try {
+        auto gravarCampoNativo = [&](const std::string& campoId, const std::string& valor) {
+            if (valor.empty()) return;
+            registro.run(
+                "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                "VALUES (?, ?, 'raiz', 0, ?, ?, 'leitura_tecnica', ?) "
+                "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) "
+                "DO UPDATE SET valor = excluded.valor, fonte = 'leitura_tecnica', atualizado_em = excluded.atualizado_em "
+                "WHERE item_campo.fonte = 'leitura_tecnica'",
+                {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(campoId),
+                 Value::of(valor), Value::of(agora)});
+        };
+
+        // EXIF data original / Data de criação
+        if (analise.leitura.exifDataOriginal && !analise.leitura.exifDataOriginal->empty()) {
+            std::string dataOriginal = *analise.leitura.exifDataOriginal;
+            juce::String dtJuce(dataOriginal);
+            if (dtJuce.length() >= 10) {
+                juce::String dParte = dtJuce.substring(0, 10).replace(":", "-");
+                juce::String hParte = dtJuce.length() > 10 ? dtJuce.substring(10) : "";
+                dataOriginal = (dParte + hParte).toStdString();
+            }
+            gravarCampoNativo("dc_created", dataOriginal);
+            gravarCampoNativo("data_criacao", dataOriginal);
+
+            if (dtJuce.length() >= 4) {
+                std::string anoStr = dtJuce.substring(0, 4).toStdString();
+                registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
+                             {Value::of(anoStr), Value::of(itemId)});
+            }
+        } else if (analise.leitura.metaDate && !analise.leitura.metaDate->empty()) {
+            gravarCampoNativo("dc_created", *analise.leitura.metaDate);
+            gravarCampoNativo("data_criacao", *analise.leitura.metaDate);
+        }
+
+        // Camera / Device / Original Source Medium
+        if (analise.leitura.exifCamera && !analise.leitura.exifCamera->empty()) {
+            std::string cam = *analise.leitura.exifCamera;
+            gravarCampoNativo("recording_device", cam);
+            gravarCampoNativo("camera_model", cam);
+
+            matriz::ui::OriginalSourceMediumInfo osm;
+            osm.medium = "Native Digital";
+            osm.recordingDevice = cam;
+            gravarCampoNativo("source_media", osm.serialize());
+        }
+
+        // Criador / Autor Humano (apenas se houver autor real embutido no arquivo!)
+        if (analise.leitura.metaCreator && !analise.leitura.metaCreator->empty()) {
+            gravarCampoNativo("dc_creator", *analise.leitura.metaCreator);
+            gravarCampoNativo("artista_principal", *analise.leitura.metaCreator);
+        }
+
+        // Título nativo embutido
+        if (analise.leitura.metaTitle && !analise.leitura.metaTitle->empty()) {
+            gravarCampoNativo("dc_title", *analise.leitura.metaTitle);
+        }
+
+        // Descrição / Notas
+        if (analise.leitura.metaDescription && !analise.leitura.metaDescription->empty()) {
+            gravarCampoNativo("dc_description", *analise.leitura.metaDescription);
+            gravarCampoNativo("descricao", *analise.leitura.metaDescription);
+        }
+
+        // Assunto / Tags nativas
+        if (analise.leitura.metaSubject && !analise.leitura.metaSubject->empty()) {
+            gravarCampoNativo("dc_subject", *analise.leitura.metaSubject);
+        }
+
+        // Outros campos Dublin Core nativos
+        if (analise.leitura.metaPublisher && !analise.leitura.metaPublisher->empty())
+            gravarCampoNativo("dc_publisher", *analise.leitura.metaPublisher);
+        if (analise.leitura.metaContributor && !analise.leitura.metaContributor->empty())
+            gravarCampoNativo("dc_contributor", *analise.leitura.metaContributor);
+        if (analise.leitura.metaFormat && !analise.leitura.metaFormat->empty())
+            gravarCampoNativo("dc_format", *analise.leitura.metaFormat);
+        if (analise.leitura.metaIdentifier && !analise.leitura.metaIdentifier->empty())
+            gravarCampoNativo("dc_identifier", *analise.leitura.metaIdentifier);
+        if (analise.leitura.metaRights && !analise.leitura.metaRights->empty())
+            gravarCampoNativo("dc_rights", *analise.leitura.metaRights);
+        if (analise.leitura.metaLanguage && !analise.leitura.metaLanguage->empty())
+            gravarCampoNativo("dc_language", *analise.leitura.metaLanguage);
+        if (analise.leitura.metaSource && !analise.leitura.metaSource->empty())
+            gravarCampoNativo("dc_source", *analise.leitura.metaSource);
+    } catch (...) {}
+
     return resultado;
 }
 
@@ -284,7 +357,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        juce::int64 tamanhoBytes,
                                                        const std::string& caminhoRelativo,
                                                        const std::string& excludeItemId,
-                                                       const juce::File& pastaProjeto) {
+                                                       const juce::File& pastaProjeto,
+                                                       const std::string& exifDateOriginal) {
     if (tamanhoBytes <= 0) return std::nullopt;
 
     auto stmt = registro.prepare(
@@ -401,7 +475,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
             bool isAudio = (queryExt == "wav" || queryExt == "mp3" || queryExt == "flac" || queryExt == "aif" || queryExt == "aiff" || queryExt == "m4a");
 
             if (isImage) {
-                // Strict duplicate rules for images: size, dimensions, screen orientation, and color space must ALL match
+                // Strict duplicate rules for images: size, dimensions, screen orientation, color space,
+                // AND EXIF DateTimeOriginal must ALL match (when available).
                 bool sizeMatches = (candTamanho == tamanhoBytes);
                 
                 int candW = obj->hasProperty("larguraPx") ? static_cast<int>(obj->getProperty("larguraPx")) : 0;
@@ -410,6 +485,11 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                 
                 juce::String candOrientation;
                 juce::String candColorSpace;
+                juce::String candExifDate;
+                // Try top-level exifDataOriginal first (new format)
+                if (obj->hasProperty("exifDataOriginal")) {
+                    candExifDate = obj->getProperty("exifDataOriginal").toString();
+                }
                 if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
                     if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
                         if (exif->hasProperty("Exif.Image.Orientation")) {
@@ -418,13 +498,28 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                         if (exif->hasProperty("Exif.Photo.ColorSpace")) {
                             candColorSpace = exif->getProperty("Exif.Photo.ColorSpace").toString();
                         }
+                        // Fallback: read from bruto.exif if not at top level
+                        if (candExifDate.isEmpty() && exif->hasProperty("Exif.Photo.DateTimeOriginal")) {
+                            candExifDate = exif->getProperty("Exif.Photo.DateTimeOriginal").toString();
+                        }
                     }
                 }
                 
                 bool orientationMatches = (origOrientationStr.isEmpty() || candOrientation.isEmpty() || candOrientation == origOrientationStr);
                 bool colorSpaceMatches = (origColorSpaceStr.isEmpty() || candColorSpace.isEmpty() || candColorSpace == origColorSpaceStr);
-                
-                if (sizeMatches && (dimensionsMatch || (largura == 0 && altura == 0)) && orientationMatches && colorSpaceMatches) {
+
+                // EXIF DateTimeOriginal disambiguation: if BOTH photos have timestamps
+                // and they differ, they are NEVER duplicates regardless of file size.
+                bool exifDateConflict = false;
+                if (!exifDateOriginal.empty() && candExifDate.isNotEmpty()) {
+                    if (juce::String(exifDateOriginal) != candExifDate) {
+                        exifDateConflict = true;
+                    }
+                }
+
+                if (exifDateConflict) {
+                    coincidences = 0; // Different EXIF timestamps → forced reject
+                } else if (sizeMatches && (dimensionsMatch || (largura == 0 && altura == 0)) && orientationMatches && colorSpaceMatches) {
                     coincidences = 3; // Force match!
                 } else if (sizeMatches && extMatches) {
                     coincidences = 3;

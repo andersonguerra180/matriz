@@ -7,6 +7,17 @@ namespace {
 juce::String valorToken(const juce::String& nomeToken, const juce::String& especificador, const ContextoMascara& ctx,
                          bool& encontrado) {
     encontrado = true;
+    if (nomeToken == "prefix" || nomeToken == "prefixo") return ctx.prefixo;
+    if (nomeToken == "name" || nomeToken == "nome") return ctx.nomeOriginalSemExtensao.empty() ? ctx.titulo : ctx.nomeOriginalSemExtensao;
+    if (nomeToken == "number" || nomeToken == "numero") {
+        int largura = especificador.isNotEmpty() ? especificador.getIntValue() : 3;
+        return juce::String(ctx.seq).paddedLeft('0', largura);
+    }
+    if (nomeToken == "year" || nomeToken == "ano") {
+        auto it = ctx.camposFicha.find("ano");
+        if (it != ctx.camposFicha.end() && !it->second.empty()) return juce::String(it->second);
+        return juce::String(juce::Time::getCurrentTime().getYear());
+    }
     if (nomeToken == "codigo") return ctx.codigoAcervo;
     if (nomeToken == "titulo") return ctx.titulo;
     if (nomeToken == "tipo") return ctx.tipoMidia;

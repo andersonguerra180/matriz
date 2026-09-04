@@ -25,6 +25,7 @@
 #include "FloatingPreviewWindow.h"
 #include "DuplicatesWorkspaceComponent.h"
 #include "BarraProgressoGlobalComponent.h"
+#include "StorageWorkspaceComponent.h"
 
 // Layout de três painéis (§11.1): mosaico | visualizador+transporte+tira |
 // ficha. Sem abas, sem janela flutuante. Nesta etapa (B.1.1-B.1.3): mosaico
@@ -33,6 +34,8 @@
 
 namespace matriz::ui {
 
+class BackupWorkspaceComponent;
+class IngestProgressModalDialog;
 class MosaicoComponent;
 class FichaPanelComponent;
 class PainelInconsistenciasComponent;
@@ -99,6 +102,7 @@ public:
     void mostrarAnalytics();
     void mostrarTree();
     void mostrarBackup();
+    void mostrarStorage();
 
     void abrirColecaoDoCatalogo(const juce::File& pastaColecao);
     void retornarAoCatalogo();
@@ -369,6 +373,7 @@ private:
     // Estado do lote em curso, pro timer conseguir fechá-lo sem que cada
     // arquivo poste um callback.
     std::shared_ptr<EstadoLote> estadoLoteAtual_;
+    juce::Component::SafePointer<IngestProgressModalDialog> ingestModalDialog_;
     bool loteEmCurso_ = false;
     int ticksDoTimer_ = 0;
     juce::int64 tamanhoTotalEmCache_ = 0;
@@ -392,6 +397,7 @@ private:
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // ANALYTICS (Statistics + Preservation)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // TREE (n8n Node Graph Editor)
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
+    std::unique_ptr<StorageWorkspaceComponent> storageWorkspace_; // STORAGE
     std::unique_ptr<PreservationWorkspaceComponent> preservationWorkspace_;
     std::unique_ptr<FloatingPreviewWindow> activePreviewWindow_;
     std::unique_ptr<BarraProgressoGlobalComponent> barraProgressoGlobal_;

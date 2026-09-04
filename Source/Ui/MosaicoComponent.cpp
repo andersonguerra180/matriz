@@ -5,6 +5,7 @@
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
 #include "Tokens.h"
+#include "ProgressoGlobal.h"
 
 #include <algorithm>
 #include <map>
@@ -18,6 +19,7 @@ MosaicoComponent::MosaicoComponent(ProjetoAberto& projeto) : projeto_(projeto) {
 
 MosaicoComponent::~MosaicoComponent() {
     EventBus::obterInstancia().removerListener(this);
+    poolSnapshot_.removeAllJobs(true, 2000);
     poolMiniaturas_.removeAllJobs(true, 2000);
 }
 
@@ -61,11 +63,14 @@ void MosaicoComponent::recarregar() {
     ProjetoAberto* projeto = &projeto_;
     bool isQuarentena = modoQuarentena_;
 
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...");
+
     poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
         std::vector<ItemResumo> itens;
         try {
             itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens();
         } catch (const std::exception&) {
+            ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
             return;  // projeto fechado no meio: nada a entregar
         }
 
@@ -78,6 +83,7 @@ void MosaicoComponent::recarregar() {
             self->itensTodos_ = std::move(itens);
             self->aplicarFiltrosEOrdenacao();
             if (self->aoMudarConteudoVisivel) self->aoMudarConteudoVisivel();
+            ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", juce::String(self->itensTodos_.size()) + " items loaded");
             // A reload was requested while this snapshot was in flight — honour it now.
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
@@ -113,6 +119,9 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->contentType = ct.has_value() && !ct->empty() ? ct : std::nullopt;
     auto col = projeto_.lerMetadado(itemId, "collection_type");
     it->collectionType = col.has_value() && !col->empty() ? col : std::nullopt;
+    it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
+    it->tags = projeto_.lerTags(itemId);
+    it->metadadosEditados = true;
 
     aplicarFiltrosEOrdenacao();
 }
@@ -192,6 +201,18 @@ void MosaicoComponent::definirFiltroFaixaAno(int anoDe, int anoAte) {
 
 void MosaicoComponent::limparFiltroFaixaAno() {
     filtroFaixaAno_.reset();
+    aplicarFiltrosEOrdenacao();
+}
+
+void MosaicoComponent::definirFiltroPeriodoData(const juce::String& dataDe, const juce::String& dataAte) {
+    filtroDataDe_ = dataDe.trim();
+    filtroDataAte_ = dataAte.trim();
+    aplicarFiltrosEOrdenacao();
+}
+
+void MosaicoComponent::limparFiltroPeriodoData() {
+    filtroDataDe_.clear();
+    filtroDataAte_.clear();
     aplicarFiltrosEOrdenacao();
 }
 
@@ -387,7 +408,27 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         // categoria de chip. DENTRO de uma categoria de chip, múltipla
         // seleção é OU (Acréscimos §10.2 — "clicáveis e combináveis").
         if (filtroItens_ && !filtroItens_->count(item.id)) continue;
-        if (buscaResultado_ && !buscaResultado_->count(item.id)) continue;
+        if (buscaResultado_ && !buscaResultado_->count(item.id)) {
+            bool inMemoryMatch = false;
+            if (buscaTexto_.isNotEmpty()) {
+                juce::String q = buscaTexto_.toLowerCase().trim();
+                if (juce::String(item.titulo).toLowerCase().contains(q) ||
+                    juce::String(item.codigoAcervo).toLowerCase().contains(q) ||
+                    juce::String(item.nomeOriginalArquivo).toLowerCase().contains(q) ||
+                    juce::String(item.pastaNome).toLowerCase().contains(q) ||
+                    juce::String(item.isrc).toLowerCase().contains(q)) {
+                    inMemoryMatch = true;
+                } else {
+                    for (const auto& tg : item.tags) {
+                        if (juce::String(tg).toLowerCase().contains(q.trimCharactersAtStart("#"))) {
+                            inMemoryMatch = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if (!inMemoryMatch) continue;
+        }
         if (!filtrosEstado_.empty() && !filtrosEstado_.count(juce::String(item.estado))) continue;
         if (!filtrosTipoMidia_.empty() && !filtrosTipoMidia_.count(juce::String(item.tipoMidia))) continue;
         if (!filtrosExtensao_.empty() && !filtrosExtensao_.count(juce::String(item.extensaoArquivo))) continue;
@@ -400,6 +441,30 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         // faixa é sobre o que se sabe, não sobre o que falta.
         if (filtroFaixaAno_ && (!item.ano || *item.ano < filtroFaixaAno_->first || *item.ano > filtroFaixaAno_->second))
             continue;
+
+        // Filtro customizado FROM {date} TO {date}
+        if (filtroDataDe_.isNotEmpty() || filtroDataAte_.isNotEmpty()) {
+            juce::String itemData = juce::String(item.criadoEm).trim();
+            if (itemData.isEmpty() && item.ano)
+                itemData = juce::String(*item.ano);
+
+            if (itemData.isEmpty()) continue;
+
+            if (filtroDataDe_.isNotEmpty()) {
+                if (filtroDataDe_.length() == 4 && itemData.length() >= 4) {
+                    if (itemData.substring(0, 4) < filtroDataDe_) continue;
+                } else if (itemData < filtroDataDe_) {
+                    continue;
+                }
+            }
+            if (filtroDataAte_.isNotEmpty()) {
+                if (filtroDataAte_.length() == 4 && itemData.length() >= 4) {
+                    if (itemData.substring(0, 4) > filtroDataAte_) continue;
+                } else if (itemData.substring(0, filtroDataAte_.length()) > filtroDataAte_) {
+                    continue;
+                }
+            }
+        }
         itensFiltrados_.push_back(item);
     }
 
@@ -852,6 +917,31 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         return true;
     }
 
+    bool isCmdOrCtrl = tecla.getModifiers().isCommandDown() || tecla.getModifiers().isCtrlDown();
+    if ((tecla.getKeyCode() == 'P' || c == 'p' || c == 'P') && (isCmdOrCtrl || (!tecla.getModifiers().isAltDown() && !tecla.getModifiers().isShiftDown()))) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarPublicacaoItens(alvos);
+            for (auto& item : itensTodos_) {
+                for (const auto& id : alvos) {
+                    if (item.id == id) {
+                        item.marcadoPublicacao = projeto_.itemMarcadoPublicacao(id);
+                    }
+                }
+            }
+            for (auto& item : itensFiltrados_) {
+                for (const auto& id : alvos) {
+                    if (item.id == id) {
+                        item.marcadoPublicacao = projeto_.itemMarcadoPublicacao(id);
+                    }
+                }
+            }
+            repaint();
+            return true;
+        }
+    }
+
     if ((tecla.getKeyCode() == 'C' || c == 'c' || c == 'C') &&
         !tecla.getModifiers().isCommandDown() && !tecla.getModifiers().isCtrlDown()) {
         removerSelecaoDoBackup();
@@ -1261,7 +1351,13 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (modoVisao_ == ModoVisao::Lista) {
                 juce::Colour corCat = corPorCategoria(item.tipoMidia);
 
-                if (selecionado) {
+                bool marcadoP = item.marcadoPublicacao || itensMarcadosP_.count(item.id) > 0;
+                if (marcadoP) {
+                    g.setColour(juce::Colour(0xff39ff14).withAlpha(0.20f));
+                    g.fillRect(bounds);
+                    g.setColour(juce::Colour(0xff39ff14));
+                    g.drawRoundedRectangle(bounds.toFloat(), 4.0f, 4.0f);
+                } else if (selecionado) {
                     g.setColour(tk.acento.withAlpha(0.12f));
                     g.fillRect(bounds);
                 } else if (sobHover) {
@@ -1269,10 +1365,30 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.fillRect(bounds);
                 }
 
-                // Category color bar (left edge)
-                g.setColour(corCat);
-                g.fillRoundedRectangle(static_cast<float>(bounds.getX()), static_cast<float>(bounds.getY() + 2),
-                                       4.0f, static_cast<float>(bounds.getHeight() - 4), 2.0f);
+                // Category color bar (left edge) — zebra striped for edited items if enabled
+                float barW = (destacarEditados_ && item.metadadosEditados) ? 9.0f : 4.0f;
+                juce::Rectangle<float> barRect(static_cast<float>(bounds.getX()), static_cast<float>(bounds.getY() + 2),
+                                               barW, static_cast<float>(bounds.getHeight() - 4));
+                if (destacarEditados_ && item.metadadosEditados) {
+                    juce::Graphics::ScopedSaveState saveState(g);
+                    juce::Path barPath;
+                    barPath.addRoundedRectangle(barRect, 2.0f);
+                    g.reduceClipRegion(barPath);
+                    g.setColour(corCat);
+                    g.fillRect(barRect);
+                    g.setColour(juce::Colours::black.withAlpha(0.92f));
+                    for (float y = barRect.getY() - barRect.getWidth() * 2; y <= barRect.getBottom() + barRect.getWidth() * 2; y += 8.0f) {
+                        g.drawLine(barRect.getX() - 3.0f, y, barRect.getRight() + 3.0f, y + barRect.getWidth(), 3.5f);
+                    }
+                } else {
+                    g.setColour(corCat);
+                    g.fillRoundedRectangle(barRect, 2.0f);
+                }
+
+                if (destacarEditados_ && item.metadadosEditados && !marcadoP && !selecionado) {
+                    g.setColour(corCat.withAlpha(0.45f));
+                    g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 1.5f);
+                }
 
                 g.setColour(tk.borda.withAlpha(0.2f));
                 g.fillRect(bounds.getX(), bounds.getBottom() - 1, bounds.getWidth(), 1);
@@ -1403,11 +1519,19 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
-            juce::String durText = (item.extensaoArquivo == "mp4" || item.extensaoArquivo == "mov" || item.extensaoArquivo == "avi" || item.extensaoArquivo == "mkv") ? "12:18"
-                                 : (item.extensaoArquivo == "wav" || item.extensaoArquivo == "mp3" || item.extensaoArquivo == "flac") ? "04:35" : "";
+            juce::String durText;
+            if (item.duracaoSegundos.has_value() && *item.duracaoSegundos > 0.0) {
+                int total = static_cast<int>(*item.duracaoSegundos + 0.5);
+                int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
+                if (h > 0)
+                    durText = juce::String(h) + ":" + juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+                else
+                    durText = juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+            }
             if (durText.isNotEmpty()) {
-                int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - 44);
-                juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, 40, 16);
+                int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
+                int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
+                juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, badgeW, 16);
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
@@ -1415,13 +1539,60 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText(durText, durBadge, juce::Justification::centred);
             }
 
-            // Card border: thick colored by media type, thicker + accent when selected
-            if (selecionado) {
+            // Card border:
+            // 1. Marked for Publish: thick lime green (8.75f)
+            // 2. Edited item: High-contrast transverse black zebra stripes over category color border
+            // 3. Selected: thick accent border
+            // 4. Unedited (intake original): Clean subtle thin category border (1.8f)
+            bool marcadoP = item.marcadoPublicacao || itensMarcadosP_.count(item.id) > 0;
+            if (marcadoP) {
+                g.setColour(juce::Colour(0xff39ff14));
+                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 8.75f);
+                if (selecionado) {
+                    g.setColour(tk.acento);
+                    g.drawRoundedRectangle(bounds.reduced(5).toFloat(), tk.raioMedio, 2.0f);
+                }
+            } else if (destacarEditados_ && item.metadadosEditados) {
+                // High-contrast diagonal zebra striped border (listras pretas transversais)
+                {
+                    juce::Graphics::ScopedSaveState saveState(g);
+                    juce::Path ringPath;
+                    ringPath.addRoundedRectangle(bounds.toFloat(), tk.raioMedio);
+                    ringPath.addRoundedRectangle(bounds.reduced(5).toFloat(), juce::jmax(1.0f, tk.raioMedio - 3.0f));
+                    ringPath.setUsingNonZeroWinding(false); // Even-odd hollow ring
+                    g.reduceClipRegion(ringPath);
+
+                    // Category base background
+                    g.setColour(corCat);
+                    g.fillRect(bounds);
+
+                    // Transverse black zebra stripes
+                    g.setColour(juce::Colours::black.withAlpha(0.92f));
+                    float stripePitch = 12.0f;
+                    float stripeWidth = 5.0f;
+                    float minCoord = static_cast<float>(bounds.getX() - bounds.getHeight() - 10);
+                    float maxCoord = static_cast<float>(bounds.getRight() + bounds.getHeight() + 10);
+                    for (float x = minCoord; x <= maxCoord; x += stripePitch) {
+                        g.drawLine(x, static_cast<float>(bounds.getY() - 5),
+                                   x + static_cast<float>(bounds.getHeight() + 10),
+                                   static_cast<float>(bounds.getBottom() + 5),
+                                   stripeWidth);
+                    }
+                }
+                // Crisp outer border outline
+                g.setColour(corCat);
+                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.2f);
+
+                if (selecionado) {
+                    g.setColour(tk.acento);
+                    g.drawRoundedRectangle(bounds.reduced(5).toFloat(), juce::jmax(1.0f, tk.raioMedio - 3.0f), 2.5f);
+                }
+            } else if (selecionado) {
                 g.setColour(tk.acento);
                 g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 3.5f);
             } else {
-                g.setColour(corCat);
-                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 2.5f);
+                g.setColour(corCat.withAlpha(0.65f));
+                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.8f);
             }
 
             if (item.sincronizado) {

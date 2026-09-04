@@ -267,22 +267,89 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
         auto image = Exiv2::ImageFactory::open(arquivo.getFullPathName().toStdString());
         image->readMetadata();
         const Exiv2::ExifData& exifData = image->exifData();
-        if (exifData.empty()) return;
+        const Exiv2::XmpData& xmpData = image->xmpData();
+        const Exiv2::IptcData& iptcData = image->iptcData();
 
-        auto obterString = [&](const char* chave) -> std::optional<std::string> {
-            auto pos = exifData.findKey(Exiv2::ExifKey(chave));
-            if (pos == exifData.end()) return std::nullopt;
-            std::string v = pos->toString();
-            return v.empty() ? std::nullopt : std::optional<std::string>(v);
+        auto obterStringExif = [&](const char* chave) -> std::optional<std::string> {
+            try {
+                auto pos = exifData.findKey(Exiv2::ExifKey(chave));
+                if (pos == exifData.end()) return std::nullopt;
+                std::string v = pos->toString();
+                return v.empty() ? std::nullopt : std::optional<std::string>(v);
+            } catch (...) { return std::nullopt; }
         };
 
-        r.exifDataOriginal = obterString("Exif.Photo.DateTimeOriginal");
-        r.exifLente = obterString("Exif.Photo.LensModel");
+        auto obterStringXmp = [&](const char* chave) -> std::optional<std::string> {
+            try {
+                auto pos = xmpData.findKey(Exiv2::XmpKey(chave));
+                if (pos == xmpData.end()) return std::nullopt;
+                std::string v = pos->toString();
+                return v.empty() ? std::nullopt : std::optional<std::string>(v);
+            } catch (...) { return std::nullopt; }
+        };
 
-        auto marca = obterString("Exif.Image.Make");
-        auto modelo = obterString("Exif.Image.Model");
-        if (marca || modelo)
-            r.exifCamera = (marca ? *marca : "") + ((marca && modelo) ? " " : "") + (modelo ? *modelo : "");
+        auto obterStringIptc = [&](const char* chave) -> std::optional<std::string> {
+            try {
+                auto pos = iptcData.findKey(Exiv2::IptcKey(chave));
+                if (pos == iptcData.end()) return std::nullopt;
+                std::string v = pos->toString();
+                return v.empty() ? std::nullopt : std::optional<std::string>(v);
+            } catch (...) { return std::nullopt; }
+        };
+
+        // Date and Time Original
+        r.exifDataOriginal = obterStringExif("Exif.Photo.DateTimeOriginal");
+        if (!r.exifDataOriginal) r.exifDataOriginal = obterStringExif("Exif.Photo.DateTimeDigitized");
+        if (!r.exifDataOriginal) r.exifDataOriginal = obterStringExif("Exif.Image.DateTime");
+        if (!r.exifDataOriginal) r.exifDataOriginal = obterStringXmp("Xmp.dc.date");
+        if (!r.exifDataOriginal) r.exifDataOriginal = obterStringXmp("Xmp.photoshop.DateCreated");
+
+        // Camera / Recording Device
+        auto marca = obterStringExif("Exif.Image.Make");
+        auto modelo = obterStringExif("Exif.Image.Model");
+        if (marca || modelo) {
+            std::string mk = marca ? *marca : "";
+            std::string md = modelo ? *modelo : "";
+            // Clean duplicate make prefixes (e.g. Make: "Panasonic", Model: "Panasonic NV-MX350")
+            if (!mk.empty() && !md.empty() && md.rfind(mk, 0) == 0) {
+                r.exifCamera = md;
+            } else {
+                r.exifCamera = mk + ((!mk.empty() && !md.empty()) ? " " : "") + md;
+            }
+        }
+        if (!r.exifCamera) {
+            auto xmpMake = obterStringXmp("Xmp.tiff.Make");
+            auto xmpModel = obterStringXmp("Xmp.tiff.Model");
+            if (xmpMake || xmpModel)
+                r.exifCamera = (xmpMake ? *xmpMake : "") + ((xmpMake && xmpModel) ? " " : "") + (xmpModel ? *xmpModel : "");
+        }
+
+        r.exifLente = obterStringExif("Exif.Photo.LensModel");
+        if (!r.exifLente) r.exifLente = obterStringXmp("Xmp.aux.Lens");
+
+        // Creator / Artist (Human author, NOT camera hardware!)
+        r.metaCreator = obterStringExif("Exif.Image.Artist");
+        if (!r.metaCreator) r.metaCreator = obterStringXmp("Xmp.dc.creator");
+        if (!r.metaCreator) r.metaCreator = obterStringIptc("Iptc.Application2.Byline");
+
+        // Title
+        r.metaTitle = obterStringXmp("Xmp.dc.title");
+        if (!r.metaTitle) r.metaTitle = obterStringIptc("Iptc.Application2.ObjectName");
+
+        // Description
+        r.metaDescription = obterStringExif("Exif.Image.ImageDescription");
+        if (!r.metaDescription) r.metaDescription = obterStringXmp("Xmp.dc.description");
+        if (!r.metaDescription) r.metaDescription = obterStringIptc("Iptc.Application2.Caption");
+
+        // Subject / Keywords
+        r.metaSubject = obterStringXmp("Xmp.dc.subject");
+        if (!r.metaSubject) r.metaSubject = obterStringIptc("Iptc.Application2.Keywords");
+        if (!r.metaSubject) r.metaSubject = obterStringExif("Exif.Photo.UserComment");
+
+        // Rights / Copyright
+        r.metaRights = obterStringExif("Exif.Image.Copyright");
+        if (!r.metaRights) r.metaRights = obterStringXmp("Xmp.dc.rights");
+        if (!r.metaRights) r.metaRights = obterStringIptc("Iptc.Application2.Copyright");
 
         auto posOrientacao = exifData.findKey(Exiv2::ExifKey("Exif.Image.Orientation"));
         if (posOrientacao != exifData.end()) r.exifOrientacao = static_cast<int>(posOrientacao->toInt64());
@@ -301,9 +368,8 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
 
         if (auto* raizObj = r.bruto.getDynamicObject())
             raizObj->setProperty("exif", juce::var(exifObj.release()));
-    } catch (const Exiv2::Error&) {
-        // Formato sem suporte na build atual (ex.: HEIC sem BMFF) ou
-        // metadado corrompido — leitura técnica de base já é suficiente.
+    } catch (...) {
+        // Formato sem suporte ou metadado ausente
     }
 }
 

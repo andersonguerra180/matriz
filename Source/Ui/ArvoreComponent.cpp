@@ -89,6 +89,10 @@ void desenharIconeArquivo(juce::Graphics& g, juce::Rectangle<int> area, juce::Co
 
 ArvoreComponent::ArvoreComponent(ProjetoAberto& projeto) : projeto_(projeto) { recarregarSincrono(); }
 
+ArvoreComponent::~ArvoreComponent() {
+    poolArvore_.removeAllJobs(true, 2000);
+}
+
 void ArvoreComponent::definirAba(Aba aba) {
     if (aba_ == aba) return;
     aba_ = aba;

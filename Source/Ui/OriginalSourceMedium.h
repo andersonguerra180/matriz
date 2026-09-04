@@ -16,6 +16,7 @@ namespace matriz::ui {
 
 struct OriginalSourceMediumInfo {
     std::string medium = "None / Unknown";
+    std::string recordingDevice;
     std::string speed;
     std::string trackFormat;
     std::string referenceEq;
@@ -36,7 +37,8 @@ struct OriginalSourceMediumInfo {
     std::string customNote;
 
     bool isNoneOrUnknown() const {
-        return medium.empty() || medium == "None / Unknown" || medium == "None" || medium == "Unknown";
+        return (medium.empty() || medium == "None / Unknown" || medium == "None" || medium == "Unknown")
+               && recordingDevice.empty();
     }
 
     bool isNativeDigital() const {
@@ -56,9 +58,12 @@ struct MediumCategoryGroup {
 class OriginalSourceMediumVocabulary {
 public:
     static const std::vector<MediumCategoryGroup>& getMediumCategories();
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
     static void populateMediumCombo(juce::ComboBox& combo, bool includeNone = true);
+#endif
 };
 
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
 class OriginalSourceMediumEditorComponent : public juce::Component {
 public:
     OriginalSourceMediumEditorComponent();
@@ -86,7 +91,6 @@ private:
     bool compactMode_ = false;
     OriginalSourceMediumInfo currentInfo_;
 
-    std::unique_ptr<juce::Label> lblMedium_;
     std::unique_ptr<juce::ComboBox> comboMedium_;
 
     struct Subfield {
@@ -101,5 +105,6 @@ private:
     void addComboField(const juce::String& key, const juce::String& label, const std::vector<juce::String>& options, const std::string& selectedVal);
     void addTextField(const juce::String& key, const juce::String& label, const std::string& currentVal);
 };
+#endif
 
 } // namespace matriz::ui

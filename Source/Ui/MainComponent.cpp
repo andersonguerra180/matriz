@@ -3,6 +3,7 @@
 #include "../App/Cancelamento.h"
 #include "../App/Preferencias.h"
 #include "../App/Logger.h"
+#include "../Model/ProjectLog.h"
 #include "../Diag/Watchdog.h"
 #include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
@@ -32,6 +33,7 @@
 #include "ProgressoGlobal.h"
 #include "InitialRelinkDialog.h"
 #include "OfflineAssetRelinkDialog.h"
+#include "IngestProgressModalDialog.h"
 #include "../Vault/AssetRelinkEngine.h"
 #include "../Vault/Resolucao.h"
 #include "Tokens.h"
@@ -304,10 +306,19 @@ public:
             g.fillRoundedRectangle(area.toFloat(), tema().raioPequeno);
         }
         auto miolo = area.reduced(tema().espacoMedio, 0);
-        g.setColour(tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-        auto areaSelo = miolo.removeFromRight(90);
-        g.drawText(selo_, areaSelo, juce::Justification::centredRight);
+
+        auto areaSelo = miolo.removeFromRight(100).reduced(2, 4);
+        bool isCatalog = (selo_.equalsIgnoreCase("catalogo") || selo_.equalsIgnoreCase("catalog"));
+        juce::Colour corBadge = isCatalog ? juce::Colour(0xff9d4edd) : tema().acento;
+        g.setColour(corBadge.withAlpha(0.18f));
+        g.fillRoundedRectangle(areaSelo.toFloat(), 4.0f);
+        g.setColour(corBadge.withAlpha(0.5f));
+        g.drawRoundedRectangle(areaSelo.toFloat(), 4.0f, 1.0f);
+
+        g.setColour(corBadge);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+        g.drawText(isCatalog ? "CATALOG" : "COLLECTION", areaSelo, juce::Justification::centred);
+
         g.setColour(tema().textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText(nome_, miolo, juce::Justification::centredLeft);
@@ -339,6 +350,7 @@ struct EstadoLote {
     // nenhum atrás. Não é "descartar o que foi feito" (item 10 proíbe isso);
     // é limpar o que nunca chegou a ser feito.
     std::vector<std::string> naoProcessados;
+    std::vector<std::string> todosItemIds;
     bool cancelado = false;
 };
 
@@ -382,12 +394,10 @@ void MainComponent::atualizarTooltips() {
 }
 
 MainComponent::~MainComponent() {
-    // Fechar o aplicativo durante uma operação equivale a cancelar, com a
-    // mesma garantia (item 10): pede o cancelamento ANTES de esperar o pool,
-    // pra os jobs ainda enfileirados desistirem em vez de copiar milhares de
-    // arquivos enquanto a janela já sumiu da tela.
+    stopTimer();
     if (cancelamentoLote_) cancelamentoLote_->pedir();
     ingestPool_.removeAllJobs(true, 5000);
+    poolVaults_.removeAllJobs(true, 2000);
 }
 
 void MainComponent::reconstruirTelaInicial() {
@@ -423,6 +433,7 @@ void MainComponent::reconstruirTelaInicial() {
     analyticsWorkspace_.reset();
     treeWorkspace_.reset();
     backupWorkspace_.reset();
+    storageWorkspace_.reset();
     preservationWorkspace_.reset();
 
     // Pergunta direta em vez de instrução abstrata: a tela inicial abria com
@@ -476,8 +487,8 @@ void MainComponent::reconstruirTelaInicial() {
         constexpr size_t kMaxRecentesExibidos = 5;
         if (recentes.size() > kMaxRecentesExibidos) recentes.resize(kMaxRecentesExibidos);
         for (auto& r : recentes) {
-            juce::String selo = r.modo == "catalogo" ? matriz::i18n::t("tela_inicial.recente_modo_catalog")
-                                                       : matriz::i18n::t("tela_inicial.recente_modo_archive");
+            bool isCatalog = (r.modo.equalsIgnoreCase("catalogo") || r.modo.equalsIgnoreCase("catalog"));
+            juce::String selo = isCatalog ? "CATALOG" : "COLLECTION";
             auto linha = std::make_unique<LinhaProjetoRecente>(r.nome, selo);
             juce::File pasta(r.pasta);
             linha->aoClicar = [this, pasta] { if (aoAbrirRecente) aoAbrirRecente(pasta); };
@@ -801,6 +812,9 @@ void MainComponent::reconstruirLayoutProjeto() {
         mosaico_->definirModoVisao(lista ? MosaicoComponent::ModoVisao::Lista
                                           : MosaicoComponent::ModoVisao::Grade);
     };
+    barraFerramentas_->aoAlternarDestacarEditados = [this](bool ativo) {
+        if (mosaico_) mosaico_->definirDestacarEditados(ativo);
+    };
     barraFerramentas_->aoMudarFiltroHorizontal = [this](const std::string& filtro) {
         if (!mosaico_ || !projetoAberto_) return;
         
@@ -965,6 +979,9 @@ void MainComponent::abrirPreview(const std::string& itemId) {
             auto proximo = mosaico_->itemAdjacente(preview_->itemAtual(), direcao);
             if (proximo) abrirPreview(*proximo);
         };
+        preview_->aoPedirRelinkManual = [this](const std::string& id) {
+            abrirDialogoRelinkOffline(id);
+        };
         addAndMakeVisible(*preview_);
     }
 
@@ -1009,12 +1026,16 @@ void MainComponent::abrirEscuta(const std::string& itemId) {
             if (fichaPanel_ && !itemEmEscuta_.empty())
                 fichaPanel_->mostrarItem(itemEmEscuta_);
         };
+        escuta_->aoNavegar = [this](int direcao) {
+            if (!mosaico_ || itemEmEscuta_.empty()) return;
+            auto proximo = mosaico_->itemAdjacente(itemEmEscuta_, direcao);
+            if (proximo) abrirPreview(*proximo);
+        };
         addAndMakeVisible(*escuta_);
     }
 
-    auto itens = projetoAberto_->listarItens();
-    auto it = std::find_if(itens.begin(), itens.end(), [&](const ItemResumo& r) { return r.id == itemId; });
-    if (it == itens.end()) return;
+    auto it = projetoAberto_->obterItemResumo(itemId);
+    if (!it) return;
 
     // O arquivo é OPCIONAL (I3): com o Vault desconectado o workspace abre
     // do mesmo jeito, com forma de onda e métricas vindas do cache, e só o
@@ -1105,13 +1126,10 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 }
 
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
-    catalogHubWorkspace_.reset();
-    intakeWorkspace_.reset();
-    catalogWorkspace_.reset();
-    duplicatesWorkspace_.reset();
-    analyticsWorkspace_.reset();
-    treeWorkspace_.reset();
-    homePanel_.reset();
+    stopTimer();
+    poolVaults_.removeAllJobs(true, 2000);
+    reconstruirTelaInicial();
+
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
 
     bool isCatalog = (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo);
@@ -1129,6 +1147,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
+        else if (tab == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
     };
     barraNavegacao_->aoClicarFechar = [this] {
         if (catalogoPai_.exists()) retornarAoCatalogo();
@@ -1142,7 +1161,11 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     if (isCatalog) {
         mostrarCatalogHub();
     } else {
-        mostrarGrid();
+        if (projetoAberto_ && projetoAberto_->contarItens() > 0) {
+            mostrarGrid();
+        } else {
+            mostrarIntake();
+        }
     }
 
     verificarVaultsConectados();
@@ -1155,8 +1178,11 @@ void MainComponent::abrirColecaoDoCatalogo(const juce::File& pastaColecao) {
     if (!projetoAberto_) return;
     catalogoPai_ = pastaProjeto();
 
+    ProgressoGlobal::obterInstancia().iniciarTarefa("collection_open", "Opening Collection", 100, nullptr, pastaColecao.getFileName());
+
     auto projColecao = matriz::model::Project::abrir(pastaColecao);
     if (!projColecao) {
+        ProgressoGlobal::obterInstancia().concluirTarefa("collection_open", "Failed to open collection");
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::WarningIcon)
@@ -1167,6 +1193,7 @@ void MainComponent::abrirColecaoDoCatalogo(const juce::File& pastaColecao) {
         return;
     }
     abrirProjeto(std::move(projColecao));
+    ProgressoGlobal::obterInstancia().concluirTarefa("collection_open", "Collection loaded: " + pastaColecao.getFileName());
 }
 
 void MainComponent::retornarAoCatalogo() {
@@ -1189,6 +1216,8 @@ void MainComponent::mostrarCatalogHub() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
 
+    ProgressoGlobal::obterInstancia().iniciarTarefa("hub_open", "Opening Collections", 100, nullptr, "Loading collections hub...");
+
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Catalog);
         barraNavegacao_->setVisible(true);
@@ -1201,6 +1230,7 @@ void MainComponent::mostrarCatalogHub() {
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!catalogHubWorkspace_) {
         catalogHubWorkspace_ = std::make_unique<CatalogHubComponent>(*projetoAberto_);
@@ -1217,6 +1247,7 @@ void MainComponent::mostrarCatalogHub() {
         catalogHubWorkspace_->recarregar();
     }
 
+    ProgressoGlobal::obterInstancia().concluirTarefa("hub_open", "Collections Hub ready");
     resized();
     repaint();
 }
@@ -1241,6 +1272,7 @@ void MainComponent::mostrarIntake() {
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!intakeWorkspace_) {
         intakeWorkspace_ = std::make_unique<IntakeWorkspaceComponent>(*projetoAberto_);
@@ -1269,6 +1301,8 @@ void MainComponent::mostrarGrid() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
 
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_view", "Opening Catalog", 100, nullptr, "Loading catalog view...");
+
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Grid);
         barraNavegacao_->setVisible(true);
@@ -1281,6 +1315,7 @@ void MainComponent::mostrarGrid() {
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!catalogWorkspace_) {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
@@ -1295,6 +1330,8 @@ void MainComponent::mostrarGrid() {
         catalogWorkspace_->setVisible(true);
         catalogWorkspace_->recarregar();
     }
+
+    ProgressoGlobal::obterInstancia().concluirTarefa("catalog_view", "Catalog ready");
 
     resized();
     repaint();
@@ -1316,6 +1353,7 @@ void MainComponent::mostrarDuplicates() {
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!duplicatesWorkspace_) {
         duplicatesWorkspace_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_);
@@ -1345,6 +1383,7 @@ void MainComponent::mostrarAnalytics() {
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!analyticsWorkspace_) {
         analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
@@ -1386,6 +1425,7 @@ void MainComponent::mostrarTree() {
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (backupWorkspace_) backupWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     if (!treeWorkspace_) {
         treeWorkspace_ = std::make_unique<ArvoreBackupComponent>(*projetoAberto_);
@@ -1448,6 +1488,7 @@ void MainComponent::mostrarBackup() {
     if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
     if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
     if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (storageWorkspace_) storageWorkspace_->setVisible(false);
 
     std::set<std::string> selected;
     if (catalogWorkspace_) selected = catalogWorkspace_->itensSelecionados();
@@ -1465,6 +1506,36 @@ void MainComponent::mostrarBackup() {
         juce::MessageManager::callAsync([safeThis, pastaBackup] { if (safeThis) safeThis->abrirCatalogo(pastaBackup); });
     };
     addAndMakeVisible(*backupWorkspace_);
+
+    resized();
+    repaint();
+}
+
+void MainComponent::mostrarStorage() {
+    if (!projetoAberto_) return;
+    telaAtiva_ = TelaAtiva::Backup;
+
+    if (barraNavegacao_) {
+        barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Storage);
+        barraNavegacao_->setVisible(true);
+    }
+
+    if (homePanel_) homePanel_->setVisible(false);
+    if (catalogHubWorkspace_) catalogHubWorkspace_->setVisible(false);
+    if (intakeWorkspace_) intakeWorkspace_->setVisible(false);
+    if (catalogWorkspace_) catalogWorkspace_->setVisible(false);
+    if (duplicatesWorkspace_) duplicatesWorkspace_->setVisible(false);
+    if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
+    if (treeWorkspace_) treeWorkspace_->setVisible(false);
+    if (backupWorkspace_) backupWorkspace_->setVisible(false);
+
+    if (!storageWorkspace_) {
+        storageWorkspace_ = std::make_unique<StorageWorkspaceComponent>(*projetoAberto_);
+        addAndMakeVisible(*storageWorkspace_);
+    } else {
+        storageWorkspace_->setVisible(true);
+        storageWorkspace_->recarregar();
+    }
 
     resized();
     repaint();
@@ -1817,20 +1888,11 @@ void MainComponent::fecharProjeto() {
     }
 
     stopTimer();
-    intakeWorkspace_.reset();
-    catalogWorkspace_.reset();
-    analyticsWorkspace_.reset();
-    treeWorkspace_.reset();
-    homePanel_.reset();
-    ingestWizard_.reset();
-    barraNavegacao_.reset();
-    barraProgressoGlobal_.reset();
-    backupWorkspace_.reset();
-    preservationWorkspace_.reset();
+    poolVaults_.removeAllJobs(true, 2000);
     catalogoPai_ = juce::File();
     telaAtiva_ = TelaAtiva::Inicial;
-    projetoAberto_.reset();
     reconstruirTelaInicial();
+    projetoAberto_.reset();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
 }
 
@@ -1927,17 +1989,22 @@ void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
         storageName,
         [safeThis, itemId](const juce::File& fileSelected) {
             if (!safeThis || !safeThis->projetoAberto_) return;
-            try {
-                auto stmt = safeThis->projetoAberto_->projeto().registro().prepare(
-                    "SELECT a.id FROM arquivo a WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
-                stmt.bind(1, matriz::db::Value::of(itemId));
-                if (stmt.step()) {
-                    std::string masterArqId = stmt.columnText(0);
-                    safeThis->projetoAberto_->aplicarRelinkEmMemoria(masterArqId, fileSelected.getFullPathName().toStdString());
-                    if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
-                    if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
-                }
-            } catch (...) {}
+            std::string novoItemId;
+            juce::String err;
+            bool ok = matriz::vault::AssetRelinkEngine::executarRelinkIndividual(
+                safeThis->projetoAberto_->projeto().registro(),
+                safeThis->projetoAberto_->projeto().pasta(),
+                itemId,
+                fileSelected,
+                true,
+                novoItemId,
+                err);
+            if (ok) {
+                safeThis->projetoAberto_->salvar();
+                if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+                if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+                if (safeThis->fichaPanel_) safeThis->fichaPanel_->mostrarItem(novoItemId);
+            }
         });
 }
 
@@ -2152,14 +2219,35 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     }
 
     if (!sourceMedia.empty() || !collection.empty()) {
+        std::string agora = matriz::model::agoraIso8601();
         for (auto& id : itemIds) {
-            if (!sourceMedia.empty())
-                projetoAberto_->salvarMetadado(id, "source_media", sourceMedia);
-            if (!collection.empty())
-                projetoAberto_->salvarMetadado(id, "collection_type", collection);
+            if (!sourceMedia.empty()) {
+                registro->run(
+                    "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'source_media', ?, 'humano', ?) "
+                    "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) "
+                    "DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em "
+                    "WHERE item_campo.fonte != 'leitura_tecnica'",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                     matriz::db::Value::of(sourceMedia), matriz::db::Value::of(agora)});
+            }
+            if (!collection.empty()) {
+                registro->run(
+                    "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'collection_type', ?, 'humano', ?) "
+                    "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) "
+                    "DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em "
+                    "WHERE item_campo.fonte != 'leitura_tecnica'",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                     matriz::db::Value::of(collection), matriz::db::Value::of(agora)});
+            }
         }
     }
 
+    if (!loteEmCurso_) {
+        ingestsTotalLote_.store(0);
+        pendentes_->store(0);
+    }
     ingestsTotalLote_ += static_cast<int>(arquivos.size());
     *pendentes_ += static_cast<int>(arquivos.size());
     atualizarLabelProgresso();
@@ -2182,13 +2270,19 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     auto cancelamento = cancelamentoLote_;
 
     auto estadoLote = std::make_shared<EstadoLote>();
+    estadoLote->todosItemIds = itemIds;
     estadoLoteAtual_ = estadoLote;
     loteEmCurso_ = true;
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ingestModalDialog_ = IngestProgressModalDialog::showModal(static_cast<int>(arquivos.size()), [safeThis] {
+        if (safeThis) safeThis->cancelarLoteIngest();
+    });
+
     // 100 ms: rápido o bastante pra grade parecer viva, devagar o bastante
     // pra o acompanhamento do lote custar 10 idas à message thread por
     // segundo em vez de uma por arquivo.
     startTimer(100);
-    juce::Component::SafePointer<MainComponent> safeThis(this);
     // Atualiza a grade periodicamente durante o lote (não a cada arquivo —
     // custaria uma consulta completa por arquivo em lotes de milhares) pra
     // as miniaturas irem preenchendo visivelmente atrás, como pedido em
@@ -2210,6 +2304,13 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis,
                              contadorParaAtualizar, cancelamento, prefixo, escritaRegistro,
                              pendentes = pendentes_]() mutable {
+            struct PendentesGuard {
+                std::shared_ptr<std::atomic<int>> p;
+                ~PendentesGuard() {
+                    if (p) p->fetch_sub(1);
+                }
+            } guard{pendentes};
+
             juce::String erro;
             bool sucesso = false;
             bool duplicata = false;
@@ -2227,7 +2328,6 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     const std::lock_guard<std::mutex> lock(*escritaRegistro);
                     registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                 } catch (...) {}
-                registrarUnidadeConcluida(pendentes);
                 return;
             }
 
@@ -2326,10 +2426,16 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                             registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                             break;
                         } catch (...) {
-                            if (retries == 0) throw;
+                            if (retries == 0) break;
                             juce::Thread::sleep(50);
                         }
                     }
+                } catch (...) {}
+            } catch (...) {
+                erro = arquivo.getFileName() + ": Unexpected fatal error during ingest";
+                try {
+                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                 } catch (...) {}
             }
 
@@ -2343,7 +2449,15 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 }
             }
 
-            registrarUnidadeConcluida(pendentes);
+            double duracaoArquivo = std::chrono::duration<double>(std::chrono::system_clock::now() - inicio).count();
+            juce::MessageManager::callAsync([safeThis, duracaoArquivo, nome = arquivo.getFileName(), pendentes]() {
+                if (safeThis && safeThis->ingestModalDialog_) {
+                    safeThis->ingestModalDialog_->recordFileProcessed(duracaoArquivo);
+                    int total = safeThis->ingestsTotalLote_.load();
+                    int pend = pendentes->load();
+                    safeThis->ingestModalDialog_->updateProgress(juce::jmax(0, total - pend), nome);
+                }
+            });
         });
     }
 }
@@ -2437,25 +2551,49 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
     if (aoConcluirLoteIngestParaTeste) aoConcluirLoteIngestParaTeste(sucessos, erros);
 
     if (cancelado) {
-        mostrarResumoCancelado(sucessos, static_cast<int>(naoProcessados.size()) + sucessos + totalErros);
+        // Spec Section 3 — Atomic Cancel:
+        // Abort entirely: all partial progress (all items created in batch and partial cache) discarded.
+        if (projetoAberto_ && !estadoLote->todosItemIds.empty()) {
+            projetoAberto_->removerItensDoProjeto(estadoLote->todosItemIds);
+        }
+        if (ingestModalDialog_) {
+            ingestModalDialog_->closeDialog();
+            ingestModalDialog_ = nullptr;
+        }
+        if (mosaico_) mosaico_->recarregar();
+        if (arvoreOrigem_) arvoreOrigem_->recarregar();
+        if (arvoreAcervo_) arvoreAcervo_->recarregar();
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
+        atualizarEtapaDoFluxo();
+
+        mostrarResumoCancelado(0, static_cast<int>(estadoLote->todosItemIds.size()));
         return;
     }
 
-    // Produção não mostra diálogo de resumo (§2.1 — nenhum diálogo, nenhuma
-    // pergunta): erro já ficou marcado no próprio item (estado='alerta' +
-    // notas_livres), visível na grade. O resumo final (item 9, §5 — "HD
-    // reconectado... X novos, Y já conhecidos") é discreto, no lugar da
-    // barra de progresso, nunca um popup que o operador precisa fechar.
+    if (ingestModalDialog_) {
+        ingestModalDialog_->closeDialog();
+        ingestModalDialog_ = nullptr;
+    }
+
+    // Append entry to project log.md
+    if (projetoAberto_) {
+        matriz::model::ProjectLog pLog(projetoAberto_->projeto().pasta());
+        juce::StringArray details;
+        details.add("Files processed: " + juce::String(sucessos));
+        details.add("Duplicates recognized: " + juce::String(duplicatas));
+        if (totalErros > 0) details.add("Errors encountered: " + juce::String(totalErros));
+        pLog.appendEntry("Ingest Batch Completed", details);
+    }
+
     mostrarResumoLote(sucessos - duplicatas, duplicatas, totalErros);
 }
 
 void MainComponent::cancelarLoteIngest() {
     if (!cancelamentoLote_ || !ingestEmAndamento()) return;
     cancelamentoLote_->pedir();
-    // Feedback na hora, sem esperar o último job drenar: o operador clicou
-    // e precisa ver que o clique valeu, mesmo que ainda faltem alguns
-    // callbacks de arquivos em curso chegarem.
-    textoProgressoIngest_ = matriz::i18n::t("ingest.cancelando");
+    if (ingestModalDialog_) ingestModalDialog_->setCancelling();
+    textoProgressoIngest_ = "Cancelling ingestion and rolling back...";
     ProgressoGlobal::obterInstancia().atualizarDetalhe("ingest", "Cancelling batch...");
 }
 
@@ -2468,16 +2606,19 @@ void MainComponent::mostrarResumoCancelado(int processados, int total) {
 
 void MainComponent::atualizarLabelProgresso() {
     MATRIZ_TRACE("MainComponent::atualizarLabelProgresso");
-    int pendentes = pendentes_->load();
-    // Enquanto o lote está rodando, mostra progresso. O estado "terminou"
-    // não reseta o rótulo aqui — quem decide o que mostrar depois do
-    // último arquivo é mostrarResumoLote(), chamado à parte (item 9, §5:
-    // resumo final "X novos, Y já conhecidos" fica discreto no lugar da
-    // barra, não desaparece sozinho).
+    int pendentes = juce::jmax(0, pendentes_->load());
+    int total = ingestsTotalLote_.load();
+    int concluidos = juce::jmin(total, juce::jmax(0, total - pendentes));
+
+    if (total > 0) {
+        ProgressoGlobal::obterInstancia().atualizarProgresso(
+            "ingest",
+            concluidos,
+            juce::String(concluidos) + " of " + juce::String(total) + " files ingested");
+    }
+
     if (pendentes <= 0) return;
 
-    int total = ingestsTotalLote_.load();
-    int concluidos = total - pendentes;
     textoProgressoIngest_ = matriz::i18n::t("ingest.progresso")
                                 .replace("{feito}", juce::String(concluidos))
                                 .replace("{total}", juce::String(total));
@@ -2664,6 +2805,11 @@ void MainComponent::resized() {
 
     if (backupWorkspace_ && backupWorkspace_->isVisible()) {
         backupWorkspace_->setBounds(area);
+        return;
+    }
+
+    if (storageWorkspace_ && storageWorkspace_->isVisible()) {
+        storageWorkspace_->setBounds(area);
         return;
     }
 

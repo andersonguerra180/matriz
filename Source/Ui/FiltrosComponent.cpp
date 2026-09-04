@@ -46,6 +46,10 @@ FiltrosComponent::FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mos
     recarregarSincrono();
 }
 
+FiltrosComponent::~FiltrosComponent() {
+    poolConsulta_.removeAllJobs(true, 2000);
+}
+
 FiltrosComponent::DadosDoBanco FiltrosComponent::coletarDoBanco(ProjetoAberto& projeto) {
     DadosDoBanco d;
     d.porTipoMidia = projeto.contagensPorTipoMidia();
@@ -205,6 +209,14 @@ void FiltrosComponent::reconstruirLinhas() {
     for (auto& colecao : dados_.salvas)
         linhas_.push_back({TipoLinha::Colecao, colecao.nome, juce::String(colecao.id), -1, false});
     linhas_.push_back({TipoLinha::SalvarColecao, matriz::i18n::t("filtros.salvar_colecao"), "", -1, false});
+
+    linhas_.push_back({TipoLinha::CabecalhoSecao, "LEGENDA", "", -1, false});
+#if JUCE_MAC
+    juce::String atalhoLegenda = "Cmd+P";
+#else
+    juce::String atalhoLegenda = "Ctrl+P";
+#endif
+    linhas_.push_back({TipoLinha::LegendaPublish, "Publish (" + atalhoLegenda + ")", "", -1, false});
 }
 
 juce::Rectangle<int> FiltrosComponent::boundsDaLinha(int indice) const {
@@ -290,6 +302,19 @@ void FiltrosComponent::paint(juce::Graphics& g) {
             g.fillEllipse(juce::Rectangle<float>(areaPonto.getX() + 2.0f, areaPonto.getCentreY() - 4.0f, 8.0f, 8.0f));
         }
 
+        if (linha.tipo == TipoLinha::LegendaPublish) {
+            auto miolo = bounds.reduced(tk.espacoMedio, 0);
+            auto areaPonto = miolo.removeFromLeft(16);
+            juce::Rectangle<float> rectBox(static_cast<float>(areaPonto.getX() + 1), static_cast<float>(areaPonto.getCentreY() - 5), 10.0f, 10.0f);
+            g.setColour(juce::Colour(0xff39ff14)); // Lime green
+            g.drawRoundedRectangle(rectBox, 2.0f, 2.0f);
+
+            g.setColour(tk.textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            g.drawText(linha.rotulo, miolo, juce::Justification::centredLeft, true);
+            continue;
+        }
+
         if (linha.contagem >= 0) {
             auto areaContagem = miolo.removeFromRight(36);
             g.setColour(tk.textoTerciario);
@@ -309,6 +334,8 @@ void FiltrosComponent::mouseDown(const juce::MouseEvent& e) {
     int indice = indiceLinhaNaPosicao(e.getPosition().y);
     if (indice < 0) return;
     auto& linha = linhas_[static_cast<size_t>(indice)];
+
+    if (linha.tipo == TipoLinha::LegendaPublish || linha.tipo == TipoLinha::CabecalhoSecao) return;
 
     if (e.mods.isPopupMenu() && linha.tipo == TipoLinha::Colecao) {
         abrirMenuContextoColecao(indice);
@@ -386,7 +413,9 @@ void FiltrosComponent::mouseDown(const juce::MouseEvent& e) {
             break;
         }
         case TipoLinha::SalvarColecao: salvarColecaoAtual(); break;
-        case TipoLinha::CabecalhoSecao: break;
+        case TipoLinha::CabecalhoSecao:
+        case TipoLinha::LegendaPublish:
+            break;
     }
 
     recarregar();

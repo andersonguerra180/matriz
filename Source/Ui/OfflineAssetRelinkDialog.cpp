@@ -90,6 +90,28 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
                     return;
                 }
 
+                if (val.isDifferentContent) {
+                    juce::AlertWindow::showAsync(
+                        juce::MessageBoxOptions()
+                            .withIconType(juce::MessageBoxIconType::WarningIcon)
+                            .withTitle("Checksum Mismatch — Different File Content")
+                            .withMessage("The selected file does not match the original file hash or size.\n\n"
+                                         "Original SHA-256: " + juce::String(val.expectedSha).substring(0, 16) + "...\n"
+                                         "Selected SHA-256: " + juce::String(val.actualSha).substring(0, 16) + "...\n\n"
+                                         "Would you like to replace the asset? A new Asset ID will be assigned, and the replacement will be recorded in the project log.")
+                            .withButton("Replace Asset (New ID)")
+                            .withButton("Cancel"),
+                        [this, result, cb = onRelinkSuccess_](int buttonIndex) {
+                            if (buttonIndex == 1) {
+                                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) {
+                                    dw->exitModalState(1);
+                                }
+                                if (cb) cb(result);
+                            }
+                        });
+                    return;
+                }
+
                 auto cb = onRelinkSuccess_;
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) {
                     dw->exitModalState(1);

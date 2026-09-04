@@ -156,6 +156,7 @@ bool atualizarPresencaDoVault(matriz::db::Database& registro, const std::string&
 }
 
 std::vector<std::string> reavaliarVaults(matriz::db::Database& registro) {
+    sincronizarDrivesDoProjeto(registro, "");
     std::vector<std::string> ficaramOnline;
     std::vector<std::pair<std::string, std::string>> vaults;  // id, status anterior
     {

@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS item (
                                       'nao_digitalizado', 'capturado', 'qc_ok', 'alerta')),
     notas_livres    TEXT,
     em_quarentena   INTEGER NOT NULL DEFAULT 0 CHECK (em_quarentena IN (0, 1)),
+    marcado_publicacao INTEGER NOT NULL DEFAULT 0 CHECK (marcado_publicacao IN (0, 1)),
+    metadados_editados INTEGER NOT NULL DEFAULT 0 CHECK (metadados_editados IN (0, 1)),
     criado_em       TEXT NOT NULL,
     atualizado_em   TEXT NOT NULL,
     UNIQUE (projeto_id, codigo_acervo)
@@ -459,18 +461,41 @@ CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_arquivo ON consolidacao_reg
 -- Vault (Cofre de Preservação)
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS vault (
-    id            TEXT PRIMARY KEY,
-    projeto_id    TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
-    nome          TEXT NOT NULL,
-    tipo          TEXT NOT NULL CHECK (tipo IN ('local','optico','lto','rede','nuvem_sync')),
-    uuid_volume   TEXT,
-    raiz_relativa TEXT,
-    localizacao   TEXT NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online','offline')),
-    visto_em      TEXT,
-    criado_em     TEXT NOT NULL,
-    verificado_em TEXT
+    id                    TEXT PRIMARY KEY,
+    projeto_id            TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    nome                  TEXT NOT NULL,
+    tipo                  TEXT NOT NULL CHECK (tipo IN ('local','optico','lto','rede','nuvem_sync')),
+    uuid_volume           TEXT,
+    raiz_relativa         TEXT,
+    localizacao           TEXT NOT NULL,
+    status                TEXT NOT NULL DEFAULT 'offline' CHECK (status IN ('online','offline')),
+    vendor                TEXT NOT NULL DEFAULT '',
+    modelo                TEXT NOT NULL DEFAULT '',
+    numero_serie          TEXT NOT NULL DEFAULT '',
+    capacidade_bytes      INTEGER NOT NULL DEFAULT 0,
+    removivel             INTEGER NOT NULL DEFAULT 1,
+    sistema_arquivos      TEXT NOT NULL DEFAULT '',
+    categoria_dispositivo TEXT NOT NULL DEFAULT 'desconhecido',
+    categoria_manual      INTEGER NOT NULL DEFAULT 0,
+    visto_em              TEXT,
+    criado_em             TEXT NOT NULL,
+    verificado_em         TEXT
 );
+
+-- ---------------------------------------------------------------------------
+-- Eventos de Backup por Vault
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS vault_evento (
+    id             TEXT PRIMARY KEY,
+    vault_id       TEXT NOT NULL REFERENCES vault(id) ON DELETE CASCADE,
+    modo           TEXT NOT NULL CHECK (modo IN ('collection', 'catalog')),
+    itens_copiados INTEGER NOT NULL DEFAULT 0,
+    itens_falha    INTEGER NOT NULL DEFAULT 0,
+    cancelado      INTEGER NOT NULL DEFAULT 0,
+    criado_em      TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vault_evento_vault ON vault_evento(vault_id);
 
 -- ---------------------------------------------------------------------------
 -- Cache de Arquivo (Visualização Offline)
@@ -599,6 +624,32 @@ END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_delete AFTER DELETE ON item_assunto FOR EACH ROW BEGIN
     DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_insert AFTER INSERT ON item_tag FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.tag);
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, '#' || new.tag);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_delete AFTER DELETE ON item_tag FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_insert AFTER INSERT ON item_observacao FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.texto);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_delete AFTER DELETE ON item_observacao FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.texto;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_insert AFTER INSERT ON arquivo FOR EACH ROW BEGIN
+    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.caminho_relativo);
+    INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_delete AFTER DELETE ON arquivo FOR EACH ROW BEGIN
+    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, ''));
 END;
 
 -- ---------------------------------------------------------------------------

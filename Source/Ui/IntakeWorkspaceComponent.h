@@ -32,6 +32,7 @@ public:
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
     juce::Component* refreshComponentForCell(int rowNumber, int columnId, bool isRowSelected, juce::Component* existingComponentToUpdate) override;
     void selectedRowsChanged(int lastRowSelected) override;
+    void sortOrderChanged(int newSortColumnId, bool isForwards) override;
     void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) override;
     void cellDoubleClicked(int rowNumber, int columnId, const juce::MouseEvent& e) override;
     void abrirArquivoOrigem(int rowNumber);
@@ -39,6 +40,13 @@ public:
     // FileDragAndDropTarget
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
+
+    enum class ModoVisao {
+        Lista,
+        Icones
+    };
+    void definirModoVisao(ModoVisao modo);
+    ModoVisao modoVisaoAtual() const { return modoVisao_; }
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -61,13 +69,17 @@ private:
         juce::String titulo;
         juce::String nomeArquivo;
         juce::String extensao;
+        juce::String dataCriacao;
         juce::int64 tamanhoBytes = 0;
+        juce::String caminhoOrigem;
         juce::String categoria; // "Audio", "Video", "Image", "Document", "Project", "Other"
         juce::String collection; // assigned collection or ""
         juce::String sourceMedia; // assigned original source medium or ""
         bool offline = false;
         bool selecionado = false;
     };
+
+    class ThumbnailsGridComponent;
 
     void carregarItens();
     void atualizarFiltragem();
@@ -78,9 +90,14 @@ private:
     void definirSourceMediaItem(const std::string& itemId, const std::string& sourceMediaJson);
     void mostrarEditorOriginalSourceMedium(int itemIndex, juce::Rectangle<int> screenBounds);
     void mostrarEditorOriginalSourceMediumLote(juce::Rectangle<int> screenBounds);
+    void aplicarGeolocationAosSelecionados(const std::string& coords, const std::string& addr, const std::string& city, const std::string& state, const std::string& country);
+    void mostrarEditorGeolocationLote(juce::Rectangle<int> screenBounds);
     void confirmarSelecaoParaGrid();
     void confirmarTodosParaGrid();
     void removerSelecionadosDoIntake();
+    void rejeitarItemDoIntake(int itemIndex);
+    void mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos);
+    void mostrarDialogoGetInfo(int itemIndex);
     void selecionarTodos(bool selecionar);
     void selecionarPorCategoria(const juce::String& categoria);
     void mostrarMenuColecaoParaItem(int itemIndex, juce::Rectangle<int> screenBounds);
@@ -89,6 +106,9 @@ private:
     std::vector<ItemIntake> todosItens_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
     juce::String filtroCategoriaAtual_ = "ALL"; // "ALL", "Audio", "Video", "Image", "Document", "Other"
+    int ultimoSortColumnId_ = 0;
+    bool sortAscendente_ = true;
+    ModoVisao modoVisao_ = ModoVisao::Lista;
 
     int contagemAudio_ = 0;
     int contagemVideo_ = 0;
@@ -100,6 +120,8 @@ private:
     std::unique_ptr<juce::Label> lblTitulo_;
     std::unique_ptr<juce::Label> lblSubtitulo_;
     std::unique_ptr<juce::Label> lblContadorTotal_;
+    std::unique_ptr<juce::TextButton> btnVisaoLista_;
+    std::unique_ptr<juce::TextButton> btnVisaoIcones_;
     std::unique_ptr<juce::TextButton> btnIngerir_;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
@@ -120,9 +142,13 @@ private:
     std::unique_ptr<juce::ComboBox> comboColecaoLote_;
     std::unique_ptr<juce::TextButton> btnAplicarColecaoLote_;
     std::unique_ptr<juce::TextButton> btnOriginalMediumLote_;
+    std::unique_ptr<juce::TextButton> btnGeolocationLote_;
 
-    // Table List
+    // Table List & Thumbnails Grid
     std::unique_ptr<juce::TableListBox> tabela_;
+    std::unique_ptr<juce::Viewport> gridViewport_;
+    std::unique_ptr<ThumbnailsGridComponent> gridComponent_;
+
     std::unique_ptr<juce::Label> lblDica_;
 
     std::unique_ptr<juce::Component> divisor1_;

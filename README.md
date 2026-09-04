@@ -118,6 +118,8 @@ tools/ingest_selftest/  self-test headless do motor de ingestão/backup, sobre m
 | `TimelineComponent` | timeline de editor: onda, cursor, zoom, régua/timecode, transporte, jog/shuttle, marcadores |
 | `BarraMetricasComponent` | barra fixa no rodapé: LUFS-I, LRA, FPS, VU e formato, adaptando-se ao tipo |
 | `ConsolidacaoDialogo` | backup: hierarquia de níveis arrastáveis com prévia da árvore ao vivo |
+| `BackupWorkspaceComponent` | workspace de consolidação e exportação de backup/catálogo limpo e focado |
+| `StorageWorkspaceComponent` | STORAGE workspace: detecção de hardware IOKit (Source e Backup Drives), inventário de discos e histórico de ingestão/backup |
 | `CatalogoComponent` | consulta ao catálogo de proxies sem o volume original |
 | `ProjetoAberto` | estado central do projeto aberto: undo stack (10 níveis), leitura/gravação de metadado, tags |
 | `Tokens.h` | design tokens (BKR Dark é o padrão; nenhuma cor literal fora deste arquivo) |

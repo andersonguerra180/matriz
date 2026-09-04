@@ -53,6 +53,7 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Duplicates, "DUPLICATES", {}, false });
         tabs_.push_back({ Tab::Analytics, "ANALYTICS", {}, false });
         tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
+        tabs_.push_back({ Tab::Storage, "STORAGE", {}, false });
     } else {
         tabs_.push_back({ Tab::Intake, "INTAKE", {}, false });
         tabs_.push_back({ Tab::Grid, "GRID", {}, false });
@@ -60,6 +61,7 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Analytics, "ANALYTICS", {}, false });
         tabs_.push_back({ Tab::Tree, "TREE", {}, false });
         tabs_.push_back({ Tab::Backup, "BACKUP", {}, false });
+        tabs_.push_back({ Tab::Storage, "STORAGE", {}, false });
     }
 }
 
@@ -128,7 +130,7 @@ void BarraNavegacaoComponent::resized() {
     area.removeFromLeft(brandWidth);
     
     // Tabs sizing
-    int tabWidth = isCatalog_ ? 125 : 110;
+    int tabWidth = isCatalog_ ? 115 : 100;
     for (auto& tab : tabs_) {
         tab.bounds = area.removeFromLeft(tabWidth);
     }
@@ -190,6 +192,7 @@ juce::String BarraNavegacaoComponent::getTooltip() {
                 case Tab::Analytics: return "View statistics, charts, and preservation metrics";
                 case Tab::Tree: return "Explore assets structure via vault directories tree";
                 case Tab::Backup: return "Plan, check conflicts, and consolidate backup publication package";
+                case Tab::Storage: return "Inspect and manage physical backup storage devices and history";
             }
         }
     }

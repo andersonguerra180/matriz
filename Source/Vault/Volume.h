@@ -12,12 +12,19 @@
 // DiskArbitration pro UUID de volume — que é o identificador estável que a
 // reconciliação de §8 precisa quando o disco é remontado em outro caminho.
 
+#include "DiskIdentity.h"
+
+namespace matriz::db {
+class Database;
+}
+
 namespace matriz::vault {
 
 struct InfoVolume {
     juce::File pontoMontagem;   // "/" , "/Volumes/BUNKER 4TB", ...
     std::string uuid;           // UUID de volume; vazio quando o SO não expõe
     std::string nome;           // rótulo pra exibição
+    VolumeHardwareIdentity hardware; // Hardware physical drive info via IOKit
 };
 
 // Ponto de montagem do volume que contém `caminho`, como o sistema de
@@ -54,5 +61,17 @@ InfoVolume descreverVolume(const juce::File& caminho);
 // Devolve o caminho absoluto quando o arquivo não está mesmo sob a raiz —
 // honesto, e o resolvedor (Resolucao.h) sabe lidar com os dois.
 std::string caminhoRelativoAoVolume(const juce::File& arquivo);
+
+// Infere categoria de dispositivo para o ícone da UI a partir de InfoVolume (§2 Spec Storage)
+std::string inferirCategoriaDispositivo(const InfoVolume& volume);
+
+// Resolve ou cria o registro de Vault para uma pasta de destino ou arquivo ingerido,
+// enriquecendo com hardware identity e respeitando categoria manual existente.
+std::string obterOuCriarVaultParaDestino(matriz::db::Database& registro,
+                                        const juce::File& caminhoDestino,
+                                        const std::string& projetoId);
+
+// Varre todos os volumes montados e arquivos do projeto para registrar e vincular vaults automaticamente.
+void sincronizarDrivesDoProjeto(matriz::db::Database& registro, const std::string& projetoId);
 
 } // namespace matriz::vault

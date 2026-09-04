@@ -45,6 +45,8 @@ private:
     std::string itemId_;
     matriz::ingest::CategoriaMidia categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
 
+    std::unique_ptr<juce::TextButton> btnAnterior_;
+    std::unique_ptr<juce::TextButton> btnProximo_;
     std::unique_ptr<juce::Label> cabecalhoTitulo_;
 
     juce::Image imagemPrincipal_;
@@ -55,8 +57,12 @@ private:
 
     std::unique_ptr<TimelineComponent> timeline_;
     std::unique_ptr<VideoPlayerComponent> videoPlayer_;
+    std::unique_ptr<juce::TextButton> btnRelinkManual_;
+    juce::String volumeEsperadoNome_;
+    juce::String volumeEsperadoSerial_;
 
 public:
+    std::function<void(const std::string& itemId)> aoPedirRelinkManual;
     // Repassados pra fora: a ficha escuta marcadores (item 9.2) e a barra de
     // métricas escuta o nível pro VU (item 6.1).
     std::function<void()> aoMudarMarcadores;

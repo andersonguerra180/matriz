@@ -10,7 +10,24 @@ namespace matriz::ui {
 
 static const std::vector<MediumCategoryGroup> kMediumVocab = {
     {
-        "AUDIO (ANALOG & DIGITAL)",
+        "SOLID STATE & FLASH MEMORY (PHOTO / VIDEO / AUDIO)",
+        {
+            "SD Card",
+            "microSD Card",
+            "CF Card (CompactFlash)",
+            "CFexpress Card",
+            "CFast Card",
+            "XQD Card",
+            "SxS Card",
+            "P2 Card",
+            "Flash Drive / USB Drive",
+            "External SSD / Portable SSD",
+            "External Hard Drive (HDD)",
+            "Internal Storage / Smartphone"
+        }
+    },
+    {
+        "AUDIO (ANALOG & DIGITAL TAPE / DISC)",
         {
             "1/4\" Tape",
             "1/2\" Tape",
@@ -21,21 +38,13 @@ static const std::vector<MediumCategoryGroup> kMediumVocab = {
             "DAT",
             "ADAT",
             "DTRS / Hi8 Digital Audio Tape",
+            "MiniDisc (MD)",
+            "Audio CD / CD-R",
             "12\" Vinyl",
             "10\" Vinyl",
             "7\" Vinyl",
             "Lacquer",
             "Shellac"
-        }
-    },
-    {
-        "FILM (MOTION PICTURE)",
-        {
-            "35mm Film",
-            "16mm Film",
-            "Super 16 Film",
-            "8mm Film",
-            "Super 8 Film"
         }
     },
     {
@@ -60,7 +69,27 @@ static const std::vector<MediumCategoryGroup> kMediumVocab = {
         }
     },
     {
-        "IMAGE (STILL & PHYSICAL)",
+        "OPTICAL DISC (AUDIO / VIDEO / DATA)",
+        {
+            "Audio CD / CD-R / CD-RW",
+            "DVD / DVD-R / DVD-Video",
+            "Blu-ray Disc (BD / BD-R)",
+            "MiniDisc (MD)",
+            "LaserDisc"
+        }
+    },
+    {
+        "FILM (MOTION PICTURE)",
+        {
+            "35mm Film",
+            "16mm Film",
+            "Super 16 Film",
+            "8mm Film",
+            "Super 8 Film"
+        }
+    },
+    {
+        "IMAGE (STILL FILM & PRINTS)",
         {
             "35mm Film (Still)",
             "120 / 220 Film",
@@ -91,6 +120,7 @@ const std::vector<MediumCategoryGroup>& OriginalSourceMediumVocabulary::getMediu
     return kMediumVocab;
 }
 
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
 void OriginalSourceMediumVocabulary::populateMediumCombo(juce::ComboBox& combo, bool includeNone) {
     combo.clear(juce::dontSendNotification);
     int id = 1;
@@ -109,12 +139,21 @@ void OriginalSourceMediumVocabulary::populateMediumCombo(juce::ComboBox& combo, 
         }
     }
 }
+#endif
 
 std::string OriginalSourceMediumInfo::toDisplaySummary() const {
-    if (isNoneOrUnknown()) return "None / Unknown";
-    if (isNativeDigital()) return "Native Digital";
+    if (isNoneOrUnknown()) {
+        if (!recordingDevice.empty()) return "None / Unknown (Device: " + recordingDevice + ")";
+        return "None / Unknown";
+    }
+    if (isNativeDigital()) {
+        if (!recordingDevice.empty()) return "Native Digital (Device: " + recordingDevice + ")";
+        return "Native Digital";
+    }
     if (medium == "Other") {
-        return customNote.empty() ? "Other" : ("Other: " + customNote);
+        std::string s = customNote.empty() ? "Other" : ("Other: " + customNote);
+        if (!recordingDevice.empty()) s += " (Device: " + recordingDevice + ")";
+        return s;
     }
 
     std::vector<std::string> parts;
@@ -140,6 +179,7 @@ std::string OriginalSourceMediumInfo::toDisplaySummary() const {
     addIfVal(color);
     if (!tapeFormulation.empty()) parts.push_back(tapeFormulation);
     if (!customNote.empty()) parts.push_back(customNote);
+    if (!recordingDevice.empty()) parts.push_back("Device: " + recordingDevice);
 
     if (parts.empty()) return medium;
 
@@ -155,6 +195,7 @@ std::string OriginalSourceMediumInfo::toDisplaySummary() const {
 std::string OriginalSourceMediumInfo::serialize() const {
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
     obj->setProperty("medium", juce::String::fromUTF8(medium.c_str()));
+    if (!recordingDevice.empty()) obj->setProperty("recordingDevice", juce::String::fromUTF8(recordingDevice.c_str()));
     if (!speed.empty()) obj->setProperty("speed", juce::String::fromUTF8(speed.c_str()));
     if (!trackFormat.empty()) obj->setProperty("trackFormat", juce::String::fromUTF8(trackFormat.c_str()));
     if (!referenceEq.empty()) obj->setProperty("referenceEq", juce::String::fromUTF8(referenceEq.c_str()));
@@ -186,6 +227,7 @@ OriginalSourceMediumInfo OriginalSourceMediumInfo::deserialize(const std::string
     if (parsed.isObject()) {
         auto* obj = parsed.getDynamicObject();
         if (obj->hasProperty("medium")) info.medium = obj->getProperty("medium").toString().toStdString();
+        if (obj->hasProperty("recordingDevice")) info.recordingDevice = obj->getProperty("recordingDevice").toString().toStdString();
         if (obj->hasProperty("speed")) info.speed = obj->getProperty("speed").toString().toStdString();
         if (obj->hasProperty("trackFormat")) info.trackFormat = obj->getProperty("trackFormat").toString().toStdString();
         if (obj->hasProperty("referenceEq")) info.referenceEq = obj->getProperty("referenceEq").toString().toStdString();
@@ -211,14 +253,8 @@ OriginalSourceMediumInfo OriginalSourceMediumInfo::deserialize(const std::string
     return info;
 }
 
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
 OriginalSourceMediumEditorComponent::OriginalSourceMediumEditorComponent() {
-    const auto& tk = tema();
-
-    lblMedium_ = std::make_unique<juce::Label>("", "MEDIUM");
-    lblMedium_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    lblMedium_->setColour(juce::Label::textColourId, tk.textoSecundario);
-    addAndMakeVisible(*lblMedium_);
-
     comboMedium_ = std::make_unique<juce::ComboBox>();
     OriginalSourceMediumVocabulary::populateMediumCombo(*comboMedium_, true);
     comboMedium_->setText("None / Unknown", juce::dontSendNotification);
@@ -241,7 +277,19 @@ void OriginalSourceMediumEditorComponent::setCompactMode(bool compact) {
 
 void OriginalSourceMediumEditorComponent::setValue(const OriginalSourceMediumInfo& info) {
     currentInfo_ = info;
-    comboMedium_->setText(juce::String::fromUTF8(currentInfo_.medium.c_str()), juce::dontSendNotification);
+    int selId = 0;
+    juce::String target = juce::String::fromUTF8(currentInfo_.medium.c_str()).trim();
+    for (int i = 0; i < comboMedium_->getNumItems(); ++i) {
+        if (comboMedium_->getItemText(i).trim().equalsIgnoreCase(target)) {
+            selId = comboMedium_->getItemId(i);
+            break;
+        }
+    }
+    if (selId > 0) {
+        comboMedium_->setSelectedId(selId, juce::dontSendNotification);
+    } else {
+        comboMedium_->setText(juce::String::fromUTF8(currentInfo_.medium.c_str()), juce::dontSendNotification);
+    }
     rebuildSubfields();
 }
 
@@ -253,7 +301,8 @@ OriginalSourceMediumInfo OriginalSourceMediumEditorComponent::getValue() const {
         if (sf.combo) val = sf.combo->getText().toStdString();
         else if (sf.textEditor) val = sf.textEditor->getText().toStdString();
 
-        if (sf.key == "speed") info.speed = val;
+        if (sf.key == "recordingDevice") info.recordingDevice = val;
+        else if (sf.key == "speed") info.speed = val;
         else if (sf.key == "trackFormat") info.trackFormat = val;
         else if (sf.key == "referenceEq") info.referenceEq = val;
         else if (sf.key == "tapeFormulation") info.tapeFormulation = val;
@@ -416,11 +465,14 @@ void OriginalSourceMediumEditorComponent::rebuildSubfields() {
         addTextField("customNote", "ORIGINAL MEDIUM DESCRIPTION", currentInfo_.customNote);
     }
 
+    // Always add RECORDING DEVICE field
+    addTextField("recordingDevice", "RECORDING DEVICE", currentInfo_.recordingDevice);
+
     resized();
 }
 
 int OriginalSourceMediumEditorComponent::getPreferredHeight() const {
-    return (1 + static_cast<int>(subfields_.size())) * 52;
+    return 34 + static_cast<int>(subfields_.size()) * 52;
 }
 
 void OriginalSourceMediumEditorComponent::paint(juce::Graphics& g) {
@@ -431,9 +483,7 @@ void OriginalSourceMediumEditorComponent::resized() {
     auto area = getLocalBounds();
     if (area.isEmpty()) return;
 
-    if (lblMedium_ && comboMedium_) {
-        lblMedium_->setBounds(area.removeFromTop(16));
-        area.removeFromTop(2);
+    if (comboMedium_) {
         comboMedium_->setBounds(area.removeFromTop(26));
         area.removeFromTop(8);
     }
@@ -451,5 +501,6 @@ void OriginalSourceMediumEditorComponent::fireChange() {
     currentInfo_ = getValue();
     if (onChange) onChange();
 }
+#endif
 
 } // namespace matriz::ui

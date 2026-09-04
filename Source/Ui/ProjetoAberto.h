@@ -58,6 +58,17 @@ struct ItemResumo {
     std::string pastaNome; // Name of the acervo_pasta folder the item belongs to
     juce::int64 tamanhoBytes = 0;
     bool offline = false;
+
+    // Fields for detailed preview and micro-site generation
+    std::optional<double> duracaoSegundos;
+    std::string masterArquivoId;
+    std::string caminhoRelativoArquivo;
+    std::string caminhoAbsolutoOrigem;
+    std::string miniaturaCaminhoRelativo;
+    std::string isrc;
+    std::vector<std::string> tags;
+    bool marcadoPublicacao = false;
+    bool metadadosEditados = false;
 };
 
 class ProjetoAbertoError : public std::runtime_error {
@@ -71,6 +82,12 @@ public:
 
     matriz::model::Project& projeto() { jassert(projeto_ != nullptr); return *projeto_; }
 
+    static std::vector<ItemResumo> listarItensDeProjeto(matriz::db::Database& registro,
+                                                        matriz::db::Database& indice,
+                                                        const juce::File& pastaProjeto,
+                                                        const std::map<std::string, std::string>& inMemoryRelinks = {});
+    std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
+
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
     // que reconstrói a árvore de Component inteira do zero (é o jeito mais
     // simples de garantir que toda string em tela é retraduzida sem exigir
@@ -79,6 +96,7 @@ public:
     std::unique_ptr<matriz::model::Project> destacarProjeto() { return std::move(projeto_); }
 
     std::vector<ItemResumo> listarItens() const;
+    int contarItens() const { return static_cast<int>(listarItens().size()); }
     std::vector<ItemResumo> listarItensEmQuarentena() const;
     void confirmarItemGrid(const std::string& itemId);
     void confirmarLoteGrid(const std::vector<std::string>& itemIds);
@@ -87,6 +105,7 @@ public:
     // medido. NUNCA chamar na message thread durante um lote.
     juce::int64 tamanhoTotalDosMasters() const;
     bool obterItemInfo(const std::string& itemId, std::string& titulo, std::string& tipoMidia, std::string& codigoAcervo) const;
+    std::optional<ItemResumo> obterItemResumo(const std::string& itemId) const;
 
     struct ItemDetalhe {
         std::string id;
@@ -173,6 +192,11 @@ public:
     void definirTags(const std::string& itemId, const std::vector<std::string>& tags);
     void adicionarTag(const std::string& itemId, const std::string& tag);
     void removerTag(const std::string& itemId, const std::string& tag);
+
+    // --- People (Collection level) ---
+    std::vector<std::string> listarPessoas() const;
+    bool adicionarPessoa(const std::string& nome);
+    bool removerPessoa(const std::string& nome);
 
     // Caminho absoluto da miniatura principal do item, se o índice já
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
@@ -485,6 +509,11 @@ public:
 
     const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
     void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
+
+    // Marcação para Publicação (Micro-site / Publish)
+    void alternarPublicacaoItens(const std::vector<std::string>& itemIds);
+    void definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado);
+    bool itemMarcadoPublicacao(const std::string& itemId) const;
 
     // In-memory relinking and two-stage persistence
     bool isDirty() const { return dirty_; }

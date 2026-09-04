@@ -34,6 +34,11 @@ public:
     std::function<void(bool)> aoAlternarEstruturaBackup;
     std::function<void(const std::string&)> aoMudarFiltroHorizontal;
     std::function<void(const std::string&)> aoMudarFiltroStatus;
+    std::function<void(bool)> aoAlternarDestacarEditados;
+
+    // Toggle zebra marking on/off
+    void definirDestacarEditados(bool ativo);
+    bool destacarEditados() const { return destacarEditados_; }
 
     // Contagem "X de Y arquivos" no meio da barra — é o feedback de que o
     // filtro/busca fez alguma coisa, sem o operador ter que contar célula.
@@ -90,6 +95,10 @@ private:
     std::unique_ptr<juce::TextButton> btnStatusOnline_;
     std::unique_ptr<juce::TextButton> btnStatusOffline_;
     std::string filtroStatusAtivo_ = "all";
+
+    // Mark edited items toggle button
+    std::unique_ptr<juce::TextButton> btnDestacarEditados_;
+    bool destacarEditados_ = true;
 
     int tamanhoAtivo_ = 1; // médio, mesmo padrão de MosaicoComponent
     bool detalhesAbertos_ = false;

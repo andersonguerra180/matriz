@@ -224,6 +224,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "marcador", "autor", "TEXT");
 
     garantirColuna(registro, "item", "estado", "TEXT NOT NULL DEFAULT 'novo'");
+    garantirColuna(registro, "item", "marcado_publicacao", "INTEGER NOT NULL DEFAULT 0");
 
     garantirColuna(registro, "item_observacao", "titulo", "TEXT");
     garantirColuna(registro, "item_observacao", "categoria", "TEXT");
@@ -235,6 +236,33 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "arquivo", "visto_pela_ultima_vez", "TEXT");
     garantirColuna(registro, "arquivo", "estado_presenca", "TEXT NOT NULL DEFAULT 'presente'");
     garantirColuna(registro, "arquivo", "vault_id", "TEXT REFERENCES vault(id) ON DELETE SET NULL");
+
+    // Vault hardware & category columns (§2 Spec Storage)
+    garantirColuna(registro, "vault", "vendor", "TEXT NOT NULL DEFAULT ''");
+    garantirColuna(registro, "vault", "modelo", "TEXT NOT NULL DEFAULT ''");
+    garantirColuna(registro, "vault", "numero_serie", "TEXT NOT NULL DEFAULT ''");
+    garantirColuna(registro, "vault", "capacidade_bytes", "INTEGER NOT NULL DEFAULT 0");
+    garantirColuna(registro, "vault", "removivel", "INTEGER NOT NULL DEFAULT 1");
+    garantirColuna(registro, "vault", "sistema_arquivos", "TEXT NOT NULL DEFAULT ''");
+    garantirColuna(registro, "vault", "categoria_dispositivo", "TEXT NOT NULL DEFAULT 'desconhecido'");
+    garantirColuna(registro, "vault", "categoria_manual", "INTEGER NOT NULL DEFAULT 0");
+
+    try {
+        registro.execScript(
+            "CREATE TABLE IF NOT EXISTS vault_evento ("
+            "  id             TEXT PRIMARY KEY,"
+            "  vault_id       TEXT NOT NULL REFERENCES vault(id) ON DELETE CASCADE,"
+            "  modo           TEXT NOT NULL CHECK (modo IN ('collection', 'catalog')),"
+            "  itens_copiados INTEGER NOT NULL DEFAULT 0,"
+            "  itens_falha    INTEGER NOT NULL DEFAULT 0,"
+            "  cancelado      INTEGER NOT NULL DEFAULT 0,"
+            "  criado_em      TEXT NOT NULL"
+            ");"
+            "CREATE INDEX IF NOT EXISTS idx_vault_evento_vault_id ON vault_evento (vault_id);"
+            "CREATE INDEX IF NOT EXISTS idx_vault_evento_criado_em ON vault_evento (criado_em DESC);"
+        );
+        registro.run("DELETE FROM vault WHERE localizacao LIKE '/System/Volumes/%' OR localizacao IN ('/', '/dev', '/net', '/home') OR nome IN ('dev', 'System Drive', 'Preboot', 'Update', 'VM', 'xarts', 'Hardware');", {});
+    } catch (...) {}
 
     // Unified metadata columns (replaces Original/Editable dual model)
     garantirColuna(registro, "item", "ano", "TEXT");
@@ -320,6 +348,16 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     } catch (...) {}
 
     try {
+        registro.execScript(
+            "CREATE TABLE IF NOT EXISTS collection_person ("
+            "  id TEXT PRIMARY KEY,"
+            "  nome TEXT NOT NULL UNIQUE,"
+            "  criado_em TEXT NOT NULL"
+            ");"
+        );
+    } catch (...) {}
+
+    try {
         registro.run(
             "INSERT OR IGNORE INTO tipo_marcador (id, rotulo, cor, embutido) VALUES "
             "('dropout', 'Dropout', '#FF6B6B', 1), "
@@ -348,10 +386,50 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
             "  AND (m.tipo_id IN ('revisar', 'dropout'))");
     } catch (...) {}
 
-    // Backfill busca_fts se estiver vazia
+    // Migração de metadados_editados
+    garantirColuna(registro, "item", "metadados_editados", "INTEGER NOT NULL DEFAULT 0");
+
+    // Garantir triggers de busca em projetos existentes
+    try {
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_insert AFTER INSERT ON item_tag FOR EACH ROW BEGIN "
+            "    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.tag); "
+            "    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, '#' || new.tag); "
+            "END;"
+        );
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_delete AFTER DELETE ON item_tag FOR EACH ROW BEGIN "
+            "    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag); "
+            "END;"
+        );
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_insert AFTER INSERT ON item_observacao FOR EACH ROW BEGIN "
+            "    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.texto); "
+            "END;"
+        );
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_delete AFTER DELETE ON item_observacao FOR EACH ROW BEGIN "
+            "    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.texto; "
+            "END;"
+        );
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_insert AFTER INSERT ON arquivo FOR EACH ROW BEGIN "
+            "    INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.caminho_relativo); "
+            "    INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL; "
+            "END;"
+        );
+        registro.exec(
+            "CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_delete AFTER DELETE ON arquivo FOR EACH ROW BEGIN "
+            "    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, '')); "
+            "END;"
+        );
+    } catch (...) {}
+
+    // Backfill busca_fts completo e consistente
     try {
         auto stmt = registro.prepare("SELECT COUNT(*) FROM busca_fts");
-        if (stmt.step() && stmt.columnInt(0) == 0) {
+        bool precisaBackfill = !stmt.step() || stmt.columnInt(0) == 0;
+        if (precisaBackfill) {
             registro.run("BEGIN TRANSACTION", {});
             try {
                 registro.run(
@@ -360,7 +438,27 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
                     "UNION ALL "
                     "SELECT id, titulo FROM item WHERE titulo IS NOT NULL "
                     "UNION ALL "
-                    "SELECT item_id, valor FROM item_campo WHERE valor IS NOT NULL "
+                    "SELECT id, persistent_id FROM item WHERE persistent_id IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT id, notas_livres FROM item WHERE notas_livres IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT id, content_type FROM item WHERE content_type IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT id, collection_type FROM item WHERE collection_type IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT id, isrc FROM item WHERE isrc IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT item_id, valor FROM item_campo WHERE valor IS NOT NULL AND TRIM(valor) <> '' "
+                    "UNION ALL "
+                    "SELECT item_id, tag FROM item_tag WHERE tag IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT item_id, '#' || tag FROM item_tag WHERE tag IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT item_id, texto FROM item_observacao WHERE texto IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT item_id, caminho_relativo FROM arquivo WHERE caminho_relativo IS NOT NULL "
+                    "UNION ALL "
+                    "SELECT item_id, caminho_absoluto_origem FROM arquivo WHERE caminho_absoluto_origem IS NOT NULL "
                     "UNION ALL "
                     "SELECT ia.item_id, a.termo FROM item_assunto ia JOIN assunto a ON a.id = ia.assunto_id",
                     {});

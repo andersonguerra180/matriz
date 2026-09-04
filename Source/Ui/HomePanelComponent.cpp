@@ -160,8 +160,12 @@ HomePanelComponent::HomePanelComponent(ProjetoAberto& projeto)
 HomePanelComponent::~HomePanelComponent() = default;
 
 void HomePanelComponent::recarregar() {
-    auto itens = projeto_.listarItens();
-    int total = static_cast<int>(itens.size());
+    int total = 0;
+    try {
+        auto stmt = projeto_.projeto().registro().prepare("SELECT COUNT(*) FROM item WHERE em_quarentena = 0");
+        if (stmt.step()) total = stmt.columnInt(0);
+    } catch (...) {}
+
     if (total > 0) {
         auto texto = matriz::i18n::t("home.total_assets");
         totalAssets_->setText(texto.replace("{0}", juce::String(total)), juce::dontSendNotification);

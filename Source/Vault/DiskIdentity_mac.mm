@@ -1,0 +1,286 @@
+#import <Foundation/Foundation.h>
+#include <sys/mount.h>
+#include <sys/param.h>
+
+#if defined(__APPLE__)
+#include <DiskArbitration/DiskArbitration.h>
+#include <IOKit/IOKitLib.h>
+#include <IOKit/storage/IOMedia.h>
+#include <IOKit/storage/IOBlockStorageDevice.h>
+#include <IOKit/storage/IOBlockStorageDriver.h>
+
+#ifndef kIOMainPortDefault
+#define kIOMainPortDefault kIOMasterPortDefault
+#endif
+#endif
+
+#include "DiskIdentity.h"
+#include "Volume.h"
+
+namespace matriz::vault {
+
+namespace {
+
+#if defined(__APPLE__)
+juce::String cfStringToJuce(CFStringRef cfStr) {
+    if (!cfStr) return {};
+    return juce::String::fromCFString(cfStr).trim();
+}
+
+juce::String extrairPropriedadeString(io_registry_entry_t entry, CFStringRef chave) {
+    if (!entry || !chave) return {};
+    CFTypeRef prop = IORegistryEntryCreateCFProperty(entry, chave, kCFAllocatorDefault, 0);
+    if (!prop) return {};
+
+    juce::String res;
+    if (CFGetTypeID(prop) == CFStringGetTypeID()) {
+        res = cfStringToJuce((CFStringRef)prop);
+    }
+    CFRelease(prop);
+    return res;
+}
+
+void inspecionarHardwareViaIOKit(const juce::String& bsdName,
+                                 juce::String& outSerial,
+                                 juce::String& outVendor,
+                                 juce::String& outModel) {
+    if (bsdName.isEmpty()) return;
+
+    // Remove "/dev/" se presente
+    juce::String bsd = bsdName;
+    if (bsd.startsWith("/dev/")) bsd = bsd.substring(5);
+
+    mach_port_t mainPort = 0;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    mainPort = kIOMasterPortDefault;
+#pragma clang diagnostic pop
+
+    io_service_t service = IOServiceGetMatchingService(mainPort,
+                                                       IOBSDNameMatching(mainPort, 0, bsd.toRawUTF8()));
+
+    // Se falhar, tenta sem a partição (ex: disk2s1 -> disk2)
+    if (service == IO_OBJECT_NULL && bsd.contains("s")) {
+        int sIndex = bsd.lastIndexOf("s");
+        if (sIndex > 4) {
+            juce::String bsdBase = bsd.substring(0, sIndex);
+            service = IOServiceGetMatchingService(mainPort,
+                                                  IOBSDNameMatching(mainPort, 0, bsdBase.toRawUTF8()));
+        }
+    }
+
+    if (service == IO_OBJECT_NULL) return;
+
+    io_registry_entry_t current = service;
+    int maxDepth = 10;
+
+    while (current != IO_OBJECT_NULL && maxDepth-- > 0) {
+        // 1. Tenta ler Serial Number
+        if (outSerial.isEmpty()) {
+            outSerial = extrairPropriedadeString(current, CFSTR("Serial Number"));
+            if (outSerial.isEmpty()) {
+                outSerial = extrairPropriedadeString(current, CFSTR("Product Serial Number"));
+            }
+            if (outSerial.isEmpty()) {
+                outSerial = extrairPropriedadeString(current, CFSTR("USB Serial Number"));
+            }
+            if (outSerial.isEmpty()) {
+                outSerial = extrairPropriedadeString(current, CFSTR("IOPlatformSerialNumber"));
+            }
+        }
+
+        // 2. Tenta ler Device Characteristics
+        CFTypeRef devChars = IORegistryEntryCreateCFProperty(current,
+                                                             CFSTR("Device Characteristics"),
+                                                             kCFAllocatorDefault, 0);
+        if (devChars != nullptr) {
+            if (CFGetTypeID(devChars) == CFDictionaryGetTypeID()) {
+                NSDictionary* dict = (__bridge NSDictionary*)devChars;
+                if (outSerial.isEmpty() && dict[@"Serial Number"]) {
+                    outSerial = juce::String::fromCFString((__bridge CFStringRef)dict[@"Serial Number"]).trim();
+                }
+                if (outVendor.isEmpty() && dict[@"Vendor Identification"]) {
+                    outVendor = juce::String::fromCFString((__bridge CFStringRef)dict[@"Vendor Identification"]).trim();
+                }
+                if (outModel.isEmpty() && dict[@"Product Identification"]) {
+                    outModel = juce::String::fromCFString((__bridge CFStringRef)dict[@"Product Identification"]).trim();
+                }
+            }
+            CFRelease(devChars);
+        }
+
+        // 3. Tenta propriedades diretas no nó
+        if (outVendor.isEmpty()) {
+            outVendor = extrairPropriedadeString(current, CFSTR("Vendor Identification"));
+            if (outVendor.isEmpty()) {
+                outVendor = extrairPropriedadeString(current, CFSTR("Device Vendor"));
+            }
+        }
+        if (outModel.isEmpty()) {
+            outModel = extrairPropriedadeString(current, CFSTR("Product Identification"));
+            if (outModel.isEmpty()) {
+                outModel = extrairPropriedadeString(current, CFSTR("Device Model"));
+            }
+            if (outModel.isEmpty()) {
+                outModel = extrairPropriedadeString(current, CFSTR("Product Name"));
+            }
+            if (outModel.isEmpty()) {
+                outModel = extrairPropriedadeString(current, CFSTR("Model"));
+            }
+        }
+
+        if (outSerial.isNotEmpty() && outVendor.isNotEmpty() && outModel.isNotEmpty()) {
+            break;
+        }
+
+        io_registry_entry_t parent = IO_OBJECT_NULL;
+        kern_return_t kr = IORegistryEntryGetParentEntry(current, kIOServicePlane, &parent);
+        if (current != service) {
+            IOObjectRelease(current);
+        }
+        current = (kr == KERN_SUCCESS) ? parent : IO_OBJECT_NULL;
+    }
+
+    if (current != IO_OBJECT_NULL && current != service) {
+        IOObjectRelease(current);
+    }
+    IOObjectRelease(service);
+}
+#endif
+
+} // namespace
+
+VolumeHardwareIdentity obterIdentidadeHardwareVolume(const juce::File& path) {
+    VolumeHardwareIdentity id;
+    juce::File alvo = path;
+    if (alvo.getFullPathName().isEmpty()) return id;
+
+#if defined(__APPLE__)
+    struct statfs sfs;
+    if (::statfs(alvo.getFullPathName().toRawUTF8(), &sfs) != 0) {
+        return id;
+    }
+
+    id.mountPoint = sfs.f_mntonname;
+    id.bsdDeviceNode = sfs.f_mntfromname;
+    id.fileSystem = sfs.f_fstypename;
+    id.totalCapacityBytes = static_cast<juce::int64>(sfs.f_blocks) * static_cast<juce::int64>(sfs.f_bsize);
+    id.freeBytes = static_cast<juce::int64>(sfs.f_bavail) * static_cast<juce::int64>(sfs.f_bsize);
+    id.isValid = true;
+
+    // DiskArbitration details
+    DASessionRef session = DASessionCreate(kCFAllocatorDefault);
+    if (session != nullptr) {
+        if (DADiskRef disk = DADiskCreateFromBSDName(kCFAllocatorDefault, session, sfs.f_mntfromname)) {
+            if (CFDictionaryRef desc = DADiskCopyDescription(disk)) {
+                // Volume UUID
+                auto uuid = static_cast<CFUUIDRef>(CFDictionaryGetValue(desc, kDADiskDescriptionVolumeUUIDKey));
+                if (uuid != nullptr) {
+                    if (CFStringRef uuidStr = CFUUIDCreateString(kCFAllocatorDefault, uuid)) {
+                        id.volumeUuid = juce::String::fromCFString(uuidStr).toStdString();
+                        CFRelease(uuidStr);
+                    }
+                }
+
+                // Volume Label / Name
+                auto volName = static_cast<CFStringRef>(CFDictionaryGetValue(desc, kDADiskDescriptionVolumeNameKey));
+                if (volName != nullptr) {
+                    id.volumeLabel = cfStringToJuce(volName).toStdString();
+                }
+
+                // Fallback Model / Vendor from DA if available
+                auto model = static_cast<CFStringRef>(CFDictionaryGetValue(desc, kDADiskDescriptionDeviceModelKey));
+                if (model != nullptr && id.model.empty()) {
+                    id.model = cfStringToJuce(model).toStdString();
+                }
+
+                auto vendor = static_cast<CFStringRef>(CFDictionaryGetValue(desc, kDADiskDescriptionDeviceVendorKey));
+                if (vendor != nullptr && id.vendor.empty()) {
+                    id.vendor = cfStringToJuce(vendor).toStdString();
+                }
+
+                // Removable / Internal
+                auto internalVal = static_cast<CFBooleanRef>(CFDictionaryGetValue(desc, kDADiskDescriptionDeviceInternalKey));
+                if (internalVal != nullptr) {
+                    id.isInternal = CFBooleanGetValue(internalVal);
+                }
+
+                auto removableVal = static_cast<CFBooleanRef>(CFDictionaryGetValue(desc, kDADiskDescriptionMediaRemovableKey));
+                if (removableVal != nullptr) {
+                    id.isRemovable = CFBooleanGetValue(removableVal);
+                }
+
+                CFRelease(desc);
+            }
+            CFRelease(disk);
+        }
+        CFRelease(session);
+    }
+
+    if (id.volumeLabel.empty()) {
+        juce::String fallbackName = juce::File(id.mountPoint).getFileName();
+        id.volumeLabel = fallbackName.isEmpty() ? "System Drive" : fallbackName.toStdString();
+    }
+
+    // IOKit Hardware inspection for physical serial, vendor, and model
+    juce::String serial, vendor, model;
+    inspecionarHardwareViaIOKit(juce::String(id.bsdDeviceNode), serial, vendor, model);
+
+    if (serial.isNotEmpty()) id.serialNumber = serial.toStdString();
+    if (vendor.isNotEmpty() && id.vendor.empty()) id.vendor = vendor.toStdString();
+    if (model.isNotEmpty() && id.model.empty()) id.model = model.toStdString();
+
+    // If hardware serial is empty, fallback to volumeUuid as stable identifier
+    if (id.serialNumber.empty() && !id.volumeUuid.empty()) {
+        id.serialNumber = id.volumeUuid;
+    }
+#endif
+
+    return id;
+}
+
+std::vector<VolumeHardwareIdentity> listarVolumesMontados() {
+    std::vector<VolumeHardwareIdentity> volumes;
+#if defined(__APPLE__)
+    int numMounts = getfsstat(NULL, 0, MNT_NOWAIT);
+    if (numMounts <= 0) return volumes;
+
+    std::vector<struct statfs> fsList(numMounts);
+    numMounts = getfsstat(fsList.data(), (int)(sizeof(struct statfs) * numMounts), MNT_NOWAIT);
+    for (int i = 0; i < numMounts; ++i) {
+        juce::String mountPoint = juce::String::fromUTF8(fsList[i].f_mntonname);
+        // Ignore internal OS partitions (/System/Volumes/..., root /, /dev, etc.)
+        if (mountPoint.isEmpty() || mountPoint == "/" || mountPoint.startsWith("/System/Volumes/")
+            || mountPoint == "/dev" || mountPoint == "/net" || mountPoint == "/home"
+            || mountPoint == "/Volumes/Macintosh HD") {
+            continue;
+        }
+
+        // Only include user-accessible / external / removable storage in /Volumes/
+        if (mountPoint.startsWith("/Volumes/")) {
+            auto id = obterIdentidadeHardwareVolume(juce::File(mountPoint));
+            if (id.isValid) {
+                volumes.push_back(std::move(id));
+            }
+        }
+    }
+#endif
+    return volumes;
+}
+
+VolumeHardwareIdentity encontrarVolumePorSerialOuUuid(const std::string& serialOrUuid) {
+    if (serialOrUuid.empty()) return {};
+
+    auto montados = listarVolumesMontados();
+    for (const auto& v : montados) {
+        if (!v.serialNumber.empty() && v.serialNumber == serialOrUuid) {
+            return v;
+        }
+        if (!v.volumeUuid.empty() && v.volumeUuid == serialOrUuid) {
+            return v;
+        }
+    }
+    return {};
+}
+
+} // namespace matriz::vault

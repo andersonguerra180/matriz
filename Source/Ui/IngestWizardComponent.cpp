@@ -490,7 +490,8 @@ void IngestWizardComponent::iniciarDescoberta(const juce::File& pasta) {
                         std::string tit = arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
                         std::string relPath = matriz::vault::caminhoRelativoAoVolume(arquivo);
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto);
+                        std::string exifDate = resultado.analise.leitura.exifDataOriginal.value_or("");
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, arquivo.getSize(), relPath, "", pastaProjeto, exifDate);
                     }
                     if (conhecido) {
                         resultado.ehDuplicata = true;
@@ -635,7 +636,8 @@ void IngestWizardComponent::iniciarImportacao() {
                         std::string tit = res.arquivo.getFileNameWithoutExtension().toStdString();
                         std::string ext = res.arquivo.getFileExtension().replaceCharacter('.', ' ').trim().toStdString();
                         std::string relPath = matriz::vault::caminhoRelativoAoVolume(res.arquivo);
-                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), relPath, "", pastaProjeto);
+                        std::string exifDate = res.analise.leitura.exifDataOriginal.value_or("");
+                        conhecido = matriz::ingest::buscarAssetPorMetadados(*registro, tit, ext, dur, w, h, res.arquivo.getSize(), relPath, "", pastaProjeto, exifDate);
                     }
 
                     if (conhecido) {

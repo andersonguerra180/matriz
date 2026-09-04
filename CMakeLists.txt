@@ -138,6 +138,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/PainelInconsistencias.cpp
     Source/Preservation/Preservation.cpp
     Source/Vault/Volume.cpp
+    Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
@@ -150,6 +151,8 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
     Source/Analytics/AssetGeolocation.cpp
+    Source/Ui/OriginalSourceMedium.cpp
+    Source/Model/ProjectLog.cpp
     Source/Model/Project.cpp)
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -180,6 +183,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_audio_formats
     # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
+    $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -248,9 +252,11 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
+    Source/Ui/StorageWorkspaceComponent.cpp
     Source/Ui/DuplicatesWorkspaceComponent.cpp
     Source/Ui/HierarquiaEditorComponent.cpp
     Source/Ui/TagChipsEditor.cpp
+    Source/Ui/PeoplePickerComponent.cpp
     Source/Ui/OriginalSourceMedium.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/HomePanelComponent.cpp
@@ -293,6 +299,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/Pcm.cpp
     Source/Ingest/Duplicata.cpp
     Source/Vault/Volume.cpp
+    Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
@@ -301,12 +308,16 @@ target_sources(matriz PRIVATE
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Catalogo/CatalogoProxies.cpp
+    Source/Catalogo/CatalogSiteExport.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Ficha/FichaI18n.cpp
     Source/Ficha/OrigemPadrao.cpp
     Source/Db/Database.cpp
-    Source/Model/Project.cpp)
+    Source/Model/Project.cpp
+    Source/Model/ProjectLog.cpp
+    Source/Ui/ProjectLogViewerDialog.cpp
+    Source/Ui/IngestProgressModalDialog.cpp)
 
 target_include_directories(matriz PRIVATE Source)
 
@@ -336,6 +347,7 @@ target_link_libraries(matriz PRIVATE
     juce::juce_audio_utils
     juce::juce_dsp
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
+    $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ AVFoundation>
     $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
     $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>

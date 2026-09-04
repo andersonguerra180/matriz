@@ -1,4 +1,5 @@
 #include "PreviewComponent.h"
+#include "../Vault/DiskIdentity.h"
 #include "../Ingest/LeituraTecnica.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -112,6 +113,20 @@ MetadadosPreview extrairMetadadosPreview(const juce::String& json) {
 } // namespace
 
 PreviewComponent::PreviewComponent(ProjetoAberto& projeto) : projeto_(projeto) {
+    btnAnterior_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xe2\x97\x80"));
+    btnAnterior_->setTooltip("Previous item (Left Arrow)");
+    btnAnterior_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnAnterior_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnAnterior_->onClick = [this] { if (aoNavegar) aoNavegar(-1); };
+    addAndMakeVisible(*btnAnterior_);
+
+    btnProximo_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xe2\x96\xb6"));
+    btnProximo_->setTooltip("Next item (Right Arrow)");
+    btnProximo_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnProximo_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnProximo_->onClick = [this] { if (aoNavegar) aoNavegar(1); };
+    addAndMakeVisible(*btnProximo_);
+
     cabecalhoTitulo_ = std::make_unique<juce::Label>();
     cabecalhoTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     cabecalhoTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
@@ -128,6 +143,14 @@ PreviewComponent::PreviewComponent(ProjetoAberto& projeto) : projeto_(projeto) {
     labelSemPreview_->setColour(juce::Label::textColourId, tema().textoTerciario);
     labelSemPreview_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*labelSemPreview_);
+
+    btnRelinkManual_ = std::make_unique<juce::TextButton>("Locate File Manually...");
+    btnRelinkManual_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnRelinkManual_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnRelinkManual_->onClick = [this] {
+        if (aoPedirRelinkManual && !itemId_.empty()) aoPedirRelinkManual(itemId_);
+    };
+    addChildComponent(*btnRelinkManual_);
 
     setWantsKeyboardFocus(true);
     startTimerHz(15);
@@ -155,10 +178,10 @@ void PreviewComponent::construirParaItem() {
     labelSemPreview_->setText("", juce::dontSendNotification);
     categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
 
-    auto itens = projeto_.listarItens();
-    auto it = std::find_if(itens.begin(), itens.end(), [this](const ItemResumo& r) { return r.id == itemId_; });
-    juce::String titulo = it != itens.end() ? juce::String(it->titulo) : juce::String();
-    juce::String codigo = it != itens.end() ? juce::String(it->codigoAcervo) : juce::String();
+    std::string tituloStr, tipoMidiaStr, codigoStr;
+    projeto_.obterItemInfo(itemId_, tituloStr, tipoMidiaStr, codigoStr);
+    juce::String titulo(tituloStr);
+    juce::String codigo(codigoStr);
     cabecalhoTitulo_->setText(codigo + " - " + (titulo.isNotEmpty() ? titulo : matriz::i18n::t("ficha.cabecalho_sem_titulo")),
                                juce::dontSendNotification);
 
@@ -170,6 +193,35 @@ void PreviewComponent::construirParaItem() {
     }
 
     juce::File arquivoFile(arquivo->caminhoAbsoluto);
+    if (btnRelinkManual_) btnRelinkManual_->setVisible(false);
+    volumeEsperadoNome_ = "";
+    volumeEsperadoSerial_ = "";
+
+    if (!arquivoFile.existsAsFile()) {
+        try {
+            auto stmt = projeto_.projeto().registro().prepare(
+                "SELECT COALESCE(v.nome, 'Offline Volume'), COALESCE(v.serial_hardware, COALESCE(v.identificador_fs, '')) "
+                "FROM arquivo a "
+                "LEFT JOIN vault v ON v.id = a.vault_id "
+                "WHERE a.item_id = ? AND a.eh_master = 1 LIMIT 1");
+            stmt.bind(1, matriz::db::Value::of(itemId_));
+            if (stmt.step()) {
+                volumeEsperadoNome_ = stmt.columnText(0);
+                volumeEsperadoSerial_ = stmt.columnText(1);
+            }
+        } catch (...) {}
+
+        if (volumeEsperadoNome_.isEmpty()) volumeEsperadoNome_ = "Offline Volume";
+
+        labelSemPreview_->setText("Insert disk volume: " + volumeEsperadoNome_ +
+                                   "\n\n(Waiting for disk volume to be connected...)",
+                                   juce::dontSendNotification);
+        if (btnRelinkManual_) btnRelinkManual_->setVisible(true);
+        labelMetadados_->setText("File path: " + arquivo->caminhoAbsoluto, juce::dontSendNotification);
+        resized();
+        return;
+    }
+
     categoriaAtual_ = matriz::ingest::categoriaPorExtensao(arquivoFile);
 
     juce::String metadados = arquivoFile.getFileName() + "\n" +
@@ -291,6 +343,15 @@ void PreviewComponent::timerCallback() {
             repaint();
         }
     }
+
+    if (btnRelinkManual_ && btnRelinkManual_->isVisible() && volumeEsperadoSerial_.isNotEmpty()) {
+        auto volId = matriz::vault::encontrarVolumePorSerialOuUuid(volumeEsperadoSerial_.toStdString());
+        if (volId.isValid) {
+            projeto_.reavaliarVaults();
+            mostrarItem(itemId_);
+            return;
+        }
+    }
 }
 
 void PreviewComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
@@ -356,13 +417,26 @@ void PreviewComponent::paint(juce::Graphics& g) {
 
 void PreviewComponent::resized() {
     auto area = getLocalBounds();
-    auto topo = area.removeFromTop(48).reduced(tema().espacoMedio, 8);
+    auto topo = area.removeFromTop(48).reduced(tema().espacoMedio, 6);
+    if (btnAnterior_) {
+        btnAnterior_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
+        topo.removeFromLeft(4);
+    }
+    if (btnProximo_) {
+        btnProximo_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
+        topo.removeFromLeft(10);
+    }
     cabecalhoTitulo_->setBounds(topo);
 
     if (labelSemPreview_->getText().isNotEmpty() && !imagemPrincipal_.isValid()) {
-        labelSemPreview_->setBounds(area.withSizeKeepingCentre(400, 60));
+        auto semPreviewArea = area.withSizeKeepingCentre(500, 140);
+        labelSemPreview_->setBounds(semPreviewArea.removeFromTop(80));
+        if (btnRelinkManual_ && btnRelinkManual_->isVisible()) {
+            btnRelinkManual_->setBounds(semPreviewArea.withSizeKeepingCentre(200, 32));
+        }
     } else {
         labelSemPreview_->setBounds({});
+        if (btnRelinkManual_) btnRelinkManual_->setBounds({});
     }
 
     auto areaMetadados = area.removeFromBottom(80).reduced(tema().espacoGrande, tema().espacoMedio);

@@ -95,6 +95,11 @@ void AssetGeolocationRepository::salvar(matriz::db::Database& db, const AssetGeo
     db.run(sql, params);
 }
 
+void AssetGeolocationRepository::remover(matriz::db::Database& db, const std::string& assetId) {
+    if (assetId.empty()) return;
+    db.run("DELETE FROM asset_geolocation WHERE asset_id = ?", {matriz::db::Value::of(assetId)});
+}
+
 std::optional<AssetGeolocation> AssetGeolocationRepository::obterPorAssetId(matriz::db::Database& db, const std::string& assetId) {
     std::string sql = "SELECT asset_id, latitude, longitude, altitude, continent, country, country_code, "
                       "state_province, state_code, city, municipality, neighborhood, district, postal_code, "

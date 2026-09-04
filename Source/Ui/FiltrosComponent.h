@@ -25,6 +25,7 @@ namespace matriz::ui {
 class FiltrosComponent : public juce::Component, public juce::DragAndDropTarget {
 public:
     FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico);
+    ~FiltrosComponent() override;
 
     // Reconsulta contagens e coleções salvas, e redesenha.
     //
@@ -84,7 +85,8 @@ private:
         Vault,             // §8 — bolinha verde/cinza de conexão
         ColecaoEmbutida,   // §10 — view SQL, sempre atualizada
         Colecao,
-        SalvarColecao
+        SalvarColecao,
+        LegendaPublish
     };
     struct Linha {
         TipoLinha tipo;

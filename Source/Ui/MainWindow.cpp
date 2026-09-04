@@ -7,6 +7,8 @@
 #include "../I18n/Strings.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "ConsolidacaoDialogo.h"
+#include "ProjectLogViewerDialog.h"
+#include "../Model/ProjectLog.h"
 #include "NovoProjetoDialogo.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
@@ -33,6 +35,7 @@ enum ComandoMenu {
     kCmdPreferenciasGerais,
     kCmdAudioDevice,
     kCmdUndo,
+    kCmdProjectLog,
     kCmdRecenteBase = 2000
 };
 } // namespace
@@ -100,9 +103,12 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         if (!recentes.empty()) {
             int rIdx = 0;
             for (const auto& r : recentes) {
-                juce::String label = r.nome.isEmpty() ? r.pasta : r.nome;
-                if (!r.pasta.isEmpty() && r.pasta != label)
-                    label += " (" + r.pasta + ")";
+                juce::String nome = r.nome.isEmpty() ? juce::File(r.pasta).getFileName() : r.nome;
+                bool isCatalog = (r.modo.equalsIgnoreCase("catalogo") || r.modo.equalsIgnoreCase("catalog"));
+                juce::String tag = isCatalog ? "[CATALOG]" : "[COLLECTION]";
+                juce::String label = tag + "  " + nome;
+                if (!r.pasta.isEmpty())
+                    label += " — " + r.pasta;
                 recentMenu.addItem(kCmdRecenteBase + rIdx, label);
                 rIdx++;
             }
@@ -148,6 +154,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
     } else if (topLevelMenuIndex == kMenuProjeto) {
         menu.addItem(kCmdConfiguracoes, matriz::i18n::t("menu.projeto_configuracoes"), conteudo_->temProjetoAberto());
         menu.addItem(kCmdConsolidar, matriz::i18n::t("consolidacao.titulo"), conteudo_->temProjetoAberto());
+        menu.addSeparator();
+        menu.addItem(kCmdProjectLog, "Project Log (log.md)...", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         menu.addItem(kCmdPreferenciasGerais, "Preferences / Theme / AI Key...");
         menu.addItem(kCmdAudioDevice, "Audio Device...");
@@ -172,6 +180,12 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
         case kCmdConsolidar: pedirConsolidar(); break;
+        case kCmdProjectLog:
+            if (conteudo_->temProjetoAberto()) {
+                matriz::model::ProjectLog pLog(conteudo_->pastaProjeto());
+                matriz::ui::ProjectLogViewerDialog::showModal(std::move(pLog));
+            }
+            break;
         case kCmdPreferenciasGerais: mostrarPreferenciasDialogo(); break;
         case kCmdAudioDevice: mostrarAudioDeviceDialogo(); break;
         default: {

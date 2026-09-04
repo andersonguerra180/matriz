@@ -5,6 +5,7 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
+#include "ProgressoGlobal.h"
 
 namespace matriz::ui::acoes {
 
@@ -14,6 +15,7 @@ enum Comando {
     kCategorizar = 1,
     kRenomear,
     kRenomearEmLote,
+    kAlternarPublicacao,
     kRemoverDoBackup,
     kRemoverDaLista,
     kMostrarNaOrigem,
@@ -246,6 +248,13 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     if (!umSo) menu.addItem(kRenomearEmLote, matriz::i18n::t("renomear_lote.titulo"));
 
+#if JUCE_MAC
+    juce::String atalhoPublish = " (Cmd+P)";
+#else
+    juce::String atalhoPublish = " (Ctrl+P)";
+#endif
+    menu.addItem(kAlternarPublicacao, "PUBLISH" + atalhoPublish);
+
     juce::PopupMenu submenuPastas;
     auto pastas = pastasDoBackup(projeto);
     int id = kPrimeiraPasta;
@@ -302,6 +311,11 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kRenomearEmLote:
             renomearEmLote(projeto, itemIds, ganchos);
+            break;
+
+        case kAlternarPublicacao:
+            projeto.alternarPublicacaoItens(itemIds);
+            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
 
         case kDefinirCapa:
@@ -422,7 +436,10 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
         retirarPeerDaTela(*janela);
         if (resultado != 1) return;
 
+        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_rename", "Renaming Assets", (int)ids.size(), nullptr, "Renaming " + juce::String((int)ids.size()) + " assets...");
+
         int modo = janela->getComboBoxComponent("modo")->getSelectedItemIndex();
+        int processados = 0;
 
         for (auto& itemId : ids) {
             std::string titulo, tipoMidia, codigo;
@@ -461,7 +478,10 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
                 }
             }
             p->renomearItens({itemId}, nome.toStdString());
+            ++processados;
+            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_rename", processados, juce::String(processados) + " of " + juce::String((int)ids.size()) + " renamed");
         }
+        ProgressoGlobal::obterInstancia().concluirTarefa("batch_rename", juce::String(processados) + " assets renamed");
         if (ganchos.aoMudarDados) ganchos.aoMudarDados();
     }));
 }

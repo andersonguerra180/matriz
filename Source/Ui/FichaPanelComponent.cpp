@@ -3,6 +3,7 @@
 #include "MetadadosOriginaisComponent.h"
 #include "OriginalSourceMedium.h"
 #include "TagChipsEditor.h"
+#include "PeoplePickerComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -15,6 +16,7 @@
 #include "FormatoTempo.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
+#include "ProgressoGlobal.h"
 #include <exiv2/exiv2.hpp>
 
 #include <algorithm>
@@ -171,7 +173,7 @@ public:
         addAndMakeVisible(*btnPlay_);
 
         lblTempo_ = std::make_unique<juce::Label>();
-        lblTempo_->setText("00:00:00 / 12:18:34", juce::dontSendNotification);
+        lblTempo_->setText("00:00:00 / --:--:--", juce::dontSendNotification);
         lblTempo_->setFont(juce::Font(juce::FontOptions(10.0f)));
         lblTempo_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
         addAndMakeVisible(*lblTempo_);
@@ -294,6 +296,8 @@ public:
         labelAplicado_.reset();
         labelReviewFaltando_.reset();
         geolocalizacao_ = {};
+        secHeaderDublinCore_.reset();
+        secHeaderUserAsset_.reset();
         itemId_.clear();
         setSize(getWidth(), 0);
     }
@@ -521,47 +525,192 @@ public:
             return;
         }
 
-        for (auto& cu : camposUnificados_) {
-            if (!cu) continue;
-            int rotuloW = larguraUtil - 100;
-            cu->rotulo->setBounds(x, y, rotuloW, 16);
-            cu->badge->setBounds(x + larguraUtil - 95, y, 95, 16);
-            y += 18;
+        bool ehDuasColunas = (larguraUtil >= 500);
 
-            if (cu->ehOriginalSourceMedium) {
-                if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(cu->editor.get())) {
-                    int prefH = osm->getPreferredHeight();
-                    osm->setBounds(x, y, larguraUtil, prefH);
-                    y += prefH + tk.espacoPequeno;
-                } else {
-                    cu->editor->setBounds(x, y, larguraUtil, 24);
-                    y += 24 + tk.espacoPequeno;
+        if (ehDuasColunas) {
+            int gap = 16;
+            int colW = (larguraUtil - gap) / 2;
+            int x0 = x;
+            int x1 = x + colW + gap;
+
+            auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1) {
+                for (auto& cu : camposUnificados_) {
+                    if (!cu || cu->bloco != bloco) continue;
+
+                    bool useCol1 = (y1 < y0);
+                    int currX = useCol1 ? x1 : x0;
+                    int& currY = useCol1 ? y1 : y0;
+
+                    int rotuloW = colW - 85;
+                    cu->rotulo->setBounds(currX, currY, rotuloW, 16);
+                    cu->badge->setBounds(currX + colW - 80, currY, 80, 16);
+                    currY += 18;
+
+                    if (cu->ehOriginalSourceMedium) {
+                        if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(cu->editor.get())) {
+                            int prefH = osm->getPreferredHeight();
+                            osm->setBounds(currX, currY, colW, prefH);
+                            currY += prefH + tk.espacoPequeno;
+                        } else {
+                            cu->editor->setBounds(currX, currY, colW, 24);
+                            currY += 24 + tk.espacoPequeno;
+                        }
+                    } else if (cu->ehPeople) {
+                        cu->editor->setBounds(currX, currY, colW, 26);
+                        currY += 26 + tk.espacoPequeno;
+                    } else if (cu->ehTags) {
+                        if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
+                            chips->setBounds(currX, currY, colW, chips->getPreferredHeight());
+                            currY += chips->getPreferredHeight() + tk.espacoPequeno;
+                        } else {
+                            cu->editor->setBounds(currX, currY, colW, 24);
+                            currY += 24 + tk.espacoPequeno;
+                        }
+                    } else if (cu->ehNotes) {
+                        cu->editor->setBounds(currX, currY, colW, 64);
+                        currY += 64 + tk.espacoPequeno;
+                    } else {
+                        cu->editor->setBounds(currX, currY, colW, 24);
+                        currY += 24 + tk.espacoPequeno;
+                    }
                 }
-            } else if (cu->ehTags) {
-                if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
-                    chips->setBounds(x, y, larguraUtil, chips->getPreferredHeight());
-                    y += chips->getPreferredHeight() + tk.espacoPequeno;
-                } else {
-                    cu->editor->setBounds(x, y, larguraUtil, 24);
-                    y += 24 + tk.espacoPequeno;
-                }
-            } else if (cu->ehNotes) {
-                cu->editor->setBounds(x, y, larguraUtil, 64);
-                y += 64 + tk.espacoPequeno;
-            } else {
-                cu->editor->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoPequeno;
+            };
+
+            // --- Bloco A: DUBLIN CORE METADATA ---
+            if (secHeaderDublinCore_) {
+                secHeaderDublinCore_->setBounds(x, y, larguraUtil, 20);
+                y += 24;
             }
+            int y0 = y;
+            int y1 = y;
+            layoutCamposDoBloco(BlocoFicha::DublinCore, y0, y1);
+            y = std::max(y0, y1) + tk.espacoMedio * 2;
+
+            // --- Bloco B: ASSET & USER METADATA (PEOPLE right above TAGS) ---
+            if (secHeaderUserAsset_) {
+                secHeaderUserAsset_->setBounds(x, y, larguraUtil, 20);
+                y += 24;
+            }
+            y0 = y;
+            y1 = y;
+            layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1);
+            y = std::max(y0, y1) + tk.espacoMedio * 2;
+
+            // --- Bloco C: GEOLOCATION (Last in metadata queue) ---
+            if (geolocalizacao_.titulo) {
+                int rotuloW = larguraUtil - 150;
+                geolocalizacao_.titulo->setBounds(x, y, rotuloW, 20);
+                if (geolocalizacao_.statusBadge)
+                    geolocalizacao_.statusBadge->setBounds(x + larguraUtil - 145, y, 145, 20);
+                y += 24;
+
+                y0 = y;
+                y1 = y;
+                auto layoutGeoField = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+                    if (lbl && ed) {
+                        bool useCol1 = (y1 < y0);
+                        int currX = useCol1 ? x1 : x0;
+                        int& currY = useCol1 ? y1 : y0;
+
+                        lbl->setBounds(currX, currY, colW, 16);
+                        currY += 18;
+                        ed->setBounds(currX, currY, colW, 24);
+                        currY += 24 + tk.espacoPequeno;
+                    }
+                };
+                layoutGeoField(geolocalizacao_.labelCoords, geolocalizacao_.editorCoords);
+                layoutGeoField(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress);
+                layoutGeoField(geolocalizacao_.labelCity, geolocalizacao_.editorCity);
+                layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
+                layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
+
+                y = std::max(y0, y1);
+            }
+
+            int maxY = y;
+
+            if (labelReviewFaltando_) {
+                maxY += tk.espacoMedio;
+                labelReviewFaltando_->setBounds(x, maxY, larguraUtil, 18);
+                maxY += 18 + tk.espacoPequeno;
+            }
+
+            if (botaoAplicar_) {
+                maxY += tk.espacoMedio;
+                botaoAplicar_->setBounds(x, maxY, 120, 28);
+                maxY += 28 + tk.espacoPequeno;
+            }
+            if (labelAplicado_) {
+                labelAplicado_->setBounds(x, maxY, larguraUtil, 18);
+                maxY += 18 + tk.espacoPequeno;
+            }
+
+            setSize(largura, maxY + tk.espacoPainel);
+            return;
         }
 
-        // --- GEO LOCATION section layout (between TAGS and APPLY button) ---
+        // --- Single Column Layout with distinct block sections ---
+        auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco) {
+            for (auto& cu : camposUnificados_) {
+                if (!cu || cu->bloco != bloco) continue;
+                int rotuloW = larguraUtil - 100;
+                cu->rotulo->setBounds(x, y, rotuloW, 16);
+                cu->badge->setBounds(x + larguraUtil - 95, y, 95, 16);
+                y += 18;
+
+                if (cu->ehOriginalSourceMedium) {
+                    if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(cu->editor.get())) {
+                        int prefH = osm->getPreferredHeight();
+                        osm->setBounds(x, y, larguraUtil, prefH);
+                        y += prefH + tk.espacoPequeno;
+                    } else {
+                        cu->editor->setBounds(x, y, larguraUtil, 24);
+                        y += 24 + tk.espacoPequeno;
+                    }
+                } else if (cu->ehPeople) {
+                    cu->editor->setBounds(x, y, larguraUtil, 26);
+                    y += 26 + tk.espacoPequeno;
+                } else if (cu->ehTags) {
+                    if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
+                        chips->setBounds(x, y, larguraUtil, chips->getPreferredHeight());
+                        y += chips->getPreferredHeight() + tk.espacoPequeno;
+                    } else {
+                        cu->editor->setBounds(x, y, larguraUtil, 24);
+                        y += 24 + tk.espacoPequeno;
+                    }
+                } else if (cu->ehNotes) {
+                    cu->editor->setBounds(x, y, larguraUtil, 64);
+                    y += 64 + tk.espacoPequeno;
+                } else {
+                    cu->editor->setBounds(x, y, larguraUtil, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+            }
+        };
+
+        // Bloco A
+        if (secHeaderDublinCore_) {
+            secHeaderDublinCore_->setBounds(x, y, larguraUtil, 20);
+            y += 24;
+        }
+        layoutCamposDoBloco1Col(BlocoFicha::DublinCore);
+        y += tk.espacoMedio;
+
+        // Bloco B
+        if (secHeaderUserAsset_) {
+            secHeaderUserAsset_->setBounds(x, y, larguraUtil, 20);
+            y += 24;
+        }
+        layoutCamposDoBloco1Col(BlocoFicha::UserAsset);
+        y += tk.espacoMedio;
+
+        // Bloco C: GEOLOCATION
         if (geolocalizacao_.titulo) {
-            y += tk.espacoMedio * 2;
             int rotuloW = larguraUtil - 140;
-            geolocalizacao_.titulo->setBounds(x, y, rotuloW, 16);
+            geolocalizacao_.titulo->setBounds(x, y, rotuloW, 20);
             if (geolocalizacao_.statusBadge)
-                geolocalizacao_.statusBadge->setBounds(x + larguraUtil - 135, y, 135, 16);
-            y += 20;
+                geolocalizacao_.statusBadge->setBounds(x + larguraUtil - 135, y, 135, 20);
+            y += 24;
 
             if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
                 geolocalizacao_.labelCoords->setBounds(x, y, larguraUtil, 16);
@@ -909,11 +1058,19 @@ public:
     }
 
 private:
+    enum class BlocoFicha {
+        DublinCore,
+        UserAsset,
+        GeoLocation
+    };
+
     struct LinhaUnificada {
         std::string campoId;
         std::string colunaDb;
+        BlocoFicha bloco = BlocoFicha::DublinCore;
         bool ehAutoFixed = false;
         bool ehNotes = false;
+        bool ehPeople = false;
         bool ehTags = false;
         bool ehOriginalSourceMedium = false;
         std::unique_ptr<juce::Label> rotulo;
@@ -922,6 +1079,8 @@ private:
         std::function<void()> onCommit;
     };
     std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
+    std::unique_ptr<juce::Label> secHeaderDublinCore_;
+    std::unique_ptr<juce::Label> secHeaderUserAsset_;
 
     void construirMetadadosUnificados(const std::string& itemId, const std::string& tipoMidia) {
         const auto& tk = matriz::ui::tema();
@@ -957,7 +1116,7 @@ private:
                     lengthStr = juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
             }
         }
-        if (lengthStr.isEmpty()) lengthStr = (cat == MediaCategory::Audio ? "04:35" : (cat == MediaCategory::Video ? "12:18" : "--:--"));
+        if (lengthStr.isEmpty()) lengthStr = "--:--";
 
         juce::String codecStr;
         if (dados.isObject() && dados.hasProperty("codec")) codecStr = dados["codec"].toString();
@@ -1075,6 +1234,12 @@ private:
         juce::String valPath = projeto_.lerMetadado(itemId, "caminho_catalogo").value_or(arquivo ? arquivo->caminhoAbsoluto.toStdString() : "");
         juce::String valYear = projeto_.lerMetadado(itemId, "ano").value_or("");
         juce::String valSourceMedia = projeto_.lerMetadado(itemId, "source_media").value_or("");
+        if (valSourceMedia.isEmpty() && dados.isObject() && dados.hasProperty("exifCamera")) {
+            OriginalSourceMediumInfo osm;
+            osm.medium = "Native Digital";
+            osm.recordingDevice = dados["exifCamera"].toString().toStdString();
+            valSourceMedia = osm.serialize();
+        }
         juce::String valCollection = projeto_.lerMetadado(itemId, "collection_type").value_or("");
         juce::String valIsrc = projeto_.lerMetadado(itemId, "isrc").value_or("");
         juce::String valNotes = projeto_.lerMetadado(itemId, "notas_livres").value_or("");
@@ -1086,9 +1251,6 @@ private:
         if (valDcTitle.isEmpty()) valDcTitle = valName;
 
         juce::String valDcCreator = projeto_.lerMetadado(itemId, "dc_creator").value_or("");
-        if (valDcCreator.isEmpty() && dados.isObject() && dados.hasProperty("exifCamera")) {
-            valDcCreator = dados["exifCamera"].toString();
-        }
 
         juce::String valDcSubject = projeto_.lerMetadado(itemId, "dc_subject").value_or("");
 
@@ -1100,12 +1262,19 @@ private:
 
         juce::String valDcCreated = projeto_.lerMetadado(itemId, "dc_created").value_or("");
         if (valDcCreated.isEmpty() && dados.isObject() && dados.hasProperty("exifDataOriginal")) {
-            valDcCreated = dados["exifDataOriginal"].toString().substring(0, 10).replace(":", "-");
+            juce::String fullExifDate = dados["exifDataOriginal"].toString().trim();
+            if (fullExifDate.length() >= 10) {
+                juce::String dataParte = fullExifDate.substring(0, 10).replace(":", "-");
+                juce::String horaParte = fullExifDate.length() > 10 ? fullExifDate.substring(10) : "";
+                valDcCreated = dataParte + horaParte;
+            } else {
+                valDcCreated = fullExifDate;
+            }
         }
         if (valDcCreated.isEmpty() && arquivo) {
             juce::File f(arquivo->caminhoAbsoluto);
             if (f.existsAsFile()) {
-                valDcCreated = f.getCreationTime().formatted("%Y-%m-%d");
+                valDcCreated = f.getCreationTime().formatted("%Y-%m-%d %H:%M:%S");
             }
         }
 
@@ -1169,14 +1338,26 @@ private:
         juce::String valDcRights = projeto_.lerMetadado(itemId, "dc_rights").value_or("");
         if (valDcRights.isEmpty()) {
             auto rOpt = projeto_.obterDireitos(itemId);
-            if (rOpt) valDcRights = rOpt->rightsStatus;
-            else valDcRights = "PUBLIC_DOMAIN";
+            if (rOpt && !rOpt->rightsStatus.empty()) valDcRights = rOpt->rightsStatus;
         }
+
+        secHeaderDublinCore_ = std::make_unique<juce::Label>();
+        secHeaderDublinCore_->setText("DUBLIN CORE METADATA", juce::dontSendNotification);
+        secHeaderDublinCore_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        secHeaderDublinCore_->setColour(juce::Label::textColourId, tk.acento);
+        addAndMakeVisible(*secHeaderDublinCore_);
+
+        secHeaderUserAsset_ = std::make_unique<juce::Label>();
+        secHeaderUserAsset_->setText("ASSET & USER METADATA", juce::dontSendNotification);
+        secHeaderUserAsset_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        secHeaderUserAsset_->setColour(juce::Label::textColourId, tk.acento);
+        addAndMakeVisible(*secHeaderUserAsset_);
 
         // Helpers to add fields
         auto addAutoFixed = [this, &tk](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
+            linha->bloco = BlocoFicha::UserAsset;
             linha->ehAutoFixed = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
@@ -1208,6 +1389,7 @@ private:
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
+            linha->bloco = (campoId.rfind("dc_", 0) == 0) ? BlocoFicha::DublinCore : BlocoFicha::UserAsset;
 
             linha->rotulo = std::make_unique<juce::Label>();
             linha->rotulo->setText(rotulo, juce::dontSendNotification);
@@ -1259,6 +1441,7 @@ private:
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
+            linha->bloco = (campoId.rfind("dc_", 0) == 0) ? BlocoFicha::DublinCore : BlocoFicha::UserAsset;
 
             linha->rotulo = std::make_unique<juce::Label>();
             linha->rotulo->setText(rotulo, juce::dontSendNotification);
@@ -1331,6 +1514,7 @@ private:
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "notes";
             linha->colunaDb = "notas_livres";
+            linha->bloco = BlocoFicha::UserAsset;
             linha->ehNotes = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
@@ -1369,9 +1553,55 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
+        auto addEditablePeople = [this, &tk, itemId]() {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = "people";
+            linha->bloco = BlocoFicha::UserAsset;
+            linha->ehPeople = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("PEOPLE", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[PEOPLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto picker = std::make_unique<PeoplePickerComponent>(projeto_, itemId);
+            picker->onPersonAddedToTags = [this, itemId](const juce::String& nomePessoa) {
+                TagChipsEditor* chips = nullptr;
+                for (auto& cu : camposUnificados_) {
+                    if (cu && cu->ehTags) {
+                        chips = dynamic_cast<TagChipsEditor*>(cu->editor.get());
+                        break;
+                    }
+                }
+
+                if (chips) {
+                    chips->addTag(nomePessoa);
+                } else {
+                    projeto_.adicionarTag(itemId, nomePessoa.toStdString());
+                }
+
+                if (aoAplicarSucesso) aoAplicarSucesso(itemId);
+                if (aoMudar) aoMudar();
+            };
+
+            addAndMakeVisible(*picker);
+            linha->editor = std::move(picker);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
         auto addEditableTags = [this, &tk, itemId](const std::vector<std::string>& tagsList) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "tags";
+            linha->bloco = BlocoFicha::UserAsset;
             linha->ehTags = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
@@ -1391,6 +1621,7 @@ private:
             chips->setTags(tagsList);
             chips->aoMudar = [this, itemId, raw = chips.get()] {
                 projeto_.definirTags(itemId, raw->getTags());
+                if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                 if (aoMudar) aoMudar();
             };
             chips->aoRedimensionar = [this] {
@@ -1406,6 +1637,7 @@ private:
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "source_media";
             linha->colunaDb = "source_media";
+            linha->bloco = BlocoFicha::UserAsset;
             linha->ehOriginalSourceMedium = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
@@ -1453,6 +1685,7 @@ private:
                                  "Artist Catalog", "Artist Backup"},
                                 "collection_type");
             addEditableNotes(valNotes);
+            addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Video) {
             addEditableText("path", "PATH", valPath, "caminho_catalogo");
@@ -1470,6 +1703,7 @@ private:
                                  "Corporate Video", "Commercial", "Live Performance", "NLE Project"},
                                 "collection_type");
             addEditableNotes(valNotes);
+            addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Image) {
             addEditableText("path", "PATH", valPath, "caminho_catalogo");
@@ -1483,6 +1717,7 @@ private:
                                 {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"},
                                 "collection_type");
             addEditableNotes(valNotes);
+            addEditablePeople();
             addEditableTags(tagsList);
         } else { // Docs
             addEditableText("path", "PATH", valPath, "caminho_catalogo");
@@ -1494,6 +1729,7 @@ private:
                                 {"Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"},
                                 "collection_type");
             addEditableNotes(valNotes);
+            addEditablePeople();
             addEditableTags(tagsList);
         }
     }
@@ -2132,6 +2368,96 @@ public:
             b->setBounds(x, y, larguraUtil, 26);
             y += 26 + tk.espacoPequeno;
         }
+        bool ehDuasColunas = (larguraUtil >= 500);
+
+        if (ehDuasColunas) {
+            int gap = 16;
+            int colW = (larguraUtil - gap) / 2;
+            int x0 = x;
+            int x1 = x + colW + gap;
+            int y0 = y;
+            int y1 = y;
+
+            for (auto* linha : linhas_) {
+                if (!linha) continue;
+
+                bool useCol1 = (y1 < y0);
+                int currX = useCol1 ? x1 : x0;
+                int& currY = useCol1 ? y1 : y0;
+
+                int rotuloW = colW - 85;
+                linha->rotulo->setBounds(currX, currY, rotuloW, 16);
+                linha->badge->setBounds(currX + colW - 80, currY, 80, 16);
+                currY += 18;
+
+                if (linha->ehOriginalSourceMedium) {
+                    if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
+                        int prefH = osm->getPreferredHeight();
+                        linha->editor->setBounds(currX, currY, colW, prefH);
+                        currY += prefH + tk.espacoPequeno;
+                    } else {
+                        linha->editor->setBounds(currX, currY, colW, 24);
+                        currY += 24 + tk.espacoPequeno;
+                    }
+                } else if (linha->ehPeople) {
+                    linha->editor->setBounds(currX, currY, colW, 26);
+                    currY += 26 + tk.espacoPequeno;
+                } else if (linha->ehNotes) {
+                    linha->editor->setBounds(currX, currY, colW, 64);
+                    currY += 64 + tk.espacoPequeno;
+                } else {
+                    linha->editor->setBounds(currX, currY, colW, 24);
+                    currY += 24 + tk.espacoPequeno;
+                }
+            }
+
+            if (geoLote_.titulo) {
+                bool useCol1 = (y1 < y0);
+                int currX = useCol1 ? x1 : x0;
+                int& currY = useCol1 ? y1 : y0;
+
+                currY += tk.espacoPequeno;
+                int rotuloW = colW - 85;
+                geoLote_.titulo->setBounds(currX, currY, rotuloW, 16);
+                if (geoLote_.badge) geoLote_.badge->setBounds(currX + colW - 80, currY, 80, 16);
+                currY += 18;
+
+                auto layoutGeoSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+                    if (lbl && ed) {
+                        lbl->setBounds(currX, currY, colW, 16);
+                        currY += 18;
+                        ed->setBounds(currX, currY, colW, 24);
+                        currY += 24 + tk.espacoPequeno;
+                    }
+                };
+
+                layoutGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords);
+                layoutGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress);
+                layoutGeoSubfield(geoLote_.labelCity, geoLote_.editorCity);
+                layoutGeoSubfield(geoLote_.labelState, geoLote_.editorState);
+                layoutGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry);
+            }
+
+            int maxY = std::max(y0, y1);
+
+            if (previa_) {
+                previa_->setBounds(x, maxY, larguraUtil, 36);
+                maxY += 36 + tk.espacoPequeno;
+            }
+            if (botaoAplicar_) {
+                botaoAplicar_->setBounds(x, maxY, 120, 28);
+                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, maxY, 120, 28);
+                maxY += 28 + tk.espacoMedio;
+            }
+            if (resultado_) {
+                resultado_->setBounds(x, maxY, larguraUtil, 20);
+                maxY += 20 + tk.espacoMedio;
+            }
+
+            setSize(largura, maxY + tk.espacoPainel);
+            return;
+        }
+
         for (auto* linha : linhas_) {
             int rotuloW = larguraUtil - 95;
             linha->rotulo->setBounds(x, y, rotuloW, 16);
@@ -2147,6 +2473,9 @@ public:
                     linha->editor->setBounds(x, y, larguraUtil, 24);
                     y += 24 + tk.espacoPequeno;
                 }
+            } else if (linha->ehPeople) {
+                linha->editor->setBounds(x, y, larguraUtil, 26);
+                y += 26 + tk.espacoPequeno;
             } else if (linha->ehNotes) {
                 linha->editor->setBounds(x, y, larguraUtil, 64);
                 y += 64 + tk.espacoPequeno;
@@ -2154,6 +2483,24 @@ public:
                 linha->editor->setBounds(x, y, larguraUtil, 24);
                 y += 24 + tk.espacoPequeno;
             }
+        }
+        if (geoLote_.titulo) {
+            y += tk.espacoPequeno;
+            int rotuloW = larguraUtil - 95;
+            geoLote_.titulo->setBounds(x, y, rotuloW, 16);
+            if (geoLote_.badge) geoLote_.badge->setBounds(x + larguraUtil - 90, y, 90, 16);
+            y += 18;
+
+            auto layoutGeoSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+                if (lbl) { lbl->setBounds(x, y, larguraUtil, 16); y += 18; }
+                if (ed) { ed->setBounds(x, y, larguraUtil, 24); y += 24 + tk.espacoPequeno; }
+            };
+
+            layoutGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords);
+            layoutGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress);
+            layoutGeoSubfield(geoLote_.labelCity, geoLote_.editorCity);
+            layoutGeoSubfield(geoLote_.labelState, geoLote_.editorState);
+            layoutGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry);
         }
         if (previa_) {
             previa_->setBounds(x, y, larguraUtil, 36);
@@ -2205,11 +2552,12 @@ private:
     struct LinhaLote {
         std::string campoId;
         std::string colunaDb;
-        std::unique_ptr<juce::Label> rotulo;
-        std::unique_ptr<juce::Label> badge;
-        std::unique_ptr<juce::Component> editor;
+        std::unique_ptr<juce::Label>       rotulo;
+        std::unique_ptr<juce::Label>       badge;
+        std::unique_ptr<juce::Component>   editor;
         bool tocado = false;
         bool ehNotes = false;
+        bool ehPeople = false;
         bool ehTags = false;
         bool ehDropdown = false;
         bool ehOriginalSourceMedium = false;
@@ -2224,6 +2572,23 @@ private:
         std::string notas_livres;
         std::string maquina;
         std::vector<std::string> tags;
+        std::optional<matriz::analytics::AssetGeolocation> geo;
+    };
+
+    struct SecaoGeoLote {
+        std::unique_ptr<juce::Label> titulo;
+        std::unique_ptr<juce::Label> badge;
+        std::unique_ptr<juce::Label> labelCoords;
+        std::unique_ptr<juce::TextEditor> editorCoords;
+        std::unique_ptr<juce::Label> labelAddress;
+        std::unique_ptr<juce::TextEditor> editorAddress;
+        std::unique_ptr<juce::Label> labelCity;
+        std::unique_ptr<juce::TextEditor> editorCity;
+        std::unique_ptr<juce::Label> labelState;
+        std::unique_ptr<juce::TextEditor> editorState;
+        std::unique_ptr<juce::Label> labelCountry;
+        std::unique_ptr<juce::TextEditor> editorCountry;
+        bool tocado = false;
     };
 
     void limpar() {
@@ -2231,6 +2596,7 @@ private:
         mensagem_.reset();
         botoesTipo_.clear();
         linhas_.clear();
+        geoLote_ = {};
         previa_.reset();
         botaoAplicar_.reset();
         botaoDesfazer_.reset();
@@ -2358,28 +2724,24 @@ private:
             cb->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
             cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
 
-            for (size_t i = 0; i < opcoes.size(); ++i) {
-                cb->addItem(opcoes[i], static_cast<int>(i + 1));
+            int id = 1;
+            for (const auto& op : opcoes) {
+                cb->addItem(op, id++);
             }
 
             std::string valorComum;
             bool todosIguais = true;
             bool primeiro = true;
-            for (const auto& id : itemIds_) {
-                std::string v = projeto_.lerMetadado(id, dbColuna).value_or("");
+            for (const auto& itemId : itemIds_) {
+                std::string v = projeto_.lerMetadado(itemId, dbColuna).value_or("");
                 if (primeiro) { valorComum = v; primeiro = false; }
                 else if (v != valorComum) { todosIguais = false; break; }
             }
 
             if (todosIguais && !valorComum.empty()) {
-                for (size_t i = 0; i < opcoes.size(); ++i) {
-                    if (opcoes[i] == valorComum) {
-                        cb->setSelectedId(static_cast<int>(i + 1), juce::dontSendNotification);
-                        break;
-                    }
-                }
+                cb->setText(valorComum, juce::dontSendNotification);
             } else {
-                cb->setTextWhenNothingSelected(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"));
+                cb->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
             }
 
             cb->onChange = [this, linha] {
@@ -2388,6 +2750,45 @@ private:
             };
             addAndMakeVisible(*cb);
             linha->editor = std::move(cb);
+        };
+
+        auto addPeopleLote = [this, &tk]() {
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = "people";
+            linha->ehPeople = true;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText("PEOPLE", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText("[PEOPLE]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto picker = std::make_unique<PeoplePickerComponent>(projeto_);
+            picker->onPersonAddedToTags = [this](const juce::String& nomePessoa) {
+                for (const auto& id : itemIds_) {
+                    projeto_.adicionarTag(id, nomePessoa.toStdString());
+                }
+                for (auto* l : linhas_) {
+                    if (l && l->ehTags) {
+                        if (auto* ed = dynamic_cast<juce::TextEditor*>(l->editor.get())) {
+                            juce::String cur = ed->getText().trim();
+                            if (cur.isNotEmpty()) cur += " ";
+                            ed->setText(cur + "#" + nomePessoa);
+                            break;
+                        }
+                    }
+                }
+                if (aoAplicarEmLote) aoAplicarEmLote();
+            };
+            addAndMakeVisible(*picker);
+            linha->editor = std::move(picker);
         };
 
         auto addTagsLote = [this, &tk]() {
@@ -2452,8 +2853,48 @@ private:
             linha->editor = std::move(osm);
         };
 
-        // Specific fields per category (§ metadata spec)
-        // Hidden in batch: NAME, PATH, and all AUTO + FIXED fields.
+        auto addGeolocationLote = [this, &tk]() {
+            geoLote_.titulo = std::make_unique<juce::Label>();
+            geoLote_.titulo->setText("GEO LOCATION", juce::dontSendNotification);
+            geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            geoLote_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*geoLote_.titulo);
+
+            geoLote_.badge = std::make_unique<juce::Label>();
+            geoLote_.badge->setText("[BATCH OVERRIDE]", juce::dontSendNotification);
+            geoLote_.badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            geoLote_.badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*geoLote_.badge);
+
+            auto makeGeoSubfield = [this, &tk](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed,
+                                               const juce::String& textRotulo, const juce::String& placeholder) {
+                lbl = std::make_unique<juce::Label>();
+                lbl->setText(textRotulo, juce::dontSendNotification);
+                lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                lbl->setColour(juce::Label::textColourId, tk.textoSecundario);
+                addAndMakeVisible(*lbl);
+
+                ed = std::make_unique<juce::TextEditor>();
+                ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+                ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+                ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+                ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+                ed->setTextToShowWhenEmpty(placeholder, tk.textoTerciario);
+                ed->onTextChange = [this] {
+                    geoLote_.tocado = true;
+                    atualizarPrevia();
+                };
+                addAndMakeVisible(*ed);
+            };
+
+            makeGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords, "GPS Coordinates (Lat, Lng)", "e.g. -16.4435, -39.0643");
+            makeGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress, "Formatted Address", "e.g. Av. Paulista, 1000");
+            makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, "City", "e.g. Porto Seguro");
+            makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, "State / Province", "e.g. Bahia");
+            makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, "Country", "e.g. Brazil");
+        };
+
         switch (cat) {
             case MediaCategory::Audio: {
                 addEditableTextLote("year", "YEAR", "ano");
@@ -2463,9 +2904,11 @@ private:
                     "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
                     "Artist Catalog", "Artist Backup"
                 });
-                addTagsLote();
                 addEditableTextLote("isrc", "ISRC", "isrc");
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addPeopleLote();
+                addTagsLote();
+                addGeolocationLote();
                 break;
             }
             case MediaCategory::Video: {
@@ -2475,8 +2918,10 @@ private:
                     "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                     "Corporate Video", "Commercial", "Live Performance", "NLE Project"
                 });
-                addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addPeopleLote();
+                addTagsLote();
+                addGeolocationLote();
                 break;
             }
             case MediaCategory::Image: {
@@ -2485,8 +2930,10 @@ private:
                 addDropdownLote("collection", "CONTENT", "collection_type", {
                     "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"
                 });
-                addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addPeopleLote();
+                addTagsLote();
+                addGeolocationLote();
                 break;
             }
             case MediaCategory::Docs: {
@@ -2495,8 +2942,10 @@ private:
                 addDropdownLote("collection", "CONTENT", "collection_type", {
                     "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"
                 });
-                addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addPeopleLote();
+                addTagsLote();
+                addGeolocationLote();
                 break;
             }
             case MediaCategory::Mixed:
@@ -2512,8 +2961,10 @@ private:
                     "Image Edit Project", "Documentation", "Book", "Contract", "Manual", "Report",
                     "Reference", "Technical Documentation"
                 });
-                addTagsLote();
                 addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addPeopleLote();
+                addTagsLote();
+                addGeolocationLote();
                 break;
             }
         }
@@ -2568,6 +3019,9 @@ private:
                 }
             }
         }
+        if (geoLote_.tocado) {
+            partes.add("GEO LOCATION=[BATCH OVERRIDE]");
+        }
 
         if (partes.isEmpty()) {
             previa_->setText(matriz::i18n::t("ficha.lote_nenhum_campo_tocado"), juce::dontSendNotification);
@@ -2584,11 +3038,13 @@ private:
     void aplicar() {
         bool algumTocado = false;
         for (auto* l : linhas_) if (l->tocado) { algumTocado = true; break; }
+        if (geoLote_.tocado) algumTocado = true;
         if (!algumTocado || itemIds_.empty()) return;
+
+        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_edit", "Applying Batch Edits", (int)itemIds_.size(), nullptr, "Updating " + juce::String((int)itemIds_.size()) + " assets...");
 
         projeto_.iniciarGrupoUndo("Batch apply");
 
-        // Snapshot of PREVIOUS values before applying
         undoSnapshot_.clear();
         for (const auto& id : itemIds_) {
             SnapshotItem snap;
@@ -2599,6 +3055,7 @@ private:
             snap.notas_livres = projeto_.lerMetadado(id, "notas_livres").value_or("");
             snap.maquina = projeto_.valorCampo(id, "raiz", 0, "maquina").value_or("");
             snap.tags = projeto_.lerTags(id);
+            snap.geo = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), id);
             undoSnapshot_[id] = snap;
         }
 
@@ -2612,7 +3069,6 @@ private:
                     juce::String val = lerValorLinha(*linha);
 
                     if (linha->ehTags) {
-                        // TAGS: Sum/Add entered tags to existing tags (§ user req 3)
                         juce::StringArray tagsNovas;
                         tagsNovas.addTokens(val, " ,;", "\"");
                         for (int t = 0; t < tagsNovas.size(); ++t) {
@@ -2622,13 +3078,11 @@ private:
                             }
                         }
                     } else if (linha->ehNotes) {
-                        // NOTES: Sum/Append entered note to existing notes (§ user req 3)
                         std::string txt = val.toStdString();
                         if (!txt.empty()) {
                             std::string existing = projeto_.lerMetadado(id, "notas_livres").value_or("");
                             std::string combined = existing.empty() ? txt : (existing + "\n" + txt);
                             projeto_.salvarMetadado(id, "notas_livres", combined);
-                            // Also keep maquina in sync for legacy test
                             std::string agora = matriz::model::agoraIso8601();
                             projeto_.projeto().registro().run(
                                 "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
@@ -2640,14 +3094,58 @@ private:
                                  matriz::db::Value::of(agora)});
                         }
                     } else {
-                        // Regular fields (YEAR, CONTENT, COLLECTION, SOURCE MEDIA, ISRC): OVERRIDE (§ user req 2)
                         projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
+                    }
+                }
+
+                if (geoLote_.tocado) {
+                    matriz::analytics::AssetGeolocation geoTemplate;
+                    std::string coordsText = geoLote_.editorCoords ? geoLote_.editorCoords->getText().trim().toStdString() : "";
+                    if (!coordsText.empty()) {
+                        auto commaPos = coordsText.find(',');
+                        if (commaPos != std::string::npos) {
+                            try {
+                                double lat = std::stod(coordsText.substr(0, commaPos));
+                                double lng = std::stod(coordsText.substr(commaPos + 1));
+                                if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+                                    geoTemplate.latitude = lat;
+                                    geoTemplate.longitude = lng;
+                                    geoTemplate.source = matriz::analytics::GeoSource::UserCoordinates;
+                                }
+                            } catch (...) {}
+                        }
+                    }
+                    std::string addr = geoLote_.editorAddress ? geoLote_.editorAddress->getText().trim().toStdString() : "";
+                    if (!addr.empty()) {
+                        geoTemplate.formattedAddress = addr;
+                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserAddress;
+                    }
+                    std::string city = geoLote_.editorCity ? geoLote_.editorCity->getText().trim().toStdString() : "";
+                    if (!city.empty()) {
+                        geoTemplate.city = city;
+                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCity;
+                    }
+                    std::string state = geoLote_.editorState ? geoLote_.editorState->getText().trim().toStdString() : "";
+                    if (!state.empty()) {
+                        geoTemplate.stateProvince = state;
+                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserState;
+                    }
+                    std::string country = geoLote_.editorCountry ? geoLote_.editorCountry->getText().trim().toStdString() : "";
+                    if (!country.empty()) {
+                        geoTemplate.country = country;
+                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCountry;
+                    }
+
+                    if (geoTemplate.hasAnyLocationData()) {
+                        geoTemplate.assetId = id;
+                        matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geoTemplate);
                     }
                 }
                 ++sucessos;
             } catch (const std::exception&) {
                 ++falhas;
             }
+            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_edit", sucessos + falhas, juce::String(sucessos + falhas) + " of " + juce::String((int)itemIds_.size()) + " updated");
         }
 
         projeto_.finalizarGrupoUndo();
@@ -2658,10 +3156,13 @@ private:
         if (botaoDesfazer_) botaoDesfazer_->setVisible(sucessos > 0);
         relayoutEExibir();
 
+        ProgressoGlobal::obterInstancia().concluirTarefa("batch_edit", texto);
+
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
     void desfazer() {
+        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_undo", "Reverting Batch Edits", (int)undoSnapshot_.size(), nullptr, "Reverting changes...");
         int restaurados = 0;
         for (const auto& [id, snap] : undoSnapshot_) {
             try {
@@ -2686,14 +3187,22 @@ private:
                         "DELETE FROM item_campo WHERE item_id = ? AND nivel = 'raiz' AND nivel_indice = 0 AND campo_id = 'maquina'",
                         {matriz::db::Value::of(id)});
                 }
+
+                if (snap.geo.has_value()) {
+                    matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), *snap.geo);
+                } else {
+                    matriz::analytics::AssetGeolocationRepository::remover(projeto_.projeto().registro(), id);
+                }
                 ++restaurados;
             } catch (const std::exception&) {
             }
+            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_undo", restaurados, juce::String(restaurados) + " restored");
         }
         resultado_->setText(matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)),
                              juce::dontSendNotification);
         if (botaoDesfazer_) botaoDesfazer_->setVisible(false);
         undoSnapshot_.clear();
+        ProgressoGlobal::obterInstancia().concluirTarefa("batch_undo", matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)));
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
@@ -2707,6 +3216,7 @@ private:
     std::unique_ptr<juce::Label> mensagem_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesTipo_;
     juce::OwnedArray<LinhaLote> linhas_;
+    SecaoGeoLote geoLote_;
     std::unique_ptr<juce::Label> previa_;
     std::unique_ptr<juce::TextButton> botaoAplicar_;
     std::unique_ptr<juce::TextButton> botaoDesfazer_;

@@ -112,6 +112,7 @@ struct GeoMapDataset {
 class AssetGeolocationRepository {
 public:
     static void salvar(matriz::db::Database& db, const AssetGeolocation& geo);
+    static void remover(matriz::db::Database& db, const std::string& assetId);
     static std::optional<AssetGeolocation> obterPorAssetId(matriz::db::Database& db, const std::string& assetId);
     static std::vector<AssetGeolocation> obterTodosGeolocalizados(matriz::db::Database& db);
     static GeolocationCoverageStats obterEstatisticasCobertura(matriz::db::Database& db);

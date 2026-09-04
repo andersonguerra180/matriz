@@ -17,6 +17,7 @@
 namespace matriz::consolidacao {
 
 struct ContextoMascara {
+    std::string prefixo;
     std::string codigoAcervo;
     std::string titulo;
     std::string tipoMidia;

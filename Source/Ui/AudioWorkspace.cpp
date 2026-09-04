@@ -847,6 +847,12 @@ bool AudioWorkspace::keyPressed(const juce::KeyPress& tecla) {
         if (aoFechar) aoFechar();
         return true;
     }
+    if (tecla == juce::KeyPress::leftKey || tecla == juce::KeyPress::pageUpKey) {
+        if (aoNavegar) { aoNavegar(-1); return true; }
+    }
+    if (tecla == juce::KeyPress::rightKey || tecla == juce::KeyPress::pageDownKey) {
+        if (aoNavegar) { aoNavegar(1); return true; }
+    }
     if (!transporteHabilitado_) return false;
 
     // JKL de mesa de corte: L acelera pra frente em degraus, J acelera pra

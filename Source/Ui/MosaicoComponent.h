@@ -76,6 +76,9 @@ public:
     void limparFiltroFaixaAno();
     std::optional<std::pair<int, int>> filtroFaixaAnoAtivo() const { return filtroFaixaAno_; }
 
+    void definirFiltroPeriodoData(const juce::String& dataDe, const juce::String& dataAte);
+    void limparFiltroPeriodoData();
+
     // Eixo de agrupamento do mosaico (item 4.3 — "ano é o eixo padrão de
     // agrupamento na grade"). Automatico é o comportamento já existente
     // (tipo de mídia no Archive, artista/lançamento no Catalog).
@@ -91,6 +94,14 @@ public:
     }
     bool modoQuarentenaAtual() const { return modoQuarentena_; }
     std::function<void(const std::string& itemId)> aoConfirmarEntradaGrid;
+
+    void definirDestacarEditados(bool destacar) {
+        if (destacarEditados_ != destacar) {
+            destacarEditados_ = destacar;
+            repaint();
+        }
+    }
+    bool destacarEditados() const { return destacarEditados_; }
 
     // Busca (Acréscimos §10.1): código/título, campo de ficha e assunto —
     // consulta o banco via ProjetoAberto::buscarItens a cada chamada (OCR/
@@ -148,6 +159,7 @@ public:
 
     int totalItensCarregados() const { return static_cast<int>(itensTodos_.size()); }
     int totalItensVisiveis() const { return static_cast<int>(itensFiltrados_.size()); }
+    const std::vector<ItemResumo>& todosItensEmMemoria() const { return itensTodos_; }
 
     void definirSubpastas(std::vector<SubpastaInfo> subpastas);
     std::function<void(const SubpastaInfo&)> aoNavegarParaSubpasta;
@@ -256,6 +268,7 @@ private:
     std::set<juce::String> filtrosContentType_, filtrosCollectionType_;
     FiltroDisponibilidade filtroDisponibilidade_ = FiltroDisponibilidade::All;
     std::optional<std::pair<int, int>> filtroFaixaAno_;                                          // ver definirFiltroFaixaAno
+    juce::String filtroDataDe_, filtroDataAte_;
     ModoAgrupamento modoAgrupamento_ = ModoAgrupamento::Automatico;
     juce::String buscaTexto_;
     std::optional<std::set<std::string>> buscaResultado_; // resultado de projeto_.buscarItens(buscaTexto_), recalculado a cada definirBusca
@@ -268,6 +281,7 @@ private:
     int colunas_ = 1;
     std::string selecionadoId_;       // âncora — última célula clicada (single-click), o que a ficha mostra
     std::set<std::string> selecionados_; // seleção múltipla completa (§3.3 — clique/Shift/Cmd)
+    std::set<std::string> itensMarcadosP_; // itens marcados com tecla P (borda azul)
     int indiceAncoraShift_ = -1;          // início do intervalo pra Shift+clique
     int indiceHover_ = -1;                // célula sob o cursor, -1 = nenhuma
     bool arrastandoArquivo_ = false;
@@ -288,6 +302,7 @@ private:
 
     ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;
+    bool destacarEditados_ = true;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;
 

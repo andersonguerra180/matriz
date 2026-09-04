@@ -122,7 +122,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        juce::int64 tamanhoBytes,
                                                        const std::string& caminhoRelativo = "",
                                                        const std::string& excludeItemId = "",
-                                                       const juce::File& pastaProjeto = {});
+                                                       const juce::File& pastaProjeto = {},
+                                                       const std::string& exifDateOriginal = "");
 
 
 // Registra que o mesmo conteúdo de `arquivoId` também foi encontrado em

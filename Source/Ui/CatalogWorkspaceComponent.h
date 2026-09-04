@@ -61,6 +61,8 @@ private:
         int vulneraveis = 0;
         int single_copy = 0;
         int ausentes = 0;
+        std::vector<std::pair<int, int>> anos;
+        std::vector<std::pair<std::string, int>> collections;
     };
 
     void construirSidebar();
@@ -96,8 +98,10 @@ private:
     std::unique_ptr<juce::Label> lblTamanho_;
     std::unique_ptr<juce::TextButton> btnVisaoGrade_;
     std::unique_ptr<juce::TextButton> btnVisaoLista_;
+    std::unique_ptr<juce::TextButton> btnDestacarEditados_;
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
+    bool destacarEditados_ = true;
     bool editMode_ = true;
     std::optional<std::string> pastaNavegarAtual_;
     std::vector<std::string> caminhoNavegacao_;
@@ -119,6 +123,13 @@ private:
     std::vector<std::unique_ptr<juce::TextButton>> botoesAnos_;
     std::optional<int> anoSelecionado_;
 
+    std::unique_ptr<juce::Label> lblDataDe_;
+    std::unique_ptr<juce::ComboBox> comboDataDe_;
+    std::unique_ptr<juce::Label> lblDataAte_;
+    std::unique_ptr<juce::ComboBox> comboDataAte_;
+    std::unique_ptr<juce::TextButton> btnLimparData_;
+    void aplicarFiltroPeriodo();
+
     std::vector<std::pair<std::string, int>> collectionDisponiveis_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesCollection_;
     std::optional<std::string> collectionSelecionado_;
@@ -132,7 +143,14 @@ private:
                                     .withDesiredThreadPriority(juce::Thread::Priority::low)};
 
     static constexpr int kLarguraSidebar = 200;
-    static constexpr int kLarguraFicha = 280;
+    static constexpr int kLarguraFichaMin = 280;
+    static constexpr int kLarguraFichaMax = 900;
+
+    int larguraFicha_ = 540;
+    bool fichaColapsada_ = false;
+
+    std::unique_ptr<juce::Component> fichaResizerBar_;
+    std::unique_ptr<juce::TextButton> btnToggleFicha_;
 };
 
 } // namespace matriz::ui
