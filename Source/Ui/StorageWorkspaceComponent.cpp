@@ -74,7 +74,7 @@ public:
         auto fontVal = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
 
         for (size_t i = 0; i < props_.size(); ++i) {
-            juce::Rectangle<int> rowRect(0, y, getWidth(), 17);
+            juce::Rectangle<int> rowRect(0, y, getWidth(), 18);
             if (i % 2 == 1) {
                 g.setColour(tk.painelAlt.withAlpha(0.35f));
                 g.fillRoundedRectangle(rowRect.toFloat(), 2.0f);
@@ -88,7 +88,7 @@ public:
             g.setFont(fontVal);
             g.drawText(props_[i].value, rowRect.reduced(4, 0), juce::Justification::centredLeft, true);
 
-            y += 18;
+            y += 19;
         }
     }
 
@@ -117,7 +117,7 @@ public:
         juce::String label = rep_.stateLabel.isNotEmpty() ? rep_.stateLabel : "HEALTHY";
         g.drawText(juce::String::charToString(0x25CF) + "  " + label, statusRow, juce::Justification::centredLeft, true);
 
-        area.removeFromTop(3);
+        area.removeFromTop(4);
 
         std::vector<StorageWorkspaceComponent::PropRow> rows;
         rows.push_back({ "SMART Status:", (rep_.smartStatus.isEmpty() || rep_.smartStatus == "-") ? "NOT SUPPORTED" : rep_.smartStatus });
@@ -133,7 +133,7 @@ public:
         auto fontVal = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
 
         for (size_t i = 0; i < rows.size(); ++i) {
-            juce::Rectangle<int> rowRect(0, y, getWidth(), 17);
+            juce::Rectangle<int> rowRect(0, y, getWidth(), 18);
             if (i % 2 == 1) {
                 g.setColour(tk.painelAlt.withAlpha(0.35f));
                 g.fillRoundedRectangle(rowRect.toFloat(), 2.0f);
@@ -147,7 +147,7 @@ public:
             g.setFont(fontVal);
             g.drawText(rows[i].value, rowRect.reduced(4, 0), juce::Justification::centredLeft, true);
 
-            y += 18;
+            y += 19;
         }
     }
 
@@ -1027,10 +1027,11 @@ void StorageWorkspaceComponent::resized() {
     lblTitle_->setBounds(headerArea.removeFromTop(24));
     lblSubtitle_->setBounds(headerArea);
 
-    area.removeFromTop(8);
+    area.removeFromTop(12);
 
     // Top Section: Two Columns (Source Drives & Backup Drives)
-    int topH = juce::jlimit(110, 150, static_cast<int>(area.getHeight() * 0.28f));
+    // Allocate ~42% of remaining height to the top columns
+    int topH = juce::jmax(180, static_cast<int>(area.getHeight() * 0.42f));
     auto topArea = area.removeFromTop(topH);
 
     int colW = (topArea.getWidth() - 16) / 2;
@@ -1039,8 +1040,8 @@ void StorageWorkspaceComponent::resized() {
     auto rightColArea = topArea;
 
     // Left Column
-    lblSourceColumnTitle_->setBounds(leftColArea.removeFromTop(22));
-    leftColArea.removeFromTop(3);
+    lblSourceColumnTitle_->setBounds(leftColArea.removeFromTop(24));
+    leftColArea.removeFromTop(4);
     sourceCardsViewport_->setBounds(leftColArea);
     if (sourceCardsContainer_) {
         sourceCardsContainer_->setSize(leftColArea.getWidth() - 12, sourceCardsContainer_->getHeight());
@@ -1048,15 +1049,15 @@ void StorageWorkspaceComponent::resized() {
     }
 
     // Right Column
-    lblBackupColumnTitle_->setBounds(rightColArea.removeFromTop(22));
-    rightColArea.removeFromTop(3);
+    lblBackupColumnTitle_->setBounds(rightColArea.removeFromTop(24));
+    rightColArea.removeFromTop(4);
     backupCardsViewport_->setBounds(rightColArea);
     if (backupCardsContainer_) {
         backupCardsContainer_->setSize(rightColArea.getWidth() - 12, backupCardsContainer_->getHeight());
         backupCardsContainer_->atualizarAltura();
     }
 
-    area.removeFromTop(10);
+    area.removeFromTop(14);
 
     // Bottom Section: Inspector & History Table
     inspectorContainer_->setBounds(area);
@@ -1068,45 +1069,45 @@ void StorageWorkspaceComponent::resized() {
     auto rightInspArea = inspArea;
 
     // Left Inspector: Device details & hardware props
-    lblInspectorTitle_->setBounds(leftInspArea.removeFromTop(24));
-    leftInspArea.removeFromTop(4);
+    lblInspectorTitle_->setBounds(leftInspArea.removeFromTop(26));
+    leftInspArea.removeFromTop(6);
 
     // Row 1: Nickname editor
-    auto nickRow = leftInspArea.removeFromTop(24);
+    auto nickRow = leftInspArea.removeFromTop(28);
     lblNickName_->setBounds(nickRow.removeFromLeft(130));
     btnSaveNickName_->setBounds(nickRow.removeFromRight(65));
     nickRow.removeFromRight(6);
     txtNickName_->setBounds(nickRow);
 
-    leftInspArea.removeFromTop(4);
+    leftInspArea.removeFromTop(6);
 
     // Row 2: Category selector
-    auto catRow = leftInspArea.removeFromTop(24);
+    auto catRow = leftInspArea.removeFromTop(28);
     lblCategory_->setBounds(catRow.removeFromLeft(130));
     comboCategory_->setBounds(catRow);
 
-    leftInspArea.removeFromTop(8);
+    leftInspArea.removeFromTop(10);
 
     // Hardware Specs Section
-    lblHardwareTitle_->setBounds(leftInspArea.removeFromTop(18));
-    leftInspArea.removeFromTop(3);
-    int specsH = 9 * 18 + 2;
+    lblHardwareTitle_->setBounds(leftInspArea.removeFromTop(20));
+    leftInspArea.removeFromTop(4);
+    int specsH = 9 * 19 + 6;
     hardwarePropsComp_->setBounds(leftInspArea.removeFromTop(specsH));
 
-    leftInspArea.removeFromTop(8);
+    leftInspArea.removeFromTop(10);
 
     // Drive Health Section (subordinate to Device Inspector)
-    auto healthHdr = leftInspArea.removeFromTop(20);
+    auto healthHdr = leftInspArea.removeFromTop(22);
     btnRefreshHealth_->setBounds(healthHdr.removeFromRight(65));
     healthHdr.removeFromRight(6);
     lblHealthTitle_->setBounds(healthHdr);
 
-    leftInspArea.removeFromTop(3);
+    leftInspArea.removeFromTop(4);
     driveHealthComp_->setBounds(leftInspArea);
 
     // Right Inspector: History Table
-    lblHistoryTitle_->setBounds(rightInspArea.removeFromTop(24));
-    rightInspArea.removeFromTop(4);
+    lblHistoryTitle_->setBounds(rightInspArea.removeFromTop(26));
+    rightInspArea.removeFromTop(6);
     tableHistory_->setBounds(rightInspArea);
 }
 

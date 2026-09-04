@@ -259,25 +259,53 @@ VolumeHardwareIdentity obterIdentidadeHardwareVolume(const juce::File& path) {
 std::vector<VolumeHardwareIdentity> listarVolumesMontados() {
     std::vector<VolumeHardwareIdentity> volumes;
 #if defined(__APPLE__)
-    int numMounts = getfsstat(NULL, 0, MNT_NOWAIT);
-    if (numMounts <= 0) return volumes;
+    // 1. Query VFS mounts with MNT_WAIT to ensure all newly attached devices are synced from kernel
+    int numMounts = getfsstat(NULL, 0, MNT_WAIT);
+    if (numMounts > 0) {
+        std::vector<struct statfs> fsList(numMounts);
+        numMounts = getfsstat(fsList.data(), (int)(sizeof(struct statfs) * numMounts), MNT_WAIT);
+        for (int i = 0; i < numMounts; ++i) {
+            juce::String mountPoint = juce::String::fromUTF8(fsList[i].f_mntonname);
+            // Ignore internal OS partitions (/System/Volumes/..., root /, /dev, etc.)
+            if (mountPoint.isEmpty() || mountPoint == "/" || mountPoint.startsWith("/System/Volumes/")
+                || mountPoint == "/dev" || mountPoint == "/net" || mountPoint == "/home"
+                || mountPoint == "/Volumes/Macintosh HD") {
+                continue;
+            }
 
-    std::vector<struct statfs> fsList(numMounts);
-    numMounts = getfsstat(fsList.data(), (int)(sizeof(struct statfs) * numMounts), MNT_NOWAIT);
-    for (int i = 0; i < numMounts; ++i) {
-        juce::String mountPoint = juce::String::fromUTF8(fsList[i].f_mntonname);
-        // Ignore internal OS partitions (/System/Volumes/..., root /, /dev, etc.)
-        if (mountPoint.isEmpty() || mountPoint == "/" || mountPoint.startsWith("/System/Volumes/")
-            || mountPoint == "/dev" || mountPoint == "/net" || mountPoint == "/home"
-            || mountPoint == "/Volumes/Macintosh HD") {
-            continue;
+            // Only include user-accessible / external / removable storage in /Volumes/
+            if (mountPoint.startsWith("/Volumes/")) {
+                auto id = obterIdentidadeHardwareVolume(juce::File(mountPoint));
+                if (id.isValid) {
+                    volumes.push_back(std::move(id));
+                }
+            }
         }
+    }
 
-        // Only include user-accessible / external / removable storage in /Volumes/
-        if (mountPoint.startsWith("/Volumes/")) {
-            auto id = obterIdentidadeHardwareVolume(juce::File(mountPoint));
-            if (id.isValid) {
-                volumes.push_back(std::move(id));
+    // 2. Direct scan of /Volumes/ to ensure hot-plugged USB drives, SD cards, and external SSDs are 100% caught
+    juce::File volsDir("/Volumes");
+    if (volsDir.isDirectory()) {
+        auto entries = volsDir.findChildFiles(juce::File::findDirectories, false);
+        for (const auto& d : entries) {
+            juce::String path = d.getFullPathName();
+            if (path.isEmpty() || path == "/Volumes/Macintosh HD" || path.startsWith("/Volumes/Recovery")
+                || path.startsWith("/Volumes/Preboot") || path.startsWith("/Volumes/VM")) {
+                continue;
+            }
+
+            bool alreadyFound = false;
+            for (const auto& v : volumes) {
+                if (v.mountPoint == path.toStdString()) {
+                    alreadyFound = true;
+                    break;
+                }
+            }
+            if (!alreadyFound) {
+                auto id = obterIdentidadeHardwareVolume(d);
+                if (id.isValid) {
+                    volumes.push_back(std::move(id));
+                }
             }
         }
     }
