@@ -159,6 +159,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnVisaoGrade_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
     btnVisaoGrade_->setTooltip("Grid view");
     btnVisaoGrade_->onClick = [this] {
+        modoVisaoGrade_ = true;
         if (mosaico_) mosaico_->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
         btnVisaoGrade_->setColour(juce::TextButton::buttonColourId, tema().acento);
         btnVisaoLista_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -170,6 +171,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnVisaoLista_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnVisaoLista_->setTooltip("List view");
     btnVisaoLista_->onClick = [this] {
+        modoVisaoGrade_ = false;
         if (mosaico_) mosaico_->definirModoVisao(MosaicoComponent::ModoVisao::Lista);
         btnVisaoLista_->setColour(juce::TextButton::buttonColourId, tema().acento);
         btnVisaoGrade_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -236,6 +238,66 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     stopTimer();
     poolContagens_.removeAllJobs(true, 1000);
     poolMiniaturas_.removeAllJobs(true, 30000);
+}
+
+void CatalogWorkspaceComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (campoBusca_) {
+        campoBusca_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        campoBusca_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
+    if (btnLimparBusca_) {
+        btnLimparBusca_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (sliderTamanho_) {
+        sliderTamanho_->setColour(juce::Slider::trackColourId, tk.borda);
+        sliderTamanho_->setColour(juce::Slider::thumbColourId, tk.acento);
+        sliderTamanho_->setColour(juce::Slider::backgroundColourId, tk.painelAlt);
+    }
+    if (lblTamanho_) {
+        lblTamanho_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        lblTamanho_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (btnVisaoGrade_) {
+        btnVisaoGrade_->setColour(juce::TextButton::buttonColourId, modoVisaoGrade_ ? tk.acento : tk.painelAlt);
+        btnVisaoGrade_->setColour(juce::TextButton::textColourOffId, modoVisaoGrade_ ? tk.textoSobreAcento : tk.textoPrimario);
+    }
+    if (btnVisaoLista_) {
+        btnVisaoLista_->setColour(juce::TextButton::buttonColourId, !modoVisaoGrade_ ? tk.acento : tk.painelAlt);
+        btnVisaoLista_->setColour(juce::TextButton::textColourOffId, !modoVisaoGrade_ ? tk.textoSobreAcento : tk.textoSecundario);
+    }
+    if (btnDestacarEditados_) {
+        btnDestacarEditados_->setColour(juce::TextButton::buttonColourId, destacarEditados_ ? tk.acento : tk.painelAlt);
+        btnDestacarEditados_->setColour(juce::TextButton::textColourOffId, destacarEditados_ ? tk.textoSobreAcento : tk.textoSecundario);
+    }
+    if (btnSelecionarTodos_) {
+        btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (btnLimparSelecao_) {
+        btnLimparSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (lblCaminhoNavegacao_) {
+        lblCaminhoNavegacao_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        lblCaminhoNavegacao_->setColour(juce::Label::backgroundColourId, tk.painelAlt);
+    }
+    if (btnToggleFicha_) {
+        btnToggleFicha_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnToggleFicha_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+
+    atualizarBotoesSidebar();
+    if (mosaico_) {
+        mosaico_->sendLookAndFeelChange();
+        mosaico_->repaint();
+    }
+    if (fichaPanel_) {
+        fichaPanel_->sendLookAndFeelChange();
+        fichaPanel_->repaint();
+    }
+    repaint();
 }
 
 void CatalogWorkspaceComponent::timerCallback() {

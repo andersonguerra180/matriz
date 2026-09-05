@@ -66,6 +66,8 @@ struct ItemResumo {
     std::string caminhoAbsolutoOrigem;
     std::string miniaturaCaminhoRelativo;
     std::string isrc;
+    std::string sourceMedia;
+    std::string dataCriacao;
     std::vector<std::string> tags;
     bool marcadoPublicacao = false;
     bool metadadosEditados = false;

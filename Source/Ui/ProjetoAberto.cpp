@@ -359,114 +359,131 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     std::vector<ItemResumo> out;
     if (!projeto_) return out;
 
-    auto stmt = projeto_->registro().prepare(
-        "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
-        "EXISTS(SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.estado_sincronizacao = 'sincronizado'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
-        " AND c.campo_id = 'artista_principal'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
-        " AND c.campo_id = 'titulo'), "
-        "(SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
-        " AND c.campo_id = 'origem'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
-        " AND c.campo_id = 'ano'), "
-        "(SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
-        "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "i.content_type, i.collection_type, i.criado_em, "
-        "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "COALESCE(i.marcado_publicacao, 0), "
-        "COALESCE(i.metadados_editados, 0) != 0 "
-        "FROM item i WHERE i.em_quarentena = 1 ORDER BY i.criado_em DESC, i.id");
-    while (stmt.step()) {
-        ItemResumo r;
-        r.id = stmt.columnText(0);
-        r.codigoAcervo = stmt.columnText(1);
-        r.titulo = stmt.columnText(2);
-        r.tipoMidia = stmt.columnText(3);
-        r.estado = stmt.columnText(4);
-        r.atualizadoEm = stmt.columnText(5);
-        r.sincronizado = stmt.columnInt(6) != 0;
-        if (!stmt.columnIsNull(7)) r.artistaLancamento = stmt.columnText(7);
-        if (!stmt.columnIsNull(8)) r.tituloLancamento = stmt.columnText(8);
-        if (!stmt.columnIsNull(9)) {
-            juce::String caminho9 = stmt.columnText(9);
-            int dotPos = caminho9.lastIndexOfChar('.');
-            if (dotPos >= 0)
-                r.extensaoArquivo = caminho9.substring(dotPos + 1).toLowerCase().toStdString();
-        }
-        if (!stmt.columnIsNull(10)) r.origem = stmt.columnText(10);
-        if (!stmt.columnIsNull(11)) {
-            juce::String anoTexto = stmt.columnText(11);
-            if (anoTexto.containsOnly("0123456789") && anoTexto.isNotEmpty()) r.ano = anoTexto.getIntValue();
-        }
-        if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
-        if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
-        r.criadoEm = stmt.columnText(17);
-        if (!stmt.columnIsNull(20)) r.marcadoPublicacao = stmt.columnInt(20) != 0;
-        if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
-
-        std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
-        std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
-        std::string camRel = stmt.columnIsNull(9) ? "" : stmt.columnText(9);
-        std::string camAbs = stmt.columnIsNull(12) ? "" : stmt.columnText(12);
-
-        bool fileExists = false;
-        if (!masterArqId.empty()) {
-            auto it = inMemoryRelinkedPaths_.find(masterArqId);
-            if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
-                fileExists = juce::File(it->second).existsAsFile();
-            } else {
-                auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
-                fileExists = res.has_value() && res->existsAsFile();
-            }
-        }
-        r.offline = !fileExists;
-
-        if (!r.titulo.empty()) {
-            r.nomeOriginalArquivo = r.titulo;
-        } else if (!stmt.columnIsNull(9)) {
-            juce::String caminho9 = stmt.columnText(9);
-            int slashPos = std::max(caminho9.lastIndexOfChar('/'), caminho9.lastIndexOfChar('\\'));
-            r.nomeOriginalArquivo = (slashPos >= 0 ? caminho9.substring(slashPos + 1) : caminho9).toStdString();
-        } else if (!stmt.columnIsNull(12)) {
-            juce::String caminho12 = stmt.columnText(12);
-            int slashPos = std::max(caminho12.lastIndexOfChar('/'), caminho12.lastIndexOfChar('\\'));
-            r.nomeOriginalArquivo = (slashPos >= 0 ? caminho12.substring(slashPos + 1) : caminho12).toStdString();
-        }
-
-        if (!stmt.columnIsNull(13)) r.pastaNome = stmt.columnText(13);
-        r.tamanhoBytes = stmt.columnIsNull(14) ? 0 : static_cast<juce::int64>(stmt.columnInt(14));
-
-        // Extract technical characteristics (duration, etc.)
+    // Retry loop in case SQLite is momentarily busy during ingest transactions
+    for (int tentativa = 0; tentativa < 3; ++tentativa) {
         try {
-            auto techStmt = projeto_->registro().prepare(
-                "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
-            techStmt.bind(1, matriz::db::Value::of(r.id));
-            if (techStmt.step() && !techStmt.columnIsNull(0)) {
-                auto jsonStr = techStmt.columnText(0);
-                auto varObj = juce::JSON::parse(jsonStr);
-                if (varObj.isObject()) {
-                    if (varObj.hasProperty("duracaoSegundos")) {
-                        r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
+            out.clear();
+            auto stmt = projeto_->registro().prepare(
+                "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
+                "EXISTS(SELECT 1 FROM arquivo a WHERE a.item_id = i.id AND a.estado_sincronizacao = 'sincronizado'), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                " AND c.campo_id = 'artista_principal'), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                " AND c.campo_id = 'titulo'), "
+                "(SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                " AND c.campo_id = 'origem'), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                " AND c.campo_id = 'ano'), "
+                "(SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+                "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
+                "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+                "i.content_type, i.collection_type, i.criado_em, "
+                "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+                "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+                "COALESCE(i.marcado_publicacao, 0), "
+                "COALESCE(i.metadados_editados, 0) != 0, "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'source_media'), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
+                "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
+                "(SELECT a.caracteristicas_tecnicas_json FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
+                "FROM item i WHERE i.em_quarentena = 1 ORDER BY i.criado_em DESC, i.id");
+            while (stmt.step()) {
+                ItemResumo r;
+                r.id = stmt.columnText(0);
+                r.codigoAcervo = stmt.columnText(1);
+                r.titulo = stmt.columnText(2);
+                r.tipoMidia = stmt.columnText(3);
+                r.estado = stmt.columnText(4);
+                r.atualizadoEm = stmt.columnText(5);
+                r.sincronizado = stmt.columnInt(6) != 0;
+                if (!stmt.columnIsNull(7)) r.artistaLancamento = stmt.columnText(7);
+                if (!stmt.columnIsNull(8)) r.tituloLancamento = stmt.columnText(8);
+                if (!stmt.columnIsNull(9)) {
+                    juce::String caminho9 = stmt.columnText(9);
+                    int dotPos = caminho9.lastIndexOfChar('.');
+                    if (dotPos >= 0)
+                        r.extensaoArquivo = caminho9.substring(dotPos + 1).toLowerCase().toStdString();
+                }
+                if (!stmt.columnIsNull(10)) r.origem = stmt.columnText(10);
+                if (!stmt.columnIsNull(11)) {
+                    juce::String anoTexto = stmt.columnText(11);
+                    if (anoTexto.containsOnly("0123456789") && anoTexto.isNotEmpty()) r.ano = anoTexto.getIntValue();
+                }
+                if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
+                if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
+                r.criadoEm = stmt.columnText(17);
+                if (!stmt.columnIsNull(20)) r.marcadoPublicacao = stmt.columnInt(20) != 0;
+                if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
+
+                std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
+                std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
+                std::string camRel = stmt.columnIsNull(9) ? "" : stmt.columnText(9);
+                std::string camAbs = stmt.columnIsNull(12) ? "" : stmt.columnText(12);
+
+                r.masterArquivoId = masterArqId;
+                r.caminhoRelativoArquivo = camRel;
+                r.caminhoAbsolutoOrigem = camAbs;
+
+                bool fileExists = false;
+                if (!masterArqId.empty()) {
+                    auto it = inMemoryRelinkedPaths_.find(masterArqId);
+                    if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+                        fileExists = juce::File(it->second).existsAsFile();
+                    } else {
+                        auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
+                        fileExists = res.has_value() && res->existsAsFile();
                     }
-                    if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
-                        juce::String exifDt = varObj["exifDataOriginal"].toString();
-                        for (int i = 0; i + 3 < exifDt.length(); ++i) {
-                            if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
-                                std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
-                                int yVal = exifDt.substring(i, i + 4).getIntValue();
-                                if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                }
+                r.offline = !fileExists;
+
+                if (!r.titulo.empty()) {
+                    r.nomeOriginalArquivo = r.titulo;
+                } else if (!stmt.columnIsNull(9)) {
+                    juce::String caminho9 = stmt.columnText(9);
+                    int slashPos = std::max(caminho9.lastIndexOfChar('/'), caminho9.lastIndexOfChar('\\'));
+                    r.nomeOriginalArquivo = (slashPos >= 0 ? caminho9.substring(slashPos + 1) : caminho9).toStdString();
+                } else if (!stmt.columnIsNull(12)) {
+                    juce::String caminho12 = stmt.columnText(12);
+                    int slashPos = std::max(caminho12.lastIndexOfChar('/'), caminho12.lastIndexOfChar('\\'));
+                    r.nomeOriginalArquivo = (slashPos >= 0 ? caminho12.substring(slashPos + 1) : caminho12).toStdString();
+                }
+
+                if (!stmt.columnIsNull(13)) r.pastaNome = stmt.columnText(13);
+                r.tamanhoBytes = stmt.columnIsNull(14) ? 0 : static_cast<juce::int64>(stmt.columnInt(14));
+
+                if (!stmt.columnIsNull(22)) r.sourceMedia = stmt.columnText(22);
+                if (!stmt.columnIsNull(23)) r.dataCriacao = stmt.columnText(23);
+                else if (!stmt.columnIsNull(24)) r.dataCriacao = stmt.columnText(24);
+
+                if (!stmt.columnIsNull(25)) {
+                    auto jsonStr = stmt.columnText(25);
+                    auto varObj = juce::JSON::parse(jsonStr);
+                    if (varObj.isObject()) {
+                        if (varObj.hasProperty("duracaoSegundos")) {
+                            r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
+                        }
+                        if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
+                            juce::String exifDt = varObj["exifDataOriginal"].toString();
+                            for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                                if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                                    std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                                    int yVal = exifDt.substring(i, i + 4).getIntValue();
+                                    if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                                }
                             }
                         }
                     }
                 }
-            }
-        } catch (...) {}
 
-        out.push_back(std::move(r));
+                out.push_back(std::move(r));
+            }
+            break; // Success!
+        } catch (...) {
+            if (tentativa < 2) {
+                juce::Thread::sleep(20);
+            }
+        }
     }
     return out;
 }

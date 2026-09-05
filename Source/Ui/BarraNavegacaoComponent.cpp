@@ -46,6 +46,15 @@ void BarraNavegacaoComponent::setHasParentCatalog(bool hasParent) {
     repaint();
 }
 
+void BarraNavegacaoComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (botaoFechar_) {
+        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        botaoFechar_->setColour(juce::TextButton::textColourOffId, hasParentCatalog_ ? tk.acento : tk.perigo);
+    }
+    repaint();
+}
+
 void BarraNavegacaoComponent::reconstruirTabs() {
     tabs_.clear();
     if (isCatalog_) {

@@ -5,6 +5,7 @@
 #include "../App/Preferencias.h"
 #include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
+#include "AboutDialog.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "ConsolidacaoDialogo.h"
 #include "ProjectLogViewerDialog.h"
@@ -34,6 +35,7 @@ enum ComandoMenu {
     kCmdConsolidar,
     kCmdPreferenciasGerais,
     kCmdAudioDevice,
+    kCmdAbout,
     kCmdUndo,
     kCmdProjectLog,
     kCmdRecenteBase = 2000
@@ -73,6 +75,15 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::closeButtonPressed() { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+
+void MainWindow::lookAndFeelChanged() {
+    setBackgroundColour(tema().fundo);
+    if (conteudo_) {
+        conteudo_->sendLookAndFeelChange();
+        conteudo_->repaint();
+    }
+    repaint();
+}
 
 juce::StringArray MainWindow::getMenuBarNames() {
     return {"File", "Edit", "Project", "Preferences", "Help"};
@@ -157,6 +168,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         menu.addItem(kCmdPreferenciasGerais, "Preferences / Theme / AI Key...");
         menu.addItem(kCmdAudioDevice, "Audio Device...");
+    } else if (topLevelMenuIndex == kMenuAjuda) {
+        menu.addItem(kCmdAbout, "About BKR Matriz...");
     }
     return menu;
 }
@@ -178,6 +191,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
         case kCmdConsolidar: pedirConsolidar(); break;
+        case kCmdAbout: mostrarAboutDialogo(); break;
         case kCmdProjectLog:
             if (conteudo_->temProjetoAberto()) {
                 matriz::model::ProjectLog pLog(conteudo_->pastaProjeto());
@@ -427,7 +441,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             btnSave_->onClick = [this] {
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
                 matriz::app::gravarTooltipsHabilitados(toggleTooltips_->getToggleState());
-                matriz::ui::recarregarTema();
+                matriz::ui::aplicarTemaGlobal(mainWin_);
                 if (mainWin_ && mainWin_->conteudo_) {
                     mainWin_->conteudo_->atualizarTooltips();
                 }
@@ -519,6 +533,10 @@ void MainWindow::pedirIngerirArquivos() {
                               if (resultados.isEmpty()) return;
                               conteudo_->ingerirArquivos(resultados);
                           });
+}
+
+void MainWindow::mostrarAboutDialogo() {
+    AboutDialog::exibirModal();
 }
 
 } // namespace matriz::ui

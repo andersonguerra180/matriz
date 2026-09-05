@@ -22,6 +22,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
     void mouseDown(const juce::MouseEvent& e) override;
 
 private:
@@ -61,6 +62,7 @@ private:
 
     std::set<std::string> needsAttentionIds_;
     juce::Rectangle<int> needsAttentionCardBounds_;
+    juce::Rectangle<int> backupHealthCardBounds_;
 
     void carregarMetricasDoBanco(matriz::db::Database& db);
     void carregarMetricasCatalogo();

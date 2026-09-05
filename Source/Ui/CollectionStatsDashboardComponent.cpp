@@ -106,13 +106,13 @@ void CollectionStatsDashboardComponent::recarregarDoBanco(matriz::db::Database& 
 }
 
 void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
-    // Warm Sand / Clean Dashboard Background (Matching User UI Theme)
-    g.fillAll(juce::Colour(0xfff5f0eb));
+    const auto& tk = tema();
+    g.fillAll(tk.fundo);
 
     auto area = getLocalBounds().reduced(20, 16);
 
     // Section Header Title
-    g.setColour(juce::Colour(0xff1e293b));
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
     g.drawText("Collection Analytics & Statistics", area.removeFromTop(24), juce::Justification::centredLeft);
     area.removeFromTop(12);
@@ -122,8 +122,10 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
     int cardW = (cardArea.getWidth() - 3 * 12) / 4;
 
     auto drawKpiCard = [&](juce::Rectangle<int> r, const std::string& label, const std::string& value, const std::string& subtitle, juce::Colour accentColor) {
-        g.setColour(juce::Colour(0xffeae3da)); // Card background
+        g.setColour(tk.painel); // Card background
         g.fillRoundedRectangle(r.toFloat(), 6.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.0f);
 
         // Accent strip on left
         auto strip = r.removeFromLeft(4);
@@ -131,27 +133,27 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         g.fillRoundedRectangle(strip.toFloat(), 3.0f);
 
         auto inner = r.reduced(10, 8);
-        g.setColour(juce::Colour(0xff64748b));
+        g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
         g.drawText(label, inner.removeFromTop(14), juce::Justification::centredLeft);
 
-        g.setColour(juce::Colour(0xff0f172a));
+        g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
         g.drawText(value, inner.removeFromTop(24), juce::Justification::centredLeft, true);
 
-        g.setColour(juce::Colour(0xff64748b));
+        g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::plain)));
         g.drawText(subtitle, inner, juce::Justification::centredLeft, true);
     };
 
     // Card 1: Total Assets
     auto r1 = cardArea.removeFromLeft(cardW); cardArea.removeFromLeft(12);
-    drawKpiCard(r1, "TOTAL ASSETS", std::to_string(data_.totalAssets), "Cataloged files", juce::Colour(0xff3b82f6));
+    drawKpiCard(r1, "TOTAL ASSETS", std::to_string(data_.totalAssets), "Cataloged files", juce::Colour(0xff38bdf8));
 
     // Card 2: Storage Size
     auto r2 = cardArea.removeFromLeft(cardW); cardArea.removeFromLeft(12);
     std::string szStr = juce::File::descriptionOfSizeInBytes(data_.totalSizeBytes).toStdString();
-    drawKpiCard(r2, "STORAGE SIZE", szStr, "Occupied volume", juce::Colour(0xff10b981));
+    drawKpiCard(r2, "STORAGE SIZE", szStr, "Occupied volume", juce::Colour(0xff22c55e));
 
     // Card 3: Primary Format
     auto r3 = cardArea.removeFromLeft(cardW); cardArea.removeFromLeft(12);
@@ -170,7 +172,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
     auto rightCol = area;
 
     // LEFT COLUMN: Format Category Distribution & Top File Extensions
-    g.setColour(juce::Colour(0xff1e293b));
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.drawText("Format Category Distribution", leftCol.removeFromTop(20), juce::Justification::centredLeft);
     leftCol.removeFromTop(8);
@@ -185,13 +187,15 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         std::string labelStr = cat.categoryName + " (" + std::to_string(cat.assetCount) + " assets - " +
                                juce::File::descriptionOfSizeInBytes(cat.sizeBytes).toStdString() + ")";
 
-        g.setColour(juce::Colour(0xff334155));
+        g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.drawText(labelStr, row.removeFromTop(14), juce::Justification::centredLeft, true);
 
         // Bar container
-        g.setColour(juce::Colour(0xffeae3da));
+        g.setColour(tk.painelAlt);
         g.fillRoundedRectangle(row.toFloat(), 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(row.toFloat(), 4.0f, 1.0f);
 
         float pct = static_cast<float>(cat.assetCount) / static_cast<float>(maxCatCount);
         int barW = juce::jmax(8, static_cast<int>(row.getWidth() * pct));
@@ -202,7 +206,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
     leftCol.removeFromTop(16);
 
     // Top File Extensions
-    g.setColour(juce::Colour(0xff1e293b));
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.drawText("Top File Extensions", leftCol.removeFromTop(20), juce::Justification::centredLeft);
     leftCol.removeFromTop(6);
@@ -214,13 +218,13 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         std::string extLine = ext.extension + "   " + std::to_string(ext.count) + " files  |  " +
                               juce::File::descriptionOfSizeInBytes(ext.sizeBytes).toStdString();
 
-        g.setColour(juce::Colour(0xff3b82f6));
+        g.setColour(tk.acento);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.drawText(extLine, row, juce::Justification::centredLeft, true);
     }
 
     // RIGHT COLUMN: Timeline & Year Distribution & Storage Status
-    g.setColour(juce::Colour(0xff1e293b));
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.drawText("Timeline & Year Distribution", rightCol.removeFromTop(20), juce::Justification::centredLeft);
     rightCol.removeFromTop(8);
@@ -232,23 +236,25 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         auto row = rightCol.removeFromTop(24);
         rightCol.removeFromTop(6);
 
-        g.setColour(juce::Colour(0xff334155));
+        g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.drawText(dec.first, row.removeFromLeft(50), juce::Justification::centredLeft);
 
-        g.setColour(juce::Colour(0xffeae3da));
+        g.setColour(tk.painelAlt);
         g.fillRoundedRectangle(row.toFloat(), 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(row.toFloat(), 4.0f, 1.0f);
 
         float pct = static_cast<float>(dec.second) / static_cast<float>(maxDecCount);
         int barW = juce::jmax(8, static_cast<int>(row.getWidth() * pct));
-        g.setColour(juce::Colour(0xff3b82f6));
+        g.setColour(tk.acento);
         g.fillRoundedRectangle(row.withWidth(barW).toFloat(), 4.0f);
     }
 
     rightCol.removeFromTop(20);
 
     // Storage & Protection Status
-    g.setColour(juce::Colour(0xff1e293b));
+    g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.drawText("Storage & Protection Status", rightCol.removeFromTop(20), juce::Justification::centredLeft);
     rightCol.removeFromTop(8);
@@ -261,17 +267,18 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         g.fillEllipse(r.removeFromLeft(12).reduced(2).toFloat());
         r.removeFromLeft(6);
 
-        g.setColour(juce::Colour(0xff334155));
+        g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.drawText(text, r, juce::Justification::centredLeft, true);
     };
 
-    drawStatusDotRow(juce::Colour(0xff10b981), "Backed up in multiple vaults: " + std::to_string(data_.backedUpVaultsCount) + " assets");
+    drawStatusDotRow(juce::Colour(0xff22c55e), "Backed up in multiple vaults: " + std::to_string(data_.backedUpVaultsCount) + " assets");
     drawStatusDotRow(juce::Colour(0xfff59e0b), "Single copy (Vulnerable): " + std::to_string(data_.singleCopyVulnerableCount) + " assets");
     drawStatusDotRow(juce::Colour(0xffef4444), "Offline or unverified: " + std::to_string(data_.offlineUnverifiedCount) + " assets");
 }
 
 void CollectionStatsDashboardComponent::resized() {
+    repaint();
     repaint();
 }
 

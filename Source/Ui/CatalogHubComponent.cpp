@@ -73,6 +73,51 @@ CatalogHubComponent::CatalogHubComponent(ProjetoAberto& projeto)
 
 CatalogHubComponent::~CatalogHubComponent() = default;
 
+void CatalogHubComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (lblTitulo_) {
+        lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (lblSubtitulo_) {
+        lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (lblResumo_) {
+        lblResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        lblResumo_->setColour(juce::Label::textColourId, tk.acento);
+    }
+    if (btnImportar_) {
+        btnImportar_->setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnImportar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    }
+    if (btnAbrir_) {
+        btnAbrir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAbrir_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnRelocar_) {
+        btnRelocar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnRelocar_->setColour(juce::TextButton::textColourOffId, tk.alerta);
+    }
+    if (btnDesvincular_) {
+        btnDesvincular_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnDesvincular_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    }
+    if (btnBackup_) {
+        btnBackup_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnBackup_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    }
+    if (tabela_) {
+        tabela_->setColour(juce::TableListBox::backgroundColourId, tk.painel);
+        tabela_->setColour(juce::ListBox::outlineColourId, tk.borda);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painelAlt);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::textColourId, tk.textoPrimario);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda);
+        tabela_->repaint();
+    }
+    repaint();
+}
+
 void CatalogHubComponent::recarregar() {
     colecoes_ = projeto_.listarColecoesLinkadas();
     if (tabela_) tabela_->updateContent();

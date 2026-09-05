@@ -159,6 +159,27 @@ HomePanelComponent::HomePanelComponent(ProjetoAberto& projeto)
 
 HomePanelComponent::~HomePanelComponent() = default;
 
+void HomePanelComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (titulo_) {
+        titulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        titulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (subtitulo_) {
+        subtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        subtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (totalAssets_) {
+        totalAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        totalAssets_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (atencaoTitulo_) {
+        atencaoTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        atencaoTitulo_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    repaint();
+}
+
 void HomePanelComponent::recarregar() {
     int total = 0;
     try {

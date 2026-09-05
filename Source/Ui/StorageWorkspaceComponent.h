@@ -4,8 +4,11 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include <map>
+#include <set>
 #include "ProjetoAberto.h"
 #include "../Vault/DeviceUsageLog.h"
+#include "../Vault/SmartHealth.h"
 
 namespace matriz::ui {
 
@@ -18,16 +21,12 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     void recarregar();
 
 private:
     void timerCallback() override;
-
-    struct PropRow {
-        juce::String label;
-        juce::String value;
-    };
 
     struct StorageDevice {
         std::string id;
@@ -52,6 +51,17 @@ private:
         bool isSource = false;
         bool isBackup = false;
 
+        // Live space metrics
+        juce::int64 espacoTotalBytes = 0;
+        juce::int64 espacoLivreBytes = 0;
+        juce::int64 espacoUsadoBytes = 0;
+        double pctUsado = 0.0;
+        double pctLivre = 0.0;
+        bool metricasEspacoDisponiveis = false;
+
+        // Integrated SMART Health
+        matriz::vault::SmartHealthReport smartReport;
+
         // Ingest stats (Source)
         int totalArquivos = 0;
         juce::int64 totalBytes = 0;
@@ -64,7 +74,9 @@ private:
         std::string ultimoBackup;
     };
 
-private:
+    class LogCalendarComponent;
+    class ColumnCardsContainer;
+
     // TableListBoxModel overrides for History table
     int getNumRows() override;
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
@@ -73,10 +85,11 @@ private:
 
     void carregarDados();
     void selecionarDevice(const std::string& vaultId, bool isSourceSelection);
-    void salvarNomeVault();
-    void salvarCategoriaVault(const std::string& novaCategoria);
+    void atualizarSaudeSmartDoDevice(const std::string& vaultId, bool forcarNovaConsulta = true);
+    void selecionarDataCalendario(const juce::String& yyyyMmDd);
+    void atualizarListaLogsFiltrada();
     void abrirPastaLogs();
-    void abrirRelatorioMd(const std::string& caminho);
+    void abrirRelatorioTxt(const std::string& caminho);
 
     ProjetoAberto& projeto_;
     bool isCatalog_ = false;
@@ -86,7 +99,10 @@ private:
 
     std::string selectedVaultId_;
     bool selectedIsSource_ = true;
-    std::vector<matriz::vault::DeviceUsageEntry> selectedUsageLogs_;
+    std::vector<matriz::vault::DeviceUsageEntry> allDeviceUsageLogs_;
+    std::vector<matriz::vault::DeviceUsageEntry> displayedUsageLogs_;
+    std::map<juce::String, int> datesWithLogs_;
+    juce::String selectedDate_; // "YYYY-MM-DD" or empty for all
 
     juce::String lastStorageError_;
     juce::String lastStorageErrorDetails_;
@@ -96,8 +112,7 @@ private:
     std::unique_ptr<juce::Label> lblSubtitle_;
     std::unique_ptr<juce::TextButton> btnRefresh_;
 
-    // Two Columns (Top Area)
-    class ColumnCardsContainer;
+    // Two Columns (Top Area - 80% screen)
     std::unique_ptr<juce::Label> lblSourceColumnTitle_;
     std::unique_ptr<juce::Viewport> sourceCardsViewport_;
     std::unique_ptr<ColumnCardsContainer> sourceCardsContainer_;
@@ -106,30 +121,12 @@ private:
     std::unique_ptr<juce::Viewport> backupCardsViewport_;
     std::unique_ptr<ColumnCardsContainer> backupCardsContainer_;
 
-    // Inspector & History Panel (Bottom Area)
-    std::unique_ptr<juce::Component> inspectorContainer_;
-    std::unique_ptr<juce::Label> lblInspectorTitle_;
-    std::unique_ptr<juce::Label> lblNickName_;
-    std::unique_ptr<juce::TextEditor> txtNickName_;
-    std::unique_ptr<juce::TextButton> btnSaveNickName_;
-    std::unique_ptr<juce::Label> lblCategory_;
-    std::unique_ptr<juce::ComboBox> comboCategory_;
+    // Bottom Area (20% screen) - Interactive Log Calendar & Sessions Dock
+    std::unique_ptr<juce::Component> logDockContainer_;
+    std::unique_ptr<LogCalendarComponent> logCalendarComp_;
 
-    // Hardware specifications component
-    class HardwarePropsComponent;
-    std::unique_ptr<juce::Label> lblHardwareTitle_;
-    std::unique_ptr<HardwarePropsComponent> hardwarePropsComp_;
-
-    // Drive Health component
-    class DriveHealthComponent;
-    std::unique_ptr<juce::Label> lblHealthTitle_;
-    std::unique_ptr<juce::TextButton> btnRefreshHealth_;
-    std::unique_ptr<DriveHealthComponent> driveHealthComp_;
-
-    void atualizarSaudeSmart(bool forcarNovaConsulta = false);
-
-    // History Log Table
-    std::unique_ptr<juce::Label> lblHistoryTitle_;
+    std::unique_ptr<juce::Label> lblDayLogsTitle_;
+    std::unique_ptr<juce::TextButton> btnShowAllLogs_;
     std::unique_ptr<juce::TextButton> btnOpenLogFolder_;
     std::unique_ptr<juce::TableListBox> tableHistory_;
 

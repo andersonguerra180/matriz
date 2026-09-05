@@ -31,6 +31,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     void renomearSelecionados();
     void removerSelecionadosDoBackup();
@@ -101,6 +102,7 @@ private:
     std::unique_ptr<juce::TextButton> btnDestacarEditados_;
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
+    bool modoVisaoGrade_ = true;
     bool destacarEditados_ = true;
     bool editMode_ = true;
     std::optional<std::string> pastaNavegarAtual_;

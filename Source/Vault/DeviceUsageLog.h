@@ -26,14 +26,14 @@ struct DeviceUsageEntry {
     juce::int64 totalBytes = 0;
     juce::StringArray arquivos;     // Processed files
     std::string detalhes;
-    std::string relatorioMdCaminho;
+    std::string relatorioTxtCaminho;
 };
 
 // Initializes the SQLite table for device usage logs
 void inicializarTabelaUsoDispositivo(matriz::db::Database& db);
 
 // Records a device usage session (Ingest, Backup, or Online Scan), persists to SQLite,
-// and generates/increments the daily Markdown report in <projectFolder>/log/disk/<diskName>/<diskName>_<YYYY-MM-DD>.md
+// and generates/increments the daily text report in <projectFolder>/log/disk/<diskName>/<diskName>_<YYYY-MM-DD>.txt
 // and in <backupFolder>/log/disk/<diskName>/ if available.
 void registrarUsoDoDispositivo(matriz::db::Database& db,
                               const juce::File& pastaProjeto,
@@ -48,9 +48,16 @@ void registrarUsoDoDispositivo(matriz::db::Database& db,
 // Retrieves chronological usage timeline records for a specific vault
 std::vector<DeviceUsageEntry> listarHistoricoUsoDoDispositivo(matriz::db::Database& db, const std::string& vaultId);
 
-// Resolves the daily markdown report path for a vault on a given date
-juce::File obterCaminhoRelatorioMarkdownDispositivo(const juce::File& pastaProjeto,
-                                                  const std::string& nomeVault,
-                                                  const std::string& dataDia);
+// Resolves the daily text report path for a vault on a given date (.txt)
+juce::File obterCaminhoRelatorioDispositivo(const juce::File& pastaProjeto,
+                                          const std::string& nomeVault,
+                                          const std::string& dataDia);
+
+// Backward compatibility alias
+inline juce::File obterCaminhoRelatorioMarkdownDispositivo(const juce::File& pastaProjeto,
+                                                          const std::string& nomeVault,
+                                                          const std::string& dataDia) {
+    return obterCaminhoRelatorioDispositivo(pastaProjeto, nomeVault, dataDia);
+}
 
 } // namespace matriz::vault

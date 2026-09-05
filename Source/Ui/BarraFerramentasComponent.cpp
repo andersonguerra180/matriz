@@ -312,6 +312,43 @@ void BarraFerramentasComponent::definirTextoBuscaSemNotificar(const juce::String
     if (campoBusca_) campoBusca_->setText(texto, juce::dontSendNotification);
 }
 
+void BarraFerramentasComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (campoBusca_) {
+        campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), tk.textoTerciario);
+        campoBusca_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+        campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        campoBusca_->setColour(juce::TextEditor::focusedOutlineColourId, tk.bordaFoco);
+        campoBusca_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+    }
+    if (btnLimparBusca_) {
+        btnLimparBusca_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnLimparBusca_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (labelContagem_) {
+        labelContagem_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (botaoAdicionar_) aplicarEstiloBotao(*botaoAdicionar_, true);
+    if (botaoNavegar_) aplicarEstiloBotao(*botaoNavegar_, false);
+    if (botaoBackup_) aplicarEstiloBotao(*botaoBackup_, false);
+    if (botaoAdvanced_) aplicarEstiloBotao(*botaoAdvanced_, false);
+    if (botaoEstruturaOrigem_) aplicarEstiloBotao(*botaoEstruturaOrigem_, false);
+    if (botaoEstruturaBackup_) aplicarEstiloBotao(*botaoEstruturaBackup_, false);
+    if (lblStatusFilter_) lblStatusFilter_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    
+    marcarTamanhoAtivo(tamanhoAtivo_);
+    definirDetalhesAbertos(detalhesAbertos_);
+    definirDestacarEditados(destacarEditados_);
+    atualizarBotoesFiltroHorizontal();
+    atualizarBotoesFiltroStatus();
+    
+    if (botaoModoVisao_) {
+        botaoModoVisao_->setColour(juce::TextButton::buttonColourId, modoLista_ ? tk.acento : tk.painelAlt);
+        botaoModoVisao_->setColour(juce::TextButton::textColourOffId, modoLista_ ? tk.textoSobreAcento : tk.textoPrimario);
+    }
+    repaint();
+}
+
 void BarraFerramentasComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.painel);

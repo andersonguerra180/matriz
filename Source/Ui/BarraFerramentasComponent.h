@@ -59,6 +59,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     static constexpr int kAltura = 88;
 

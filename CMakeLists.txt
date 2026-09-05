@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MATRIZ VERSION 0.1.0 LANGUAGES C CXX)
+project(MATRIZ VERSION 1.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -204,7 +204,7 @@ matriz_aplicar_asan(matriz_ingest_selftest)
 # ------------------------------------------------------------------------------
 juce_add_gui_app(matriz
     PRODUCT_NAME "BKR Matriz"
-    VERSION 0.1.0
+    VERSION 1.0.0
     COMPANY_NAME "BKR"
     BUNDLE_ID "com.bkr.matriz"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_256x256.png"
@@ -223,6 +223,7 @@ target_sources(matriz PRIVATE
     Source/App/Preferencias.cpp
     Source/Diag/NSExceptionGuard.mm
     Source/I18n/Strings.cpp
+    Source/Ui/AboutDialog.cpp
     Source/Ui/Tokens.h
     Source/Ui/Tokens.cpp
     Source/Ui/ProjetoAberto.cpp
@@ -238,6 +239,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MetadadosOriginaisComponent.cpp
     Source/Ui/MosaicoComponent.cpp
     Source/Ui/EstatisticasComponent.cpp
+    Source/Ui/VulnerabilidadesDialog.cpp
     Source/Ui/AnalyticsTreemapComponent.cpp
     Source/Ui/AnalyticsTableComponent.cpp
     Source/Ui/AnalyticsChartComponent.cpp
@@ -334,7 +336,7 @@ target_compile_definitions(matriz PRIVATE
     JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=1
     JUCE_APPLICATION_NAME_STRING="BKR Matriz"
-    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+    JUCE_APPLICATION_VERSION_STRING="1.0"
     MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
     MATRIZ_DEV_BUILD=1
     JUCE_MODAL_LOOPS_PERMITTED=1)

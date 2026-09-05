@@ -18,6 +18,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     std::function<void()> aoIngerir;
     std::function<void()> aoCatalogar;

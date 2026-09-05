@@ -393,6 +393,138 @@ void MainComponent::atualizarTooltips() {
     }
 }
 
+void MainComponent::lookAndFeelChanged() {
+    atualizarTema();
+}
+
+void MainComponent::atualizarTema() {
+    const auto& tk = tema();
+    if (telaInicialTitulo_) {
+        telaInicialTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        telaInicialTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (telaInicialSubtitulo_) {
+        telaInicialSubtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        telaInicialSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (telaInicialRecentesTitulo_) {
+        telaInicialRecentesTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        telaInicialRecentesTitulo_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (labelSource_) {
+        labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        labelSource_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (labelBackupTree_) {
+        labelBackupTree_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        labelBackupTree_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (catalogoTitulo_) {
+        catalogoTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        catalogoTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (catalogoBusca_) {
+        catalogoBusca_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        catalogoBusca_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        catalogoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
+    if (catalogoFechar_) {
+        catalogoFechar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        catalogoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+
+    if (barraNavegacao_) {
+        barraNavegacao_->sendLookAndFeelChange();
+        barraNavegacao_->repaint();
+    }
+    if (homePanel_) {
+        homePanel_->sendLookAndFeelChange();
+        homePanel_->repaint();
+    }
+    if (catalogHubWorkspace_) {
+        catalogHubWorkspace_->sendLookAndFeelChange();
+        catalogHubWorkspace_->repaint();
+    }
+    if (ingestWizard_) {
+        ingestWizard_->sendLookAndFeelChange();
+        ingestWizard_->repaint();
+    }
+    if (intakeWorkspace_) {
+        intakeWorkspace_->sendLookAndFeelChange();
+        intakeWorkspace_->repaint();
+    }
+    if (catalogWorkspace_) {
+        catalogWorkspace_->sendLookAndFeelChange();
+        catalogWorkspace_->repaint();
+    }
+    if (duplicatesWorkspace_) {
+        duplicatesWorkspace_->sendLookAndFeelChange();
+        duplicatesWorkspace_->repaint();
+    }
+    if (analyticsWorkspace_) {
+        analyticsWorkspace_->sendLookAndFeelChange();
+        analyticsWorkspace_->repaint();
+    }
+    if (treeWorkspace_) {
+        treeWorkspace_->sendLookAndFeelChange();
+        treeWorkspace_->repaint();
+    }
+    if (backupWorkspace_) {
+        backupWorkspace_->sendLookAndFeelChange();
+        backupWorkspace_->repaint();
+    }
+    if (storageWorkspace_) {
+        storageWorkspace_->sendLookAndFeelChange();
+        storageWorkspace_->repaint();
+    }
+    if (preservationWorkspace_) {
+        preservationWorkspace_->sendLookAndFeelChange();
+        preservationWorkspace_->repaint();
+    }
+    if (mosaico_) {
+        mosaico_->sendLookAndFeelChange();
+        mosaico_->repaint();
+    }
+    if (preview_) {
+        preview_->sendLookAndFeelChange();
+        preview_->repaint();
+    }
+    if (escuta_) {
+        escuta_->sendLookAndFeelChange();
+        escuta_->repaint();
+    }
+    if (fichaPanel_) {
+        fichaPanel_->sendLookAndFeelChange();
+        fichaPanel_->repaint();
+    }
+    if (barraFerramentas_) {
+        barraFerramentas_->sendLookAndFeelChange();
+        barraFerramentas_->repaint();
+    }
+    if (transport_) {
+        transport_->sendLookAndFeelChange();
+        transport_->repaint();
+    }
+    if (arvoreOrigem_) {
+        arvoreOrigem_->sendLookAndFeelChange();
+        arvoreOrigem_->repaint();
+    }
+    if (arvoreAcervo_) {
+        arvoreAcervo_->sendLookAndFeelChange();
+        arvoreAcervo_->repaint();
+    }
+    if (filtros_) {
+        filtros_->sendLookAndFeelChange();
+        filtros_->repaint();
+    }
+    if (catalogo_) {
+        catalogo_->sendLookAndFeelChange();
+        catalogo_->repaint();
+    }
+
+    repaint();
+}
+
 MainComponent::~MainComponent() {
     stopTimer();
     if (cancelamentoLote_) cancelamentoLote_->pedir();
@@ -2575,6 +2707,20 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
         ingestModalDialog_->closeDialog();
         ingestModalDialog_ = nullptr;
     }
+
+    if (mosaico_) mosaico_->recarregar();
+    if (intakeWorkspace_) {
+        intakeWorkspace_->recarregar();
+        intakeWorkspace_->repaint();
+    }
+    juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<MainComponent>(this)] {
+        if (!safeThis) return;
+        if (safeThis->intakeWorkspace_) {
+            safeThis->intakeWorkspace_->recarregar();
+            safeThis->intakeWorkspace_->repaint();
+        }
+        if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+    });
 
     // Append entry to project log.md
     if (projetoAberto_) {

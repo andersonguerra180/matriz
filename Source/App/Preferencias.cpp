@@ -53,7 +53,7 @@ void gravarGeminiApiKey(const juce::String& key) {
     arquivo().saveIfNeeded();
 }
 
-juce::String lerTema() { return arquivo().getValue("tema", "light"); }
+juce::String lerTema() { return arquivo().getValue("tema", "dark"); }
 
 void gravarTema(const juce::String& tema) {
     arquivo().setValue("tema", tema);

@@ -122,7 +122,7 @@ private:
 class MatrizApplication : public juce::JUCEApplication {
 public:
     const juce::String getApplicationName() override { return "BKR Matriz"; }
-    const juce::String getApplicationVersion() override { return "0.1.0"; }
+    const juce::String getApplicationVersion() override { return "1.0"; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise(const juce::String& commandLine) override {
@@ -146,12 +146,8 @@ public:
 
         matriz::i18n::carregar(matriz::app::lerLocale());
 
-        const auto& tk = matriz::ui::tema();
-        juce::LookAndFeel_V4::ColourScheme esquema{tk.fundo,        tk.painel,      tk.painel,
-                                                      tk.borda,       tk.textoPrimario, tk.acento,
-                                                      tk.textoSobreAcento, tk.acentoHover, tk.textoPrimario};
         lookAndFeel_ = std::make_unique<juce::LookAndFeel_V4>();
-        lookAndFeel_->setColourScheme(esquema);
+        matriz::ui::configurarLookAndFeel(*lookAndFeel_);
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel_.get());
 
         if (commandLine.contains("--selftest-mosaico-10k")) {

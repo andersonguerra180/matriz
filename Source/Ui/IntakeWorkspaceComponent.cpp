@@ -146,20 +146,21 @@ public:
     explicit ActionButton(const juce::String& text = {}) : juce::TextButton(text) {}
 
     void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+        const auto& tk = tema();
         auto bounds = getLocalBounds().toFloat().reduced(1.0f);
         float radius = 5.0f;
 
-        juce::Colour bg = juce::Colour(0xff21262d);
-        if (shouldDrawButtonAsDown) bg = juce::Colour(0xff30363d);
-        else if (shouldDrawButtonAsHighlighted) bg = juce::Colour(0xff2b313a);
+        juce::Colour bg = tk.painelAlt;
+        if (shouldDrawButtonAsDown) bg = tk.painelAlt.darker(0.15f);
+        else if (shouldDrawButtonAsHighlighted) bg = tk.painelAlt.brighter(0.10f);
 
         g.setColour(bg);
         g.fillRoundedRectangle(bounds, radius);
 
-        g.setColour(juce::Colour(0xff30363d));
+        g.setColour(tk.borda);
         g.drawRoundedRectangle(bounds, radius, 1.0f);
 
-        g.setColour(juce::Colour(0xffe6edf3));
+        g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText(getButtonText(), bounds, juce::Justification::centred, true);
     }
@@ -790,12 +791,17 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*lblRotuloColecao_);
 
     comboColecaoLote_ = std::make_unique<juce::ComboBox>();
+    comboColecaoLote_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+    comboColecaoLote_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboColecaoLote_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboColecaoLote_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     popularComboColecoes(*comboColecaoLote_, true);
     addAndMakeVisible(*comboColecaoLote_);
 
     auto btnAplicar = std::make_unique<PillButton>("Apply");
     btnAplicar->tamanhoFonte = 12.5f;
     btnAplicar->corTextoCustom = tk.textoPrimario;
+    btnAplicar->corBordaCustom = tk.borda;
     btnAplicar->onClick = [this] {
         juce::String chosen = comboColecaoLote_->getText();
         if (comboColecaoLote_->getSelectedId() == 1 || chosen == "None") {
@@ -810,6 +816,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     auto btnOrigMed = std::make_unique<PillButton>("Original Medium...");
     btnOrigMed->tamanhoFonte = 12.5f;
     btnOrigMed->corTextoCustom = tk.textoPrimario;
+    btnOrigMed->corBordaCustom = tk.borda;
     btnOrigMed->onClick = [this] {
         if (btnOriginalMediumLote_) mostrarEditorOriginalSourceMediumLote(btnOriginalMediumLote_->getScreenBounds());
     };
@@ -819,6 +826,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     auto btnGeo = std::make_unique<PillButton>("Geo Location...");
     btnGeo->tamanhoFonte = 12.5f;
     btnGeo->corTextoCustom = tk.textoPrimario;
+    btnGeo->corBordaCustom = tk.borda;
     btnGeo->onClick = [this] {
         if (btnGeolocationLote_) mostrarEditorGeolocationLote(btnGeolocationLote_->getScreenBounds());
     };
@@ -828,7 +836,8 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     // Cluster C (Right)
     auto btnConfSel = std::make_unique<PillButton>("Send selected to GRID");
     btnConfSel->tamanhoFonte = 12.5f;
-    btnConfSel->corTextoCustom = juce::Colour(0xff2a9d8f);
+    btnConfSel->corTextoCustom = juce::Colour(0xff22c55e);
+    btnConfSel->corBordaCustom = juce::Colour(0xff22c55e);
     btnConfSel->onClick = [this] { confirmarSelecaoParaGrid(); };
     btnConfSel->setTooltip("Send selected intake items to GRID");
     btnConfSel->setAlpha(0.4f);
@@ -838,8 +847,8 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     auto btnConfTodos = std::make_unique<PillButton>("Send all to GRID");
     btnConfTodos->tamanhoFonte = 12.5f;
-    btnConfTodos->corTextoCustom = juce::Colour(0xff2a9d8f);
-    btnConfTodos->corBordaCustom = juce::Colour(0xff2a9d8f);
+    btnConfTodos->corTextoCustom = juce::Colour(0xff22c55e);
+    btnConfTodos->corBordaCustom = juce::Colour(0xff22c55e);
     btnConfTodos->onClick = [this] { confirmarTodosParaGrid(); };
     btnConfTodos->setTooltip("Send all items in this batch to GRID");
     btnConfirmarTodos_ = std::move(btnConfTodos);
@@ -854,8 +863,8 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     auto btnRemover = std::make_unique<PillButton>("Reject selected");
     btnRemover->tamanhoFonte = 12.5f;
-    btnRemover->corTextoCustom = juce::Colour(0xffcc3333);
-    btnRemover->corBordaCustom = juce::Colour(0xffcc3333);
+    btnRemover->corTextoCustom = tk.perigo;
+    btnRemover->corBordaCustom = tk.perigo;
     btnRemover->onClick = [this] { removerSelecionadosDoIntake(); };
     btnRemover->setTooltip("Remove selected items from intake");
     btnRemover->setAlpha(1.0f);
@@ -865,6 +874,11 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     // 4. Main Table List
     tabela_ = std::make_unique<juce::TableListBox>("IntakeTable", this);
+    tabela_->setColour(juce::ListBox::backgroundColourId, tk.painel);
+    tabela_->setColour(juce::ListBox::outlineColourId, tk.borda);
+    tabela_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painelAlt);
+    tabela_->getHeader().setColour(juce::TableHeaderComponent::textColourId, tk.textoPrimario);
+    tabela_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda);
     tabela_->setHeaderHeight(28);
     tabela_->setRowHeight(32);
     tabela_->setMultipleSelectionEnabled(true);
@@ -894,8 +908,9 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 IntakeWorkspaceComponent::~IntakeWorkspaceComponent() = default;
 
 void IntakeWorkspaceComponent::carregarItens() {
-    todosItens_.clear();
     auto quarentena = projeto_.listarItensEmQuarentena();
+    std::vector<ItemIntake> novosItens;
+    novosItens.reserve(quarentena.size());
 
     for (const auto& item : quarentena) {
         ItemIntake it;
@@ -916,29 +931,23 @@ void IntakeWorkspaceComponent::carregarItens() {
             default:                                         it.categoria = "Other"; break;
         }
 
-        it.collection = projeto_.lerMetadado(item.id, "collection_type").value_or("");
-        it.sourceMedia = projeto_.lerMetadado(item.id, "source_media").value_or("");
+        it.collection = item.collectionType.has_value() ? juce::String::fromUTF8(item.collectionType->c_str()) : juce::String();
+        it.sourceMedia = juce::String::fromUTF8(item.sourceMedia.c_str());
         it.offline = item.offline;
         it.selecionado = false;
 
-        it.dataCriacao = juce::String::fromUTF8(projeto_.lerMetadado(item.id, "dc_created").value_or("").c_str());
+        it.dataCriacao = juce::String::fromUTF8(item.dataCriacao.c_str());
         if (it.dataCriacao.isEmpty()) {
-            it.dataCriacao = juce::String::fromUTF8(projeto_.lerMetadado(item.id, "data_criacao").value_or("").c_str());
+            it.dataCriacao = juce::String::fromUTF8(item.criadoEm.c_str());
         }
 
-        auto caminhoOpt = projeto_.caminhoDeOrigem(item.id);
-        auto arqPrinc = projeto_.arquivoPrincipal(item.id);
-        it.caminhoOrigem = caminhoOpt ? *caminhoOpt : (arqPrinc ? arqPrinc->caminhoAbsoluto : "");
+        it.caminhoOrigem = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str())
+                                                              : juce::String::fromUTF8(item.caminhoRelativoArquivo.c_str());
 
-        if (it.dataCriacao.isEmpty() && !it.caminhoOrigem.isEmpty()) {
-            juce::File f(it.caminhoOrigem);
-            if (f.existsAsFile()) {
-                it.dataCriacao = f.getCreationTime().formatted("%Y-%m-%d %H:%M:%S");
-            }
-        }
-
-        todosItens_.push_back(std::move(it));
+        novosItens.push_back(std::move(it));
     }
+
+    todosItens_ = std::move(novosItens);
 
     if (ultimoSortColumnId_ > 0) {
         sortOrderChanged(ultimoSortColumnId_, sortAscendente_);
@@ -1303,9 +1312,9 @@ int IntakeWorkspaceComponent::getNumRows() {
 void IntakeWorkspaceComponent::paintRowBackground(juce::Graphics& g, int rowNumber, int, int, bool rowIsSelected) {
     const auto& tk = tema();
     if (rowIsSelected) {
-        g.fillAll(tk.painelAlt.withAlpha(0.7f));
-    } else if (rowNumber % 2 == 1) {
-        g.fillAll(juce::Colour(0x08ffffff));
+        g.fillAll(tk.acento.withAlpha(0.25f));
+    } else {
+        g.fillAll(rowNumber % 2 == 1 ? tk.painelAlt.withAlpha(0.35f) : tk.painel);
     }
 }
 
@@ -1320,47 +1329,44 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
     if (columnId == kColType) {
         juce::Colour corCat = corParaCategoria(item.categoria);
         auto badgeArea = juce::Rectangle<int>(4, 5, width - 8, height - 10);
-        g.setColour(corCat.withAlpha(0.2f));
-        g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
         g.setColour(corCat);
-        g.drawRoundedRectangle(badgeArea.toFloat(), 3.0f, 1.0f);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
         g.drawText(item.categoria.toUpperCase(), badgeArea, juce::Justification::centred, true);
     } else if (columnId == kColName) {
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(12.5f)));
         if (item.offline) {
             int offBadgeW = 58;
             auto offBadge = juce::Rectangle<int>(width - offBadgeW - 6, (height - 18) / 2, offBadgeW, 18);
             g.drawText(item.nomeArquivo, 6, 0, width - offBadgeW - 16, height, juce::Justification::centredLeft, true);
-            g.setColour(juce::Colour(0xd0000000));
+            g.setColour(juce::Colour(0xffef4444));
             g.fillRoundedRectangle(offBadge.toFloat(), 3.0f);
-            g.setColour(juce::Colour(0xfff97316));
-            g.drawRoundedRectangle(offBadge.toFloat(), 3.0f, 1.0f);
-            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
             g.drawText("OFFLINE", offBadge, juce::Justification::centred);
         } else {
             g.drawText(item.nomeArquivo, 6, 0, width - 12, height, juce::Justification::centredLeft, true);
         }
     } else if (columnId == kColDateCreated) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText(item.dataCriacao.isNotEmpty() ? item.dataCriacao : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColSize) {
-        g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText(formatarBytes(item.tamanhoBytes), 4, 0, width - 8, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColPath) {
-        g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.drawText(item.caminhoOrigem.isNotEmpty() ? item.caminhoOrigem : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColCollection) {
         if (!item.collection.isEmpty()) {
             auto badgeArea = juce::Rectangle<int>(4, 5, width - 8, height - 10);
-            g.setColour(tk.acento.withAlpha(0.25f));
-            g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
             g.setColour(tk.acento);
-            g.drawRoundedRectangle(badgeArea.toFloat(), 3.0f, 1.0f);
+            g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
+            g.setColour(tk.textoSobreAcento);
             g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             g.drawText(item.collection, badgeArea, juce::Justification::centred, true);
         } else {
@@ -1378,11 +1384,10 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
                 g.drawText("None", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
             } else {
                 auto badgeArea = juce::Rectangle<int>(4, 5, width - 8, height - 10);
-                g.setColour(juce::Colour(0xff2a9d8f).withAlpha(0.20f));
+                g.setColour(juce::Colour(0xff0d9488));
                 g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
-                g.setColour(juce::Colour(0xff2a9d8f));
-                g.drawRoundedRectangle(badgeArea.toFloat(), 3.0f, 1.0f);
-                g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
                 g.drawText(text, badgeArea.reduced(6, 0), juce::Justification::centredLeft, true);
             }
         } else {
@@ -1740,6 +1745,60 @@ void IntakeWorkspaceComponent::resized() {
         gridViewport_->setBounds(0, 120, getWidth(), getHeight() - 120);
         if (gridComponent_) gridComponent_->recalcularLayout();
     }
+}
+
+void IntakeWorkspaceComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (lblSubtitulo_) {
+        lblSubtitulo_->setFont(juce::Font(juce::FontOptions(13.0f)));
+        lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (lblRotuloColecao_) {
+        lblRotuloColecao_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblRotuloColecao_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (comboColecaoLote_) {
+        comboColecaoLote_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboColecaoLote_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboColecaoLote_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboColecaoLote_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (btnSelecionarTodos_) {
+        btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnLimparSelecao_) {
+        btnLimparSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (btnAplicarColecaoLote_) {
+        btnAplicarColecaoLote_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAplicarColecaoLote_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnOriginalMediumLote_) {
+        btnOriginalMediumLote_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnOriginalMediumLote_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnGeolocationLote_) {
+        btnGeolocationLote_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnGeolocationLote_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnRemoverSelecao_) {
+        btnRemoverSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnRemoverSelecao_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    }
+    if (tabela_) {
+        tabela_->setColour(juce::ListBox::backgroundColourId, tk.painel);
+        tabela_->setColour(juce::ListBox::outlineColourId, tk.borda);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painelAlt);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::textColourId, tk.textoPrimario);
+        tabela_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda);
+        tabela_->repaint();
+    }
+    if (gridComponent_) {
+        gridComponent_->repaint();
+    }
+    repaint();
 }
 
 } // namespace matriz::ui

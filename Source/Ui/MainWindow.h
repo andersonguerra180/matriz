@@ -12,6 +12,7 @@ public:
     ~MainWindow() override;
 
     void closeButtonPressed() override;
+    void lookAndFeelChanged() override;
 
     // juce::MenuBarModel
     juce::StringArray getMenuBarNames() override;
@@ -35,6 +36,7 @@ private:
     void pedirConsolidar();
     void mostrarPreferenciasDialogo();
     void mostrarAudioDeviceDialogo();
+    void mostrarAboutDialogo();
     void conectarConteudo();
 
     std::unique_ptr<MainComponent> conteudo_;

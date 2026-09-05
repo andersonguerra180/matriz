@@ -50,6 +50,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;

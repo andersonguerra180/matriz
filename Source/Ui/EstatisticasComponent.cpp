@@ -1,4 +1,5 @@
 #include "EstatisticasComponent.h"
+#include "VulnerabilidadesDialog.h"
 #include "Tokens.h"
 #include "../Ingest/LeituraTecnica.h"
 #include <map>
@@ -160,6 +161,15 @@ EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
 }
 
 EstatisticasComponent::~EstatisticasComponent() = default;
+
+void EstatisticasComponent::lookAndFeelChanged() {
+    treemapComponent_.sendLookAndFeelChange();
+    treemapComponent_.repaint();
+    if (catalogAnalyticsContent_) {
+        catalogAnalyticsContent_->repaint();
+    }
+    repaint();
+}
 
 void EstatisticasComponent::setSelectedAssets(const std::set<std::string>&) {
 }
@@ -397,7 +407,7 @@ void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::R
     drawCard(x, "STORAGE SIZE", formatSizeHuman(summaryKpi_.totalBytes), "Occupied volume", juce::Colour(0xff10b981)); x += cardW + 12;
     drawCard(x, "PRIMARY FORMAT", juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " assets", juce::Colour(0xfff59e0b)); x += cardW + 12;
     needsAttentionCardBounds_ = drawCard(x, "NEEDS ATTENTION", juce::String(summaryKpi_.needsAttentionCount), "files missing required metadata", juce::Colour(0xfff97316)); x += cardW + 12;
-    drawCard(x, "BACKUP HEALTH", juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " vulnerable", juce::Colour(0xffef4444));
+    backupHealthCardBounds_ = drawCard(x, "BACKUP HEALTH", juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " vulnerable (click)", juce::Colour(0xffef4444));
 }
 
 void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
@@ -407,6 +417,12 @@ void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
         } else if (aoAbrirNoGrid) {
             aoAbrirNoGrid(needsAttentionIds_);
         }
+    } else if (backupHealthCardBounds_.contains(e.getPosition())) {
+        VulnerabilidadesDialog::exibirModal(projeto_, this, [this](const std::set<std::string>& ids) {
+            if (aoAbrirNoGrid) {
+                aoAbrirNoGrid(ids);
+            }
+        });
     }
 }
 

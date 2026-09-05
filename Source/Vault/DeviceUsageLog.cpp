@@ -56,15 +56,15 @@ void inicializarTabelaUsoDispositivo(matriz::db::Database& db) {
     } catch (...) {}
 }
 
-juce::File obterCaminhoRelatorioMarkdownDispositivo(const juce::File& pastaProjeto,
-                                                  const std::string& nomeVault,
-                                                  const std::string& dataDia) {
+juce::File obterCaminhoRelatorioDispositivo(const juce::File& pastaProjeto,
+                                          const std::string& nomeVault,
+                                          const std::string& dataDia) {
     juce::String safeDisk = sanitizarNomeArquivo(juce::String::fromUTF8(nomeVault.c_str()));
     juce::File logDiskDir = pastaProjeto.getChildFile("log").getChildFile("disk").getChildFile(safeDisk);
     if (!logDiskDir.isDirectory()) {
         logDiskDir.createDirectory();
     }
-    return logDiskDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".md");
+    return logDiskDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".txt");
 }
 
 void registrarUsoDoDispositivo(matriz::db::Database& db,
@@ -82,7 +82,7 @@ void registrarUsoDoDispositivo(matriz::db::Database& db,
     juce::Time agora = juce::Time::getCurrentTime();
     std::string dataDia = agora.formatted("%Y-%m-%d").toStdString();
     std::string criadoEm = agora.formatted("%Y-%m-%d %H:%M:%S").toStdString();
-    std::string horaMinuto = agora.formatted("%H:%M").toStdString();
+    std::string horaMinuto = agora.formatted("%H:%M:%S").toStdString();
 
     std::string operador = juce::SystemStats::getLogonName().toStdString();
     if (operador.empty()) operador = "Operator";
@@ -129,9 +129,9 @@ void registrarUsoDoDispositivo(matriz::db::Database& db,
 
     juce::String listaJunta = listaArquivos.joinIntoString("\n");
 
-    // 1. Resolve markdown report destination in project folder
-    juce::File mdReportFile = obterCaminhoRelatorioMarkdownDispositivo(pastaProjeto, nomeVault, dataDia);
-    std::string relatorioMdCaminho = mdReportFile.getFullPathName().toStdString();
+    // 1. Resolve text report destination in project folder (.txt)
+    juce::File txtReportFile = obterCaminhoRelatorioDispositivo(pastaProjeto, nomeVault, dataDia);
+    std::string relatorioTxtCaminho = txtReportFile.getFullPathName().toStdString();
 
     // 2. Insert record into database
     std::string entryId = matriz::model::novoUuid();
@@ -155,69 +155,73 @@ void registrarUsoDoDispositivo(matriz::db::Database& db,
         stmt.bind(11, matriz::db::Value::of(totalBytes));
         stmt.bind(12, matriz::db::Value::of(listaJunta.toStdString()));
         stmt.bind(13, matriz::db::Value::of(detalhes));
-        stmt.bind(14, matriz::db::Value::of(relatorioMdCaminho));
+        stmt.bind(14, matriz::db::Value::of(relatorioTxtCaminho));
         stmt.bind(15, matriz::db::Value::of(criadoEm));
         stmt.step();
     } catch (...) {}
 
-    // 3. Build & increment Markdown Report
+    // 3. Build & increment plain text report (.txt)
     juce::String safeDisk = sanitizarNomeArquivo(juce::String::fromUTF8(nomeVault.c_str()));
-    juce::String mdContent;
+    juce::String txtContent;
 
-    if (mdReportFile.existsAsFile()) {
-        mdContent = mdReportFile.loadFileAsString();
+    if (txtReportFile.existsAsFile()) {
+        txtContent = txtReportFile.loadFileAsString();
     } else {
-        mdContent << "# Device Usage Log: " << juce::String::fromUTF8(nomeVault.c_str()) << "\n\n";
-        mdContent << "**Date:** " << juce::String(dataDia) << "  \n";
-        mdContent << "**Hardware Serial / UUID:** `" << (serialVault.empty() ? "N/A" : serialVault) << "`  \n";
-        mdContent << "**Device Vendor / Model:** " << (vendorVault.empty() ? "" : vendorVault + " ") << modeloVault << "  \n";
-        mdContent << "**Total Capacity:** " << formatBytes(capacidadeVault) << "  \n";
-        mdContent << "**File System:** " << (fsVault.empty() ? "N/A" : fsVault) << "  \n";
-        mdContent << "**Drive Health:** " << saudeEstado << " (SMART Status: " << smartStatus << ")  \n\n";
-        mdContent << "---\n\n";
-        mdContent << "## Timeline Sessions\n\n";
+        txtContent << "================================================================================\n";
+        txtContent << "BKR MATRIZ - DEVICE USAGE & HARDWARE AUDIT LOG\n";
+        txtContent << "================================================================================\n";
+        txtContent << "Device Name:            " << juce::String::fromUTF8(nomeVault.c_str()) << "\n";
+        txtContent << "Log Date:               " << juce::String(dataDia) << "\n";
+        txtContent << "Hardware Serial / UUID: " << (serialVault.empty() ? "N/A" : serialVault) << "\n";
+        txtContent << "Device Vendor / Model:  " << (vendorVault.empty() ? "" : vendorVault + " ") << modeloVault << "\n";
+        txtContent << "Total Capacity:         " << formatBytes(capacidadeVault) << "\n";
+        txtContent << "File System:            " << (fsVault.empty() ? "N/A" : fsVault) << "\n";
+        txtContent << "Drive Health:           " << saudeEstado << " (SMART Status: " << smartStatus << ")\n";
+        txtContent << "================================================================================\n\n";
+        txtContent << "TIMELINE SESSIONS:\n";
+        txtContent << "--------------------------------------------------------------------------------\n";
     }
 
     // Append session entry
-    mdContent << "### Session: " << juce::String(horaMinuto) << " — [" << juce::String(acao) << "]\n";
-    mdContent << "- **Timestamp:** " << juce::String(criadoEm) << "\n";
-    mdContent << "- **Operator:** " << juce::String(operador) << "\n";
-    mdContent << "- **Workstation:** " << juce::String(computador) << " (" << juce::String(sistemaOperacional) << ")\n";
-    mdContent << "- **Operation Action:** " << juce::String(acao) << "\n";
-    mdContent << "- **Drive Health at Session:** " << saudeEstado << " (SMART: " << smartStatus << ")\n";
+    txtContent << "[SESSION " << juce::String(horaMinuto) << "] - ACTION: " << juce::String(acao).toUpperCase() << "\n";
+    txtContent << "  Timestamp:            " << juce::String(criadoEm) << "\n";
+    txtContent << "  Operator:             " << juce::String(operador) << "\n";
+    txtContent << "  Workstation:          " << juce::String(computador) << " (" << juce::String(sistemaOperacional) << ")\n";
+    txtContent << "  Operation Action:     " << juce::String(acao) << "\n";
+    txtContent << "  Drive Health:         " << saudeEstado << " (SMART: " << smartStatus << ")\n";
 
     if (totalArquivos > 0 || totalBytes > 0) {
-        mdContent << "- **Volume Processed:** " << juce::String(totalArquivos) << " item(s), " << formatBytes(totalBytes) << "\n";
+        txtContent << "  Volume Processed:     " << juce::String(totalArquivos) << " item(s), " << formatBytes(totalBytes) << "\n";
     }
 
     if (!detalhes.empty()) {
-        mdContent << "- **Details / Note:** " << juce::String::fromUTF8(detalhes.c_str()) << "\n";
+        txtContent << "  Details / Note:       " << juce::String::fromUTF8(detalhes.c_str()) << "\n";
     }
 
     if (listaArquivos.size() > 0) {
-        mdContent << "- **Processed Files List:**\n";
+        txtContent << "  Processed Files:\n";
         int maxListing = juce::jmin(50, listaArquivos.size());
         for (int i = 0; i < maxListing; ++i) {
-            mdContent << "  - `" << listaArquivos[i] << "`\n";
+            txtContent << "    * " << listaArquivos[i] << "\n";
         }
         if (listaArquivos.size() > maxListing) {
-            mdContent << "  - *... and " << juce::String(listaArquivos.size() - maxListing) << " additional items*\n";
+            txtContent << "    * ... and " << juce::String(listaArquivos.size() - maxListing) << " additional items\n";
         }
     }
-    mdContent << "\n";
+    txtContent << "--------------------------------------------------------------------------------\n\n";
 
     // Write primary report to project directory
-    mdReportFile.getParentDirectory().createDirectory();
-    mdReportFile.replaceWithText(mdContent);
+    txtReportFile.getParentDirectory().createDirectory();
+    txtReportFile.replaceWithText(txtContent);
 
-    // 4. If drive is a mounted backup destination, also mirror log directly on the backup drive
+    // 4. If drive is a mounted backup destination, also mirror log directly on the backup drive (.txt)
     if (!localizacaoVault.empty()) {
         juce::File driveLoc(localizacaoVault);
         if (driveLoc.isDirectory()) {
             juce::File driveLogDir = driveLoc.getChildFile("log").getChildFile("disk").getChildFile(safeDisk);
             driveLogDir.createDirectory();
-            juce::File driveReportFile = driveLogDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".md");
-            driveReportFile.replaceWithText(mdContent);
+            juce::File driveReportFile = driveLogDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".txt");
+            driveReportFile.replaceWithText(txtContent);
         }
     }
 }
@@ -257,7 +261,7 @@ std::vector<DeviceUsageEntry> listarHistoricoUsoDoDispositivo(matriz::db::Databa
                 e.arquivos.addLines(filesRaw);
             }
             e.detalhes = stmt.columnText(12);
-            e.relatorioMdCaminho = stmt.columnText(13);
+            e.relatorioTxtCaminho = stmt.columnText(13);
             e.criadoEm = stmt.columnText(14);
             resultado.push_back(std::move(e));
         }

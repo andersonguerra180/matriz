@@ -715,6 +715,70 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
     viewport_.reset();
 }
 
+void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (lblStatus_) {
+        lblStatus_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (lblScope_) {
+        lblScope_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblScope_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (cbScope_) {
+        cbScope_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        cbScope_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbScope_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        cbScope_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (lblFileType_) {
+        lblFileType_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblFileType_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (cbFileType_) {
+        cbFileType_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        cbFileType_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbFileType_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        cbFileType_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (lblFileSize_) {
+        lblFileSize_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblFileSize_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (cbSizeFilter_) {
+        cbSizeFilter_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        cbSizeFilter_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbSizeFilter_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        cbSizeFilter_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (txtSizeValue_) {
+        txtSizeValue_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        txtSizeValue_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        txtSizeValue_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
+    if (cbSizeUnit_) {
+        cbSizeUnit_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        cbSizeUnit_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbSizeUnit_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (btnScan_) {
+        btnScan_->setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnScan_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    }
+    if (btnValidateAll_) {
+        btnValidateAll_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnValidateAll_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (btnDismissAll_) {
+        btnDismissAll_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnDismissAll_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+    }
+    if (listaComponent_) {
+        listaComponent_->repaint();
+    }
+    repaint();
+}
+
 void DuplicatesWorkspaceComponent::recarregar() {
     if (isThreadRunning() || estado_ == State::Results) {
         return; // Don't interrupt active scan or clear results on view reload

@@ -65,6 +65,8 @@ public:
     ~MainComponent() override;
 
     void atualizarTooltips();
+    void atualizarTema();
+    void lookAndFeelChanged() override;
 
     void abrirProjeto(std::unique_ptr<matriz::model::Project> projeto);
     void salvarProjeto();

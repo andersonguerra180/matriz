@@ -468,6 +468,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*labelSource_);
 
     comboSource_ = std::make_unique<juce::ComboBox>();
+    comboSource_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+    comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     comboSource_->addItem(isCatalogMode ? "All assets in catalog" : "All assets in project", 1);
     comboSource_->addItem("Intake assets", 2);
     comboSource_->addItem("Selected assets (" + juce::String(static_cast<int>(selectedItemIds_.size())) + ")", 3);
@@ -489,6 +493,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*comboSource_);
 
     comboColecoes_ = std::make_unique<juce::ComboBox>();
+    comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+    comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     for (size_t i = 0; i < colecoes_.size(); ++i)
         comboColecoes_->addItem(colecoes_[i].rotulo + " (" + juce::String(colecoes_[i].contagem) + ")", static_cast<int>(i + 1));
     if (!colecoes_.empty()) comboColecoes_->setSelectedId(1, juce::dontSendNotification);
@@ -507,7 +515,8 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     listVaults_ = std::make_unique<juce::ListBox>();
     listVaults_->setModel(this);
-    listVaults_->setColour(juce::ListBox::backgroundColourId, tk.painel);
+    listVaults_->setColour(juce::ListBox::backgroundColourId, tk.painelAlt);
+    listVaults_->setColour(juce::ListBox::outlineColourId, tk.borda);
     listVaults_->setRowHeight(32);
     configContainer_->addAndMakeVisible(*listVaults_);
 
@@ -553,6 +562,8 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*labelOrg_);
 
     togglePreservarEstrutura_ = std::make_unique<juce::ToggleButton>("Preserve Original Folder Structure");
+    togglePreservarEstrutura_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    togglePreservarEstrutura_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     togglePreservarEstrutura_->setTooltip("Toggle keeping original source subfolder paths in the backup folder");
     togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
     togglePreservarEstrutura_->onClick = [this] {
@@ -564,6 +575,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*togglePreservarEstrutura_);
 
     comboOrg_ = std::make_unique<juce::ComboBox>();
+    comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+    comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     comboOrg_->addItem("Keep my catalog organization", 1);
     comboOrg_->addItem("By media type", 2);
     comboOrg_->addItem("By year", 3);
@@ -600,16 +615,22 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*labelOpcoes_);
 
     toggleVerificarChecksum_ = std::make_unique<juce::ToggleButton>("Verify checksum after copy (SHA-256)");
+    toggleVerificarChecksum_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleVerificarChecksum_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleVerificarChecksum_->setTooltip("Enable reading back copied files to verify SHA-256 integrity");
     toggleVerificarChecksum_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleVerificarChecksum_);
 
     toggleGerarCatalogo_ = std::make_unique<juce::ToggleButton>("Generate BKR Backup Catalog Database (SQLite)");
+    toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleGerarCatalogo_->setTooltip("Enable SQLite database summary file generation in target folder");
     toggleGerarCatalogo_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleGerarCatalogo_);
 
     toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>("Embed metadata into backup files (EXIF/XMP/iXML)");
+    toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleEmbutirMetadados_->setTooltip("Enable embedding Dublin Core and technical tags directly into media headers");
     toggleEmbutirMetadados_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleEmbutirMetadados_);
@@ -682,6 +703,97 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 }
 
 BackupWorkspaceComponent::~BackupWorkspaceComponent() = default;
+
+void BackupWorkspaceComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (labelTitulo_) {
+        labelTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        labelTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (labelSource_) {
+        labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (comboSource_) {
+        comboSource_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (comboColecoes_) {
+        comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (labelDest_) {
+        labelDest_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelDest_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (listVaults_) {
+        listVaults_->setColour(juce::ListBox::backgroundColourId, tk.painelAlt);
+        listVaults_->setColour(juce::ListBox::outlineColourId, tk.borda);
+        listVaults_->repaint();
+    }
+    if (labelDestInfo_) {
+        labelDestInfo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        labelDestInfo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (labelOrg_) {
+        labelOrg_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (togglePreservarEstrutura_) {
+        togglePreservarEstrutura_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        togglePreservarEstrutura_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    }
+    if (comboOrg_) {
+        comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    }
+    if (btnEditarHierarquia_) {
+        btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    }
+    if (labelOpcoes_) {
+        labelOpcoes_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelOpcoes_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (toggleVerificarChecksum_) {
+        toggleVerificarChecksum_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleVerificarChecksum_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    }
+    if (toggleGerarCatalogo_) {
+        toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    }
+    if (toggleEmbutirMetadados_) {
+        toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    }
+    if (labelResumo_) {
+        labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (labelProgressoStatus_) {
+        labelProgressoStatus_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        labelProgressoStatus_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (btnStartBackup_) aplicarEstiloBotao(*btnStartBackup_, true);
+    if (btnCancel_) {
+        aplicarEstiloBotao(*btnCancel_, false);
+        btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    }
+    if (btnDone_) aplicarEstiloBotao(*btnDone_, false);
+    if (btnOpenCatalog_) aplicarEstiloBotao(*btnOpenCatalog_, true);
+    if (btnExportJanela_) aplicarEstiloBotao(*btnExportJanela_, false);
+    if (btnBrowseVault_) aplicarEstiloBotao(*btnBrowseVault_, false);
+
+    if (listPrevia_) listPrevia_->repaint();
+    repaint();
+}
 
 void BackupWorkspaceComponent::mostrarJanelaExportar() {
     struct JanelaExportarMetadata : public juce::DialogWindow {

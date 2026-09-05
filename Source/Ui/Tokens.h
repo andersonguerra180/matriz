@@ -2,6 +2,11 @@
 
 #include <JuceHeader.h>
 
+namespace juce {
+class Component;
+class LookAndFeel_V4;
+}
+
 // Design system por tokens, desde a primeira linha de UI (§11.6). Nenhum
 // Component deve ter juce::Colour(0xff...) espalhado no código — tudo
 // referencia matriz::ui::tema().<campo>.
@@ -67,37 +72,37 @@ struct Tema {
 
 // BKR Dark — Pro Tools-inspired dark theme: medium charcoal surfaces,
 // visible borders, cool blue accent. Brighter than Logic, closer to
-// Pro Tools / Reaper default.
+// Pro Tools / Modern Slate default.
 inline const Tema& temaBkrDark() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xff181818);          // Dark charcoal background
-        x.painel = juce::Colour(0xff222222);         // Slightly lighter panel
-        x.painelAlt = juce::Colour(0xff2d2d2d);      // Alternative panel
-        x.borda = juce::Colour(0xff1c1c1c);          // Dark border
-        x.bordaFoco = juce::Colour(0xffe6a100);      // Lightroom amber focus
+        x.fundo = juce::Colour(0xff14161c);          // Deep matte background
+        x.painel = juce::Colour(0xff252934);         // Clearly lighter elevated card surface (matching UI reference)
+        x.painelAlt = juce::Colour(0xff313746);      // Secondary card / hover / table header
+        x.borda = juce::Colour(0xff434a5d);          // Crisp elegant borders
+        x.bordaFoco = juce::Colour(0xff38bdf8);      // Electric cyan / sky blue focus
 
-        x.textoPrimario = juce::Colour(0xffe0e0e0);   // Light text
-        x.textoSecundario = juce::Colour(0xffa0a0a0); // Muted text
-        x.textoTerciario = juce::Colour(0xff707070);  // Darker gray text
-        x.textoSobreAcento = juce::Colour(0xff181818); // Dark text on amber accent
+        x.textoPrimario = juce::Colour(0xffffffff);   // Pure 100% white
+        x.textoSecundario = juce::Colour(0xffe2e8f0); // High-contrast bright slate
+        x.textoTerciario = juce::Colour(0xffcbd5e1);  // Clean readable off-white
+        x.textoSobreAcento = juce::Colour(0xff0b0f17); // Maximum contrast on accent
 
-        x.acento = juce::Colour(0xffe6a100);         // Lightroom signature amber/gold
-        x.acentoHover = juce::Colour(0xffffb732);    // Brighter amber
-        x.perigo = juce::Colour(0xffc0392b);
-        x.alerta = juce::Colour(0xffe67e22);
+        x.acento = juce::Colour(0xff38bdf8);         // Vibrant sky blue / cyan
+        x.acentoHover = juce::Colour(0xff60a5fa);    // Electric blue hover
+        x.perigo = juce::Colour(0xffef4444);         // Vivid red
+        x.alerta = juce::Colour(0xfff59e0b);         // Vivid amber
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff707070);
-        x.estadoCapturado = juce::Colour(0xff3d7fd6);
-        x.estadoQcOk = juce::Colour(0xff3f9142);
-        x.estadoAlerta = juce::Colour(0xffb87517);
-        x.haloSincronizado = juce::Colour(0xff1f8f84);
+        x.estadoNaoDigitalizado = juce::Colour(0xff94a3b8);
+        x.estadoCapturado = juce::Colour(0xff38bdf8);
+        x.estadoQcOk = juce::Colour(0xff22c55e);
+        x.estadoAlerta = juce::Colour(0xfff59e0b);
+        x.haloSincronizado = juce::Colour(0xff14b8a6);
 
-        x.campoHumano = juce::Colour(0xffe0e0e0);
-        x.campoHerdado = juce::Colour(0xffa0a0a0);
-        x.campoLeituraTecnica = juce::Colour(0xffa0a0a0);
-        x.campoSugestaoIa = juce::Colour(0xffb87517);
-        x.campoSugestaoIaFundo = juce::Colour(0x22b87517);
+        x.campoHumano = juce::Colour(0xffffffff);
+        x.campoHerdado = juce::Colour(0xffe2e8f0);
+        x.campoLeituraTecnica = juce::Colour(0xffe2e8f0);
+        x.campoSugestaoIa = juce::Colour(0xfffbbf24);
+        x.campoSugestaoIaFundo = juce::Colour(0x33fbbf24);
 
         x.tamanhoFonteTitulo = 22.0f;
         x.tamanhoFonteSubtitulo = 17.0f;
@@ -109,8 +114,8 @@ inline const Tema& temaBkrDark() {
         x.espacoGrande = 16;
         x.espacoPainel = 12;
 
-        x.raioPequeno = 4.0f;
-        x.raioMedio = 6.0f;
+        x.raioPequeno = 5.0f;
+        x.raioMedio = 8.0f;
         return x;
     }();
     return t;
@@ -138,20 +143,20 @@ inline const Tema& temaBkrLight() {
 
         x.acento = juce::Colour(0xff3d7fd6);
         x.acentoHover = juce::Colour(0xff5b9dff);
-        x.perigo = juce::Colour(0xffc0392b);
-        x.alerta = juce::Colour(0xffd35400);
+        x.perigo = juce::Colour(0xffb83232);
+        x.alerta = juce::Colour(0xffb87a1a);
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff9a9aa0);
+        x.estadoNaoDigitalizado = juce::Colour(0xff68686d);
         x.estadoCapturado = juce::Colour(0xff3d7fd6);
-        x.estadoQcOk = juce::Colour(0xff3f9142);
-        x.estadoAlerta = juce::Colour(0xffb87517);
-        x.haloSincronizado = juce::Colour(0xff1f8f84);
+        x.estadoQcOk = juce::Colour(0xff2d8a4e);
+        x.estadoAlerta = juce::Colour(0xffb87a1a);
+        x.haloSincronizado = juce::Colour(0xff1f9d85);
 
-        x.campoHumano = juce::Colour(0xff1c1c1e);
-        x.campoHerdado = juce::Colour(0xff5a5a60);
-        x.campoLeituraTecnica = juce::Colour(0xff5a5a60);
-        x.campoSugestaoIa = juce::Colour(0xffb87517);
-        x.campoSugestaoIaFundo = juce::Colour(0x22b87517);
+        x.campoHumano = juce::Colour(0xff000000);
+        x.campoHerdado = juce::Colour(0xff2c2c2e);
+        x.campoLeituraTecnica = juce::Colour(0xff2c2c2e);
+        x.campoSugestaoIa = juce::Colour(0xff8a5700);
+        x.campoSugestaoIaFundo = juce::Colour(0x33b87a1a);
 
         x.tamanhoFonteTitulo = 22.0f;
         x.tamanhoFonteSubtitulo = 17.0f;
@@ -174,6 +179,10 @@ inline const Tema& temaBkrLight() {
 // Not inline: defined in Tokens.cpp (linked via CMakeLists).
 const Tema& tema();
 void recarregarTema();
+void aplicarTemaGlobal(juce::Component* raiz = nullptr);
+
+// Configure JUCE LookAndFeel with current theme tokens across all UI widgets
+void configurarLookAndFeel(juce::LookAndFeel_V4& lf);
 
 // Font scale applied globally.
 float escalaFonte();

@@ -17,34 +17,78 @@ juce::String formatBytes(juce::int64 bytes) {
     if (bytes < 1024 * 1024) return juce::String(bytes / 1024.0, 1) + " KB";
     if (bytes < 1024 * 1024 * 1024) return juce::String(bytes / (1024.0 * 1024.0), 1) + " MB";
     if (bytes < 1024LL * 1024LL * 1024LL * 1024LL) return juce::String(bytes / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
-    return juce::String(bytes / (1024.0 * 1024.0 * 1024.0), 2) + " TB";
+    return juce::String(bytes / (1024.0 * 1024.0 * 1024.0 * 1024.0), 2) + " TB";
 }
 
-juce::String categoriaParaRotulo(const std::string& cat) {
-    if (cat == "hd_externo") return "External Drive (HDD/SSD)";
-    if (cat == "pen_drive") return "USB Flash Drive / SD Card";
-    if (cat == "cd" || cat == "dvd") return "Optical Disc (CD/DVD/BD)";
-    if (cat == "hd_interno") return "Internal Drive";
-    if (cat == "rede") return "Network Share (NAS/SMB)";
-    return "Other / Unknown";
+juce::String formatCompactDate(const juce::String& isoDateStr) {
+    if (isoDateStr.isEmpty()) return {};
+    juce::String s = isoDateStr.trim();
+    if (s.length() >= 10 && s[4] == '-' && s[7] == '-') {
+        int day = s.substring(8, 10).getIntValue();
+        int month = s.substring(5, 7).getIntValue();
+        static const char* meses[] = { "jan", "fev", "mar", "abr", "mai", "jun",
+                                       "jul", "ago", "set", "out", "nov", "dez" };
+        if (month >= 1 && month <= 12 && day > 0) {
+            return juce::String::formatted("%02d %s", day, meses[month - 1]);
+        }
+    }
+    return s.substring(0, 10);
 }
 
-juce::String categoriaParaSigla(const std::string& cat) {
-    if (cat == "hd_externo") return "EXT HD";
-    if (cat == "pen_drive") return "USB/SD";
-    if (cat == "cd" || cat == "dvd") return "OPTICAL";
-    if (cat == "hd_interno") return "INT HD";
-    if (cat == "rede") return "NAS";
-    return "DEV";
+juce::String formatSmartStatus(const juce::String& status) {
+    auto s = status.trim();
+    if (s.isEmpty() || s.equalsIgnoreCase("NOT SUPPORTED") || s.equalsIgnoreCase("NOT_SUPPORTED") || s == "-") {
+        return "Not supported";
+    }
+    if (s.equalsIgnoreCase("PASSED") || s.equalsIgnoreCase("VERIFIED")) {
+        return "Passed";
+    }
+    if (s.equalsIgnoreCase("FAILING") || s.equalsIgnoreCase("FAILED")) {
+        return "Failing";
+    }
+    if (s.equalsIgnoreCase("UNKNOWN")) {
+        return "Unknown";
+    }
+    return s;
 }
 
-juce::Colour categoriaParaCor(const std::string& cat) {
-    if (cat == "hd_externo") return juce::Colour(0xff3d7fd6);
-    if (cat == "pen_drive") return juce::Colour(0xff0284c7);
-    if (cat == "cd" || cat == "dvd") return juce::Colour(0xff9333ea);
-    if (cat == "hd_interno") return juce::Colour(0xff64748b);
-    if (cat == "rede") return juce::Colour(0xff0d9488);
-    return juce::Colour(0xff71717a);
+juce::String formatHealthTitle(const matriz::vault::SmartHealthReport& rep, bool online) {
+    if (!online) return "Offline";
+    if (rep.state == matriz::vault::HealthState::Healthy) return "Healthy";
+    if (rep.state == matriz::vault::HealthState::Warning) return "Attention";
+    if (rep.state == matriz::vault::HealthState::Failing) return "Critical";
+    if (rep.state == matriz::vault::HealthState::Unavailable) return "Healthy";
+    if (rep.stateLabel.isNotEmpty()) {
+        auto lbl = rep.stateLabel.toLowerCase();
+        return lbl.substring(0, 1).toUpperCase() + lbl.substring(1);
+    }
+    return "Healthy";
+}
+
+juce::String formatSensors(const matriz::vault::SmartHealthReport& rep) {
+    if (rep.temperatureC > 0) {
+        juce::String s = juce::String(rep.temperatureC) + " \u00B0C";
+        if (rep.powerOnHours > 0) {
+            s << " \u00B7 " << rep.powerOnHours << "h power";
+        }
+        return s;
+    }
+    return "Temp N/A";
+}
+
+juce::String formatSectors(const matriz::vault::SmartHealthReport& rep) {
+    juce::int64 realloc = juce::jmax<juce::int64>(0, rep.reallocatedSectors);
+    juce::int64 pending = juce::jmax<juce::int64>(0, rep.pendingSectors);
+    return "Realloc " + juce::String(realloc) + " \u00B7 Pending " + juce::String(pending);
+}
+
+juce::String formatLogDateTime(const juce::String& isoStr) {
+    if (isoStr.isEmpty()) return "-";
+    juce::String s = isoStr.trim();
+    if (s.length() >= 16 && (s[4] == '-' || s[4] == '/')) {
+        return s.substring(5, 10) + " " + s.substring(11, 16);
+    }
+    return s.substring(0, 16);
 }
 
 enum ColumnIds {
@@ -58,81 +102,210 @@ enum ColumnIds {
 
 } // namespace
 
-class StorageWorkspaceComponent::HardwarePropsComponent : public juce::Component {
+// =============================================================================
+// LogCalendarComponent: Interactive Month / Day Log Browser
+// =============================================================================
+class StorageWorkspaceComponent::LogCalendarComponent : public juce::Component {
 public:
-    void setProps(const std::vector<StorageWorkspaceComponent::PropRow>& props) {
-        props_ = props;
+    explicit LogCalendarComponent(StorageWorkspaceComponent& owner)
+        : owner_(owner) {
+        auto now = juce::Time::getCurrentTime();
+        mesAnoAtual_ = juce::Time(now.getYear(), now.getMonth(), 1, 0, 0);
+
+        btnMesAnterior_ = std::make_unique<juce::TextButton>("\u2039");
+        btnMesAnterior_->onClick = [this] { navegarMes(-1); };
+        addAndMakeVisible(*btnMesAnterior_);
+
+        btnMesProximo_ = std::make_unique<juce::TextButton>("\u203A");
+        btnMesProximo_->onClick = [this] { navegarMes(1); };
+        addAndMakeVisible(*btnMesProximo_);
+
+        lblMesAno_ = std::make_unique<juce::Label>("lblMesAno", "");
+        lblMesAno_->setJustificationType(juce::Justification::centred);
+        addAndMakeVisible(*lblMesAno_);
+
+        atualizarRotuloMes();
+    }
+
+    void navegarMes(int deltaMeses) {
+        int y = mesAnoAtual_.getYear();
+        int m = mesAnoAtual_.getMonth() + deltaMeses;
+        while (m < 0) { m += 12; y--; }
+        while (m > 11) { m -= 12; y++; }
+        mesAnoAtual_ = juce::Time(y, m, 1, 0, 0);
+        atualizarRotuloMes();
         repaint();
+    }
+
+    void atualizarRotuloMes() {
+        const auto& tk = tema();
+        lblMesAno_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblMesAno_->setColour(juce::Label::textColourId, tk.textoPrimario);
+
+        btnMesAnterior_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnMesAnterior_->setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+        btnMesAnterior_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+
+        btnMesProximo_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnMesProximo_->setColour(juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+        btnMesProximo_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+
+        static const char* meses[] = {
+            "January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"
+        };
+        int m = juce::jlimit(0, 11, mesAnoAtual_.getMonth());
+        lblMesAno_->setText(juce::String(meses[m]) + " " + juce::String(mesAnoAtual_.getYear()), juce::dontSendNotification);
     }
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        int y = 0;
-        auto fontLbl = juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold));
-        auto fontVal = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
 
-        for (size_t i = 0; i < props_.size(); ++i) {
-            juce::Rectangle<int> rowRect(0, y, getWidth(), 17);
-            if (i % 2 == 1) {
-                g.setColour(tk.painelAlt.withAlpha(0.35f));
-                g.fillRoundedRectangle(rowRect.toFloat(), 2.0f);
+        auto area = getLocalBounds();
+        area.removeFromTop(24); // Month navigation header
+
+        // Card Container for Calendar
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(area.toFloat(), 6.0f);
+        g.setColour(tk.borda.withAlpha(0.6f));
+        g.drawRoundedRectangle(area.toFloat(), 6.0f, 1.0f);
+
+        auto inner = area.reduced(8, 6);
+
+        // Days of week header (S M T W T F S)
+        auto daysHeader = inner.removeFromTop(16);
+        static const char* diaSemana[] = { "S", "M", "T", "W", "T", "F", "S" };
+        int colW = daysHeader.getWidth() / 7;
+
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setColour(tk.textoTerciario);
+        for (int i = 0; i < 7; ++i) {
+            juce::Rectangle<int> col(daysHeader.getX() + i * colW, daysHeader.getY(), colW, daysHeader.getHeight());
+            g.drawText(diaSemana[i], col, juce::Justification::centred);
+        }
+
+        inner.removeFromTop(2);
+
+        // Grid of days
+        cellBounds_.clear();
+        cellDates_.clear();
+
+        int ano = mesAnoAtual_.getYear();
+        int mes = mesAnoAtual_.getMonth();
+        juce::Time primeiroDia(ano, mes, 1, 0, 0);
+        int primeiroDiaSemana = primeiroDia.getDayOfWeek(); // 0 = Sunday
+
+        int diasNoMes = 31;
+        if (mes == 1) { // Feb
+            bool leap = (ano % 4 == 0 && (ano % 100 != 0 || ano % 400 == 0));
+            diasNoMes = leap ? 29 : 28;
+        } else if (mes == 3 || mes == 5 || mes == 8 || mes == 10) {
+            diasNoMes = 30;
+        }
+
+        int rowH = inner.getHeight() / 6;
+        int diaCont = 1;
+
+        auto now = juce::Time::getCurrentTime();
+        juce::String hojeStr = now.formatted("%Y-%m-%d");
+
+        for (int row = 0; row < 6; ++row) {
+            for (int col = 0; col < 7; ++col) {
+                int cellIdx = row * 7 + col;
+                if (cellIdx < primeiroDiaSemana || diaCont > diasNoMes) {
+                    continue;
+                }
+
+                juce::Rectangle<int> cell(inner.getX() + col * colW, inner.getY() + row * rowH, colW, rowH);
+                cellBounds_.push_back(cell);
+
+                juce::String dataStr = juce::String::formatted("%04d-%02d-%02d", ano, mes + 1, diaCont);
+                cellDates_.push_back(dataStr);
+
+                bool isSelected = (owner_.selectedDate_ == dataStr);
+                bool isToday = (dataStr == hojeStr);
+                bool isHovered = (hoveredCellIdx_ == static_cast<int>(cellDates_.size() - 1));
+
+                juce::Colour pillColor = (tk.fundo.getBrightness() > 0.5f) ? juce::Colour(0xffb87a1a) : tk.acento;
+
+                if (isSelected || (owner_.selectedDate_.isEmpty() && isToday)) {
+                    auto pillRect = cell.reduced(2, 1);
+                    g.setColour(pillColor);
+                    g.fillRoundedRectangle(pillRect.toFloat(), 4.0f);
+
+                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                    g.setColour(juce::Colours::white);
+                    g.drawText(juce::String(diaCont), cell, juce::Justification::centred);
+                } else {
+                    if (isHovered) {
+                        g.setColour(tk.painelAlt);
+                        g.fillRoundedRectangle(cell.toFloat().reduced(1.0f), 3.0f);
+                    }
+
+                    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                    g.setColour(tk.textoPrimario);
+                    g.drawText(juce::String(diaCont), cell, juce::Justification::centred);
+                }
+
+                diaCont++;
             }
+        }
+    }
 
-            g.setColour(tk.textoSecundario);
-            g.setFont(fontLbl);
-            g.drawText(props_[i].label, rowRect.removeFromLeft(130).reduced(4, 0), juce::Justification::centredLeft, true);
+    void resized() override {
+        auto navRow = getLocalBounds().removeFromTop(22);
+        btnMesAnterior_->setBounds(navRow.removeFromLeft(18));
+        btnMesProximo_->setBounds(navRow.removeFromRight(18));
+        lblMesAno_->setBounds(navRow);
+    }
 
-            g.setColour(tk.textoPrimario);
-            g.setFont(fontVal);
-            g.drawText(props_[i].value, rowRect.reduced(4, 0), juce::Justification::centredLeft, true);
+    void mouseMove(const juce::MouseEvent& e) override {
+        int oldHover = hoveredCellIdx_;
+        hoveredCellIdx_ = -1;
 
-            y += 18;
+        for (size_t i = 0; i < cellBounds_.size(); ++i) {
+            if (cellBounds_[i].contains(e.getPosition())) {
+                hoveredCellIdx_ = static_cast<int>(i);
+                break;
+            }
+        }
+
+        if (hoveredCellIdx_ != oldHover) {
+            repaint();
+        }
+    }
+
+    void mouseExit(const juce::MouseEvent&) override {
+        if (hoveredCellIdx_ != -1) {
+            hoveredCellIdx_ = -1;
+            repaint();
+        }
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        for (size_t i = 0; i < cellBounds_.size(); ++i) {
+            if (cellBounds_[i].contains(e.getPosition())) {
+                owner_.selecionarDataCalendario(cellDates_[i]);
+                return;
+            }
         }
     }
 
 private:
-    std::vector<StorageWorkspaceComponent::PropRow> props_;
+    StorageWorkspaceComponent& owner_;
+    juce::Time mesAnoAtual_;
+    std::unique_ptr<juce::TextButton> btnMesAnterior_;
+    std::unique_ptr<juce::TextButton> btnMesProximo_;
+    std::unique_ptr<juce::Label> lblMesAno_;
+
+    std::vector<juce::Rectangle<int>> cellBounds_;
+    std::vector<juce::String> cellDates_;
+    int hoveredCellIdx_ = -1;
 };
 
-class StorageWorkspaceComponent::DriveHealthComponent : public juce::Component {
-public:
-    void setReport(const matriz::vault::SmartHealthReport& rep) {
-        rep_ = rep;
-        repaint();
-    }
-
-    void paint(juce::Graphics& g) override {
-        const auto& tk = tema();
-        auto area = getLocalBounds();
-        if (area.isEmpty()) return;
-
-        // Top Status Header: Colored Bullet + Status Text
-        auto statusRow = area.removeFromTop(18);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-
-        // Bullet ●
-        g.setColour(rep_.stateColour);
-        juce::String label = rep_.stateLabel.isNotEmpty() ? rep_.stateLabel : "HEALTHY";
-        g.drawText(juce::String::charToString(0x25CF) + "  " + label, statusRow, juce::Justification::centredLeft, true);
-
-        area.removeFromTop(3);
-
-        // Single SMART Status Row
-        juce::Rectangle<int> rowRect(0, area.getY(), getWidth(), 17);
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-        g.drawText("SMART Status:", rowRect.removeFromLeft(130).reduced(4, 0), juce::Justification::centredLeft, true);
-
-        g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-        juce::String sStatus = (rep_.smartStatus.isEmpty() || rep_.smartStatus == "-") ? "NOT SUPPORTED" : rep_.smartStatus;
-        g.drawText(sStatus, rowRect.reduced(4, 0), juce::Justification::centredLeft, true);
-    }
-
-private:
-    matriz::vault::SmartHealthReport rep_;
-};
-
+// =============================================================================
+// ColumnCardsContainer: HD Cards (Clean Single-Column Layout matching Spec)
+// =============================================================================
 class StorageWorkspaceComponent::ColumnCardsContainer : public juce::Component {
 public:
     ColumnCardsContainer(StorageWorkspaceComponent& owner, bool isSourceColumn)
@@ -140,6 +313,19 @@ public:
 
     const std::vector<StorageDevice>& getDevices() const {
         return isSourceColumn_ ? owner_.sourceDevices_ : owner_.backupDevices_;
+    }
+
+    static constexpr int kCardW = 320;
+    static constexpr int kCardH = 236;
+    static constexpr int kGap = 12;
+
+    juce::Rectangle<int> getCardBounds(size_t index) const {
+        int availW = getWidth();
+        int cardsPerRow = juce::jmax(1, (availW + kGap) / (kCardW + kGap));
+        int cardW = juce::jmin(kCardW, juce::jmax(260, availW));
+        int row = static_cast<int>(index) / cardsPerRow;
+        int col = static_cast<int>(index) % cardsPerRow;
+        return juce::Rectangle<int>(col * (cardW + kGap), row * (kCardH + kGap), cardW, kCardH);
     }
 
     void paint(juce::Graphics& g) override {
@@ -185,130 +371,194 @@ public:
             return;
         }
 
-        const int cardH = 104;
-        const int gap = 8;
-        int y = 0;
-
         for (size_t i = 0; i < devs.size(); ++i) {
             const auto& d = devs[i];
             bool isSelected = (d.id == owner_.selectedVaultId_);
             bool isHovered = (static_cast<int>(i) == hoveredIndex_);
 
-            juce::Rectangle<int> cardBounds(0, y, getWidth(), cardH);
+            juce::Rectangle<int> cardBounds = getCardBounds(i);
 
-            // Background
+            // Card Background
             if (isSelected) {
                 g.setColour(tk.painelAlt);
             } else if (isHovered) {
-                g.setColour(tk.painel.interpolatedWith(tk.painelAlt, 0.5f));
+                g.setColour(tk.painel.interpolatedWith(tk.painelAlt, 0.45f));
             } else {
                 g.setColour(tk.painel);
             }
-            g.fillRoundedRectangle(cardBounds.toFloat(), tk.raioMedio);
+            g.fillRoundedRectangle(cardBounds.toFloat(), 6.0f);
 
-            // Border
+            // Card Border
             if (isSelected) {
                 g.setColour(tk.acento);
-                g.drawRoundedRectangle(cardBounds.toFloat(), tk.raioMedio, 1.5f);
+                g.drawRoundedRectangle(cardBounds.toFloat(), 6.0f, 1.5f);
             } else {
-                g.setColour(tk.borda);
-                g.drawRoundedRectangle(cardBounds.toFloat(), tk.raioMedio, 1.0f);
+                g.setColour(isHovered ? tk.borda.brighter(0.25f) : tk.borda);
+                g.drawRoundedRectangle(cardBounds.toFloat(), 6.0f, 1.0f);
             }
 
-            auto content = cardBounds.reduced(10, 8);
+            auto content = cardBounds.reduced(12, 10);
 
-            // Header row: Badge + Online Indicator + Title + Size
-            auto topRow = content.removeFromTop(20);
+            // =================================================================
+            // 1. TOP HEADER ROW
+            // Left: "Bunker 4TB · Online"
+            // Right: "3.64 TB"
+            // =================================================================
+            auto headerRow = content.removeFromTop(18);
 
-            // Category Badge
-            juce::Colour catColor = categoriaParaCor(d.categoriaDispositivo);
-            juce::String catSigla = categoriaParaSigla(d.categoriaDispositivo);
-            auto badgeRect = topRow.removeFromLeft(48);
-            g.setColour(catColor.withAlpha(0.20f));
-            g.fillRoundedRectangle(badgeRect.toFloat(), 3.0f);
-            g.setColour(catColor);
-            g.drawRoundedRectangle(badgeRect.toFloat(), 3.0f, 1.0f);
-            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
-            g.drawText(catSigla, badgeRect, juce::Justification::centred);
+            // Total capacity on the right
+            juce::int64 capTotal = d.espacoTotalBytes > 0 ? d.espacoTotalBytes : d.capacidadeBytes;
+            juce::String capStr = formatBytes(capTotal);
+            g.setFont(juce::Font(juce::FontOptions(12.5f)));
+            g.setColour(tk.textoSecundario);
+            g.drawText(capStr, headerRow.removeFromRight(65), juce::Justification::centredRight);
 
-            topRow.removeFromLeft(8);
-
-            // Online / Offline Bullet
-            juce::Colour statusColor = d.online ? juce::Colour(0xff22c55e) : juce::Colour(0xff71717a);
-            auto bulletRect = topRow.removeFromLeft(12);
-            g.setColour(statusColor);
-            g.fillEllipse(bulletRect.toFloat().reduced(2.0f));
-
-            topRow.removeFromLeft(6);
-
-            // Capacity on the right
-            juce::String capStr = formatBytes(d.capacidadeBytes);
-            auto capRect = topRow.removeFromRight(80);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-            g.setColour(tk.textoPrimario);
-            g.drawText(capStr, capRect, juce::Justification::centredRight, true);
-
-            // Drive Name
+            // Name & Online / Offline on the left
             juce::String displayTitle = d.nome.isNotEmpty() ? d.nome : juce::String(d.modelo);
             if (displayTitle.isEmpty()) displayTitle = "Storage Device";
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+
+            auto titleFont = juce::Font(juce::FontOptions(13.0f, juce::Font::bold));
+            g.setFont(titleFont);
             g.setColour(isSelected ? tk.acento : tk.textoPrimario);
-            g.drawText(displayTitle, topRow, juce::Justification::centredLeft, true);
 
-            content.removeFromTop(4);
+            int maxTitleW = headerRow.getWidth() - 60;
+            int titleW = juce::jmin(maxTitleW, (int)juce::GlyphArrangement::getStringWidth(titleFont, displayTitle) + 2);
+            g.drawText(displayTitle, headerRow.removeFromLeft(titleW), juce::Justification::centredLeft, true);
 
-            // Model & Vendor row
-            auto modelRow = content.removeFromTop(18);
-            juce::String hwInfo;
-            if (!d.vendor.empty()) hwInfo << juce::String(d.vendor) << " ";
-            if (!d.modelo.empty()) hwInfo << juce::String(d.modelo);
-            if (hwInfo.isEmpty()) hwInfo = "Hardware details offline / pending";
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            g.setColour(tk.textoSecundario);
-            g.drawText(hwInfo, modelRow, juce::Justification::centredLeft, true);
+            headerRow.removeFromLeft(3);
+            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setColour(tk.textoTerciario);
+            g.drawText("\u00B7", headerRow.removeFromLeft(6), juce::Justification::centred);
 
-            content.removeFromTop(2);
+            headerRow.removeFromLeft(3);
+            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            juce::Colour statusColor = d.online ? juce::Colour(0xff22c55e) : tk.perigo;
+            g.setColour(statusColor);
+            g.drawText(d.online ? "Online" : "Offline", headerRow, juce::Justification::centredLeft);
 
-            // Location & Serial row
-            auto locRow = content.removeFromTop(18);
-            juce::String locInfo;
-            if (d.localizacao.isNotEmpty()) locInfo << d.localizacao;
-            else locInfo << "Mount: Offline";
-            if (!d.sistemaArquivos.empty()) locInfo << " (" << juce::String(d.sistemaArquivos) << ")";
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            g.setColour(tk.textoSecundario);
-            g.drawText(locInfo, locRow, juce::Justification::centredLeft, true);
+            // Divider 1
+            content.removeFromTop(6);
+            auto div1 = content.removeFromTop(1);
+            g.setColour(tk.borda.withAlpha(0.5f));
+            g.fillRect(div1);
+            content.removeFromTop(6);
 
-            content.removeFromTop(2);
+            // =================================================================
+            // 2. HARDWARE SPECIFICATIONS (4 Rows: Model, Serial, Mount, Format)
+            // =================================================================
+            auto drawRow = [&](juce::Rectangle<int> rowRect, const juce::String& label, const juce::String& value) {
+                g.setFont(juce::Font(juce::FontOptions(12.0f)));
+                g.setColour(tk.textoTerciario);
+                g.drawText(label, rowRect.removeFromLeft(55), juce::Justification::centredLeft);
 
-            // Stats / Activity row
-            auto statsRow = content.removeFromTop(18);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-            if (isSourceColumn_) {
+                g.setFont(juce::Font(juce::FontOptions(12.0f)));
                 g.setColour(tk.textoPrimario);
-                juce::String statText = juce::String(d.totalArquivos) + " files imported (" + formatBytes(d.totalBytes) + ")";
-                g.drawText(statText, statsRow.removeFromLeft(200), juce::Justification::centredLeft, true);
+                g.drawText(value, rowRect, juce::Justification::centredRight, true);
+            };
 
-                if (!d.ultimoIngest.empty()) {
-                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-                    g.setColour(tk.textoSecundario);
-                    g.drawText("Last: " + juce::String(d.ultimoIngest).substring(0, 16).replace("T", " "),
-                               statsRow, juce::Justification::centredRight, true);
-                }
-            } else {
-                g.setColour(tk.textoPrimario);
-                juce::String statText = juce::String(d.totalBackups) + " backup runs (" + juce::String(d.totalItensCopiados) + " files)";
-                g.drawText(statText, statsRow.removeFromLeft(200), juce::Justification::centredLeft, true);
+            // Model
+            juce::String hwModel;
+            if (!d.vendor.empty() && !juce::String(d.modelo).containsIgnoreCase(d.vendor)) {
+                hwModel << juce::String(d.vendor) << " ";
+            }
+            if (!d.modelo.empty()) {
+                hwModel << juce::String(d.modelo);
+            } else if (hwModel.isEmpty()) {
+                hwModel = "Storage Device";
+            }
+            drawRow(content.removeFromTop(16), "Model", hwModel.trim());
+            content.removeFromTop(1);
 
-                if (!d.ultimoBackup.empty()) {
-                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-                    g.setColour(tk.textoSecundario);
-                    g.drawText("Last: " + juce::String(d.ultimoBackup).substring(0, 16).replace("T", " "),
-                               statsRow, juce::Justification::centredRight, true);
-                }
+            // Serial
+            juce::String snText = !d.numeroSerie.empty() ? juce::String(d.numeroSerie)
+                                : (!d.uuidVolume.empty() ? juce::String(d.uuidVolume) : "-");
+            drawRow(content.removeFromTop(16), "Serial", snText);
+            content.removeFromTop(1);
+
+            // Mount
+            juce::String mountText = d.localizacao.isNotEmpty() ? d.localizacao : "Offline / Unmounted";
+            drawRow(content.removeFromTop(16), "Mount", mountText);
+            content.removeFromTop(1);
+
+            // Format
+            juce::String fsText = !d.sistemaArquivos.empty() ? juce::String(d.sistemaArquivos).toUpperCase() : "HFS";
+            fsText << " \u00B7 " << (d.online ? "Connected" : "Disconnected");
+            drawRow(content.removeFromTop(16), "Format", fsText);
+
+            // Divider 2
+            content.removeFromTop(6);
+            auto div2 = content.removeFromTop(1);
+            g.setColour(tk.borda.withAlpha(0.5f));
+            g.fillRect(div2);
+            content.removeFromTop(6);
+
+            // =================================================================
+            // 3. DRIVE HEALTH & SMART SECTION
+            // Header: Healthy, SMART, Sensors, Sectors
+            // =================================================================
+            auto hTitleRow = content.removeFromTop(16);
+            juce::String hTitle = formatHealthTitle(d.smartReport, d.online);
+            juce::Colour hColor = (hTitle == "Healthy") ? juce::Colour(0xff22c55e)
+                                : ((hTitle == "Attention") ? tk.alerta
+                                : ((hTitle == "Critical") ? tk.perigo : tk.textoSecundario));
+            g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+            g.setColour(hColor);
+            g.drawText(hTitle, hTitleRow, juce::Justification::centredLeft);
+
+            content.removeFromTop(1);
+            drawRow(content.removeFromTop(16), "SMART", formatSmartStatus(d.smartReport.smartStatus));
+            content.removeFromTop(1);
+            drawRow(content.removeFromTop(16), "Sensors", formatSensors(d.smartReport));
+            content.removeFromTop(1);
+            drawRow(content.removeFromTop(16), "Sectors", formatSectors(d.smartReport));
+
+            // Divider 3
+            content.removeFromTop(6);
+            auto div3 = content.removeFromTop(1);
+            g.setColour(tk.borda.withAlpha(0.5f));
+            g.fillRect(div3);
+            content.removeFromTop(6);
+
+            // =================================================================
+            // 4. BOTTOM PROGRESS BAR & SUMMARY
+            // =================================================================
+            auto barRect = content.removeFromTop(4);
+            g.setColour(tk.painelAlt);
+            g.fillRoundedRectangle(barRect.toFloat(), 2.0f);
+
+            if (d.metricasEspacoDisponiveis && d.espacoTotalBytes > 0) {
+                float fillW = static_cast<float>(barRect.getWidth()) * static_cast<float>(d.pctUsado / 100.0);
+                fillW = juce::jlimit(0.0f, static_cast<float>(barRect.getWidth()), fillW);
+                juce::Rectangle<float> fillRect(static_cast<float>(barRect.getX()), static_cast<float>(barRect.getY()), fillW, static_cast<float>(barRect.getHeight()));
+
+                juce::Colour barColor = (tk.fundo.getBrightness() > 0.5f) ? juce::Colour(0xffb87a1a) : tk.acento;
+                if (d.pctUsado >= 92.0) barColor = tk.perigo;
+                else if (d.pctUsado >= 80.0) barColor = tk.alerta;
+
+                g.setColour(barColor);
+                g.fillRoundedRectangle(fillRect, 2.0f);
             }
 
-            y += cardH + gap;
+            content.removeFromTop(5);
+            auto summaryRow = content.removeFromTop(14);
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setColour(tk.textoSecundario);
+
+            juce::String summaryText;
+            if (d.metricasEspacoDisponiveis && d.espacoTotalBytes > 0) {
+                summaryText = formatBytes(d.espacoUsadoBytes) + " used (" + juce::String(d.pctUsado, 1) + "%) \u00B7 " + formatBytes(d.espacoLivreBytes) + " free";
+                if (isSourceColumn_) {
+                    if (d.totalArquivos > 0) summaryText << " \u00B7 " << d.totalArquivos << " files";
+                    if (!d.ultimoIngest.empty()) summaryText << ", last " << formatCompactDate(juce::String(d.ultimoIngest));
+                } else {
+                    if (d.totalBackups > 0) summaryText << " \u00B7 " << d.totalBackups << (d.totalBackups == 1 ? " backup" : " backups");
+                    if (!d.ultimoBackup.empty()) summaryText << ", last " << formatCompactDate(juce::String(d.ultimoBackup));
+                }
+            } else {
+                summaryText = d.online ? ("Capacity: " + formatBytes(d.capacidadeBytes) + " \u00B7 Live telemetry scanning...")
+                                       : (formatBytes(d.capacidadeBytes > 0 ? d.capacidadeBytes : 0) + " \u00B7 Offline \u00B7 Volume telemetry unavailable");
+            }
+            g.drawText(summaryText, summaryRow, juce::Justification::centredLeft, true);
         }
     }
 
@@ -316,12 +566,14 @@ public:
         const auto& devs = getDevices();
         if (devs.empty()) return;
 
-        const int cardH = 104;
-        const int gap = 8;
-        int idx = e.y / (cardH + gap);
-
-        if (idx >= 0 && idx < static_cast<int>(devs.size())) {
-            owner_.selecionarDevice(devs[static_cast<size_t>(idx)].id, isSourceColumn_);
+        for (size_t i = 0; i < devs.size(); ++i) {
+            if (getCardBounds(i).contains(e.getPosition())) {
+                owner_.selecionarDevice(devs[i].id, isSourceColumn_);
+                if (e.getNumberOfClicks() >= 2) {
+                    owner_.atualizarSaudeSmartDoDevice(devs[i].id, true);
+                }
+                return;
+            }
         }
     }
 
@@ -332,17 +584,16 @@ public:
             return;
         }
 
-        const int cardH = 104;
-        const int gap = 8;
-        int idx = e.y / (cardH + gap);
-
-        if (idx >= 0 && idx < static_cast<int>(devs.size())) {
-            if (hoveredIndex_ != idx) {
-                hoveredIndex_ = idx;
-                repaint();
+        int newHover = -1;
+        for (size_t i = 0; i < devs.size(); ++i) {
+            if (getCardBounds(i).contains(e.getPosition())) {
+                newHover = static_cast<int>(i);
+                break;
             }
-        } else if (hoveredIndex_ != -1) {
-            hoveredIndex_ = -1;
+        }
+
+        if (hoveredIndex_ != newHover) {
+            hoveredIndex_ = newHover;
             repaint();
         }
     }
@@ -356,9 +607,10 @@ public:
 
     void atualizarAltura() {
         const auto& devs = getDevices();
-        const int cardH = 104;
-        const int gap = 8;
-        int totalH = static_cast<int>(devs.size()) * (cardH + gap) + 16;
+        int availW = getWidth();
+        int cardsPerRow = juce::jmax(1, (availW + kGap) / (kCardW + kGap));
+        int numRows = (static_cast<int>(devs.size()) + cardsPerRow - 1) / cardsPerRow;
+        int totalH = numRows * (kCardH + kGap) + 16;
         setSize(getWidth(), juce::jmax(getHeight(), totalH));
         repaint();
     }
@@ -369,6 +621,9 @@ private:
     int hoveredIndex_ = -1;
 };
 
+// =============================================================================
+// StorageWorkspaceComponent Implementation
+// =============================================================================
 StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
     isCatalog_ = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
@@ -382,18 +637,18 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
 
     lblSubtitle_ = std::make_unique<juce::Label>(
         "lblSubtitle",
-        "Hardware identities, health telemetry, and usage timelines for physical drives used across Ingest and Backup operations.");
+        "Hardware identities, independent drive health, and interactive calendar logs across Ingest and Backup operations.");
     lblSubtitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
     lblSubtitle_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblSubtitle_);
 
-    btnRefresh_ = std::make_unique<juce::TextButton>("SCAN & REFRESH");
+    btnRefresh_ = std::make_unique<juce::TextButton>("SCAN & REFRESH ALL");
     btnRefresh_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnRefresh_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnRefresh_->onClick = [this] { recarregar(); };
     addAndMakeVisible(*btnRefresh_);
 
-    // Left Column (Source Drives)
+    // Top 80%: Source & Backup Cards Columns
     lblSourceColumnTitle_ = std::make_unique<juce::Label>("lblSrcCol", "SOURCE DRIVES  (INGEST)");
     lblSourceColumnTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
     lblSourceColumnTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -405,7 +660,6 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     sourceCardsViewport_->setScrollBarsShown(true, false);
     addAndMakeVisible(*sourceCardsViewport_);
 
-    // Right Column (Backup Drives)
     lblBackupColumnTitle_ = std::make_unique<juce::Label>("lblBkpCol", "BACKUP DRIVES  (DESTINATION)");
     lblBackupColumnTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
     lblBackupColumnTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -417,96 +671,52 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     backupCardsViewport_->setScrollBarsShown(true, false);
     addAndMakeVisible(*backupCardsViewport_);
 
-    // Bottom Area: Inspector & History Container
-    inspectorContainer_ = std::make_unique<juce::Component>();
-    addAndMakeVisible(*inspectorContainer_);
+    // Bottom: Interactive Log Calendar & Sessions Dock
+    logDockContainer_ = std::make_unique<juce::Component>();
+    addAndMakeVisible(*logDockContainer_);
 
-    lblInspectorTitle_ = std::make_unique<juce::Label>("lblInspTitle", "DEVICE INSPECTOR");
-    lblInspectorTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
-    lblInspectorTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
-    inspectorContainer_->addAndMakeVisible(*lblInspectorTitle_);
+    logCalendarComp_ = std::make_unique<LogCalendarComponent>(*this);
+    logDockContainer_->addAndMakeVisible(*logCalendarComp_);
 
-    lblNickName_ = std::make_unique<juce::Label>("lblNickName", "Drive Nickname:");
-    lblNickName_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    lblNickName_->setColour(juce::Label::textColourId, tk.textoSecundario);
-    inspectorContainer_->addAndMakeVisible(*lblNickName_);
+    lblDayLogsTitle_ = std::make_unique<juce::Label>("lblDayLogs", "All sessions (0 records)");
+    lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+    lblDayLogsTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    logDockContainer_->addAndMakeVisible(*lblDayLogsTitle_);
 
-    txtNickName_ = std::make_unique<juce::TextEditor>();
-    txtNickName_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
-    txtNickName_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-    txtNickName_->setColour(juce::TextEditor::outlineColourId, tk.borda);
-    txtNickName_->onReturnKey = [this] { salvarNomeVault(); };
-    inspectorContainer_->addAndMakeVisible(*txtNickName_);
-
-    btnSaveNickName_ = std::make_unique<juce::TextButton>("SAVE");
-    btnSaveNickName_->setColour(juce::TextButton::buttonColourId, tk.acento);
-    btnSaveNickName_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
-    btnSaveNickName_->onClick = [this] { salvarNomeVault(); };
-    inspectorContainer_->addAndMakeVisible(*btnSaveNickName_);
-
-    lblCategory_ = std::make_unique<juce::Label>("lblCategory", "Drive Category:");
-    lblCategory_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    lblCategory_->setColour(juce::Label::textColourId, tk.textoSecundario);
-    inspectorContainer_->addAndMakeVisible(*lblCategory_);
-
-    comboCategory_ = std::make_unique<juce::ComboBox>();
-    comboCategory_->addItem("External Drive (HDD / SSD)", 1);
-    comboCategory_->addItem("USB Flash Drive / SD Card", 2);
-    comboCategory_->addItem("Optical Disc (CD / DVD / BD)", 3);
-    comboCategory_->addItem("Internal Drive", 4);
-    comboCategory_->addItem("Network Storage (NAS / SMB)", 5);
-    comboCategory_->addItem("Other / Unknown", 6);
-    comboCategory_->onChange = [this] {
-        int id = comboCategory_->getSelectedId();
-        std::string novaCat = "desconhecido";
-        if (id == 1) novaCat = "hd_externo";
-        else if (id == 2) novaCat = "pen_drive";
-        else if (id == 3) novaCat = "cd";
-        else if (id == 4) novaCat = "hd_interno";
-        else if (id == 5) novaCat = "rede";
-        salvarCategoriaVault(novaCat);
+    btnShowAllLogs_ = std::make_unique<juce::TextButton>("All sessions");
+    btnShowAllLogs_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
+    btnShowAllLogs_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    btnShowAllLogs_->onClick = [this] {
+        selectedDate_ = "";
+        atualizarListaLogsFiltrada();
+        if (logCalendarComp_) logCalendarComp_->repaint();
     };
-    inspectorContainer_->addAndMakeVisible(*comboCategory_);
+    logDockContainer_->addAndMakeVisible(*btnShowAllLogs_);
 
-    lblHardwareTitle_ = std::make_unique<juce::Label>("lblHwTitle", "HARDWARE IDENTITY (READ-ONLY)");
-    lblHardwareTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    lblHardwareTitle_->setColour(juce::Label::textColourId, tk.acento);
-    inspectorContainer_->addAndMakeVisible(*lblHardwareTitle_);
-
-    hardwarePropsComp_ = std::make_unique<HardwarePropsComponent>();
-    inspectorContainer_->addAndMakeVisible(*hardwarePropsComp_);
-
-    // Drive Health (Compact subordinate section)
-    lblHealthTitle_ = std::make_unique<juce::Label>("lblHealthTitle", "DRIVE HEALTH");
-    lblHealthTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    lblHealthTitle_->setColour(juce::Label::textColourId, tk.acento);
-    inspectorContainer_->addAndMakeVisible(*lblHealthTitle_);
-
-    btnRefreshHealth_ = std::make_unique<juce::TextButton>("REFRESH");
-    btnRefreshHealth_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-    btnRefreshHealth_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
-    btnRefreshHealth_->onClick = [this] { atualizarSaudeSmart(true); };
-    inspectorContainer_->addAndMakeVisible(*btnRefreshHealth_);
-
-    driveHealthComp_ = std::make_unique<DriveHealthComponent>();
-    inspectorContainer_->addAndMakeVisible(*driveHealthComp_);
-
-    // History Table Header & Button
-    lblHistoryTitle_ = std::make_unique<juce::Label>("lblHistTitle", "DEVICE USAGE TIMELINE & LOGS");
-    lblHistoryTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
-    lblHistoryTitle_->setColour(juce::Label::textColourId, tk.acento);
-    inspectorContainer_->addAndMakeVisible(*lblHistoryTitle_);
-
-    btnOpenLogFolder_ = std::make_unique<juce::TextButton>("OPEN LOGS FOLDER");
-    btnOpenLogFolder_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnOpenLogFolder_ = std::make_unique<juce::TextButton>("Open logs folder");
+    btnOpenLogFolder_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
     btnOpenLogFolder_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnOpenLogFolder_->onClick = [this] { abrirPastaLogs(); };
-    inspectorContainer_->addAndMakeVisible(*btnOpenLogFolder_);
+    logDockContainer_->addAndMakeVisible(*btnOpenLogFolder_);
 
     tableHistory_ = std::make_unique<juce::TableListBox>("StorageHistoryTable", this);
-    tableHistory_->setHeaderHeight(24);
-    tableHistory_->setRowHeight(24);
-    inspectorContainer_->addAndMakeVisible(*tableHistory_);
+    tableHistory_->setColour(juce::ListBox::backgroundColourId, tk.painel);
+    tableHistory_->setColour(juce::ListBox::outlineColourId, tk.borda.withAlpha(0.6f));
+    tableHistory_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painel);
+    tableHistory_->getHeader().setColour(juce::TableHeaderComponent::textColourId, tk.textoTerciario);
+    tableHistory_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda.withAlpha(0.4f));
+    tableHistory_->setHeaderHeight(26);
+    tableHistory_->setRowHeight(30);
+    logDockContainer_->addAndMakeVisible(*tableHistory_);
+
+    auto& hdr = tableHistory_->getHeader();
+    hdr.removeAllColumns();
+    hdr.addColumn("Date and time", kColDate, 115, 90, 150);
+    hdr.addColumn("Action", kColAction, 105, 80, 130);
+    hdr.addColumn("Operator", kColHost, 120, 90, 160);
+    hdr.addColumn("Items/vol", kColVolume, 140, 100, 220);
+    hdr.addColumn("Health", kColHealth, 75, 60, 100);
+    hdr.addColumn("Report", kColReport, 65, 50, 90);
 
     carregarDados();
     startTimer(2000);
@@ -530,9 +740,6 @@ void StorageWorkspaceComponent::recarregar() {
         projeto_.reavaliarVaults();
     } catch (...) {}
     carregarDados();
-    if (driveHealthComp_) {
-        atualizarSaudeSmart(true);
-    }
 }
 
 void StorageWorkspaceComponent::carregarDados() {
@@ -541,12 +748,10 @@ void StorageWorkspaceComponent::carregarDados() {
     lastStorageError_ = "";
     lastStorageErrorDetails_ = "";
 
-    // Sync all mounted physical drives & resolve unlinked project files
     try {
         matriz::vault::sincronizarDrivesDoProjeto(projeto_.projeto().registro(), projeto_.projeto().projetoId());
     } catch (...) {}
 
-    // Scan ProjectLog for any recent storage error diagnostics
     try {
         matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
         juce::String logText = pLog.readContent();
@@ -579,7 +784,6 @@ void StorageWorkspaceComponent::carregarDados() {
     auto& db = projeto_.projeto().registro();
     std::vector<StorageDevice> allDevs;
 
-    // Query all registered vaults
     try {
         auto stmt = db.prepare(
             "SELECT id, COALESCE(projeto_id, ''), COALESCE(nome, ''), COALESCE(tipo, ''), "
@@ -611,20 +815,42 @@ void StorageWorkspaceComponent::carregarDados() {
             dev.criadoEm = stmt.columnText(15);
             dev.vistoEm = stmt.columnText(16);
 
-            // Evaluate live online state
             dev.online = (dev.status == "online");
-            if (!dev.online && !dev.localizacao.isEmpty()) {
+            if (!dev.localizacao.isEmpty()) {
                 juce::File loc(dev.localizacao);
-                if (loc.isDirectory()) dev.online = true;
+                if (loc.isDirectory()) {
+                    dev.online = true;
+                    juce::int64 volTotal = loc.getVolumeTotalSize();
+                    juce::int64 volFree = loc.getBytesFreeOnVolume();
+                    if (volTotal <= 0 && dev.capacidadeBytes > 0) {
+                        volTotal = dev.capacidadeBytes;
+                    }
+                    if (volTotal > 0 && volFree >= 0) {
+                        dev.espacoTotalBytes = volTotal;
+                        dev.espacoLivreBytes = volFree;
+                        dev.espacoUsadoBytes = juce::jmax<juce::int64>(0, volTotal - volFree);
+                        dev.pctUsado = juce::jlimit(0.0, 100.0, (static_cast<double>(dev.espacoUsadoBytes) / static_cast<double>(volTotal)) * 100.0);
+                        dev.pctLivre = juce::jlimit(0.0, 100.0, 100.0 - dev.pctUsado);
+                        dev.metricasEspacoDisponiveis = true;
+                    } else if (dev.capacidadeBytes > 0) {
+                        dev.espacoTotalBytes = dev.capacidadeBytes;
+                    }
+                }
             }
+            if (!dev.metricasEspacoDisponiveis && dev.capacidadeBytes > 0) {
+                dev.espacoTotalBytes = dev.capacidadeBytes;
+            }
+
+            // Retrieve SMART report for this device
+            try {
+                dev.smartReport = matriz::vault::obterUltimoLogOuConsultar(db, dev.id, dev.numeroSerie, juce::File(dev.localizacao));
+            } catch (...) {}
 
             allDevs.push_back(std::move(dev));
         }
     } catch (...) {}
 
-    // Categorize into Source and Backup drives
     for (auto& dev : allDevs) {
-        // Check ingest activity
         try {
             auto stmt = db.prepare(
                 "SELECT COUNT(*), COALESCE(SUM(tamanho_bytes), 0), COALESCE(MAX(criado_em), '') "
@@ -640,7 +866,6 @@ void StorageWorkspaceComponent::carregarDados() {
             }
         } catch (...) {}
 
-        // Check backup activity
         try {
             auto stmt = db.prepare(
                 "SELECT COUNT(*), COALESCE(SUM(itens_copiados), 0), COALESCE(SUM(itens_falha), 0), COALESCE(MAX(criado_em), '') "
@@ -672,7 +897,6 @@ void StorageWorkspaceComponent::carregarDados() {
         }
     }
 
-    // Maintain or establish selection
     std::string targetVaultId = selectedVaultId_;
     bool targetIsSource = selectedIsSource_;
 
@@ -709,6 +933,10 @@ void StorageWorkspaceComponent::carregarDados() {
 
     if (!targetVaultId.empty()) {
         selecionarDevice(targetVaultId, targetIsSource);
+    } else {
+        allDeviceUsageLogs_.clear();
+        datesWithLogs_.clear();
+        atualizarListaLogsFiltrada();
     }
 
     if (sourceCardsContainer_) {
@@ -724,7 +952,6 @@ void StorageWorkspaceComponent::carregarDados() {
 void StorageWorkspaceComponent::selecionarDevice(const std::string& vaultId, bool isSourceSelection) {
     selectedVaultId_ = vaultId;
     selectedIsSource_ = isSourceSelection;
-    selectedUsageLogs_.clear();
 
     const StorageDevice* selectedDev = nullptr;
     const auto& currentList = selectedIsSource_ ? sourceDevices_ : backupDevices_;
@@ -744,110 +971,97 @@ void StorageWorkspaceComponent::selecionarDevice(const std::string& vaultId, boo
         }
     }
 
-    if (!selectedDev) return;
-    const auto& dev = *selectedDev;
-
-    // Update Title & Nickname editor
-    juce::String displayTitle = dev.nome.isNotEmpty() ? dev.nome : juce::String(dev.modelo);
-    if (displayTitle.isEmpty()) displayTitle = "Storage Device";
-    lblInspectorTitle_->setText("DEVICE INSPECTOR: " + displayTitle, juce::dontSendNotification);
-    txtNickName_->setText(dev.nome, false);
-
-    // Update Category ComboBox
-    if (dev.categoriaDispositivo == "hd_externo") comboCategory_->setSelectedId(1, juce::dontSendNotification);
-    else if (dev.categoriaDispositivo == "pen_drive") comboCategory_->setSelectedId(2, juce::dontSendNotification);
-    else if (dev.categoriaDispositivo == "cd" || dev.categoriaDispositivo == "dvd") comboCategory_->setSelectedId(3, juce::dontSendNotification);
-    else if (dev.categoriaDispositivo == "hd_interno") comboCategory_->setSelectedId(4, juce::dontSendNotification);
-    else if (dev.categoriaDispositivo == "rede") comboCategory_->setSelectedId(5, juce::dontSendNotification);
-    else comboCategory_->setSelectedId(6, juce::dontSendNotification);
-
-    // Populate Read-Only Hardware Specifications
-    std::vector<PropRow> props;
-    props.push_back({ "Device Model:", dev.modelo.empty() ? "-" : dev.modelo });
-    props.push_back({ "Vendor / Brand:", dev.vendor.empty() ? "-" : dev.vendor });
-    props.push_back({ "Hardware Serial:", dev.numeroSerie.empty() ? "-" : dev.numeroSerie });
-    props.push_back({ "Volume UUID:", dev.uuidVolume.empty() ? "-" : dev.uuidVolume });
-    props.push_back({ "File System:", dev.sistemaArquivos.empty() ? "-" : dev.sistemaArquivos });
-    props.push_back({ "Total Capacity:", formatBytes(dev.capacidadeBytes) });
-    props.push_back({ "Media Location:", dev.localizacao.isEmpty() ? "Disconnected" : dev.localizacao });
-    props.push_back({ "Connection State:", dev.online ? "Connected (Online)" : "Offline / Unmounted" });
-    props.push_back({ "First Registered:", dev.criadoEm.empty() ? "-" : dev.criadoEm.substr(0, 16) });
-
-    if (hardwarePropsComp_) {
-        hardwarePropsComp_->setProps(props);
-    }
-
-    // Load Device Usage Timeline Logs
     auto& db = projeto_.projeto().registro();
-    selectedUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, dev.id);
-
-    // If no timeline records exist yet for this device, initialize first online scan log
-    if (selectedUsageLogs_.empty() && dev.online) {
-        matriz::vault::registrarUsoDoDispositivo(db, projeto_.projeto().pasta(), dev.id, "ONLINE SCAN", 0, 0, {}, "Device connected and verified");
-        selectedUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, dev.id);
+    if (selectedDev) {
+        allDeviceUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, selectedDev->id);
+        if (allDeviceUsageLogs_.empty() && selectedDev->online) {
+            matriz::vault::registrarUsoDoDispositivo(db, projeto_.projeto().pasta(), selectedDev->id, "ONLINE SCAN", 0, 0, {}, "Device connected and verified");
+            allDeviceUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, selectedDev->id);
+        }
+    } else {
+        allDeviceUsageLogs_.clear();
     }
 
-    // Configure Table Header for Device Usage Timeline
-    auto& hdr = tableHistory_->getHeader();
-    hdr.removeAllColumns();
-
-    lblHistoryTitle_->setText("DEVICE USAGE TIMELINE & LOGS (" + juce::String(selectedUsageLogs_.size()) + " sessions)", juce::dontSendNotification);
-    hdr.addColumn("Date & Time", kColDate, 140, 110, 180);
-    hdr.addColumn("Action", kColAction, 95, 80, 130);
-    hdr.addColumn("Operator & Host", kColHost, 150, 110, 220);
-    hdr.addColumn("Items / Volume", kColVolume, 120, 90, 180);
-    hdr.addColumn("Health", kColHealth, 85, 70, 110);
-    hdr.addColumn("Daily Report (.md)", kColReport, 130, 100, 200);
-
-    if (tableHistory_) {
-        tableHistory_->updateContent();
-        tableHistory_->repaint();
+    // Populate dates with logs map (YYYY-MM-DD -> count)
+    datesWithLogs_.clear();
+    for (const auto& log : allDeviceUsageLogs_) {
+        if (log.criadoEm.length() >= 10) {
+            juce::String dateStr = juce::String(log.criadoEm).substring(0, 10);
+            datesWithLogs_[dateStr]++;
+        }
     }
 
-    atualizarSaudeSmart(false);
+    atualizarListaLogsFiltrada();
 
-    inspectorContainer_->repaint();
+    if (logCalendarComp_) {
+        logCalendarComp_->repaint();
+    }
+
+    if (sourceCardsContainer_) sourceCardsContainer_->repaint();
+    if (backupCardsContainer_) backupCardsContainer_->repaint();
 }
 
-void StorageWorkspaceComponent::atualizarSaudeSmart(bool forcarNovaConsulta) {
-    if (selectedVaultId_.empty() || !driveHealthComp_) return;
+void StorageWorkspaceComponent::atualizarSaudeSmartDoDevice(const std::string& vaultId, bool forcarNovaConsulta) {
+    if (vaultId.empty()) return;
 
-    const StorageDevice* selectedDev = nullptr;
-    const auto& currentList = selectedIsSource_ ? sourceDevices_ : backupDevices_;
-    for (const auto& d : currentList) {
-        if (d.id == selectedVaultId_) {
-            selectedDev = &d;
-            break;
+    StorageDevice* targetDev = nullptr;
+    for (auto& d : sourceDevices_) {
+        if (d.id == vaultId) { targetDev = &d; break; }
+    }
+    if (!targetDev) {
+        for (auto& d : backupDevices_) {
+            if (d.id == vaultId) { targetDev = &d; break; }
         }
     }
 
-    if (!selectedDev) {
-        const auto& otherList = selectedIsSource_ ? backupDevices_ : sourceDevices_;
-        for (const auto& d : otherList) {
-            if (d.id == selectedVaultId_) {
-                selectedDev = &d;
-                break;
-            }
-        }
-    }
-
-    if (!selectedDev) return;
+    if (!targetDev) return;
 
     auto& db = projeto_.projeto().registro();
     matriz::vault::SmartHealthReport rep;
 
     if (forcarNovaConsulta) {
-        rep = matriz::vault::consultarSaudeSmart(selectedDev->numeroSerie, juce::File(selectedDev->localizacao));
-        matriz::vault::gravarLogSmart(db, selectedDev->id, rep);
-        // Log telemetry update to timeline
-        matriz::vault::registrarUsoDoDispositivo(db, projeto_.projeto().pasta(), selectedDev->id, "SMART CHECK", 0, 0, {}, "Manual health telemetry scan", &rep);
-        selectedUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, selectedDev->id);
-        if (tableHistory_) tableHistory_->updateContent();
+        rep = matriz::vault::consultarSaudeSmart(targetDev->numeroSerie, juce::File(targetDev->localizacao));
+        matriz::vault::gravarLogSmart(db, targetDev->id, rep);
+        matriz::vault::registrarUsoDoDispositivo(db, projeto_.projeto().pasta(), targetDev->id, "SMART CHECK", 0, 0, {}, "Drive health telemetry refreshed", &rep);
     } else {
-        rep = matriz::vault::obterUltimoLogOuConsultar(db, selectedDev->id, selectedDev->numeroSerie, juce::File(selectedDev->localizacao));
+        rep = matriz::vault::obterUltimoLogOuConsultar(db, targetDev->id, targetDev->numeroSerie, juce::File(targetDev->localizacao));
     }
 
-    driveHealthComp_->setReport(rep);
+    targetDev->smartReport = rep;
+
+    if (targetDev->id == selectedVaultId_) {
+        selecionarDevice(targetDev->id, selectedIsSource_);
+    } else {
+        if (sourceCardsContainer_) sourceCardsContainer_->repaint();
+        if (backupCardsContainer_) backupCardsContainer_->repaint();
+    }
+}
+
+void StorageWorkspaceComponent::selecionarDataCalendario(const juce::String& yyyyMmDd) {
+    selectedDate_ = yyyyMmDd;
+    atualizarListaLogsFiltrada();
+    if (logCalendarComp_) logCalendarComp_->repaint();
+}
+
+void StorageWorkspaceComponent::atualizarListaLogsFiltrada() {
+    displayedUsageLogs_.clear();
+
+    for (const auto& log : allDeviceUsageLogs_) {
+        if (selectedDate_.isEmpty() || juce::String(log.criadoEm).startsWith(selectedDate_)) {
+            displayedUsageLogs_.push_back(log);
+        }
+    }
+
+    if (selectedDate_.isNotEmpty()) {
+        lblDayLogsTitle_->setText("Logs for: " + selectedDate_ + " (" + juce::String(displayedUsageLogs_.size()) + " sessions)", juce::dontSendNotification);
+    } else {
+        lblDayLogsTitle_->setText("All sessions (" + juce::String(displayedUsageLogs_.size()) + " records)", juce::dontSendNotification);
+    }
+
+    if (tableHistory_) {
+        tableHistory_->updateContent();
+        tableHistory_->repaint();
+    }
 }
 
 void StorageWorkspaceComponent::abrirPastaLogs() {
@@ -866,7 +1080,7 @@ void StorageWorkspaceComponent::abrirPastaLogs() {
     logDir.revealToUser();
 }
 
-void StorageWorkspaceComponent::abrirRelatorioMd(const std::string& caminho) {
+void StorageWorkspaceComponent::abrirRelatorioTxt(const std::string& caminho) {
     if (caminho.empty()) return;
     juce::File f(caminho);
     if (f.existsAsFile()) {
@@ -876,247 +1090,241 @@ void StorageWorkspaceComponent::abrirRelatorioMd(const std::string& caminho) {
     }
 }
 
-void StorageWorkspaceComponent::salvarNomeVault() {
-    if (selectedVaultId_.empty()) return;
-
-    juce::String novoNome = txtNickName_->getText().trim();
-
-    try {
-        auto& db = projeto_.projeto().registro();
-        auto stmt = db.prepare("UPDATE vault SET nome = ?, visto_em = datetime('now') WHERE id = ?;");
-        stmt.bind(1, matriz::db::Value::of(novoNome.toStdString()));
-        stmt.bind(2, matriz::db::Value::of(selectedVaultId_));
-        stmt.step();
-    } catch (...) {}
-
-    for (auto& d : sourceDevices_) {
-        if (d.id == selectedVaultId_) d.nome = novoNome;
-    }
-    for (auto& d : backupDevices_) {
-        if (d.id == selectedVaultId_) d.nome = novoNome;
-    }
-
-    lblInspectorTitle_->setText("DEVICE INSPECTOR: " + (novoNome.isNotEmpty() ? novoNome : "Storage Device"), juce::dontSendNotification);
-
-    if (sourceCardsContainer_) sourceCardsContainer_->repaint();
-    if (backupCardsContainer_) backupCardsContainer_->repaint();
-}
-
-void StorageWorkspaceComponent::salvarCategoriaVault(const std::string& novaCategoria) {
-    if (selectedVaultId_.empty()) return;
-
-    try {
-        auto& db = projeto_.projeto().registro();
-        auto stmt = db.prepare("UPDATE vault SET categoria_dispositivo = ?, categoria_manual = 1, visto_em = datetime('now') WHERE id = ?;");
-        stmt.bind(1, matriz::db::Value::of(novaCategoria));
-        stmt.bind(2, matriz::db::Value::of(selectedVaultId_));
-        stmt.step();
-    } catch (...) {}
-
-    for (auto& d : sourceDevices_) {
-        if (d.id == selectedVaultId_) {
-            d.categoriaDispositivo = novaCategoria;
-            d.categoriaManual = true;
-        }
-    }
-    for (auto& d : backupDevices_) {
-        if (d.id == selectedVaultId_) {
-            d.categoriaDispositivo = novaCategoria;
-            d.categoriaManual = true;
-        }
-    }
-
-    if (sourceCardsContainer_) sourceCardsContainer_->repaint();
-    if (backupCardsContainer_) backupCardsContainer_->repaint();
-}
-
 // TableListBoxModel implementation
 int StorageWorkspaceComponent::getNumRows() {
-    return static_cast<int>(selectedUsageLogs_.size());
+    return static_cast<int>(displayedUsageLogs_.size());
 }
 
-void StorageWorkspaceComponent::paintRowBackground(juce::Graphics& g, int rowNumber, int, int, bool rowIsSelected) {
+void StorageWorkspaceComponent::paintRowBackground(juce::Graphics& g, int, int width, int height, bool rowIsSelected) {
     const auto& tk = tema();
     if (rowIsSelected) {
         g.fillAll(tk.acento.withAlpha(0.18f));
-    } else if (rowNumber % 2 == 1) {
-        g.fillAll(tk.painelAlt.withAlpha(0.40f));
+    } else {
+        g.fillAll(tk.painel);
     }
+    g.setColour(tk.borda.withAlpha(0.4f));
+    g.fillRect(0, height - 1, width, 1);
 }
 
 void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool) {
     const auto& tk = tema();
-    if (rowNumber < 0 || rowNumber >= static_cast<int>(selectedUsageLogs_.size())) return;
-    const auto& item = selectedUsageLogs_[static_cast<size_t>(rowNumber)];
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(displayedUsageLogs_.size())) return;
+    const auto& item = displayedUsageLogs_[static_cast<size_t>(rowNumber)];
 
-    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
     juce::Rectangle<int> cellBounds(6, 0, width - 12, height);
 
     if (columnId == kColDate) {
+        g.setFont(juce::Font(juce::FontOptions(12.5f)));
         g.setColour(tk.textoPrimario);
-        g.drawText(item.criadoEm, cellBounds, juce::Justification::centredLeft, true);
+        g.drawText(formatLogDateTime(item.criadoEm), cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColAction) {
-        juce::Colour actColor = tk.acento;
-        if (item.acao == "INGEST") actColor = juce::Colour(0xff0284c7);
-        else if (item.acao == "BACKUP") actColor = juce::Colour(0xff10b981);
-        else if (item.acao == "ONLINE SCAN" || item.acao == "SMART CHECK") actColor = tk.textoSecundario;
+        juce::String actionText = item.acao;
+        if (actionText.equalsIgnoreCase("SMART CHECK")) actionText = "Smart check";
+        else if (actionText.equalsIgnoreCase("INGEST")) actionText = "Ingest";
+        else if (actionText.equalsIgnoreCase("BACKUP")) actionText = "Backup";
+        else if (actionText.equalsIgnoreCase("ONLINE SCAN")) actionText = "Online scan";
+        else if (actionText.isNotEmpty()) {
+            actionText = actionText.toLowerCase();
+            actionText = actionText.substring(0, 1).toUpperCase() + actionText.substring(1);
+        }
 
-        auto badgeRect = cellBounds.reduced(2, 3);
-        g.setColour(actColor.withAlpha(0.18f));
-        g.fillRoundedRectangle(badgeRect.toFloat(), 3.0f);
-        g.setColour(actColor);
-        g.drawRoundedRectangle(badgeRect.toFloat(), 3.0f, 1.0f);
-        g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
-        g.drawText(juce::String(item.acao).toUpperCase(), badgeRect, juce::Justification::centred);
+        auto badgeFont = juce::Font(juce::FontOptions(11.5f));
+        int textW = (int)juce::GlyphArrangement::getStringWidth(badgeFont, actionText);
+        auto badgeRect = cellBounds.reduced(0, 4).withWidth(juce::jmin(cellBounds.getWidth() - 4, textW + 20));
+
+        g.setColour(tk.painelAlt.withAlpha(0.6f));
+        g.fillRoundedRectangle(badgeRect.toFloat(), badgeRect.getHeight() / 2.0f);
+        g.setColour(tk.borda.withAlpha(0.6f));
+        g.drawRoundedRectangle(badgeRect.toFloat(), badgeRect.getHeight() / 2.0f, 0.8f);
+
+        g.setColour(tk.textoPrimario);
+        g.setFont(badgeFont);
+        g.drawText(actionText, badgeRect, juce::Justification::centred);
     } else if (columnId == kColHost) {
         juce::String hostInfo = item.operador;
+        if (hostInfo.isEmpty()) hostInfo = "user";
         if (!item.computador.empty()) hostInfo << "@" << juce::String(item.computador);
-        g.setColour(tk.textoSecundario);
+        else hostInfo << "@Mac-mini";
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setColour(tk.textoPrimario);
         g.drawText(hostInfo, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColVolume) {
         juce::String volText;
-        if (item.totalArquivos > 0 || item.totalBytes > 0) {
-            volText << item.totalArquivos << " items (" << formatBytes(item.totalBytes) << ")";
+        juce::String act = juce::String(item.acao);
+        if (act.equalsIgnoreCase("SMART CHECK")) {
+            volText = "Manual health check";
+        } else if (item.totalArquivos > 0 || item.totalBytes > 0) {
+            volText = juce::String(item.totalArquivos) + " items (" + formatBytes(item.totalBytes) + ")";
+        } else if (!item.detalhes.empty()) {
+            volText = juce::String::fromUTF8(item.detalhes.c_str());
         } else {
-            volText = !item.detalhes.empty() ? juce::String::fromUTF8(item.detalhes.c_str()) : "-";
+            volText = "-";
         }
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
         g.setColour(tk.textoPrimario);
         g.drawText(volText, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColHealth) {
         juce::Colour hColor = juce::Colour(0xff22c55e);
-        if (item.saudeEstado == "WARNING") hColor = juce::Colour(0xffeab308);
-        else if (item.saudeEstado == "FAILING") hColor = juce::Colour(0xffef4444);
-        else if (item.saudeEstado == "UNAVAILABLE") hColor = juce::Colour(0xff71717a);
+        juce::String hLabel = "Healthy";
+        juce::String estadoStr = juce::String(item.saudeEstado);
+        if (estadoStr.equalsIgnoreCase("WARNING")) {
+            hColor = tk.alerta;
+            hLabel = "Warning";
+        } else if (estadoStr.equalsIgnoreCase("FAILING") || estadoStr.equalsIgnoreCase("CRITICAL")) {
+            hColor = tk.perigo;
+            hLabel = "Critical";
+        } else if (estadoStr.equalsIgnoreCase("UNAVAILABLE")) {
+            hColor = tk.textoTerciario;
+            hLabel = "Unavailable";
+        } else if (estadoStr.isNotEmpty()) {
+            hLabel = estadoStr.toLowerCase();
+            hLabel = hLabel.substring(0, 1).toUpperCase() + hLabel.substring(1);
+        }
 
-        auto badgeRect = cellBounds.reduced(2, 3);
-        g.setColour(hColor.withAlpha(0.18f));
-        g.fillRoundedRectangle(badgeRect.toFloat(), 3.0f);
+        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
         g.setColour(hColor);
-        g.drawRoundedRectangle(badgeRect.toFloat(), 3.0f, 1.0f);
-        g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
-        g.drawText(item.saudeEstado, badgeRect, juce::Justification::centred);
+        g.drawText(hLabel, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColReport) {
-        auto btnRect = cellBounds.reduced(2, 2);
-        g.setColour(tk.painelAlt);
-        g.fillRoundedRectangle(btnRect.toFloat(), 3.0f);
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(btnRect.toFloat(), 3.0f, 1.0f);
-        g.setColour(tk.acento);
-        g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
-        g.drawText("VIEW .MD", btnRect, juce::Justification::centred);
+        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::underlined)));
+        g.setColour(tk.textoSecundario);
+        g.drawText(".txt", cellBounds, juce::Justification::centredLeft, true);
     }
 }
 
 void StorageWorkspaceComponent::cellDoubleClicked(int rowNumber, int, const juce::MouseEvent&) {
-    if (rowNumber < 0 || rowNumber >= static_cast<int>(selectedUsageLogs_.size())) return;
-    const auto& item = selectedUsageLogs_[static_cast<size_t>(rowNumber)];
-    abrirRelatorioMd(item.relatorioMdCaminho);
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(displayedUsageLogs_.size())) return;
+    const auto& item = displayedUsageLogs_[static_cast<size_t>(rowNumber)];
+    abrirRelatorioTxt(item.relatorioTxtCaminho);
+}
+
+void StorageWorkspaceComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (lblTitle_) {
+        lblTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (lblSubtitle_) {
+        lblSubtitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        lblSubtitle_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (btnRefresh_) {
+        btnRefresh_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnRefresh_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (lblSourceColumnTitle_) {
+        lblSourceColumnTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        lblSourceColumnTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (lblBackupColumnTitle_) {
+        lblBackupColumnTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        lblBackupColumnTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (lblDayLogsTitle_) {
+        lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblDayLogsTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (btnShowAllLogs_) {
+        btnShowAllLogs_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
+        btnShowAllLogs_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnOpenLogFolder_) {
+        btnOpenLogFolder_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
+        btnOpenLogFolder_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (tableHistory_) {
+        tableHistory_->setColour(juce::ListBox::backgroundColourId, tk.painel);
+        tableHistory_->setColour(juce::ListBox::outlineColourId, tk.borda.withAlpha(0.6f));
+        tableHistory_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painel);
+        tableHistory_->getHeader().setColour(juce::TableHeaderComponent::textColourId, tk.textoTerciario);
+        tableHistory_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda.withAlpha(0.4f));
+        tableHistory_->repaint();
+    }
+    if (logCalendarComp_) {
+        logCalendarComp_->atualizarRotuloMes();
+        logCalendarComp_->repaint();
+    }
+    if (sourceCardsContainer_) sourceCardsContainer_->repaint();
+    if (backupCardsContainer_) backupCardsContainer_->repaint();
+    repaint();
 }
 
 void StorageWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.fundo);
 
-    // Divider line between header and main section
     g.setColour(tk.borda);
-    g.fillRect(0, 68, getWidth(), 1);
+    g.fillRect(0, 62, getWidth(), 1);
 }
 
 void StorageWorkspaceComponent::resized() {
-    auto area = getLocalBounds().reduced(20, 12);
+    auto area = getLocalBounds().reduced(16, 10);
 
     // Header Area
-    auto headerArea = area.removeFromTop(48);
-    btnRefresh_->setBounds(headerArea.removeFromRight(140).reduced(0, 8));
-    lblTitle_->setBounds(headerArea.removeFromTop(24));
+    auto headerArea = area.removeFromTop(44);
+    btnRefresh_->setBounds(headerArea.removeFromRight(150).reduced(0, 6));
+    lblTitle_->setBounds(headerArea.removeFromTop(22));
     lblSubtitle_->setBounds(headerArea);
 
-    area.removeFromTop(10);
+    area.removeFromTop(8);
 
-    // Top Section: Two Columns (Source Drives & Backup Drives)
-    // Allocate ~50% of available height to give ample room for all drive cards
-    int topH = juce::jmax(220, static_cast<int>(area.getHeight() * 0.50f));
+    int totalAvailH = area.getHeight();
+
+    // Bottom Section: Interactive Log Calendar + Sessions Table
+    int bottomH = juce::jlimit(175, 220, static_cast<int>(totalAvailH * 0.28f));
+    int topH = totalAvailH - bottomH - 8;
+
+    // Top Section (HD Cards occupy upper area)
     auto topArea = area.removeFromTop(topH);
 
-    int colW = (topArea.getWidth() - 16) / 2;
+    int colW = (topArea.getWidth() - 14) / 2;
     auto leftColArea = topArea.removeFromLeft(colW);
-    topArea.removeFromLeft(16); // Gap between columns
+    topArea.removeFromLeft(14);
     auto rightColArea = topArea;
 
-    // Left Column
-    lblSourceColumnTitle_->setBounds(leftColArea.removeFromTop(24));
+    // Left Column (Source Drives)
+    lblSourceColumnTitle_->setBounds(leftColArea.removeFromTop(22));
     leftColArea.removeFromTop(4);
     sourceCardsViewport_->setBounds(leftColArea);
     if (sourceCardsContainer_) {
-        sourceCardsContainer_->setSize(leftColArea.getWidth() - 12, sourceCardsContainer_->getHeight());
+        sourceCardsContainer_->setSize(leftColArea.getWidth() - 10, sourceCardsContainer_->getHeight());
         sourceCardsContainer_->atualizarAltura();
     }
 
-    // Right Column
-    lblBackupColumnTitle_->setBounds(rightColArea.removeFromTop(24));
+    // Right Column (Backup Drives)
+    lblBackupColumnTitle_->setBounds(rightColArea.removeFromTop(22));
     rightColArea.removeFromTop(4);
     backupCardsViewport_->setBounds(rightColArea);
     if (backupCardsContainer_) {
-        backupCardsContainer_->setSize(rightColArea.getWidth() - 12, backupCardsContainer_->getHeight());
+        backupCardsContainer_->setSize(rightColArea.getWidth() - 10, backupCardsContainer_->getHeight());
         backupCardsContainer_->atualizarAltura();
     }
 
-    area.removeFromTop(12);
+    area.removeFromTop(8);
 
-    // Bottom Section: Inspector & History Table
-    inspectorContainer_->setBounds(area);
+    // Bottom Section: Interactive Log Calendar (Left) + Day Sessions Table (Right)
+    logDockContainer_->setBounds(area);
 
-    auto inspArea = inspectorContainer_->getLocalBounds();
-    int leftInspW = juce::jmax(340, static_cast<int>(inspArea.getWidth() * 0.38f));
-    auto leftInspArea = inspArea.removeFromLeft(leftInspW);
-    inspArea.removeFromLeft(20); // Gap between inspector and history table
-    auto rightInspArea = inspArea;
+    auto dockArea = logDockContainer_->getLocalBounds();
 
-    // Left Inspector: Device details & hardware props
-    lblInspectorTitle_->setBounds(leftInspArea.removeFromTop(24));
-    leftInspArea.removeFromTop(4);
+    // Left Calendar Widget (Fixed width ~180px)
+    int calW = 180;
+    auto calArea = dockArea.removeFromLeft(calW);
+    dockArea.removeFromLeft(16); // Gap
 
-    // Row 1: Nickname editor
-    auto nickRow = leftInspArea.removeFromTop(24);
-    lblNickName_->setBounds(nickRow.removeFromLeft(130));
-    btnSaveNickName_->setBounds(nickRow.removeFromRight(65));
-    nickRow.removeFromRight(6);
-    txtNickName_->setBounds(nickRow);
+    // Right Sessions Table
+    auto tableArea = dockArea;
 
-    leftInspArea.removeFromTop(4);
+    logCalendarComp_->setBounds(calArea);
 
-    // Row 2: Category selector
-    auto catRow = leftInspArea.removeFromTop(24);
-    lblCategory_->setBounds(catRow.removeFromLeft(130));
-    comboCategory_->setBounds(catRow);
+    auto tableHdr = tableArea.removeFromTop(24);
+    btnOpenLogFolder_->setBounds(tableHdr.removeFromRight(125).reduced(0, 1));
+    tableHdr.removeFromRight(6);
+    btnShowAllLogs_->setBounds(tableHdr.removeFromRight(95).reduced(0, 1));
+    tableHdr.removeFromRight(10);
+    lblDayLogsTitle_->setBounds(tableHdr);
 
-    leftInspArea.removeFromTop(6);
-
-    // Hardware Specs Section
-    lblHardwareTitle_->setBounds(leftInspArea.removeFromTop(18));
-    leftInspArea.removeFromTop(2);
-    int specsH = 9 * 18 + 2;
-    hardwarePropsComp_->setBounds(leftInspArea.removeFromTop(specsH));
-
-    leftInspArea.removeFromTop(6);
-
-    // Drive Health Section (Streamlined 2-line compact section)
-    auto healthHdr = leftInspArea.removeFromTop(20);
-    btnRefreshHealth_->setBounds(healthHdr.removeFromRight(65));
-    healthHdr.removeFromRight(6);
-    lblHealthTitle_->setBounds(healthHdr);
-
-    leftInspArea.removeFromTop(2);
-    driveHealthComp_->setBounds(leftInspArea.removeFromTop(44));
-
-    // Right Inspector: History Table & Open Folder Button
-    auto histHdr = rightInspArea.removeFromTop(24);
-    btnOpenLogFolder_->setBounds(histHdr.removeFromRight(150).reduced(0, 1));
-    histHdr.removeFromRight(8);
-    lblHistoryTitle_->setBounds(histHdr);
-
-    rightInspArea.removeFromTop(4);
-    tableHistory_->setBounds(rightInspArea);
+    tableArea.removeFromTop(4);
+    tableHistory_->setBounds(tableArea);
 }
 
 } // namespace matriz::ui
