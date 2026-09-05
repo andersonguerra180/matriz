@@ -122,7 +122,7 @@ private:
 class MatrizApplication : public juce::JUCEApplication {
 public:
     const juce::String getApplicationName() override { return "BKR Matriz"; }
-    const juce::String getApplicationVersion() override { return "1.0"; }
+    const juce::String getApplicationVersion() override { return "1.0 TRIAL"; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise(const juce::String& commandLine) override {
@@ -175,7 +175,7 @@ public:
 
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
 
-        janela_ = std::make_unique<matriz::ui::MainWindow>(matriz::i18n::t("janela_principal.titulo"));
+        janela_ = std::make_unique<matriz::ui::MainWindow>(matriz::i18n::t("janela_principal.titulo") + " [1.0 TRIAL — NOT FOR SALE]");
         janela_->setVisible(false);
 
         splash_ = std::make_unique<SplashWindow>();

@@ -235,9 +235,9 @@ void MainWindow::conectarConteudo() {
         menuItemsChanged();
         if (conteudo_->temProjetoAberto()) {
             auto pNome = juce::String::fromUTF8(conteudo_->projetoAberto()->projeto().nome().c_str());
-            setName(pNome.isEmpty() ? "BKR Matriz" : (pNome + " — BKR Matriz"));
+            setName(pNome.isEmpty() ? "BKR Matriz [1.0 TRIAL — NOT FOR SALE]" : (pNome + " — BKR Matriz [1.0 TRIAL — NOT FOR SALE]"));
         } else {
-            setName("BKR Matriz");
+            setName("BKR Matriz [1.0 TRIAL — NOT FOR SALE]");
         }
     };
 }

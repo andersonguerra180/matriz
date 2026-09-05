@@ -57,6 +57,7 @@ private:
     bool isCatalog_ = false;
     bool hasParentCatalog_ = false;
 
+    juce::Rectangle<int> trialBadgeBounds_;
     std::unique_ptr<juce::TextButton> botaoFechar_;
 };
 

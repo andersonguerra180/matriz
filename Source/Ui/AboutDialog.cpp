@@ -62,8 +62,8 @@ void AboutDialog::paint(juce::Graphics& g) {
     // Subtitle / Version tag
     auto versionRow = infoBounds.removeFromTop(20.0f);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-    g.setColour(tk.acento);
-    g.drawText("Version 1.0", versionRow, juce::Justification::centredLeft, true);
+    g.setColour(juce::Colour(0xffff5555));
+    g.drawText("Version 1.0 (TRIAL — NOT FOR SALE)", versionRow, juce::Justification::centredLeft, true);
 
     infoBounds.removeFromTop(6.0f);
 
