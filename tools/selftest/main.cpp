@@ -245,30 +245,27 @@ void testarProjetoPortavel() {
     tmpRoot.deleteRecursively();
 }
 
-// Idioma único (§6): a interface inteira é em inglês, vinda da tabela
-// estática de Source/Ui/Strings.h. Não há mais troca de locale em tempo real
-// nem tabela pt_BR — carregar() continua existindo (chamado no start do
-// programa) mas é no-op, e pedir outro locale não pode mudar nada nem travar.
+// i18n: Inglês é o padrão, Português do Brasil é selecionável em Preferências.
 void testarI18n() {
-    std::cout << "== i18n (single language: English) ==\n";
+    std::cout << "== i18n (EN-US default, PT-BR selectable) ==\n";
 
     matriz::i18n::carregar("en");
     check(matriz::i18n::t("menu.arquivo") == "File", "menu.arquivo = \"File\"");
-    // O rótulo do modo deixou de ser o jargão "Archive"/"Acervo" e passou a
-    // dizer o que a pessoa tem em mãos ("mixed files") — mudança deliberada
-    // de vocabulário, não regressão.
     check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New Collection project",
           "preservation mode is called \"New Collection project\"");
     check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
           "a missing key returns [key], never throws and never hangs");
 
-    // Pedir outro locale não derruba nem devolve string vazia: continua tudo
-    // em inglês (critério 13 — interface, logs e relatórios 100% em inglês).
+    // Troca para pt_BR carrega a tabela completa em Português do Brasil
     matriz::i18n::carregar("pt_BR");
-    check(matriz::i18n::t("menu.arquivo") == "File",
-          "asking for pt_BR changes nothing: the interface stays in English");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New Collection project",
-          "no Portuguese string survives after asking for pt_BR");
+    check(matriz::i18n::t("menu.arquivo") == "Arquivo",
+          "asking for pt_BR switches interface to Brazilian Portuguese (\"Arquivo\")");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "Novo projeto de arquivos variados",
+          "preservation mode in pt_BR translates correctly");
+    check(matriz::i18n::t("nao_baixado") == juce::String::fromUTF8("Não Baixado"),
+          "the database value 'nao_baixado' in pt_BR is displayed as \"Não Baixado\"");
+    check(matriz::i18n::t("ausente") == "Ausente",
+          "the database value 'ausente' in pt_BR is displayed as \"Ausente\"");
 
     matriz::i18n::carregar("en");
     check(matriz::i18n::t("menu.arquivo") == "File", "switching back to en is idempotent");

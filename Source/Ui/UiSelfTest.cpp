@@ -1920,8 +1920,8 @@ int rodarUiSelfTest() {
             matriz::i18n::carregar("pt_BR");
             juce::String depoisDePedirPtBr = matriz::i18n::t("tela_inicial.botao_abrir");
             matriz::i18n::carregar("en");
-            checar(emIngles == "Open an existing project..." && depoisDePedirPtBr == emIngles,
-                   "the key the start screen uses resolves to English and no locale changes it (\"" + emIngles +
+            checar(emIngles == "Open an existing project..." && depoisDePedirPtBr == juce::String::fromUTF8("Abrir um projeto que já existe…"),
+                   "the key the start screen uses resolves to English and changes to pt_BR (\"" + emIngles +
                        "\" / \"" + depoisDePedirPtBr + "\")");
         }
 

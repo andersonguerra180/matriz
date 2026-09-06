@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate-complete.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-build.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-configure.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-download.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-install.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-mkdir.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-patch.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-test.rule"
+		},
+		{
+			"file" : "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"exiv2-populate"
+		],
+		"name" : "exiv2-populate"
+	}
+}

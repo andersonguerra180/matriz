@@ -86,11 +86,21 @@ void MainWindow::lookAndFeelChanged() {
 }
 
 juce::StringArray MainWindow::getMenuBarNames() {
+    juce::String locale = matriz::app::lerLocale();
+    bool isPt = locale.equalsIgnoreCase("pt_BR") || locale.equalsIgnoreCase("pt-BR") || locale.equalsIgnoreCase("pt");
+    if (isPt) {
+        return {juce::String::fromUTF8("Arquivo"), juce::String::fromUTF8("Editar"),
+                juce::String::fromUTF8("Projeto"), juce::String::fromUTF8("Preferências"),
+                juce::String::fromUTF8("Ajuda")};
+    }
     return {"File", "Edit", "Project", "Preferences", "Help"};
 }
 
 juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
     juce::PopupMenu menu;
+    juce::String locale = matriz::app::lerLocale();
+    bool isPt = locale.equalsIgnoreCase("pt_BR") || locale.equalsIgnoreCase("pt-BR") || locale.equalsIgnoreCase("pt");
+
     if (topLevelMenuIndex == kMenuArquivo) {
         bool podeTrocarProjeto = !conteudo_->ingestEmAndamento();
         bool temProjeto = conteudo_->temProjetoAberto() || conteudo_->temCatalogoAberto();
@@ -98,15 +108,15 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
         // New Submenu
         juce::PopupMenu newMenu;
-        newMenu.addItem(kCmdNovoProjeto, "Collection (.mtz)...", podeTrocarProjeto);
-        newMenu.addItem(kCmdNovoCatalogo, "Catalog (.bkm)...", podeTrocarProjeto);
-        menu.addSubMenu("New", newMenu, podeTrocarProjeto);
+        newMenu.addItem(kCmdNovoProjeto, isPt ? juce::String::fromUTF8("Coleção (.mtz)...") : "Collection (.mtz)...", podeTrocarProjeto);
+        newMenu.addItem(kCmdNovoCatalogo, isPt ? juce::String::fromUTF8("Catálogo (.bkm)...") : "Catalog (.bkm)...", podeTrocarProjeto);
+        menu.addSubMenu(isPt ? juce::String::fromUTF8("Novo") : "New", newMenu, podeTrocarProjeto);
 
         // Open Submenu
         juce::PopupMenu openMenu;
-        openMenu.addItem(kCmdAbrirProjeto, "Collection (.mtz)...", podeTrocarProjeto);
-        openMenu.addItem(kCmdAbrirCatalogo, "Catalog (.bkm)...", podeTrocarProjeto);
-        menu.addSubMenu("Open", openMenu, podeTrocarProjeto);
+        openMenu.addItem(kCmdAbrirProjeto, isPt ? juce::String::fromUTF8("Coleção (.mtz)...") : "Collection (.mtz)...", podeTrocarProjeto);
+        openMenu.addItem(kCmdAbrirCatalogo, isPt ? juce::String::fromUTF8("Catálogo (.bkm)...") : "Catalog (.bkm)...", podeTrocarProjeto);
+        menu.addSubMenu(isPt ? juce::String::fromUTF8("Abrir") : "Open", openMenu, podeTrocarProjeto);
 
         // Recent Files Submenu
         juce::PopupMenu recentMenu;
@@ -115,18 +125,19 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
             int rIdx = 0;
             for (const auto& r : recentes) {
                 juce::String nome = r.nome.isEmpty() ? juce::File(r.pasta).getFileName() : r.nome;
-                bool isCatalog = (r.modo.equalsIgnoreCase("catalogo") || r.modo.equalsIgnoreCase("catalog"));
-                juce::String tag = isCatalog ? "[CATALOG]" : "[COLLECTION]";
+                bool isCat = (r.modo.equalsIgnoreCase("catalogo") || r.modo.equalsIgnoreCase("catalog"));
+                juce::String tag = isPt ? (isCat ? juce::String::fromUTF8("[CATÁLOGO]") : juce::String::fromUTF8("[COLEÇÃO]"))
+                                        : (isCat ? "[CATALOG]" : "[COLLECTION]");
                 juce::String label = tag + "  " + nome;
                 if (!r.pasta.isEmpty())
-                    label += " — " + r.pasta;
+                    label += juce::String::fromUTF8(" — ") + r.pasta;
                 recentMenu.addItem(kCmdRecenteBase + rIdx, label);
                 rIdx++;
             }
         } else {
-            recentMenu.addItem(1, "No Recent Files", false);
+            recentMenu.addItem(1, isPt ? juce::String::fromUTF8("Nenhum Arquivo Recente") : "No Recent Files", false);
         }
-        menu.addSubMenu("Open Recent Files", recentMenu, podeTrocarProjeto);
+        menu.addSubMenu(isPt ? juce::String::fromUTF8("Abrir Arquivos Recentes") : "Open Recent Files", recentMenu, podeTrocarProjeto);
 
         menu.addSeparator();
         juce::String saveText = "Save (Cmd+S)";
@@ -136,40 +147,45 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
         if (temProjeto) {
             if (isCatalog) {
-                saveText = "Save Catalog (Cmd+S)";
-                saveAsText = "Save Catalog As... (Cmd+Shift+S)";
-                closeText = "Close Catalog";
-                infoText = "Catalog Info...";
+                saveText = isPt ? juce::String::fromUTF8("Salvar Catálogo (Cmd+S)") : "Save Catalog (Cmd+S)";
+                saveAsText = isPt ? juce::String::fromUTF8("Salvar Catálogo Como... (Cmd+Shift+S)") : "Save Catalog As... (Cmd+Shift+S)";
+                closeText = isPt ? juce::String::fromUTF8("Fechar Catálogo") : "Close Catalog";
+                infoText = isPt ? juce::String::fromUTF8("Info do Catálogo...") : "Catalog Info...";
             } else {
-                saveText = "Save Collection (Cmd+S)";
-                saveAsText = "Save Collection As... (Cmd+Shift+S)";
-                closeText = "Close Collection";
-                infoText = "Collection Info...";
+                saveText = isPt ? juce::String::fromUTF8("Salvar Coleção (Cmd+S)") : "Save Collection (Cmd+S)";
+                saveAsText = isPt ? juce::String::fromUTF8("Salvar Coleção Como... (Cmd+Shift+S)") : "Save Collection As... (Cmd+Shift+S)";
+                closeText = isPt ? juce::String::fromUTF8("Fechar Coleção") : "Close Collection";
+                infoText = isPt ? juce::String::fromUTF8("Info da Coleção...") : "Collection Info...";
             }
+        } else if (isPt) {
+            saveText = juce::String::fromUTF8("Salvar (Cmd+S)");
+            saveAsText = juce::String::fromUTF8("Salvar Como... (Cmd+Shift+S)");
+            closeText = juce::String::fromUTF8("Fechar");
+            infoText = juce::String::fromUTF8("Info do Projeto...");
         }
 
         menu.addItem(kCmdSalvarProjeto, saveText, temProjeto);
         menu.addItem(kCmdSalvarProjetoComo, saveAsText, temProjeto);
         menu.addItem(kCmdFecharProjeto, closeText, temProjeto && podeTrocarProjeto);
         menu.addSeparator();
-        menu.addItem(kCmdIngerirArquivos, "Add Files...", conteudo_->temProjetoAberto() && !isCatalog);
+        menu.addItem(kCmdIngerirArquivos, isPt ? juce::String::fromUTF8("Adicionar Arquivos...") : "Add Files...", conteudo_->temProjetoAberto() && !isCatalog);
         menu.addSeparator();
-        menu.addItem(kCmdSair, "Quit");
+        menu.addItem(kCmdSair, isPt ? juce::String::fromUTF8("Encerrar") : "Quit");
     } else if (topLevelMenuIndex == kMenuEditar) {
         bool podeUndo = conteudo_->temProjetoAberto() && conteudo_->podeDesfazer();
-        menu.addItem(kCmdUndo, "Undo (Cmd+Z)", podeUndo, false, nullptr);
+        menu.addItem(kCmdUndo, isPt ? juce::String::fromUTF8("Desfazer (Cmd+Z)") : "Undo (Cmd+Z)", podeUndo, false, nullptr);
         menu.addSeparator();
-        menu.addItem(kCmdRenomearItem, "Rename Item(s)... (R)", conteudo_->temProjetoAberto());
-        menu.addItem(kCmdRemoverDoBackup, "Remove Selected from Backup (C)", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdRenomearItem, isPt ? juce::String::fromUTF8("Renomear Item(ns)... (R)") : "Rename Item(s)... (R)", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdRemoverDoBackup, isPt ? juce::String::fromUTF8("Remover Selecionado do Backup (C)") : "Remove Selected from Backup (C)", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuProjeto) {
-        menu.addItem(kCmdConsolidar, matriz::i18n::t("consolidacao.titulo"), conteudo_->temProjetoAberto());
+        menu.addItem(kCmdConsolidar, isPt ? juce::String::fromUTF8("Consolidar / Relocar Arquivos...") : "Consolidate / Relocate Files...", conteudo_->temProjetoAberto());
         menu.addSeparator();
-        menu.addItem(kCmdProjectLog, "Project Log (log.md)...", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuPreferencias) {
-        menu.addItem(kCmdPreferenciasGerais, "Preferences / Theme / AI Key...");
-        menu.addItem(kCmdAudioDevice, "Audio Device...");
+        menu.addItem(kCmdPreferenciasGerais, isPt ? juce::String::fromUTF8("Preferências / Tema / Chave de IA...") : "Preferences / Theme / AI Key...");
+        menu.addItem(kCmdAudioDevice, isPt ? juce::String::fromUTF8("Dispositivo de Áudio...") : "Audio Device...");
     } else if (topLevelMenuIndex == kMenuAjuda) {
-        menu.addItem(kCmdAbout, "About BKR Matriz...");
+        menu.addItem(kCmdAbout, isPt ? juce::String::fromUTF8("Sobre o BKR Matriz...") : "About BKR Matriz...");
     }
     return menu;
 }
@@ -405,51 +421,104 @@ void MainWindow::mostrarAudioDeviceDialogo() {
     }));
 }
 
+void MainWindow::trocarIdioma(const juce::String& locale) {
+    if (conteudo_ && conteudo_->ingestEmAndamento()) return;
+
+    matriz::app::gravarLocale(locale);
+    matriz::i18n::carregar(locale);
+
+    auto projetoAberto = conteudo_ ? conteudo_->destacarProjeto() : nullptr;
+    juce::File pastaCatalogo;
+    if (conteudo_ && conteudo_->temCatalogoAberto()) {
+        pastaCatalogo = conteudo_->pastaProjeto();
+    }
+
+    conteudo_ = std::make_unique<MainComponent>();
+    conectarConteudo();
+    setContentNonOwned(conteudo_.get(), true);
+
+    if (projetoAberto) {
+        conteudo_->abrirProjeto(std::move(projetoAberto));
+    } else if (pastaCatalogo.isDirectory()) {
+        conteudo_->abrirCatalogo(pastaCatalogo);
+    }
+
+    juce::MenuBarModel::setMacMainMenu(nullptr);
+    juce::MenuBarModel::setMacMainMenu(this);
+    menuItemsChanged();
+    repaint();
+}
+
 void MainWindow::mostrarPreferenciasDialogo() {
-    auto janela = std::make_shared<juce::DialogWindow>("Preferences & Theme", tema().painel, true);
+    juce::String locAtual = matriz::app::lerLocale();
+    bool isPt = locAtual.equalsIgnoreCase("pt_BR") || locAtual.equalsIgnoreCase("pt-BR") || locAtual.equalsIgnoreCase("pt");
+
+    auto janela = std::make_shared<juce::DialogWindow>(
+        isPt ? juce::String::fromUTF8("Preferências e Tema") : "Preferences & Theme",
+        tema().painel, true);
 
     struct PainelPreferencias : public juce::Component {
-        PainelPreferencias(std::shared_ptr<juce::DialogWindow> win, MainWindow* mainWin)
-            : janela_(std::move(win)), mainWin_(mainWin) {
+        PainelPreferencias(std::shared_ptr<juce::DialogWindow> win, MainWindow* mainWin, bool isPt)
+            : janela_(std::move(win)), mainWin_(mainWin), isPt_(isPt) {
             const auto& tk = tema();
 
-            lblTitulo_ = std::make_unique<juce::Label>("", "Application Preferences");
+            lblTitulo_ = std::make_unique<juce::Label>("", isPt_ ? juce::String::fromUTF8("Preferências do Aplicativo") : "Application Preferences");
             lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
             lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*lblTitulo_);
 
-            lblTema_ = std::make_unique<juce::Label>("", "Appearance / UI Theme:");
+            lblIdioma_ = std::make_unique<juce::Label>("", isPt_ ? juce::String::fromUTF8("Idioma / Language:") : "Language / Idioma:");
+            lblIdioma_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+            lblIdioma_->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*lblIdioma_);
+
+            comboIdioma_ = std::make_unique<juce::ComboBox>();
+            comboIdioma_->addItem("English (EN-US)", 1);
+            comboIdioma_->addItem(juce::String::fromUTF8("Português (PT-BR)"), 2);
+            comboIdioma_->setSelectedId(isPt_ ? 2 : 1, juce::dontSendNotification);
+            addAndMakeVisible(*comboIdioma_);
+
+            lblTema_ = std::make_unique<juce::Label>("", isPt_ ? juce::String::fromUTF8("Aparência / Tema da UI:") : "Appearance / UI Theme:");
             lblTema_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
             lblTema_->setColour(juce::Label::textColourId, tk.textoSecundario);
             addAndMakeVisible(*lblTema_);
 
             comboTema_ = std::make_unique<juce::ComboBox>();
-            comboTema_->addItem("Dark (BKR Dark)", 1);
-            comboTema_->addItem("Light (BKR Light)", 2);
+            comboTema_->addItem(isPt_ ? juce::String::fromUTF8("Escuro (BKR Dark)") : "Dark (BKR Dark)", 1);
+            comboTema_->addItem(isPt_ ? juce::String::fromUTF8("Claro (BKR Light)") : "Light (BKR Light)", 2);
             juce::String temaAtual = matriz::app::lerTema();
             comboTema_->setSelectedId(temaAtual == "light" ? 2 : 1, juce::dontSendNotification);
             addAndMakeVisible(*comboTema_);
 
-            toggleTooltips_ = std::make_unique<juce::ToggleButton>("Show tooltips (hints on hover)");
+            toggleTooltips_ = std::make_unique<juce::ToggleButton>(
+                isPt_ ? juce::String::fromUTF8("Exibir dicas ao passar o mouse (tooltips)") : "Show tooltips (hints on hover)");
             toggleTooltips_->setToggleState(matriz::app::lerTooltipsHabilitados(), juce::dontSendNotification);
             toggleTooltips_->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
             addAndMakeVisible(*toggleTooltips_);
 
-            btnSave_ = std::make_unique<juce::TextButton>("SAVE & APPLY");
+            btnSave_ = std::make_unique<juce::TextButton>(isPt_ ? juce::String::fromUTF8("SALVAR E APLICAR") : "SAVE & APPLY");
             btnSave_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnSave_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
             btnSave_->onClick = [this] {
+                juce::String novoLocale = (comboIdioma_->getSelectedId() == 2) ? "pt_BR" : "en";
+                bool mudouLocale = (novoLocale != matriz::app::lerLocale());
+                matriz::app::gravarLocale(novoLocale);
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");
                 matriz::app::gravarTooltipsHabilitados(toggleTooltips_->getToggleState());
                 matriz::ui::aplicarTemaGlobal(mainWin_);
-                if (mainWin_ && mainWin_->conteudo_) {
+
+                auto win = janela_;
+                if (win) win->exitModalState(0);
+
+                if (mudouLocale && mainWin_) {
+                    mainWin_->trocarIdioma(novoLocale);
+                } else if (mainWin_ && mainWin_->conteudo_) {
                     mainWin_->conteudo_->atualizarTooltips();
                 }
-                if (janela_) janela_->exitModalState(0);
             };
             addAndMakeVisible(*btnSave_);
 
-            btnClose_ = std::make_unique<juce::TextButton>("CLOSE");
+            btnClose_ = std::make_unique<juce::TextButton>(isPt_ ? juce::String::fromUTF8("FECHAR") : "CLOSE");
             btnClose_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
             btnClose_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
             btnClose_->onClick = [this] {
@@ -457,7 +526,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             };
             addAndMakeVisible(*btnClose_);
 
-            setSize(400, 240);
+            setSize(420, 310);
         }
 
         void resized() override {
@@ -465,22 +534,29 @@ void MainWindow::mostrarPreferenciasDialogo() {
             lblTitulo_->setBounds(area.removeFromTop(30));
             area.removeFromTop(8);
 
+            lblIdioma_->setBounds(area.removeFromTop(20));
+            comboIdioma_->setBounds(area.removeFromTop(28));
+            area.removeFromTop(10);
+
             lblTema_->setBounds(area.removeFromTop(20));
             comboTema_->setBounds(area.removeFromTop(28));
-            area.removeFromTop(12);
+            area.removeFromTop(10);
 
             toggleTooltips_->setBounds(area.removeFromTop(28));
-            
+
             auto bottomRow = area.removeFromBottom(36);
             btnClose_->setBounds(bottomRow.removeFromRight(100));
             bottomRow.removeFromRight(8);
-            btnSave_->setBounds(bottomRow.removeFromRight(130));
+            btnSave_->setBounds(bottomRow.removeFromRight(160));
         }
 
     private:
         std::shared_ptr<juce::DialogWindow> janela_;
         MainWindow* mainWin_;
+        bool isPt_;
         std::unique_ptr<juce::Label> lblTitulo_;
+        std::unique_ptr<juce::Label> lblIdioma_;
+        std::unique_ptr<juce::ComboBox> comboIdioma_;
         std::unique_ptr<juce::Label> lblTema_;
         std::unique_ptr<juce::ComboBox> comboTema_;
         std::unique_ptr<juce::ToggleButton> toggleTooltips_;
@@ -488,10 +564,10 @@ void MainWindow::mostrarPreferenciasDialogo() {
         std::unique_ptr<juce::TextButton> btnClose_;
     };
 
-    auto painel = std::make_unique<PainelPreferencias>(janela, this);
+    auto painel = std::make_unique<PainelPreferencias>(janela, this, isPt);
     janela->setContentOwned(painel.release(), true);
     janela->setResizable(false, false);
-    janela->centreWithSize(400, 280);
+    janela->centreWithSize(420, 350);
     janela->setVisible(true);
     janela->enterModalState(true, juce::ModalCallbackFunction::create([janela](int) {
         janela->setVisible(false);

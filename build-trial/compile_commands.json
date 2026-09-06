@@ -1,0 +1,380 @@
+[
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/canonmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/canonmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/canonmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/canonmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/casiomn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/casiomn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/casiomn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/casiomn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/cr2header_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/cr2header_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/cr2header_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/cr2header_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/crwimage_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/crwimage_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/crwimage_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/crwimage_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/fujimn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/fujimn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/fujimn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/fujimn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/helper_functions.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/helper_functions.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/helper_functions.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/helper_functions.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/image_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/image_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/image_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/image_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/jp2image_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jp2image_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jp2image_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/jp2image_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/makernote_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/makernote_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/makernote_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/makernote_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/minoltamn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/minoltamn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/minoltamn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/minoltamn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/nikonmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/nikonmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/nikonmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/nikonmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/olympusmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/olympusmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/olympusmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/olympusmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/orfimage_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/orfimage_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/orfimage_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/orfimage_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/panasonicmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/panasonicmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/panasonicmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/panasonicmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/pentaxmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pentaxmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pentaxmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/pentaxmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/rw2image_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rw2image_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rw2image_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/rw2image_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/samsungmn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/samsungmn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/samsungmn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/samsungmn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/sigmamn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/sigmamn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/sigmamn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/sigmamn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/sonymn_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/sonymn_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/sonymn_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/sonymn_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/tags_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tags_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tags_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/tags_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/tiffcomposite_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffcomposite_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffcomposite_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/tiffcomposite_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/tiffimage_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffimage_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffimage_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/tiffimage_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/tiffvisitor_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffvisitor_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffvisitor_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/tiffvisitor_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/utils.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/utils.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/utils.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/utils.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++ -Dexiv2lib_EXPORTS -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fPIC -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib_int.dir/pngchunk_int.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pngchunk_int.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pngchunk_int.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib_int.dir/pngchunk_int.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/asfvideo.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/asfvideo.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/asfvideo.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/asfvideo.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/basicio.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/basicio.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/basicio.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/basicio.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/bmffimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/bmffimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/bmffimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/bmffimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/bmpimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/bmpimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/bmpimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/bmpimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/convert.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/convert.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/convert.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/convert.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/cr2image.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/cr2image.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/cr2image.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/cr2image.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/crwimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/crwimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/crwimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/crwimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/datasets.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/datasets.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/datasets.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/datasets.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/easyaccess.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/easyaccess.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/easyaccess.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/easyaccess.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/epsimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/epsimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/epsimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/epsimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/error.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/error.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/error.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/error.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/exif.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/exif.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/exif.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/exif.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/futils.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/futils.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/futils.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/futils.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/gifimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/gifimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/gifimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/gifimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/image.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/image.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/image.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/image.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/iptc.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/iptc.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/iptc.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/iptc.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/jp2image.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jp2image.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jp2image.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/jp2image.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/jpgimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jpgimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/jpgimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/jpgimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/metadatum.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/metadatum.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/metadatum.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/metadatum.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/mrwimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/mrwimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/mrwimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/mrwimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/orfimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/orfimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/orfimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/orfimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/pgfimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pgfimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pgfimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/pgfimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/photoshop.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/photoshop.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/photoshop.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/photoshop.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/preview.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/preview.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/preview.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/preview.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/properties.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/properties.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/properties.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/properties.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/psdimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/psdimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/psdimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/psdimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/rafimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rafimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rafimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/rafimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/rw2image.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rw2image.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/rw2image.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/rw2image.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/tags.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tags.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tags.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/tags.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/tgaimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tgaimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tgaimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/tgaimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/tiffimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/tiffimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/tiffimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/types.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/types.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/types.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/types.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/value.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/value.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/value.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/value.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/version.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/version.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/version.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/version.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/webpimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/webpimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/webpimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/webpimage.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/xmp.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/xmp.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/xmp.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/xmp.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/xmpsidecar.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/xmpsidecar.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/xmpsidecar.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/xmpsidecar.cpp.o"
+},
+{
+  "directory": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src",
+  "command": "/usr/bin/c++  -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-build/src\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include/exiv2\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/include\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-build\" -I\"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/zlib-src\" -isystem \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/xmpsdk/include\" -O3 -DNDEBUG -std=gnu++17 -arch x86_64 -arch arm64 -mmacosx-version-min=12.0 -fstack-protector-strong -Wp,-D_GLIBCXX_ASSERTIONS -Wall -Wcast-align -Wpointer-arith -Wformat-security -Wmissing-format-attribute -Woverloaded-virtual -W -Wno-error=format-nonliteral -o CMakeFiles/exiv2lib.dir/pngimage.cpp.o -c \"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pngimage.cpp\"",
+  "file": "/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-src/src/pngimage.cpp",
+  "output": "_deps/exiv2-build/src/CMakeFiles/exiv2lib.dir/pngimage.cpp.o"
+}
+]

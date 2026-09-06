@@ -6,16 +6,15 @@
 // Nenhum literal de texto de UI deve viver dentro de código de Component —
 // tudo passa por t("chave.pontilhada").
 //
-// IDIOMA ÚNICO (§6, critério 13): a interface, os logs e os relatórios são
-// 100% em inglês. O texto mora numa tabela estática em Source/Ui/Strings.h —
-// não há mais tabela pt_BR nem troca de locale em tempo real. Valores que
-// vêm do banco em português (estado de item, prioridade, estado de presença)
-// são traduzidos na hora pela própria t().
+// IDIOMAS SUPORTADOS:
+// - Inglês (EN-US): idioma padrão da interface (Source/Ui/Strings.h).
+// - Português do Brasil (PT-BR): selecionável em Preferências (Source/Ui/StringsPt.h).
+// Valores que vêm do banco em português (estado de item, prioridade, presença)
+// são traduzidos na hora pela própria t() conforme o idioma ativo.
 
 namespace matriz::i18n {
 
-// No-op mantido pelo call site do início do programa e pela assinatura dos
-// testes: qualquer locale pedido continua devolvendo inglês.
+// Carrega o locale ativo ("en" ou "pt_BR"). Padrão: "en".
 void carregar(const juce::String& locale = "en");
 
 // Busca a string de `chave`. Se a chave não existir na tabela, devolve

@@ -1,0 +1,12 @@
+{
+	"InstallScripts" : 
+	[
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/cmake_install.cmake",
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/JUCE/cmake_install.cmake",
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/JUCE/modules/cmake_install.cmake",
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/JUCE/extras/Build/cmake_install.cmake",
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/JUCE/extras/Build/juceaide/cmake_install.cmake",
+		"/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/yaml-cpp-build/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

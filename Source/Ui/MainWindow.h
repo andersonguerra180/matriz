@@ -38,6 +38,7 @@ private:
     void mostrarAudioDeviceDialogo();
     void mostrarAboutDialogo();
     void conectarConteudo();
+    void trocarIdioma(const juce::String& locale);
 
     std::unique_ptr<MainComponent> conteudo_;
 

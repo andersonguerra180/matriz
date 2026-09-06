@@ -1,0 +1,2 @@
+/usr/bin/ar qc libmatriz_sqlite3.a "CMakeFiles/matriz_sqlite3.dir/_deps/sqlite3_amalgamation-src/sqlite3.c.o"
+/usr/bin/ranlib libmatriz_sqlite3.a

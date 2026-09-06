@@ -1,0 +1,2 @@
+/usr/bin/ar qc libMatrizI18nAssets.a CMakeFiles/MatrizI18nAssets.dir/juce_binarydata_MatrizI18nAssets/JuceLibraryCode/BinaryData1.cpp.o CMakeFiles/MatrizI18nAssets.dir/juce_binarydata_MatrizI18nAssets/JuceLibraryCode/BinaryData2.cpp.o
+/usr/bin/ranlib libMatrizI18nAssets.a

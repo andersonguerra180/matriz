@@ -1,0 +1,3 @@
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate.dir
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/edit_cache.dir
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/rebuild_cache.dir

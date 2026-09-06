@@ -1,0 +1,2 @@
+/usr/bin/ar qc libMatrizAssets.a CMakeFiles/MatrizAssets.dir/juce_binarydata_MatrizAssets/JuceLibraryCode/BinaryData1.cpp.o CMakeFiles/MatrizAssets.dir/juce_binarydata_MatrizAssets/JuceLibraryCode/BinaryData2.cpp.o
+/usr/bin/ranlib libMatrizAssets.a

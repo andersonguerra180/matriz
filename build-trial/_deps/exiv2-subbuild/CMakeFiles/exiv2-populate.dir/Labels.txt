@@ -1,0 +1,14 @@
+# Target labels
+ exiv2-populate
+# Source files and their labels
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/CMakeFiles/exiv2-populate-complete.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-build.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-configure.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-download.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-install.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-mkdir.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-patch.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-test.rule
+/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/exiv2-subbuild/exiv2-populate-prefix/src/exiv2-populate-stamp/exiv2-populate-update.rule
