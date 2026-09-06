@@ -1,5 +1,6 @@
-build/
-build-asan/
+build*/
+dist/
+Apps/
 .DS_Store
 *.sqlite
 *.sqlite-wal
