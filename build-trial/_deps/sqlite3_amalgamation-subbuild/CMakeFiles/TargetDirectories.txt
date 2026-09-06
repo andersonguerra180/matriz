@@ -1,3 +1,0 @@
-/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/sqlite3_amalgamation-subbuild/CMakeFiles/sqlite3_amalgamation-populate.dir
-/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/sqlite3_amalgamation-subbuild/CMakeFiles/edit_cache.dir
-/Volumes/BUNKER 4TB/Apps/BKR Matriz/build-trial/_deps/sqlite3_amalgamation-subbuild/CMakeFiles/rebuild_cache.dir
