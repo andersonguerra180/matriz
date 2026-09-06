@@ -203,10 +203,10 @@ matriz_aplicar_asan(matriz_ingest_selftest)
 # marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
 # ------------------------------------------------------------------------------
 juce_add_gui_app(matriz
-    PRODUCT_NAME "BKR Matriz"
+    PRODUCT_NAME "BKR Matriz Trial"
     VERSION 1.0.0
     COMPANY_NAME "BKR"
-    BUNDLE_ID "com.bkr.matriz"
+    BUNDLE_ID "com.bkr.matriz.trial"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_256x256.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_32x32.png")
 juce_generate_juce_header(matriz)
