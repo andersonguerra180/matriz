@@ -2573,6 +2573,7 @@ private:
         std::string maquina;
         std::vector<std::string> tags;
         std::optional<matriz::analytics::AssetGeolocation> geo;
+        std::map<std::string, std::string> campos;
     };
 
     struct SecaoGeoLote {
@@ -2895,8 +2896,28 @@ private:
             makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, "Country", "e.g. Brazil");
         };
 
+        auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote]() {
+            addEditableTextLote("dc_creator", "CREATOR", "dc_creator");
+            addEditableTextLote("dc_subject", "SUBJECT", "dc_subject");
+            addEditableTextLote("dc_description", "DESCRIPTION", "dc_description");
+            addEditableTextLote("dc_publisher", "PUBLISHER", "dc_publisher");
+            addEditableTextLote("dc_contributor", "CONTRIBUTOR", "dc_contributor");
+            addEditableTextLote("dc_issued", "DATE ISSUED (YYYY-MM-DD)", "dc_issued");
+            addEditableTextLote("dc_type", "TYPE", "dc_type");
+            addEditableTextLote("dc_source", "SOURCE", "dc_source");
+            addEditableTextLote("dc_language", "LANGUAGE", "dc_language");
+            addEditableTextLote("dc_relation", "RELATION", "dc_relation");
+            addEditableTextLote("dc_coverage", "COVERAGE", "dc_coverage");
+            addDropdownLote("dc_rights", "RIGHTS", "dc_rights", {
+                "PUBLIC DOMAIN", "COPYRIGHT", "CREATIVE COMMONS (CC BY)", "CREATIVE COMMONS (CC BY-SA)",
+                "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)", "CREATIVE COMMONS (CC0)",
+                "ORPHAN WORK", "FAIR USE", "RESTRICTED"
+            });
+        };
+
         switch (cat) {
             case MediaCategory::Audio: {
+                addDublinCoreLote();
                 addEditableTextLote("year", "YEAR", "ano");
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", "CONTENT", "collection_type", {
@@ -2912,6 +2933,7 @@ private:
                 break;
             }
             case MediaCategory::Video: {
+                addDublinCoreLote();
                 addEditableTextLote("year", "YEAR", "ano");
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", "CONTENT", "collection_type", {
@@ -2925,6 +2947,7 @@ private:
                 break;
             }
             case MediaCategory::Image: {
+                addDublinCoreLote();
                 addEditableTextLote("year", "YEAR", "ano");
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", "CONTENT", "collection_type", {
@@ -2937,6 +2960,7 @@ private:
                 break;
             }
             case MediaCategory::Docs: {
+                addDublinCoreLote();
                 addEditableTextLote("year", "YEAR", "ano");
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", "CONTENT", "collection_type", {
@@ -2950,6 +2974,7 @@ private:
             }
             case MediaCategory::Mixed:
             default: {
+                addDublinCoreLote();
                 addEditableTextLote("year", "YEAR", "ano");
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", "CONTENT", "collection_type", {
@@ -3056,6 +3081,11 @@ private:
             snap.maquina = projeto_.valorCampo(id, "raiz", 0, "maquina").value_or("");
             snap.tags = projeto_.lerTags(id);
             snap.geo = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), id);
+            for (auto* linha : linhas_) {
+                if (linha && !linha->colunaDb.empty()) {
+                    snap.campos[linha->colunaDb] = projeto_.lerMetadado(id, linha->colunaDb).value_or("");
+                }
+            }
             undoSnapshot_[id] = snap;
         }
 
@@ -3166,6 +3196,9 @@ private:
         int restaurados = 0;
         for (const auto& [id, snap] : undoSnapshot_) {
             try {
+                for (const auto& [coluna, valor] : snap.campos) {
+                    projeto_.salvarMetadado(id, coluna, valor);
+                }
                 projeto_.salvarMetadado(id, "ano", snap.ano);
                 projeto_.salvarMetadado(id, "source_media", snap.source_media);
                 projeto_.salvarMetadado(id, "collection_type", snap.collection_type);

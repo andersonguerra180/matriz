@@ -65,7 +65,7 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg)
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
@@ -257,6 +257,7 @@ target_sources(matriz PRIVATE
     Source/Ui/ModalLoopSelfTest.cpp
     Source/Ui/OverlayComponent.cpp
     Source/Ui/AudioWorkspace.cpp
+    Source/Ui/BackupFileSelectorDialog.cpp
     Source/Ui/BackupWorkspaceComponent.cpp
     Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp

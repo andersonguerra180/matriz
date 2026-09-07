@@ -2,6 +2,7 @@
 #include "VulnerabilidadesDialog.h"
 #include "Tokens.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../I18n/Strings.h"
 #include <map>
 #include <algorithm>
 
@@ -32,7 +33,9 @@ public:
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        g.fillAll(tk.fundo);
+        bool isLight = (tk.fundo.getBrightness() > 0.5f);
+        juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+        g.fillAll(bg);
 
         int y = 16;
         int w = getWidth() - 32;
@@ -47,7 +50,7 @@ public:
         auto totalInner = totalRect.reduced(16, 12);
         g.setColour(tk.acento);
         g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-        g.drawText("CATALOG TOTAL (AGGREGATED)", totalInner.removeFromTop(18), juce::Justification::left);
+        g.drawText(i18n::t("analytics.cat_total"), totalInner.removeFromTop(18), juce::Justification::left);
 
         totalInner.removeFromTop(6);
         desenharLinhaMetricas(g, totalInner, owner_.catalogTotalKpi_, true);
@@ -57,13 +60,14 @@ public:
         // 2. Section Header for Collections
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-        g.drawText("COLLECTIONS (" + juce::String(owner_.colecoesKpi_.size()) + ")", 16, y, w, 22, juce::Justification::left);
+        juce::String colTitle = juce::String(i18n::t("analytics.colecoes")).replace("{n}", juce::String(owner_.colecoesKpi_.size()));
+        g.drawText(colTitle, 16, y, w, 22, juce::Justification::left);
         y += 30;
 
         if (owner_.colecoesKpi_.empty()) {
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(12.0f)));
-            g.drawText("No linked collections yet. Import collections in the COLLECTIONS tab to view multi-collection analytics.", 16, y, w, 30, juce::Justification::left);
+            g.drawText(i18n::t("analytics.sem_colecoes"), 16, y, w, 30, juce::Justification::left);
             return;
         }
 
@@ -80,7 +84,7 @@ public:
             auto headerArea = inner.removeFromTop(18);
             g.setColour(tk.textoPrimario);
             g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-            g.drawText("COLLECTION: " + kpi.name.toUpperCase(), headerArea.removeFromLeft(headerArea.getWidth() / 2), juce::Justification::left, true);
+            g.drawText(juce::String(i18n::t("analytics.colecao_prefixo")) + kpi.name.toUpperCase(), headerArea.removeFromLeft(headerArea.getWidth() / 2), juce::Justification::left, true);
 
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(10.0f)));
@@ -117,11 +121,11 @@ public:
             x += itemW;
         };
 
-        drawMetric("TOTAL ASSETS", juce::String(kpi.totalAssets), isTotal ? tk.acento : tk.textoPrimario);
-        drawMetric("STORAGE SIZE", formatSizeHuman(kpi.totalBytes), juce::Colour(0xff10b981));
-        drawMetric("PRIMARY FORMAT", kpi.primaryFormatName.empty() ? "None" : juce::String(kpi.primaryFormatName), juce::Colour(0xfff59e0b));
-        drawMetric("NEEDS ATTENTION", juce::String(kpi.needsAttentionCount), kpi.needsAttentionCount > 0 ? juce::Colour(0xfff97316) : tk.textoSecundario);
-        drawMetric("BACKUP HEALTH", juce::String(kpi.backupHealthPercentage, 0) + "%", juce::Colour(0xff3b82f6));
+        drawMetric(i18n::t("analytics.total_assets"), juce::String(kpi.totalAssets), isTotal ? tk.acento : tk.textoPrimario);
+        drawMetric(i18n::t("analytics.storage_size"), formatSizeHuman(kpi.totalBytes), juce::Colour(0xff10b981));
+        drawMetric(i18n::t("analytics.primary_format"), kpi.primaryFormatName.empty() ? "None" : juce::String(kpi.primaryFormatName), juce::Colour(0xfff59e0b));
+        drawMetric(i18n::t("analytics.needs_attention"), juce::String(kpi.needsAttentionCount), kpi.needsAttentionCount > 0 ? juce::Colour(0xfff97316) : tk.textoSecundario);
+        drawMetric(i18n::t("analytics.backup_health"), juce::String(kpi.backupHealthPercentage, 0) + "%", juce::Colour(0xff3b82f6));
     }
 
     void recalculateHeight() {
@@ -348,7 +352,9 @@ void EstatisticasComponent::carregarMetricasDoBanco(matriz::db::Database& db) {
 
 void EstatisticasComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    g.fillAll(tk.fundo);
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    g.fillAll(bg);
 
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     if (isCatalogMode) {
@@ -360,7 +366,7 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
     // Section Header Title (§ A.3 - Treemap Explorer)
     g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-    g.drawText("Collection Analytics - Treemap Explorer", area.removeFromTop(22), juce::Justification::left);
+    g.drawText(i18n::t("analytics.titulo"), area.removeFromTop(22), juce::Justification::left);
     area.removeFromTop(8);
 
     // Top 5 KPI Cards Area (Top 70px)
@@ -403,11 +409,11 @@ void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::R
     };
 
     int x = area.getX();
-    drawCard(x, "TOTAL ASSETS", juce::String(summaryKpi_.totalAssets), "Cataloged files", juce::Colour(0xff3b82f6)); x += cardW + 12;
-    drawCard(x, "STORAGE SIZE", formatSizeHuman(summaryKpi_.totalBytes), "Occupied volume", juce::Colour(0xff10b981)); x += cardW + 12;
-    drawCard(x, "PRIMARY FORMAT", juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " assets", juce::Colour(0xfff59e0b)); x += cardW + 12;
-    needsAttentionCardBounds_ = drawCard(x, "NEEDS ATTENTION", juce::String(summaryKpi_.needsAttentionCount), "files missing required metadata", juce::Colour(0xfff97316)); x += cardW + 12;
-    backupHealthCardBounds_ = drawCard(x, "BACKUP HEALTH", juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " vulnerable (click)", juce::Colour(0xffef4444));
+    drawCard(x, i18n::t("analytics.total_assets"), juce::String(summaryKpi_.totalAssets), i18n::t("analytics.total_assets_sub"), juce::Colour(0xff3b82f6)); x += cardW + 12;
+    drawCard(x, i18n::t("analytics.storage_size"), formatSizeHuman(summaryKpi_.totalBytes), i18n::t("analytics.storage_size_sub"), juce::Colour(0xff10b981)); x += cardW + 12;
+    drawCard(x, i18n::t("analytics.primary_format"), juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " " + i18n::t("analytics.ativos"), juce::Colour(0xfff59e0b)); x += cardW + 12;
+    needsAttentionCardBounds_ = drawCard(x, i18n::t("analytics.needs_attention"), juce::String(summaryKpi_.needsAttentionCount), i18n::t("analytics.needs_attention_sub"), juce::Colour(0xfff97316)); x += cardW + 12;
+    backupHealthCardBounds_ = drawCard(x, i18n::t("analytics.backup_health"), juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444));
 }
 
 void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {

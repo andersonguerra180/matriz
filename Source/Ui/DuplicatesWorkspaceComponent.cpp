@@ -1,6 +1,7 @@
 #include "DuplicatesWorkspaceComponent.h"
 #include "ProjetoAberto.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "VideoPlayerComponent.h"
@@ -134,7 +135,7 @@ public:
         if (file_ == juce::File()) {
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            g.drawText("File offline or not found", getLocalBounds(), juce::Justification::centred);
+            g.drawText(matriz::i18n::t("duplicatas.offline"), getLocalBounds(), juce::Justification::centred);
             return;
         }
         
@@ -144,7 +145,7 @@ public:
                                   juce::RectanglePlacement::centred, false);
             } else {
                 g.setColour(tk.textoTerciario);
-                g.drawText("Invalid Image File", getLocalBounds(), juce::Justification::centred);
+                g.drawText(matriz::i18n::t("duplicatas.imagem_invalida"), getLocalBounds(), juce::Justification::centred);
             }
         } else if (isDoc_) {
             g.setColour(tk.textoPrimario);
@@ -274,7 +275,9 @@ public:
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        g.fillAll(tk.fundo);
+        bool isLight = (tk.fundo.getBrightness() > 0.5f);
+        juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+        g.fillAll(bg);
     }
 
     void resized() override {
@@ -300,6 +303,12 @@ public:
         recalculateHeight();
     }
 
+    void updateButtonsI18n() {
+        for (auto* card : cards_) {
+            card->updateButtonsI18n();
+        }
+    }
+
     void recalculateHeight() {
         int totalHeight = 20;
         for (auto* card : cards_) {
@@ -315,7 +324,7 @@ private:
         CardComponent(DuplicatesWorkspaceComponent& owner, size_t index, const DuplicateGroup& grupo, ListaResultadosComponent& parent)
             : owner_(owner), index_(index), grupo_(grupo), parent_(parent) {
             
-            btnValidate_ = std::make_unique<juce::TextButton>("VALIDATE AS DUPLICATE");
+            btnValidate_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate"));
             btnValidate_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
             btnValidate_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
             btnValidate_->onClick = [this] {
@@ -323,7 +332,7 @@ private:
             };
             addAndMakeVisible(*btnValidate_);
 
-            btnDismiss_ = std::make_unique<juce::TextButton>("NOT A DUPLICATE (DISMISS)");
+            btnDismiss_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_dismiss"));
             btnDismiss_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
             btnDismiss_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
             btnDismiss_->onClick = [this] {
@@ -376,25 +385,35 @@ private:
             }
         }
 
+        void updateButtonsI18n() {
+            if (btnValidate_) btnValidate_->setButtonText(matriz::i18n::t("duplicatas.btn_validate"));
+            if (btnDismiss_) btnDismiss_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss"));
+        }
+
         void mouseDown(const juce::MouseEvent& e) override {
             if (e.mods.isPopupMenu()) {
-                int w = getWidth() - 20;
-                juce::Rectangle<int> origThumbRect(15, 36, 64, 64);
-                juce::Rectangle<int> dupThumbRect(w / 2 + 5, 36, 64, 64);
+                int w = getWidth();
+                int btnW = 160;
+                int rightPanelW = btnW + 20;
+                int subCardsAreaW = w - rightPanelW - 20;
+                int subW = std::max(120, (subCardsAreaW - 14) / 2);
+                int origX = 14;
+                int dupX = 14 + subW + 14;
 
                 std::string targetItemId;
-                if (origThumbRect.contains(e.getPosition()) || (e.x < getWidth() / 2 && e.y < 180)) {
+                if (e.x >= origX && e.x < origX + subW && e.y >= 10 && e.y <= 180) {
                     targetItemId = grupo_.original.itemId;
-                } else if (dupThumbRect.contains(e.getPosition()) || (e.x >= getWidth() / 2 && e.y < 180)) {
+                } else if (e.x >= dupX && e.x < dupX + subW && e.y >= 10 && e.y <= 180) {
                     targetItemId = grupo_.duplicata.itemId;
                 }
 
                 if (!targetItemId.empty()) {
+                    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
                     juce::PopupMenu menu;
-                    menu.addItem(1, "SHOW SOURCE");
-                    menu.addItem(2, "COPY PATH");
+                    menu.addItem(1, matriz::i18n::t("duplicatas.show_source"));
+                    menu.addItem(2, matriz::i18n::t("duplicatas.copy_path"));
                     juce::Component::SafePointer<CardComponent> safeThis(this);
-                    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, targetItemId](int res) {
+                    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, targetItemId, isPt](int res) {
                         if (!safeThis) return;
                         if (res == 1) {
                             auto caminhoOpt = safeThis->owner_.projeto_.caminhoDeOrigem(targetItemId);
@@ -406,8 +425,8 @@ private:
                                     juce::AlertWindow::showAsync(
                                         juce::MessageBoxOptions()
                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
-                                            .withTitle("Source Not Found")
-                                            .withMessage("The source file was not found at:\n" + *caminhoOpt)
+                                            .withTitle(isPt ? juce::String::fromUTF8("Origem Não Encontrada") : "Source Not Found")
+                                            .withMessage((isPt ? juce::String::fromUTF8("O arquivo de origem não foi encontrado em:\n") : "The source file was not found at:\n") + *caminhoOpt)
                                             .withButton("OK"),
                                         nullptr);
                                 }
@@ -415,8 +434,8 @@ private:
                                 juce::AlertWindow::showAsync(
                                     juce::MessageBoxOptions()
                                         .withIconType(juce::MessageBoxIconType::InfoIcon)
-                                        .withTitle("Source Not Found")
-                                        .withMessage("No source path recorded for this item.")
+                                        .withTitle(isPt ? juce::String::fromUTF8("Origem Não Encontrada") : "Source Not Found")
+                                        .withMessage(isPt ? juce::String::fromUTF8("Nenhum caminho de origem registrado para este item.") : "No source path recorded for this item.")
                                         .withButton("OK"),
                                     nullptr);
                             }
@@ -439,29 +458,58 @@ private:
         void paint(juce::Graphics& g) override {
             const auto& tk = tema();
             
-            // Background box
+            // Outer container box
             g.setColour(tk.painel);
             g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
             g.setColour(tk.borda);
             g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
 
-            // Columns layout
-            int w = getWidth() - 20;
-            int colW = w / 2 - 20;
+            int w = getWidth();
+            int btnW = 160;
+            int rightPanelW = btnW + 20;
+            int subCardsAreaW = w - rightPanelW - 20;
+            int subW = std::max(120, (subCardsAreaW - 14) / 2);
+            int subH = 168;
 
-            auto drawColumn = [&](juce::Graphics& g, int x, const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
+            auto drawSubCard = [&](juce::Graphics& g, int x, int y, int subWidth, int subHeight,
+                                   const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
+                juce::Rectangle<float> cardRect(static_cast<float>(x), static_cast<float>(y),
+                                                static_cast<float>(subWidth), static_cast<float>(subHeight));
+
+                // 1. Sub-card background fill (HD Storage card style)
+                g.setColour(tk.painelAlt.withAlpha(0.35f));
+                g.fillRoundedRectangle(cardRect, 6.0f);
+
+                // 2. Sub-card border
+                g.setColour(tk.borda.withAlpha(0.70f));
+                g.drawRoundedRectangle(cardRect, 6.0f, 1.0f);
+
+                // 3. Top Banner strip (Storage card style header)
+                g.saveState();
+                g.reduceClipRegion(cardRect.toNearestInt().withHeight(24));
+                g.setColour(isDup ? tk.alerta.withAlpha(0.18f) : tk.acento.withAlpha(0.18f));
+                g.fillRoundedRectangle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(subWidth), 24.0f, 6.0f);
+                g.fillRect(static_cast<float>(x), static_cast<float>(y) + 12.0f, static_cast<float>(subWidth), 12.0f);
+                g.restoreState();
+
+                // Banner divider line
+                g.setColour(tk.borda.withAlpha(0.40f));
+                g.drawHorizontalLine(y + 24, static_cast<float>(x), static_cast<float>(x + subWidth));
+
+                // Badge / Header text
+                g.setColour(isDup ? tk.alerta : tk.acento);
+                g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                juce::String headerTag = isDup ? matriz::i18n::t("duplicatas.possible_duplicate") : matriz::i18n::t("duplicatas.existing_original");
                 if (!m.collectionNome.empty()) {
-                    g.setColour(tk.acento);
-                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-                    g.drawText("COLLECTION: " + juce::String(m.collectionNome).toUpperCase(), x, 2, colW, 14, juce::Justification::left, true);
+                    headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
                 }
+                g.drawText(headerTag, x + 8, y + 2, subWidth - 16, 20, juce::Justification::centredLeft, true);
 
-                g.setColour(tk.textoPrimario);
-                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
-                g.drawText(isDup ? "POSSIBLE DUPLICATE" : "EXISTING ORIGINAL", x, 16, colW, 18, juce::Justification::left);
+                // 4. Content layout
+                int contentY = y + 28;
+                int thumbSize = 64;
+                juce::Rectangle<int> thumbRect(x + 8, contentY, thumbSize, thumbSize);
 
-                // Draw thumbnail rectangle
-                juce::Rectangle<int> thumbRect(x, 36, 64, 64);
                 if (thumb.isValid()) {
                     g.drawImageWithin(thumb, thumbRect.getX(), thumbRect.getY(), thumbRect.getWidth(), thumbRect.getHeight(),
                                       juce::RectanglePlacement::centred, false);
@@ -473,86 +521,80 @@ private:
                     juce::String extension = juce::String(m.ext).toUpperCase();
                     g.drawText(extension, thumbRect, juce::Justification::centred);
                 }
-                
-                g.setColour(tk.borda);
+                g.setColour(tk.borda.withAlpha(0.60f));
                 g.drawRoundedRectangle(thumbRect.toFloat(), tk.raioPequeno, 1.0f);
 
-                // Text fields shifted by 74 pixels
+                // Text fields shifted to right of thumbnail
+                int metaX = x + 8 + thumbSize + 8;
+                int metaW = subWidth - (metaX - x) - 8;
+
+                // Row 1: Title
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
                 g.setColour(m.nomeCoincide ? juce::Colour(0xffef4444) : tk.textoPrimario);
-                g.drawText("Title: " + m.titulo, x + 74, 36, colW - 74, 18, juce::Justification::left, true);
+                g.drawText(matriz::i18n::t("duplicatas.title") + " " + m.titulo, metaX, contentY, metaW, 16, juce::Justification::left, true);
 
+                // Row 2: Code + Format
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
                 g.setColour(tk.textoSecundario);
-                g.drawText("Code: " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo), x + 74, 56, colW - 74, 16, juce::Justification::left);
-                
-                g.setColour(m.extCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
-                g.drawText("Format: " + juce::String(m.ext).toUpperCase(), x + 74, 72, colW - 74, 16, juce::Justification::left);
+                juce::String row2 = matriz::i18n::t("duplicatas.code") + " " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo)
+                                  + " \u00B7 " + matriz::i18n::t("duplicatas.format") + " " + juce::String(m.ext).toUpperCase();
+                g.drawText(row2, metaX, contentY + 16, metaW, 15, juce::Justification::left, true);
 
+                // Row 3: Duration / Dimensions / LUFS
+                juce::String row3;
                 if (m.duracao > 0.0) {
-                    g.setColour(m.duracaoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
                     int min = static_cast<int>(m.duracao) / 60;
                     int sec = static_cast<int>(m.duracao) % 60;
-                    g.drawText("Duration: " + juce::String::formatted("%02d:%02d", min, sec), x + 74, 88, colW - 74, 16, juce::Justification::left);
-                } else {
-                    g.setColour(tk.textoTerciario);
-                    g.drawText("Duration: N/A", x + 74, 88, colW - 74, 16, juce::Justification::left);
-                }
-
-                if (m.lufs != 0.0) {
-                    g.setColour(m.lufsCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
-                    g.drawText("LUFS-I: " + juce::String::formatted("%.2f LUFS", m.lufs), x + 74, 104, colW - 74, 16, juce::Justification::left);
+                    row3 = matriz::i18n::t("duplicatas.duration") + " " + juce::String::formatted("%02d:%02d", min, sec);
                 } else if (m.largura > 0 && m.altura > 0) {
-                    g.setColour(m.dimCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
-                    g.drawText("Dimensions: " + juce::String(m.largura) + "x" + juce::String(m.altura), x + 74, 104, colW - 74, 16, juce::Justification::left);
+                    row3 = matriz::i18n::t("duplicatas.dimensions") + " " + juce::String(m.largura) + "x" + juce::String(m.altura);
                 } else {
-                    g.setColour(tk.textoTerciario);
-                    g.drawText("Dimensions/LUFS-I: N/A", x + 74, 104, colW - 74, 16, juce::Justification::left);
+                    row3 = matriz::i18n::t("duplicatas.duration") + " N/A";
                 }
+                if (m.lufs != 0.0) {
+                    row3 += " \u00B7 LUFS: " + juce::String::formatted("%.1f", m.lufs);
+                }
+                g.setColour(tk.textoSecundario);
+                g.drawText(row3, metaX, contentY + 31, metaW, 15, juce::Justification::left, true);
 
-                g.setColour(m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+                // Row 4: File Size + Extra tags
                 double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
-                g.drawText("File Size: " + juce::String::formatted("%.1f KB", kb), x + 74, 120, colW - 74, 16, juce::Justification::left);
+                juce::String row4 = matriz::i18n::t("duplicatas.file_size") + " " + juce::String::formatted("%.1f KB", kb);
+                if (!m.orientation.empty() || !m.colorSpace.empty()) {
+                    row4 += " \u00B7 " + juce::String(m.orientation) + " " + juce::String(m.colorSpace);
+                }
+                g.setColour(m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
+                g.drawText(row4, metaX, contentY + 46, metaW, 15, juce::Justification::left, true);
 
-                juce::String extraInfo = "";
-                if (!m.orientation.empty()) {
-                    extraInfo += "Orientation: " + juce::String(m.orientation);
-                }
-                if (!m.colorSpace.empty()) {
-                    if (!extraInfo.isEmpty()) extraInfo += " | ";
-                    extraInfo += "Color Space: " + juce::String(m.colorSpace);
-                }
-                if (!extraInfo.isEmpty()) {
-                    g.setColour((m.orientationCoincide && m.colorSpaceCoincide) ? juce::Colour(0xffef4444) : tk.textoSecundario);
-                    g.drawText(extraInfo, x + 74, 136, colW - 74, 16, juce::Justification::left, true);
-                } else {
-                    g.setColour(tk.textoTerciario);
-                    g.drawText("EXIF Orientation & ColorSpace: N/A", x + 74, 136, colW - 74, 16, juce::Justification::left);
-                }
+                // Divider line before path
+                g.setColour(tk.borda.withAlpha(0.35f));
+                g.drawHorizontalLine(contentY + 68, static_cast<float>(x + 6), static_cast<float>(x + subWidth - 6));
 
+                // Bottom Path row
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(9.0f)));
+                g.setFont(juce::Font(juce::FontOptions(10.0f)));
                 juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
-                g.drawText("Path: " + displayPath, x, 158, colW, 14, juce::Justification::left, true);
+                g.drawText(matriz::i18n::t("duplicatas.path") + " " + displayPath, x + 8, contentY + 70, subWidth - 16, 16, juce::Justification::left, true);
             };
 
-            // Draw original details with its thumbnail
-            drawColumn(g, 15, grupo_.original, grupo_.duplicata, false, thumbOriginal_);
+            // Draw Original sub-card
+            drawSubCard(g, 14, 10, subW, subH, grupo_.original, grupo_.duplicata, false, thumbOriginal_);
 
-            // Draw duplicate details with its thumbnail
-            drawColumn(g, w / 2 + 5, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
+            // Draw Duplicate sub-card
+            drawSubCard(g, 14 + subW + 14, 10, subW, subH, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
             
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
-                g.drawHorizontalLine(180, 10.0f, getWidth() - 10.0f);
+                g.drawHorizontalLine(180, 10.0f, static_cast<float>(getWidth() - 10));
             }
         }
 
         void resized() override {
             int w = getWidth();
-            btnValidate_->setBounds(w - 180, 20, 160, 32);
-            btnDismiss_->setBounds(w - 180, 60, 160, 32);
+            int btnW = 160;
+            btnValidate_->setBounds(w - btnW - 14, 25, btnW, 32);
+            btnDismiss_->setBounds(w - btnW - 14, 65, btnW, 32);
             
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
@@ -610,47 +652,47 @@ private:
 DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projeto)
     : Thread("BkrDuplicatesScan"), projeto_(projeto) {
     
-    btnScan_ = std::make_unique<juce::TextButton>("SCAN FOR DUPLICATES");
+    btnScan_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_scan"));
     btnScan_->onClick = [this] { iniciarScan(); };
-    btnScan_->setTooltip("Start duplicate detection scan based on attributes");
+    btnScan_->setTooltip(matriz::i18n::t("duplicatas.btn_scan_dica"));
     addAndMakeVisible(*btnScan_);
 
-    lblScope_ = std::make_unique<juce::Label>("lblScope", "Scan:");
+    lblScope_ = std::make_unique<juce::Label>("lblScope", matriz::i18n::t("duplicatas.lbl_scope"));
     lblScope_->setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(*lblScope_);
 
     cbScope_ = std::make_unique<juce::ComboBox>("cbScope");
-    cbScope_->addItem("ALL FILES", 1);
-    cbScope_->addItem("SELECTED FILES", 2);
+    cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
+    cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
     cbScope_->setSelectedId(1);
     cbScope_->setTooltip("Choose search scope (all database files vs selected grid items)");
     addAndMakeVisible(*cbScope_);
 
-    lblFileType_ = std::make_unique<juce::Label>("lblFileType", "Type:");
+    lblFileType_ = std::make_unique<juce::Label>("lblFileType", matriz::i18n::t("duplicatas.lbl_type"));
     lblFileType_->setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(*lblFileType_);
 
     cbFileType_ = std::make_unique<juce::ComboBox>("cbFileType");
-    cbFileType_->addItem("ALL FILES", 1);
-    cbFileType_->addItem("IMAGE", 2);
-    cbFileType_->addItem("VIDEO", 3);
-    cbFileType_->addItem("AUDIO", 4);
-    cbFileType_->addItem("DOCS", 5);
-    cbFileType_->addItem("SESSIONS", 6);
-    cbFileType_->addItem("OTHER", 7);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_all"), 1);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_image"), 2);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_video"), 3);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_audio"), 4);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_docs"), 5);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_sessions"), 6);
+    cbFileType_->addItem(matriz::i18n::t("duplicatas.type_other"), 7);
     cbFileType_->setSelectedId(1);
     cbFileType_->setTooltip("Filter candidates by media type");
     addAndMakeVisible(*cbFileType_);
 
-    lblFileSize_ = std::make_unique<juce::Label>("lblFileSize", "Size:");
+    lblFileSize_ = std::make_unique<juce::Label>("lblFileSize", matriz::i18n::t("duplicatas.lbl_size"));
     lblFileSize_->setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(*lblFileSize_);
 
     cbSizeFilter_ = std::make_unique<juce::ComboBox>("cbSizeFilter");
-    cbSizeFilter_->addItem("No Size Filter", 1);
-    cbSizeFilter_->addItem("Size is bigger than", 2);
-    cbSizeFilter_->addItem("Size is smaller than", 3);
-    cbSizeFilter_->addItem("Size equals", 4);
+    cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_none"), 1);
+    cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_bigger"), 2);
+    cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_smaller"), 3);
+    cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_equals"), 4);
     cbSizeFilter_->setSelectedId(1);
     cbSizeFilter_->setTooltip("Filter candidates by file size rules");
     cbSizeFilter_->onChange = [this] {
@@ -682,14 +724,14 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     lblStatus_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblStatus_);
 
-    btnValidateAll_ = std::make_unique<juce::TextButton>("VALIDATE ALL DUPLICATES");
+    btnValidateAll_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate_all"));
     btnValidateAll_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
     btnValidateAll_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     btnValidateAll_->onClick = [this] { resolverTudo(true); };
     btnValidateAll_->setTooltip("Validate all detected duplicates, keeping original versions");
     addChildComponent(*btnValidateAll_);
 
-    btnDismissAll_ = std::make_unique<juce::TextButton>("DISMISS ALL DUPLICATES");
+    btnDismissAll_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_dismiss_all"));
     btnDismissAll_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
     btnDismissAll_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnDismissAll_->onClick = [this] { resolverTudo(false); };
@@ -723,8 +765,14 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     if (lblScope_) {
         lblScope_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
         lblScope_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblScope_->setText(matriz::i18n::t("duplicatas.lbl_scope"), juce::dontSendNotification);
     }
     if (cbScope_) {
+        int sel = cbScope_->getSelectedId();
+        cbScope_->clear(juce::dontSendNotification);
+        cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
+        cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
+        cbScope_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
         cbScope_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         cbScope_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         cbScope_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -733,8 +781,19 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     if (lblFileType_) {
         lblFileType_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
         lblFileType_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblFileType_->setText(matriz::i18n::t("duplicatas.lbl_type"), juce::dontSendNotification);
     }
     if (cbFileType_) {
+        int sel = cbFileType_->getSelectedId();
+        cbFileType_->clear(juce::dontSendNotification);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_all"), 1);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_image"), 2);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_video"), 3);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_audio"), 4);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_docs"), 5);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_sessions"), 6);
+        cbFileType_->addItem(matriz::i18n::t("duplicatas.type_other"), 7);
+        cbFileType_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
         cbFileType_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         cbFileType_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         cbFileType_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -743,8 +802,16 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     if (lblFileSize_) {
         lblFileSize_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
         lblFileSize_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblFileSize_->setText(matriz::i18n::t("duplicatas.lbl_size"), juce::dontSendNotification);
     }
     if (cbSizeFilter_) {
+        int sel = cbSizeFilter_->getSelectedId();
+        cbSizeFilter_->clear(juce::dontSendNotification);
+        cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_none"), 1);
+        cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_bigger"), 2);
+        cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_smaller"), 3);
+        cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_equals"), 4);
+        cbSizeFilter_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
         cbSizeFilter_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         cbSizeFilter_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         cbSizeFilter_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -764,16 +831,23 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     if (btnScan_) {
         btnScan_->setColour(juce::TextButton::buttonColourId, tk.acento);
         btnScan_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        if (estado_ != State::Scanning) {
+            btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
+            btnScan_->setTooltip(matriz::i18n::t("duplicatas.btn_scan_dica"));
+        }
     }
     if (btnValidateAll_) {
         btnValidateAll_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnValidateAll_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnValidateAll_->setButtonText(matriz::i18n::t("duplicatas.btn_validate_all"));
     }
     if (btnDismissAll_) {
         btnDismissAll_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnDismissAll_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnDismissAll_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss_all"));
     }
     if (listaComponent_) {
+        listaComponent_->updateButtonsI18n();
         listaComponent_->repaint();
     }
     repaint();
@@ -788,7 +862,7 @@ void DuplicatesWorkspaceComponent::recarregar() {
     estado_ = State::Idle;
     gruposDetectados_.clear();
     lblStatus_->setText("", juce::dontSendNotification);
-    btnScan_->setButtonText("SCAN FOR DUPLICATES");
+    btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
     btnScan_->setEnabled(true);
     viewport_->setVisible(false);
     resized();
@@ -815,7 +889,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     progressoScan_ = 0.0;
     gruposDetectados_.clear();
     btnScan_->setEnabled(false);
-    btnScan_->setButtonText("SCANNING...");
+    btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
     viewport_->setVisible(false);
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(
@@ -1141,16 +1215,16 @@ void DuplicatesWorkspaceComponent::timerCallback() {
         if (!isThreadRunning()) {
             stopTimer();
             btnScan_->setEnabled(true);
-            btnScan_->setButtonText("SCAN FOR DUPLICATES");
+            btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
             
             juce::String msgFinal;
             if (gruposDetectados_.empty()) {
                 estado_ = State::Clean;
-                msgFinal = "No duplicates found. Your archive is 100% clean!";
+                msgFinal = matriz::i18n::t("duplicatas.nenhuma");
                 lblStatus_->setText(msgFinal, juce::dontSendNotification);
             } else {
                 estado_ = State::Results;
-                msgFinal = "Scan completed. Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.";
+                msgFinal = matriz::i18n::t("duplicatas.encontradas").replace("{n}", juce::String(gruposDetectados_.size()));
                 lblStatus_->setText(msgFinal, juce::dontSendNotification);
                 viewport_->setVisible(true);
                 listaComponent_->updateList(gruposDetectados_);
@@ -1185,12 +1259,15 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         // Remove resolved group from local list
         gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
         
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
         if (gruposDetectados_.empty()) {
             estado_ = State::Clean;
-            lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+            lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
+                                     : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
             viewport_->setVisible(false);
         } else {
-            lblStatus_->setText("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
+            lblStatus_->setText(isPt ? (juce::String::fromUTF8("Encontrados ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos de duplicatas."))
+                                     : ("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups."), juce::dontSendNotification);
             listaComponent_->updateList(gruposDetectados_);
         }
         resized();
@@ -1198,20 +1275,21 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         return;
     }
 
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
     // Validation path: Show prompt to ask which file to keep
     auto janela = std::make_shared<juce::AlertWindow>(
-        "Resolve Duplicate Match",
-        "How would you like to handle this duplicate pair?\n\n"
-        "File 1 (Original): " + juce::String(group.original.titulo) + "\n"
-        "File 2 (Duplicate): " + juce::String(group.duplicata.titulo),
+        isPt ? juce::String::fromUTF8("Resolver Correspondência de Duplicata") : "Resolve Duplicate Match",
+        isPt ? (juce::String::fromUTF8("Como você deseja tratar este par de duplicatas?\n\nArquivo 1 (Original): ") + juce::String(group.original.titulo) + juce::String::fromUTF8("\nArquivo 2 (Duplicata): ") + juce::String(group.duplicata.titulo))
+             : ("How would you like to handle this duplicate pair?\n\nFile 1 (Original): " + juce::String(group.original.titulo) + "\nFile 2 (Duplicate): " + juce::String(group.duplicata.titulo)),
         juce::MessageBoxIconType::QuestionIcon
     );
-    janela->addButton("KEEP FILE 1", 1);
-    janela->addButton("KEEP FILE 2", 2);
-    janela->addButton("KEEP BOTH", 3);
-    janela->addButton("RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
+    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 1") : "KEEP FILE 1", 1);
+    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 2") : "KEEP FILE 2", 2);
+    janela->addButton(isPt ? juce::String::fromUTF8("MANTER AMBOS") : "KEEP BOTH", 3);
+    janela->addButton(isPt ? juce::String::fromUTF8("VOLTAR") : "RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
 
-    janela->enterModalState(true, juce::ModalCallbackFunction::create([this, janela, grupoIdx, group](int buttonResult) {
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([this, janela, grupoIdx, group, isPt](int buttonResult) {
         retirarPeerDaTela(*janela);
         if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
 
@@ -1247,16 +1325,18 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         }
 
         // Run UI update on MessageThread context
-        juce::MessageManager::callAsync([this, grupoIdx]() {
+        juce::MessageManager::callAsync([this, grupoIdx, isPt]() {
             if (grupoIdx >= 0 && grupoIdx < static_cast<int>(gruposDetectados_.size())) {
                 gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
                 
                 if (gruposDetectados_.empty()) {
                     estado_ = State::Clean;
-                    lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+                    lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
+                                             : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
                     viewport_->setVisible(false);
                 } else {
-                    lblStatus_->setText("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups.", juce::dontSendNotification);
+                    lblStatus_->setText(isPt ? (juce::String::fromUTF8("Encontrados ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos de duplicatas."))
+                                             : ("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups."), juce::dontSendNotification);
                     listaComponent_->updateList(gruposDetectados_);
                 }
                 resized();
@@ -1269,15 +1349,22 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     if (gruposDetectados_.empty()) return;
     
-    juce::String msg = ehDuplicataReal
-        ? "Are you sure you want to validate all " + juce::String(gruposDetectados_.size()) + " duplicate groups as duplicates? This will update their state to 'duplicata'."
-        : "Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again.";
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    juce::String titulo = isPt ? (ehDuplicataReal ? juce::String::fromUTF8("Validar Todas as Duplicatas") : juce::String::fromUTF8("Ignorar Todas as Duplicatas"))
+                               : (ehDuplicataReal ? "Validate All Duplicates" : "Dismiss All Duplicates");
+    juce::String msg = isPt ? (ehDuplicataReal
+        ? (juce::String::fromUTF8("Tem certeza de que deseja validar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos como duplicatas? O estado deles será atualizado para 'duplicata'."))
+        : (juce::String::fromUTF8("Tem certeza de que deseja ignorar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos? Eles não serão mais sinalizados como duplicatas.")))
+        : (ehDuplicataReal
+        ? ("Are you sure you want to validate all " + juce::String(gruposDetectados_.size()) + " duplicate groups as duplicates? This will update their state to 'duplicata'.")
+        : ("Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again."));
         
     bool confirm = juce::AlertWindow::showOkCancelBox(
         juce::AlertWindow::QuestionIcon,
-        ehDuplicataReal ? "Validate All Duplicates" : "Dismiss All Duplicates",
+        titulo,
         msg,
-        "Yes", "No",
+        isPt ? juce::String::fromUTF8("Sim") : "Yes",
+        isPt ? juce::String::fromUTF8("Não") : "No",
         this
     );
     
@@ -1316,7 +1403,9 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
 
 void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    g.fillAll(tk.fundo);
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    g.fillAll(bg);
 
     if (estado_ == State::Idle) {
         g.setColour(tk.borda.withAlpha(0.3f));
@@ -1332,16 +1421,27 @@ void DuplicatesWorkspaceComponent::resized() {
     // Filter toolbar at the top
     auto areaFilter = area.removeFromTop(32);
     
-    lblScope_->setBounds(areaFilter.removeFromLeft(40));
-    cbScope_->setBounds(areaFilter.removeFromLeft(130));
-    areaFilter.removeFromLeft(15);
+    bool isPt = lblScope_->getText().containsIgnoreCase("Varredura");
+    int wScopeLbl = isPt ? 75 : 50;
+    int wScopeCb  = isPt ? 180 : 130;
+    int wTypeLbl  = isPt ? 45 : 40;
+    int wTypeCb   = isPt ? 165 : 125;
+    int wSizeLbl  = isPt ? 70 : 45;
+    int wSizeCb   = isPt ? 185 : 160;
+
+    lblScope_->setBounds(areaFilter.removeFromLeft(wScopeLbl));
+    areaFilter.removeFromLeft(4);
+    cbScope_->setBounds(areaFilter.removeFromLeft(wScopeCb));
+    areaFilter.removeFromLeft(16);
     
-    lblFileType_->setBounds(areaFilter.removeFromLeft(40));
-    cbFileType_->setBounds(areaFilter.removeFromLeft(120));
-    areaFilter.removeFromLeft(15);
+    lblFileType_->setBounds(areaFilter.removeFromLeft(wTypeLbl));
+    areaFilter.removeFromLeft(4);
+    cbFileType_->setBounds(areaFilter.removeFromLeft(wTypeCb));
+    areaFilter.removeFromLeft(16);
     
-    lblFileSize_->setBounds(areaFilter.removeFromLeft(40));
-    cbSizeFilter_->setBounds(areaFilter.removeFromLeft(160));
+    lblFileSize_->setBounds(areaFilter.removeFromLeft(wSizeLbl));
+    areaFilter.removeFromLeft(4);
+    cbSizeFilter_->setBounds(areaFilter.removeFromLeft(wSizeCb));
     
     if (txtSizeValue_->isVisible()) {
         areaFilter.removeFromLeft(8);
@@ -1354,26 +1454,29 @@ void DuplicatesWorkspaceComponent::resized() {
 
     if (estado_ == State::Results) {
         btnScan_->setVisible(true);
-        btnScan_->setButtonText("RE-SCAN");
+        btnScan_->setButtonText(isPt ? "NOVA VARREDURA" : "RE-SCAN");
         btnValidateAll_->setVisible(true);
         btnDismissAll_->setVisible(true);
         
         auto areaControle = area.removeFromTop(40);
-        lblStatus_->setJustificationType(juce::Justification::centredLeft);
-        lblStatus_->setBounds(areaControle.removeFromLeft(areaControle.getWidth() - 510));
+        int btnW = isPt ? 160 : 180;
+        int scanW = isPt ? 140 : 120;
+        btnValidateAll_->setBounds(areaControle.removeFromRight(btnW));
+        areaControle.removeFromRight(10);
+        btnDismissAll_->setBounds(areaControle.removeFromRight(btnW));
+        areaControle.removeFromRight(10);
+        btnScan_->setBounds(areaControle.removeFromRight(scanW));
+        areaControle.removeFromRight(16);
         
-        btnValidateAll_->setBounds(areaControle.removeFromRight(180));
-        areaControle.removeFromRight(10);
-        btnDismissAll_->setBounds(areaControle.removeFromRight(180));
-        areaControle.removeFromRight(10);
-        btnScan_->setBounds(areaControle.removeFromRight(120));
+        lblStatus_->setJustificationType(juce::Justification::centredLeft);
+        lblStatus_->setBounds(areaControle);
         
         viewport_->setBounds(area);
         viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
     } else {
         btnScan_->setVisible(true);
-        btnScan_->setButtonText("SCAN FOR DUPLICATES");
+        btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
         btnValidateAll_->setVisible(false);
         btnDismissAll_->setVisible(false);
         lblStatus_->setJustificationType(juce::Justification::centred);

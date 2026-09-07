@@ -103,6 +103,15 @@ public:
     }
     bool destacarEditados() const { return destacarEditados_; }
 
+    void definirOcultarEditados(bool ocultar) {
+        if (ocultarEditados_ != ocultar) {
+            ocultarEditados_ = ocultar;
+            aplicarFiltrosEOrdenacao();
+            repaint();
+        }
+    }
+    bool ocultarEditados() const { return ocultarEditados_; }
+
     // Busca (Acréscimos §10.1): código/título, campo de ficha e assunto —
     // consulta o banco via ProjetoAberto::buscarItens a cada chamada (OCR/
     // transcrição não existem ainda, gap declarado). "" limpa a busca.
@@ -141,9 +150,11 @@ public:
     std::function<void(int indice, std::vector<std::string> itemIds)> aoCategorizarPorAtalho;
     std::function<void()> aoRenomearItem;
     std::function<void()> aoRemoverDoBackup;
+    std::function<void(std::vector<std::string> itemIds)> aoLimparMetadados;
 
     void renomearSelecao();
     void removerSelecaoDoBackup();
+    void limparMetadadosSelecao();
 
     // Disparado sempre que o CONJUNTO VISÍVEL muda — chip de filtro, busca,
     // ordenação, pasta da árvore, recarregar(). É o único funil por onde
@@ -303,6 +314,7 @@ private:
     ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;
     bool destacarEditados_ = true;
+    bool ocultarEditados_ = false;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;
 

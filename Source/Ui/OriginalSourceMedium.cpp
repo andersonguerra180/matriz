@@ -465,8 +465,8 @@ void OriginalSourceMediumEditorComponent::rebuildSubfields() {
         addTextField("customNote", "ORIGINAL MEDIUM DESCRIPTION", currentInfo_.customNote);
     }
 
-    // Always add RECORDING DEVICE field
-    addTextField("recordingDevice", "RECORDING DEVICE", currentInfo_.recordingDevice);
+    // Always add DEVICE field
+    addTextField("recordingDevice", "DEVICE", currentInfo_.recordingDevice);
 
     resized();
 }

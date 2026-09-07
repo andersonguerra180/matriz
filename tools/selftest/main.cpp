@@ -262,13 +262,12 @@ void testarI18n() {
     check(matriz::i18n::t("chave.que.nao.existe") == "[chave.que.nao.existe]",
           "a missing key returns [key], never throws and never hangs");
 
-    // Pedir outro locale não derruba nem devolve string vazia: continua tudo
-    // em inglês (critério 13 — interface, logs e relatórios 100% em inglês).
+    // Pedir pt_BR carrega a tabela em português do Brasil
     matriz::i18n::carregar("pt_BR");
-    check(matriz::i18n::t("menu.arquivo") == "File",
-          "asking for pt_BR changes nothing: the interface stays in English");
-    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == "New Collection project",
-          "no Portuguese string survives after asking for pt_BR");
+    check(matriz::i18n::t("menu.arquivo") == juce::String::fromUTF8("Arquivo"),
+          "asking for pt_BR switches interface to Portuguese");
+    check(matriz::i18n::t("dialogo_novo_projeto.campo_modo_preservacao") == juce::String::fromUTF8("Novo projeto de arquivos variados"),
+          "Portuguese string is loaded after asking for pt_BR");
 
     matriz::i18n::carregar("en");
     check(matriz::i18n::t("menu.arquivo") == "File", "switching back to en is idempotent");

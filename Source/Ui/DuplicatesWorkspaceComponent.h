@@ -21,6 +21,7 @@ public:
     void lookAndFeelChanged() override;
 
     void recarregar();
+    void iniciarScan();
 
 private:
     // Thread method for background scanning
@@ -62,7 +63,6 @@ private:
         DuplicateMatch duplicata;
     };
 
-    void iniciarScan();
     void resolverDuplicata(int grupoIdx, bool ehDuplicataReal);
 
     ProjetoAberto& projeto_;

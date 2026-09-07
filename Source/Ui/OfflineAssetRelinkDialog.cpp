@@ -1,5 +1,6 @@
 #include "OfflineAssetRelinkDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
 
@@ -19,19 +20,19 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
       onCancel_(std::move(onCancel)) {
     const auto& tk = tema();
 
-    lblHeader_.setText("ASSET OFFLINE", juce::dontSendNotification);
+    lblHeader_.setText(i18n::t("relink.ativo_offline"), juce::dontSendNotification);
     lblHeader_.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, juce::Colour(0xfff97316)); // bright orange
     lblHeader_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblHeader_);
 
-    lblStatusWarning_.setText("The original physical file could not be found at its recorded location.", juce::dontSendNotification);
+    lblStatusWarning_.setText(i18n::t("relink.offline_desc"), juce::dontSendNotification);
     lblStatusWarning_.setFont(juce::Font(juce::FontOptions(13.0f)));
     lblStatusWarning_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblStatusWarning_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblStatusWarning_);
 
-    lblTitleHeader_.setText("Title:", juce::dontSendNotification);
+    lblTitleHeader_.setText(i18n::t("relink.rotulo_titulo"), juce::dontSendNotification);
     lblTitleHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     lblTitleHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblTitleHeader_);
@@ -41,7 +42,7 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     lblTitleValue_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblTitleValue_);
 
-    lblExpectedHeader_.setText("Expected location:", juce::dontSendNotification);
+    lblExpectedHeader_.setText(i18n::t("relink.rotulo_localizacao_esperada"), juce::dontSendNotification);
     lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     lblExpectedHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblExpectedHeader_);
@@ -54,12 +55,12 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     txtExpectedPath_.setColour(juce::TextEditor::outlineColourId, tk.borda);
     addAndMakeVisible(txtExpectedPath_);
 
-    lblStorageHeader_.setText("Storage:", juce::dontSendNotification);
+    lblStorageHeader_.setText(i18n::t("relink.rotulo_armazenamento"), juce::dontSendNotification);
     lblStorageHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     lblStorageHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblStorageHeader_);
 
-    lblStorageValue_.setText(storageName_.isEmpty() ? "Local Storage" : storageName_, juce::dontSendNotification);
+    lblStorageValue_.setText(storageName_.isEmpty() ? i18n::t("relink.armazenamento_local") : storageName_, juce::dontSendNotification);
     lblStorageValue_.setFont(juce::Font(juce::FontOptions(13.0f)));
     lblStorageValue_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblStorageValue_);
@@ -69,6 +70,7 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     lblError_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblError_);
 
+    btnLocate_.setButtonText(i18n::t("dialogo.localizar_arquivo"));
     btnLocate_.setColour(juce::TextButton::buttonColourId, tk.acento);
     btnLocate_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnLocate_.onClick = [this] {
@@ -76,7 +78,7 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
 
         juce::String fname = juce::File(expectedPath_).getFileName();
         fileChooser_ = std::make_unique<juce::FileChooser>(
-            "Locate Asset File (" + fname + ")",
+            i18n::t("relink.localizar_arquivo_ativo").replace("{n}", fname),
             juce::File::getSpecialLocation(juce::File::userHomeDirectory),
             "*.*");
 
@@ -94,13 +96,12 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
                     juce::AlertWindow::showAsync(
                         juce::MessageBoxOptions()
                             .withIconType(juce::MessageBoxIconType::WarningIcon)
-                            .withTitle("Checksum Mismatch — Different File Content")
-                            .withMessage("The selected file does not match the original file hash or size.\n\n"
-                                         "Original SHA-256: " + juce::String(val.expectedSha).substring(0, 16) + "...\n"
-                                         "Selected SHA-256: " + juce::String(val.actualSha).substring(0, 16) + "...\n\n"
-                                         "Would you like to replace the asset? A new Asset ID will be assigned, and the replacement will be recorded in the project log.")
-                            .withButton("Replace Asset (New ID)")
-                            .withButton("Cancel"),
+                            .withTitle(i18n::t("relink.divergencia_checksum_titulo"))
+                            .withMessage(i18n::t("relink.divergencia_checksum_msg")
+                                             .replace("{o}", juce::String(val.expectedSha).substring(0, 16))
+                                             .replace("{s}", juce::String(val.actualSha).substring(0, 16)))
+                            .withButton(i18n::t("relink.btn_substituir_ativo"))
+                            .withButton(i18n::t("dialogo.cancelar")),
                         [this, result, cb = onRelinkSuccess_](int buttonIndex) {
                             if (buttonIndex == 1) {
                                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) {
@@ -122,6 +123,7 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     };
     addAndMakeVisible(btnLocate_);
 
+    btnCancel_.setButtonText(i18n::t("dialogo.cancelar"));
     btnCancel_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnCancel_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnCancel_.onClick = [this] {
@@ -134,6 +136,18 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     addAndMakeVisible(btnCancel_);
 
     setSize(520, 340);
+}
+
+void OfflineAssetRelinkDialog::lookAndFeelChanged() {
+    lblHeader_.setText(i18n::t("relink.ativo_offline"), juce::dontSendNotification);
+    lblStatusWarning_.setText(i18n::t("relink.offline_desc"), juce::dontSendNotification);
+    lblTitleHeader_.setText(i18n::t("relink.rotulo_titulo"), juce::dontSendNotification);
+    lblExpectedHeader_.setText(i18n::t("relink.rotulo_localizacao_esperada"), juce::dontSendNotification);
+    lblStorageHeader_.setText(i18n::t("relink.rotulo_armazenamento"), juce::dontSendNotification);
+    lblStorageValue_.setText(storageName_.isEmpty() ? i18n::t("relink.armazenamento_local") : storageName_, juce::dontSendNotification);
+    btnLocate_.setButtonText(i18n::t("dialogo.localizar_arquivo"));
+    btnCancel_.setButtonText(i18n::t("dialogo.cancelar"));
+    repaint();
 }
 
 void OfflineAssetRelinkDialog::paint(juce::Graphics& g) {
@@ -185,7 +199,7 @@ void OfflineAssetRelinkDialog::showModal(matriz::db::Database& db,
                                                std::move(onRelinkSuccess), std::move(onCancel));
 
     juce::DialogWindow::LaunchOptions opt;
-    opt.dialogTitle = "Relink Offline Asset";
+    opt.dialogTitle = i18n::t("relink.dialog_offline_titulo");
     opt.content.setOwned(dialog);
     opt.componentToCentreAround = nullptr;
     opt.dialogBackgroundColour = tema().painel;

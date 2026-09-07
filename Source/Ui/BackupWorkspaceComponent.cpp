@@ -1,4 +1,6 @@
 #include "BackupWorkspaceComponent.h"
+#include "BackupFileSelectorDialog.h"
+#include <AssetsBinaryData.h>
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
@@ -8,6 +10,41 @@
 #include "ProgressoGlobal.h"
 
 namespace matriz::ui {
+
+namespace {
+
+class GoogleDriveIconButton : public juce::Button {
+public:
+    GoogleDriveIconButton() : juce::Button("GoogleDrive") {
+        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
+    }
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        
+        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
+                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
+        g.fillRoundedRectangle(r, 6.0f);
+        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff1a73e8) : tk.borda);
+        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+
+        if (img_.isValid()) {
+            auto iconArea = r.reduced(4.0f);
+            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
+                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
+                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
+        } else {
+            g.setColour(juce::Colour(0xff1a73e8));
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.drawText("GD", getLocalBounds(), juce::Justification::centred);
+        }
+    }
+private:
+    juce::Image img_;
+};
+
+} // namespace
 
 class BackupWorkspaceComponent::PreviaLista : public juce::Component {
 public:
@@ -32,12 +69,13 @@ public:
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
         g.fillAll(tk.painel);
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
         if (isCatalogMode_) {
             if (colecoes_.empty()) {
                 g.setColour(tk.textoTerciario);
                 g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-                g.drawText("No collections linked to this catalog.", getLocalBounds(), juce::Justification::centred);
+                g.drawText(isPt ? juce::String::fromUTF8("Nenhuma coleção vinculada a este catálogo.") : "No collections linked to this catalog.", getLocalBounds(), juce::Justification::centred);
                 return;
             }
 
@@ -68,7 +106,7 @@ public:
                 // Assets & Size
                 g.setColour(tk.textoSecundario);
                 g.setFont(juce::Font(juce::FontOptions(11.5f)));
-                juce::String details = juce::String(c.totalAssets) + " assets  |  " +
+                juce::String details = juce::String(c.totalAssets) + (isPt ? juce::String::fromUTF8(" itens  |  ") : " assets  |  ") +
                                        juce::File::descriptionOfSizeInBytes(c.totalBytes);
                 g.drawText(details, r.removeFromLeft(160), juce::Justification::centredLeft);
 
@@ -86,7 +124,7 @@ public:
         if (!plano_ || plano_->itens.empty()) {
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            g.drawText("No items to backup.", getLocalBounds(), juce::Justification::centred);
+            g.drawText(isPt ? juce::String::fromUTF8("Nenhum item para backup.") : "No items to backup.", getLocalBounds(), juce::Justification::centred);
             return;
         }
 
@@ -103,7 +141,8 @@ public:
             g.setColour(item.emConflito ? tk.perigo : (item.jaConsolidado ? tk.textoTerciario : tk.textoPrimario));
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
             juce::String texto = item.nomeOriginal + "  ->  " + item.caminhoRelativoDestino;
-            if (item.jaConsolidado) texto += "  (already backed up)";
+            if (item.emConflito) texto += isPt ? juce::String::fromUTF8("  [CONFLITO: destino duplicado]") : "  [CONFLICT: duplicate destination]";
+            else if (item.jaConsolidado) texto += isPt ? juce::String::fromUTF8("  (já em backup)") : "  (already backed up)";
             g.drawText(texto, linha.reduced(6, 2), juce::Justification::centredLeft, true);
             y += 22;
         }
@@ -134,72 +173,147 @@ public:
         cartoes_.clear();
 
         int largura = getWidth();
-        if (largura <= 0) return;
+        int totalH = getHeight();
+        if (largura <= 0 || totalH <= 0) return;
 
         bool isCatalogMode = (owner_.projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
-        const int padCartao = tk.espacoPainel + 2;
-        const int alturaControle = 32;
-        const int alturaLinhaToggle = 28;
-        const int alturaCabecalhoSecao = 24;
+        const int padCartaoX = 10;
+        const int padCartaoY = 8;
+        const int alturaControle = 26;
+        const int alturaLinhaToggle = 22;
+        const int alturaCabecalhoSecao = 20;
+        const int numCartoes = isCatalogMode ? 2 : 4;
+        const int gapCartoes = 8;
+        const int espacosTotais = (numCartoes - 1) * gapCartoes;
+        const int availableForCards = totalH - espacosTotais;
 
-        auto colunaConfig = juce::Rectangle<int>(0, 0, largura, 2000);
+        int card1H = 0, card2H = 0, card3H = 0, card4H = 0;
 
-        auto abrirCartao = [&](int alturaConteudo) {
-            auto cartao = colunaConfig.removeFromTop(alturaConteudo + padCartao * 2);
+        if (isCatalogMode) {
+            int minH2 = alturaCabecalhoSecao + 2 + 36 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
+            int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + padCartaoY * 2;
+            int minTotal = minH2 + minH4;
+
+            if (availableForCards >= minTotal) {
+                int extra = availableForCards - minTotal;
+                int extra2 = static_cast<int>(extra * 0.55f);
+                int extra4 = extra - extra2;
+                card2H = minH2 + extra2;
+                card4H = minH4 + extra4;
+            } else {
+                float ratio = static_cast<float>(availableForCards) / static_cast<float>(std::max(1, minTotal));
+                card2H = std::max(60, static_cast<int>(minH2 * ratio));
+                card4H = std::max(40, availableForCards - card2H);
+            }
+        } else {
+            bool temColecoes = (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible());
+            bool temEditarSelecao = (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible());
+            bool temEditorHierarquia = (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible());
+            int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
+            int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
+            int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
+            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + padCartaoY * 2;
+            int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 3) + padCartaoY * 2;
+            int minTotal = minH1 + minH2 + minH3 + minH4;
+
+            if (availableForCards >= minTotal) {
+                int extra = availableForCards - minTotal;
+                int extra1 = static_cast<int>(extra * 0.05f);
+                int extra2 = static_cast<int>(extra * 0.38f);
+                int extra3 = static_cast<int>(extra * 0.37f);
+                int extra4 = extra - extra1 - extra2 - extra3;
+                card1H = minH1 + extra1;
+                card2H = minH2 + extra2;
+                card3H = minH3 + extra3;
+                card4H = minH4 + extra4;
+            } else {
+                float ratio = static_cast<float>(availableForCards) / static_cast<float>(std::max(1, minTotal));
+                card1H = std::max(46, static_cast<int>(minH1 * ratio));
+                card2H = std::max(80, static_cast<int>(minH2 * ratio));
+                card3H = std::max(80, static_cast<int>(minH3 * ratio));
+                card4H = std::max(60, availableForCards - card1H - card2H - card3H);
+            }
+        }
+
+        int currY = 0;
+        auto abrirCartao = [&](int altura) {
+            auto cartao = juce::Rectangle<int>(0, currY, largura, altura);
             cartoes_.push_back(cartao);
-            colunaConfig.removeFromTop(tk.espacoPainel);
-            return cartao.reduced(padCartao, padCartao);
+            currY += altura + gapCartoes;
+            return cartao.reduced(padCartaoX, padCartaoY);
         };
 
-        // 1. SOURCE (Collection Mode only - in Catalog Mode all collections are backed up)
+        // 1. SOURCE (Collection Mode only)
         if (!isCatalogMode && owner_.comboSource_) {
-            int h = alturaCabecalhoSecao + alturaControle;
-            if (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible())
-                h += tk.espacoMedio + alturaControle;
-            auto dentro = abrirCartao(h);
+            auto dentro = abrirCartao(card1H);
             if (owner_.labelSource_) owner_.labelSource_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            dentro.removeFromTop(2);
             owner_.comboSource_->setBounds(dentro.removeFromTop(alturaControle));
             if (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible()) {
-                dentro.removeFromTop(tk.espacoMedio);
+                dentro.removeFromTop(4);
                 owner_.comboColecoes_->setBounds(dentro.removeFromTop(alturaControle));
+            } else if (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible()) {
+                dentro.removeFromTop(4);
+                owner_.btnEditarSelecao_->setBounds(dentro.removeFromTop(alturaControle));
             }
         }
 
         // 2. DESTINATION (Both Collection & Catalog Modes)
         if (owner_.listVaults_) {
-            const int alturaVaults = std::min(128, std::max(36, static_cast<int>(owner_.vaults_.size()) * 36));
-            int h = alturaCabecalhoSecao + alturaVaults + tk.espacoMedio + alturaControle + tk.espacoMedio + 32;
-            auto dentro = abrirCartao(h);
+            auto dentro = abrirCartao(card2H);
             if (owner_.labelDest_) owner_.labelDest_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
-            owner_.listVaults_->setBounds(dentro.removeFromTop(alturaVaults));
-            dentro.removeFromTop(tk.espacoMedio);
-            if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(dentro.removeFromTop(alturaControle));
-            dentro.removeFromTop(tk.espacoMedio);
-            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(32));
+            dentro.removeFromTop(2);
+
+            int alturaDestInfo = 20;
+            int reservedBottom = alturaControle + 4 + alturaDestInfo;
+            int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
+            owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
+            dentro.removeFromTop(4);
+
+            // Browse and Google Drive buttons side by side
+            {
+                auto linhaBrowse = dentro.removeFromTop(alturaControle);
+                int btnGdW = 32;
+                if (owner_.btnGoogleDriveDest_) {
+                    owner_.btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(btnGdW));
+                    linhaBrowse.removeFromRight(tk.espacoPequeno);
+                }
+                if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(linhaBrowse);
+            }
+            dentro.removeFromTop(2);
+            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
         }
 
-        // 3. ORGANIZATION (Collection Mode only - in Catalog Mode each collection keeps its own structure)
+        // 3. ORGANIZATION (Collection Mode only)
         if (!isCatalogMode && owner_.comboOrg_) {
-            int h = alturaCabecalhoSecao + alturaLinhaToggle + tk.espacoPequeno + alturaControle;
-            if (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible())
-                h += tk.espacoMedio + alturaControle;
-            auto dentro = abrirCartao(h);
+            auto dentro = abrirCartao(card3H);
             if (owner_.labelOrg_) owner_.labelOrg_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            dentro.removeFromTop(2);
             if (owner_.togglePreservarEstrutura_) owner_.togglePreservarEstrutura_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
-            dentro.removeFromTop(tk.espacoPequeno);
+            if (owner_.toggleUsarEstruturaMapa_) owner_.toggleUsarEstruturaMapa_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+            dentro.removeFromTop(3);
             owner_.comboOrg_->setBounds(dentro.removeFromTop(alturaControle));
             if (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible()) {
-                dentro.removeFromTop(tk.espacoMedio);
+                dentro.removeFromTop(3);
                 owner_.btnEditarHierarquia_->setBounds(dentro.removeFromTop(alturaControle));
+            }
+            if (owner_.labelPrefixo_ && owner_.editPrefixo_) {
+                dentro.removeFromTop(4);
+                auto linhaPrefixo = dentro.removeFromTop(alturaControle);
+                int labelW = std::min(110, static_cast<int>(linhaPrefixo.getWidth() * 0.40f));
+                owner_.labelPrefixo_->setBounds(linhaPrefixo.removeFromLeft(labelW));
+                linhaPrefixo.removeFromLeft(4);
+                owner_.editPrefixo_->setBounds(linhaPrefixo);
             }
         }
 
-        // 4. OPTIONS (Catalog Mode: first 2 options only; Collection Mode: all 3 options)
+        // 4. OPTIONS (Both Collection & Catalog Modes)
         if (owner_.toggleVerificarChecksum_) {
-            int numToggles = isCatalogMode ? 2 : 3;
-            auto dentro = abrirCartao(alturaCabecalhoSecao + alturaLinhaToggle * numToggles);
+            int lastCardH = std::max(40, totalH - currY);
+            auto dentro = abrirCartao(lastCardH);
             if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            dentro.removeFromTop(2);
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (!isCatalogMode && owner_.toggleEmbutirMetadados_) {
@@ -207,7 +321,7 @@ public:
             }
         }
 
-        alturaCalculada_ = cartoes_.empty() ? 500 : (cartoes_.back().getBottom() + tk.espacoPainel);
+        alturaCalculada_ = cartoes_.empty() ? totalH : cartoes_.back().getBottom();
         repaint();
     }
 
@@ -227,7 +341,10 @@ public:
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        g.fillAll(tk.fundo);
+        bool isLight = (tk.fundo.getBrightness() > 0.5f);
+        juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+        g.fillAll(bg);
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
         int y = 20;
         int w = getWidth() - 32;
@@ -235,7 +352,7 @@ public:
         // 1. Global Backup Summary (Top 4 KPI Cards)
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
-        g.drawText("GLOBAL BACKUP SUMMARY", 16, y, w, 22, juce::Justification::left);
+        g.drawText(isPt ? juce::String::fromUTF8("RESUMO GLOBAL DO BACKUP") : "GLOBAL BACKUP SUMMARY", 16, y, w, 22, juce::Justification::left);
         y += 28;
 
         int cardW = (w - 36) / 4;
@@ -268,20 +385,25 @@ public:
             cx += cardW + 12;
         };
 
-        drawCard("TOTAL DATA", juce::File::descriptionOfSizeInBytes(owner_.catalogBackupTotal_.sizeBytes),
-                 juce::String(owner_.catalogBackupTotal_.totalAssets) + " assets", juce::Colour(0xff3b82f6));
-        drawCard("BACKED UP", juce::File::descriptionOfSizeInBytes(owner_.catalogBackupTotal_.sizeBytes),
-                 "100% protected", juce::Colour(0xff10b981));
-        drawCard("MISSING", "0 B", "0 assets missing", juce::Colour(0xff64748b));
-        drawCard("NEEDS ATTENTION", juce::String(owner_.catalogBackupTotal_.needsAttention),
-                 "items need review", owner_.catalogBackupTotal_.needsAttention > 0 ? juce::Colour(0xfff97316) : tk.textoSecundario);
+        drawCard(isPt ? juce::String::fromUTF8("DADOS TOTAIS") : "TOTAL DATA",
+                 juce::File::descriptionOfSizeInBytes(owner_.catalogBackupTotal_.sizeBytes),
+                 juce::String(owner_.catalogBackupTotal_.totalAssets) + (isPt ? juce::String::fromUTF8(" itens") : " assets"), juce::Colour(0xff3b82f6));
+        drawCard(isPt ? juce::String::fromUTF8("COM BACKUP") : "BACKED UP",
+                 juce::File::descriptionOfSizeInBytes(owner_.catalogBackupTotal_.sizeBytes),
+                 isPt ? juce::String::fromUTF8("100% protegido") : "100% protected", juce::Colour(0xff10b981));
+        drawCard(isPt ? juce::String::fromUTF8("AUSENTES") : "MISSING",
+                 "0 B", isPt ? juce::String::fromUTF8("0 itens ausentes") : "0 assets missing", juce::Colour(0xff64748b));
+        drawCard(isPt ? juce::String::fromUTF8("REQUER ATENÇÃO") : "NEEDS ATTENTION",
+                 juce::String(owner_.catalogBackupTotal_.needsAttention),
+                 isPt ? juce::String::fromUTF8("itens para revisar") : "items need review",
+                 owner_.catalogBackupTotal_.needsAttention > 0 ? juce::Colour(0xfff97316) : tk.textoSecundario);
 
         y += cardH + 24;
 
         // 2. Collections Overview Section Header
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
-        g.drawText("COLLECTIONS BACKUP STATUS", 16, y, w, 22, juce::Justification::left);
+        g.drawText(isPt ? juce::String::fromUTF8("STATUS DO BACKUP DAS COLEÇÕES") : "COLLECTIONS BACKUP STATUS", 16, y, w, 22, juce::Justification::left);
         y += 28;
 
         // Table Header
@@ -297,18 +419,18 @@ public:
         int col4W = 120;
         
         auto hInner = headerRect.reduced(12, 0);
-        g.drawText("COLLECTION", hInner.removeFromLeft(col1W), juce::Justification::centredLeft);
-        g.drawText("STORAGE SIZE", hInner.removeFromLeft(col2W), juce::Justification::centredLeft);
-        g.drawText("ASSETS", hInner.removeFromLeft(col3W), juce::Justification::centredLeft);
+        g.drawText(isPt ? juce::String::fromUTF8("COLEÇÃO") : "COLLECTION", hInner.removeFromLeft(col1W), juce::Justification::centredLeft);
+        g.drawText(isPt ? juce::String::fromUTF8("TAMANHO EM DISCO") : "STORAGE SIZE", hInner.removeFromLeft(col2W), juce::Justification::centredLeft);
+        g.drawText(isPt ? juce::String::fromUTF8("ITENS") : "ASSETS", hInner.removeFromLeft(col3W), juce::Justification::centredLeft);
         g.drawText("STATUS", hInner.removeFromLeft(col4W), juce::Justification::centredLeft);
-        g.drawText("LOCATION", hInner, juce::Justification::centredLeft);
+        g.drawText(isPt ? juce::String::fromUTF8("LOCALIZAÇÃO") : "LOCATION", hInner, juce::Justification::centredLeft);
 
         y += 32;
 
         if (owner_.catalogBackupItems_.empty()) {
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(12.0f)));
-            g.drawText("No collections linked to this catalog yet.", 16, y, w, 30, juce::Justification::left);
+            g.drawText(isPt ? juce::String::fromUTF8("Nenhuma coleção vinculada a este catálogo ainda.") : "No collections linked to this catalog yet.", 16, y, w, 30, juce::Justification::left);
             return;
         }
 
@@ -345,7 +467,8 @@ public:
             g.fillRoundedRectangle(badge.toFloat(), 3.0f);
             g.setColour(tk.textoSobreAcento);
             g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
-            g.drawText(item.status, badge, juce::Justification::centred);
+            juce::String statusTxt = (item.status == "READY") ? (isPt ? juce::String::fromUTF8("PRONTO") : "READY") : item.status;
+            g.drawText(statusTxt, badge, juce::Justification::centred);
 
             // Path
             g.setColour(tk.textoTerciario);
@@ -366,7 +489,7 @@ public:
         auto tInner = totalRow.reduced(12, 0);
         g.setColour(tk.acento);
         g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        g.drawText("CATALOG TOTAL", tInner.removeFromLeft(col1W), juce::Justification::centredLeft);
+        g.drawText(isPt ? juce::String::fromUTF8("TOTAL DO CATÁLOGO") : "CATALOG TOTAL", tInner.removeFromLeft(col1W), juce::Justification::centredLeft);
 
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
@@ -379,7 +502,7 @@ public:
         g.fillRoundedRectangle(badge.toFloat(), 3.0f);
         g.setColour(tk.textoSobreAcento);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.drawText("READY", badge, juce::Justification::centred);
+        g.drawText(isPt ? juce::String::fromUTF8("PRONTO") : "READY", badge, juce::Justification::centred);
     }
 
     void recalculateHeight() {
@@ -436,19 +559,111 @@ void BackupWorkspaceComponent::carregarColecoesBackupCatalogo() {
     }
 }
 
+void BackupWorkspaceComponent::carregarOpcoesContent() {
+    opcoesContent_.clear();
+
+    // Standard CONTENT taxonomy from metadata sheets across all categories
+    static const std::vector<std::string> kPadroesContent = {
+        // Audio
+        "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
+        "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+        "Artist Catalog", "Artist Backup",
+        // Video
+        "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
+        "Corporate Video", "Commercial", "Live Performance", "NLE Project",
+        // Image
+        "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
+        // Docs
+        "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"
+    };
+
+    std::map<std::string, int> contagens;
+    int semConteudo = 0;
+
+    try {
+        auto stmt = projeto_.projeto().registro().prepare(
+            "SELECT COALESCE(NULLIF(TRIM(i.collection_type), ''), "
+            "       (SELECT TRIM(valor) FROM item_campo WHERE item_id = i.id AND campo_id = 'collection_type' AND valor IS NOT NULL AND TRIM(valor) <> '' LIMIT 1), "
+            "       '') AS ctype, COUNT(DISTINCT i.id) "
+            "FROM item i "
+            "WHERE i.projeto_id = ? "
+            "GROUP BY ctype");
+        stmt.bind(1, matriz::db::Value::of(projeto_.projeto().projetoId()));
+        while (stmt.step()) {
+            std::string ct = stmt.columnText(0);
+            int cnt = stmt.columnInt(1);
+            if (ct.empty()) {
+                semConteudo += cnt;
+            } else {
+                contagens[ct] += cnt;
+            }
+        }
+    } catch (...) {}
+
+    // 1. Add all standard options from metadata sheets
+    std::set<std::string> jaAdicionados;
+    for (const auto& opt : kPadroesContent) {
+        int cnt = 0;
+        auto it = contagens.find(opt);
+        if (it != contagens.end()) cnt = it->second;
+        opcoesContent_.push_back({opt, juce::String(opt), cnt});
+        jaAdicionados.insert(opt);
+    }
+
+    // 2. Add any custom options that exist in the database but aren't in the standard list
+    for (const auto& [ct, cnt] : contagens) {
+        if (jaAdicionados.find(ct) == jaAdicionados.end()) {
+            opcoesContent_.push_back({ct, juce::String(ct), cnt});
+        }
+    }
+
+    // 3. Add "No content defined" / "Sem conteúdo definido"
+    juce::String rotuloSem = matriz::i18n::t("backup.sem_conteudo");
+    opcoesContent_.push_back({"__empty__", rotuloSem, semConteudo});
+}
+
+juce::String BackupWorkspaceComponent::rotuloOpcaoSelecionados() const {
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    if (selectedItemIds_.empty()) {
+        return isPt ? juce::String::fromUTF8("Selecionar Arquivos...") : "Select Files...";
+    }
+    return (isPt ? juce::String::fromUTF8("Selecionar Arquivos (") : "Select Files (")
+           + juce::String(static_cast<int>(selectedItemIds_.size())) + ")";
+}
+
+void BackupWorkspaceComponent::abrirJanelaSelecionarArquivos() {
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    BackupFileSelectorDialog::exibirModal(projeto_, selectedItemIds_, this, [safeThis](const std::set<std::string>& novosIds) {
+        if (!safeThis) return;
+        safeThis->selectedItemIds_ = novosIds;
+        safeThis->whatOption_ = WhatOption::SelectedAssets;
+        if (safeThis->comboSource_) {
+            safeThis->comboSource_->changeItemText(3, safeThis->rotuloOpcaoSelecionados());
+            safeThis->comboSource_->setSelectedId(3, juce::dontSendNotification);
+        }
+        if (safeThis->btnEditarSelecao_) {
+            safeThis->btnEditarSelecao_->setVisible(true);
+        }
+        safeThis->atualizarResumo();
+        safeThis->resized();
+    });
+}
+
 BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const std::set<std::string>& selectedItemIds)
     : projeto_(projeto), selectedItemIds_(selectedItemIds)
 {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
     vaults_ = projeto_.listarVaults();
-    colecoes_ = projeto_.listarColecoesDisponiveis();
+    carregarOpcoesContent();
 
     const auto& tk = tema();
 
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
     // === TITLE ===
     labelTitulo_ = std::make_unique<juce::Label>();
-    labelTitulo_->setText(isCatalogMode ? "Catalog Backup & Consolidation" : "Backup Configuration", juce::dontSendNotification);
+    labelTitulo_->setText(isCatalogMode ? matriz::i18n::t("backup.titulo_catalogo") : matriz::i18n::t("backup.titulo_configuracao"), juce::dontSendNotification);
     labelTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
     labelTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*labelTitulo_);
@@ -462,7 +677,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     // === SOURCE section ===
     labelSource_ = std::make_unique<juce::Label>();
-    labelSource_->setText("SOURCE", juce::dontSendNotification);
+    labelSource_->setText(matriz::i18n::t("backup.secao_origem"), juce::dontSendNotification);
     labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelSource_);
@@ -472,11 +687,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
     comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
     comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
-    comboSource_->addItem(isCatalogMode ? "All assets in catalog" : "All assets in project", 1);
-    comboSource_->addItem("Intake assets", 2);
-    comboSource_->addItem("Selected assets (" + juce::String(static_cast<int>(selectedItemIds_.size())) + ")", 3);
-    comboSource_->addItem("Assets with no backup yet", 4);
-    comboSource_->addItem("From content", 5);
+    comboSource_->addItem(isCatalogMode ? matriz::i18n::t("backup.origem_todos_catalogo") : matriz::i18n::t("backup.origem_todos_projeto"), 1);
+    comboSource_->addItem(matriz::i18n::t("backup.origem_intake"), 2);
+    comboSource_->addItem(rotuloOpcaoSelecionados(), 3);
+    comboSource_->addItem(matriz::i18n::t("backup.origem_sem_backup"), 4);
+    comboSource_->addItem(matriz::i18n::t("backup.origem_de_conteudo"), 5);
     if (!selectedItemIds_.empty()) {
         comboSource_->setSelectedId(3, juce::dontSendNotification);
         whatOption_ = WhatOption::SelectedAssets;
@@ -485,30 +700,51 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     }
     comboSource_->onChange = [this] {
         int id = comboSource_->getSelectedId();
+        if (id == 3) {
+            whatOption_ = WhatOption::SelectedAssets;
+            if (comboColecoes_) comboColecoes_->setVisible(false);
+            if (btnEditarSelecao_) btnEditarSelecao_->setVisible(true);
+            resized();
+            abrirJanelaSelecionarArquivos();
+            return;
+        }
         whatOption_ = static_cast<WhatOption>(id - 1);
         if (comboColecoes_) comboColecoes_->setVisible(id == 5);
+        if (btnEditarSelecao_) btnEditarSelecao_->setVisible(id == 3);
         resized();
         atualizarResumo();
     };
     configContainer_->addAndMakeVisible(*comboSource_);
+
+    btnEditarSelecao_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("SELECIONAR ARQUIVOS...") : "SELECT FILES...");
+    btnEditarSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnEditarSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    btnEditarSelecao_->setTooltip(isPt ? juce::String::fromUTF8("Abrir janela para selecionar arquivos do backup") : "Open window to choose backup files");
+    btnEditarSelecao_->onClick = [this] {
+        abrirJanelaSelecionarArquivos();
+    };
+    configContainer_->addChildComponent(*btnEditarSelecao_);
+    if (!selectedItemIds_.empty()) {
+        btnEditarSelecao_->setVisible(true);
+    }
 
     comboColecoes_ = std::make_unique<juce::ComboBox>();
     comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
     comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
     comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
     comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
-    for (size_t i = 0; i < colecoes_.size(); ++i)
-        comboColecoes_->addItem(colecoes_[i].rotulo + " (" + juce::String(colecoes_[i].contagem) + ")", static_cast<int>(i + 1));
-    if (!colecoes_.empty()) comboColecoes_->setSelectedId(1, juce::dontSendNotification);
+    for (size_t i = 0; i < opcoesContent_.size(); ++i)
+        comboColecoes_->addItem(opcoesContent_[i].rotulo + " (" + juce::String(opcoesContent_[i].contagem) + ")", static_cast<int>(i + 1));
+    if (!opcoesContent_.empty()) comboColecoes_->setSelectedId(1, juce::dontSendNotification);
     comboColecoes_->onChange = [this] {
-        selectedCollectionIdx_ = comboColecoes_->getSelectedItemIndex();
+        selectedContentIdx_ = comboColecoes_->getSelectedItemIndex();
         atualizarResumo();
     };
     configContainer_->addChildComponent(*comboColecoes_);
 
     // === DESTINATION section ===
     labelDest_ = std::make_unique<juce::Label>();
-    labelDest_->setText("DESTINATION", juce::dontSendNotification);
+    labelDest_->setText(matriz::i18n::t("backup.secao_destino"), juce::dontSendNotification);
     labelDest_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelDest_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelDest_);
@@ -520,7 +756,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     listVaults_->setRowHeight(32);
     configContainer_->addAndMakeVisible(*listVaults_);
 
-    btnBrowseVault_ = std::make_unique<juce::TextButton>("Choose Custom Folder...");
+    btnBrowseVault_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.escolher_pasta"));
     btnBrowseVault_->setTooltip("Select a custom folder destination for the backup");
     aplicarEstiloBotao(*btnBrowseVault_, false);
     btnBrowseVault_->onClick = [this] {
@@ -542,6 +778,38 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     configContainer_->addAndMakeVisible(*btnBrowseVault_);
 
+    // Botão Google Drive como destino
+    bool isPtGDest = isPt;
+    btnGoogleDriveDest_ = std::make_unique<GoogleDriveIconButton>();
+    btnGoogleDriveDest_->setTooltip(isPtGDest
+        ? juce::String::fromUTF8("Exportar para Google Drive (requer Google Drive para Desktop)")
+        : "Export to Google Drive (requires Google Drive for Desktop)");
+    btnGoogleDriveDest_->onClick = [this, isPtGDest] {
+        auto gdFolder = detectarPastaGoogleDrive();
+        if (gdFolder.isDirectory()) {
+            googleDriveComoDestino_ = true;
+            pastaGoogleDrive_ = gdFolder;
+            customDestFolder_ = gdFolder;
+            selectedVaultIdx_ = -1;
+            listVaults_->deselectAllRows();
+            resolvedDestFolder_ = gdFolder;
+            juce::String msg = isPtGDest
+                ? (juce::String::fromUTF8("Google Drive: ") + gdFolder.getFullPathName())
+                : ("Google Drive: " + gdFolder.getFullPathName());
+            labelDestInfo_->setText(msg, juce::dontSendNotification);
+            labelDestInfo_->setTooltip(msg);
+            atualizarResumo();
+        } else {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::InfoIcon,
+                "Google Drive",
+                isPtGDest
+                    ? juce::String::fromUTF8("Pasta do Google Drive não encontrada.\nInstale o Google Drive para Desktop em drive.google.com/drive/download")
+                    : "Google Drive folder not found.\nInstall Google Drive for Desktop from drive.google.com/drive/download");
+        }
+    };
+    configContainer_->addAndMakeVisible(*btnGoogleDriveDest_);
+
     labelDestInfo_ = std::make_unique<juce::Label>();
     labelDestInfo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
     labelDestInfo_->setColour(juce::Label::textColourId, tk.textoSecundario);
@@ -549,42 +817,73 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*labelDestInfo_);
 
     resolvedDestFolder_ = projeto_.projeto().pasta().getChildFile("Backup");
-    juce::String defaultMsg = "Default: " + resolvedDestFolder_.getFullPathName() +
-                              "  -  pick a vault or custom folder above to change it";
+    juce::String defaultMsg = isPt ? (juce::String::fromUTF8("Padrão: ") + resolvedDestFolder_.getFullPathName() +
+                                      juce::String::fromUTF8("  -  escolha um disco ou pasta acima para mudar"))
+                                   : ("Default: " + resolvedDestFolder_.getFullPathName() +
+                                      "  -  pick a vault or custom folder above to change it");
     labelDestInfo_->setText(defaultMsg, juce::dontSendNotification);
     labelDestInfo_->setTooltip(defaultMsg);
 
     // === ORGANIZATION section ===
     labelOrg_ = std::make_unique<juce::Label>();
-    labelOrg_->setText("ORGANIZATION", juce::dontSendNotification);
+    labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao"), juce::dontSendNotification);
     labelOrg_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelOrg_);
 
-    togglePreservarEstrutura_ = std::make_unique<juce::ToggleButton>("Preserve Original Folder Structure");
+    togglePreservarEstrutura_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.preservar_estrutura"));
     togglePreservarEstrutura_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     togglePreservarEstrutura_->setColour(juce::ToggleButton::tickColourId, tk.acento);
-    togglePreservarEstrutura_->setTooltip("Toggle keeping original source subfolder paths in the backup folder");
+    togglePreservarEstrutura_->setTooltip(matriz::i18n::t("backup.preservar_estrutura_dica"));
     togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
-    togglePreservarEstrutura_->onClick = [this] {
-        bool preserve = togglePreservarEstrutura_->getToggleState();
-        if (comboOrg_) comboOrg_->setEnabled(!preserve);
-        if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(!preserve);
+
+    toggleUsarEstruturaMapa_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.usar_estrutura_mapa"));
+    toggleUsarEstruturaMapa_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleUsarEstruturaMapa_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    toggleUsarEstruturaMapa_->setTooltip(matriz::i18n::t("backup.usar_estrutura_mapa_dica"));
+    toggleUsarEstruturaMapa_->setToggleState(true, juce::dontSendNotification);
+
+    auto atualizarEstadoOrganizacao = [this] {
+        bool usaOriginal = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
+        bool usaMapa = toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState();
+        bool permitePadrao = (!usaOriginal && !usaMapa);
+        if (comboOrg_) comboOrg_->setEnabled(permitePadrao);
+        if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(permitePadrao && comboOrg_->getSelectedId() == 5);
         atualizarResumo();
     };
+
+    togglePreservarEstrutura_->onClick = [this, atualizarEstadoOrganizacao] {
+        if (togglePreservarEstrutura_->getToggleState()) {
+            if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(false, juce::dontSendNotification);
+        }
+        atualizarEstadoOrganizacao();
+        if (togglePreservarEstrutura_->getToggleState() && !plano_.podeConsolidar() && !plano_.nomesEmConflito.empty()) {
+            mostrarPopupConflitoPreservacao();
+        }
+    };
+
+    toggleUsarEstruturaMapa_->onClick = [this, atualizarEstadoOrganizacao] {
+        if (toggleUsarEstruturaMapa_->getToggleState()) {
+            if (togglePreservarEstrutura_) togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
+        }
+        atualizarEstadoOrganizacao();
+    };
+
     configContainer_->addAndMakeVisible(*togglePreservarEstrutura_);
+    configContainer_->addAndMakeVisible(*toggleUsarEstruturaMapa_);
 
     comboOrg_ = std::make_unique<juce::ComboBox>();
     comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
     comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
     comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
     comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
-    comboOrg_->addItem("Keep my catalog organization", 1);
-    comboOrg_->addItem("By media type", 2);
-    comboOrg_->addItem("By year", 3);
-    comboOrg_->addItem("By media type + year", 4);
-    comboOrg_->addItem("Custom (visual editor)", 5);
+    comboOrg_->addItem(matriz::i18n::t("backup.manter_organizacao"), 1);
+    comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia") : "By media type", 2);
+    comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por ano") : "By year", 3);
+    comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia + ano") : "By media type + year", 4);
+    comboOrg_->addItem(isPt ? juce::String::fromUTF8("Personalizado (editor visual)") : "Custom (visual editor)", 5);
     comboOrg_->setSelectedId(1, juce::dontSendNotification);
+    comboOrg_->setEnabled(false);
     comboOrg_->setTooltip("Choose directory naming/organization structure pattern");
     comboOrg_->onChange = [this] {
         if (btnEditarHierarquia_)
@@ -595,7 +894,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*comboOrg_);
 
     hierarquiaCustom_ = matriz::consolidacao::hierarquiaPadrao();
-    btnEditarHierarquia_ = std::make_unique<juce::TextButton>("OPEN VISUAL EDITOR");
+    btnEditarHierarquia_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR EDITOR VISUAL") : "OPEN VISUAL EDITOR");
     btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
     btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnEditarHierarquia_->setTooltip("Open visual interactive editor to design folder naming tree");
@@ -607,28 +906,57 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     configContainer_->addChildComponent(*btnEditarHierarquia_);
 
+    prefixoCustomizado_ = "BKR";
+    {
+        auto stmtPref = projeto_.projeto().registro().prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
+        if (stmtPref.step() && !stmtPref.columnIsNull(0)) {
+            juce::String val = stmtPref.columnText(0);
+            if (val.isNotEmpty())
+                prefixoCustomizado_ = val;
+        }
+    }
+
+    labelPrefixo_ = std::make_unique<juce::Label>();
+    labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos"), juce::dontSendNotification);
+    labelPrefixo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+    labelPrefixo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    configContainer_->addAndMakeVisible(*labelPrefixo_);
+
+    editPrefixo_ = std::make_unique<juce::TextEditor>();
+    editPrefixo_->setText(prefixoCustomizado_, juce::dontSendNotification);
+    editPrefixo_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+    editPrefixo_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+    editPrefixo_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    editPrefixo_->setColour(juce::TextEditor::focusedOutlineColourId, tk.acento);
+    editPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_arquivos_dica"));
+    editPrefixo_->onTextChange = [this] {
+        prefixoCustomizado_ = editPrefixo_->getText().trim();
+        atualizarResumo();
+    };
+    configContainer_->addAndMakeVisible(*editPrefixo_);
+
     // === OPTIONS section ===
     labelOpcoes_ = std::make_unique<juce::Label>();
-    labelOpcoes_->setText("OPTIONS", juce::dontSendNotification);
+    labelOpcoes_->setText(matriz::i18n::t("backup.secao_opcoes"), juce::dontSendNotification);
     labelOpcoes_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelOpcoes_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelOpcoes_);
 
-    toggleVerificarChecksum_ = std::make_unique<juce::ToggleButton>("Verify checksum after copy (SHA-256)");
+    toggleVerificarChecksum_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.verificar_checksum"));
     toggleVerificarChecksum_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     toggleVerificarChecksum_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleVerificarChecksum_->setTooltip("Enable reading back copied files to verify SHA-256 integrity");
     toggleVerificarChecksum_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleVerificarChecksum_);
 
-    toggleGerarCatalogo_ = std::make_unique<juce::ToggleButton>("Generate BKR Backup Catalog Database (SQLite)");
+    toggleGerarCatalogo_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.gerar_banco_sqlite"));
     toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleGerarCatalogo_->setTooltip("Enable SQLite database summary file generation in target folder");
     toggleGerarCatalogo_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleGerarCatalogo_);
 
-    toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>("Embed metadata into backup files (EXIF/XMP/iXML)");
+    toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.embutir_metadados"));
     toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     toggleEmbutirMetadados_->setTooltip("Enable embedding Dublin Core and technical tags directly into media headers");
@@ -657,13 +985,20 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addChildComponent(*labelProgressoStatus_);
 
     // === BUTTONS ===
-    btnStartBackup_ = std::make_unique<juce::TextButton>("MAKE BACKUP");
+    btnStartBackup_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_fazer_backup"));
     aplicarEstiloBotao(*btnStartBackup_, true);
     btnStartBackup_->setTooltip("Begin backup creation process");
-    btnStartBackup_->onClick = [this] { iniciarBackup(); };
+    btnStartBackup_->onClick = [this] {
+        if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState() &&
+            !plano_.podeConsolidar() && !plano_.nomesEmConflito.empty()) {
+            mostrarPopupConflitoPreservacao();
+            return;
+        }
+        iniciarBackup();
+    };
     addAndMakeVisible(*btnStartBackup_);
 
-    btnCancel_ = std::make_unique<juce::TextButton>("CANCEL");
+    btnCancel_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
     aplicarEstiloBotao(*btnCancel_, false);
     btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
     btnCancel_->setTooltip("Abort current backup task safely or return to Home");
@@ -676,7 +1011,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addAndMakeVisible(*btnCancel_);
 
-    btnDone_ = std::make_unique<juce::TextButton>("DONE");
+    btnDone_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
     aplicarEstiloBotao(*btnDone_, false);
     btnDone_->setTooltip("Return to Home screen");
     btnDone_->onClick = [this] {
@@ -685,7 +1020,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnDone_);
 
-    btnOpenCatalog_ = std::make_unique<juce::TextButton>("OPEN BACKUP CATALOG");
+    btnOpenCatalog_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR CATÁLOGO DE BACKUP") : "OPEN BACKUP CATALOG");
     aplicarEstiloBotao(*btnOpenCatalog_, true);
     btnOpenCatalog_->setTooltip("Load generated catalog database as read-only view");
     btnOpenCatalog_->onClick = [this] {
@@ -693,11 +1028,13 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnOpenCatalog_);
 
-    btnExportJanela_ = std::make_unique<juce::TextButton>("EXPORT METADATA");
+    btnExportJanela_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_exportar_metadados"));
     aplicarEstiloBotao(*btnExportJanela_, false);
     btnExportJanela_->setTooltip("Export metadata catalog as CSV/JSON/PDF");
     btnExportJanela_->onClick = [this] { mostrarJanelaExportar(); };
     addChildComponent(*btnExportJanela_);
+
+    addChildComponent(overlay_);
 
     atualizarResumo();
 }
@@ -706,27 +1043,57 @@ BackupWorkspaceComponent::~BackupWorkspaceComponent() = default;
 
 void BackupWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+
     if (labelTitulo_) {
+        labelTitulo_->setText(isCatalogMode ? matriz::i18n::t("backup.titulo_catalogo") : matriz::i18n::t("backup.titulo_configuracao"), juce::dontSendNotification);
         labelTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
         labelTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (labelSource_) {
+        labelSource_->setText(matriz::i18n::t("backup.secao_origem"), juce::dontSendNotification);
         labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (comboSource_) {
+        int sel = comboSource_->getSelectedId();
+        comboSource_->clear(juce::dontSendNotification);
+        comboSource_->addItem(isCatalogMode ? matriz::i18n::t("backup.origem_todos_catalogo") : matriz::i18n::t("backup.origem_todos_projeto"), 1);
+        comboSource_->addItem(matriz::i18n::t("backup.origem_intake"), 2);
+        comboSource_->addItem(rotuloOpcaoSelecionados(), 3);
+        comboSource_->addItem(matriz::i18n::t("backup.origem_sem_backup"), 4);
+        comboSource_->addItem(matriz::i18n::t("backup.origem_de_conteudo"), 5);
+        if (sel > 0) comboSource_->setSelectedId(sel, juce::dontSendNotification);
+
         comboSource_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     }
+    if (btnEditarSelecao_) {
+        btnEditarSelecao_->setButtonText(isPt ? juce::String::fromUTF8("SELECIONAR ARQUIVOS...") : "SELECT FILES...");
+        btnEditarSelecao_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnEditarSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
     if (comboColecoes_) {
+        int sel = comboColecoes_->getSelectedId();
+        carregarOpcoesContent();
+        comboColecoes_->clear(juce::dontSendNotification);
+        for (size_t i = 0; i < opcoesContent_.size(); ++i)
+            comboColecoes_->addItem(opcoesContent_[i].rotulo + " (" + juce::String(opcoesContent_[i].contagem) + ")", static_cast<int>(i + 1));
+        if (sel > 0 && sel <= static_cast<int>(opcoesContent_.size()))
+            comboColecoes_->setSelectedId(sel, juce::dontSendNotification);
+        else if (!opcoesContent_.empty())
+            comboColecoes_->setSelectedId(1, juce::dontSendNotification);
+
         comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     }
     if (labelDest_) {
+        labelDest_->setText(matriz::i18n::t("backup.secao_destino"), juce::dontSendNotification);
         labelDest_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelDest_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
@@ -740,36 +1107,71 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelDestInfo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (labelOrg_) {
+        labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao"), juce::dontSendNotification);
         labelOrg_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (togglePreservarEstrutura_) {
+        togglePreservarEstrutura_->setButtonText(matriz::i18n::t("backup.preservar_estrutura"));
+        togglePreservarEstrutura_->setTooltip(matriz::i18n::t("backup.preservar_estrutura_dica"));
         togglePreservarEstrutura_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         togglePreservarEstrutura_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
+    if (toggleUsarEstruturaMapa_) {
+        toggleUsarEstruturaMapa_->setButtonText(matriz::i18n::t("backup.usar_estrutura_mapa"));
+        toggleUsarEstruturaMapa_->setTooltip(matriz::i18n::t("backup.usar_estrutura_mapa_dica"));
+        toggleUsarEstruturaMapa_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleUsarEstruturaMapa_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    }
     if (comboOrg_) {
+        int sel = comboOrg_->getSelectedId();
+        comboOrg_->clear(juce::dontSendNotification);
+        comboOrg_->addItem(matriz::i18n::t("backup.manter_organizacao"), 1);
+        comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia") : "By media type", 2);
+        comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por ano") : "By year", 3);
+        comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia + ano") : "By media type + year", 4);
+        comboOrg_->addItem(isPt ? juce::String::fromUTF8("Personalizado (editor visual)") : "Custom (visual editor)", 5);
+        if (sel > 0) comboOrg_->setSelectedId(sel, juce::dontSendNotification);
+
         comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
         comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
         comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
     }
     if (btnEditarHierarquia_) {
+        btnEditarHierarquia_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR EDITOR VISUAL") : "OPEN VISUAL EDITOR");
         btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
         btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     }
+    if (labelPrefixo_) {
+        labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos"), juce::dontSendNotification);
+        labelPrefixo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        labelPrefixo_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (editPrefixo_) {
+        editPrefixo_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+        editPrefixo_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        editPrefixo_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        editPrefixo_->setColour(juce::TextEditor::focusedOutlineColourId, tk.acento);
+        editPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_arquivos_dica"));
+    }
     if (labelOpcoes_) {
+        labelOpcoes_->setText(matriz::i18n::t("backup.secao_opcoes"), juce::dontSendNotification);
         labelOpcoes_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelOpcoes_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (toggleVerificarChecksum_) {
+        toggleVerificarChecksum_->setButtonText(matriz::i18n::t("backup.verificar_checksum"));
         toggleVerificarChecksum_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleVerificarChecksum_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
     if (toggleGerarCatalogo_) {
+        toggleGerarCatalogo_->setButtonText(matriz::i18n::t("backup.gerar_banco_sqlite"));
         toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
     if (toggleEmbutirMetadados_) {
+        toggleEmbutirMetadados_->setButtonText(matriz::i18n::t("backup.embutir_metadados"));
         toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
@@ -781,17 +1183,34 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelProgressoStatus_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         labelProgressoStatus_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
-    if (btnStartBackup_) aplicarEstiloBotao(*btnStartBackup_, true);
+    if (btnStartBackup_) {
+        btnStartBackup_->setButtonText(matriz::i18n::t("backup.btn_fazer_backup"));
+        aplicarEstiloBotao(*btnStartBackup_, true);
+    }
     if (btnCancel_) {
+        btnCancel_->setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
         aplicarEstiloBotao(*btnCancel_, false);
         btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
     }
-    if (btnDone_) aplicarEstiloBotao(*btnDone_, false);
-    if (btnOpenCatalog_) aplicarEstiloBotao(*btnOpenCatalog_, true);
-    if (btnExportJanela_) aplicarEstiloBotao(*btnExportJanela_, false);
-    if (btnBrowseVault_) aplicarEstiloBotao(*btnBrowseVault_, false);
+    if (btnDone_) {
+        btnDone_->setButtonText(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
+        aplicarEstiloBotao(*btnDone_, false);
+    }
+    if (btnOpenCatalog_) {
+        btnOpenCatalog_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR CATÁLOGO DE BACKUP") : "OPEN BACKUP CATALOG");
+        aplicarEstiloBotao(*btnOpenCatalog_, true);
+    }
+    if (btnExportJanela_) {
+        btnExportJanela_->setButtonText(matriz::i18n::t("backup.btn_exportar_metadados"));
+        aplicarEstiloBotao(*btnExportJanela_, false);
+    }
+    if (btnBrowseVault_) {
+        btnBrowseVault_->setButtonText(matriz::i18n::t("backup.escolher_pasta"));
+        aplicarEstiloBotao(*btnBrowseVault_, false);
+    }
 
     if (listPrevia_) listPrevia_->repaint();
+    atualizarResumo();
     repaint();
 }
 
@@ -1153,14 +1572,32 @@ std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriter
     } else if (whatOption_ == WhatOption::NeedsBackup) {
         return projeto_.itensDaColecaoEmbutida("vulneraveis");
     } else if (whatOption_ == WhatOption::Collection) {
-        if (selectedCollectionIdx_ >= 0 && selectedCollectionIdx_ < static_cast<int>(colecoes_.size()))
-            return projeto_.itensDaColecao(colecoes_[static_cast<size_t>(selectedCollectionIdx_)].chave);
+        if (selectedContentIdx_ >= 0 && selectedContentIdx_ < static_cast<int>(opcoesContent_.size())) {
+            const auto& opt = opcoesContent_[static_cast<size_t>(selectedContentIdx_)];
+            if (opt.chave == "__empty__") {
+                auto stmt = db.prepare(
+                    "SELECT i.id FROM item i "
+                    "WHERE (i.collection_type IS NULL OR TRIM(i.collection_type) = '') "
+                    "  AND NOT EXISTS (SELECT 1 FROM item_campo ic WHERE ic.item_id = i.id AND ic.campo_id = 'collection_type' AND ic.valor IS NOT NULL AND TRIM(ic.valor) <> '')");
+                while (stmt.step()) out.insert(stmt.columnText(0));
+            } else {
+                auto stmt = db.prepare(
+                    "SELECT i.id FROM item i "
+                    "WHERE i.collection_type = ? "
+                    "   OR ( (i.collection_type IS NULL OR TRIM(i.collection_type) = '') "
+                    "        AND EXISTS (SELECT 1 FROM item_campo ic WHERE ic.item_id = i.id AND ic.campo_id = 'collection_type' AND ic.valor = ?) )");
+                stmt.bind(1, matriz::db::Value::of(opt.chave));
+                stmt.bind(2, matriz::db::Value::of(opt.chave));
+                while (stmt.step()) out.insert(stmt.columnText(0));
+            }
+        }
     }
     return out;
 }
 
 void BackupWorkspaceComponent::atualizarResumo() {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     if (isCatalogMode) {
         auto colecoes = projeto_.listarColecoesLinkadas();
@@ -1173,15 +1610,15 @@ void BackupWorkspaceComponent::atualizarResumo() {
             }
         }
 
-        juce::String summary = "COLLECTIONS (" + juce::String(static_cast<int>(colecoes.size())) + ")" +
-                               "  |  Total Assets: " + juce::String(totalAssets) +
-                               "  |  Space: " + juce::File::descriptionOfSizeInBytes(totalBytes);
+        juce::String summary = (isPt ? juce::String::fromUTF8("COLEÇÕES (") : "COLLECTIONS (") + juce::String(static_cast<int>(colecoes.size())) + ")" +
+                               (isPt ? juce::String::fromUTF8("  |  Itens Totais: ") : "  |  Total Assets: ") + juce::String(totalAssets) +
+                               (isPt ? juce::String::fromUTF8("  |  Espaço: ") : "  |  Space: ") + juce::File::descriptionOfSizeInBytes(totalBytes);
 
         if (resolvedDestFolder_.getFullPathName().isEmpty()) {
-            summary += "  -  (Select a destination folder above)";
+            summary += isPt ? juce::String::fromUTF8("  -  (Selecione uma pasta de destino acima)") : "  -  (Select a destination folder above)";
             btnStartBackup_->setEnabled(false);
         } else if (colecoes.empty()) {
-            summary += "  -  (No collections linked to this catalog)";
+            summary += isPt ? juce::String::fromUTF8("  -  (Nenhuma coleção vinculada a este catálogo)") : "  -  (No collections linked to this catalog)";
             btnStartBackup_->setEnabled(false);
         } else {
             btnStartBackup_->setEnabled(true);
@@ -1194,7 +1631,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     }
 
     if (resolvedDestFolder_.getFullPathName().isEmpty()) {
-        labelResumo_->setText("Select a destination to see backup preview.", juce::dontSendNotification);
+        labelResumo_->setText(isPt ? juce::String::fromUTF8("Selecione um destino para ver a prévia do backup.") : "Select a destination to see backup preview.", juce::dontSendNotification);
         plano_.itens.clear();
         listPrevia_->definirPlano(plano_);
         btnStartBackup_->setEnabled(false);
@@ -1206,6 +1643,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
     matriz::consolidacao::HierarquiaBackup h;
     if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState()) {
         h = { matriz::consolidacao::NivelHierarquia::EstruturaOriginal };
+    } else if (toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState()) {
+        h = { matriz::consolidacao::NivelHierarquia::PastaManual };
     } else {
         int orgId = comboOrg_ ? comboOrg_->getSelectedId() : 1;
         if (orgId == 1) h = { matriz::consolidacao::NivelHierarquia::PastaManual };
@@ -1216,7 +1655,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     }
 
     plano_ = matriz::consolidacao::planejarConsolidacao(
-        projeto_.projeto().registro(), projeto_.projeto().pasta(), resolvedDestFolder_, h);
+        projeto_.projeto().registro(), projeto_.projeto().pasta(), resolvedDestFolder_, h, {}, prefixoCustomizado_);
 
     std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
     juce::int64 sz = 0; // space to copy
@@ -1231,24 +1670,38 @@ void BackupWorkspaceComponent::atualizarResumo() {
     plano_.itens = std::move(filtrados);
     plano_.espacoNecessarioBytes = sz;
 
-    juce::String summary = "Assets: " + juce::String(static_cast<int>(plano_.itens.size()));
+    juce::String summary = (isPt ? juce::String::fromUTF8("Itens: ") : "Assets: ") + juce::String(static_cast<int>(plano_.itens.size()));
     if (itemIds.size() > plano_.itens.size()) {
-        summary += " (of " + juce::String(static_cast<int>(itemIds.size())) + " in catalog)";
+        summary += isPt ? (juce::String::fromUTF8(" (de ") + juce::String(static_cast<int>(itemIds.size())) + juce::String::fromUTF8(" no catálogo)"))
+                        : (" (of " + juce::String(static_cast<int>(itemIds.size())) + " in catalog)");
     }
-    summary += " | Space: " + juce::File::descriptionOfSizeInBytes(totalSz);
+    summary += (isPt ? juce::String::fromUTF8(" | Espaço: ") : " | Space: ") + juce::File::descriptionOfSizeInBytes(totalSz);
 
     int semArquivo = static_cast<int>(itemIds.size() - plano_.itens.size());
     if (semArquivo > 0) {
-        summary += "  -  (" + juce::String(semArquivo) + " metadata items have no physical files)";
+        summary += isPt ? (juce::String::fromUTF8("  -  (") + juce::String(semArquivo) + juce::String::fromUTF8(" itens de metadado não têm arquivos físicos)"))
+                        : ("  -  (" + juce::String(semArquivo) + " metadata items have no physical files)");
     }
 
     // Botão desabilitado sem explicação é indistinguível de botão ausente —
     // o motivo vai junto do resumo sempre que o backup não puder rodar.
     bool pronto = plano_.podeConsolidar() && !plano_.itens.empty();
     if (plano_.itens.empty())
-        summary += "  -  CANNOT RUN: no assets match the selected source.";
-    else if (!plano_.podeConsolidar())
-        summary += "  -  CANNOT RUN: naming conflict, change the organization above.";
+        summary += isPt ? juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: nenhum item corresponde à origem selecionada.")
+                        : "  -  CANNOT RUN: no assets match the selected source.";
+    else if (!plano_.podeConsolidar()) {
+        bool preservando = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
+        if (preservando) {
+            summary += isPt ? juce::String::fromUTF8("  -  (Conflito de nomes detectado na estrutura original)")
+                            : "  -  (Naming conflict detected in original structure)";
+        } else {
+            int qtd = static_cast<int>(plano_.nomesEmConflito.size());
+            summary += isPt ? (juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: ") + juce::String(qtd) +
+                               juce::String::fromUTF8(" arquivo(s) com conflito de nomes no destino. Resolva as duplicatas ou altere a organização."))
+                            : ("  -  CANNOT RUN: " + juce::String(qtd) +
+                               " file(s) with naming conflicts at destination. Resolve duplicates or change organization.");
+        }
+    }
 
     labelResumo_->setText(summary, juce::dontSendNotification);
 
@@ -1256,6 +1709,61 @@ void BackupWorkspaceComponent::atualizarResumo() {
     listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
 
     btnStartBackup_->setEnabled(pronto);
+}
+
+void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    int qtd = static_cast<int>(plano_.nomesEmConflito.size());
+
+    PainelOverlay::Config cfg;
+    cfg.titulo = isPt ? juce::String::fromUTF8("CONFLITO DE ARQUIVOS NO DESTINO")
+                      : "DESTINATION FILE CONFLICT";
+
+    juce::String msg;
+    if (isPt) {
+        msg = juce::String::fromUTF8(
+            "Ao optar por 'Preservar estrutura original de pastas', foram identificados ")
+            + juce::String(qtd) + juce::String::fromUTF8(" arquivo(s) cujos nomes geram colisão no destino.\n\n"
+            "O processo de backup não pode sobrescrever arquivos com o mesmo nome.\n\n"
+            "Deseja ir para a aba de Duplicatas para escanear, validar e resolver os arquivos conflitantes?");
+    } else {
+        msg = juce::String(
+            "When choosing 'Preserve original folder structure', ")
+            + juce::String(qtd) + " file(s) collide at the destination with identical names and paths.\n\n"
+            "The backup process cannot overwrite destination files.\n\n"
+            "Would you like to go to the Duplicates tab to scan, inspect, and resolve these conflicting files?";
+    }
+    cfg.mensagem = msg;
+    cfg.botoes = {
+        { isPt ? "IR PARA DUPLICATAS" : "GO TO DUPLICATES", 1, true, false },
+        { isPt ? "VOLTAR" : "RETURN", 2, false, true }
+    };
+
+    overlay_.mostrar(cfg, [this](PainelOverlay::Resultado res) {
+        if (res.botaoId == 1) {
+            if (aoPedirIrParaDuplicatas) {
+                aoPedirIrParaDuplicatas();
+            }
+        }
+    });
+}
+
+juce::File BackupWorkspaceComponent::detectarPastaGoogleDrive() {
+    // Caminho moderno (Google Drive Desktop ≥ v55, macOS 12+)
+    juce::File base = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                          .getChildFile("Library/CloudStorage");
+    if (base.isDirectory()) {
+        for (auto& child : base.findChildFiles(juce::File::findDirectories, false, "GoogleDrive-*")) {
+            auto myDrive = child.getChildFile("My Drive");
+            if (myDrive.isDirectory()) return myDrive;
+            if (child.isDirectory()) return child;
+        }
+    }
+    // Caminho legado (Google Drive pré-2021)
+    juce::File legacy = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
+                            .getChildFile("Google Drive");
+    if (legacy.isDirectory()) return legacy;
+    return juce::File(); // não encontrado
 }
 
 void BackupWorkspaceComponent::iniciarBackup() {
@@ -1561,7 +2069,9 @@ void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
 
 void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    g.fillAll(tk.fundo);
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    g.fillAll(bg);
 
     // Cabeçalho e rodapé como faixas, separados por fio de 1px: dá âncora
     // visual fixa pro olho e impede que o conteúdo pareça flutuar solto.
@@ -1663,27 +2173,18 @@ void BackupWorkspaceComponent::resized() {
         return;
     }
 
-    // ---- Config: duas colunas, com largura máxima ----
-    auto corpo = area.reduced(tk.espacoGrande * 2, tk.espacoGrande + tk.espacoMedio);
-    const int larguraMax = 1180;
-    if (corpo.getWidth() > larguraMax)
-        corpo = corpo.withSizeKeepingCentre(larguraMax, corpo.getHeight()).withY(corpo.getY());
+    // ---- Config: duas colunas justificadas à esquerda, com prévia expandida até a direita ----
+    auto corpo = area.reduced(tk.espacoGrande, tk.espacoMedio);
 
-    const int larguraConfig = std::min(460, corpo.getWidth() / 2);
+    const int larguraConfig = std::min(420, std::max(340, static_cast<int>(corpo.getWidth() * 0.32f)));
     auto colunaConfig = corpo.removeFromLeft(larguraConfig);
-    corpo.removeFromLeft(tk.espacoGrande + tk.espacoMedio);
+    corpo.removeFromLeft(tk.espacoMedio);
     auto colunaPrevia = corpo;
 
     if (configViewport_ && configContainer_) {
         configViewport_->setBounds(colunaConfig);
-        int larguraConteudo = colunaConfig.getWidth();
-        configContainer_->setSize(larguraConteudo, 1000);
-        configContainer_->resized();
-        int altNec = configContainer_->calcularAlturaNecessaria();
-        if (altNec > colunaConfig.getHeight()) {
-            larguraConteudo -= configViewport_->getScrollBarThickness();
-        }
-        configContainer_->setSize(larguraConteudo, altNec);
+        configViewport_->setScrollBarsShown(false, false);
+        configContainer_->setBounds(0, 0, colunaConfig.getWidth(), colunaConfig.getHeight());
         configContainer_->resized();
     }
 
@@ -1699,6 +2200,8 @@ void BackupWorkspaceComponent::resized() {
     dentroPrevia.removeFromTop(tk.espacoMedio);
     listPreviaViewport_->setBounds(dentroPrevia);
     if (listPrevia_) listPrevia_->setSize(dentroPrevia.getWidth(), listPrevia_->getHeight());
+
+    overlay_.setBounds(getLocalBounds());
 }
 
 } // namespace matriz::ui

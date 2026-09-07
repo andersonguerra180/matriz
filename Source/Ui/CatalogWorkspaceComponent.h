@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "FloatingPreviewWindow.h"
+#include "ViewModeIconButton.h"
 
 namespace matriz::ui {
 
@@ -97,13 +98,15 @@ private:
     std::unique_ptr<juce::TextButton> btnLimparBusca_;
     std::unique_ptr<juce::Slider> sliderTamanho_;
     std::unique_ptr<juce::Label> lblTamanho_;
-    std::unique_ptr<juce::TextButton> btnVisaoGrade_;
-    std::unique_ptr<juce::TextButton> btnVisaoLista_;
+    std::unique_ptr<ViewModeIconButton> btnVisaoGrade_;
+    std::unique_ptr<ViewModeIconButton> btnVisaoLista_;
     std::unique_ptr<juce::TextButton> btnDestacarEditados_;
+    std::unique_ptr<juce::TextButton> btnOcultarEditados_;
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
     bool modoVisaoGrade_ = true;
     bool destacarEditados_ = true;
+    bool ocultarEditados_ = false;
     bool editMode_ = true;
     std::optional<std::string> pastaNavegarAtual_;
     std::vector<std::string> caminhoNavegacao_;
@@ -152,6 +155,7 @@ private:
     bool fichaColapsada_ = false;
 
     std::unique_ptr<juce::Component> fichaResizerBar_;
+    juce::Rectangle<int> toolbarBounds_;
     std::unique_ptr<juce::TextButton> btnToggleFicha_;
 };
 

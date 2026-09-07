@@ -8,6 +8,8 @@
 namespace matriz::ui {
 
 AnalyticsTreemapComponent::AnalyticsTreemapComponent() {
+    btnUp_.setButtonText(i18n::t("analytics.btn_up"));
+    btnRoot_.setButtonText(i18n::t("analytics.btn_root"));
     addAndMakeVisible(btnUp_);
     addAndMakeVisible(btnRoot_);
 
@@ -22,6 +24,13 @@ AnalyticsTreemapComponent::AnalyticsTreemapComponent() {
     btnRoot_.onClick = [this] {
         resetarNavegacao();
     };
+}
+
+void AnalyticsTreemapComponent::lookAndFeelChanged() {
+    juce::Component::lookAndFeelChanged();
+    btnUp_.setButtonText(i18n::t("analytics.btn_up"));
+    btnRoot_.setButtonText(i18n::t("analytics.btn_root"));
+    repaint();
 }
 
 void AnalyticsTreemapComponent::resetarNavegacao() {
@@ -401,7 +410,7 @@ void AnalyticsTreemapComponent::paint(juce::Graphics& g) {
     if (!noAtual_ || noAtual_->children.empty()) {
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
-        g.drawText("No assets cataloged yet.", area, juce::Justification::centred);
+        g.drawText(i18n::t("analytics.vazio"), area, juce::Justification::centred);
         return;
     }
 
@@ -430,11 +439,15 @@ void AnalyticsTreemapComponent::desenharTopBar(juce::Graphics& g, juce::Rectangl
     btnUp_.setEnabled(noAtual_ && noAtual_->parent != nullptr);
 
     // KPI indicators
-    juce::String currentName = noAtual_ ? juce::String(noAtual_->name) : "ALL ASSETS";
+    juce::String currentName = noAtual_ ? juce::String(noAtual_->name) : juce::String(i18n::t("analytics.all_assets"));
     uint64_t currentSize = noAtual_ ? noAtual_->aggregateSize : totalTamanhoNoCatalogo_;
 
-    juce::String statsText = juce::String("TOTAL CATALOG: ") + juce::String(totalAssetsNoCatalogo_) + " ASSETS (" + formatarTamanho(totalTamanhoNoCatalogo_) + ")"
-                             + "  |  VIEWPORT: " + currentName + " (" + formatarTamanho(currentSize) + ")";
+    juce::String statsTemplate = i18n::t("analytics.stats");
+    juce::String statsText = statsTemplate
+        .replace("{t}", juce::String(totalAssetsNoCatalogo_))
+        .replace("{ts}", formatarTamanho(totalTamanhoNoCatalogo_))
+        .replace("{v}", currentName)
+        .replace("{vs}", formatarTamanho(currentSize));
 
     g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
@@ -583,11 +596,11 @@ void AnalyticsTreemapComponent::desenharTooltip(juce::Graphics& g) {
     juce::String pathStr = noHover_->path.empty() ? "N/A" : juce::String(noHover_->path);
 
     juce::StringArray lines;
-    lines.add("Name: " + nameStr);
-    lines.add("Size: " + sizeStr);
-    lines.add("Media Type: " + typeStr);
-    lines.add("Extension: " + extStr);
-    lines.add("Path: " + pathStr);
+    lines.add(juce::String(i18n::t("analytics.tooltip_name")) + nameStr);
+    lines.add(juce::String(i18n::t("analytics.tooltip_size")) + sizeStr);
+    lines.add(juce::String(i18n::t("analytics.tooltip_media_type")) + typeStr);
+    lines.add(juce::String(i18n::t("analytics.tooltip_extension")) + extStr);
+    lines.add(juce::String(i18n::t("analytics.tooltip_path")) + pathStr);
 
     int maxW = 320;
     int lineH = 14;

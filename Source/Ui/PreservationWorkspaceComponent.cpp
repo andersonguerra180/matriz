@@ -9,13 +9,13 @@ PreservationWorkspaceComponent::PreservationWorkspaceComponent(ProjetoAberto& pr
     : projeto_(projeto)
 {
     labelTitulo_ = std::make_unique<juce::Label>();
-    labelTitulo_->setText("Archive Preservation & Health Dashboard", juce::dontSendNotification);
+    labelTitulo_->setText(i18n::t("preservacao.titulo_dashboard"), juce::dontSendNotification);
     labelTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
     labelTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
     addAndMakeVisible(*labelTitulo_);
 
     labelSubtitulo_ = std::make_unique<juce::Label>();
-    labelSubtitulo_->setText("Monitor integrity, backup status, rights, and metadata health.", juce::dontSendNotification);
+    labelSubtitulo_->setText(i18n::t("preservacao.subtitulo_dashboard"), juce::dontSendNotification);
     labelSubtitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     labelSubtitulo_->setColour(juce::Label::textColourId, tema().textoSecundario);
     addAndMakeVisible(*labelSubtitulo_);
@@ -25,6 +25,20 @@ PreservationWorkspaceComponent::PreservationWorkspaceComponent(ProjetoAberto& pr
 }
 
 PreservationWorkspaceComponent::~PreservationWorkspaceComponent() = default;
+
+void PreservationWorkspaceComponent::lookAndFeelChanged() {
+    if (labelTitulo_) {
+        labelTitulo_->setText(i18n::t("preservacao.titulo_dashboard"), juce::dontSendNotification);
+        labelTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
+        labelTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
+    }
+    if (labelSubtitulo_) {
+        labelSubtitulo_->setText(i18n::t("preservacao.subtitulo_dashboard"), juce::dontSendNotification);
+        labelSubtitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
+        labelSubtitulo_->setColour(juce::Label::textColourId, tema().textoSecundario);
+    }
+    recarregar();
+}
 
 void PreservationWorkspaceComponent::recarregar() {
     auto& db = projeto_.projeto().registro();
@@ -117,35 +131,35 @@ void PreservationWorkspaceComponent::recarregar() {
     // --- Health banner ---
     const auto& tk = tema();
     if (falhaIntegridade_ > 0) {
-        textoHealth_ = "CRITICAL";
+        textoHealth_ = i18n::t("preservacao.status_critico");
         corHealth_   = tk.perigo;
     } else if (semBackup_ > 0 || semFixity_ > totalAssets_ / 2) {
-        textoHealth_ = "WARNING";
+        textoHealth_ = i18n::t("preservacao.status_alerta");
         corHealth_   = tk.alerta;
     } else {
-        textoHealth_ = "GOOD";
+        textoHealth_ = i18n::t("preservacao.status_bom");
         corHealth_   = tk.estadoQcOk;
     }
 
     // --- 16 cards (4x4) ---
     metricas_ = {
-        { "total",               "TOTAL ASSETS",              totalAssets_,          {}, false, false },
-        { "persistent_id",       "PERSISTENT IDENTIFIER",     comPersistentId_,      {}, false, false },
-        { "fixity_sha256",       "SHA-256 CALCULATED",        comSha256_,            {}, false, false },
-        { "fixity_verificada",   "FIXITY VERIFIED",           fixityVerificada_,     {}, false, false },
-        { "falha_integridade",   "INTEGRITY FAILURES",        falhaIntegridade_,     {}, false, true  },
-        { "formato_identificado","FORMAT IDENTIFIED",         formatoIdentificado_,  {}, false, false },
-        { "backup_verificado",   "BACKUP VERIFIED (PREMIS)",  backupVerificado_,     {}, false, false },
-        { "sem_backup",          "WITHOUT VERIFIED BACKUP",   semBackup_,            {}, false, true  },
-        { "direitos_desconhecidos","RIGHTS UNKNOWN",          direitosDesconhecidos_,{}, false, true  },
-        { "sem_fixity",          "WITHOUT SHA-256",           semFixity_,            {}, false, true  },
-        { "eventos",             "PRESERVATION EVENTS",       totalEventos_,         {}, false, false },
-        { "vulneraveis",         "NEEDS BACKUP (SINGLE COPY)",static_cast<int>(projeto_.itensDaColecaoEmbutida("vulneraveis").size()), {}, false, true },
+        { "total",               i18n::t("preservacao.card_total"),                  totalAssets_,          {}, false, false },
+        { "persistent_id",       i18n::t("preservacao.card_persistent_id"),         comPersistentId_,      {}, false, false },
+        { "fixity_sha256",       i18n::t("preservacao.card_fixity_sha256"),         comSha256_,            {}, false, false },
+        { "fixity_verificada",   i18n::t("preservacao.card_fixity_verificada"),     fixityVerificada_,     {}, false, false },
+        { "falha_integridade",   i18n::t("preservacao.card_falha_integridade"),     falhaIntegridade_,     {}, false, true  },
+        { "formato_identificado",i18n::t("preservacao.card_formato_identificado"),  formatoIdentificado_,  {}, false, false },
+        { "backup_verificado",   i18n::t("preservacao.card_backup_verificado"),     backupVerificado_,     {}, false, false },
+        { "sem_backup",          i18n::t("preservacao.card_sem_backup"),            semBackup_,            {}, false, true  },
+        { "direitos_desconhecidos",i18n::t("preservacao.card_direitos_desconhecidos"),direitosDesconhecidos_,{}, false, true },
+        { "sem_fixity",          i18n::t("preservacao.card_sem_fixity"),            semFixity_,            {}, false, true  },
+        { "eventos",             i18n::t("preservacao.card_eventos"),               totalEventos_,         {}, false, false },
+        { "vulneraveis",         i18n::t("preservacao.card_vulneraveis"),           static_cast<int>(projeto_.itensDaColecaoEmbutida("vulneraveis").size()), {}, false, true },
         // Compliance row
-        { "formato_risco",       "FORMAT AT RISK",            formatosEmRisco_,      {}, false, true  },
-        { "regra_321",           "BACKUP RULE 3-2-1",         (regra321Status_ == "OK") ? 1 : 0, {}, false, false },
-        { "vault_refresh",       "VAULT NEEDS REFRESH",       vaultsParaRefresh_,    {}, false, true  },
-        { "compliance_score",    "COMPLIANCE SCORE",          0,                     {}, false, false },
+        { "formato_risco",       i18n::t("preservacao.card_formato_risco"),         formatosEmRisco_,      {}, false, true  },
+        { "regra_321",           i18n::t("preservacao.card_regra_321"),             (regra321Status_ == "OK") ? 1 : 0, {}, false, false },
+        { "vault_refresh",       i18n::t("preservacao.card_vault_refresh"),         vaultsParaRefresh_,    {}, false, true  },
+        { "compliance_score",    i18n::t("preservacao.card_compliance_score"),      0,                     {}, false, false },
     };
 
     repaint();
@@ -166,7 +180,7 @@ void PreservationWorkspaceComponent::paint(juce::Graphics& g) {
 
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    g.drawText("ARCHIVE HEALTH STATUS",
+    g.drawText(i18n::t("preservacao.banner_status"),
                boundsBanner_.getX() + 24, boundsBanner_.getY() + 12,
                boundsBanner_.getWidth() - 40, 16,
                juce::Justification::centredLeft, true);

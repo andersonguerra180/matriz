@@ -23,6 +23,7 @@ enum Comando {
     kVerDuplicatas,
     kDefinirCapa,
     kRemoverCapa,
+    kLimparMetadados,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -218,6 +219,18 @@ void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& ite
               });
 }
 
+void limparMetadados(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    if (itemIds.empty()) return;
+    ProjetoAberto* p = &projeto;
+    auto ids = itemIds;
+    confirmar(matriz::i18n::t("metadados.confirmar_limpar_titulo"),
+              matriz::i18n::t("metadados.confirmar_limpar_msg"),
+              matriz::i18n::t("menu.limpar_metadados"), [p, ids, ganchos] {
+                  p->redefinirMetadadosItens(ids);
+                  if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+              });
+}
+
 void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos,
                       juce::Component* ancora) {
     if (itemIds.empty()) return;
@@ -247,6 +260,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kCategorizar, matriz::i18n::t("acoes.categorizar"));
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     if (!umSo) menu.addItem(kRenomearEmLote, matriz::i18n::t("renomear_lote.titulo"));
+    menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
 
 #if JUCE_MAC
     juce::String atalhoPublish = " (Cmd+P)";
@@ -311,6 +325,10 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kRenomearEmLote:
             renomearEmLote(projeto, itemIds, ganchos);
+            break;
+
+        case kLimparMetadados:
+            limparMetadados(projeto, itemIds, ganchos);
             break;
 
         case kAlternarPublicacao:

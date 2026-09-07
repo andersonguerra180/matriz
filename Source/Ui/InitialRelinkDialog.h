@@ -18,6 +18,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     static void showModal(const juce::String& sampleExpectedPath,
                           const juce::String& sampleTitle,
@@ -34,8 +35,8 @@ private:
     juce::Label lblDescription_;
     juce::Label lblExpectedHeader_;
     juce::TextEditor txtExpectedPath_;
-    juce::TextButton btnLocate_{"LOCATE FILE"};
-    juce::TextButton btnWorkOffline_{"WORK OFFLINE"};
+    juce::TextButton btnLocate_;
+    juce::TextButton btnWorkOffline_;
 
     std::unique_ptr<juce::FileChooser> fileChooser_;
 };

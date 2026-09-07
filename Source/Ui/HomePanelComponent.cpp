@@ -14,6 +14,12 @@ public:
         setInterceptsMouseClicks(true, false);
     }
 
+    void definirTextos(const juce::String& titulo, const juce::String& descricao) {
+        titulo_ = titulo;
+        descricao_ = descricao;
+        repaint();
+    }
+
     std::function<void()> aoClicar;
 
     void paint(juce::Graphics& g) override {
@@ -162,10 +168,12 @@ HomePanelComponent::~HomePanelComponent() = default;
 void HomePanelComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (titulo_) {
+        titulo_->setText(matriz::i18n::t("home.titulo"), juce::dontSendNotification);
         titulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
         titulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (subtitulo_) {
+        subtitulo_->setText(matriz::i18n::t("home.subtitulo"), juce::dontSendNotification);
         subtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         subtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
@@ -174,9 +182,15 @@ void HomePanelComponent::lookAndFeelChanged() {
         totalAssets_->setColour(juce::Label::textColourId, tk.textoTerciario);
     }
     if (atencaoTitulo_) {
+        atencaoTitulo_->setText(matriz::i18n::t("home.atencao_titulo"), juce::dontSendNotification);
         atencaoTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         atencaoTitulo_->setColour(juce::Label::textColourId, tk.textoTerciario);
     }
+    if (cartaoIngest_) cartaoIngest_->definirTextos(matriz::i18n::t("home.ingest_titulo"), matriz::i18n::t("home.ingest_desc"));
+    if (cartaoCatalog_) cartaoCatalog_->definirTextos(matriz::i18n::t("home.catalog_titulo"), matriz::i18n::t("home.catalog_desc"));
+    if (cartaoBackup_) cartaoBackup_->definirTextos(matriz::i18n::t("home.backup_titulo"), matriz::i18n::t("home.backup_desc"));
+    if (cartaoPreservacao_) cartaoPreservacao_->definirTextos(matriz::i18n::t("home.preservacao_titulo"), matriz::i18n::t("home.preservacao_desc"));
+    recarregar();
     repaint();
 }
 
@@ -195,6 +209,7 @@ void HomePanelComponent::recarregar() {
     }
 
     linhasAtencao_.clear();
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     // 1. Items need review
     int countRevisao = 0;
@@ -203,7 +218,8 @@ void HomePanelComponent::recarregar() {
         if (stmt.step()) countRevisao = stmt.columnInt(0);
     } catch (...) {}
     if (countRevisao > 0) {
-        auto label = juce::String(countRevisao) + (countRevisao == 1 ? " item needs review" : " items need review");
+        auto label = isPt ? (juce::String(countRevisao) + (countRevisao == 1 ? juce::String::fromUTF8(" item requer revisão") : juce::String::fromUTF8(" itens requerem revisão")))
+                          : (juce::String(countRevisao) + (countRevisao == 1 ? " item needs review" : " items need review"));
         auto linha = std::make_unique<LinhaAtencao>(label, countRevisao, "revisao");
         linha->aoClicar = [this](const std::string& chave) { if (aoClicarAtencao) aoClicarAtencao(chave); };
         addAndMakeVisible(*linha);
@@ -217,7 +233,8 @@ void HomePanelComponent::recarregar() {
         if (stmt.step()) countVulneraveis = stmt.columnInt(0);
     } catch (...) {}
     if (countVulneraveis > 0) {
-        auto label = juce::String(countVulneraveis) + (countVulneraveis == 1 ? " asset has only one copy" : " assets have only one copy");
+        auto label = isPt ? (juce::String(countVulneraveis) + (countVulneraveis == 1 ? juce::String::fromUTF8(" item tem apenas uma cópia") : juce::String::fromUTF8(" itens têm apenas uma cópia")))
+                          : (juce::String(countVulneraveis) + (countVulneraveis == 1 ? " asset has only one copy" : " assets have only one copy"));
         auto linha = std::make_unique<LinhaAtencao>(label, countVulneraveis, "vulneraveis");
         linha->aoClicar = [this](const std::string& chave) { if (aoClicarAtencao) aoClicarAtencao(chave); };
         addAndMakeVisible(*linha);
@@ -231,7 +248,8 @@ void HomePanelComponent::recarregar() {
         if (stmt.step()) countCorrompido = stmt.columnInt(0);
     } catch (...) {}
     if (countCorrompido > 0) {
-        auto label = juce::String(countCorrompido) + (countCorrompido == 1 ? " checksum problem" : " checksum problems");
+        auto label = isPt ? (juce::String(countCorrompido) + (countCorrompido == 1 ? juce::String::fromUTF8(" problema de integridade/checksum") : juce::String::fromUTF8(" problemas de integridade/checksum")))
+                          : (juce::String(countCorrompido) + (countCorrompido == 1 ? " checksum problem" : " checksum problems"));
         auto linha = std::make_unique<LinhaAtencao>(label, countCorrompido, "corrompido");
         linha->aoClicar = [this](const std::string& chave) { if (aoClicarAtencao) aoClicarAtencao(chave); };
         addAndMakeVisible(*linha);

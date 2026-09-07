@@ -6,6 +6,7 @@
 // ==============================================================================
 
 #include <JuceHeader.h>
+#include "ViewModeIconButton.h"
 #include <functional>
 #include <memory>
 #include <set>
@@ -54,6 +55,9 @@ public:
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
+    // Called with the Google Drive root folder when the GD button is clicked
+    // and the mount point exists. Host should open a FileChooser at that path.
+    std::function<void(const juce::File& gdFolder)> aoIngerirDeGoogleDrive;
     std::function<void()> aoConfirmarParaGrid;
 
     // Static helper to get controlled collections vocabulary
@@ -81,10 +85,13 @@ private:
     };
 
     class ThumbnailsGridComponent;
+    class IntakeDragDropEmptyState;
+    friend class IntakeDragDropEmptyState;
 
     void carregarItens();
     void atualizarFiltragem();
     void atualizarContagens();
+    void atualizarVisibilidadeEmptyState();
     void aplicarColecaoAosSelecionados(const juce::String& colecao);
     void definirColecaoItem(const std::string& itemId, const juce::String& colecao);
     void aplicarOriginalSourceMediumAosSelecionados(const std::string& sourceMediaJson);
@@ -121,9 +128,10 @@ private:
     std::unique_ptr<juce::Label> lblTitulo_;
     std::unique_ptr<juce::Label> lblSubtitulo_;
     std::unique_ptr<juce::Label> lblContadorTotal_;
-    std::unique_ptr<juce::TextButton> btnVisaoLista_;
-    std::unique_ptr<juce::TextButton> btnVisaoIcones_;
+    std::unique_ptr<ViewModeIconButton> btnVisaoLista_;
+    std::unique_ptr<ViewModeIconButton> btnVisaoIcones_;
     std::unique_ptr<juce::TextButton> btnIngerir_;
+    std::unique_ptr<juce::Button> btnGoogleDrive_;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
     std::unique_ptr<juce::TextButton> btnRemoverSelecao_;
@@ -149,6 +157,7 @@ private:
     std::unique_ptr<juce::TableListBox> tabela_;
     std::unique_ptr<juce::Viewport> gridViewport_;
     std::unique_ptr<ThumbnailsGridComponent> gridComponent_;
+    std::unique_ptr<IntakeDragDropEmptyState> emptyState_;
 
     std::unique_ptr<juce::Label> lblDica_;
 

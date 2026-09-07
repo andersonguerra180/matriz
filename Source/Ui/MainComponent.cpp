@@ -561,12 +561,19 @@ void MainComponent::reconstruirTelaInicial() {
     filtros_.reset();
 
     barraNavegacao_.reset();
+    homePanel_.reset();
+    catalogHubWorkspace_.reset();
+    ingestWizard_.reset();
+    intakeWorkspace_.reset();
     catalogWorkspace_.reset();
+    duplicatesWorkspace_.reset();
     analyticsWorkspace_.reset();
     treeWorkspace_.reset();
     backupWorkspace_.reset();
     storageWorkspace_.reset();
     preservationWorkspace_.reset();
+    activePreviewWindow_.reset();
+    barraProgressoGlobal_.reset();
 
     // Pergunta direta em vez de instrução abstrata: a tela inicial abria com
     // "Escolha como você quer trabalhar", que não diz nada a quem nunca viu
@@ -631,6 +638,33 @@ void MainComponent::reconstruirTelaInicial() {
         telaInicialRecentesTitulo_.reset();
     }
 
+    // Botões discretos de idioma no canto inferior direito
+    bool isPtAtivo = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    telaInicialBtnIdiomaPt_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xf0\x9f\x87\xa7\xf0\x9f\x87\xb7")); // 🇧🇷
+    telaInicialBtnIdiomaPt_->setTooltip("Português (Brasil)");
+    telaInicialBtnIdiomaPt_->setColour(juce::TextButton::buttonColourId,
+        isPtAtivo ? tema().acento.withAlpha(0.25f) : juce::Colours::transparentBlack);
+    telaInicialBtnIdiomaPt_->setColour(juce::TextButton::textColourOffId,
+        isPtAtivo ? tema().acento : tema().textoTerciario);
+    telaInicialBtnIdiomaPt_->onClick = [this] {
+        matriz::app::gravarLocale("pt_BR");
+        if (aoTrocarIdioma) aoTrocarIdioma("pt_BR");
+    };
+    addAndMakeVisible(*telaInicialBtnIdiomaPt_);
+
+    telaInicialBtnIdiomaEn_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xf0\x9f\x87\xac\xf0\x9f\x87\xa7")); // 🇬🇧
+    telaInicialBtnIdiomaEn_->setTooltip("English");
+    telaInicialBtnIdiomaEn_->setColour(juce::TextButton::buttonColourId,
+        !isPtAtivo ? tema().acento.withAlpha(0.25f) : juce::Colours::transparentBlack);
+    telaInicialBtnIdiomaEn_->setColour(juce::TextButton::textColourOffId,
+        !isPtAtivo ? tema().acento : tema().textoTerciario);
+    telaInicialBtnIdiomaEn_->onClick = [this] {
+        matriz::app::gravarLocale("en");
+        if (aoTrocarIdioma) aoTrocarIdioma("en");
+    };
+    addAndMakeVisible(*telaInicialBtnIdiomaEn_);
+
     resized();
     repaint();
 }
@@ -647,6 +681,8 @@ void MainComponent::reconstruirLayoutProjeto() {
     telaInicialBotaoAbrir_.reset();
     telaInicialRecentesTitulo_.reset();
     telaInicialLinhasRecentes_.clear();
+    telaInicialBtnIdiomaPt_.reset();
+    telaInicialBtnIdiomaEn_.reset();
 
     // A grade é o protagonista (Reorientação completa §3.1) — ocupa o
     // essencial da janela; o preview (quando aberto) troca de lugar com
@@ -1412,6 +1448,22 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
             ingerirArquivos(arqs);
         };
+        intakeWorkspace_->aoIngerirDeGoogleDrive = [this](const juce::File& gdFolder) {
+            // Open a FileChooser rooted at the Google Drive local folder
+            auto chooser = std::make_shared<juce::FileChooser>(
+                "Import from Google Drive", gdFolder, "*");
+            chooser->launchAsync(
+                juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
+                juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectMultipleItems,
+                [this, chooser](const juce::FileChooser& fc) {
+                    auto results = fc.getResults();
+                    if (!results.isEmpty()) {
+                        juce::Array<juce::File> files;
+                        for (auto& f : results) files.add(f);
+                        ingerirArquivos(files);
+                    }
+                });
+        };
         intakeWorkspace_->aoConfirmarParaGrid = [this] {
             if (catalogWorkspace_) catalogWorkspace_->recarregar();
         };
@@ -1636,6 +1688,16 @@ void MainComponent::mostrarBackup() {
     };
     backupWorkspace_->aoAbrirCatalogo = [safeThis](const juce::File& pastaBackup) {
         juce::MessageManager::callAsync([safeThis, pastaBackup] { if (safeThis) safeThis->abrirCatalogo(pastaBackup); });
+    };
+    backupWorkspace_->aoPedirIrParaDuplicatas = [safeThis] {
+        juce::MessageManager::callAsync([safeThis] {
+            if (safeThis) {
+                safeThis->mostrarDuplicates();
+                if (safeThis->duplicatesWorkspace_) {
+                    safeThis->duplicatesWorkspace_->iniciarScan();
+                }
+            }
+        });
     };
     addAndMakeVisible(*backupWorkspace_);
 
@@ -2025,6 +2087,8 @@ void MainComponent::fecharProjeto() {
     telaAtiva_ = TelaAtiva::Inicial;
     reconstruirTelaInicial();
     projetoAberto_.reset();
+    resized();
+    repaint();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
 }
 
@@ -2785,6 +2849,12 @@ void MainComponent::mostrarResumoLote(int novos, int duplicatas, int erros) {
     if (erros > 0) texto += " | " + matriz::i18n::t("ingest.resumo_erros").replace("{n}", juce::String(erros));
     textoProgressoIngest_ = texto;
     ProgressoGlobal::obterInstancia().concluirTarefa("ingest", texto);
+
+    // Recarrega o intake imediatamente se estiver visível — sem precisar
+    // trocar de aba para ver os arquivos recém-ingeridos.
+    if (intakeWorkspace_ && intakeWorkspace_->isVisible())
+        intakeWorkspace_->recarregar();
+
     atualizarPainelDeApoio();
     atualizarEtapaDoFluxo();
 }
@@ -2847,7 +2917,14 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
 }
 
 void MainComponent::paint(juce::Graphics& g) {
-    g.fillAll(tema().fundo);
+    const auto& tk = tema();
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour bg = isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f);
+    if (!projetoAberto_ || telaAtiva_ == TelaAtiva::Inicial) {
+        g.fillAll(bg);
+    } else {
+        g.fillAll(tk.fundo);
+    }
 
     // Highlight do painel ativo (item 9): borda colorida no painel que
     // está recebendo os comandos de filtro (MEDIA TYPE / STATUS / FILE TYPE).
@@ -2994,6 +3071,13 @@ void MainComponent::resized() {
             coluna.removeFromTop(tema().espacoGrande);
             telaInicialRecentesTitulo_->setBounds(coluna.removeFromTop(20));
             for (auto& linha : telaInicialLinhasRecentes_) linha->setBounds(coluna.removeFromTop(28));
+        }
+
+        // Botões de idioma — canto inferior direito, discretos
+        if (telaInicialBtnIdiomaPt_ && telaInicialBtnIdiomaEn_) {
+            auto fullArea = getLocalBounds();
+            telaInicialBtnIdiomaEn_->setBounds(fullArea.getRight() - 48, fullArea.getBottom() - 40, 40, 30);
+            telaInicialBtnIdiomaPt_->setBounds(fullArea.getRight() - 92, fullArea.getBottom() - 40, 40, 30);
         }
         return;
     }

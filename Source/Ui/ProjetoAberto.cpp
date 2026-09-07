@@ -791,6 +791,60 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
     EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
 }
 
+void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    std::string agora = matriz::model::agoraIso8601();
+
+    for (const auto& itemId : itemIds) {
+        if (itemId.empty()) continue;
+
+        try {
+            // 1. Clear non-native custom field entries (keep only reading/ingest technical fields)
+            db.run("DELETE FROM item_campo WHERE item_id = ? AND fonte != 'leitura_tecnica'",
+                   {matriz::db::Value::of(itemId)});
+
+            // 2. Clear user tags
+            db.run("DELETE FROM item_tag WHERE item_id = ?",
+                   {matriz::db::Value::of(itemId)});
+
+            // 3. Clear search entries for tags
+            db.run("DELETE FROM busca_fts WHERE item_id = ? AND conteudo LIKE '#%'",
+                   {matriz::db::Value::of(itemId)});
+
+            // 4. Find if there are native readings for ano / date or source_media
+            std::optional<std::string> nativeAno;
+            std::optional<std::string> nativeSourceMedia;
+
+            auto stmtAno = db.prepare(
+                "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'data_criacao', 'ano') AND fonte = 'leitura_tecnica' LIMIT 1");
+            stmtAno.bind(1, matriz::db::Value::of(itemId));
+            if (stmtAno.step() && !stmtAno.columnIsNull(0)) {
+                juce::String dt(stmtAno.columnText(0));
+                if (dt.length() >= 4) {
+                    nativeAno = dt.substring(0, 4).toStdString();
+                }
+            }
+
+            auto stmtSm = db.prepare(
+                "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'source_media' AND fonte = 'leitura_tecnica' LIMIT 1");
+            stmtSm.bind(1, matriz::db::Value::of(itemId));
+            if (stmtSm.step() && !stmtSm.columnIsNull(0)) {
+                nativeSourceMedia = stmtSm.columnText(0);
+            }
+
+            // 5. Reset item columns to original/null and mark metadados_editados = 0
+            db.run("UPDATE item SET metadados_editados = 0, notas_livres = NULL, isrc = NULL, content_type = NULL, collection_type = NULL, ano = ?, source_media = ?, atualizado_em = ? WHERE id = ?",
+                   {nativeAno ? matriz::db::Value::of(*nativeAno) : matriz::db::Value::null(),
+                    nativeSourceMedia ? matriz::db::Value::of(*nativeSourceMedia) : matriz::db::Value::null(),
+                    matriz::db::Value::of(agora),
+                    matriz::db::Value::of(itemId)});
+
+            EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
+        } catch (...) {}
+    }
+}
+
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
     std::vector<std::string> out;
     if (!projeto_) return out;

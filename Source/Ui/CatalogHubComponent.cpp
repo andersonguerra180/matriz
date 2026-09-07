@@ -8,12 +8,12 @@ CatalogHubComponent::CatalogHubComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
     const auto& tk = tema();
 
-    lblTitulo_ = std::make_unique<juce::Label>("", "COLLECTIONS");
+    lblTitulo_ = std::make_unique<juce::Label>("", i18n::t("hub.titulo"));
     lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
     lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*lblTitulo_);
 
-    lblSubtitulo_ = std::make_unique<juce::Label>("", "Collections belonging to this catalog. Open any collection to manage its assets, or import new collections.");
+    lblSubtitulo_ = std::make_unique<juce::Label>("", i18n::t("hub.subtitulo"));
     lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
     lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblSubtitulo_);
@@ -23,31 +23,31 @@ CatalogHubComponent::CatalogHubComponent(ProjetoAberto& projeto)
     lblResumo_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblResumo_);
 
-    btnImportar_ = std::make_unique<juce::TextButton>("+ IMPORT COLLECTION...");
+    btnImportar_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_importar"));
     btnImportar_->setColour(juce::TextButton::buttonColourId, tk.acento);
     btnImportar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnImportar_->onClick = [this] { importarColecaoDialogo(); };
     addAndMakeVisible(*btnImportar_);
 
-    btnAbrir_ = std::make_unique<juce::TextButton>("OPEN COLLECTION");
+    btnAbrir_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_abrir"));
     btnAbrir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnAbrir_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnAbrir_->onClick = [this] { abrirSelecionada(); };
     addAndMakeVisible(*btnAbrir_);
 
-    btnRelocar_ = std::make_unique<juce::TextButton>("LOCATE COLLECTION...");
+    btnRelocar_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_relocar"));
     btnRelocar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnRelocar_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xfff97316));
     btnRelocar_->onClick = [this] { relocarSelecionada(); };
     addAndMakeVisible(*btnRelocar_);
 
-    btnDesvincular_ = std::make_unique<juce::TextButton>("UNLINK");
+    btnDesvincular_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_desvincular"));
     btnDesvincular_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnDesvincular_->setColour(juce::TextButton::textColourOffId, tk.perigo);
     btnDesvincular_->onClick = [this] { desvincularSelecionada(); };
     addAndMakeVisible(*btnDesvincular_);
 
-    btnBackup_ = std::make_unique<juce::TextButton>("CONSOLIDATED BACKUP");
+    btnBackup_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_backup"));
     btnBackup_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnBackup_->setColour(juce::TextButton::textColourOffId, tk.acento);
     btnBackup_->onClick = [this] { if (aoBackupConsolidado) aoBackupConsolidado(); };
@@ -60,12 +60,12 @@ CatalogHubComponent::CatalogHubComponent(ProjetoAberto& projeto)
     tabela_->setMultipleSelectionEnabled(false);
 
     auto& hdr = tabela_->getHeader();
-    hdr.addColumn("STATUS", kColStatus, 80, 60, 100, juce::TableHeaderComponent::notSortable);
-    hdr.addColumn("COLLECTION NAME", kColNome, 220, 150, 400, juce::TableHeaderComponent::notSortable);
-    hdr.addColumn("GROUP", kColGrupo, 140, 100, 250, juce::TableHeaderComponent::notSortable);
-    hdr.addColumn("TOTAL ASSETS", kColAssets, 110, 90, 150, juce::TableHeaderComponent::notSortable);
-    hdr.addColumn("TOTAL SIZE", kColTamanho, 110, 90, 150, juce::TableHeaderComponent::notSortable);
-    hdr.addColumn("LOCATION / PATH", kColCaminho, 350, 200, 800, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_status"), kColStatus, 80, 60, 100, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_nome"), kColNome, 220, 150, 400, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_grupo"), kColGrupo, 140, 100, 250, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_assets"), kColAssets, 110, 90, 150, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_tamanho"), kColTamanho, 110, 90, 150, juce::TableHeaderComponent::notSortable);
+    hdr.addColumn(i18n::t("hub.col_caminho"), kColCaminho, 350, 200, 800, juce::TableHeaderComponent::notSortable);
     addAndMakeVisible(*tabela_);
 
     recarregar();
@@ -76,10 +76,12 @@ CatalogHubComponent::~CatalogHubComponent() = default;
 void CatalogHubComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblTitulo_) {
+        lblTitulo_->setText(i18n::t("hub.titulo"), juce::dontSendNotification);
         lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
         lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (lblSubtitulo_) {
+        lblSubtitulo_->setText(i18n::t("hub.subtitulo"), juce::dontSendNotification);
         lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
@@ -88,26 +90,38 @@ void CatalogHubComponent::lookAndFeelChanged() {
         lblResumo_->setColour(juce::Label::textColourId, tk.acento);
     }
     if (btnImportar_) {
+        btnImportar_->setButtonText(i18n::t("hub.btn_importar"));
         btnImportar_->setColour(juce::TextButton::buttonColourId, tk.acento);
         btnImportar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     }
     if (btnAbrir_) {
+        btnAbrir_->setButtonText(i18n::t("hub.btn_abrir"));
         btnAbrir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnAbrir_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     }
     if (btnRelocar_) {
+        btnRelocar_->setButtonText(i18n::t("hub.btn_relocar"));
         btnRelocar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnRelocar_->setColour(juce::TextButton::textColourOffId, tk.alerta);
     }
     if (btnDesvincular_) {
+        btnDesvincular_->setButtonText(i18n::t("hub.btn_desvincular"));
         btnDesvincular_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnDesvincular_->setColour(juce::TextButton::textColourOffId, tk.perigo);
     }
     if (btnBackup_) {
+        btnBackup_->setButtonText(i18n::t("hub.btn_backup"));
         btnBackup_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnBackup_->setColour(juce::TextButton::textColourOffId, tk.acento);
     }
     if (tabela_) {
+        auto& hdr = tabela_->getHeader();
+        hdr.setColumnName(kColStatus, i18n::t("hub.col_status"));
+        hdr.setColumnName(kColNome, i18n::t("hub.col_nome"));
+        hdr.setColumnName(kColGrupo, i18n::t("hub.col_grupo"));
+        hdr.setColumnName(kColAssets, i18n::t("hub.col_assets"));
+        hdr.setColumnName(kColTamanho, i18n::t("hub.col_tamanho"));
+        hdr.setColumnName(kColCaminho, i18n::t("hub.col_caminho"));
         tabela_->setColour(juce::TableListBox::backgroundColourId, tk.painel);
         tabela_->setColour(juce::ListBox::outlineColourId, tk.borda);
         tabela_->getHeader().setColour(juce::TableHeaderComponent::backgroundColourId, tk.painelAlt);
@@ -115,6 +129,7 @@ void CatalogHubComponent::lookAndFeelChanged() {
         tabela_->getHeader().setColour(juce::TableHeaderComponent::outlineColourId, tk.borda);
         tabela_->repaint();
     }
+    recarregar();
     repaint();
 }
 
@@ -131,9 +146,10 @@ void CatalogHubComponent::recarregar() {
         }
     }
 
-    juce::String resumo = juce::String(static_cast<int>(colecoes_.size())) + " linked collection(s)  |  " +
-                          juce::String(totalAssets) + " total assets  |  " +
-                          juce::File::descriptionOfSizeInBytes(totalBytes);
+    juce::String resumo = i18n::t("hub.resumo")
+                              .replace("{c}", juce::String(static_cast<int>(colecoes_.size())))
+                              .replace("{a}", juce::String(totalAssets))
+                              .replace("{s}", juce::File::descriptionOfSizeInBytes(totalBytes));
     if (lblResumo_) lblResumo_->setText(resumo, juce::dontSendNotification);
 
     bool temSel = tabela_ && tabela_->getSelectedRow() >= 0;
@@ -235,7 +251,7 @@ void CatalogHubComponent::cellDoubleClicked(int rowNumber, int, const juce::Mous
 }
 
 void CatalogHubComponent::importarColecaoDialogo() {
-    auto chooser = std::make_shared<juce::FileChooser>("Select Collection Project Folder to Import into Catalog");
+    auto chooser = std::make_shared<juce::FileChooser>(i18n::t("hub.dialog_importar_titulo"));
     juce::Component::SafePointer<CatalogHubComponent> safeThis(this);
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                           [safeThis, chooser](const juce::FileChooser& fc) {
@@ -248,9 +264,9 @@ void CatalogHubComponent::importarColecaoDialogo() {
                                   juce::AlertWindow::showAsync(
                                       juce::MessageBoxOptions()
                                           .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle("Invalid Collection Folder")
-                                          .withMessage("The selected folder is not a valid BKR project directory (missing registro.sqlite).")
-                                          .withButton("OK"),
+                                          .withTitle(i18n::t("hub.dialog_invalida_titulo"))
+                                          .withMessage(i18n::t("hub.dialog_invalida_msg"))
+                                          .withButton(i18n::t("geral.ok")),
                                       nullptr);
                                   return;
                               }
@@ -282,7 +298,7 @@ void CatalogHubComponent::relocarSelecionada() {
     std::string linkId = c.id;
 
     auto chooser = std::make_shared<juce::FileChooser>(
-        "Locate Collection Folder for: " + c.nome,
+        i18n::t("hub.dialog_relocar_titulo") + c.nome,
         juce::File::getSpecialLocation(juce::File::userHomeDirectory));
 
     juce::Component::SafePointer<CatalogHubComponent> safeThis(this);
@@ -296,9 +312,9 @@ void CatalogHubComponent::relocarSelecionada() {
                                   juce::AlertWindow::showAsync(
                                       juce::MessageBoxOptions()
                                           .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                          .withTitle("Invalid Collection Folder")
-                                          .withMessage("The selected folder does not contain a valid collection database (registro.sqlite).")
-                                          .withButton("OK"),
+                                          .withTitle(i18n::t("hub.dialog_invalida_titulo"))
+                                          .withMessage(i18n::t("hub.dialog_relocar_invalida_msg"))
+                                          .withButton(i18n::t("geral.ok")),
                                       nullptr);
                                   return;
                               }

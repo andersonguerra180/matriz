@@ -365,8 +365,12 @@ void MosaicoComponent::definirModoVisao(ModoVisao modo) {
         celulaLargura_ = getWidth() > 0 ? getWidth() : 600;
         celulaAltura_ = 44;
     } else {
-        definirTamanhoCelula(tamanhoCelula_);
-        return;
+        switch (tamanhoCelula_) {
+            case TamanhoCelula::Pequeno: celulaLargura_ = 112; celulaAltura_ = 100; break;
+            case TamanhoCelula::Grande: celulaLargura_ = 240; celulaAltura_ = 210; break;
+            case TamanhoCelula::Medio:
+            default: celulaLargura_ = 168; celulaAltura_ = 148; break;
+        }
     }
     recalcularLayout();
     repaint();
@@ -404,6 +408,8 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     itensFiltrados_.clear();
 
     for (auto& item : itensTodos_) {
+        if (ocultarEditados_ && item.metadadosEditados) continue;
+
         // Eixos combinados com E: pasta da árvore, busca de texto, cada
         // categoria de chip. DENTRO de uma categoria de chip, múltipla
         // seleção é OU (Acréscimos §10.2 — "clicáveis e combináveis").
@@ -944,7 +950,7 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
 
     if ((tecla.getKeyCode() == 'C' || c == 'c' || c == 'C') &&
         !tecla.getModifiers().isCommandDown() && !tecla.getModifiers().isCtrlDown()) {
-        removerSelecaoDoBackup();
+        limparMetadadosSelecao();
         return true;
     }
 
@@ -1053,6 +1059,15 @@ void MosaicoComponent::renomearSelecao() {
 void MosaicoComponent::removerSelecaoDoBackup() {
     limparSelecao();
     if (aoRemoverDoBackup) aoRemoverDoBackup();
+}
+
+void MosaicoComponent::limparMetadadosSelecao() {
+    std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+    if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+    if (alvos.empty()) return;
+    if (aoLimparMetadados) {
+        aoLimparMetadados(std::move(alvos));
+    }
 }
 
 juce::Image MosaicoComponent::imagemDeArrasto(int quantidade) const {

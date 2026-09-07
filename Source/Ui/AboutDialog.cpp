@@ -1,5 +1,6 @@
 #include "AboutDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 #include <AssetsBinaryData.h>
 
 namespace matriz::ui {
@@ -10,7 +11,7 @@ AboutDialog::AboutDialog() {
 
     const auto& tk = tema();
 
-    btnClose_ = std::make_unique<juce::TextButton>("CLOSE");
+    btnClose_ = std::make_unique<juce::TextButton>(i18n::t("dialogo.fechar"));
     btnClose_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnClose_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnClose_->onClick = [this] {
@@ -19,6 +20,13 @@ AboutDialog::AboutDialog() {
     addAndMakeVisible(*btnClose_);
 
     setSize(540, 480);
+}
+
+void AboutDialog::lookAndFeelChanged() {
+    if (btnClose_) {
+        btnClose_->setButtonText(i18n::t("dialogo.fechar"));
+    }
+    repaint();
 }
 
 void AboutDialog::paint(juce::Graphics& g) {
@@ -63,7 +71,7 @@ void AboutDialog::paint(juce::Graphics& g) {
     auto versionRow = infoBounds.removeFromTop(20.0f);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.setColour(tk.acento);
-    g.drawText("Version 1.0", versionRow, juce::Justification::centredLeft, true);
+    g.drawText(i18n::t("sobre.versao"), versionRow, juce::Justification::centredLeft, true);
 
     infoBounds.removeFromTop(6.0f);
 
@@ -71,7 +79,7 @@ void AboutDialog::paint(juce::Graphics& g) {
     auto devRow = infoBounds.removeFromTop(20.0f);
     g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::plain)));
     g.setColour(tk.textoSecundario);
-    g.drawText("Developed by A. Guerra", devRow, juce::Justification::centredLeft, true);
+    g.drawText(i18n::t("sobre.desenvolvido_por"), devRow, juce::Justification::centredLeft, true);
 
     // BKR Systems
     auto brandRow = infoBounds.removeFromTop(18.0f);
@@ -83,7 +91,7 @@ void AboutDialog::paint(juce::Graphics& g) {
     auto copyRow = infoBounds.removeFromTop(16.0f);
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::plain)));
     g.setColour(tk.textoTerciario.withAlpha(0.7f));
-    g.drawText("© 2026 BKR Systems. All rights reserved.", copyRow, juce::Justification::centredLeft, true);
+    g.drawText(i18n::t("sobre.direitos_reservados"), copyRow, juce::Justification::centredLeft, true);
 
     // Outline
     g.setColour(tk.borda);
@@ -108,7 +116,7 @@ void AboutDialog::exibirModal() {
 
     juce::DialogWindow::LaunchOptions opt;
     opt.content.setOwned(dlg.release());
-    opt.dialogTitle = "About BKR Matriz";
+    opt.dialogTitle = i18n::t("sobre.dialog_titulo");
     opt.dialogBackgroundColour = juce::Colours::transparentBlack;
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = false;

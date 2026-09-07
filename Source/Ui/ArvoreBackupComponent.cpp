@@ -1,4 +1,5 @@
 #include "ArvoreBackupComponent.h"
+#include "../I18n/Strings.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Vault/Resolucao.h"
@@ -36,11 +37,18 @@ public:
     };
 
     TreeDetailContent() {
-        btnShowInGrid = std::make_unique<juce::TextButton>("SHOW CONTENT IN GRID");
+        btnShowInGrid = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.exibir_grade"));
         btnShowInGrid->setColour(juce::TextButton::buttonColourId, tema().acento);
         btnShowInGrid->setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
         btnShowInGrid->onClick = [this] { if (aoMostrarNaGrade) aoMostrarNaGrade(); };
         addAndMakeVisible(*btnShowInGrid);
+    }
+
+    void lookAndFeelChanged() override {
+        juce::Component::lookAndFeelChanged();
+        if (btnShowInGrid)
+            btnShowInGrid->setButtonText(i18n::t("arvore_backup.exibir_grade"));
+        repaint();
     }
 
     juce::String folderName;
@@ -111,7 +119,7 @@ public:
         if (!subfolders.empty()) {
             g.setColour(tema().textoSecundario);
             g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-            g.drawText("SUBFOLDERS", area.removeFromTop(20), juce::Justification::centredLeft);
+            g.drawText(i18n::t("arvore_backup.subpastas"), area.removeFromTop(20), juce::Justification::centredLeft);
 
             g.setFont(juce::Font(juce::FontOptions(11.0f)));
             for (const auto& sf : subfolders) {
@@ -121,7 +129,7 @@ public:
                            row.removeFromLeft(row.getWidth() - 50),
                            juce::Justification::centredLeft, true);
                 g.setColour(tema().textoTerciario);
-                g.drawText(juce::String(sf.contagemItens) + " items",
+                g.drawText(juce::String(sf.contagemItens) + " " + i18n::t("arvore_backup.items"),
                            row, juce::Justification::centredRight);
             }
             area.removeFromTop(4);
@@ -130,7 +138,7 @@ public:
         if (!files.empty()) {
             g.setColour(tema().textoSecundario);
             g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-            g.drawText("FILES", area.removeFromTop(20), juce::Justification::centredLeft);
+            g.drawText(i18n::t("arvore_backup.arquivos"), area.removeFromTop(20), juce::Justification::centredLeft);
 
             g.setFont(juce::Font(juce::FontOptions(11.0f)));
             for (const auto& f : files) {
@@ -147,7 +155,7 @@ public:
         if (subfolders.empty() && files.empty()) {
             g.setColour(tema().textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(11.0f)));
-            g.drawText("Empty folder", area, juce::Justification::centredLeft);
+            g.drawText(i18n::t("arvore_backup.pasta_vazia"), area, juce::Justification::centredLeft);
         }
     }
 };
@@ -159,8 +167,8 @@ void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, 
     juce::MessageManager::callAsync([titulo, mensagem, valorInicial, aoConcluir]() {
         auto janela = std::make_shared<juce::AlertWindow>(titulo, mensagem, juce::MessageBoxIconType::NoIcon);
         janela->addTextEditor("valor", valorInicial);
-        janela->addButton("OK", 1, juce::KeyPress(juce::KeyPress::returnKey));
-        janela->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        janela->addButton(i18n::t("dialogo.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+        janela->addButton(i18n::t("dialogo.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
         if (auto* editor = janela->getTextEditor("valor")) {
             editor->grabKeyboardFocus();
             editor->setHighlightedRegion(juce::Range<int>(0, valorInicial.length()));
@@ -179,10 +187,10 @@ void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, 
 ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
 
-    btnCriarPasta_ = std::make_unique<juce::TextButton>("+ NEW FOLDER");
+    btnCriarPasta_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_criar_pasta"));
     btnCriarPasta_->onClick = [this] {
         juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-        pedirTextoBackup("CREATE FOLDER", "Enter new folder name:", "New Folder",
+        pedirTextoBackup(i18n::t("arvore_backup.criar_pasta_titulo"), i18n::t("arvore_backup.criar_pasta_msg"), i18n::t("arvore_backup.criar_pasta_padrao"),
             [safeThis](std::optional<juce::String> nome) {
                 if (!safeThis || !nome || nome->trim().isEmpty()) return;
                 safeThis->criarNovaPasta(nome->trim().toStdString(), std::nullopt);
@@ -190,14 +198,14 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnCriarPasta_);
 
-    btnRenomearPasta_ = std::make_unique<juce::TextButton>("RENAME");
+    btnRenomearPasta_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_renomear"));
     btnRenomearPasta_->onClick = [this] {
         for (const auto& n : nodes_) {
             if (n.selecionado) {
                 std::string pId = n.id;
                 juce::String nomeAtual = n.nome;
                 juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-                pedirTextoBackup("RENAME FOLDER", "Enter new folder name:", nomeAtual,
+                pedirTextoBackup(i18n::t("arvore_backup.renomear_pasta_titulo"), i18n::t("arvore_backup.renomear_pasta_msg"), nomeAtual,
                     [safeThis, pId](std::optional<juce::String> nome) {
                         if (!safeThis || !nome || nome->trim().isEmpty()) return;
                         safeThis->renomearPastaSelecionada(pId, nome->trim().toStdString());
@@ -208,7 +216,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnRenomearPasta_);
 
-    btnApagarPasta_ = std::make_unique<juce::TextButton>("DELETE");
+    btnApagarPasta_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_apagar"));
     btnApagarPasta_->onClick = [this] {
         for (const auto& n : nodes_) {
             if (n.selecionado) {
@@ -219,18 +227,15 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnApagarPasta_);
 
-    btnImportarEstrutura_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xe2\x86\xbb IMPORT / REFRESH FOLDER STRUCTURE"));
+    btnImportarEstrutura_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_importar"));
     btnImportarEstrutura_->onClick = [this] {
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::WarningIcon)
-                .withTitle("IMPORT / REFRESH FOLDER STRUCTURE")
-                .withMessage("This will DELETE all current folders and connections, "
-                             "then recreate the folder tree from the original ingested file paths.\n\n"
-                             "Any custom folder arrangement will be lost.\n\n"
-                             "Continue?")
-                .withButton("Import")
-                .withButton("Cancel"),
+                .withTitle(i18n::t("arvore_backup.btn_importar"))
+                .withMessage(i18n::t("arvore_backup.importar_msg"))
+                .withButton(i18n::t("arvore_backup.importar_btn"))
+                .withButton(i18n::t("dialogo.cancelar")),
             [this](int res) {
                 if (res == 1) {
                     try {
@@ -239,9 +244,9 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
                         juce::AlertWindow::showAsync(
                             juce::MessageBoxOptions()
                                 .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                .withTitle("Error")
-                                .withMessage(juce::String("Failed to import structure: ") + e.what())
-                                .withButton("OK"),
+                                .withTitle(i18n::t("dialogo.erro"))
+                                .withMessage(juce::String(i18n::t("arvore_backup.falha_importar")) + e.what())
+                                .withButton(i18n::t("dialogo.ok")),
                             nullptr);
                         return;
                     }
@@ -251,7 +256,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnImportarEstrutura_);
 
-    btnAutoArranjar_ = std::make_unique<juce::TextButton>("AUTO ARRANGE");
+    btnAutoArranjar_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_auto_arranjar"));
     btnAutoArranjar_->onClick = [this] { autoArranjar(); };
     addAndMakeVisible(*btnAutoArranjar_);
 
@@ -263,7 +268,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnZoomOut_->onClick = [this] { aplicarZoom(zoom_ / 1.2f, {getWidth() / 2.0f, getHeight() / 2.0f}); };
     addAndMakeVisible(*btnZoomOut_);
 
-    btnZoomFit_ = std::make_unique<juce::TextButton>("FIT");
+    btnZoomFit_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_fit"));
     btnZoomFit_->onClick = [this] { zoom_ = 1.0f; panOffset_ = {0.0f, 0.0f}; repaint(); };
     addAndMakeVisible(*btnZoomFit_);
 
@@ -682,7 +687,10 @@ void ArvoreBackupComponent::desenharMinimap(juce::Graphics& g) const {
 }
 
 void ArvoreBackupComponent::paint(juce::Graphics& g) {
-    g.fillAll(tema().fundo);
+    const auto& tk = tema();
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    g.fillAll(bg);
 
     // Canvas background grid pattern (n8n style dots) — in screen space
     g.setColour(tema().painelAlt.withAlpha(0.4f));
@@ -699,8 +707,8 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     // Header title
     g.setColour(tema().textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
-    g.drawText("Project TREE Workspace", getLocalBounds().reduced(20, 16).removeFromTop(24), juce::Justification::centredLeft);
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
+    g.drawText(i18n::t("arvore_backup.titulo"), getLocalBounds().reduced(20, 16).removeFromTop(28), juce::Justification::centredLeft);
 
     // Zoom indicator
     g.setColour(tema().textoTerciario);
@@ -710,7 +718,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     if (nodes_.empty()) {
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
-        g.drawText("TREE is empty. Click '+ NEW FOLDER' or ingest a folder structure to populate the graph.",
+        g.drawText(i18n::t("arvore_backup.vazio"),
                    getLocalBounds(), juce::Justification::centred, true);
         return;
     }
@@ -769,7 +777,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
         g.setColour(node.ativo ? tema().acento : tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.drawText(node.ativo ? "FOLDER NODE [ACTIVE]" : "FOLDER NODE [DISABLED]", header.reduced(10, 0), juce::Justification::centredLeft);
+        g.drawText(node.ativo ? i18n::t("arvore_backup.no_ativo") : i18n::t("arvore_backup.no_desativado"), header.reduced(10, 0), juce::Justification::centredLeft);
 
         auto content = b.reduced(10, 6);
         g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
@@ -778,7 +786,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
         g.setColour(tema().textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(10.0f)));
-        juce::String desc = juce::String(node.contagemItens) + " items";
+        juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
         g.drawText(desc, content, juce::Justification::centredLeft, true);
 
         // Input & Output socket handles
@@ -880,16 +888,16 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 };
                 coletarFilhos(pId);
 
-                menu.addItem("SHOW CONTENT IN GRID", [this, allItemIds] {
+                menu.addItem(i18n::t("arvore_backup.exibir_grade"), [this, allItemIds] {
                     if (aoMostrarConteudoNaGrade) {
                         aoMostrarConteudoNaGrade(allItemIds);
                     }
                 });
                 menu.addSeparator();
 
-                menu.addItem("+ New Subfolder", [this, pId] {
+                menu.addItem(i18n::t("arvore_backup.nova_subpasta"), [this, pId] {
                     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-                    pedirTextoBackup("NEW SUBFOLDER", "Enter subfolder name:", "New Subfolder",
+                    pedirTextoBackup(i18n::t("arvore_backup.nova_subpasta_titulo"), i18n::t("arvore_backup.nova_subpasta_msg"), i18n::t("arvore_backup.nova_subpasta_padrao"),
                         [safeThis, pId](std::optional<juce::String> nome) {
                             if (!safeThis || !nome || nome->trim().isEmpty()) return;
                             safeThis->criarNovaPasta(nome->trim().toStdString(), pId);
@@ -898,18 +906,18 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addSeparator();
 
                 if (temPai) {
-                    menu.addItem("Disconnect from Parent", [this, pId] {
+                    menu.addItem(i18n::t("arvore_backup.desconectar_pai"), [this, pId] {
                         conectarPastas(pId, std::nullopt);
                     });
                 }
 
-                menu.addItem("Rename Folder...", [this, pId, idx] {
+                menu.addItem(i18n::t("arvore_backup.renomear_pasta_menu"), [this, pId, idx] {
                     iniciarEdicaoInline(idx);
                 });
-                menu.addItem("Toggle ACTIVE / DISABLED", [this, pId] {
+                menu.addItem(i18n::t("arvore_backup.alternar_ativo"), [this, pId] {
                     alternarAtivoPasta(pId);
                 });
-                menu.addItem("Delete Folder", [this, pId] {
+                menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, pId] {
                     apagarPastaSelecionada(pId);
                 });
                 menu.showMenuAsync(juce::PopupMenu::Options());
@@ -1116,6 +1124,18 @@ void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId) 
     resized();
     detailContent_->recalcularAltura();
     detailContent_->repaint();
+}
+
+void ArvoreBackupComponent::lookAndFeelChanged() {
+    juce::Component::lookAndFeelChanged();
+    if (btnCriarPasta_) btnCriarPasta_->setButtonText(i18n::t("arvore_backup.btn_criar_pasta"));
+    if (btnRenomearPasta_) btnRenomearPasta_->setButtonText(i18n::t("arvore_backup.btn_renomear"));
+    if (btnApagarPasta_) btnApagarPasta_->setButtonText(i18n::t("arvore_backup.btn_apagar"));
+    if (btnImportarEstrutura_) btnImportarEstrutura_->setButtonText(i18n::t("arvore_backup.btn_importar"));
+    if (btnAutoArranjar_) btnAutoArranjar_->setButtonText(i18n::t("arvore_backup.btn_auto_arranjar"));
+    if (btnZoomFit_) btnZoomFit_->setButtonText(i18n::t("arvore_backup.btn_fit"));
+    if (detailContent_) detailContent_->lookAndFeelChanged();
+    repaint();
 }
 
 } // namespace matriz::ui

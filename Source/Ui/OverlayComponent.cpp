@@ -29,24 +29,39 @@ PainelOverlay::PainelOverlay() {
 // component).
 PainelOverlay::~PainelOverlay() = default;
 
+static int calcularAlturaTexto(const juce::String& texto, const juce::Font& fonte, int larguraMax) {
+    if (texto.isEmpty() || larguraMax <= 20) return 0;
+    juce::StringArray linhas;
+    linhas.addLines(texto);
+    int totalLinhas = 0;
+    for (const auto& l : linhas) {
+        if (l.trim().isEmpty()) {
+            totalLinhas += 1;
+            continue;
+        }
+        int w = juce::GlyphArrangement::getStringWidthInt(fonte, l);
+        int quebras = std::max(1, (w + larguraMax - 1) / larguraMax);
+        totalLinhas += quebras;
+    }
+    int alturaLinha = static_cast<int>(fonte.getHeight()) + 6;
+    return totalLinhas * alturaLinha;
+}
+
 int PainelOverlay::alturaDoCartao() const {
     const auto& tk = tema();
     int altura = kMargem;
-    altura += static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoMedio;  // título
+    altura += static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoGrande;  // título
     if (config_.mensagem.isNotEmpty()) {
-        // Estimativa de quebra de linha: largura útil dividida por uma
-        // largura média de caractere. Não precisa ser exata — só não pode
-        // cortar texto, então arredonda pra cima.
         int larguraUtil = kLarguraCartao - 2 * kMargem;
-        int charsPorLinha = juce::jmax(1, larguraUtil / 7);
-        int linhas = 1 + config_.mensagem.length() / charsPorLinha;
-        altura += linhas * (static_cast<int>(tk.tamanhoFonteCorpo) + 6) + tk.espacoMedio;
+        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
+        int textoH = calcularAlturaTexto(config_.mensagem, fonte, larguraUtil);
+        altura += textoH + tk.espacoGrande;
     }
     if (!config_.opcoes.empty()) altura += kAlturaLinha + tk.espacoMedio;
     if (config_.comCampoTexto) altura += kAlturaLinha + tk.espacoMedio;
     for (size_t i = 0; i < config_.campos.size(); ++i)
         altura += 16 + kAlturaLinha + tk.espacoPequeno;
-    altura += kAlturaLinha + kMargem;
+    altura += kAlturaLinha + 8 + kMargem;
     return altura;
 }
 
@@ -126,8 +141,16 @@ void PainelOverlay::mostrar(Config config, std::function<void(Resultado)> aoConc
         camposExtras_.push_back(std::move(cw));
     }
 
+    const auto& tk = tema();
     for (const auto& b : config_.botoes) {
         auto botao = std::make_unique<juce::TextButton>(b.rotulo);
+        if (b.ehPadrao) {
+            botao->setColour(juce::TextButton::buttonColourId, tk.acento);
+            botao->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        } else {
+            botao->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            botao->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        }
         int id = b.id;
         // SafePointer: se o overlay morrer entre o clique e o despacho, o
         // callback não toca em memória liberada.
@@ -189,12 +212,12 @@ void PainelOverlay::resized() {
     const auto& tk = tema();
     auto cartao = areaDoCartao().reduced(kMargem);
 
-    cartao.removeFromTop(static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoMedio);
+    cartao.removeFromTop(static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoGrande);
     if (config_.mensagem.isNotEmpty()) {
         int larguraUtil = cartao.getWidth();
-        int charsPorLinha = juce::jmax(1, larguraUtil / 7);
-        int linhas = 1 + config_.mensagem.length() / charsPorLinha;
-        cartao.removeFromTop(linhas * (static_cast<int>(tk.tamanhoFonteCorpo) + 6) + tk.espacoMedio);
+        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
+        int textoH = calcularAlturaTexto(config_.mensagem, fonte, larguraUtil);
+        cartao.removeFromTop(textoH + tk.espacoGrande);
     }
 
     if (combo_) {
@@ -217,12 +240,14 @@ void PainelOverlay::resized() {
         cartao.removeFromTop(tk.espacoPequeno);
     }
 
-    auto rodape = cartao.removeFromBottom(kAlturaLinha);
-    // Da direita pra esquerda: o botão padrão fica na ponta direita, que é
-    // onde a mão já está depois de ler o texto.
+    auto rodape = cartao.removeFromBottom(kAlturaLinha + 4);
+    // Da direita pra esquerda: o botão padrão fica na ponta direita
     for (auto it = botoes_.rbegin(); it != botoes_.rend(); ++it) {
-        (*it)->setBounds(rodape.removeFromRight(120));
-        rodape.removeFromRight(tk.espacoPequeno);
+        auto fonteBtn = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo));
+        int strW = juce::GlyphArrangement::getStringWidthInt(fonteBtn, (*it)->getButtonText());
+        int btnW = juce::jmax(130, strW + 36);
+        (*it)->setBounds(rodape.removeFromRight(btnW));
+        rodape.removeFromRight(tk.espacoMedio);
     }
 }
 
@@ -242,18 +267,18 @@ void PainelOverlay::paint(juce::Graphics& g) {
 
     auto miolo = cartao.reduced(kMargem);
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(tk.tamanhoFonteTitulo, juce::Font::bold));
+    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
     g.drawText(config_.titulo, miolo.removeFromTop(static_cast<int>(tk.tamanhoFonteTitulo)),
                juce::Justification::centredLeft, true);
-    miolo.removeFromTop(tk.espacoMedio);
+    miolo.removeFromTop(tk.espacoGrande);
 
     if (config_.mensagem.isNotEmpty()) {
         g.setColour(tk.textoSecundario);
-        g.setFont(tk.tamanhoFonteCorpo);
-        int charsPorLinha = juce::jmax(1, miolo.getWidth() / 7);
-        int linhas = 1 + config_.mensagem.length() / charsPorLinha;
-        auto areaTexto = miolo.removeFromTop(linhas * (static_cast<int>(tk.tamanhoFonteCorpo) + 6));
-        g.drawFittedText(config_.mensagem, areaTexto, juce::Justification::topLeft, linhas);
+        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
+        g.setFont(fonte);
+        int textoH = calcularAlturaTexto(config_.mensagem, fonte, miolo.getWidth());
+        auto areaTexto = miolo.removeFromTop(textoH);
+        g.drawFittedText(config_.mensagem, areaTexto, juce::Justification::topLeft, 20);
     }
 }
 

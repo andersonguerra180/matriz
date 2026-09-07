@@ -20,6 +20,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     static void showModal(matriz::db::Database& db,
                           const std::string& itemId,
@@ -48,8 +49,8 @@ private:
     juce::Label lblStatusWarning_;
     juce::Label lblError_;
 
-    juce::TextButton btnLocate_{"LOCATE FILE"};
-    juce::TextButton btnCancel_{"CANCEL"};
+    juce::TextButton btnLocate_;
+    juce::TextButton btnCancel_;
 
     std::unique_ptr<juce::FileChooser> fileChooser_;
 };

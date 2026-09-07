@@ -264,6 +264,8 @@ private:
     std::unique_ptr<juce::TextButton> telaInicialBotaoAbrir_;
     std::unique_ptr<juce::Label> telaInicialRecentesTitulo_;
     std::vector<std::unique_ptr<LinhaProjetoRecente>> telaInicialLinhasRecentes_;
+    std::unique_ptr<juce::TextButton> telaInicialBtnIdiomaPt_;
+    std::unique_ptr<juce::TextButton> telaInicialBtnIdiomaEn_;
 
     PainelAtivo painelAtivo_ = PainelAtivo::Source;
     std::unique_ptr<juce::Label> labelSource_;
@@ -429,6 +431,10 @@ public:
     // Disparado sempre que o estado do projeto/catálogo muda (aberto, fechado, trocado)
     // para que a barra de menus do macOS/desktop atualize itens habilitados e títulos.
     std::function<void()> aoMudarEstadoProjeto;
+
+    // Troca de idioma a partir dos botões 🇧🇷/🇬🇧 na tela inicial.
+    // Wired pelo MainWindow que tem acesso ao trocarIdioma().
+    std::function<void(const juce::String&)> aoTrocarIdioma;
 
     // Se definido, substitui o AlertWindow padrão de resumo ao final de um
     // lote de ingest — único jeito de rodar o fluxo real em

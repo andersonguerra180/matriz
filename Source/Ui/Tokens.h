@@ -53,11 +53,12 @@ struct Tema {
     juce::Colour campoSugestaoIa;
     juce::Colour campoSugestaoIaFundo;
 
-    // Tipografia
-    float tamanhoFonteTitulo;
-    float tamanhoFonteSubtitulo;
-    float tamanhoFonteCorpo;
-    float tamanhoFontePequena;
+    // Tipografia (Padronização Estilo Adobe Pro UI)
+    float tamanhoFonteTitulo;      // 18.0f - Workspace Header (ex.: INTAKE, CATALOG, TREEMAP, BACKUP, DISK)
+    float tamanhoFonteSubtitulo;   // 14.0f - Section / Group header / Dialog Title
+    float tamanhoFonteCorpo;       // 12.5f - Standard body, buttons, table items, inputs, combos
+    float tamanhoFontePequena;     // 11.0f - Captions, secondary paths, metadata labels, timecodes
+    float tamanhoFonteMicro;       // 9.5f  - Status tags, pills (ONLINE/OFFLINE, QC OK, EXT)
 
     // Espaçamento
     int espacoPequeno;
@@ -104,10 +105,11 @@ inline const Tema& temaBkrDark() {
         x.campoSugestaoIa = juce::Colour(0xfffbbf24);
         x.campoSugestaoIaFundo = juce::Colour(0x33fbbf24);
 
-        x.tamanhoFonteTitulo = 22.0f;
-        x.tamanhoFonteSubtitulo = 17.0f;
-        x.tamanhoFonteCorpo = 15.0f;
-        x.tamanhoFontePequena = 13.0f;
+        x.tamanhoFonteTitulo = 18.0f;
+        x.tamanhoFonteSubtitulo = 14.0f;
+        x.tamanhoFonteCorpo = 12.5f;
+        x.tamanhoFontePequena = 11.0f;
+        x.tamanhoFonteMicro = 9.5f;
 
         x.espacoPequeno = 4;
         x.espacoMedio = 8;
@@ -158,10 +160,11 @@ inline const Tema& temaBkrLight() {
         x.campoSugestaoIa = juce::Colour(0xff8a5700);
         x.campoSugestaoIaFundo = juce::Colour(0x33b87a1a);
 
-        x.tamanhoFonteTitulo = 22.0f;
-        x.tamanhoFonteSubtitulo = 17.0f;
-        x.tamanhoFonteCorpo = 15.0f;
-        x.tamanhoFontePequena = 13.0f;
+        x.tamanhoFonteTitulo = 18.0f;
+        x.tamanhoFonteSubtitulo = 14.0f;
+        x.tamanhoFonteCorpo = 12.5f;
+        x.tamanhoFontePequena = 11.0f;
+        x.tamanhoFonteMicro = 9.5f;
 
         x.espacoPequeno = 4;
         x.espacoMedio = 8;

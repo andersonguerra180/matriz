@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <map>
 #include <set>
+#include <unordered_set>
 
 namespace matriz::consolidacao {
 
@@ -289,10 +290,17 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         "ORDER BY i.codigo_acervo");
 
     std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
+    std::unordered_set<std::string> itensProcessados;
 
     while (stmt.step()) {
+        std::string itemId = stmt.columnText(0);
+        if (usaEstruturaOriginal) {
+            if (!itensProcessados.insert(itemId).second)
+                continue; // Mesmo item em múltiplas pastas virtuais: na estrutura original só copia uma vez
+        }
+
         ItemPlanejado ip;
-        ip.itemId = stmt.columnText(0);
+        ip.itemId = std::move(itemId);
         ip.pastaId = stmt.columnText(1);
         ip.codigoAcervo = stmt.columnText(2);
         std::string titulo = stmt.columnText(3);
@@ -424,6 +432,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
     for (auto& [caminho, indices] : indicesPorDestino) {
         if (indices.size() <= 1) continue;
+        std::unordered_set<std::string> idsDistintos;
+        for (auto idx : indices) idsDistintos.insert(plano.itens[idx].itemId);
+        if (idsDistintos.size() <= 1) continue;
+
         plano.nomesEmConflito.push_back(juce::String(caminho));
         for (auto idx : indices) plano.itens[idx].emConflito = true;
     }

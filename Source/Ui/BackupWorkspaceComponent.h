@@ -11,6 +11,7 @@
 #include "../Consolidacao/Consolidacao.h"
 #include "HierarquiaEditorComponent.h"
 #include "../App/Cancelamento.h"
+#include "OverlayComponent.h"
 
 namespace matriz::ui {
 
@@ -29,6 +30,7 @@ public:
     std::function<void()> aoConcluir;
     std::function<void()> aoVoltarHome;
     std::function<void(const juce::File&)> aoAbrirCatalogo;
+    std::function<void()> aoPedirIrParaDuplicatas;
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -59,6 +61,14 @@ private:
         Collection
     };
     WhatOption whatOption_ = WhatOption::Everything;
+    struct OpcaoContent {
+        std::string chave;
+        juce::String rotulo;
+        int contagem = 0;
+    };
+    std::vector<OpcaoContent> opcoesContent_;
+    int selectedContentIdx_ = 0;
+    void carregarOpcoesContent();
     std::vector<ProjetoAberto::ColecaoDisponivel> colecoes_;
     int selectedCollectionIdx_ = 0;
 
@@ -108,16 +118,26 @@ private:
 
     void carregarColecoesBackupCatalogo();
 
+    void abrirJanelaSelecionarArquivos();
+    juce::String rotuloOpcaoSelecionados() const;
+
     // === SOURCE section ===
     std::unique_ptr<juce::Label> labelSource_;
     std::unique_ptr<juce::ComboBox> comboSource_;
+    std::unique_ptr<juce::TextButton> btnEditarSelecao_;
     std::unique_ptr<juce::ComboBox> comboColecoes_;
 
     // === DESTINATION section ===
     std::unique_ptr<juce::Label> labelDest_;
     std::unique_ptr<juce::ListBox> listVaults_;
     std::unique_ptr<juce::TextButton> btnBrowseVault_;
+    std::unique_ptr<juce::Button> btnGoogleDriveDest_; // Export to Google Drive (local mount)
     std::unique_ptr<juce::Label> labelDestInfo_;
+    bool googleDriveComoDestino_ = false;
+    juce::File pastaGoogleDrive_;  // resolved GD mount, if selected
+
+    // Helper: detect Google Drive Desktop mount (macOS)
+    static juce::File detectarPastaGoogleDrive();
 
     // === ORGANIZATION section ===
     std::unique_ptr<juce::Label> labelOrg_;
@@ -125,6 +145,10 @@ private:
     std::unique_ptr<juce::TextButton> btnEditarHierarquia_;
     matriz::consolidacao::HierarquiaBackup hierarquiaCustom_;
     std::unique_ptr<juce::ToggleButton> togglePreservarEstrutura_;
+    std::unique_ptr<juce::ToggleButton> toggleUsarEstruturaMapa_;
+    std::unique_ptr<juce::Label> labelPrefixo_;
+    std::unique_ptr<juce::TextEditor> editPrefixo_;
+    juce::String prefixoCustomizado_;
 
     // === OPTIONS section ===
     std::unique_ptr<juce::Label> labelOpcoes_;
@@ -181,6 +205,9 @@ private:
     juce::Rectangle<int> cartaoCentral_;
     juce::Rectangle<int> faixaCabecalho_;
     juce::Rectangle<int> faixaRodape_;
+
+    void mostrarPopupConflitoPreservacao();
+    PainelOverlay overlay_;
 };
 
 } // namespace matriz::ui

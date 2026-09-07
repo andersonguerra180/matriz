@@ -94,8 +94,8 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     aplicarEstiloBotao(*botaoBackup_, false);
     addAndMakeVisible(*botaoBackup_);
 
-    botaoEstruturaOrigem_ = std::make_unique<juce::TextButton>("SRC TREE");
-    botaoEstruturaOrigem_->setTooltip("Show/hide Source Directory Structure");
+    botaoEstruturaOrigem_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.src_tree"));
+    botaoEstruturaOrigem_->setTooltip(matriz::i18n::t("barra.src_tree_dica"));
     botaoEstruturaOrigem_->onClick = [this] {
         mostrarEstruturaOrigem_ = !mostrarEstruturaOrigem_;
         const auto& tk = tema();
@@ -108,8 +108,8 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     // desfaz o estado inicial escondido (só ADVANCED revela estes dois).
     addChildComponent(*botaoEstruturaOrigem_);
 
-    botaoEstruturaBackup_ = std::make_unique<juce::TextButton>("DEST TREE");
-    botaoEstruturaBackup_->setTooltip("Show/hide Backup Destination Structure");
+    botaoEstruturaBackup_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.dest_tree"));
+    botaoEstruturaBackup_->setTooltip(matriz::i18n::t("barra.dest_tree_dica"));
     botaoEstruturaBackup_->onClick = [this] {
         mostrarEstruturaBackup_ = !mostrarEstruturaBackup_;
         const auto& tk = tema();
@@ -120,8 +120,8 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     aplicarEstiloBotao(*botaoEstruturaBackup_, false);
     addChildComponent(*botaoEstruturaBackup_);
 
-    botaoAdvanced_ = std::make_unique<juce::TextButton>("ADVANCED");
-    botaoAdvanced_->setTooltip("Show/hide advanced directory trees");
+    botaoAdvanced_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.advanced"));
+    botaoAdvanced_->setTooltip(matriz::i18n::t("barra.advanced_dica"));
     botaoAdvanced_->onClick = [this] {
         mostrarAdvanced_ = !mostrarAdvanced_;
         const auto& tk = tema();
@@ -136,11 +136,11 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     addAndMakeVisible(*botaoAdvanced_);
 
     // Horizontal filters
-    btnAllAssets_ = std::make_unique<juce::TextButton>("ALL ASSETS");
-    btnAudio_ = std::make_unique<juce::TextButton>("AUDIO");
-    btnVideo_ = std::make_unique<juce::TextButton>("VIDEO");
-    btnImage_ = std::make_unique<juce::TextButton>("IMAGE");
-    btnDocument_ = std::make_unique<juce::TextButton>("DOCUMENT");
+    btnAllAssets_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.todos_ativos"));
+    btnAudio_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.audio"));
+    btnVideo_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.video"));
+    btnImage_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.image"));
+    btnDocument_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.document"));
 
     std::vector<std::pair<juce::TextButton*, std::string>> horizontalFilters = {
         { btnAllAssets_.get(), "all" },
@@ -164,15 +164,15 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
 
     // Status filter buttons (ALL, ONLINE, OFFLINE)
     lblStatusFilter_ = std::make_unique<juce::Label>();
-    lblStatusFilter_->setText("STATUS:", juce::dontSendNotification);
+    lblStatusFilter_->setText(matriz::i18n::t("barra.status_rotulo"), juce::dontSendNotification);
     lblStatusFilter_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
     lblStatusFilter_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblStatusFilter_->setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(*lblStatusFilter_);
 
-    btnStatusAll_ = std::make_unique<juce::TextButton>("ALL");
-    btnStatusOnline_ = std::make_unique<juce::TextButton>("ONLINE");
-    btnStatusOffline_ = std::make_unique<juce::TextButton>("OFFLINE");
+    btnStatusAll_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.status_todos"));
+    btnStatusOnline_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.status_online"));
+    btnStatusOffline_ = std::make_unique<juce::TextButton>(matriz::i18n::t("barra.status_offline"));
 
     std::vector<std::pair<juce::TextButton*, std::string>> statusFilters = {
         { btnStatusAll_.get(), "all" },
@@ -287,7 +287,7 @@ void BarraFerramentasComponent::definirDestacarEditados(bool ativo) {
     destacarEditados_ = ativo;
     if (!btnDestacarEditados_) return;
     const auto& tk = tema();
-    btnDestacarEditados_->setButtonText(ativo ? "MARK EDITED: ON" : "MARK EDITED: OFF");
+    btnDestacarEditados_->setButtonText(ativo ? matriz::i18n::t("catwork.destacar_editados_on") : matriz::i18n::t("catwork.destacar_editados_off"));
     btnDestacarEditados_->setColour(juce::TextButton::buttonColourId, ativo ? tk.acento : tk.painelAlt);
     btnDestacarEditados_->setColour(juce::TextButton::textColourOffId, ativo ? tk.textoSobreAcento : tk.textoSecundario);
     btnDestacarEditados_->repaint();
@@ -328,13 +328,64 @@ void BarraFerramentasComponent::lookAndFeelChanged() {
     if (labelContagem_) {
         labelContagem_->setColour(juce::Label::textColourId, tk.textoTerciario);
     }
-    if (botaoAdicionar_) aplicarEstiloBotao(*botaoAdicionar_, true);
-    if (botaoNavegar_) aplicarEstiloBotao(*botaoNavegar_, false);
-    if (botaoBackup_) aplicarEstiloBotao(*botaoBackup_, false);
-    if (botaoAdvanced_) aplicarEstiloBotao(*botaoAdvanced_, false);
-    if (botaoEstruturaOrigem_) aplicarEstiloBotao(*botaoEstruturaOrigem_, false);
-    if (botaoEstruturaBackup_) aplicarEstiloBotao(*botaoEstruturaBackup_, false);
-    if (lblStatusFilter_) lblStatusFilter_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    if (botaoAdicionar_) {
+        botaoAdicionar_->setButtonText(matriz::i18n::t("barra.adicionar"));
+        botaoAdicionar_->setTooltip(matriz::i18n::t("barra.adicionar_dica"));
+        aplicarEstiloBotao(*botaoAdicionar_, true);
+    }
+    if (botaoNavegar_) {
+        botaoNavegar_->setButtonText(matriz::i18n::t("navegador.abrir"));
+        aplicarEstiloBotao(*botaoNavegar_, false);
+    }
+    if (botaoBackup_) {
+        botaoBackup_->setButtonText(matriz::i18n::t("barra.backup"));
+        botaoBackup_->setTooltip(matriz::i18n::t("barra.backup_dica"));
+        aplicarEstiloBotao(*botaoBackup_, false);
+    }
+    if (botaoAdvanced_) {
+        botaoAdvanced_->setButtonText(matriz::i18n::t("barra.advanced"));
+        botaoAdvanced_->setTooltip(matriz::i18n::t("barra.advanced_dica"));
+        aplicarEstiloBotao(*botaoAdvanced_, false);
+    }
+    if (botaoEstruturaOrigem_) {
+        botaoEstruturaOrigem_->setButtonText(matriz::i18n::t("barra.src_tree"));
+        botaoEstruturaOrigem_->setTooltip(matriz::i18n::t("barra.src_tree_dica"));
+        aplicarEstiloBotao(*botaoEstruturaOrigem_, false);
+    }
+    if (botaoEstruturaBackup_) {
+        botaoEstruturaBackup_->setButtonText(matriz::i18n::t("barra.dest_tree"));
+        botaoEstruturaBackup_->setTooltip(matriz::i18n::t("barra.dest_tree_dica"));
+        aplicarEstiloBotao(*botaoEstruturaBackup_, false);
+    }
+    if (botaoDetalhes_) {
+        botaoDetalhes_->setButtonText(matriz::i18n::t("ficha.alternar"));
+        botaoDetalhes_->setTooltip(matriz::i18n::t("barra.detalhes_dica"));
+        aplicarEstiloBotao(*botaoDetalhes_, false);
+    }
+    if (botaoTamanhoP_) {
+        botaoTamanhoP_->setButtonText(matriz::i18n::t("grade.tamanho_pequeno"));
+        botaoTamanhoP_->setTooltip(matriz::i18n::t("barra.tamanho_dica"));
+    }
+    if (botaoTamanhoM_) {
+        botaoTamanhoM_->setButtonText(matriz::i18n::t("grade.tamanho_medio"));
+        botaoTamanhoM_->setTooltip(matriz::i18n::t("barra.tamanho_dica"));
+    }
+    if (botaoTamanhoG_) {
+        botaoTamanhoG_->setButtonText(matriz::i18n::t("grade.tamanho_grande"));
+        botaoTamanhoG_->setTooltip(matriz::i18n::t("barra.tamanho_dica"));
+    }
+    if (btnAllAssets_) btnAllAssets_->setButtonText(matriz::i18n::t("barra.todos_ativos"));
+    if (btnAudio_) btnAudio_->setButtonText(matriz::i18n::t("barra.audio"));
+    if (btnVideo_) btnVideo_->setButtonText(matriz::i18n::t("barra.video"));
+    if (btnImage_) btnImage_->setButtonText(matriz::i18n::t("barra.image"));
+    if (btnDocument_) btnDocument_->setButtonText(matriz::i18n::t("barra.document"));
+    if (lblStatusFilter_) {
+        lblStatusFilter_->setText(matriz::i18n::t("barra.status_rotulo"), juce::dontSendNotification);
+        lblStatusFilter_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (btnStatusAll_) btnStatusAll_->setButtonText(matriz::i18n::t("barra.status_todos"));
+    if (btnStatusOnline_) btnStatusOnline_->setButtonText(matriz::i18n::t("barra.status_online"));
+    if (btnStatusOffline_) btnStatusOffline_->setButtonText(matriz::i18n::t("barra.status_offline"));
     
     marcarTamanhoAtivo(tamanhoAtivo_);
     definirDetalhesAbertos(detalhesAbertos_);
@@ -343,6 +394,8 @@ void BarraFerramentasComponent::lookAndFeelChanged() {
     atualizarBotoesFiltroStatus();
     
     if (botaoModoVisao_) {
+        botaoModoVisao_->setButtonText(matriz::i18n::t(modoLista_ ? "grade.modo_grade" : "grade.modo_lista"));
+        botaoModoVisao_->setTooltip(matriz::i18n::t("barra.modo_visao_dica"));
         botaoModoVisao_->setColour(juce::TextButton::buttonColourId, modoLista_ ? tk.acento : tk.painelAlt);
         botaoModoVisao_->setColour(juce::TextButton::textColourOffId, modoLista_ ? tk.textoSobreAcento : tk.textoPrimario);
     }
@@ -413,7 +466,7 @@ void BarraFerramentasComponent::resized() {
     btnImage_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     btnDocument_->setBounds(startX, areaBottom.getY(), filterW, areaBottom.getHeight()); startX += filterW + gap;
     if (btnDestacarEditados_) {
-        btnDestacarEditados_->setBounds(startX + tk.espacoPequeno, areaBottom.getY(), 135, areaBottom.getHeight());
+        btnDestacarEditados_->setBounds(startX + tk.espacoPequeno, areaBottom.getY(), 150, areaBottom.getHeight());
     }
 
     // Lay out Status filter buttons on the right side

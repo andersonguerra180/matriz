@@ -91,9 +91,9 @@ public:
     void definirTextoParaTeste(const juce::String& texto);
     juce::String tituloParaTeste() const { return config_.titulo; }
 
-    static constexpr int kLarguraCartao = 460;
-    static constexpr int kMargem = 20;
-    static constexpr int kAlturaLinha = 28;
+    static constexpr int kLarguraCartao = 520;
+    static constexpr int kMargem = 22;
+    static constexpr int kAlturaLinha = 30;
 
 private:
     void concluir(int botaoId);

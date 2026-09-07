@@ -47,6 +47,7 @@ private:
         Tab tab;
         juce::String label;
         juce::Rectangle<int> bounds;
+        juce::Rectangle<int> sepBounds;
         bool hover = false;
     };
 
@@ -54,6 +55,7 @@ private:
     Tab selectedTab_ = Tab::Grid;
 
     juce::String brandText_{"COLLECTION"};
+    juce::String projectName_;
     bool isCatalog_ = false;
     bool hasParentCatalog_ = false;
 

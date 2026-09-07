@@ -58,5 +58,7 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
                       juce::Component* ancora);
 
 void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
+void limparMetadados(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 
 } // namespace matriz::ui::acoes
+

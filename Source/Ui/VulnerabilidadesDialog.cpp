@@ -1,5 +1,6 @@
 #include "VulnerabilidadesDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 #include "../Vault/Reconciliacao.h"
 #include <map>
 
@@ -9,19 +10,19 @@ VulnerabilidadesDialog::VulnerabilidadesDialog(ProjetoAberto& projeto)
     : projeto_(projeto) {
     const auto& tk = tema();
 
-    lblTitulo_ = std::make_unique<juce::Label>("lblTitulo", "BACKUP HEALTH & VULNERABILITY ANALYTICS");
+    lblTitulo_ = std::make_unique<juce::Label>("lblTitulo", i18n::t("vulnerabilidades.titulo"));
     lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
     lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*lblTitulo_);
 
     lblSubtitulo_ = std::make_unique<juce::Label>(
         "lblSubtitulo",
-        "Categorized risk breakdown for project assets. Click any issue card to open and filter affected files directly in the Mosaic Grid.");
+        i18n::t("vulnerabilidades.subtitulo"));
     lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
     lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblSubtitulo_);
 
-    btnFechar_ = std::make_unique<juce::TextButton>("CLOSE");
+    btnFechar_ = std::make_unique<juce::TextButton>(i18n::t("dialogo.fechar"));
     btnFechar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnFechar_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnFechar_->onClick = [this] {
@@ -32,6 +33,20 @@ VulnerabilidadesDialog::VulnerabilidadesDialog(ProjetoAberto& projeto)
     carregarVulnerabilidades();
 }
 
+void VulnerabilidadesDialog::lookAndFeelChanged() {
+    if (lblTitulo_) {
+        lblTitulo_->setText(i18n::t("vulnerabilidades.titulo"), juce::dontSendNotification);
+    }
+    if (lblSubtitulo_) {
+        lblSubtitulo_->setText(i18n::t("vulnerabilidades.subtitulo"), juce::dontSendNotification);
+    }
+    if (btnFechar_) {
+        btnFechar_->setButtonText(i18n::t("dialogo.fechar"));
+    }
+    carregarVulnerabilidades();
+    repaint();
+}
+
 void VulnerabilidadesDialog::carregarVulnerabilidades() {
     categorias_.clear();
     auto& db = projeto_.projeto().registro();
@@ -39,8 +54,8 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     // 1. Missing Required Metadata
     VulnerabilidadeCategoria catMeta;
     catMeta.id = "missing_metadata";
-    catMeta.titulo = "MISSING METADATA";
-    catMeta.descricao = "Assets missing required catalog metadata (Release/Year, Media Type, or Collection Type).";
+    catMeta.titulo = i18n::t("vulnerabilidades.cat_meta");
+    catMeta.descricao = i18n::t("vulnerabilidades.cat_meta_desc");
     catMeta.corAcento = juce::Colour(0xfff59e0b); // Amber
 
     try {
@@ -58,8 +73,8 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     // 2. Duplicate Files
     VulnerabilidadeCategoria catDup;
     catDup.id = "duplicates";
-    catDup.titulo = "DUPLICATE FILES";
-    catDup.descricao = "Assets sharing identical SHA-256 checksums across the project or duplicate intake files.";
+    catDup.titulo = i18n::t("vulnerabilidades.cat_dup");
+    catDup.descricao = i18n::t("vulnerabilidades.cat_dup_desc");
     catDup.corAcento = juce::Colour(0xff3b82f6); // Blue
 
     try {
@@ -79,8 +94,8 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     // 3. Offline / Missing Source Media
     VulnerabilidadeCategoria catOffline;
     catOffline.id = "offline";
-    catOffline.titulo = "OFFLINE / MISSING SOURCE";
-    catOffline.descricao = "Assets whose master files are on disconnected volumes or missing from disk.";
+    catOffline.titulo = i18n::t("vulnerabilidades.cat_offline");
+    catOffline.descricao = i18n::t("vulnerabilidades.cat_offline_desc");
     catOffline.corAcento = juce::Colour(0xffef4444); // Red
 
     auto itensResumo = projeto_.listarItens();
@@ -94,8 +109,8 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     // 4. Single Copy / Unbacked Assets
     VulnerabilidadeCategoria catSingleCopy;
     catSingleCopy.id = "single_copy";
-    catSingleCopy.titulo = "SINGLE COPY (NO BACKUP)";
-    catSingleCopy.descricao = "Assets with no verified replica in any secondary backup vault.";
+    catSingleCopy.titulo = i18n::t("vulnerabilidades.cat_single");
+    catSingleCopy.descricao = i18n::t("vulnerabilidades.cat_single_desc");
     catSingleCopy.corAcento = juce::Colour(0xfff97316); // Orange
 
     try {
@@ -181,7 +196,7 @@ void VulnerabilidadesDialog::paint(juce::Graphics& g) {
         g.drawRoundedRectangle(countBadge.toFloat(), 4.0f, 1.0f);
 
         g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-        juce::String countText = juce::String(cat.itemIds.size()) + " files";
+        juce::String countText = i18n::t("vulnerabilidades.arquivos_contador").replace("{n}", juce::String(cat.itemIds.size()));
         g.drawText(countText, countBadge, juce::Justification::centred);
 
         inner.removeFromTop(8);
@@ -195,7 +210,7 @@ void VulnerabilidadesDialog::paint(juce::Graphics& g) {
         inner.removeFromTop(6);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         g.setColour(isHovered ? tk.acento : tk.textoTerciario);
-        g.drawText("Click to view & select in Grid \u2192", inner, juce::Justification::bottomRight);
+        g.drawText(i18n::t("vulnerabilidades.clique_grid"), inner, juce::Justification::bottomRight);
     }
 }
 
@@ -260,7 +275,7 @@ void VulnerabilidadesDialog::exibirModal(ProjetoAberto& projeto,
 
     juce::DialogWindow::LaunchOptions opt;
     opt.content.setOwned(dlg.release());
-    opt.dialogTitle = "Backup Health & Vulnerability Diagnostics";
+    opt.dialogTitle = i18n::t("vulnerabilidades.dialog_titulo");
     opt.dialogBackgroundColour = tema().fundo;
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = false;

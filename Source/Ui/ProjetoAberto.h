@@ -189,6 +189,9 @@ public:
     // Writes a direct column on the item table
     void salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor);
 
+    // --- Clear / Reset Metadata to Original Intake State ---
+    void redefinirMetadadosItens(const std::vector<std::string>& itemIds);
+
     // --- Tags ---
     std::vector<std::string> lerTags(const std::string& itemId) const;
     void definirTags(const std::string& itemId, const std::vector<std::string>& tags);

@@ -1,5 +1,6 @@
 #include "InitialRelinkDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
 
@@ -13,19 +14,20 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
       onWorkOffline_(std::move(onWorkOffline)) {
     const auto& tk = tema();
 
-    lblHeader_.setText("ASSET LOCATION NOT FOUND", juce::dontSendNotification);
+    lblHeader_.setText(i18n::t("relink.inicial_titulo"), juce::dontSendNotification);
     lblHeader_.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblHeader_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblHeader_);
 
-    lblDescription_.setText("The assets for this project could not be located at their recorded paths.\n\nPlease locate one known asset from this project. The system will automatically infer the new storage root and relink reachable assets.", juce::dontSendNotification);
+    lblDescription_.setText(i18n::t("relink.inicial_desc"), juce::dontSendNotification);
     lblDescription_.setFont(juce::Font(juce::FontOptions(13.0f)));
     lblDescription_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblDescription_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblDescription_);
 
-    lblExpectedHeader_.setText("Sample Expected File (" + (sampleTitle_.isEmpty() ? "Asset" : sampleTitle_) + "):", juce::dontSendNotification);
+    juce::String tituloAtivo = sampleTitle_.isEmpty() ? "Asset" : sampleTitle_;
+    lblExpectedHeader_.setText(i18n::t("relink.arquivo_esperado_exemplo").replace("{t}", tituloAtivo), juce::dontSendNotification);
     lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     lblExpectedHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblExpectedHeader_);
@@ -38,12 +40,13 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
     txtExpectedPath_.setColour(juce::TextEditor::outlineColourId, tk.borda);
     addAndMakeVisible(txtExpectedPath_);
 
+    btnLocate_.setButtonText(i18n::t("dialogo.localizar_arquivo"));
     btnLocate_.setColour(juce::TextButton::buttonColourId, tk.acento);
     btnLocate_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnLocate_.onClick = [this] {
         juce::String fname = juce::File(sampleMissingPath_).getFileName();
         fileChooser_ = std::make_unique<juce::FileChooser>(
-            "Locate Known Asset (" + fname + ")",
+            i18n::t("relink.localizar_ativo_conhecido").replace("{n}", fname),
             juce::File::getSpecialLocation(juce::File::userHomeDirectory),
             "*.*");
 
@@ -61,6 +64,7 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
     };
     addAndMakeVisible(btnLocate_);
 
+    btnWorkOffline_.setButtonText(i18n::t("dialogo.trabalhar_offline"));
     btnWorkOffline_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnWorkOffline_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnWorkOffline_.onClick = [this] {
@@ -73,6 +77,16 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
     addAndMakeVisible(btnWorkOffline_);
 
     setSize(560, 310);
+}
+
+void InitialRelinkDialog::lookAndFeelChanged() {
+    lblHeader_.setText(i18n::t("relink.inicial_titulo"), juce::dontSendNotification);
+    lblDescription_.setText(i18n::t("relink.inicial_desc"), juce::dontSendNotification);
+    juce::String tituloAtivo = sampleTitle_.isEmpty() ? "Asset" : sampleTitle_;
+    lblExpectedHeader_.setText(i18n::t("relink.arquivo_esperado_exemplo").replace("{t}", tituloAtivo), juce::dontSendNotification);
+    btnLocate_.setButtonText(i18n::t("dialogo.localizar_arquivo"));
+    btnWorkOffline_.setButtonText(i18n::t("dialogo.trabalhar_offline"));
+    repaint();
 }
 
 void InitialRelinkDialog::paint(juce::Graphics& g) {
@@ -112,7 +126,7 @@ void InitialRelinkDialog::showModal(const juce::String& sampleExpectedPath,
                                           std::move(onLocateFile), std::move(onWorkOffline));
 
     juce::DialogWindow::LaunchOptions opt;
-    opt.dialogTitle = "Asset Location Not Found";
+    opt.dialogTitle = i18n::t("relink.dialog_inicial_titulo");
     opt.content.setOwned(dialog);
     opt.componentToCentreAround = nullptr;
     opt.dialogBackgroundColour = tema().painel;

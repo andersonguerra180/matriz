@@ -12,6 +12,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
     void mouseDown(const juce::MouseEvent& e) override;
 
     std::function<void()> aoFechar;
