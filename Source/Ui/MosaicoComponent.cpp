@@ -6,6 +6,7 @@
 #include "../I18n/Strings.h"
 #include "Tokens.h"
 #include "ProgressoGlobal.h"
+#include "SendToPrintDialog.h"
 
 #include <algorithm>
 #include <map>
@@ -930,6 +931,11 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
     if (tecla.getKeyCode() == 'A' && (tecla.getModifiers().isCommandDown() || tecla.getModifiers().isCtrlDown())) {
         selecionarTodos(); // "tudo que está no filtro atual" — ver nota em selecionarTodos()
         if (aoSelecionar && !selecionadoId_.empty()) aoSelecionar(selecionadoId_);
+        return true;
+    }
+
+    if (tecla.getKeyCode() == 'P' && (tecla.getModifiers().isCommandDown() || tecla.getModifiers().isCtrlDown())) {
+        SendToPrintDialog::exibirModal(projeto_);
         return true;
     }
 

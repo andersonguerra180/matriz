@@ -28,6 +28,7 @@
 #include "../Ingest/FluxoLote.h"
 #include "../Sync/SyncEngine.h"
 #include "ExportZipDialog.h"
+#include "SendToPrintDialog.h"
 #include "../Imagem/ProcessamentoImagem.h"
 
 #include <JuceHeader.h>
@@ -3063,6 +3064,141 @@ int rodarUiSelfTest() {
             auto lidoInvalido = lerImagem(fakeTxt);
             checar(!lidoInvalido.sucesso, "ETAPA 1: Arquivo .txt rejeitado corretamente com mensagem de erro");
             checar(lidoInvalido.erro.isNotEmpty(), "ETAPA 1: Mensagem de erro informativa presente");
+        }
+
+        // ===================================================================
+        // SEND TO PRINT - ETAPA 2: Interface e Previa do Papel
+        // ===================================================================
+        std::cout << "\n== SEND TO PRINT - ETAPA 2: Interface e Previa do Papel ==\n";
+
+        {
+            // 1. Tabela de Papeis Fotograficos Padrao e Calculo de Resolucao em Pixels
+            const auto& papeis = SendToPrintDialog::papeisPadrao();
+            checar(papeis.size() >= 8, "ETAPA 2: Pelo menos 8 formatos padrao cadastrados");
+
+            // 10x15 cm @ 300 DPI
+            const DefinicaoPapel* p10x15 = nullptr;
+            for (const auto& p : papeis) {
+                if (p.id == "10x15") { p10x15 = &p; break; }
+            }
+            checar(p10x15 != nullptr, "ETAPA 2: Formato 10x15 encontrado");
+            if (p10x15) {
+                int wLandscape = p10x15->larguraPixels(300.0, true);
+                int hLandscape = p10x15->alturaPixels(300.0, true);
+                checar(wLandscape == 1772 && hLandscape == 1181,
+                       "ETAPA 2: 10x15 paisagem a 300 DPI resulta em 1772x1181 px");
+
+                int wPortrait = p10x15->larguraPixels(300.0, false);
+                int hPortrait = p10x15->alturaPixels(300.0, false);
+                checar(wPortrait == 1181 && hPortrait == 1772,
+                       "ETAPA 2: 10x15 retrato a 300 DPI resulta em 1181x1772 px");
+            }
+
+            // A4 @ 300 DPI
+            const DefinicaoPapel* pA4 = nullptr;
+            for (const auto& p : papeis) {
+                if (p.id == "a4") { pA4 = &p; break; }
+            }
+            checar(pA4 != nullptr, "ETAPA 2: Formato A4 encontrado");
+            if (pA4) {
+                int wLandscape = pA4->larguraPixels(300.0, true);
+                int hLandscape = pA4->alturaPixels(300.0, true);
+                checar(wLandscape == 3508 && hLandscape == 2480,
+                       "ETAPA 2: A4 paisagem a 300 DPI resulta em 3508x2480 px");
+            }
+
+            // 2. Calculo de DPI Efetivo e Diagnostico de Resolucao
+            ItemFilaPrint itemAlta;
+            itemAlta.larguraOriginal = 4032;
+            itemAlta.alturaOriginal = 3024;
+            int dpiAlta = itemAlta.calcularDpiEfetivo(1772, 1181);
+            checar(dpiAlta >= 300, "ETAPA 2: Foto 4032x3024 em 10x15 tem DPI excelente (" + juce::String(dpiAlta) + " DPI)");
+
+            ItemFilaPrint itemBaixa;
+            itemBaixa.larguraOriginal = 800;
+            itemBaixa.alturaOriginal = 600;
+            int dpiBaixa = itemBaixa.calcularDpiEfetivo(1772, 1181);
+            checar(dpiBaixa < 200, "ETAPA 2: Foto 800x600 em 10x15 detectada com baixa resolucao (" + juce::String(dpiBaixa) + " DPI)");
+
+            // 3. Componente de Previa do Papel (PreviaPapelComponent)
+            PreviaPapelComponent previa;
+            previa.setBounds(0, 0, 600, 400);
+
+            ItemFilaPrint itemTeste;
+            itemTeste.valido = true;
+            itemTeste.larguraOriginal = 2000;
+            itemTeste.alturaOriginal = 1000;
+            itemTeste.offsetX = 0.0f;
+            itemTeste.offsetY = 0.0f;
+            itemTeste.miniatura = juce::Image(juce::Image::RGB, 200, 100, true);
+
+            if (p10x15) {
+                previa.configurarItem(&itemTeste, *p10x15, OrientacaoPapel::Auto,
+                                     matriz::imagem::ModoEnquadramento::Preencher,
+                                     ZoomPrevia::AjustarJanela);
+            }
+
+            // Simulacao de renderizacao sem crash
+            juce::Image canvasPrevia(juce::Image::RGB, 600, 400, true);
+            juce::Graphics gPrevia(canvasPrevia);
+            previa.paint(gPrevia);
+            checar(true, "ETAPA 2: PreviaPapelComponent desenhou sem falhas em modo Preencher");
+
+            if (p10x15) {
+                previa.configurarItem(&itemTeste, *p10x15, OrientacaoPapel::Paisagem,
+                                     matriz::imagem::ModoEnquadramento::Encaixar,
+                                     ZoomPrevia::Zoom100);
+                previa.paint(gPrevia);
+                checar(true, "ETAPA 2: PreviaPapelComponent desenhou sem falhas em modo Encaixar e Zoom 100%");
+            }
+
+            // 4. Dialogo SendToPrintDialog com itens na fila e validacao
+            auto* projeto = janelaArchive.projetoAberto();
+            auto pastaEtapa2 = tmpRoot.getChildFile("etapa2");
+            pastaEtapa2.createDirectory();
+            auto arqFoto = pastaEtapa2.getChildFile("foto_fila.jpg");
+            matriz::imagem::ImagemBuffer buf(400, 300, 200, 150, 100, 255);
+            matriz::imagem::gravar(buf, arqFoto, matriz::imagem::FormatoSaida::Jpeg, 95, 300.0);
+
+            std::string agora = matriz::model::agoraIso8601();
+            std::string idFotoP = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'PRINT-01', 'Foto Para Impressao', 'digital_image', 'catalogado', ?, ?)",
+                {matriz::db::Value::of(idFotoP),
+                 matriz::db::Value::of(projeto->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            std::string arqId = matriz::model::novoUuid();
+            projeto->projeto().registro().run(
+                "INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
+                "estado_presenca, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, 'preservation_master', 1, ?, 'presente', ?, ?)",
+                {matriz::db::Value::of(arqId),
+                 matriz::db::Value::of(idFotoP),
+                 matriz::db::Value::of(arqFoto.getFullPathName().toStdString()),
+                 matriz::db::Value::of(static_cast<juce::int64>(arqFoto.getSize())),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // Marca o item na lista P
+            projeto->alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, {idFotoP});
+            checar(projeto->contemMarcacao(ProjetoAberto::TipoMarcacao::Print, idFotoP),
+                   "ETAPA 2: Item marcado na fila P de impressao");
+
+            // Instancia o dialogo e verifica que a fila carrega o item
+            SendToPrintDialog dlg(*projeto);
+            dlg.setBounds(0, 0, 1120, 720);
+            checar(dlg.getNumRows() >= 1, "ETAPA 2: SendToPrintDialog carregou o item marcado na lista");
+
+            // Simula renderizacao do item na ListBox
+            juce::Image rowCanvas(juce::Image::RGB, 280, 68, true);
+            juce::Graphics gRow(rowCanvas);
+            dlg.paintListBoxItem(0, gRow, 280, 68, true);
+            checar(true, "ETAPA 2: paintListBoxItem renderizou a linha da fila com sucesso");
+
+            // Simula atalho Escape para fechar
+            bool escTratado = dlg.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
+            checar(escTratado, "ETAPA 2: Tecla Escape tratada pelo dialogo");
         }
 
     } catch (const std::exception& e) {

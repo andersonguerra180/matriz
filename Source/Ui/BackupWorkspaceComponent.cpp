@@ -5,6 +5,7 @@
 #include "SyncDestinationDialog.h"
 #include "PublishHtmlDialog.h"
 #include "ExportZipDialog.h"
+#include "SendToPrintDialog.h"
 #include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
@@ -1443,9 +1444,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnSendToPrint_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("backup.enviar_print").toRawUTF8(), 0));
     aplicarEstiloBotao(*btnSendToPrint_, false);
     btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
-    btnSendToPrint_->setTooltip(isPt ? juce::String::fromUTF8("Enviar itens marcados com P para impressão (em breve)")
-                                     : "Send assets marked with P to print (coming soon)");
-    btnSendToPrint_->setEnabled(false);
+    btnSendToPrint_->setTooltip(isPt ? juce::String::fromUTF8("Enviar fotos marcadas com P para impressão")
+                                     : "Send photos marked with P to print");
+    btnSendToPrint_->onClick = [this] {
+        SendToPrintDialog::exibirModal(projeto_);
+    };
     addChildComponent(*btnSendToPrint_);
 
     btnLimparPrint_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("×"));
