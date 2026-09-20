@@ -56,6 +56,9 @@ std::vector<ProjetoRecente> lerRecentes();
 // Move `pasta` pro topo da lista (ou insere), grava. Limita a 10 entradas.
 void registrarRecente(const juce::String& pasta, const juce::String& nome, const juce::String& modo);
 
+// Remove `pasta` da lista de recentes e grava.
+void removerRecente(const juce::String& pasta);
+
 // Lógica pura de "mover/inserir no topo com dedup por pasta + limite de
 // tamanho" — separada de qualquer I/O de arquivo pra ser testável em
 // isolamento (tools/selftest, sem tocar nas preferências reais do usuário).

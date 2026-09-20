@@ -258,17 +258,248 @@ inline MediaCategory determinarCategoriaMidia(const std::string& tipoMidia, cons
     switch (cat) {
         case matriz::ingest::CategoriaMidia::Audio: return MediaCategory::Audio;
         case matriz::ingest::CategoriaMidia::Video: return MediaCategory::Video;
+        case matriz::ingest::CategoriaMidia::Arte:
         case matriz::ingest::CategoriaMidia::Imagem: return MediaCategory::Image;
         case matriz::ingest::CategoriaMidia::Sessao:
         case matriz::ingest::CategoriaMidia::Documento:
-        case matriz::ingest::CategoriaMidia::Texto: return MediaCategory::Docs;
-        default: return MediaCategory::Audio;
+        case matriz::ingest::CategoriaMidia::Texto:
+        case matriz::ingest::CategoriaMidia::Desconhecida:
+        default:
+            return MediaCategory::Docs;
     }
+}
+
+inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesContent() {
+    static const std::vector<std::pair<juce::String, juce::String>> mapa = {
+        // Audio
+        {"Album", juce::String::fromUTF8("Álbum")},
+        {"Single", "Single"},
+        {"EP", "EP"},
+        {"Compilation", juce::String::fromUTF8("Compilação")},
+        {"Soundtrack", "Trilha Sonora"},
+        {"Stems", "Stems"},
+        {"Multitracks", "Multitracks"},
+        {"Sample Pack", "Pacote de Samples"},
+        {"Sample", "Sample"},
+        {"Preset", "Preset"},
+        {"DAW Session", juce::String::fromUTF8("Sessão de DAW")},
+        {"Field Recording", juce::String::fromUTF8("Gravação de Campo")},
+        {"Sound FX", "Efeitos Sonoros (SFX)"},
+        {"MIDI", "MIDI"},
+        {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
+        {"Artist Backup", "Backup do Artista"},
+        // Video
+        {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
+        {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},
+        {"Music Video", "Videoclipe"},
+        {"Film", "Filme / Curta"},
+        {"Documentary", juce::String::fromUTF8("Documentário")},
+        {"Corporate Video", juce::String::fromUTF8("Vídeo Institucional")},
+        {"Commercial", "Comercial / Publicidade"},
+        {"Live Performance", "Show / Ao Vivo"},
+        {"NLE Project", juce::String::fromUTF8("Projeto de Edição (NLE)")},
+        {"Social Media Video", juce::String::fromUTF8("Vídeos para Redes Sociais")},
+        // Image
+        {"Photo", "Foto"},
+        {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
+        {"Album Cover", juce::String::fromUTF8("Capa de Álbum")},
+        {"Poster", juce::String::fromUTF8("Pôster / Cartaz")},
+        {"Press / Promotional", juce::String::fromUTF8("Material de Divulgação")},
+        {"Image Edit Project", "Projeto de Imagem"},
+        {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
+        {"Logo", "Logotipo"},
+        {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        // Docs
+        {"Documentation", juce::String::fromUTF8("Documentação")},
+        {"Book", "Livro"},
+        {"Contract", "Contrato"},
+        {"Manual", "Manual"},
+        {"Report", juce::String::fromUTF8("Relatório")},
+        {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
+        {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
+        {"Spreadsheet", "Planilha"},
+        {"Planilha", "Planilha"}
+    };
+    return mapa;
+}
+
+inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
+    if (val.isEmpty()) return {};
+    for (const auto& par : mapaTraducoesContent()) {
+        if (paraPt) {
+            if (val.equalsIgnoreCase(par.first)) return par.second;
+        } else {
+            if (val.equalsIgnoreCase(par.second)) return par.first;
+        }
+    }
+    return val;
+}
+
+inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bool isPt) {
+    std::vector<juce::String> keys;
+    if (cat == MediaCategory::Audio) {
+        keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
+                "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+                "Artist Catalog", "Artist Backup"};
+    } else if (cat == MediaCategory::Video) {
+        keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
+                "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video"};
+    } else if (cat == MediaCategory::Image) {
+        keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
+                "Graphics", "Logo", "3D"};
+    } else if (cat == MediaCategory::Docs) {
+        keys = {"Documentation", "Book", "Contract", "Manual", "Report", "Reference",
+                "Technical Documentation", "Spreadsheet"};
+    } else {
+        std::vector<juce::String> res;
+        for (auto c : {MediaCategory::Audio, MediaCategory::Video, MediaCategory::Image, MediaCategory::Docs}) {
+            auto sub = opcoesContentPorCategoria(c, isPt);
+            res.insert(res.end(), sub.begin(), sub.end());
+        }
+        return res;
+    }
+    if (!isPt) return keys;
+    std::vector<juce::String> res;
+    for (const auto& k : keys) res.push_back(traduzirContent(k, true));
+    return res;
+}
+
+inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory cat, bool isPt) {
+    auto juceOpts = opcoesContentPorCategoria(cat, isPt);
+    std::vector<std::string> res;
+    res.reserve(juceOpts.size());
+    for (const auto& s : juceOpts) res.push_back(s.toStdString());
+    return res;
 }
 
 class FichaConteudo : public juce::Component {
 public:
     explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
+
+    void paint(juce::Graphics& g) override {
+        if (itemId_.empty()) return;
+        const auto& tk = matriz::ui::tema();
+        auto drawCard = [&](const juce::Rectangle<int>& r) {
+            if (r.isEmpty()) return;
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(r.toFloat(), 6.0f);
+            g.setColour(tk.borda);
+            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 6.0f, 1.0f);
+        };
+        drawCard(quadroDublinCore_);
+        drawCard(quadroUserAsset_);
+        drawCard(quadroGeoLocation_);
+    }
+
+    void lookAndFeelChanged() override {
+        const auto& tk = matriz::ui::tema();
+        if (cabecalho_) {
+            cabecalho_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+            cabecalho_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        if (secHeaderDublinCore_) {
+            secHeaderDublinCore_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            secHeaderDublinCore_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        if (secHeaderUserAsset_) {
+            secHeaderUserAsset_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            secHeaderUserAsset_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        if (geolocalizacao_.titulo) {
+            geolocalizacao_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            geolocalizacao_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        for (auto* btn : {btnAjudaDublinCore_.get(), btnAjudaUserAsset_.get(), btnAjudaGeoLocation_.get()}) {
+            if (btn) {
+                btn->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+                btn->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+            }
+        }
+        for (auto* btn : {btnCollapseDublinCore_.get(), btnCollapseUserAsset_.get(), btnCollapseGeoLocation_.get()}) {
+            if (btn) {
+                btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+                btn->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+            }
+        }
+        if (geolocalizacao_.labelCoords) geolocalizacao_.labelCoords->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geolocalizacao_.labelAddress) geolocalizacao_.labelAddress->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geolocalizacao_.labelCity) geolocalizacao_.labelCity->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geolocalizacao_.labelState) geolocalizacao_.labelState->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geolocalizacao_.labelCountry) geolocalizacao_.labelCountry->setColour(juce::Label::textColourId, tk.textoSecundario);
+
+        if (geolocalizacao_.editorCoords) {
+            geolocalizacao_.editorCoords->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geolocalizacao_.editorCoords->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geolocalizacao_.editorCoords->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geolocalizacao_.editorAddress) {
+            geolocalizacao_.editorAddress->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geolocalizacao_.editorAddress->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geolocalizacao_.editorAddress->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geolocalizacao_.editorCity) {
+            geolocalizacao_.editorCity->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geolocalizacao_.editorCity->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geolocalizacao_.editorCity->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geolocalizacao_.editorState) {
+            geolocalizacao_.editorState->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geolocalizacao_.editorState->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geolocalizacao_.editorState->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geolocalizacao_.editorCountry) {
+            geolocalizacao_.editorCountry->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geolocalizacao_.editorCountry->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geolocalizacao_.editorCountry->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+
+        for (auto& u : camposUnificados_) {
+            if (u->rotulo) u->rotulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+            if (u->badge) u->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            if (u->editor) {
+                if (auto* ed = dynamic_cast<juce::TextEditor*>(u->editor.get())) {
+                    ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+                    ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+                    ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+                } else if (auto* cb = dynamic_cast<juce::ComboBox*>(u->editor.get())) {
+                    cb->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+                    cb->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+                    cb->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+                    cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
+                } else if (auto* tb = dynamic_cast<juce::ToggleButton*>(u->editor.get())) {
+                    tb->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+                    tb->setColour(juce::ToggleButton::tickColourId, tk.acento);
+                }
+            }
+        }
+
+        for (auto& s : secoes_) {
+            if (s.titulo) s.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            for (auto& l : s.linhas) {
+                if (l->rotulo) l->rotulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+                if (l->editorSimples) {
+                    if (auto* ed = dynamic_cast<juce::TextEditor*>(l->editorSimples.get())) {
+                        ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+                        ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+                        ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+                    } else if (auto* cb = dynamic_cast<juce::ComboBox*>(l->editorSimples.get())) {
+                        cb->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+                        cb->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+                        cb->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+                        cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
+                    }
+                }
+            }
+        }
+
+        if (arquivosEsperados_.titulo) arquivosEsperados_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+        if (observacoes_.titulo) observacoes_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+        if (mensagemNaoClassificado_) mensagemNaoClassificado_->setColour(juce::Label::textColourId, tk.textoSecundario);
+
+        repaint();
+    }
 
     void limpar() {
         camposUnificados_.clear();
@@ -296,8 +527,20 @@ public:
         labelAplicado_.reset();
         labelReviewFaltando_.reset();
         geolocalizacao_ = {};
+        quadroDublinCore_ = {};
+        quadroUserAsset_ = {};
+        quadroGeoLocation_ = {};
         secHeaderDublinCore_.reset();
+        btnAjudaDublinCore_.reset();
+        btnCollapseDublinCore_.reset();
+        colapsadoDublinCore_ = false;
         secHeaderUserAsset_.reset();
+        btnAjudaUserAsset_.reset();
+        btnCollapseUserAsset_.reset();
+        colapsadoUserAsset_ = false;
+        btnAjudaGeoLocation_.reset();
+        btnCollapseGeoLocation_.reset();
+        colapsadoGeoLocation_ = false;
         itemId_.clear();
         setSize(getWidth(), 0);
     }
@@ -312,16 +555,6 @@ public:
 
         std::string tituloStd, tipoMidia, codigoAcervo;
         if (!projeto_.obterItemInfo(itemId, tituloStd, tipoMidia, codigoAcervo)) return;
-        juce::String titulo = tituloStd;
-        juce::String codigo = codigoAcervo;
-
-        cabecalho_ = std::make_unique<juce::Label>();
-        cabecalho_->setText(codigo + " - " + (titulo.isNotEmpty() ? titulo : matriz::i18n::t("ficha.cabecalho_sem_titulo")),
-                             juce::dontSendNotification);
-        cabecalho_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteSubtitulo, juce::Font::bold)));
-        cabecalho_->setColour(juce::Label::textColourId, matriz::ui::tema().textoPrimario);
-        addAndMakeVisible(*cabecalho_);
-
         if (tipoMidia.empty()) {
             std::string ext;
             std::set<std::string> setIds{itemId};
@@ -493,6 +726,13 @@ public:
     }
 
     void relayout(int largura) {
+        if (itemId_.empty()) {
+            quadroDublinCore_ = {};
+            quadroUserAsset_ = {};
+            quadroGeoLocation_ = {};
+            setSize(largura, 0);
+            return;
+        }
         const auto& tk = matriz::ui::tema();
         int y = tk.espacoPainel;
         int x = tk.espacoPainel;
@@ -508,7 +748,9 @@ public:
             y += 24 + tk.espacoPequeno;
         }
 
-        y += tk.espacoMedio;
+        if (cabecalho_ || botaoRecategorizar_) {
+            y += tk.espacoMedio;
+        }
 
         if (mensagemNaoClassificado_) {
             mensagemNaoClassificado_->setBounds(x, y, larguraUtil, 40);
@@ -525,13 +767,16 @@ public:
             return;
         }
 
+        const int padCardX = 12;
+        const int padCardY = 10;
         bool ehDuasColunas = (larguraUtil >= 500);
 
         if (ehDuasColunas) {
+            int innerW = larguraUtil - 2 * padCardX;
             int gap = 16;
-            int colW = (larguraUtil - gap) / 2;
-            int x0 = x;
-            int x1 = x + colW + gap;
+            int colW = (innerW - gap) / 2;
+            int x0 = x + padCardX;
+            int x1 = x + padCardX + colW + gap;
 
             auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1) {
                 for (auto& cu : camposUnificados_) {
@@ -577,66 +822,140 @@ public:
             };
 
             // --- Bloco A: DUBLIN CORE METADATA ---
+            int cardATop = y;
             if (secHeaderDublinCore_) {
-                secHeaderDublinCore_->setBounds(x, y, larguraUtil, 20);
-                y += 24;
+                int btnW = 20;
+                int btnH = 18;
+                int rightX = x + padCardX + innerW;
+                if (btnCollapseDublinCore_) {
+                    rightX -= btnW;
+                    btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 4;
+                }
+                if (btnAjudaDublinCore_) {
+                    rightX -= btnW;
+                    btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 8;
+                }
+                secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                y += padCardY + 24;
+            } else {
+                y += padCardY;
             }
-            int y0 = y;
-            int y1 = y;
-            layoutCamposDoBloco(BlocoFicha::DublinCore, y0, y1);
-            y = std::max(y0, y1) + tk.espacoMedio * 2;
+            if (!colapsadoDublinCore_) {
+                int y0 = y;
+                int y1 = y;
+                layoutCamposDoBloco(BlocoFicha::DublinCore, y0, y1);
+                int cardABottom = std::max(y0, y1) + padCardY;
+                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoMedio;
+            } else {
+                int cardABottom = y;
+                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoPequeno;
+            }
 
             // --- Bloco B: ASSET & USER METADATA (PEOPLE right above TAGS) ---
+            int cardBTop = y;
             if (secHeaderUserAsset_) {
-                secHeaderUserAsset_->setBounds(x, y, larguraUtil, 20);
-                y += 24;
+                int btnW = 20;
+                int btnH = 18;
+                int rightX = x + padCardX + innerW;
+                if (btnCollapseUserAsset_) {
+                    rightX -= btnW;
+                    btnCollapseUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 4;
+                }
+                if (btnAjudaUserAsset_) {
+                    rightX -= btnW;
+                    btnAjudaUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 8;
+                }
+                secHeaderUserAsset_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                y += padCardY + 24;
+            } else {
+                y += padCardY;
             }
-            y0 = y;
-            y1 = y;
-            layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1);
-            y = std::max(y0, y1) + tk.espacoMedio * 2;
+            if (!colapsadoUserAsset_) {
+                int y0 = y;
+                int y1 = y;
+                layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1);
+                int cardBBottom = std::max(y0, y1) + padCardY;
+                quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
+                y = cardBBottom + tk.espacoMedio;
+            } else {
+                int cardBBottom = y;
+                quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
+                y = cardBBottom + tk.espacoPequeno;
+            }
 
             // --- Bloco C: GEOLOCATION (Last in metadata queue) ---
             if (geolocalizacao_.titulo) {
-                int rotuloW = larguraUtil - 150;
-                geolocalizacao_.titulo->setBounds(x, y, rotuloW, 20);
-                if (geolocalizacao_.statusBadge)
-                    geolocalizacao_.statusBadge->setBounds(x + larguraUtil - 145, y, 145, 20);
-                y += 24;
+                int cardCTop = y;
+                int btnW = 20;
+                int btnH = 18;
+                int rightX = x + padCardX + innerW;
+                if (btnCollapseGeoLocation_) {
+                    rightX -= btnW;
+                    btnCollapseGeoLocation_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 4;
+                }
+                if (btnAjudaGeoLocation_) {
+                    rightX -= btnW;
+                    btnAjudaGeoLocation_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 8;
+                }
+                if (geolocalizacao_.statusBadge) {
+                    rightX -= 145;
+                    geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 145, 20);
+                    rightX -= 8;
+                }
+                geolocalizacao_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                y += padCardY + 24;
 
-                y0 = y;
-                y1 = y;
-                auto layoutGeoField = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                    if (lbl && ed) {
-                        bool useCol1 = (y1 < y0);
-                        int currX = useCol1 ? x1 : x0;
-                        int& currY = useCol1 ? y1 : y0;
+                if (!colapsadoGeoLocation_) {
+                    int y0 = y;
+                    int y1 = y;
+                    auto layoutGeoField = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+                        if (lbl && ed) {
+                            bool useCol1 = (y1 < y0);
+                            int currX = useCol1 ? x1 : x0;
+                            int& currY = useCol1 ? y1 : y0;
 
-                        lbl->setBounds(currX, currY, colW, 16);
-                        currY += 18;
-                        ed->setBounds(currX, currY, colW, 24);
-                        currY += 24 + tk.espacoPequeno;
-                    }
-                };
-                layoutGeoField(geolocalizacao_.labelCoords, geolocalizacao_.editorCoords);
-                layoutGeoField(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress);
-                layoutGeoField(geolocalizacao_.labelCity, geolocalizacao_.editorCity);
-                layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
-                layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
+                            lbl->setBounds(currX, currY, colW, 16);
+                            currY += 18;
+                            ed->setBounds(currX, currY, colW, 24);
+                            currY += 24 + tk.espacoPequeno;
+                        }
+                    };
+                    layoutGeoField(geolocalizacao_.labelCoords, geolocalizacao_.editorCoords);
+                    layoutGeoField(geolocalizacao_.labelAddress, geolocalizacao_.editorAddress);
+                    layoutGeoField(geolocalizacao_.labelCity, geolocalizacao_.editorCity);
+                    layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
+                    layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
 
-                y = std::max(y0, y1);
+                    int cardCBottom = std::max(y0, y1) + padCardY;
+                    quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
+                    y = cardCBottom + tk.espacoMedio;
+                } else {
+                    int cardCBottom = y;
+                    quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
+                    y = cardCBottom + tk.espacoPequeno;
+                }
+            } else {
+                quadroGeoLocation_ = {};
             }
 
             int maxY = y;
 
             if (labelReviewFaltando_) {
-                maxY += tk.espacoMedio;
+                maxY += tk.espacoPequeno;
                 labelReviewFaltando_->setBounds(x, maxY, larguraUtil, 18);
                 maxY += 18 + tk.espacoPequeno;
             }
 
             if (botaoAplicar_) {
-                maxY += tk.espacoMedio;
+                maxY += tk.espacoPequeno;
                 botaoAplicar_->setBounds(x, maxY, 120, 28);
                 maxY += 28 + tk.espacoPequeno;
             }
@@ -650,102 +969,178 @@ public:
         }
 
         // --- Single Column Layout with distinct block sections ---
+        int innerW = larguraUtil - 2 * padCardX;
         auto layoutCamposDoBloco1Col = [&](BlocoFicha bloco) {
             for (auto& cu : camposUnificados_) {
                 if (!cu || cu->bloco != bloco) continue;
-                int rotuloW = larguraUtil - 100;
-                cu->rotulo->setBounds(x, y, rotuloW, 16);
-                cu->badge->setBounds(x + larguraUtil - 95, y, 95, 16);
+                int rotuloW = innerW - 100;
+                cu->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
+                cu->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
                 y += 18;
 
                 if (cu->ehOriginalSourceMedium) {
                     if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(cu->editor.get())) {
                         int prefH = osm->getPreferredHeight();
-                        osm->setBounds(x, y, larguraUtil, prefH);
+                        osm->setBounds(x + padCardX, y, innerW, prefH);
                         y += prefH + tk.espacoPequeno;
                     } else {
-                        cu->editor->setBounds(x, y, larguraUtil, 24);
+                        cu->editor->setBounds(x + padCardX, y, innerW, 24);
                         y += 24 + tk.espacoPequeno;
                     }
                 } else if (cu->ehPeople) {
-                    cu->editor->setBounds(x, y, larguraUtil, 26);
+                    cu->editor->setBounds(x + padCardX, y, innerW, 26);
                     y += 26 + tk.espacoPequeno;
                 } else if (cu->ehTags) {
                     if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
-                        chips->setBounds(x, y, larguraUtil, chips->getPreferredHeight());
+                        chips->setBounds(x + padCardX, y, innerW, chips->getPreferredHeight());
                         y += chips->getPreferredHeight() + tk.espacoPequeno;
                     } else {
-                        cu->editor->setBounds(x, y, larguraUtil, 24);
+                        cu->editor->setBounds(x + padCardX, y, innerW, 24);
                         y += 24 + tk.espacoPequeno;
                     }
                 } else if (cu->ehNotes) {
-                    cu->editor->setBounds(x, y, larguraUtil, 64);
+                    cu->editor->setBounds(x + padCardX, y, innerW, 64);
                     y += 64 + tk.espacoPequeno;
                 } else {
-                    cu->editor->setBounds(x, y, larguraUtil, 24);
+                    cu->editor->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoPequeno;
                 }
             }
         };
 
         // Bloco A
+        int cardATop1 = y;
         if (secHeaderDublinCore_) {
-            secHeaderDublinCore_->setBounds(x, y, larguraUtil, 20);
-            y += 24;
+            int btnW = 20;
+            int btnH = 18;
+            int rightX = x + padCardX + innerW;
+            if (btnCollapseDublinCore_) {
+                rightX -= btnW;
+                btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 4;
+            }
+            if (btnAjudaDublinCore_) {
+                rightX -= btnW;
+                btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 8;
+            }
+            secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+            y += padCardY + 24;
+        } else {
+            y += padCardY;
         }
-        layoutCamposDoBloco1Col(BlocoFicha::DublinCore);
-        y += tk.espacoMedio;
+        if (!colapsadoDublinCore_) {
+            layoutCamposDoBloco1Col(BlocoFicha::DublinCore);
+            int cardABottom1 = y + padCardY;
+            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoMedio;
+        } else {
+            int cardABottom1 = y;
+            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoPequeno;
+        }
 
         // Bloco B
+        int cardBTop1 = y;
         if (secHeaderUserAsset_) {
-            secHeaderUserAsset_->setBounds(x, y, larguraUtil, 20);
-            y += 24;
+            int btnW = 20;
+            int btnH = 18;
+            int rightX = x + padCardX + innerW;
+            if (btnCollapseUserAsset_) {
+                rightX -= btnW;
+                btnCollapseUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 4;
+            }
+            if (btnAjudaUserAsset_) {
+                rightX -= btnW;
+                btnAjudaUserAsset_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 8;
+            }
+            secHeaderUserAsset_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+            y += padCardY + 24;
+        } else {
+            y += padCardY;
         }
-        layoutCamposDoBloco1Col(BlocoFicha::UserAsset);
-        y += tk.espacoMedio;
+        if (!colapsadoUserAsset_) {
+            layoutCamposDoBloco1Col(BlocoFicha::UserAsset);
+            int cardBBottom1 = y + padCardY;
+            quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
+            y = cardBBottom1 + tk.espacoMedio;
+        } else {
+            int cardBBottom1 = y;
+            quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
+            y = cardBBottom1 + tk.espacoPequeno;
+        }
 
         // Bloco C: GEOLOCATION
         if (geolocalizacao_.titulo) {
-            int rotuloW = larguraUtil - 140;
-            geolocalizacao_.titulo->setBounds(x, y, rotuloW, 20);
-            if (geolocalizacao_.statusBadge)
-                geolocalizacao_.statusBadge->setBounds(x + larguraUtil - 135, y, 135, 20);
-            y += 24;
-
-            if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
-                geolocalizacao_.labelCoords->setBounds(x, y, larguraUtil, 16);
-                y += 18;
-                geolocalizacao_.editorCoords->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoPequeno;
+            int cardCTop1 = y;
+            int btnW = 20;
+            int btnH = 18;
+            int rightX = x + padCardX + innerW;
+            if (btnCollapseGeoLocation_) {
+                rightX -= btnW;
+                btnCollapseGeoLocation_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 4;
             }
-
-            if (geolocalizacao_.labelAddress && geolocalizacao_.editorAddress) {
-                geolocalizacao_.labelAddress->setBounds(x, y, larguraUtil, 16);
-                y += 18;
-                geolocalizacao_.editorAddress->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoPequeno;
+            if (btnAjudaGeoLocation_) {
+                rightX -= btnW;
+                btnAjudaGeoLocation_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 8;
             }
-
-            if (geolocalizacao_.labelCity && geolocalizacao_.editorCity) {
-                geolocalizacao_.labelCity->setBounds(x, y, larguraUtil, 16);
-                y += 18;
-                geolocalizacao_.editorCity->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoPequeno;
+            if (geolocalizacao_.statusBadge) {
+                rightX -= 135;
+                geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 135, 20);
+                rightX -= 8;
             }
+            geolocalizacao_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+            y += padCardY + 24;
 
-            if (geolocalizacao_.labelState && geolocalizacao_.editorState) {
-                geolocalizacao_.labelState->setBounds(x, y, larguraUtil, 16);
-                y += 18;
-                geolocalizacao_.editorState->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoPequeno;
-            }
+            if (!colapsadoGeoLocation_) {
+                if (geolocalizacao_.labelCoords && geolocalizacao_.editorCoords) {
+                    geolocalizacao_.labelCoords->setBounds(x + padCardX, y, innerW, 16);
+                    y += 18;
+                    geolocalizacao_.editorCoords->setBounds(x + padCardX, y, innerW, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
 
-            if (geolocalizacao_.labelCountry && geolocalizacao_.editorCountry) {
-                geolocalizacao_.labelCountry->setBounds(x, y, larguraUtil, 16);
-                y += 18;
-                geolocalizacao_.editorCountry->setBounds(x, y, larguraUtil, 24);
-                y += 24 + tk.espacoMedio;
+                if (geolocalizacao_.labelAddress && geolocalizacao_.editorAddress) {
+                    geolocalizacao_.labelAddress->setBounds(x + padCardX, y, innerW, 16);
+                    y += 18;
+                    geolocalizacao_.editorAddress->setBounds(x + padCardX, y, innerW, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+
+                if (geolocalizacao_.labelCity && geolocalizacao_.editorCity) {
+                    geolocalizacao_.labelCity->setBounds(x + padCardX, y, innerW, 16);
+                    y += 18;
+                    geolocalizacao_.editorCity->setBounds(x + padCardX, y, innerW, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+
+                if (geolocalizacao_.labelState && geolocalizacao_.editorState) {
+                    geolocalizacao_.labelState->setBounds(x + padCardX, y, innerW, 16);
+                    y += 18;
+                    geolocalizacao_.editorState->setBounds(x + padCardX, y, innerW, 24);
+                    y += 24 + tk.espacoPequeno;
+                }
+
+                if (geolocalizacao_.labelCountry && geolocalizacao_.editorCountry) {
+                    geolocalizacao_.labelCountry->setBounds(x + padCardX, y, innerW, 16);
+                    y += 18;
+                    geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
+                    y += 24 + tk.espacoMedio;
+                }
+                int cardCBottom1 = y + padCardY;
+                quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop1, larguraUtil, cardCBottom1 - cardCTop1);
+                y = cardCBottom1 + tk.espacoMedio;
+            } else {
+                int cardCBottom1 = y;
+                quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop1, larguraUtil, cardCBottom1 - cardCTop1);
+                y = cardCBottom1 + tk.espacoPequeno;
             }
+        } else {
+            quadroGeoLocation_ = {};
         }
 
         if (labelReviewFaltando_) {
@@ -856,24 +1251,25 @@ public:
     void construirSecaoGeolocalizacao(const std::string& itemId) {
         geolocalizacao_ = {};
         const auto& tk = matriz::ui::tema();
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
         auto geoOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), itemId);
 
         geolocalizacao_.titulo = std::make_unique<juce::Label>();
-        geolocalizacao_.titulo->setText("GEO LOCATION", juce::dontSendNotification);
+        geolocalizacao_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
         geolocalizacao_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        geolocalizacao_.titulo->setColour(juce::Label::textColourId, tk.textoSecundario);
+        geolocalizacao_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.titulo);
 
         geolocalizacao_.statusBadge = std::make_unique<juce::Label>();
         if (!geoOpt || geoOpt->source == matriz::analytics::GeoSource::None) {
-            geolocalizacao_.statusBadge->setText("[ NO GPS DATA - MANUAL FILL ]", juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ SEM DADOS GPS - PREENCHIMENTO MANUAL ]") : juce::String("[ NO GPS DATA - MANUAL FILL ]"), juce::dontSendNotification);
             geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, tk.textoTerciario);
         } else if (geoOpt->source == matriz::analytics::GeoSource::EmbeddedMetadata) {
-            geolocalizacao_.statusBadge->setText("[ EXIF GPS AUTO-EXTRACTED ]", juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ GPS EXIF EXTRAÍDO AUTOMATICAMENTE ]") : juce::String("[ EXIF GPS AUTO-EXTRACTED ]"), juce::dontSendNotification);
             geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::lightgreen);
         } else {
-            geolocalizacao_.statusBadge->setText("[ USER-DEFINED GEOLOCATION ]", juce::dontSendNotification);
+            geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ GEOLOCALIZAÇÃO DEFINIDA PELO USUÁRIO ]") : juce::String("[ USER-DEFINED GEOLOCATION ]"), juce::dontSendNotification);
             geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::cyan);
         }
         geolocalizacao_.statusBadge->setFont(juce::Font(juce::FontOptions(9.0f)));
@@ -882,88 +1278,127 @@ public:
 
         // Coordinates (Lat, Lng)
         geolocalizacao_.labelCoords = std::make_unique<juce::Label>();
-        geolocalizacao_.labelCoords->setText("GPS Coordinates (Lat, Lng)", juce::dontSendNotification);
+        geolocalizacao_.labelCoords->setText(isPt ? "Coordenadas GPS (Lat, Long)" : "GPS Coordinates (Lat, Lng)", juce::dontSendNotification);
         geolocalizacao_.labelCoords->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.labelCoords->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelCoords);
 
         geolocalizacao_.editorCoords = std::make_unique<juce::TextEditor>();
         geolocalizacao_.editorCoords->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        geolocalizacao_.editorCoords->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-        geolocalizacao_.editorCoords->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        geolocalizacao_.editorCoords->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        geolocalizacao_.editorCoords->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCoords->setColour(juce::TextEditor::outlineColourId, tk.borda);
         if (geoOpt && geoOpt->hasValidCoordinates()) {
             std::ostringstream ss;
             ss << std::fixed << std::setprecision(6) << *geoOpt->latitude << ", " << *geoOpt->longitude;
             geolocalizacao_.editorCoords->setText(ss.str());
         } else {
-            geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", tk.textoTerciario);
+            geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", juce::Colour(0xff888888));
         }
         addAndMakeVisible(*geolocalizacao_.editorCoords);
 
         // Address
         geolocalizacao_.labelAddress = std::make_unique<juce::Label>();
-        geolocalizacao_.labelAddress->setText("Formatted Address", juce::dontSendNotification);
+        geolocalizacao_.labelAddress->setText(isPt ? juce::String::fromUTF8("Endereço Formatado") : juce::String("Formatted Address"), juce::dontSendNotification);
         geolocalizacao_.labelAddress->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.labelAddress->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelAddress);
 
         geolocalizacao_.editorAddress = std::make_unique<juce::TextEditor>();
         geolocalizacao_.editorAddress->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        geolocalizacao_.editorAddress->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-        geolocalizacao_.editorAddress->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        geolocalizacao_.editorAddress->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        geolocalizacao_.editorAddress->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorAddress->setText(geoOpt && geoOpt->formattedAddress ? *geoOpt->formattedAddress : "");
-        geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", tk.textoTerciario);
+        geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", juce::Colour(0xff888888));
         addAndMakeVisible(*geolocalizacao_.editorAddress);
 
         // City
         geolocalizacao_.labelCity = std::make_unique<juce::Label>();
-        geolocalizacao_.labelCity->setText("City", juce::dontSendNotification);
+        geolocalizacao_.labelCity->setText(isPt ? juce::String::fromUTF8("Cidade") : juce::String("City"), juce::dontSendNotification);
         geolocalizacao_.labelCity->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.labelCity->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelCity);
 
         geolocalizacao_.editorCity = std::make_unique<juce::TextEditor>();
         geolocalizacao_.editorCity->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        geolocalizacao_.editorCity->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-        geolocalizacao_.editorCity->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        geolocalizacao_.editorCity->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        geolocalizacao_.editorCity->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCity->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCity->setText(geoOpt && geoOpt->city ? *geoOpt->city : "");
-        geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", tk.textoTerciario);
+        geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", juce::Colour(0xff888888));
         addAndMakeVisible(*geolocalizacao_.editorCity);
 
         // State
         geolocalizacao_.labelState = std::make_unique<juce::Label>();
-        geolocalizacao_.labelState->setText("State / Province", juce::dontSendNotification);
+        geolocalizacao_.labelState->setText(isPt ? juce::String::fromUTF8("Estado / Província") : juce::String("State / Province"), juce::dontSendNotification);
         geolocalizacao_.labelState->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.labelState->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelState);
 
         geolocalizacao_.editorState = std::make_unique<juce::TextEditor>();
         geolocalizacao_.editorState->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        geolocalizacao_.editorState->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-        geolocalizacao_.editorState->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        geolocalizacao_.editorState->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        geolocalizacao_.editorState->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorState->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorState->setText(geoOpt && geoOpt->stateProvince ? *geoOpt->stateProvince : "");
-        geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", tk.textoTerciario);
+        geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", juce::Colour(0xff888888));
         addAndMakeVisible(*geolocalizacao_.editorState);
 
         // Country
         geolocalizacao_.labelCountry = std::make_unique<juce::Label>();
-        geolocalizacao_.labelCountry->setText("Country", juce::dontSendNotification);
+        geolocalizacao_.labelCountry->setText(isPt ? juce::String::fromUTF8("País") : juce::String("Country"), juce::dontSendNotification);
         geolocalizacao_.labelCountry->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         geolocalizacao_.labelCountry->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelCountry);
 
         geolocalizacao_.editorCountry = std::make_unique<juce::TextEditor>();
         geolocalizacao_.editorCountry->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        geolocalizacao_.editorCountry->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-        geolocalizacao_.editorCountry->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+        geolocalizacao_.editorCountry->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        geolocalizacao_.editorCountry->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCountry->setText(geoOpt && geoOpt->country ? *geoOpt->country : "");
-        geolocalizacao_.editorCountry->setTextToShowWhenEmpty("e.g. Brazil", tk.textoTerciario);
+        geolocalizacao_.editorCountry->setTextToShowWhenEmpty(isPt ? "Ex: Brasil" : "e.g. Brazil", juce::Colour(0xff888888));
         addAndMakeVisible(*geolocalizacao_.editorCountry);
+
+        btnAjudaGeoLocation_ = std::make_unique<juce::TextButton>("?");
+        btnAjudaGeoLocation_->setTooltip(
+            isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO\n"
+                                         "Coordenadas geográficas espaciais (Latitude e Longitude) e endereço estruturado do item.\n"
+                                         "Preenchido automaticamente a partir de dados EXIF GPS da câmera ou definido manualmente para catalogação territorial.")
+                 : juce::String("GEOLOCATION\n"
+                                "Geographic coordinates (Latitude, Longitude) and structured address for this asset.\n"
+                                "Extracted automatically from camera EXIF GPS data or entered manually for territorial cataloging."));
+        btnAjudaGeoLocation_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaGeoLocation_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaGeoLocation_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        addAndMakeVisible(*btnAjudaGeoLocation_);
+
+        btnCollapseGeoLocation_ = std::make_unique<juce::TextButton>();
+        btnCollapseGeoLocation_->setButtonText(colapsadoGeoLocation_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+        btnCollapseGeoLocation_->setTooltip(colapsadoGeoLocation_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+        btnCollapseGeoLocation_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnCollapseGeoLocation_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnCollapseGeoLocation_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        btnCollapseGeoLocation_->onClick = [this, isPt] {
+            colapsadoGeoLocation_ = !colapsadoGeoLocation_;
+            btnCollapseGeoLocation_->setButtonText(colapsadoGeoLocation_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseGeoLocation_->setTooltip(colapsadoGeoLocation_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+            bool vis = !colapsadoGeoLocation_;
+            if (geolocalizacao_.labelCoords) geolocalizacao_.labelCoords->setVisible(vis);
+            if (geolocalizacao_.editorCoords) geolocalizacao_.editorCoords->setVisible(vis);
+            if (geolocalizacao_.labelAddress) geolocalizacao_.labelAddress->setVisible(vis);
+            if (geolocalizacao_.editorAddress) geolocalizacao_.editorAddress->setVisible(vis);
+            if (geolocalizacao_.labelCity) geolocalizacao_.labelCity->setVisible(vis);
+            if (geolocalizacao_.editorCity) geolocalizacao_.editorCity->setVisible(vis);
+            if (geolocalizacao_.labelState) geolocalizacao_.labelState->setVisible(vis);
+            if (geolocalizacao_.editorState) geolocalizacao_.editorState->setVisible(vis);
+            if (geolocalizacao_.labelCountry) geolocalizacao_.labelCountry->setVisible(vis);
+            if (geolocalizacao_.editorCountry) geolocalizacao_.editorCountry->setVisible(vis);
+            if (aoRelayoutNecessario) aoRelayoutNecessario();
+            repaint();
+        };
+        addAndMakeVisible(*btnCollapseGeoLocation_);
     }
 
     void salvarGeolocalizacao(const std::string& itemId) {
@@ -1080,7 +1515,18 @@ private:
     };
     std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
     std::unique_ptr<juce::Label> secHeaderDublinCore_;
+    std::unique_ptr<juce::TextButton> btnAjudaDublinCore_;
+    std::unique_ptr<juce::TextButton> btnCollapseDublinCore_;
+    bool colapsadoDublinCore_ = false;
+
     std::unique_ptr<juce::Label> secHeaderUserAsset_;
+    std::unique_ptr<juce::TextButton> btnAjudaUserAsset_;
+    std::unique_ptr<juce::TextButton> btnCollapseUserAsset_;
+    bool colapsadoUserAsset_ = false;
+
+    std::unique_ptr<juce::TextButton> btnAjudaGeoLocation_;
+    std::unique_ptr<juce::TextButton> btnCollapseGeoLocation_;
+    bool colapsadoGeoLocation_ = false;
 
     void construirMetadadosUnificados(const std::string& itemId, const std::string& tipoMidia) {
         const auto& tk = matriz::ui::tema();
@@ -1342,19 +1788,92 @@ private:
         }
 
         secHeaderDublinCore_ = std::make_unique<juce::Label>();
-        secHeaderDublinCore_->setText("DUBLIN CORE METADATA", juce::dontSendNotification);
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+        secHeaderDublinCore_->setText(isPt ? "METADADOS DUBLIN CORE" : "DUBLIN CORE METADATA", juce::dontSendNotification);
         secHeaderDublinCore_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-        secHeaderDublinCore_->setColour(juce::Label::textColourId, tk.acento);
+        secHeaderDublinCore_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*secHeaderDublinCore_);
 
+        btnAjudaDublinCore_ = std::make_unique<juce::TextButton>("?");
+        btnAjudaDublinCore_->setTooltip(
+            isPt ? juce::String::fromUTF8("DUBLIN CORE (ISO 15836)\n"
+                                         "Padrão internacional aberto de metadados arquivísticos (15 elementos essenciais).\n"
+                                         "Ideal para catalogação de patrimônio e acervos, bibliotecas digitais, intercâmbio entre instituições e integração direta com outros sistemas DAM.")
+                 : juce::String("DUBLIN CORE (ISO 15836)\n"
+                                "International open archival metadata standard (15 core elements).\n"
+                                "Ideal for heritage cataloging, digital libraries, institutional exchange, and direct interoperability with other DAM systems."));
+        btnAjudaDublinCore_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaDublinCore_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaDublinCore_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        addAndMakeVisible(*btnAjudaDublinCore_);
+
+        btnCollapseDublinCore_ = std::make_unique<juce::TextButton>();
+        btnCollapseDublinCore_->setButtonText(colapsadoDublinCore_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+        btnCollapseDublinCore_->setTooltip(colapsadoDublinCore_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+        btnCollapseDublinCore_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnCollapseDublinCore_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnCollapseDublinCore_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        btnCollapseDublinCore_->onClick = [this, isPt] {
+            colapsadoDublinCore_ = !colapsadoDublinCore_;
+            btnCollapseDublinCore_->setButtonText(colapsadoDublinCore_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseDublinCore_->setTooltip(colapsadoDublinCore_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+            bool vis = !colapsadoDublinCore_;
+            for (auto& cu : camposUnificados_) {
+                if (cu && cu->bloco == BlocoFicha::DublinCore) {
+                    if (cu->rotulo) cu->rotulo->setVisible(vis);
+                    if (cu->badge) cu->badge->setVisible(vis);
+                    if (cu->editor) cu->editor->setVisible(vis);
+                }
+            }
+            if (aoRelayoutNecessario) aoRelayoutNecessario();
+            repaint();
+        };
+        addAndMakeVisible(*btnCollapseDublinCore_);
+
         secHeaderUserAsset_ = std::make_unique<juce::Label>();
-        secHeaderUserAsset_->setText("ASSET & USER METADATA", juce::dontSendNotification);
+        secHeaderUserAsset_->setText(isPt ? juce::String::fromUTF8("METADADOS DO ATIVO E DO USUÁRIO") : juce::String("ASSET & USER METADATA"), juce::dontSendNotification);
         secHeaderUserAsset_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-        secHeaderUserAsset_->setColour(juce::Label::textColourId, tk.acento);
+        secHeaderUserAsset_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*secHeaderUserAsset_);
 
+        btnAjudaUserAsset_ = std::make_unique<juce::TextButton>("?");
+        btnAjudaUserAsset_->setTooltip(
+            isPt ? juce::String::fromUTF8("METADADOS DO ATIVO E DO USUÁRIO\n"
+                                         "Atributos descritivos e técnicos específicos do item no acervo.\n"
+                                         "Inclui mídia de origem (suporte original), classificação de conteúdo, pessoas envolvidas, anotações de curadoria e tags personalizadas.")
+                 : juce::String("ASSET & USER METADATA\n"
+                                "Specific descriptive and technical attributes for this collection item.\n"
+                                "Includes original source medium, content classification, associated persons, curatorial notes, and custom tags."));
+        btnAjudaUserAsset_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaUserAsset_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaUserAsset_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        addAndMakeVisible(*btnAjudaUserAsset_);
+
+        btnCollapseUserAsset_ = std::make_unique<juce::TextButton>();
+        btnCollapseUserAsset_->setButtonText(colapsadoUserAsset_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+        btnCollapseUserAsset_->setTooltip(colapsadoUserAsset_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+        btnCollapseUserAsset_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnCollapseUserAsset_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnCollapseUserAsset_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        btnCollapseUserAsset_->onClick = [this, isPt] {
+            colapsadoUserAsset_ = !colapsadoUserAsset_;
+            btnCollapseUserAsset_->setButtonText(colapsadoUserAsset_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseUserAsset_->setTooltip(colapsadoUserAsset_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
+            bool vis = !colapsadoUserAsset_;
+            for (auto& cu : camposUnificados_) {
+                if (cu && cu->bloco == BlocoFicha::UserAsset) {
+                    if (cu->rotulo) cu->rotulo->setVisible(vis);
+                    if (cu->badge) cu->badge->setVisible(vis);
+                    if (cu->editor) cu->editor->setVisible(vis);
+                }
+            }
+            if (aoRelayoutNecessario) aoRelayoutNecessario();
+            repaint();
+        };
+        addAndMakeVisible(*btnCollapseUserAsset_);
+
         // Helpers to add fields
-        auto addAutoFixed = [this, &tk](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
+        auto addAutoFixed = [this, &tk, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->bloco = BlocoFicha::UserAsset;
@@ -1367,7 +1886,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[AUTO + FIXED]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? "[AUTO + FIXO]" : "[AUTO + FIXED]", juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
             linha->badge->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1385,7 +1904,7 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditableText = [this, &tk, itemId](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::string& dbColuna) {
+        auto addEditableText = [this, &tk, itemId, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::string& dbColuna) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
@@ -1398,7 +1917,7 @@ private:
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1407,8 +1926,8 @@ private:
             auto ed = std::make_unique<juce::TextEditor>();
             ed->setText(valor, false);
             ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
             ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
             auto* edPtr = ed.get();
             linha->onCommit = [this, itemId, dbColuna, edPtr] {
@@ -1437,7 +1956,7 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditableDropdown = [this, &tk, itemId](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::vector<juce::String>& opcoes, const std::string& dbColuna) {
+        auto addEditableDropdown = [this, &tk, itemId, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::vector<juce::String>& opcoes, const std::string& dbColuna) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
@@ -1460,7 +1979,9 @@ private:
             int selId = 0;
             for (size_t i = 0; i < opcoes.size(); ++i) {
                 combo->addItem(opcoes[i], static_cast<int>(i + 1));
-                if (valor.trim().equalsIgnoreCase(opcoes[i].trim())) {
+                if (valor.trim().equalsIgnoreCase(opcoes[i].trim()) ||
+                    traduzirContent(valor, isPt).trim().equalsIgnoreCase(opcoes[i].trim()) ||
+                    traduzirContent(valor, !isPt).trim().equalsIgnoreCase(opcoes[i].trim())) {
                     selId = static_cast<int>(i + 1);
                 }
             }
@@ -1470,14 +1991,19 @@ private:
                 combo->setSelectedId(static_cast<int>(opcoes.size() + 1), juce::dontSendNotification);
             }
 
-            combo->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
-            combo->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+            combo->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+            combo->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+            combo->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
             combo->setColour(juce::ComboBox::outlineColourId, tk.borda);
 
             auto* comboPtr = combo.get();
-            linha->onCommit = [this, itemId, dbColuna, comboPtr] {
+            linha->onCommit = [this, itemId, dbColuna, campoId, comboPtr] {
                 if (comboPtr) {
-                    projeto_.salvarMetadado(itemId, dbColuna, comboPtr->getText().toStdString());
+                    juce::String txt = comboPtr->getText();
+                    if (campoId == "collection") {
+                        txt = traduzirContent(txt, false);
+                    }
+                    projeto_.salvarMetadado(itemId, dbColuna, txt.toStdString());
                     if (aoMudar) aoMudar();
                 }
             };
@@ -1488,29 +2014,118 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
+        auto addEditableToggle = [this, &tk, itemId, isPt](const std::string& campoId, const juce::String& rotulo, bool ligado, const std::string& dbColuna) {
+            auto linha = std::make_unique<LinhaUnificada>();
+            linha->campoId = campoId;
+            linha->colunaDb = dbColuna;
+            linha->bloco = BlocoFicha::UserAsset;
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(rotulo, juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText(isPt ? "[USER]" : "[USER]", juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto toggle = std::make_unique<juce::ToggleButton>();
+            toggle->setToggleState(ligado, juce::dontSendNotification);
+            toggle->setButtonText("");
+            toggle->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+            toggle->setColour(juce::ToggleButton::tickColourId, tk.acento);
+
+            auto* tPtr = toggle.get();
+            linha->onCommit = [this, itemId, dbColuna, tPtr] {
+                if (tPtr) {
+                    bool st = tPtr->getToggleState();
+                    projeto_.salvarMetadado(itemId, dbColuna, st ? "AI Generated / Gerado por IA" : "");
+
+                    TagChipsEditor* chips = nullptr;
+                    for (auto& cu : camposUnificados_) {
+                        if (cu && cu->ehTags) {
+                            chips = dynamic_cast<TagChipsEditor*>(cu->editor.get());
+                            break;
+                        }
+                    }
+
+                    if (st) {
+                        if (chips) {
+                            chips->addTag("IA");
+                            chips->addTag("AI");
+                            chips->addTag("CONTEUDO IA");
+                            chips->addTag("AI CONTENT");
+                        } else {
+                            projeto_.adicionarTag(itemId, "IA");
+                            projeto_.adicionarTag(itemId, "AI");
+                            projeto_.adicionarTag(itemId, "CONTEUDO IA");
+                            projeto_.adicionarTag(itemId, "AI CONTENT");
+                        }
+                    } else {
+                        if (chips) {
+                            auto currentTags = chips->getTags();
+                            std::vector<std::string> newTags;
+                            for (const auto& tg : currentTags) {
+                                juce::String lower = juce::String(tg).trimCharactersAtStart("#").trim().toLowerCase();
+                                if (lower != "ia" && lower != "ai" && lower != "conteudo ia" && lower != "ai content") {
+                                    newTags.push_back(tg);
+                                }
+                            }
+                            chips->setTags(newTags);
+                            projeto_.definirTags(itemId, newTags);
+                        } else {
+                            projeto_.removerTag(itemId, "IA");
+                            projeto_.removerTag(itemId, "AI");
+                            projeto_.removerTag(itemId, "CONTEUDO IA");
+                            projeto_.removerTag(itemId, "AI CONTENT");
+                        }
+                    }
+
+                    if (aoAplicarSucesso) aoAplicarSucesso(itemId);
+                    if (aoMudar) aoMudar();
+                }
+            };
+            toggle->onClick = linha->onCommit;
+            addAndMakeVisible(*toggle);
+            linha->editor = std::move(toggle);
+
+            camposUnificados_.push_back(std::move(linha));
+        };
+
         // --- DUBLIN CORE METADATA SECTION (At top of all cards, above NAME) ---
-        addEditableText("dc_title", "TITLE", valDcTitle, "dc_title");
-        addEditableText("dc_creator", "CREATOR", valDcCreator, "dc_creator");
-        addEditableText("dc_subject", "SUBJECT", valDcSubject, "dc_subject");
-        addEditableText("dc_description", "DESCRIPTION", valDcDescription, "dc_description");
-        addEditableText("dc_publisher", "PUBLISHER", valDcPublisher, "dc_publisher");
-        addEditableText("dc_contributor", "CONTRIBUTOR", valDcContributor, "dc_contributor");
-        addEditableText("dc_created", "DATE CREATED (YYYY-MM-DD)", valDcCreated, "dc_created");
-        addEditableText("dc_issued", "DATE ISSUED (YYYY-MM-DD)", valDcIssued, "dc_issued");
-        addEditableText("dc_type", "TYPE", valDcType, "dc_type");
-        addEditableText("dc_format", "FORMAT", valDcFormat, "dc_format");
-        addEditableText("dc_identifier", "IDENTIFIER", valDcIdentifier, "dc_identifier");
-        addEditableText("dc_source", "SOURCE", valDcSource, "dc_source");
-        addEditableText("dc_language", "LANGUAGE", valDcLanguage, "dc_language");
-        addEditableText("dc_relation", "RELATION", valDcRelation, "dc_relation");
-        addEditableText("dc_coverage", "COVERAGE", valDcCoverage, "dc_coverage");
-        addEditableDropdown("dc_rights", "RIGHTS", valDcRights,
-                            {"PUBLIC DOMAIN", "COPYRIGHT", "CREATIVE COMMONS (CC BY)", "CREATIVE COMMONS (CC BY-SA)",
-                             "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)", "CREATIVE COMMONS (CC0)",
-                             "ORPHAN WORK", "FAIR USE", "RESTRICTED"},
+        addEditableText("dc_title", isPt ? juce::String::fromUTF8("TÍTULO") : juce::String("TITLE"), valDcTitle, "dc_title");
+        addEditableText("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator");
+        addEditableText("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject");
+        addEditableText("dc_description", isPt ? juce::String::fromUTF8("DESCRIÇÃO") : juce::String("DESCRIPTION"), valDcDescription, "dc_description");
+        addEditableText("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), valDcPublisher, "dc_publisher");
+        addEditableText("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), valDcContributor, "dc_contributor");
+        addEditableText("dc_created", isPt ? juce::String::fromUTF8("DATA DE CRIAÇÃO (AAAA-MM-DD)") : juce::String("DATE CREATED (YYYY-MM-DD)"), valDcCreated, "dc_created");
+        addEditableText("dc_issued", isPt ? juce::String::fromUTF8("DATA DE PUBLICAÇÃO (AAAA-MM-DD)") : juce::String("DATE ISSUED (YYYY-MM-DD)"), valDcIssued, "dc_issued");
+        addEditableText("dc_type", isPt ? juce::String::fromUTF8("TIPO") : juce::String("TYPE"), valDcType, "dc_type");
+        addEditableText("dc_format", isPt ? juce::String::fromUTF8("FORMATO") : juce::String("FORMAT"), valDcFormat, "dc_format");
+        addEditableText("dc_identifier", isPt ? juce::String::fromUTF8("IDENTIFICADOR") : juce::String("IDENTIFIER"), valDcIdentifier, "dc_identifier");
+        addEditableText("dc_source", isPt ? juce::String::fromUTF8("ORIGEM") : juce::String("SOURCE"), valDcSource, "dc_source");
+        addEditableText("dc_language", isPt ? juce::String::fromUTF8("IDIOMA") : juce::String("LANGUAGE"), valDcLanguage, "dc_language");
+        addEditableText("dc_relation", isPt ? juce::String::fromUTF8("RELAÇÃO") : juce::String("RELATION"), valDcRelation, "dc_relation");
+        addEditableText("dc_coverage", isPt ? juce::String::fromUTF8("COBERTURA") : juce::String("COVERAGE"), valDcCoverage, "dc_coverage");
+
+        std::vector<juce::String> opcoesRights = isPt ?
+            std::vector<juce::String>{juce::String::fromUTF8("DOMÍNIO PÚBLICO"), "DIREITOS AUTORAIS (COPYRIGHT)", "CREATIVE COMMONS (CC BY)",
+                                      "CREATIVE COMMONS (CC BY-SA)", "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)",
+                                      "CREATIVE COMMONS (CC0)", juce::String::fromUTF8("OBRA ÓRFÃ"), juce::String::fromUTF8("USO ACEITÁVEL (FAIR USE)"), "RESTRITO"} :
+            std::vector<juce::String>{"PUBLIC DOMAIN", "COPYRIGHT", "CREATIVE COMMONS (CC BY)",
+                                      "CREATIVE COMMONS (CC BY-SA)", "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)",
+                                      "CREATIVE COMMONS (CC0)", "ORPHAN WORK", "FAIR USE", "RESTRICTED"};
+
+        addEditableDropdown("dc_rights", isPt ? juce::String::fromUTF8("DIREITOS") : juce::String("RIGHTS"), valDcRights,
+                            opcoesRights,
                             "dc_rights");
 
-        auto addEditableNotes = [this, &tk, itemId](const juce::String& valor) {
+        auto addEditableNotes = [this, &tk, itemId, isPt](const juce::String& valor) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "notes";
             linha->colunaDb = "notas_livres";
@@ -1518,13 +2133,13 @@ private:
             linha->ehNotes = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("NOTES", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? "NOTAS" : "NOTES", juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1535,8 +2150,8 @@ private:
             ed->setReturnKeyStartsNewLine(true);
             ed->setText(valor, false);
             ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
             ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
 
             auto* edPtr = ed.get();
@@ -1553,20 +2168,20 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditablePeople = [this, &tk, itemId]() {
+        auto addEditablePeople = [this, &tk, itemId, isPt]() {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "people";
             linha->bloco = BlocoFicha::UserAsset;
             linha->ehPeople = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("PEOPLE", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? "PESSOAS" : "PEOPLE", juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[PEOPLE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? "[PESSOAS]" : "[PEOPLE]", juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1598,20 +2213,20 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditableTags = [this, &tk, itemId](const std::vector<std::string>& tagsList) {
+        auto addEditableTags = [this, &tk, itemId, isPt](const std::vector<std::string>& tagsList) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "tags";
             linha->bloco = BlocoFicha::UserAsset;
             linha->ehTags = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("TAGS", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? "TAGS" : "TAGS", juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[TAGS]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? "[TAGS]" : "[TAGS]", juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1633,7 +2248,7 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditableOriginalSourceMedium = [this, &tk, itemId](const std::string& rawValue) {
+        auto addEditableOriginalSourceMedium = [this, &tk, itemId, isPt](const std::string& rawValue) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = "source_media";
             linha->colunaDb = "source_media";
@@ -1641,13 +2256,13 @@ private:
             linha->ehOriginalSourceMedium = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("ORIGINAL SOURCE MEDIUM", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? juce::String::fromUTF8("MÍDIA DE ORIGEM") : juce::String("ORIGINAL SOURCE MEDIUM"), juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -1666,68 +2281,72 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
+        juce::String valAiGen = projeto_.lerMetadado(itemId, "ai_generated").value_or("");
+        bool isAi = (valAiGen.isNotEmpty() && !valAiGen.equalsIgnoreCase("false") && !valAiGen.equalsIgnoreCase("0") && !valAiGen.equalsIgnoreCase("no") && !valAiGen.equalsIgnoreCase("nao"));
+
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
-            addEditableText("path", "PATH", valPath, "caminho_catalogo");
-            addAutoFixed("length", "LENGTH", lengthStr);
-            addAutoFixed("format", "FORMAT", ext);
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
+            addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
-            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
-            addAutoFixed("sample_rate", "SAMPLE RATE", sampleRateStr);
-            addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("sample_rate", isPt ? "TAXA DE AMOSTRAGEM" : "SAMPLE RATE", sampleRateStr);
+            addAutoFixed("bit_depth", isPt ? "PROFUNDIDADE DE BITS" : "BIT DEPTH", bitDepthStr);
             if (channelsStr.isNotEmpty())
-                addAutoFixed("channels", "CHANNELS", channelsStr);
+                addAutoFixed("channels", isPt ? "CANAIS" : "CHANNELS", channelsStr);
             addEditableText("isrc", "ISRC", valIsrc, "isrc");
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
-            addEditableDropdown("collection", "CONTENT", valCollection,
-                                {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-                                 "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
-                                 "Artist Catalog", "Artist Backup"},
+            addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
+                                opcoesContentPorCategoria(MediaCategory::Audio, isPt),
                                 "collection_type");
+            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Video) {
-            addEditableText("path", "PATH", valPath, "caminho_catalogo");
-            addAutoFixed("length", "LENGTH", lengthStr);
-            addAutoFixed("dimensions", "DIMENSIONS", dimensionsStr);
-            addAutoFixed("screen_orientation", "SCREEN / ORIENTATION", orientationStr);
-            addAutoFixed("format", "FORMAT", ext);
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
+            addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
+            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
+            addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
-            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
-            addAutoFixed("sample_rate", "SAMPLE RATE", sampleRateStr);
-            addAutoFixed("bit_depth", "BIT DEPTH", bitDepthStr);
+            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("sample_rate", isPt ? "TAXA DE AMOSTRAGEM" : "SAMPLE RATE", sampleRateStr);
+            addAutoFixed("bit_depth", isPt ? "PROFUNDIDADE DE BITS" : "BIT DEPTH", bitDepthStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
-            addEditableDropdown("collection", "CONTENT", valCollection,
-                                {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
-                                 "Corporate Video", "Commercial", "Live Performance", "NLE Project"},
+            addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
+                                opcoesContentPorCategoria(MediaCategory::Video, isPt),
                                 "collection_type");
+            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Image) {
-            addEditableText("path", "PATH", valPath, "caminho_catalogo");
-            addAutoFixed("dimensions", "DIMENSIONS", dimensionsStr);
-            addAutoFixed("screen_orientation", "SCREEN / ORIENTATION", orientationStr);
-            addAutoFixed("format", "FORMAT", ext);
-            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
-            addAutoFixed("color_space", "COLOR SPACE", colorSpaceStr);
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
+            addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
+            addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
+            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("color_space", isPt ? juce::String::fromUTF8("ESPAÇO DE COR") : juce::String("COLOR SPACE"), colorSpaceStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
-            addEditableDropdown("collection", "CONTENT", valCollection,
-                                {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"},
+            addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
+                                opcoesContentPorCategoria(MediaCategory::Image, isPt),
                                 "collection_type");
+            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else { // Docs
-            addEditableText("path", "PATH", valPath, "caminho_catalogo");
-            addAutoFixed("format", "FORMAT", ext);
-            addAutoFixed("file_size", "FILE SIZE", fileSizeStr);
-            addAutoFixed("pages", "PAGES", pagesStr);
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
+            addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
+            addAutoFixed("pages", isPt ? juce::String::fromUTF8("PÁGINAS") : juce::String("PAGES"), pagesStr);
             addEditableOriginalSourceMedium(valSourceMedia.toStdString());
-            addEditableDropdown("collection", "CONTENT", valCollection,
-                                {"Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"},
+            addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
+                                opcoesContentPorCategoria(MediaCategory::Docs, isPt),
                                 "collection_type");
+            addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
@@ -2286,6 +2905,10 @@ private:
         std::unique_ptr<juce::Label>       labelCountry;
         std::unique_ptr<juce::TextEditor>  editorCountry;
     } geolocalizacao_;
+
+    juce::Rectangle<int> quadroDublinCore_;
+    juce::Rectangle<int> quadroUserAsset_;
+    juce::Rectangle<int> quadroGeoLocation_;
 };
 
 // ---------------------------------------------------------------------------
@@ -2296,6 +2919,65 @@ private:
 class FichaLoteConteudo : public juce::Component {
 public:
     explicit FichaLoteConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
+
+    void lookAndFeelChanged() override {
+        const auto& tk = matriz::ui::tema();
+        if (cabecalho_) {
+            cabecalho_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+            cabecalho_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        for (auto* l : linhas_) {
+            if (l->rotulo) l->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            if (l->badge) l->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            if (l->editor) {
+                if (auto* ed = dynamic_cast<juce::TextEditor*>(l->editor.get())) {
+                    ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+                    ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+                    ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+                } else if (auto* cb = dynamic_cast<juce::ComboBox*>(l->editor.get())) {
+                    cb->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+                    cb->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+                    cb->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+                    cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
+                }
+            }
+        }
+        if (geoLote_.titulo) geoLote_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+        if (geoLote_.badge) geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+        if (geoLote_.labelCoords) geoLote_.labelCoords->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geoLote_.labelAddress) geoLote_.labelAddress->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geoLote_.labelCity) geoLote_.labelCity->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geoLote_.labelState) geoLote_.labelState->setColour(juce::Label::textColourId, tk.textoSecundario);
+        if (geoLote_.labelCountry) geoLote_.labelCountry->setColour(juce::Label::textColourId, tk.textoSecundario);
+
+        if (geoLote_.editorCoords) {
+            geoLote_.editorCoords->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geoLote_.editorCoords->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geoLote_.editorCoords->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geoLote_.editorAddress) {
+            geoLote_.editorAddress->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geoLote_.editorAddress->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geoLote_.editorAddress->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geoLote_.editorCity) {
+            geoLote_.editorCity->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geoLote_.editorCity->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geoLote_.editorCity->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geoLote_.editorState) {
+            geoLote_.editorState->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geoLote_.editorState->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geoLote_.editorState->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+        if (geoLote_.editorCountry) {
+            geoLote_.editorCountry->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            geoLote_.editorCountry->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            geoLote_.editorCountry->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        }
+
+        repaint();
+    }
 
     void mostrarSelecao(std::vector<std::string> itemIds) {
         limpar();
@@ -2668,14 +3350,14 @@ private:
 
             auto ed = std::make_unique<juce::TextEditor>();
             ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
+            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
             ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
 
             if (ehNotes) {
                 ed->setMultiLine(true);
                 ed->setReturnKeyStartsNewLine(true);
-                ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", tk.textoTerciario);
+                ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", juce::Colour(0xff888888));
             } else {
                 std::string valorComum;
                 bool todosIguais = true;
@@ -2688,7 +3370,7 @@ private:
                 if (todosIguais && !valorComum.empty()) {
                     ed->setText(valorComum, false);
                 } else {
-                    ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), tk.textoTerciario);
+                    ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
                 }
             }
 
@@ -2721,13 +3403,14 @@ private:
             addAndMakeVisible(*linha->badge);
 
             auto cb = std::make_unique<juce::ComboBox>();
-            cb->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
-            cb->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+            cb->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+            cb->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+            cb->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
             cb->setColour(juce::ComboBox::outlineColourId, tk.borda);
 
             int id = 1;
             for (const auto& op : opcoes) {
-                cb->addItem(op, id++);
+                cb->addItem(juce::String::fromUTF8(op.c_str()), id++);
             }
 
             std::string valorComum;
@@ -2740,7 +3423,7 @@ private:
             }
 
             if (todosIguais && !valorComum.empty()) {
-                cb->setText(valorComum, juce::dontSendNotification);
+                cb->setText(juce::String::fromUTF8(valorComum.c_str()), juce::dontSendNotification);
             } else {
                 cb->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
             }
@@ -2825,20 +3508,22 @@ private:
             linha->editor = std::move(ed);
         };
 
-        auto addOriginalSourceMediumLote = [this, &tk]() {
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+        auto addOriginalSourceMediumLote = [this, &tk, isPt]() {
             auto* linha = linhas_.add(new LinhaLote());
             linha->campoId = "source_media";
             linha->colunaDb = "source_media";
             linha->ehOriginalSourceMedium = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("ORIGINAL SOURCE MEDIUM", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? juce::String::fromUTF8("MÍDIA DE ORIGEM") : juce::String("ORIGINAL SOURCE MEDIUM"), juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[BATCH OVERRIDE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? juce::String::fromUTF8("[SUBSTITUIÇÃO EM LOTE]") : juce::String("[BATCH OVERRIDE]"), juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2854,15 +3539,15 @@ private:
             linha->editor = std::move(osm);
         };
 
-        auto addGeolocationLote = [this, &tk]() {
+        auto addGeolocationLote = [this, &tk, isPt]() {
             geoLote_.titulo = std::make_unique<juce::Label>();
-            geoLote_.titulo->setText("GEO LOCATION", juce::dontSendNotification);
+            geoLote_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
             geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             geoLote_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*geoLote_.titulo);
 
             geoLote_.badge = std::make_unique<juce::Label>();
-            geoLote_.badge->setText("[BATCH OVERRIDE]", juce::dontSendNotification);
+            geoLote_.badge->setText(isPt ? juce::String::fromUTF8("[SUBSTITUIÇÃO EM LOTE]") : juce::String("[BATCH OVERRIDE]"), juce::dontSendNotification);
             geoLote_.badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             geoLote_.badge->setJustificationType(juce::Justification::centredRight);
@@ -2889,44 +3574,45 @@ private:
                 addAndMakeVisible(*ed);
             };
 
-            makeGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords, "GPS Coordinates (Lat, Lng)", "e.g. -16.4435, -39.0643");
-            makeGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress, "Formatted Address", "e.g. Av. Paulista, 1000");
-            makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, "City", "e.g. Porto Seguro");
-            makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, "State / Province", "e.g. Bahia");
-            makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, "Country", "e.g. Brazil");
+            makeGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords, isPt ? juce::String::fromUTF8("Coordenadas GPS (Lat, Long)") : juce::String("GPS Coordinates (Lat, Lng)"), "e.g. -16.4435, -39.0643");
+            makeGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress, isPt ? juce::String::fromUTF8("Endereço Formatado") : juce::String("Formatted Address"), "e.g. Av. Paulista, 1000");
+            makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, isPt ? juce::String::fromUTF8("Cidade") : juce::String("City"), "e.g. Porto Seguro");
+            makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, isPt ? juce::String::fromUTF8("Estado / Província") : juce::String("State / Province"), "e.g. Bahia");
+            makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, isPt ? juce::String::fromUTF8("País") : juce::String("Country"), isPt ? juce::String::fromUTF8("Ex: Brasil") : juce::String("e.g. Brazil"));
         };
 
-        auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote]() {
-            addEditableTextLote("dc_creator", "CREATOR", "dc_creator");
-            addEditableTextLote("dc_subject", "SUBJECT", "dc_subject");
-            addEditableTextLote("dc_description", "DESCRIPTION", "dc_description");
-            addEditableTextLote("dc_publisher", "PUBLISHER", "dc_publisher");
-            addEditableTextLote("dc_contributor", "CONTRIBUTOR", "dc_contributor");
-            addEditableTextLote("dc_issued", "DATE ISSUED (YYYY-MM-DD)", "dc_issued");
-            addEditableTextLote("dc_type", "TYPE", "dc_type");
-            addEditableTextLote("dc_source", "SOURCE", "dc_source");
-            addEditableTextLote("dc_language", "LANGUAGE", "dc_language");
-            addEditableTextLote("dc_relation", "RELATION", "dc_relation");
-            addEditableTextLote("dc_coverage", "COVERAGE", "dc_coverage");
-            addDropdownLote("dc_rights", "RIGHTS", "dc_rights", {
-                "PUBLIC DOMAIN", "COPYRIGHT", "CREATIVE COMMONS (CC BY)", "CREATIVE COMMONS (CC BY-SA)",
-                "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)", "CREATIVE COMMONS (CC0)",
-                "ORPHAN WORK", "FAIR USE", "RESTRICTED"
-            });
+        auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote, isPt]() {
+            addEditableTextLote("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator");
+            addEditableTextLote("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject");
+            addEditableTextLote("dc_description", isPt ? juce::String::fromUTF8("DESCRIÇÃO") : juce::String("DESCRIPTION"), "dc_description");
+            addEditableTextLote("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), "dc_publisher");
+            addEditableTextLote("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), "dc_contributor");
+            addEditableTextLote("dc_issued", isPt ? juce::String::fromUTF8("DATA DE PUBLICAÇÃO (AAAA-MM-DD)") : juce::String("DATE ISSUED (YYYY-MM-DD)"), "dc_issued");
+            addEditableTextLote("dc_type", isPt ? juce::String::fromUTF8("TIPO") : juce::String("TYPE"), "dc_type");
+            addEditableTextLote("dc_source", isPt ? juce::String::fromUTF8("ORIGEM") : juce::String("SOURCE"), "dc_source");
+            addEditableTextLote("dc_language", isPt ? juce::String::fromUTF8("IDIOMA") : juce::String("LANGUAGE"), "dc_language");
+            addEditableTextLote("dc_relation", isPt ? juce::String::fromUTF8("RELAÇÃO") : juce::String("RELATION"), "dc_relation");
+            addEditableTextLote("dc_coverage", isPt ? juce::String::fromUTF8("COBERTURA") : juce::String("COVERAGE"), "dc_coverage");
+            addDropdownLote("dc_rights", isPt ? juce::String::fromUTF8("DIREITOS") : juce::String("RIGHTS"), "dc_rights", isPt ?
+                std::vector<std::string>{"DOMÍNIO PÚBLICO", "DIREITOS AUTORAIS (COPYRIGHT)", "CREATIVE COMMONS (CC BY)",
+                                         "CREATIVE COMMONS (CC BY-SA)", "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)",
+                                         "CREATIVE COMMONS (CC0)", "OBRA ÓRFÃ", "USO ACEITÁVEL (FAIR USE)", "RESTRITO"} :
+                std::vector<std::string>{"PUBLIC DOMAIN", "COPYRIGHT", "CREATIVE COMMONS (CC BY)", "CREATIVE COMMONS (CC BY-SA)",
+                                         "CREATIVE COMMONS (CC BY-NC)", "CREATIVE COMMONS (CC BY-NC-ND)", "CREATIVE COMMONS (CC0)",
+                                         "ORPHAN WORK", "FAIR USE", "RESTRICTED"});
         };
 
         switch (cat) {
             case MediaCategory::Audio: {
                 addDublinCoreLote();
-                addEditableTextLote("year", "YEAR", "ano");
+                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
                 addOriginalSourceMediumLote();
-                addDropdownLote("collection", "CONTENT", "collection_type", {
-                    "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-                    "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
-                    "Artist Catalog", "Artist Backup"
-                });
+                addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
+                                opcoesContentPorCategoriaString(MediaCategory::Audio, isPt));
+                addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
+                                isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
                 addEditableTextLote("isrc", "ISRC", "isrc");
-                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -2934,13 +3620,13 @@ private:
             }
             case MediaCategory::Video: {
                 addDublinCoreLote();
-                addEditableTextLote("year", "YEAR", "ano");
+                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
                 addOriginalSourceMediumLote();
-                addDropdownLote("collection", "CONTENT", "collection_type", {
-                    "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
-                    "Corporate Video", "Commercial", "Live Performance", "NLE Project"
-                });
-                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
+                                opcoesContentPorCategoriaString(MediaCategory::Video, isPt));
+                addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
+                                isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
+                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -2948,12 +3634,13 @@ private:
             }
             case MediaCategory::Image: {
                 addDublinCoreLote();
-                addEditableTextLote("year", "YEAR", "ano");
+                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
                 addOriginalSourceMediumLote();
-                addDropdownLote("collection", "CONTENT", "collection_type", {
-                    "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project"
-                });
-                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
+                                opcoesContentPorCategoriaString(MediaCategory::Image, isPt));
+                addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
+                                isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
+                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -2961,12 +3648,13 @@ private:
             }
             case MediaCategory::Docs: {
                 addDublinCoreLote();
-                addEditableTextLote("year", "YEAR", "ano");
+                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
                 addOriginalSourceMediumLote();
-                addDropdownLote("collection", "CONTENT", "collection_type", {
-                    "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"
-                });
-                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
+                                opcoesContentPorCategoriaString(MediaCategory::Docs, isPt));
+                addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
+                                isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
+                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -2975,18 +3663,13 @@ private:
             case MediaCategory::Mixed:
             default: {
                 addDublinCoreLote();
-                addEditableTextLote("year", "YEAR", "ano");
+                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
                 addOriginalSourceMediumLote();
-                addDropdownLote("collection", "CONTENT", "collection_type", {
-                    "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-                    "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
-                    "Artist Catalog", "Artist Backup", "Raw Footage", "Home Video", "Music Video",
-                    "Film", "Documentary", "Corporate Video", "Commercial", "Live Performance",
-                    "NLE Project", "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
-                    "Image Edit Project", "Documentation", "Book", "Contract", "Manual", "Report",
-                    "Reference", "Technical Documentation"
-                });
-                addEditableTextLote("notes", "NOTES", "notas_livres", true);
+                addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
+                                opcoesContentPorCategoriaString(MediaCategory::Mixed, isPt));
+                addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
+                                isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
+                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3122,6 +3805,23 @@ private:
                                  matriz::db::Value::of(id),
                                  matriz::db::Value::of(txt),
                                  matriz::db::Value::of(agora)});
+                        }
+                    } else if (linha->colunaDb == "collection_type") {
+                        juce::String canon = traduzirContent(val, false);
+                        projeto_.salvarMetadado(id, "collection_type", canon.toStdString());
+                    } else if (linha->colunaDb == "ai_generated") {
+                        if (val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES")) {
+                            projeto_.salvarMetadado(id, "ai_generated", "AI Generated / Gerado por IA");
+                            projeto_.adicionarTag(id, "IA");
+                            projeto_.adicionarTag(id, "AI");
+                            projeto_.adicionarTag(id, "CONTEUDO IA");
+                            projeto_.adicionarTag(id, "AI CONTENT");
+                        } else {
+                            projeto_.salvarMetadado(id, "ai_generated", "");
+                            projeto_.removerTag(id, "IA");
+                            projeto_.removerTag(id, "AI");
+                            projeto_.removerTag(id, "CONTEUDO IA");
+                            projeto_.removerTag(id, "AI CONTENT");
                         }
                     } else {
                         projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
@@ -3338,12 +4038,13 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
 }
 
 void FichaPanelComponent::paint(juce::Graphics& g) {
-    g.fillAll(matriz::ui::tema().painel);
+    const auto& tk = matriz::ui::tema();
+    g.fillAll(tk.fundo);
 
     if (!modoLote_ && itemIdAtual_.empty()) {
-        g.setColour(matriz::ui::tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteCorpo)));
-        g.drawText(matriz::i18n::t("ficha.vazia"), getLocalBounds().reduced(matriz::ui::tema().espacoPainel),
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        g.drawText(matriz::i18n::t("ficha.vazia"), getLocalBounds().reduced(tk.espacoPainel).withTrimmedTop(32),
                    juce::Justification::centredTop, true);
     }
 }
@@ -3354,6 +4055,20 @@ void FichaPanelComponent::resized() {
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
     if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura);
     else conteudo_->relayout(largura);
+}
+
+void FichaPanelComponent::lookAndFeelChanged() {
+    if (modoLote_ && conteudoLote_) {
+        conteudoLote_->sendLookAndFeelChange();
+        conteudoLote_->repaint();
+    } else if (conteudo_) {
+        if (!itemIdAtual_.empty()) {
+            conteudo_->construirParaItem(itemIdAtual_);
+        }
+        conteudo_->sendLookAndFeelChange();
+        conteudo_->repaint();
+    }
+    repaint();
 }
 
 } // namespace matriz::ui

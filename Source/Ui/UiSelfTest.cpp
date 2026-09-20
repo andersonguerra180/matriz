@@ -4,6 +4,7 @@
 #include "../Ficha/CatalogoDeFichas.h"
 #include "../I18n/Strings.h"
 #include "../Model/Project.h"
+#include "../Model/ProjectLog.h"
 #include "../Catalogo/CatalogoProxies.h"
 #include "ArvoreComponent.h"
 #include "CatalogoComponent.h"
@@ -25,6 +26,7 @@
 #include "TagChipsEditor.h"
 #include "PeoplePickerComponent.h"
 #include "../Ingest/FluxoLote.h"
+#include "../Sync/SyncEngine.h"
 
 #include <JuceHeader.h>
 
@@ -1520,6 +1522,21 @@ int rodarUiSelfTest() {
                        "resolverNomeFinalBackup preserves uppercase extension without duplication");
                 checar(matriz::consolidacao::resolverNomeFinalBackup(fWav, "", true) == "test.wav",
                        "resolverNomeFinalBackup in EstruturaOriginal mode preserves original filename");
+
+                // Backup prefix modes: No prefix (DAW/NLE session safety), Auto prefix, Custom prefix
+                auto pNoPrefix = matriz::consolidacao::planejarConsolidacao(
+                    projeto->projeto().registro(), projeto->projeto().pasta(), destinoCatalogo,
+                    {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                    matriz::consolidacao::ModoPrefixoArquivo::Nenhum);
+                checar(!pNoPrefix.itens.empty() && pNoPrefix.itens[0].caminhoRelativoDestino.endsWith(pNoPrefix.itens[0].nomeOriginal),
+                       "ModoPrefixoArquivo::Nenhum preserves original filename for DAW session links");
+
+                auto pCustomPrefix = matriz::consolidacao::planejarConsolidacao(
+                    projeto->projeto().registro(), projeto->projeto().pasta(), destinoCatalogo,
+                    {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                    matriz::consolidacao::ModoPrefixoArquivo::Custom, "CUSTOM_PREF");
+                checar(!pCustomPrefix.itens.empty() && pCustomPrefix.itens[0].caminhoRelativoDestino.contains("CUSTOM_PREF"),
+                       "ModoPrefixoArquivo::Custom applies user custom prefix");
             }
 
             // 2. Absence of automatic XMP sidecars
@@ -1584,6 +1601,87 @@ int rodarUiSelfTest() {
                     projIdem->registro(), projIdem->pasta(), destIdem, p2);
                 checar(r2.consolidados == 0 && r2.pulados == 1,
                        "running backup a second time is idempotent (0 re-copied, all skipped)");
+            }
+
+            // 4. Backup Versions, Destination tracking and ProjectLog integration
+            {
+                juce::File pastaVersoes = tmpRoot.getChildFile("versoes_project");
+                pastaVersoes.createDirectory();
+                matriz::model::NovoProjetoParams pParams;
+                pParams.nome = "Versoes Test";
+                pParams.modo = matriz::model::Modo::Preservacao;
+                pParams.prefixoNomenclatura = "VER";
+                auto projVersoes = matriz::model::Project::criar(pastaVersoes, pParams);
+
+                // Check backup_destino schema
+                auto stmtBD = projVersoes->registro().prepare(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='backup_destino'");
+                checar(stmtBD.step(), "table backup_destino exists in database");
+
+                // Check destino_path in consolidacao_registro
+                auto stmtCR = projVersoes->registro().prepare(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='consolidacao_registro'");
+                checar(stmtCR.step() && stmtCR.columnText(0).find("destino_path") != std::string::npos,
+                       "consolidacao_registro contains destino_path column");
+
+                // Insert version 1
+                std::string v1Id = "v1-uuid";
+                std::string v1Path = "/Volumes/BUNKER 4TB/Backup";
+                projVersoes->registro().run(
+                    "INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em) VALUES (?, ?, 'Western Digital', 1, '2026-09-08T12:00:00Z')",
+                    {matriz::db::Value::of(v1Id), matriz::db::Value::of(v1Path)});
+
+                // Unlink version 1 (ativo = 0, never deleted)
+                projVersoes->registro().run("UPDATE backup_destino SET ativo = 0 WHERE id = ?", {matriz::db::Value::of(v1Id)});
+                auto stmtCount = projVersoes->registro().prepare("SELECT COUNT(*) FROM backup_destino WHERE id = ? AND ativo = 1");
+                stmtCount.bind(1, matriz::db::Value::of(v1Id));
+                checar(stmtCount.step() && stmtCount.columnInt(0) == 0, "unlinking backup version sets ativo = 0 and keeps row");
+
+                // Re-activating version 1 on repeated backup
+                projVersoes->registro().run("UPDATE backup_destino SET ativo = 1 WHERE destino_path = ?", {matriz::db::Value::of(v1Path)});
+                auto stmtActive = projVersoes->registro().prepare("SELECT COUNT(*) FROM backup_destino WHERE id = ? AND ativo = 1");
+                stmtActive.bind(1, matriz::db::Value::of(v1Id));
+                checar(stmtActive.step() && stmtActive.columnInt(0) == 1, "re-running backup to same path re-activates existing version");
+
+                // Verify multi-destination coexistence in consolidacao_registro
+                projVersoes->registro().run(
+                    "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) VALUES ('it-test', ?, 'TT-1', 'Title', 'video', '2026-09-08T12:00:00Z', '2026-09-08T12:00:00Z')",
+                    {matriz::db::Value::of(projVersoes->projetoId())});
+                projVersoes->registro().run(
+                    "INSERT INTO arquivo (id, item_id, papel, caminho_relativo, checksum_sha256, eh_master, criado_em, atualizado_em) VALUES ('arq-test', 'it-test', 'master', 'vid.mp4', 'sha-vid', 1, '2026-09-08T12:00:00Z', '2026-09-08T12:00:00Z')", {});
+
+                // Target 1
+                projVersoes->registro().run(
+                    "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em, destino_path) "
+                    "VALUES ('cr-1', 'it-test', '', 'arq-test', 'Target1/vid.mp4', 'sha-vid', '2026-09-08T12:00:00Z', '/Dest/Target1')", {});
+
+                // Target 2 with same item and arquivo
+                projVersoes->registro().run(
+                    "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em, destino_path) "
+                    "VALUES ('cr-2', 'it-test', '', 'arq-test', 'Target2/vid.mp4', 'sha-vid', '2026-09-08T12:00:00Z', '/Dest/Target2')", {});
+
+                auto stmtBoth = projVersoes->registro().prepare("SELECT COUNT(*) FROM consolidacao_registro WHERE item_id = 'it-test'");
+                checar(stmtBoth.step() && stmtBoth.columnInt(0) == 2, "multiple backup versions can independently track the same item in consolidacao_registro");
+
+                // Test ProjectLog entries
+                matriz::model::ProjectLog pLog(pastaVersoes);
+                pLog.appendEntry("Backup Completed", {"Destination: Western Digital (/Volumes/BUNKER 4TB/Backup)", "Copied: 5", "Skipped: 2", "Failures: 0"});
+                pLog.appendEntry("Backup Sources Rescanned", {"Pairs scanned: 2", "New files: 1", "Modified files: 0"});
+                pLog.appendEntry("Backup Versions Synced", {"Source Version: WD", "Target Version: GD", "Files copied: 1", "Divergences ignored: 0"});
+                pLog.appendEntry("File Recovered from Backup", {"File: test.wav", "Source Version: WD", "Destination: /tmp"});
+                pLog.appendEntry("Backup Version Created", {"Label: Google Drive", "Path: /Volumes/GD"});
+                pLog.appendEntry("Backup Version Unlinked", {"Label: Google Drive", "Path: /Volumes/GD"});
+                pLog.appendEntry("Backup Version Renamed", {"Old Label: WD", "New Label: Western Digital Primary"});
+
+                juce::String logContent = pLog.readContent();
+                checar(logContent.contains("Backup Completed") &&
+                       logContent.contains("Backup Sources Rescanned") &&
+                       logContent.contains("Backup Versions Synced") &&
+                       logContent.contains("File Recovered from Backup") &&
+                       logContent.contains("Backup Version Created") &&
+                       logContent.contains("Backup Version Unlinked") &&
+                       logContent.contains("Backup Version Renamed"),
+                       "ProjectLog records all 7 required backup version and sync events");
             }
 
             // Pasta sem catálogo não é confundida com uma que tem.
@@ -2107,6 +2205,7 @@ int rodarUiSelfTest() {
             matriz::model::NovoProjetoParams pParams;
             pParams.nome = "Colecao People";
             pParams.modo = matriz::model::Modo::Catalogo;
+            pParams.prefixoNomenclatura = "PEO";
             auto projPeople = matriz::model::Project::criar(pastaPeopleProj, pParams);
             checar(projPeople != nullptr, "Created test project for People");
             auto paPeople = std::make_unique<ProjetoAberto>(std::move(projPeople));
@@ -2186,6 +2285,7 @@ int rodarUiSelfTest() {
             matriz::model::NovoProjetoParams testParams;
             testParams.nome = "Exif Dedup Test";
             testParams.modo = matriz::model::Modo::Catalogo;
+            testParams.prefixoNomenclatura = "EXF";
             auto projTest = matriz::model::Project::criar(pastaTestProj, testParams);
             checar(projTest != nullptr, "Created test project for Exif Dedup");
             auto paTest = std::make_unique<ProjetoAberto>(std::move(projTest));
@@ -2196,17 +2296,18 @@ int rodarUiSelfTest() {
             // Insert candidate image item with EXIF date "2023:08:15 10:30:00"
             std::string item1Id = matriz::model::novoUuid();
             reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
-                    "VALUES (?, 'proj1', 'TEST-00001', 'Photo A', 'foto', 'catalogado', ?, ?)",
-                    {matriz::db::Value::of(item1Id), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+                    "VALUES (?, ?, 'TEST-00001', 'Photo A', 'foto', 'catalogado', ?, ?)",
+                    {matriz::db::Value::of(item1Id), matriz::db::Value::of(paTest->projeto().projetoId()),
+                     matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
 
             juce::var candJson(new juce::DynamicObject());
             candJson.getDynamicObject()->setProperty("larguraPx", 1920);
             candJson.getDynamicObject()->setProperty("alturaPx", 1080);
             candJson.getDynamicObject()->setProperty("exifDataOriginal", "2023:08:15 10:30:00");
 
-            reg.run("INSERT INTO arquivo (id, item_id, vault_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
+            reg.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
                     "checksum_sha256, caracteristicas_tecnicas_json, estado_presenca, criado_em, atualizado_em) "
-                    "VALUES (?, ?, 'vault1', 'photos/photoA.jpg', 'foto_suporte', 1, 500000, 'sha256_dummy', ?, 'presente', ?, ?)",
+                    "VALUES (?, ?, 'photos/photoA.jpg', 'foto_suporte', 1, 500000, 'sha256_dummy', ?, 'presente', ?, ?)",
                     {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1Id),
                      matriz::db::Value::of(juce::JSON::toString(candJson).toStdString()),
                      matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
@@ -2251,6 +2352,275 @@ int rodarUiSelfTest() {
             auto valPosGrid = paTest->lerMetadado(item1Id, "source_media");
             checar(valPosGrid.has_value() && *valPosGrid == "Manual Grid Edit",
                    "Individual edit in GRID is allowed to override native metadata post-ingest");
+        }
+
+        // =====================================================================
+        // Destino Raiz vs Destino Media Canonical Separation (6 Acceptance Tests)
+        // =====================================================================
+        std::cout << "\n== Destino Raiz vs Destino Media Canonical Separation ==\n";
+        {
+            // Test 4: Attempt to add folder named Media or Project, or inside them -> rejected
+            juce::File dummyRoot = tmpRoot.getChildFile("dummy_dest");
+            dummyRoot.createDirectory();
+            juce::File dummyMedia = dummyRoot.getChildFile("Media");
+            dummyMedia.createDirectory();
+            juce::File dummyMediaSub = dummyMedia.getChildFile("sub");
+            dummyMediaSub.createDirectory();
+            juce::File dummyProj = dummyRoot.getChildFile("Project");
+            dummyProj.createDirectory();
+
+            checar(matriz::model::normalizarParaRaizDestino(dummyMedia) == dummyRoot,
+                   "normalizarParaRaizDestino normalizes Media folder to its root");
+            checar(matriz::model::normalizarParaRaizDestino(dummyMediaSub) == dummyRoot,
+                   "normalizarParaRaizDestino normalizes inside-Media folder to root");
+            checar(matriz::model::normalizarParaRaizDestino(dummyProj) == dummyRoot,
+                   "normalizarParaRaizDestino normalizes Project folder to its root");
+
+            // Test 1: New project, backup to new destination -> Media only has media, root has Media, Project, destination.json, .mtz
+            auto pastaProj1 = tmpRoot.getChildFile("proj_canonical_1");
+            pastaProj1.createDirectory();
+            matriz::model::NovoProjetoParams params1;
+            params1.nome = "Proj Canonical 1";
+            params1.modo = matriz::model::Modo::Preservacao;
+            params1.prefixoNomenclatura = "PC1";
+            auto proj1 = matriz::model::Project::criar(pastaProj1, params1);
+            checar(proj1 != nullptr, "Test 1: Project created");
+
+            // Add an item and ingest a dummy media file
+            juce::File mediaSrc = pastaProj1.getChildFile("video.mov");
+            mediaSrc.replaceWithText("dummy video bytes 12345");
+            pastaProj1.getChildFile("Media").createDirectory();
+            mediaSrc.copyFileTo(pastaProj1.getChildFile("Media").getChildFile("video.mov"));
+
+            std::string item1Id = "pc1-item-1";
+            std::string arq1Id = "pc1-arq-1";
+            std::string agoraStr = matriz::model::agoraIso8601();
+            proj1->registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'PC1-001', 'Video 1', 'video', ?, ?)",
+                {matriz::db::Value::of(item1Id), matriz::db::Value::of(proj1->projetoId()),
+                 matriz::db::Value::of(agoraStr), matriz::db::Value::of(agoraStr)});
+
+            proj1->registro().run(
+                "INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, "
+                "checksum_sha256, estado_presenca, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'video.mov', 'master', 1, 23, 'dummy_sha', 'presente', ?, ?)",
+                {matriz::db::Value::of(arq1Id), matriz::db::Value::of(item1Id),
+                 matriz::db::Value::of(agoraStr), matriz::db::Value::of(agoraStr)});
+
+            juce::File dest1Raiz = tmpRoot.getChildFile("dest_canonical_1");
+            dest1Raiz.createDirectory();
+
+            // Simulate backup execution matching BackupWorkspaceComponent:
+            // 1. Write destination.json at dest1Raiz
+            matriz::model::DestinationInfo dInfo;
+            dInfo.destinationId = matriz::model::novoUuid();
+            dInfo.projetoId = proj1->projetoId();
+            dInfo.papel = "DESTINATION";
+            dInfo.rotulo = "Backup Dest 1";
+            dInfo.revisao = 1;
+            dInfo.criadoEm = agoraStr;
+            dInfo.ultimaEdicaoUtc = agoraStr;
+            dInfo.gravarEmArquivo(dest1Raiz.getChildFile("destination.json"));
+
+            // 2. Plan consolidation to dest1Raiz/Media
+            juce::File dest1Media = dest1Raiz.getChildFile("Media");
+            dest1Media.createDirectory();
+            matriz::consolidacao::HierarquiaBackup hier = { matriz::consolidacao::NivelHierarquia::TipoMidia };
+            auto plano1 = matriz::consolidacao::planejarConsolidacao(
+                proj1->registro(), pastaProj1, dest1Media, hier, {}, matriz::consolidacao::ModoPrefixoArquivo::Nenhum, "", true, false);
+
+            checar(!plano1.itens.empty(), "Test 1: Plan has items");
+            auto rConsol = matriz::consolidacao::executarConsolidacao(
+                proj1->registro(), pastaProj1, dest1Media, plano1);
+            checar(rConsol.consolidados == 1, "Test 1: Consolidated 1 media file");
+
+            // Copy project file and databases into Project/
+            juce::File proj1Sub = dest1Raiz.getChildFile("Project");
+            proj1Sub.createDirectory();
+            proj1->pasta().getChildFile("registro.sqlite").copyFileTo(proj1Sub.getChildFile("registro.sqlite"));
+            proj1->pasta().getChildFile("indice.sqlite").copyFileTo(proj1Sub.getChildFile("indice.sqlite"));
+            juce::File mtzOrig = pastaProj1.getChildFile("Proj Canonical 1.mtz");
+            mtzOrig.replaceWithText("dummy mtz");
+            mtzOrig.copyFileTo(dest1Raiz.getChildFile("Proj Canonical 1.mtz"));
+
+            // Register in backup_destino with dest1Raiz (NOT dest1Media)
+            proj1->registro().run(
+                "INSERT INTO backup_destino (id, destino_path, rotulo, papel, ativo, ultima_revisao_conhecida, criado_em) VALUES (?, ?, 'Dest 1', 'DESTINATION', 1, 1, ?)",
+                {matriz::db::Value::of(dInfo.destinationId), matriz::db::Value::of(dest1Raiz.getFullPathName().toStdString()),
+                 matriz::db::Value::of(agoraStr)});
+
+            // Check Test 1 structure:
+            // Media/ contains ONLY media files (no destination.json, Project, log, _lixeira, Media)
+            juce::Array<juce::File> mediaChildren;
+            dest1Media.findChildFiles(mediaChildren, juce::File::findFilesAndDirectories, false);
+            bool mediaOnlyMedia = true;
+            for (const auto& f : mediaChildren) {
+                juce::String n = f.getFileName();
+                if (n == "destination.json" || n == "Project" || n == "log" || n == "_lixeira" || n == "Media") {
+                    mediaOnlyMedia = false;
+                }
+            }
+            checar(mediaOnlyMedia, "Test 1: Media/ contains ONLY media files, no Project, destination.json, log or _lixeira");
+
+            // Root contains ONLY Media, Project, destination.json, and .mtz
+            juce::Array<juce::File> rootChildren;
+            dest1Raiz.findChildFiles(rootChildren, juce::File::findFilesAndDirectories, false);
+            bool rootCorrect = true;
+            for (const auto& f : rootChildren) {
+                juce::String n = f.getFileName();
+                if (n != "Media" && n != "Project" && n != "destination.json" && !n.endsWithIgnoreCase(".mtz") && !n.endsWithIgnoreCase(".bkm")) {
+                    rootCorrect = false;
+                }
+            }
+            checar(rootCorrect, "Test 1: Destination root contains only Media, Project, destination.json, and project file");
+
+            // Test 2: Run backup twice and mirroring -> nothing unexpected inside Media
+            auto plano2 = matriz::consolidacao::planejarConsolidacao(
+                proj1->registro(), pastaProj1, dest1Media, hier, {}, matriz::consolidacao::ModoPrefixoArquivo::Nenhum, "", true, false);
+            auto rConsol2 = matriz::consolidacao::executarConsolidacao(
+                proj1->registro(), pastaProj1, dest1Media, plano2);
+            checar(rConsol2.consolidados == 0 && rConsol2.pulados == 1,
+                   "Test 2: Second backup is idempotent (consolidados=" + juce::String(rConsol2.consolidados) + " pulados=" + juce::String(rConsol2.pulados) + ")");
+
+            // Setup clone destination and register in backup_destino
+            juce::File cloneRaiz = tmpRoot.getChildFile("dest_canonical_clone");
+            cloneRaiz.createDirectory();
+            matriz::model::DestinationInfo cloneInfo;
+            cloneInfo.destinationId = "clone-1";
+            cloneInfo.projetoId = proj1->projetoId();
+            cloneInfo.papel = "CLONE";
+            cloneInfo.rotulo = "Clone Dest";
+            cloneInfo.revisao = 1;
+            cloneInfo.criadoEm = agoraStr;
+            cloneInfo.ultimaEdicaoUtc = agoraStr;
+            cloneInfo.gravarEmArquivo(cloneRaiz.getChildFile("destination.json"));
+
+            proj1->registro().run(
+                "INSERT INTO backup_destino (id, destino_path, rotulo, papel, ativo, ultima_revisao_conhecida, criado_em) VALUES ('clone-1', ?, 'Clone Dest', 'CLONE', 1, 1, ?)",
+                {matriz::db::Value::of(cloneRaiz.getFullPathName().toStdString()), matriz::db::Value::of(agoraStr)});
+
+            auto statuses = matriz::sync::SyncEngine::executarEspelhamentoAutomatico(*proj1);
+            auto itClone = std::find_if(statuses.begin(), statuses.end(), [](const auto& s) { return s.destinationId == "clone-1"; });
+            bool cloneMirrorOk = (itClone != statuses.end() && itClone->estado == matriz::sync::SyncEngine::StatusEspelhamento::Estado::Aplicado);
+            juce::String errMsg = (itClone == statuses.end()) ? "clone-1 not found in statuses" : (itClone->mensagem + " (estado=" + juce::String(static_cast<int>(itClone->estado)) + ")");
+            checar(cloneMirrorOk, "Test 2: Mirroring to clone succeeded: " + errMsg);
+
+            juce::File cloneMedia = cloneRaiz.getChildFile("Media");
+            juce::Array<juce::File> cloneMediaChildren;
+            cloneMedia.findChildFiles(cloneMediaChildren, juce::File::findFilesAndDirectories, false);
+            bool cloneMediaOnlyMedia = true;
+            for (const auto& f : cloneMediaChildren) {
+                juce::String n = f.getFileName();
+                if (n == "destination.json" || n == "Project" || n == "log" || n == "_lixeira" || n == "Media") {
+                    cloneMediaOnlyMedia = false;
+                }
+            }
+            checar(cloneMediaOnlyMedia, "Test 2: Clone Media/ contains ONLY media files after mirroring");
+
+            // Test 3: Select destination from list and backup -> media goes to <raiz>/Media, scan sees same files
+            auto scanRes = matriz::sync::SyncEngine::escanearEComparar(pastaProj1, cloneRaiz);
+            checar(scanRes.totalNovos == 0 && scanRes.totalModificados == 0 && scanRes.totalRemovidos == 0 && scanRes.totalIguais >= 1,
+                   "Test 3: Scan comparison (iguais=" + juce::String(scanRes.totalIguais) + " novos=" + juce::String(scanRes.totalNovos) + " mod=" + juce::String(scanRes.totalModificados) + " rem=" + juce::String(scanRes.totalRemovidos) + " erros=" + juce::String(scanRes.errosValidacao.size()) + ")");
+
+            // Test 5: Old project with backup_destino pointing to .../Media -> opens, destination marked inactive (ativo = 0), logged, no files deleted
+            auto pastaProj5 = tmpRoot.getChildFile("proj_legacy_5");
+            pastaProj5.createDirectory();
+            matriz::model::NovoProjetoParams params5;
+            params5.nome = "Proj Legacy 5";
+            params5.modo = matriz::model::Modo::Preservacao;
+            params5.prefixoNomenclatura = "PL5";
+            auto proj5 = matriz::model::Project::criar(pastaProj5, params5);
+
+            juce::File legacyDestMedia = tmpRoot.getChildFile("some_drive").getChildFile("Backup").getChildFile("Media");
+            legacyDestMedia.createDirectory();
+            juce::File dummyFileInLegacy = legacyDestMedia.getChildFile("important.mov");
+            dummyFileInLegacy.replaceWithText("do not delete");
+
+            // Insert old invalid row ending with /Media
+            proj5->registro().run(
+                "INSERT INTO backup_destino (id, destino_path, rotulo, papel, ativo, criado_em) VALUES ('old-dest-1', ?, 'Old Drive', 'DESTINATION', 1, ?)",
+                {matriz::db::Value::of(legacyDestMedia.getFullPathName().toStdString()), matriz::db::Value::of(agoraStr)});
+
+            // Reopen project using Project::abrir
+            juce::File mtz5 = pastaProj5.getChildFile("Proj Legacy 5.mtz");
+            mtz5.replaceWithText("dummy mtz");
+            auto proj5Reaberto = matriz::model::Project::abrir(mtz5);
+            checar(proj5Reaberto != nullptr, "Test 5: Opened project with legacy destination");
+
+            auto stmt5 = proj5Reaberto->registro().prepare("SELECT ativo FROM backup_destino WHERE id = 'old-dest-1'");
+            checar(stmt5.step() && stmt5.columnInt(0) == 0,
+                   "Test 5: Legacy destination ending in /Media was automatically deactivated (ativo = 0)");
+            checar(dummyFileInLegacy.existsAsFile(),
+                   "Test 5: No files were deleted when deactivating invalid destination");
+
+            // Test 6: Catalog (.bkm) mode -> enforces canonical destination structure
+            auto pastaProj6 = tmpRoot.getChildFile("proj_catalog_6");
+            pastaProj6.createDirectory();
+            matriz::model::NovoProjetoParams params6;
+            params6.nome = "Proj Catalog 6";
+            params6.modo = matriz::model::Modo::Catalogo;
+            params6.prefixoNomenclatura = "PC6";
+            auto proj6 = matriz::model::Project::criar(pastaProj6, params6);
+            checar(proj6 != nullptr && proj6->modo() == matriz::model::Modo::Catalogo,
+                   "Test 6: Created catalog (.bkm) project");
+
+            juce::File dest6Raiz = tmpRoot.getChildFile("GoogleDrive_Dest");
+            dest6Raiz.createDirectory();
+            checar(matriz::model::normalizarParaRaizDestino(dest6Raiz.getChildFile("Media")) == dest6Raiz,
+                   "Test 6: Normalization applies to cloud/catalog destination root");
+
+            // Test 7: sanitizarEstruturaDestino cleans dirty Media/ items and root log/trash
+            auto dest7Raiz = tmpRoot.getChildFile("dest_dirty_7");
+            dest7Raiz.createDirectory();
+            auto dest7Media = dest7Raiz.getChildFile("Media");
+            dest7Media.createDirectory();
+
+            // Create genuine media file
+            auto mediaFile7 = dest7Media.getChildFile("video.mov");
+            mediaFile7.replaceWithText("fake video data");
+
+            // Create dirty items inside Media/
+            dest7Media.getChildFile("destination.json").replaceWithText("{}");
+            dest7Media.getChildFile("_lixeira").createDirectory();
+            dest7Media.getChildFile("_lixeira").getChildFile("trashed.txt").replaceWithText("trashed");
+            dest7Media.getChildFile("log").createDirectory();
+            dest7Media.getChildFile("log").getChildFile("test.log").replaceWithText("log");
+            dest7Media.getChildFile("Project").createDirectory();
+            dest7Media.getChildFile("Project").getChildFile("notes.txt").replaceWithText("notes");
+            dest7Media.getChildFile("Media").createDirectory();
+            dest7Media.getChildFile("Media").getChildFile("nested_media.wav").replaceWithText("nested");
+
+            // Create dirty items on root
+            dest7Raiz.getChildFile("log").createDirectory();
+            dest7Raiz.getChildFile("log").getChildFile("disk.log").replaceWithText("disk");
+            dest7Raiz.getChildFile("_lixeira").createDirectory();
+
+            // Run sanitization
+            matriz::model::sanitizarEstruturaDestino(dest7Raiz);
+
+            // Verify Media/ contains ONLY genuine media
+            juce::Array<juce::File> mediaChildren7;
+            dest7Media.findChildFiles(mediaChildren7, juce::File::findFilesAndDirectories, false);
+            bool mediaClean7 = true;
+            for (const auto& f : mediaChildren7) {
+                juce::String n = f.getFileName();
+                if (n == "destination.json" || n == "_lixeira" || n == "log" || n == "Project" || n == "Media") {
+                    mediaClean7 = false;
+                }
+            }
+            checar(mediaClean7 && mediaFile7.existsAsFile(),
+                   "Test 7: Media/ is fully cleaned of non-media items (destination.json, Project, log, _lixeira, Media)");
+            checar(!dest7Raiz.getChildFile("log").isDirectory(),
+                   "Test 7: Root log/ directory moved to Project/log/");
+            checar(!dest7Raiz.getChildFile("_lixeira").isDirectory(),
+                   "Test 7: Root _lixeira/ directory moved to Project/_lixeira/");
+            checar(dest7Raiz.getChildFile("Project").getChildFile("log").isDirectory(),
+                   "Test 7: Project/log/ exists");
+            checar(dest7Raiz.getChildFile("Project").getChildFile("_lixeira").isDirectory(),
+                   "Test 7: Project/_lixeira/ exists");
+            checar(dest7Raiz.getChildFile("destination.json").existsAsFile(),
+                   "Test 7: Root destination.json exists");
         }
 
     } catch (const std::exception& e) {

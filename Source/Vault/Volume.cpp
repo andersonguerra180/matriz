@@ -338,6 +338,22 @@ void sincronizarDrivesDoProjeto(matriz::db::Database& registro, const std::strin
             }
         }
     } catch (...) {}
+
+    // 3. Scan all registered backup destinations (MAIN and CLONES) to ensure physical vaults exist and are marked as 'backup'
+    try {
+        auto stmtDest = registro.prepare(
+            "SELECT DISTINCT destino_path FROM backup_destino WHERE ativo = 1 AND destino_path IS NOT NULL AND destino_path != ''");
+        while (stmtDest.step()) {
+            std::string destPath = stmtDest.columnText(0);
+            juce::File dFile(destPath);
+            if (!destPath.empty()) {
+                std::string vId = obterOuCriarVaultParaDestino(registro, dFile, pid);
+                if (!vId.empty()) {
+                    registro.run("UPDATE vault SET tipo = 'backup', categoria_dispositivo = 'backup' WHERE id = ?", {Value::of(vId)});
+                }
+            }
+        }
+    } catch (...) {}
 }
 
 } // namespace matriz::vault

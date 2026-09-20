@@ -75,6 +75,11 @@ void garantirDispositivoAberto() {
     static bool aberto = false;
     if (aberto) return;
     dispositivoDeAudioCompartilhado().initialiseWithDefaultDevices(0, 2); // sem entrada - só reprodução
+    {
+        auto setup = dispositivoDeAudioCompartilhado().getAudioDeviceSetup();
+        setup.bufferSize = 1024;
+        dispositivoDeAudioCompartilhado().setAudioDeviceSetup(setup, true);
+    }
     dispositivoDeAudioCompartilhado().addAudioCallback(&playerDeAudioCompartilhado());
     aberto = true;
 }

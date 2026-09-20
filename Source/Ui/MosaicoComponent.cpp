@@ -23,12 +23,29 @@ MosaicoComponent::~MosaicoComponent() {
     poolMiniaturas_.removeAllJobs(true, 2000);
 }
 
-void MosaicoComponent::aoItemAlterado(const EventoItemAlterado&) {
+void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
     // Desregistrar no destrutor não basta: um evento recebido um instante
     // antes já postou esta mensagem, que só é entregue depois.
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
-    juce::MessageManager::callAsync([safeThis]() {
+    juce::MessageManager::callAsync([safeThis, e]() {
         if (safeThis == nullptr) return;
+        if (e.tipoAlteracao == "publicacao") {
+            bool marcado = safeThis->projeto_.itemMarcadoPublicacao(e.itemId);
+            for (auto& item : safeThis->itensTodos_) {
+                if (item.id == e.itemId) {
+                    item.marcadoPublicacao = marcado;
+                    break;
+                }
+            }
+            for (auto& item : safeThis->itensFiltrados_) {
+                if (item.id == e.itemId) {
+                    item.marcadoPublicacao = marcado;
+                    break;
+                }
+            }
+            safeThis->repaint();
+            return;
+        }
         safeThis->recarregar();
     });
 }
@@ -284,11 +301,14 @@ int MosaicoComponent::alturaSecaoSubpastas() const {
 }
 
 juce::Rectangle<int> MosaicoComponent::boundsSubpasta(int indice) const {
-    if (indice < 0 || indice >= static_cast<int>(subpastas_.size())) return {};
+    if (indice < 0 || indice >= static_cast<int>(subpastas_.size()) || colunas_ <= 0) return {};
     int coluna = indice % colunas_;
     int linha = indice / colunas_;
     int yBase = matriz::ui::tema().espacoPainel;
-    return {coluna * celulaLargura_, yBase + linha * celulaAltura_, celulaLargura_, celulaAltura_};
+    int w = getWidth();
+    int x0 = (w > 0) ? (coluna * w) / colunas_ : coluna * celulaLargura_;
+    int x1 = (w > 0) ? ((coluna + 1) * w) / colunas_ : (coluna + 1) * celulaLargura_;
+    return {x0, yBase + linha * celulaAltura_, x1 - x0, celulaAltura_};
 }
 
 int MosaicoComponent::indiceSubpastaNaPosicao(juce::Point<int> pos) const {
@@ -299,7 +319,8 @@ int MosaicoComponent::indiceSubpastaNaPosicao(juce::Point<int> pos) const {
     int linha = yRelativo / celulaAltura_;
     int totalLinhas = (static_cast<int>(subpastas_.size()) + colunas_ - 1) / colunas_;
     if (linha >= totalLinhas) return -1;
-    int coluna = pos.x / celulaLargura_;
+    int w = getWidth();
+    int coluna = (w > 0) ? (pos.x * colunas_) / w : pos.x / celulaLargura_;
     if (coluna < 0 || coluna >= colunas_) return -1;
     int indice = linha * colunas_ + coluna;
     if (indice >= static_cast<int>(subpastas_.size())) return -1;
@@ -409,6 +430,7 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
 
     for (auto& item : itensTodos_) {
         if (ocultarEditados_ && item.metadadosEditados) continue;
+        if (ocultarNaoSelecionados_ && !selecionados_.count(item.id)) continue;
 
         // Eixos combinados com E: pasta da árvore, busca de texto, cada
         // categoria de chip. DENTRO de uma categoria de chip, múltipla
@@ -644,12 +666,16 @@ const GrupoMosaico* MosaicoComponent::grupoNaPosicaoY(int y) const {
 }
 
 juce::Rectangle<int> MosaicoComponent::boundsDaCelula(int indice) const {
+    if (colunas_ <= 0) return {};
     for (auto& g : grupos_) {
         if (indice < g.indiceInicio || indice >= g.indiceInicio + g.quantidade) continue;
         int localIndice = indice - g.indiceInicio;
         int coluna = localIndice % colunas_;
         int linha = localIndice / colunas_;
-        return {coluna * celulaLargura_, g.yItens + linha * celulaAltura_, celulaLargura_, celulaAltura_};
+        int w = getWidth();
+        int x0 = (w > 0) ? (coluna * w) / colunas_ : coluna * celulaLargura_;
+        int x1 = (w > 0) ? ((coluna + 1) * w) / colunas_ : (coluna + 1) * celulaLargura_;
+        return {x0, g.yItens + linha * celulaAltura_, x1 - x0, celulaAltura_};
     }
     return {};
 }
@@ -659,7 +685,8 @@ int MosaicoComponent::indiceNaPosicao(juce::Point<int> pos) const {
     const GrupoMosaico* g = grupoNaPosicaoY(pos.y);
     if (!g || pos.y < g->yItens) return -1; // fora de um grupo, ou em cima do cabeçalho (não clicável)
 
-    int coluna = pos.x / celulaLargura_;
+    int w = getWidth();
+    int coluna = (w > 0) ? (pos.x * colunas_) / w : pos.x / celulaLargura_;
     if (coluna < 0 || coluna >= colunas_) return -1;
     int linha = (pos.y - g->yItens) / celulaAltura_;
     int localIndice = linha * colunas_ + coluna;
@@ -929,18 +956,16 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
         if (!alvos.empty()) {
             projeto_.alternarPublicacaoItens(alvos);
+            bool novoEstado = projeto_.itemMarcadoPublicacao(alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
             for (auto& item : itensTodos_) {
-                for (const auto& id : alvos) {
-                    if (item.id == id) {
-                        item.marcadoPublicacao = projeto_.itemMarcadoPublicacao(id);
-                    }
+                if (alvosSet.count(item.id)) {
+                    item.marcadoPublicacao = novoEstado;
                 }
             }
             for (auto& item : itensFiltrados_) {
-                for (const auto& id : alvos) {
-                    if (item.id == id) {
-                        item.marcadoPublicacao = projeto_.itemMarcadoPublicacao(id);
-                    }
+                if (alvosSet.count(item.id)) {
+                    item.marcadoPublicacao = novoEstado;
                 }
             }
             repaint();
@@ -960,43 +985,8 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
 namespace {
 void renomearItemNoProjeto(ProjetoAberto& projetoAberto, const std::string& itemId, const juce::String& novoTitulo) {
     auto& db = projetoAberto.projeto().registro();
-    const auto& pastaProjeto = projetoAberto.projeto().pasta();
-
     db.run("UPDATE item SET titulo = ? WHERE id = ?",
            {matriz::db::Value::of(novoTitulo.toStdString()), matriz::db::Value::of(itemId)});
-
-    try {
-        auto stmt = db.prepare("SELECT id, caminho_relativo FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
-        stmt.bind(1, matriz::db::Value::of(itemId));
-        if (stmt.step()) {
-            std::string arqId = stmt.columnText(0);
-            juce::String relPath = stmt.columnText(1);
-
-            juce::File arqAtual = pastaProjeto.getChildFile(relPath);
-            if (arqAtual.existsAsFile()) {
-                juce::File pastaPai = arqAtual.getParentDirectory();
-                juce::String ext = arqAtual.getFileExtension();
-
-                juce::String nomeSanitizado = novoTitulo;
-                static const juce::String invalidos = "/\\:*?\"<>|";
-                for (auto c : invalidos) nomeSanitizado = nomeSanitizado.replaceCharacter(c, '_');
-
-                juce::File novoArq = pastaPai.getChildFile(nomeSanitizado + ext);
-                if (novoArq != arqAtual) {
-                    int counter = 1;
-                    while (novoArq.existsAsFile()) {
-                        novoArq = pastaPai.getChildFile(nomeSanitizado + "_" + juce::String(counter++) + ext);
-                    }
-
-                    if (arqAtual.moveFileTo(novoArq)) {
-                        juce::String novoRelPath = novoArq.getRelativePathFrom(pastaProjeto);
-                        db.run("UPDATE arquivo SET caminho_relativo = ? WHERE id = ?",
-                               {matriz::db::Value::of(novoRelPath.toStdString()), matriz::db::Value::of(arqId)});
-                    }
-                }
-            }
-        }
-    } catch (...) {}
 }
 } // namespace
 
@@ -1366,7 +1356,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (modoVisao_ == ModoVisao::Lista) {
                 juce::Colour corCat = corPorCategoria(item.tipoMidia);
 
-                bool marcadoP = item.marcadoPublicacao || itensMarcadosP_.count(item.id) > 0;
+                bool marcadoP = item.marcadoPublicacao;
                 if (marcadoP) {
                     g.setColour(juce::Colour(0xff39ff14).withAlpha(0.20f));
                     g.fillRect(bounds);
@@ -1381,6 +1371,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 }
 
                 // Category color bar (left edge) — zebra striped for edited items if enabled
+                const juce::Colour kZebraYellowList{0xffFFEE00}; // vivid yellow
+                const juce::Colour kZebraStripeList{0xdd000000}; // near-black stripe
                 float barW = (destacarEditados_ && item.metadadosEditados) ? 9.0f : 4.0f;
                 juce::Rectangle<float> barRect(static_cast<float>(bounds.getX()), static_cast<float>(bounds.getY() + 2),
                                                barW, static_cast<float>(bounds.getHeight() - 4));
@@ -1389,9 +1381,9 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     juce::Path barPath;
                     barPath.addRoundedRectangle(barRect, 2.0f);
                     g.reduceClipRegion(barPath);
-                    g.setColour(corCat);
+                    g.setColour(kZebraYellowList);
                     g.fillRect(barRect);
-                    g.setColour(juce::Colours::black.withAlpha(0.92f));
+                    g.setColour(kZebraStripeList);
                     for (float y = barRect.getY() - barRect.getWidth() * 2; y <= barRect.getBottom() + barRect.getWidth() * 2; y += 8.0f) {
                         g.drawLine(barRect.getX() - 3.0f, y, barRect.getRight() + 3.0f, y + barRect.getWidth(), 3.5f);
                     }
@@ -1401,7 +1393,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 }
 
                 if (destacarEditados_ && item.metadadosEditados && !marcadoP && !selecionado) {
-                    g.setColour(corCat.withAlpha(0.45f));
+                    g.setColour(kZebraYellowList.withAlpha(0.45f));
                     g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), 4.0f, 1.5f);
                 }
 
@@ -1462,14 +1454,14 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 auto areaTexto = linha.reduced(4, 0);
                 int metadeAltura = areaTexto.getHeight() / 2;
 
-                juce::String nomeExibicaoList = item.titulo.empty() ? juce::String(item.nomeOriginalArquivo) : juce::String(item.titulo);
+                juce::String nomeExibicaoList = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str()) : juce::String::fromUTF8(item.titulo.c_str());
                 g.setColour(tk.textoPrimario);
                 g.setFont(font13Bold);
                 g.drawText(nomeExibicaoList, areaTexto.removeFromTop(metadeAltura),
                            juce::Justification::centredLeft, true);
 
-                juce::String info2 = item.extensaoArquivo.empty() ? juce::String("FILE") : juce::String(item.extensaoArquivo).toUpperCase();
-                if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
+                juce::String info2 = item.extensaoArquivo.empty() ? juce::String("FILE") : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase();
+                if (!item.pastaNome.empty()) info2 += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
                 if (item.offline) info2 += "  |  OFFLINE";
                 g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
                 g.setFont(font11Normal);
@@ -1559,7 +1551,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             // 2. Edited item: High-contrast transverse black zebra stripes over category color border
             // 3. Selected: thick accent border
             // 4. Unedited (intake original): Clean subtle thin category border (1.8f)
-            bool marcadoP = item.marcadoPublicacao || itensMarcadosP_.count(item.id) > 0;
+            bool marcadoP = item.marcadoPublicacao;
             if (marcadoP) {
                 g.setColour(juce::Colour(0xff39ff14));
                 g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 8.75f);
@@ -1568,7 +1560,9 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawRoundedRectangle(bounds.reduced(5).toFloat(), tk.raioMedio, 2.0f);
                 }
             } else if (destacarEditados_ && item.metadadosEditados) {
-                // High-contrast diagonal zebra striped border (listras pretas transversais)
+                // High-contrast diagonal zebra striped border — vivid yellow
+                const juce::Colour kZebraYellow{0xffFFEE00}; // vivid yellow
+                const juce::Colour kZebraStripe{0xdd000000}; // near-black stripe
                 {
                     juce::Graphics::ScopedSaveState saveState(g);
                     juce::Path ringPath;
@@ -1577,12 +1571,12 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     ringPath.setUsingNonZeroWinding(false); // Even-odd hollow ring
                     g.reduceClipRegion(ringPath);
 
-                    // Category base background
-                    g.setColour(corCat);
+                    // Vivid yellow base background
+                    g.setColour(kZebraYellow);
                     g.fillRect(bounds);
 
-                    // Transverse black zebra stripes
-                    g.setColour(juce::Colours::black.withAlpha(0.92f));
+                    // Transverse dark zebra stripes
+                    g.setColour(kZebraStripe);
                     float stripePitch = 12.0f;
                     float stripeWidth = 5.0f;
                     float minCoord = static_cast<float>(bounds.getX() - bounds.getHeight() - 10);
@@ -1595,7 +1589,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     }
                 }
                 // Crisp outer border outline
-                g.setColour(corCat);
+                g.setColour(kZebraYellow);
                 g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.2f);
 
                 if (selecionado) {
@@ -1646,7 +1640,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText("+", btnMais, juce::Justification::centred);
             }
 
-            juce::String nomeExibicaoGrid = item.titulo.empty() ? juce::String(item.nomeOriginalArquivo) : juce::String(item.titulo);
+            juce::String nomeExibicaoGrid = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str()) : juce::String::fromUTF8(item.titulo.c_str());
             auto areaTexto = bounds.withTop(areaImagem.getBottom() + 2).reduced(6, 0);
             g.setColour(tk.textoPrimario);
             g.setFont(font11Bold);
@@ -1654,8 +1648,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                        juce::Justification::centredLeft, true);
 
             // Subtitle: file type + folder
-            juce::String info2 = item.extensaoArquivo.empty() ? "FILE" : juce::String(item.extensaoArquivo).toUpperCase();
-            if (!item.pastaNome.empty()) info2 += "  |  " + juce::String(item.pastaNome);
+            juce::String info2 = item.extensaoArquivo.empty() ? "FILE" : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase();
+            if (!item.pastaNome.empty()) info2 += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
             if (item.offline) info2 += "  |  OFFLINE";
             g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
             g.setFont(font95Normal);

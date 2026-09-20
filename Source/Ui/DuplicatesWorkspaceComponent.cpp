@@ -35,7 +35,8 @@ public:
 
         if (file_ == juce::File() && !colPasta.empty()) {
             juce::File colDir(colPasta);
-            juce::File colDbFile = colDir.getChildFile("registro.sqlite");
+            juce::File resolvedColDir = matriz::model::Project::resolverPastaProjeto(colDir);
+            juce::File colDbFile = resolvedColDir.getChildFile("registro.sqlite");
             if (colDbFile.existsAsFile()) {
                 try {
                     matriz::db::Database colDb(colDbFile.getFullPathName().toStdString());
@@ -43,7 +44,7 @@ public:
                     stmtArq.bind(1, matriz::db::Value::of(itemId_));
                     if (stmtArq.step()) {
                         std::string arquivoId = stmtArq.columnText(0);
-                        auto fileOpt = matriz::vault::resolverArquivo(colDb, arquivoId, colDir);
+                        auto fileOpt = matriz::vault::resolverArquivo(colDb, arquivoId, resolvedColDir);
                         if (fileOpt && fileOpt->existsAsFile())
                             file_ = *fileOpt;
                     }
@@ -773,10 +774,10 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->addItem(matriz::i18n::t("duplicatas.scope_all"), 1);
         cbScope_->addItem(matriz::i18n::t("duplicatas.scope_selected"), 2);
         cbScope_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
-        cbScope_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        cbScope_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbScope_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        cbScope_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbScope_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        cbScope_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        cbScope_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileType_) {
         lblFileType_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
@@ -794,10 +795,10 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbFileType_->addItem(matriz::i18n::t("duplicatas.type_sessions"), 6);
         cbFileType_->addItem(matriz::i18n::t("duplicatas.type_other"), 7);
         cbFileType_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
-        cbFileType_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        cbFileType_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbFileType_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        cbFileType_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbFileType_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        cbFileType_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        cbFileType_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileSize_) {
         lblFileSize_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
@@ -812,21 +813,21 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_smaller"), 3);
         cbSizeFilter_->addItem(matriz::i18n::t("duplicatas.size_equals"), 4);
         cbSizeFilter_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
-        cbSizeFilter_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        cbSizeFilter_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbSizeFilter_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        cbSizeFilter_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbSizeFilter_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        cbSizeFilter_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        cbSizeFilter_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (txtSizeValue_) {
-        txtSizeValue_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
-        txtSizeValue_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        txtSizeValue_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        txtSizeValue_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         txtSizeValue_->setColour(juce::TextEditor::outlineColourId, tk.borda);
     }
     if (cbSizeUnit_) {
-        cbSizeUnit_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        cbSizeUnit_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        cbSizeUnit_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        cbSizeUnit_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         cbSizeUnit_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (btnScan_) {
         btnScan_->setColour(juce::TextButton::buttonColourId, tk.acento);
@@ -1032,11 +1033,12 @@ void DuplicatesWorkspaceComponent::run() {
         for (const auto& c : colecoes) {
             if (!c.valido) continue;
             juce::File colDir(c.caminhoProjeto);
-            juce::File dbF = colDir.getChildFile("registro.sqlite");
+            juce::File resolvedColDir = matriz::model::Project::resolverPastaProjeto(colDir);
+            juce::File dbF = resolvedColDir.getChildFile("registro.sqlite");
             if (dbF.existsAsFile()) {
                 try {
                     matriz::db::Database colDb(dbF.getFullPathName().toStdString());
-                    carregarItensDeDb(colDb, colDir, c.nome.toStdString(), c.caminhoProjeto.toStdString());
+                    carregarItensDeDb(colDb, resolvedColDir, c.nome.toStdString(), c.caminhoProjeto.toStdString());
                 } catch (...) {}
             }
         }

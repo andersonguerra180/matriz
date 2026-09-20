@@ -39,7 +39,8 @@ const std::set<juce::String>& extensoesSessao() {
         "rpp-bak", "rpp-undo",
         "alp", "alc", "adg", "adv", "agr", "amxd", "ams", "abl", "ablbundle", "asd", "ask",
         "fcpbundle", "fcpxml", "fcpxmld", "fcpevent", "fcproject", "fcp", "fcarch", "cboard",
-        "json", "bkrgs"
+        "json", "bkrgs",
+        "lrcat", "lrcat-journal", "lrcat-wal", "lrcat-shm", "lrtemplate", "lrsmcol"
     };
     return s;
 }
@@ -665,6 +666,8 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "groovesculptor.png";
     if (ext == "logic" || ext == "logicx")
         return "logic.png";
+    if (ext == "lrcat" || ext == "lrcat-journal" || ext == "lrcat-wal" || ext == "lrcat-shm" || ext == "lrtemplate" || ext == "lrsmcol")
+        return "lrlogo.png";
     return "";
 }
 

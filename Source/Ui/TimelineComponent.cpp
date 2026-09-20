@@ -28,6 +28,11 @@ void garantirDispositivo() {
     static bool aberto = false;
     if (aberto) return;
     dispositivoCompartilhado().initialiseWithDefaultDevices(0, 2);
+    {
+        auto setup = dispositivoCompartilhado().getAudioDeviceSetup();
+        setup.bufferSize = 1024;
+        dispositivoCompartilhado().setAudioDeviceSetup(setup, true);
+    }
     dispositivoCompartilhado().addAudioCallback(&playerCompartilhado());
     aberto = true;
 }

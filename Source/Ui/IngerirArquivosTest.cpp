@@ -6,6 +6,7 @@
 #include "PainelInconsistenciasComponent.h"
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
+#include "../Ingest/LightroomImporter.h"
 
 #include <JuceHeader.h>
 
@@ -131,6 +132,274 @@ void esperarIngestTerminar(MainComponent& mainComponent) {
     // Mais uma passada pra garantir que o callAsync final (recarregar
     // mosaico + resumo) já foi processado antes de conferir o banco.
     juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+}
+
+void testarImportacaoLightroom(const juce::File& tmpRoot, const std::function<void(bool, const juce::String&)>& checar) {
+    std::cout << "\n== Lightroom Catalog Import (.lrcat) ==\n";
+
+    juce::File pastaOrigem = tmpRoot.getChildFile("lr_origem");
+    pastaOrigem.createDirectory();
+    juce::File pastaFotos = pastaOrigem.getChildFile("Fotos");
+    pastaFotos.createDirectory();
+
+    // 1. Imagens e arquivos acompanhantes
+    juce::File foto1 = pastaFotos.getChildFile("foto1.jpg");
+    juce::File foto2 = pastaFotos.getChildFile("foto2.jpg");
+    juce::File xmp1 = pastaFotos.getChildFile("foto1.xmp");
+
+    gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                     "color=c=green:s=160x120", "-frames:v", "1", foto1.getFullPathName()});
+    gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                     "color=c=yellow:s=160x120", "-frames:v", "1", foto2.getFullPathName()});
+    xmp1.replaceWithText("<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF></rdf:RDF></x:xmpmeta>");
+
+    // Pasta .lrdata que DEVE ser ignorada
+    juce::File pastaLrdata = pastaOrigem.getChildFile("CatalogoTeste Previews.lrdata");
+    pastaLrdata.createDirectory();
+    pastaLrdata.getChildFile("previews.db").replaceWithText("dummy preview data");
+
+    // 2. Criar banco .lrcat sintético
+    juce::File lrcatFile = pastaOrigem.getChildFile("CatalogoTeste.lrcat");
+    if (lrcatFile.existsAsFile()) lrcatFile.deleteFile();
+
+    {
+        matriz::db::Database db(lrcatFile.getFullPathName().toStdString());
+        db.execScript(
+            "CREATE TABLE AgLibraryRootFolder ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  absolutePath TEXT, "
+            "  name TEXT"
+            ");"
+            "CREATE TABLE AgLibraryFolder ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  rootFolder INTEGER, "
+            "  pathFromRoot TEXT"
+            ");"
+            "CREATE TABLE AgLibraryFile ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  folder INTEGER, "
+            "  idxInFolder INTEGER, "
+            "  baseName TEXT, "
+            "  extension TEXT, "
+            "  sidecarExtensions TEXT"
+            ");"
+            "CREATE TABLE Adobe_images ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  rootFile INTEGER, "
+            "  captureTime TEXT, "
+            "  rating REAL, "
+            "  colorLabels TEXT, "
+            "  pick REAL, "
+            "  masterImage INTEGER, "
+            "  touchCount INTEGER"
+            ");"
+            "CREATE TABLE AgHarvestedExifMetadata ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  image INTEGER, "
+            "  focalLength REAL, "
+            "  aperture REAL, "
+            "  shutterSpeed REAL, "
+            "  isoSpeedRating REAL, "
+            "  hasGPS INTEGER, "
+            "  gpsLatitude REAL, "
+            "  gpsLongitude REAL, "
+            "  gpsAltitude REAL, "
+            "  cameraModelRef INTEGER, "
+            "  lensRef INTEGER"
+            ");"
+            "CREATE TABLE AgInternedExifCameraModel ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  value TEXT"
+            ");"
+            "CREATE TABLE AgInternedExifLens ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  value TEXT"
+            ");"
+            "CREATE TABLE AgHarvestedIptcMetadata ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  image INTEGER, "
+            "  creatorRef INTEGER"
+            ");"
+            "CREATE TABLE AgInternedIptcCreator ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  value TEXT"
+            ");"
+            "CREATE TABLE AgLibraryIPTC ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  image INTEGER, "
+            "  caption TEXT, "
+            "  copyright TEXT, "
+            "  title TEXT"
+            ");"
+            "CREATE TABLE AgLibraryKeyword ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  name TEXT"
+            ");"
+            "CREATE TABLE AgLibraryKeywordImage ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  tag INTEGER, "
+            "  image INTEGER"
+            ");"
+            "CREATE TABLE AgLibraryCollection ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  name TEXT"
+            ");"
+            "CREATE TABLE AgLibraryCollectionImage ("
+            "  id_local INTEGER PRIMARY KEY, "
+            "  collection INTEGER, "
+            "  image INTEGER"
+            ");"
+        );
+
+        using V = matriz::db::Value;
+
+        // Raiz e pasta
+        juce::String rootPath = pastaOrigem.getFullPathName();
+        if (!rootPath.endsWithChar('/')) rootPath << "/";
+        db.run("INSERT INTO AgLibraryRootFolder (id_local, absolutePath, name) VALUES (1, ?, 'lr_origem')",
+               {V::of(rootPath.toStdString())});
+        db.run("INSERT INTO AgLibraryFolder (id_local, rootFolder, pathFromRoot) VALUES (1, 1, 'Fotos/')", {});
+
+        // Arquivos
+        db.run("INSERT INTO AgLibraryFile (id_local, folder, idxInFolder, baseName, extension, sidecarExtensions) "
+               "VALUES (1, 1, 1, 'foto1', 'jpg', 'xmp')", {});
+        db.run("INSERT INTO AgLibraryFile (id_local, folder, idxInFolder, baseName, extension, sidecarExtensions) "
+               "VALUES (2, 1, 2, 'foto2', 'jpg', '')", {});
+
+        // Câmera, lente, criador
+        db.run("INSERT INTO AgInternedExifCameraModel (id_local, value) VALUES (1, 'Nikon Z6')", {});
+        db.run("INSERT INTO AgInternedExifLens (id_local, value) VALUES (1, 'NIKKOR Z 50mm f/1.8 S')", {});
+        db.run("INSERT INTO AgInternedIptcCreator (id_local, value) VALUES (1, 'Anderson Fotografo')", {});
+
+        // Adobe_images
+        db.run("INSERT INTO Adobe_images (id_local, rootFile, captureTime, rating, colorLabels, pick, masterImage, touchCount) "
+               "VALUES (1, 1, '2025-11-20T14:30:00', 5.0, 'blue', 1.0, NULL, 0)", {});
+        db.run("INSERT INTO Adobe_images (id_local, rootFile, captureTime, rating, colorLabels, pick, masterImage, touchCount) "
+               "VALUES (2, 2, '2025-11-21T09:15:00', 3.0, 'red', 0.0, NULL, 0)", {});
+
+        // IPTC
+        db.run("INSERT INTO AgLibraryIPTC (id_local, image, caption, copyright, title) "
+               "VALUES (1, 1, 'Retrato no parque', '(C) 2025 Anderson', 'Retrato Outono')", {});
+        db.run("INSERT INTO AgHarvestedIptcMetadata (id_local, image, creatorRef) VALUES (1, 1, 1)", {});
+
+        // EXIF
+        db.run("INSERT INTO AgHarvestedExifMetadata (id_local, image, focalLength, aperture, shutterSpeed, isoSpeedRating, hasGPS, gpsLatitude, gpsLongitude, gpsAltitude, cameraModelRef, lensRef) "
+               "VALUES (1, 1, 50.0, 1.8, 0.005, 400.0, 1, -23.5505, -46.6333, 760.0, 1, 1)", {});
+
+        // Keywords
+        db.run("INSERT INTO AgLibraryKeyword (id_local, name) VALUES (1, 'Retrato')", {});
+        db.run("INSERT INTO AgLibraryKeyword (id_local, name) VALUES (2, 'Natureza')", {});
+        db.run("INSERT INTO AgLibraryKeywordImage (id_local, tag, image) VALUES (1, 1, 1)", {});
+        db.run("INSERT INTO AgLibraryKeywordImage (id_local, tag, image) VALUES (2, 2, 1)", {});
+
+        // Collection
+        db.run("INSERT INTO AgLibraryCollection (id_local, name) VALUES (1, 'Portfolio 2025')", {});
+        db.run("INSERT INTO AgLibraryCollectionImage (id_local, collection, image) VALUES (1, 1, 1)", {});
+    }
+
+    // 3. Criar projeto de teste e executar importação
+    matriz::model::NovoProjetoParams paramsLr;
+    paramsLr.nome = "Projeto Teste Lightroom";
+    paramsLr.prefixoNomenclatura = "LRTEST";
+    auto projetoLr = matriz::model::Project::criar(tmpRoot.getChildFile("projeto_lr"), paramsLr);
+
+    auto resultado = matriz::ingest::LightroomImporter::importarCatalogo(
+        lrcatFile,
+        projetoLr->registro(),
+        projetoLr->indice(),
+        projetoLr->pasta(),
+        projetoLr->projetoId(),
+        "LRTEST",
+        nullptr,
+        nullptr,
+        nullptr);
+
+    checar(resultado.sucesso, "LightroomImporter reports success: " + resultado.erro);
+    checar(resultado.fotosImportadas == 2, "imported exactly 2 photos (got " + juce::String(resultado.fotosImportadas) + ")");
+    checar(resultado.fotosNaoEncontradas == 0, "zero missing photos");
+    checar(resultado.arquivosSessaoImportados >= 1, "session file (.lrcat) imported as session item (" + juce::String(resultado.arquivosSessaoImportados) + ")");
+
+    auto& reg = projetoLr->registro();
+
+    // 4. Conferir fotos importadas e metadados no banco
+    {
+        auto stmtFoto1 = reg.prepare(
+            "SELECT i.id, i.titulo, i.tipo_midia, i.codigo_acervo "
+            "FROM item i JOIN arquivo a ON a.item_id = i.id WHERE a.caminho_absoluto_origem LIKE '%foto1.jpg'");
+        bool achouFoto1 = stmtFoto1.step();
+        checar(achouFoto1, "foto1 found in database via joined arquivo");
+        if (achouFoto1) {
+            std::string item1Id = stmtFoto1.columnText(0);
+            juce::String titulo = juce::String::fromUTF8(stmtFoto1.columnText(1).c_str());
+            juce::String tipoMidia = juce::String::fromUTF8(stmtFoto1.columnText(2).c_str());
+            checar(tipoMidia == "foto", "foto1 imported with tipo_midia='foto'");
+            checar(titulo == "Retrato Outono", "foto1 title set from catalog IPTC title ('Retrato Outono')");
+
+            auto sCampos = reg.prepare(
+                "SELECT campo_id, valor FROM item_campo "
+                "WHERE item_id = ? AND nivel = 'raiz'");
+            sCampos.bind(1, matriz::db::Value::of(item1Id));
+            std::map<std::string, std::string> campos;
+            while (sCampos.step()) {
+                campos[sCampos.columnText(0)] = sCampos.columnText(1);
+            }
+
+            checar(campos["dc_title"] == "Retrato Outono", "dc_title mapped correctly ('Retrato Outono')");
+            checar(campos["dc_description"] == "Retrato no parque", "dc_description mapped correctly ('Retrato no parque')");
+            checar(campos["dc_creator"] == "Anderson Fotografo", "dc_creator mapped correctly ('Anderson Fotografo')");
+            checar(campos["dc_rights"] == "(C) 2025 Anderson", "dc_rights mapped correctly");
+            checar(campos["dc_subject"].find("Retrato") != std::string::npos &&
+                   campos["dc_subject"].find("Natureza") != std::string::npos,
+                   "dc_subject contains keywords ('Retrato', 'Natureza')");
+            checar(campos["user_rating"] == "5", "user_rating mapped (5 stars)");
+            checar(campos["color_label"] == "blue", "color_label mapped ('blue')");
+            checar(campos["pick_status"] == "pick", "pick_status mapped ('pick')");
+            checar(campos["collection_type"] == "Portfolio 2025", "collection_type mapped ('Portfolio 2025')");
+
+            // Notas técnicas com câmera, lente, abertura, velocidade, ISO
+            auto sNotas = reg.prepare("SELECT notas_livres FROM item WHERE id = ?");
+            sNotas.bind(1, matriz::db::Value::of(item1Id));
+            sNotas.step();
+            juce::String notas = juce::String::fromUTF8(sNotas.columnText(0).c_str());
+            checar(notas.contains("Nikon Z6") && notas.contains("NIKKOR Z 50mm") &&
+                   notas.contains("50.0mm") && notas.contains("400"),
+                   "technical details appended to notas_livres (" + notas.replace("\n", " | ") + ")");
+
+            // Geolocalização
+            auto sGeo = reg.prepare(
+                "SELECT latitude, longitude FROM asset_geolocation "
+                "WHERE asset_id = ?");
+            sGeo.bind(1, matriz::db::Value::of(item1Id));
+            bool achouGeo = sGeo.step();
+            checar(achouGeo, "geolocation entry exists for foto1 in asset_geolocation");
+            if (achouGeo) {
+                double lat = sGeo.columnReal(0);
+                double lon = sGeo.columnReal(1);
+                checar(std::abs(lat - (-23.5505)) < 0.001 && std::abs(lon - (-46.6333)) < 0.001,
+                       "coordinates match catalog GPS (-23.5505, -46.6333)");
+            }
+        }
+    }
+
+    // 5. Conferir arquivo de sessão (.lrcat)
+    {
+        auto sSessao = reg.prepare("SELECT COUNT(*) FROM item WHERE tipo_midia = 'sessao'");
+        sSessao.step();
+        checar(sSessao.columnInt(0) >= 1, "session item created in registro.sqlite");
+
+        juce::File pastaSessoes = projetoLr->pastaMedia().getChildFile("Sessões");
+        if (!pastaSessoes.isDirectory()) pastaSessoes = projetoLr->pasta().getChildFile("Sessões");
+        juce::File lrcatCopiado = pastaSessoes.getChildFile("CatalogoTeste").getChildFile("CatalogoTeste.lrcat");
+        checar(lrcatCopiado.existsAsFile(), "CatalogoTeste.lrcat copied to project session folder: " + lrcatCopiado.getFullPathName());
+    }
+
+    // 6. Conferir que .lrdata foi totalmente ignorado
+    {
+        auto sLrdata = reg.prepare(
+            "SELECT COUNT(*) FROM item WHERE titulo LIKE '%lrdata%' OR titulo LIKE '%previews%'");
+        sLrdata.step();
+        checar(sLrdata.columnInt(0) == 0, ".lrdata previews folder was completely ignored (0 items in DB)");
+    }
 }
 
 } // namespace
@@ -372,6 +641,8 @@ int rodarTestIngerirArquivos() {
         checar(tiposCatalog.size() < tiposArchive.size(),
                "catalog mode offers a narrower list than archive");
 
+        testarImportacaoLightroom(tmpRoot, checar);
+
     } catch (const std::exception& e) {
         checar(false, juce::String("teste da ponte de ingest: ") + e.what());
     }
@@ -583,6 +854,27 @@ int rodarTestIngerirArquivos() {
     }
     loteRoot.deleteRecursively();
 
+    tmpRoot.deleteRecursively();
+
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+int rodarTestLightroom() {
+    std::cout << "== Lightroom Ingest Self-Test ==\n";
+    int falhas = 0;
+    auto checar = [&](bool condicao, const juce::String& descricao) {
+        std::cout << (condicao ? "  OK   " : "  FAIL ") << descricao << "\n";
+        if (!condicao) ++falhas;
+    };
+
+    juce::File tmpRoot = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_lr_test_" + juce::Uuid().toDashedString());
+    try {
+        testarImportacaoLightroom(tmpRoot, checar);
+    } catch (const std::exception& e) {
+        checar(false, juce::String("teste lightroom: ") + e.what());
+    }
     tmpRoot.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";

@@ -1,13 +1,22 @@
 #include "BackupWorkspaceComponent.h"
 #include "BackupFileSelectorDialog.h"
+#include "BackupSyncDialog.h"
+#include "BackupScanProgressDialog.h"
+#include "SyncDestinationDialog.h"
+#include "PublishHtmlDialog.h"
+#include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
+#include "../Catalogo/CatalogSiteExport.h"
 #include "../Consolidacao/MetadadoEmbutido.h"
 #include "../Vault/Resolucao.h"
+#include "../Vault/Volume.h"
 #include "../Preservation/Preservation.h"
 #include "ProgressoGlobal.h"
+#include "../Model/ProjectLog.h"
+#include "../Vault/DeviceUsageLog.h"
 
 namespace matriz::ui {
 
@@ -44,16 +53,91 @@ private:
     juce::Image img_;
 };
 
+void desenharIconeNuvem(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour cor) {
+    juce::Path cloud;
+    float x = r.getX();
+    float y = r.getY();
+    float w = r.getWidth();
+    float h = r.getHeight();
+
+    cloud.startNewSubPath(x + w * 0.20f, y + h * 0.82f);
+    cloud.lineTo(x + w * 0.80f, y + h * 0.82f);
+    cloud.cubicTo(x + w * 0.94f, y + h * 0.82f, x + w * 1.00f, y + h * 0.65f, x + w * 0.92f, y + h * 0.52f);
+    cloud.cubicTo(x + w * 0.94f, y + h * 0.38f, x + w * 0.80f, y + h * 0.32f, x + w * 0.72f, y + h * 0.36f);
+    cloud.cubicTo(x + w * 0.66f, y + h * 0.12f, x + w * 0.36f, y + h * 0.12f, x + w * 0.30f, y + h * 0.34f);
+    cloud.cubicTo(x + w * 0.20f, y + h * 0.30f, x + w * 0.06f, y + h * 0.38f, x + w * 0.06f, y + h * 0.56f);
+    cloud.cubicTo(x + w * 0.04f, y + h * 0.72f, x + w * 0.12f, y + h * 0.82f, x + w * 0.20f, y + h * 0.82f);
+    cloud.closeSubPath();
+
+    g.setColour(cor);
+    g.fillPath(cloud);
+}
+
+bool ehDestinoNuvem(const juce::String& caminho, const juce::String& rotulo, const std::string& papel) {
+    if (papel == "ORIGINAL") return false;
+    const juce::String& p = caminho;
+    const juce::String& r = rotulo;
+    return (p.contains("CloudStorage") ||
+            p.containsIgnoreCase("Google Drive") || p.containsIgnoreCase("GoogleDrive") ||
+            r.containsIgnoreCase("Google Drive") || r.containsIgnoreCase("GoogleDrive") ||
+            p.containsIgnoreCase("Dropbox") || r.containsIgnoreCase("Dropbox") ||
+            p.containsIgnoreCase("OneDrive") || r.containsIgnoreCase("OneDrive") ||
+            p.containsIgnoreCase("iCloud") || p.containsIgnoreCase("Mobile Documents") || r.containsIgnoreCase("iCloud") ||
+            p.containsIgnoreCase("pCloud") || r.containsIgnoreCase("pCloud") ||
+            p.containsIgnoreCase("Box Sync") || r.containsIgnoreCase("Box") ||
+            r.containsIgnoreCase("Cloud") || r.containsIgnoreCase("Nuvem"));
+}
+
 } // namespace
 
 class BackupWorkspaceComponent::PreviaLista : public juce::Component {
 public:
+    enum class ModoPrioridade {
+        Nenhum = 0,
+        PriorizarIdenticos = 1,  // 🟢
+        PriorizarPendentes = 2,  // 🔴
+        PriorizarOrfaos = 3      // ⚪
+    };
+
+    struct LinhaExibicao {
+        enum class Tipo { Normal, Orfao };
+        Tipo tipo = Tipo::Normal;
+
+        // Item Normal
+        std::string itemId;
+        std::string arquivoId;
+        juce::String nomeOriginal;
+        juce::String caminhoRelativoDestino;
+        bool emConflito = false;
+        bool jaConsolidado = false;
+        matriz::consolidacao::StatusArquivoBackup status = matriz::consolidacao::StatusArquivoBackup::Vermelho;
+
+        // Item Órfão
+        juce::String caminhoRelativoOrfao;
+        juce::int64 tamanhoBytesOrfao = 0;
+    };
+
     void definirPlano(const matriz::consolidacao::PlanoConsolidacao& plano) {
         plano_ = &plano;
         isCatalogMode_ = false;
         colecoes_.clear();
-        setSize(getWidth(), std::max(60, static_cast<int>(plano_->itens.size()) * 22));
-        repaint();
+        reconstruirLinhas();
+    }
+
+    void definirScan(const matriz::consolidacao::ResultadoScanBackup& scan) {
+        statusPorItem_.clear();
+        for (const auto& isb : scan.itensGrid) {
+            statusPorItem_[isb.arquivoId] = isb.status;
+            if (!isb.itemId.empty()) statusPorItem_[isb.itemId] = isb.status;
+        }
+        reconstruirLinhas();
+    }
+
+    void definirOrfaos(const std::vector<matriz::consolidacao::ArquivoOrfao>& orfaos,
+                       const juce::File& destFolder) {
+        orfaos_ = orfaos;
+        destFolder_ = destFolder;
+        reconstruirLinhas();
     }
 
     void definirColecoesCatalogo(const std::vector<ProjetoAberto::ColecaoLink>& colecoes,
@@ -62,7 +146,78 @@ public:
         destFolder_ = destFolder;
         isCatalogMode_ = true;
         plano_ = nullptr;
-        setSize(getWidth(), std::max(60, static_cast<int>(colecoes_.size()) * 36 + 10));
+        orfaos_.clear();
+        reconstruirLinhas();
+    }
+
+    void definirModoPrioridade(ModoPrioridade modo) {
+        modoPrioridade_ = modo;
+        reconstruirLinhas();
+    }
+
+    void reconstruirLinhas() {
+        linhasExibicao_.clear();
+        if (isCatalogMode_) {
+            setSize(getWidth(), std::max(60, static_cast<int>(colecoes_.size()) * 36 + 10));
+            repaint();
+            return;
+        }
+
+        if (plano_) {
+            for (const auto& item : plano_->itens) {
+                LinhaExibicao l;
+                l.tipo = LinhaExibicao::Tipo::Normal;
+                l.itemId = item.itemId;
+                l.arquivoId = item.arquivoId;
+                l.nomeOriginal = item.nomeOriginal;
+                l.caminhoRelativoDestino = item.caminhoRelativoDestino;
+                l.emConflito = item.emConflito;
+                l.jaConsolidado = item.jaConsolidado;
+
+                auto itStatus = statusPorItem_.find(item.arquivoId);
+                if (itStatus != statusPorItem_.end()) {
+                    l.status = itStatus->second;
+                } else {
+                    itStatus = statusPorItem_.find(item.itemId);
+                    if (itStatus != statusPorItem_.end()) {
+                        l.status = itStatus->second;
+                    } else {
+                        l.status = item.jaConsolidado ? matriz::consolidacao::StatusArquivoBackup::Verde : matriz::consolidacao::StatusArquivoBackup::Vermelho;
+                    }
+                }
+                linhasExibicao_.push_back(std::move(l));
+            }
+        }
+
+        for (const auto& orf : orfaos_) {
+            LinhaExibicao l;
+            l.tipo = LinhaExibicao::Tipo::Orfao;
+            l.caminhoRelativoOrfao = orf.caminhoRelativo;
+            l.tamanhoBytesOrfao = orf.tamanhoBytes;
+            linhasExibicao_.push_back(std::move(l));
+        }
+
+        if (modoPrioridade_ == ModoPrioridade::PriorizarPendentes) {
+            std::stable_sort(linhasExibicao_.begin(), linhasExibicao_.end(), [](const LinhaExibicao& a, const LinhaExibicao& b) {
+                int pA = (a.tipo == LinhaExibicao::Tipo::Normal && (a.status == matriz::consolidacao::StatusArquivoBackup::Vermelho || a.emConflito)) ? 0 : 1;
+                int pB = (b.tipo == LinhaExibicao::Tipo::Normal && (b.status == matriz::consolidacao::StatusArquivoBackup::Vermelho || b.emConflito)) ? 0 : 1;
+                return pA < pB;
+            });
+        } else if (modoPrioridade_ == ModoPrioridade::PriorizarIdenticos) {
+            std::stable_sort(linhasExibicao_.begin(), linhasExibicao_.end(), [](const LinhaExibicao& a, const LinhaExibicao& b) {
+                int pA = (a.tipo == LinhaExibicao::Tipo::Normal && a.status == matriz::consolidacao::StatusArquivoBackup::Verde && !a.emConflito) ? 0 : 1;
+                int pB = (b.tipo == LinhaExibicao::Tipo::Normal && b.status == matriz::consolidacao::StatusArquivoBackup::Verde && !b.emConflito) ? 0 : 1;
+                return pA < pB;
+            });
+        } else if (modoPrioridade_ == ModoPrioridade::PriorizarOrfaos) {
+            std::stable_sort(linhasExibicao_.begin(), linhasExibicao_.end(), [](const LinhaExibicao& a, const LinhaExibicao& b) {
+                int pA = (a.tipo == LinhaExibicao::Tipo::Orfao) ? 0 : 1;
+                int pB = (b.tipo == LinhaExibicao::Tipo::Orfao) ? 0 : 1;
+                return pA < pB;
+            });
+        }
+
+        setSize(getWidth(), std::max(60, static_cast<int>(linhasExibicao_.size()) * 26));
         repaint();
     }
 
@@ -113,7 +268,8 @@ public:
                 // Target Destination
                 g.setColour(tk.textoTerciario);
                 g.setFont(juce::Font(juce::FontOptions(11.0f)));
-                juce::String target = "->  " + destFolder_.getChildFile(c.nome).getFullPathName();
+                juce::File raiz = matriz::model::normalizarParaRaizDestino(destFolder_);
+                juce::String target = "->  " + raiz.getChildFile("Media").getChildFile(c.nome).getFullPathName();
                 g.drawText(target, r, juce::Justification::centredLeft, true);
 
                 y += 34;
@@ -121,7 +277,7 @@ public:
             return;
         }
 
-        if (!plano_ || plano_->itens.empty()) {
+        if (linhasExibicao_.empty()) {
             g.setColour(tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
             g.drawText(isPt ? juce::String::fromUTF8("Nenhum item para backup.") : "No items to backup.", getLocalBounds(), juce::Justification::centred);
@@ -129,29 +285,212 @@ public:
         }
 
         int y = 0;
-        for (auto& item : plano_->itens) {
-            juce::Rectangle<int> linha(0, y, getWidth(), 22);
-            if (item.emConflito) {
-                g.setColour(tk.perigo.withAlpha(0.15f));
-                g.fillRect(linha);
-            } else if (item.jaConsolidado) {
-                g.setColour(tk.painelAlt);
-                g.fillRect(linha);
+        const int itemH = 26;
+        for (const auto& linha : linhasExibicao_) {
+            juce::Rectangle<int> rLinha(0, y, getWidth(), itemH);
+
+            if (linha.tipo == LinhaExibicao::Tipo::Normal) {
+                if (linha.emConflito) {
+                    g.setColour(tk.perigo.withAlpha(0.12f));
+                    g.fillRect(rLinha);
+                } else if (linha.status == matriz::consolidacao::StatusArquivoBackup::Verde) {
+                    g.setColour(tk.painelAlt.withAlpha(0.35f));
+                    g.fillRect(rLinha);
+                }
+
+                auto r = rLinha.reduced(6, 2);
+                bool isVerde = (linha.status == matriz::consolidacao::StatusArquivoBackup::Verde);
+
+                // Dot
+                auto dotArea = r.removeFromLeft(16).withSizeKeepingCentre(8, 8);
+                g.setColour(isVerde ? juce::Colour(0xff22c55e) : juce::Colour(0xffef4444));
+                g.fillEllipse(dotArea.toFloat());
+                r.removeFromLeft(4);
+
+                // Status badge on the right (with comfortable margin from scrollbar)
+                juce::String statusTxt;
+                juce::Colour statusCol;
+                if (linha.emConflito) {
+                    statusTxt = isPt ? juce::String::fromUTF8("CONFLITO") : "CONFLICT";
+                    statusCol = tk.perigo;
+                } else if (isVerde) {
+                    statusTxt = isPt ? juce::String::fromUTF8("Idêntico") : "Up to date";
+                    statusCol = juce::Colour(0xff22c55e);
+                } else {
+                    statusTxt = isPt ? juce::String::fromUTF8("Pendente") : "Pending";
+                    statusCol = juce::Colour(0xffef4444);
+                }
+
+                r.removeFromRight(20); // Margem para não colidir com scrollbar
+                int statusW = 95;
+                auto statusArea = r.removeFromRight(statusW);
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena - 0.5f, juce::Font::bold)));
+                g.setColour(statusCol);
+                g.drawText(statusTxt, statusArea, juce::Justification::centredRight, false);
+                r.removeFromRight(12);
+
+                // Main Text: "nomeOriginal  →  caminhoRelativoDestino"
+                g.setColour(linha.emConflito ? tk.perigo : (isVerde ? tk.textoSecundario : tk.textoPrimario));
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                juce::String texto = linha.nomeOriginal + juce::String::fromUTF8("  →  ") + linha.caminhoRelativoDestino;
+                g.drawText(texto, r, juce::Justification::centredLeft, true);
+
+            } else {
+                // Linha Órfão
+                auto r = rLinha.reduced(6, 2);
+
+                // Dot ⚪
+                auto dotArea = r.removeFromLeft(16).withSizeKeepingCentre(8, 8);
+                g.setColour(juce::Colour(0xff9ca3af));
+                g.fillEllipse(dotArea.toFloat());
+                r.removeFromLeft(4);
+
+                // Size & Status badge on the right
+                r.removeFromRight(20);
+                juce::String sizeTxt = juce::File::descriptionOfSizeInBytes(linha.tamanhoBytesOrfao);
+                int statusW = 95;
+                auto statusArea = r.removeFromRight(statusW);
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena - 0.5f)));
+                g.setColour(tk.textoTerciario);
+                g.drawText(sizeTxt, statusArea, juce::Justification::centredRight, false);
+                r.removeFromRight(12);
+
+                // Main text: caminhoRelativo
+                g.setColour(tk.textoTerciario);
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                juce::String texto = linha.caminhoRelativoOrfao + (isPt ? juce::String::fromUTF8("  [Órfão no destino]") : "  [Orphan in destination]");
+                g.drawText(texto, r, juce::Justification::centredLeft, true);
             }
-            g.setColour(item.emConflito ? tk.perigo : (item.jaConsolidado ? tk.textoTerciario : tk.textoPrimario));
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-            juce::String texto = item.nomeOriginal + "  ->  " + item.caminhoRelativoDestino;
-            if (item.emConflito) texto += isPt ? juce::String::fromUTF8("  [CONFLITO: destino duplicado]") : "  [CONFLICT: duplicate destination]";
-            else if (item.jaConsolidado) texto += isPt ? juce::String::fromUTF8("  (já em backup)") : "  (already backed up)";
-            g.drawText(texto, linha.reduced(6, 2), juce::Justification::centredLeft, true);
-            y += 22;
+
+            y += itemH;
         }
     }
+
+    void mouseDoubleClick(const juce::MouseEvent& e) override {
+        if (isCatalogMode_) return;
+        const int itemH = 26;
+        int idx = e.y / itemH;
+        if (idx >= 0 && idx < static_cast<int>(linhasExibicao_.size())) {
+            const auto& linha = linhasExibicao_[static_cast<size_t>(idx)];
+            if (linha.tipo == LinhaExibicao::Tipo::Normal) {
+                if (!linha.itemId.empty() && aoAbrirNoGrid) {
+                    aoAbrirNoGrid({linha.itemId});
+                }
+            } else if (linha.tipo == LinhaExibicao::Tipo::Orfao) {
+                juce::File targetFile;
+                if (destFolder_.isDirectory() && linha.caminhoRelativoOrfao.isNotEmpty()) {
+                    targetFile = destFolder_.getChildFile(linha.caminhoRelativoOrfao);
+                }
+                if (targetFile.existsAsFile()) {
+                    targetFile.revealToUser();
+                } else if (destFolder_.isDirectory()) {
+                    destFolder_.revealToUser();
+                }
+            }
+        }
+    }
+
+    std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;
+
 private:
     const matriz::consolidacao::PlanoConsolidacao* plano_ = nullptr;
+    std::unordered_map<std::string, matriz::consolidacao::StatusArquivoBackup> statusPorItem_;
+    std::vector<matriz::consolidacao::ArquivoOrfao> orfaos_;
+    std::vector<LinhaExibicao> linhasExibicao_;
+    ModoPrioridade modoPrioridade_ = ModoPrioridade::Nenhum;
     std::vector<ProjetoAberto::ColecaoLink> colecoes_;
     juce::File destFolder_;
     bool isCatalogMode_ = false;
+};
+
+class BackupWorkspaceComponent::LegendaStatusComponent : public juce::Component {
+public:
+    LegendaStatusComponent() {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    std::function<void(PreviaLista::ModoPrioridade)> aoMudarFiltro;
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+        auto area = getLocalBounds();
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena - 0.5f)));
+
+        struct ItemLegenda {
+            PreviaLista::ModoPrioridade modo;
+            juce::Colour cor;
+            juce::String texto;
+        };
+
+        std::vector<ItemLegenda> itens = {
+            { PreviaLista::ModoPrioridade::PriorizarIdenticos, juce::Colour(0xff22c55e), isPt ? juce::String::fromUTF8("Idêntico (SHA-256)") : "Up to date (SHA-256)" },
+            { PreviaLista::ModoPrioridade::PriorizarPendentes, juce::Colour(0xffef4444), isPt ? juce::String::fromUTF8("Pendente / Divergente") : "Pending / Modified" },
+            { PreviaLista::ModoPrioridade::PriorizarOrfaos, juce::Colour(0xff9ca3af), isPt ? juce::String::fromUTF8("Órfão no destino") : "Orphan in destination" }
+        };
+
+        pillRects_.clear();
+        int x = 0;
+        for (const auto& it : itens) {
+            int textW = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), it.texto);
+            int pillW = 8 + 8 + 5 + textW + 8;
+            auto pillRect = juce::Rectangle<int>(x, 0, pillW, area.getHeight());
+            pillRects_.push_back({ pillRect, it.modo });
+
+            bool isSelected = (modoAtivo_ == it.modo);
+
+            if (isSelected) {
+                g.setColour(tk.acento.withAlpha(0.20f));
+                g.fillRoundedRectangle(pillRect.toFloat(), 4.0f);
+                g.setColour(tk.acento);
+                g.drawRoundedRectangle(pillRect.toFloat().reduced(0.5f), 4.0f, 1.5f);
+            } else {
+                g.setColour(tk.painelAlt.withAlpha(0.6f));
+                g.fillRoundedRectangle(pillRect.toFloat(), 4.0f);
+                g.setColour(tk.borda.withAlpha(0.6f));
+                g.drawRoundedRectangle(pillRect.toFloat().reduced(0.5f), 4.0f, 1.0f);
+            }
+
+            auto dotRect = juce::Rectangle<float>((float)x + 7.0f, ((float)area.getHeight() - 7.0f) / 2.0f, 7.0f, 7.0f);
+            g.setColour(it.cor);
+            g.fillEllipse(dotRect);
+
+            g.setColour(isSelected ? tk.textoPrimario : tk.textoSecundario);
+            auto textRect = juce::Rectangle<int>(x + 18, 0, textW + 4, area.getHeight());
+            g.drawText(it.texto, textRect, juce::Justification::centredLeft, false);
+
+            x += pillW + 8;
+        }
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        for (const auto& pr : pillRects_) {
+            if (pr.rect.contains(e.getPosition())) {
+                if (modoAtivo_ == pr.modo) {
+                    modoAtivo_ = PreviaLista::ModoPrioridade::Nenhum;
+                } else {
+                    modoAtivo_ = pr.modo;
+                }
+                repaint();
+                if (aoMudarFiltro) aoMudarFiltro(modoAtivo_);
+                break;
+            }
+        }
+    }
+
+    void resetarFiltro() {
+        modoAtivo_ = PreviaLista::ModoPrioridade::Nenhum;
+        repaint();
+    }
+
+private:
+    struct PillInfo {
+        juce::Rectangle<int> rect;
+        PreviaLista::ModoPrioridade modo;
+    };
+    std::vector<PillInfo> pillRects_;
+    PreviaLista::ModoPrioridade modoAtivo_ = PreviaLista::ModoPrioridade::Nenhum;
 };
 
 class BackupWorkspaceComponent::ConfigContainerComponent : public juce::Component {
@@ -210,18 +549,19 @@ public:
             bool temColecoes = (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible());
             bool temEditarSelecao = (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible());
             bool temEditorHierarquia = (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible());
+            bool temEditCustomPrefixo = (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible());
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
             int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
-            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + padCartaoY * 2;
-            int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 3) + padCartaoY * 2;
+            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
+            int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
             int minTotal = minH1 + minH2 + minH3 + minH4;
 
             if (availableForCards >= minTotal) {
                 int extra = availableForCards - minTotal;
                 int extra1 = static_cast<int>(extra * 0.05f);
-                int extra2 = static_cast<int>(extra * 0.38f);
-                int extra3 = static_cast<int>(extra * 0.37f);
+                int extra2 = static_cast<int>(extra * 0.60f); // DESTINATION: 38% → 60%
+                int extra3 = static_cast<int>(extra * 0.08f); // ORGANIZATION: 37% → 8% (mínimo)
                 int extra4 = extra - extra1 - extra2 - extra3;
                 card1H = minH1 + extra1;
                 card2H = minH2 + extra2;
@@ -253,7 +593,8 @@ public:
             if (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible()) {
                 dentro.removeFromTop(4);
                 owner_.comboColecoes_->setBounds(dentro.removeFromTop(alturaControle));
-            } else if (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible()) {
+            }
+            if (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible()) {
                 dentro.removeFromTop(4);
                 owner_.btnEditarSelecao_->setBounds(dentro.removeFromTop(alturaControle));
             }
@@ -298,13 +639,19 @@ public:
                 dentro.removeFromTop(3);
                 owner_.btnEditarHierarquia_->setBounds(dentro.removeFromTop(alturaControle));
             }
-            if (owner_.labelPrefixo_ && owner_.editPrefixo_) {
+            if (owner_.comboModoPrefixo_) {
                 dentro.removeFromTop(4);
                 auto linhaPrefixo = dentro.removeFromTop(alturaControle);
-                int labelW = std::min(110, static_cast<int>(linhaPrefixo.getWidth() * 0.40f));
-                owner_.labelPrefixo_->setBounds(linhaPrefixo.removeFromLeft(labelW));
-                linhaPrefixo.removeFromLeft(4);
-                owner_.editPrefixo_->setBounds(linhaPrefixo);
+                if (owner_.labelPrefixo_) {
+                    int labelW = std::min(90, static_cast<int>(linhaPrefixo.getWidth() * 0.35f));
+                    owner_.labelPrefixo_->setBounds(linhaPrefixo.removeFromLeft(labelW));
+                    linhaPrefixo.removeFromLeft(4);
+                }
+                owner_.comboModoPrefixo_->setBounds(linhaPrefixo);
+                if (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible()) {
+                    dentro.removeFromTop(3);
+                    owner_.editPrefixo_->setBounds(dentro.removeFromTop(alturaControle));
+                }
             }
         }
 
@@ -316,8 +663,16 @@ public:
             dentro.removeFromTop(2);
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
-            if (!isCatalogMode && owner_.toggleEmbutirMetadados_) {
-                owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+            if (!isCatalogMode) {
+                if (owner_.toggleEmbutirMetadados_) {
+                    owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+                }
+                if (owner_.toggleAutoResolverConflitos_) {
+                    owner_.toggleAutoResolverConflitos_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+                }
+                if (owner_.toggleForcarRebackup_) {
+                    owner_.toggleForcarRebackup_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+                }
             }
         }
 
@@ -533,7 +888,7 @@ void BackupWorkspaceComponent::carregarColecoesBackupCatalogo() {
             item.status = "READY";
 
             juce::File colDir(c.caminhoProjeto);
-            juce::File dbFile = colDir.getChildFile("registro.sqlite");
+            juce::File dbFile = matriz::model::Project::resolverPastaProjeto(colDir).getChildFile("registro.sqlite");
             if (dbFile.existsAsFile()) {
                 try {
                     matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
@@ -566,15 +921,17 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
     static const std::vector<std::string> kPadroesContent = {
         // Audio
         "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-        "Sample Pack", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+        "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Sound FX", "MIDI",
         "Artist Catalog", "Artist Backup",
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
-        "Corporate Video", "Commercial", "Live Performance", "NLE Project",
+        "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
+        "Graphics", "Logo", "3D",
         // Docs
-        "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation"
+        "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
+        "Spreadsheet", "Planilha"
     };
 
     std::map<std::string, int> contagens;
@@ -654,7 +1011,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
-    vaults_ = projeto_.listarVaults();
+    carregarDestinosBackup();
     carregarOpcoesContent();
 
     const auto& tk = tema();
@@ -675,29 +1032,27 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configViewport_->setViewedComponent(configContainer_.get(), false);
     addAndMakeVisible(*configViewport_);
 
-    // === SOURCE section ===
+    // === SELECTION section ===
     labelSource_ = std::make_unique<juce::Label>();
     labelSource_->setText(matriz::i18n::t("backup.secao_origem"), juce::dontSendNotification);
+    labelSource_->setTooltip(isPt ? juce::String::fromUTF8("Seleção dos itens para o backup") : "Selection of assets to backup");
     labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelSource_);
 
     comboSource_ = std::make_unique<juce::ComboBox>();
-    comboSource_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-    comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboSource_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboSource_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
     comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-    comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    comboSource_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    comboSource_->setTooltip(isPt ? juce::String::fromUTF8("Escolha quais itens incluir nesta execução do backup") : "Choose which assets to include in this backup run");
     comboSource_->addItem(isCatalogMode ? matriz::i18n::t("backup.origem_todos_catalogo") : matriz::i18n::t("backup.origem_todos_projeto"), 1);
     comboSource_->addItem(matriz::i18n::t("backup.origem_intake"), 2);
     comboSource_->addItem(rotuloOpcaoSelecionados(), 3);
     comboSource_->addItem(matriz::i18n::t("backup.origem_sem_backup"), 4);
     comboSource_->addItem(matriz::i18n::t("backup.origem_de_conteudo"), 5);
-    if (!selectedItemIds_.empty()) {
-        comboSource_->setSelectedId(3, juce::dontSendNotification);
-        whatOption_ = WhatOption::SelectedAssets;
-    } else {
-        comboSource_->setSelectedId(1, juce::dontSendNotification);
-    }
+    comboSource_->setSelectedId(1, juce::dontSendNotification);
+    whatOption_ = WhatOption::Everything;
     comboSource_->onChange = [this] {
         int id = comboSource_->getSelectedId();
         if (id == 3) {
@@ -729,10 +1084,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     }
 
     comboColecoes_ = std::make_unique<juce::ComboBox>();
-    comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-    comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboColecoes_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboColecoes_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
     comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-    comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    comboColecoes_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     for (size_t i = 0; i < opcoesContent_.size(); ++i)
         comboColecoes_->addItem(opcoesContent_[i].rotulo + " (" + juce::String(opcoesContent_[i].contagem) + ")", static_cast<int>(i + 1));
     if (!opcoesContent_.empty()) comboColecoes_->setSelectedId(1, juce::dontSendNotification);
@@ -756,24 +1111,20 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     listVaults_->setRowHeight(32);
     configContainer_->addAndMakeVisible(*listVaults_);
 
-    btnBrowseVault_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.escolher_pasta"));
-    btnBrowseVault_->setTooltip("Select a custom folder destination for the backup");
+    btnBrowseVault_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("+ Adicionar Destino...") : "+ Add Destination...");
+    btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um destino de backup") : "Create or link a backup destination folder");
     aplicarEstiloBotao(*btnBrowseVault_, false);
-    btnBrowseVault_->onClick = [this] {
-        auto chooser = std::make_shared<juce::FileChooser>(matriz::i18n::t("consolidacao.escolher_destino"));
+    btnBrowseVault_->onClick = [this, isPt] {
+        auto chooser = std::make_shared<juce::FileChooser>(
+            isPt ? juce::String::fromUTF8("Selecione a pasta para o novo Destino")
+                 : "Select folder for the new Destination");
         juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                               [safeThis, chooser](const juce::FileChooser& fc) {
                                   if (!safeThis) return;
                                   juce::File folder = fc.getResult();
                                   if (folder == juce::File()) return;
-                                  safeThis->customDestFolder_ = folder;
-                                  safeThis->selectedVaultIdx_ = -1;
-                                  safeThis->listVaults_->deselectAllRows();
-                                  safeThis->resolvedDestFolder_ = folder;
-                                  safeThis->labelDestInfo_->setText("Target: " + folder.getFullPathName(), juce::dontSendNotification);
-                                  safeThis->labelDestInfo_->setTooltip("Target: " + folder.getFullPathName());
-                                  safeThis->atualizarResumo();
+                                  safeThis->criarNovoClone(folder);
                               });
     };
     configContainer_->addAndMakeVisible(*btnBrowseVault_);
@@ -782,23 +1133,23 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     bool isPtGDest = isPt;
     btnGoogleDriveDest_ = std::make_unique<GoogleDriveIconButton>();
     btnGoogleDriveDest_->setTooltip(isPtGDest
-        ? juce::String::fromUTF8("Exportar para Google Drive (requer Google Drive para Desktop)")
-        : "Export to Google Drive (requires Google Drive for Desktop)");
+        ? juce::String::fromUTF8("Criar destino no Google Drive (requer Google Drive para Desktop)")
+        : "Create destination in Google Drive (requires Google Drive for Desktop)");
     btnGoogleDriveDest_->onClick = [this, isPtGDest] {
         auto gdFolder = detectarPastaGoogleDrive();
         if (gdFolder.isDirectory()) {
-            googleDriveComoDestino_ = true;
-            pastaGoogleDrive_ = gdFolder;
-            customDestFolder_ = gdFolder;
-            selectedVaultIdx_ = -1;
-            listVaults_->deselectAllRows();
-            resolvedDestFolder_ = gdFolder;
-            juce::String msg = isPtGDest
-                ? (juce::String::fromUTF8("Google Drive: ") + gdFolder.getFullPathName())
-                : ("Google Drive: " + gdFolder.getFullPathName());
-            labelDestInfo_->setText(msg, juce::dontSendNotification);
-            labelDestInfo_->setTooltip(msg);
-            atualizarResumo();
+            auto chooser = std::make_shared<juce::FileChooser>(
+                isPtGDest ? juce::String::fromUTF8("Selecione ou crie uma subpasta no Google Drive para o Destino")
+                          : "Select or create a subfolder in Google Drive for the Destination",
+                gdFolder);
+            juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+            chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                  [safeThis, chooser](const juce::FileChooser& fc) {
+                                      if (!safeThis) return;
+                                      juce::File subpasta = fc.getResult();
+                                      if (subpasta == juce::File()) return;
+                                      safeThis->criarNovoClone(subpasta);
+                                  });
         } else {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::MessageBoxIconType::InfoIcon,
@@ -816,17 +1167,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelDestInfo_->setMinimumHorizontalScale(0.85f);
     configContainer_->addAndMakeVisible(*labelDestInfo_);
 
-    resolvedDestFolder_ = projeto_.projeto().pasta().getChildFile("Backup");
-    juce::String defaultMsg = isPt ? (juce::String::fromUTF8("Padrão: ") + resolvedDestFolder_.getFullPathName() +
-                                      juce::String::fromUTF8("  -  escolha um disco ou pasta acima para mudar"))
-                                   : ("Default: " + resolvedDestFolder_.getFullPathName() +
-                                      "  -  pick a vault or custom folder above to change it");
-    labelDestInfo_->setText(defaultMsg, juce::dontSendNotification);
-    labelDestInfo_->setTooltip(defaultMsg);
-
-    // === ORGANIZATION section ===
+    // === FOLDER STRUCTURE section ===
     labelOrg_ = std::make_unique<juce::Label>();
     labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao"), juce::dontSendNotification);
+    labelOrg_->setTooltip(isPt ? juce::String::fromUTF8("Defina como as pastas e arquivos serão estruturados no backup") : "Define how folders and files will be structured in the backup");
     labelOrg_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelOrg_);
@@ -845,10 +1189,13 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     auto atualizarEstadoOrganizacao = [this] {
         bool usaOriginal = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
-        bool usaMapa = toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState();
-        bool permitePadrao = (!usaOriginal && !usaMapa);
-        if (comboOrg_) comboOrg_->setEnabled(permitePadrao);
-        if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(permitePadrao && comboOrg_->getSelectedId() == 5);
+        if (comboOrg_) comboOrg_->setEnabled(!usaOriginal);
+        if (btnEditarHierarquia_) {
+            bool isCustom = (comboOrg_ && comboOrg_->getSelectedId() == 5);
+            btnEditarHierarquia_->setVisible(isCustom && !usaOriginal);
+            btnEditarHierarquia_->setEnabled(isCustom && !usaOriginal);
+        }
+        resized();
         atualizarResumo();
     };
 
@@ -865,6 +1212,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     toggleUsarEstruturaMapa_->onClick = [this, atualizarEstadoOrganizacao] {
         if (toggleUsarEstruturaMapa_->getToggleState()) {
             if (togglePreservarEstrutura_) togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
+            if (comboOrg_) comboOrg_->setSelectedId(1, juce::dontSendNotification);
         }
         atualizarEstadoOrganizacao();
     };
@@ -873,23 +1221,27 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     configContainer_->addAndMakeVisible(*toggleUsarEstruturaMapa_);
 
     comboOrg_ = std::make_unique<juce::ComboBox>();
-    comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-    comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+    comboOrg_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboOrg_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
     comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-    comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+    comboOrg_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     comboOrg_->addItem(matriz::i18n::t("backup.manter_organizacao"), 1);
     comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia") : "By media type", 2);
     comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por ano") : "By year", 3);
     comboOrg_->addItem(isPt ? juce::String::fromUTF8("Por tipo de mídia + ano") : "By media type + year", 4);
     comboOrg_->addItem(isPt ? juce::String::fromUTF8("Personalizado (editor visual)") : "Custom (visual editor)", 5);
     comboOrg_->setSelectedId(1, juce::dontSendNotification);
-    comboOrg_->setEnabled(false);
+    comboOrg_->setEnabled(true);
     comboOrg_->setTooltip("Choose directory naming/organization structure pattern");
-    comboOrg_->onChange = [this] {
-        if (btnEditarHierarquia_)
-            btnEditarHierarquia_->setVisible(comboOrg_->getSelectedId() == 5);
-        resized();
-        atualizarResumo();
+    comboOrg_->onChange = [this, atualizarEstadoOrganizacao] {
+        int id = comboOrg_->getSelectedId();
+        if (id == 1) {
+            if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(true, juce::dontSendNotification);
+        } else {
+            if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(false, juce::dontSendNotification);
+        }
+        if (togglePreservarEstrutura_) togglePreservarEstrutura_->setToggleState(false, juce::dontSendNotification);
+        atualizarEstadoOrganizacao();
     };
     configContainer_->addAndMakeVisible(*comboOrg_);
 
@@ -906,15 +1258,16 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     configContainer_->addChildComponent(*btnEditarHierarquia_);
 
-    prefixoCustomizado_ = "BKR";
+    prefixoAuto_ = "BKR";
     {
         auto stmtPref = projeto_.projeto().registro().prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
         if (stmtPref.step() && !stmtPref.columnIsNull(0)) {
             juce::String val = stmtPref.columnText(0);
             if (val.isNotEmpty())
-                prefixoCustomizado_ = val;
+                prefixoAuto_ = val;
         }
     }
+    prefixoCustomizado_ = prefixoAuto_;
 
     labelPrefixo_ = std::make_unique<juce::Label>();
     labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos"), juce::dontSendNotification);
@@ -922,18 +1275,47 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelPrefixo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     configContainer_->addAndMakeVisible(*labelPrefixo_);
 
+    comboModoPrefixo_ = std::make_unique<juce::ComboBox>();
+    comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_nenhum"), 1);
+    comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_auto").replace("{prefix}", prefixoAuto_), 2);
+    comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_custom"), 3);
+    comboModoPrefixo_->setSelectedId(1, juce::dontSendNotification); // Default: NO PREFIX (1)
+    modoPrefixo_ = matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+    comboModoPrefixo_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboModoPrefixo_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboModoPrefixo_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboModoPrefixo_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    comboModoPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_modo_nenhum_dica"));
+    comboModoPrefixo_->onChange = [this] {
+        int id = comboModoPrefixo_->getSelectedId();
+        if (id == 1) {
+            modoPrefixo_ = matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+            if (editPrefixo_) editPrefixo_->setVisible(false);
+        } else if (id == 2) {
+            modoPrefixo_ = matriz::consolidacao::ModoPrefixoArquivo::Auto;
+            if (editPrefixo_) editPrefixo_->setVisible(false);
+        } else if (id == 3) {
+            modoPrefixo_ = matriz::consolidacao::ModoPrefixoArquivo::Custom;
+            if (editPrefixo_) editPrefixo_->setVisible(true);
+        }
+        if (configContainer_) configContainer_->resized();
+        atualizarResumo();
+    };
+    configContainer_->addAndMakeVisible(*comboModoPrefixo_);
+
     editPrefixo_ = std::make_unique<juce::TextEditor>();
     editPrefixo_->setText(prefixoCustomizado_, juce::dontSendNotification);
-    editPrefixo_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
-    editPrefixo_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+    editPrefixo_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+    editPrefixo_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
     editPrefixo_->setColour(juce::TextEditor::outlineColourId, tk.borda);
     editPrefixo_->setColour(juce::TextEditor::focusedOutlineColourId, tk.acento);
     editPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_arquivos_dica"));
+    editPrefixo_->setVisible(false);
     editPrefixo_->onTextChange = [this] {
         prefixoCustomizado_ = editPrefixo_->getText().trim();
         atualizarResumo();
     };
-    configContainer_->addAndMakeVisible(*editPrefixo_);
+    configContainer_->addChildComponent(*editPrefixo_);
 
     // === OPTIONS section ===
     labelOpcoes_ = std::make_unique<juce::Label>();
@@ -963,13 +1345,38 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     toggleEmbutirMetadados_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleEmbutirMetadados_);
 
+    toggleAutoResolverConflitos_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.auto_resolver_conflitos"));
+    toggleAutoResolverConflitos_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleAutoResolverConflitos_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    toggleAutoResolverConflitos_->setTooltip(matriz::i18n::t("backup.auto_resolver_conflitos"));
+    toggleAutoResolverConflitos_->setToggleState(true, juce::dontSendNotification);
+    toggleAutoResolverConflitos_->onClick = [this] { atualizarResumo(); };
+    configContainer_->addAndMakeVisible(*toggleAutoResolverConflitos_);
+
+    toggleForcarRebackup_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.forcar_rebackup"));
+    toggleForcarRebackup_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    toggleForcarRebackup_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+    toggleForcarRebackup_->setTooltip(matriz::i18n::t("backup.forcar_rebackup_dica"));
+    toggleForcarRebackup_->setToggleState(false, juce::dontSendNotification);
+    toggleForcarRebackup_->onClick = [this] { atualizarResumo(); };
+    configContainer_->addAndMakeVisible(*toggleForcarRebackup_);
+
     // === PREVIEW section ===
     labelResumo_ = std::make_unique<juce::Label>();
     labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*labelResumo_);
 
+    barraLegenda_ = std::make_unique<LegendaStatusComponent>();
+    barraLegenda_->aoMudarFiltro = [this](PreviaLista::ModoPrioridade modo) {
+        if (listPrevia_) listPrevia_->definirModoPrioridade(modo);
+    };
+    addAndMakeVisible(*barraLegenda_);
+
     listPrevia_ = std::make_unique<PreviaLista>();
+    listPrevia_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+        if (aoAbrirNoGrid) aoAbrirNoGrid(ids);
+    };
     listPreviaViewport_ = std::make_unique<juce::Viewport>();
     listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
     addAndMakeVisible(*listPreviaViewport_);
@@ -987,29 +1394,41 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     // === BUTTONS ===
     btnStartBackup_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_fazer_backup"));
     aplicarEstiloBotao(*btnStartBackup_, true);
-    btnStartBackup_->setTooltip("Begin backup creation process");
+    btnStartBackup_->setTooltip("Begin incremental backup process (sends only pending/modified files)");
     btnStartBackup_->onClick = [this] {
         if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState() &&
             !plano_.podeConsolidar() && !plano_.nomesEmConflito.empty()) {
             mostrarPopupConflitoPreservacao();
             return;
         }
-        iniciarBackup();
+        executarBackupAcao(false);
     };
     addAndMakeVisible(*btnStartBackup_);
 
-    btnCancel_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
-    aplicarEstiloBotao(*btnCancel_, false);
-    btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
-    btnCancel_->setTooltip("Abort current backup task safely or return to Home");
-    btnCancel_->onClick = [this] {
-        if (executando_) {
-            cancelamento_->pedir();
-        } else if (aoVoltarHome) {
-            aoVoltarHome();
-        }
+    btnSyncDestino_ = std::make_unique<juce::TextButton>("BACKUP SYNC...");
+    aplicarEstiloBotao(*btnSyncDestino_, false);
+    btnSyncDestino_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    btnSyncDestino_->setTooltip(isPt ? juce::String::fromUTF8("Comparar destino ativo com outro disco/pasta para sincronização manual")
+                                     : "Compare active destination with another drive/folder for manual sync review");
+    btnSyncDestino_->onClick = [this] { iniciarSyncComOutroDestino(); };
+    addAndMakeVisible(*btnSyncDestino_);
+
+    btnPublishHtml_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_publicar_html"));
+    aplicarEstiloBotao(*btnPublishHtml_, false);
+    btnPublishHtml_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    btnPublishHtml_->setTooltip("Publish static HTML website preview / catalog");
+    btnPublishHtml_->onClick = [this] { publicarHtml(); };
+    addChildComponent(*btnPublishHtml_);
+
+    btnCancelarExecucao_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
+    aplicarEstiloBotao(*btnCancelarExecucao_, false);
+    btnCancelarExecucao_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    btnCancelarExecucao_->setTooltip("Abort current backup task safely");
+    btnCancelarExecucao_->onClick = [this] {
+        if (cancelamento_) cancelamento_->pedir();
     };
-    addAndMakeVisible(*btnCancel_);
+    btnCancelarExecucao_->setVisible(false);
+    addAndMakeVisible(*btnCancelarExecucao_);
 
     btnDone_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
     aplicarEstiloBotao(*btnDone_, false);
@@ -1020,22 +1439,31 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnDone_);
 
-    btnOpenCatalog_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR CATÁLOGO DE BACKUP") : "OPEN BACKUP CATALOG");
+    btnOpenCatalog_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
     aplicarEstiloBotao(*btnOpenCatalog_, true);
-    btnOpenCatalog_->setTooltip("Load generated catalog database as read-only view");
+    btnOpenCatalog_->setTooltip(isPt ? juce::String::fromUTF8("Abrir pasta do backup no Finder") : "Open backup folder in Finder");
     btnOpenCatalog_->onClick = [this] {
-        if (aoAbrirCatalogo) aoAbrirCatalogo(resolvedDestFolder_);
+        juce::File pastaAlvo = matriz::model::normalizarParaRaizDestino(resolvedDestFolder_);
+        if (!pastaAlvo.exists()) pastaAlvo = projeto_.projeto().raiz();
+        if (!pastaAlvo.exists()) pastaAlvo = projeto_.projeto().pastaMedia();
+        if (!pastaAlvo.exists()) pastaAlvo = projeto_.projeto().pasta();
+        if (pastaAlvo.exists()) {
+            if (!pastaAlvo.startAsProcess()) {
+                pastaAlvo.revealToUser();
+            }
+        }
     };
     addChildComponent(*btnOpenCatalog_);
 
     btnExportJanela_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_exportar_metadados"));
     aplicarEstiloBotao(*btnExportJanela_, false);
-    btnExportJanela_->setTooltip("Export metadata catalog as CSV/JSON/PDF");
+    btnExportJanela_->setTooltip(isPt ? juce::String::fromUTF8("Exportar catálogo de metadados como CSV/XLS") : "Export metadata catalog as CSV/XLS");
     btnExportJanela_->onClick = [this] { mostrarJanelaExportar(); };
     addChildComponent(*btnExportJanela_);
 
     addChildComponent(overlay_);
 
+    carregarDestinoAtivoInicial();
     atualizarResumo();
 }
 
@@ -1051,12 +1479,17 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
         labelTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
+    if (btnSyncDestino_) {
+        btnSyncDestino_->setButtonText("BACKUP SYNC...");
+    }
     if (labelSource_) {
         labelSource_->setText(matriz::i18n::t("backup.secao_origem"), juce::dontSendNotification);
+        labelSource_->setTooltip(isPt ? juce::String::fromUTF8("Seleção dos itens para o backup") : "Selection of assets to backup");
         labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (comboSource_) {
+        comboSource_->setTooltip(isPt ? juce::String::fromUTF8("Escolha quais itens incluir nesta execução do backup") : "Choose which assets to include in this backup run");
         int sel = comboSource_->getSelectedId();
         comboSource_->clear(juce::dontSendNotification);
         comboSource_->addItem(isCatalogMode ? matriz::i18n::t("backup.origem_todos_catalogo") : matriz::i18n::t("backup.origem_todos_projeto"), 1);
@@ -1066,10 +1499,10 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         comboSource_->addItem(matriz::i18n::t("backup.origem_de_conteudo"), 5);
         if (sel > 0) comboSource_->setSelectedId(sel, juce::dontSendNotification);
 
-        comboSource_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        comboSource_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboSource_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboSource_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         comboSource_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboSource_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        comboSource_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (btnEditarSelecao_) {
         btnEditarSelecao_->setButtonText(isPt ? juce::String::fromUTF8("SELECIONAR ARQUIVOS...") : "SELECT FILES...");
@@ -1087,15 +1520,24 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         else if (!opcoesContent_.empty())
             comboColecoes_->setSelectedId(1, juce::dontSendNotification);
 
-        comboColecoes_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        comboColecoes_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboColecoes_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboColecoes_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         comboColecoes_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboColecoes_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        comboColecoes_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (labelDest_) {
         labelDest_->setText(matriz::i18n::t("backup.secao_destino"), juce::dontSendNotification);
         labelDest_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelDest_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (btnBrowseVault_) {
+        btnBrowseVault_->setButtonText(isPt ? juce::String::fromUTF8("+ Adicionar Destino...") : "+ Add Destination...");
+        btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um destino de backup") : "Create or link a backup destination folder");
+    }
+    if (btnGoogleDriveDest_) {
+        btnGoogleDriveDest_->setTooltip(isPt
+            ? juce::String::fromUTF8("Criar destino no Google Drive (requer Google Drive para Desktop)")
+            : "Create destination in Google Drive (requires Google Drive for Desktop)");
     }
     if (listVaults_) {
         listVaults_->setColour(juce::ListBox::backgroundColourId, tk.painelAlt);
@@ -1108,6 +1550,7 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
     }
     if (labelOrg_) {
         labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao"), juce::dontSendNotification);
+        labelOrg_->setTooltip(isPt ? juce::String::fromUTF8("Defina como as pastas e arquivos serão estruturados no backup") : "Define how folders and files will be structured in the backup");
         labelOrg_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelOrg_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
@@ -1133,10 +1576,10 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         comboOrg_->addItem(isPt ? juce::String::fromUTF8("Personalizado (editor visual)") : "Custom (visual editor)", 5);
         if (sel > 0) comboOrg_->setSelectedId(sel, juce::dontSendNotification);
 
-        comboOrg_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
-        comboOrg_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        comboOrg_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboOrg_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         comboOrg_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboOrg_->setColour(juce::ComboBox::arrowColourId, tk.textoPrimario);
+        comboOrg_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (btnEditarHierarquia_) {
         btnEditarHierarquia_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR EDITOR VISUAL") : "OPEN VISUAL EDITOR");
@@ -1148,9 +1591,22 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelPrefixo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         labelPrefixo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
+    if (comboModoPrefixo_) {
+        int sel = comboModoPrefixo_->getSelectedId();
+        comboModoPrefixo_->clear(juce::dontSendNotification);
+        comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_nenhum"), 1);
+        comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_auto").replace("{prefix}", prefixoAuto_), 2);
+        comboModoPrefixo_->addItem(matriz::i18n::t("backup.prefixo_modo_custom"), 3);
+        comboModoPrefixo_->setSelectedId(sel > 0 ? sel : 1, juce::dontSendNotification);
+        comboModoPrefixo_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboModoPrefixo_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboModoPrefixo_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboModoPrefixo_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        comboModoPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_modo_nenhum_dica"));
+    }
     if (editPrefixo_) {
-        editPrefixo_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
-        editPrefixo_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        editPrefixo_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        editPrefixo_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         editPrefixo_->setColour(juce::TextEditor::outlineColourId, tk.borda);
         editPrefixo_->setColour(juce::TextEditor::focusedOutlineColourId, tk.acento);
         editPrefixo_->setTooltip(matriz::i18n::t("backup.prefixo_arquivos_dica"));
@@ -1175,6 +1631,18 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
+    if (toggleAutoResolverConflitos_) {
+        toggleAutoResolverConflitos_->setButtonText(matriz::i18n::t("backup.auto_resolver_conflitos"));
+        toggleAutoResolverConflitos_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleAutoResolverConflitos_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+        toggleAutoResolverConflitos_->setTooltip(matriz::i18n::t("backup.auto_resolver_conflitos"));
+    }
+    if (toggleForcarRebackup_) {
+        toggleForcarRebackup_->setButtonText(matriz::i18n::t("backup.forcar_rebackup"));
+        toggleForcarRebackup_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+        toggleForcarRebackup_->setColour(juce::ToggleButton::tickColourId, tk.acento);
+        toggleForcarRebackup_->setTooltip(matriz::i18n::t("backup.forcar_rebackup_dica"));
+    }
     if (labelResumo_) {
         labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -1187,17 +1655,23 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         btnStartBackup_->setButtonText(matriz::i18n::t("backup.btn_fazer_backup"));
         aplicarEstiloBotao(*btnStartBackup_, true);
     }
-    if (btnCancel_) {
-        btnCancel_->setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
-        aplicarEstiloBotao(*btnCancel_, false);
-        btnCancel_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    if (btnPublishHtml_) {
+        btnPublishHtml_->setButtonText(matriz::i18n::t("backup.btn_publicar_html"));
+        aplicarEstiloBotao(*btnPublishHtml_, false);
+        btnPublishHtml_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    }
+    if (btnCancelarExecucao_) {
+        btnCancelarExecucao_->setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
+        aplicarEstiloBotao(*btnCancelarExecucao_, false);
+        btnCancelarExecucao_->setColour(juce::TextButton::textColourOffId, tk.perigo);
     }
     if (btnDone_) {
         btnDone_->setButtonText(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
         aplicarEstiloBotao(*btnDone_, false);
     }
     if (btnOpenCatalog_) {
-        btnOpenCatalog_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR CATÁLOGO DE BACKUP") : "OPEN BACKUP CATALOG");
+        btnOpenCatalog_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
+        btnOpenCatalog_->setTooltip(isPt ? juce::String::fromUTF8("Abrir pasta do backup no Finder") : "Open backup folder in Finder");
         aplicarEstiloBotao(*btnOpenCatalog_, true);
     }
     if (btnExportJanela_) {
@@ -1225,14 +1699,17 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
         }
     };
 
-    auto janela = std::make_shared<JanelaExportarMetadata>("EXPORT METADATA", tema().painel);
+    int modalH = 300;
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    auto janela = std::make_shared<JanelaExportarMetadata>(isPt ? juce::String::fromUTF8("EXPORTAR METADADOS") : "EXPORT METADATA", tema().painel);
 
     struct PainelExportar : public juce::Component {
         PainelExportar(BackupWorkspaceComponent& parent, std::shared_ptr<juce::DialogWindow> win)
             : win_(std::move(win)) {
             const auto& tk = tema();
+            bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
-            lblTitulo_ = std::make_unique<juce::Label>("", "EXPORT METADATA");
+            lblTitulo_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("EXPORTAR METADADOS") : "EXPORT METADATA");
             lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
             lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
             lblTitulo_->setJustificationType(juce::Justification::centred);
@@ -1249,12 +1726,12 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
                 return b;
             };
 
-            btnCsvFull_ = criarBotao("CSV (FULL)", [&parent] { parent.exportarCsv(); });
+            btnCsvFull_ = criarBotao(isPt ? juce::String::fromUTF8("CSV (COMPLETO)") : "CSV (FULL)", [&parent] { parent.exportarCsv(); });
             btnXls_ = criarBotao("XLS", [&parent] { parent.exportarXls(); });
-            btnDublinCore_ = criarBotao("CSV (DUBLIN CORE)", [&parent] { parent.exportarDublinCore(); });
-            btnChecksums_ = criarBotao("CHECKSUMS", [&parent] { parent.exportarChecksums(); });
+            btnDublinCore_ = criarBotao(isPt ? juce::String::fromUTF8("CSV (DUBLIN CORE)") : "CSV (DUBLIN CORE)", [&parent] { parent.exportarDublinCore(); });
+            btnChecksums_ = criarBotao(isPt ? juce::String::fromUTF8("HASHES / CHECKSUMS") : "CHECKSUMS", [&parent] { parent.exportarChecksums(); });
 
-            setSize(460, 310);
+            setSize(460, 300);
         }
 
         void resized() override {
@@ -1285,9 +1762,13 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
 
     janela->setContentOwned(painel.release(), true);
     janela->setResizable(false, false);
-    janela->centreWithSize(460, 310);
+    janela->centreWithSize(460, modalH);
     janela->setVisible(true);
     janela->enterModalState(true);
+}
+
+void BackupWorkspaceComponent::publicarHtml() {
+    PublishHtmlDialog::exibirModal(projeto_);
 }
 
 void BackupWorkspaceComponent::exportarCsv() {
@@ -1322,7 +1803,7 @@ void BackupWorkspaceComponent::exportarCsv() {
         thread.runThread();
 
         if (ok) {
-            juce::File pkgDir = targetDir.getChildFile("BKR_Full_Export");
+            juce::File pkgDir = targetDir.getFileName() == "BKR_Full_Export" ? targetDir : targetDir.getChildFile("BKR_Full_Export");
             juce::AlertWindow::showAsync(
                 juce::MessageBoxOptions()
                     .withIconType(juce::MessageBoxIconType::InfoIcon)
@@ -1503,6 +1984,7 @@ void BackupWorkspaceComponent::exportarChecksums() {
         juce::File targetFile = fc.getResult();
         if (targetFile.getFileExtension().isEmpty()) targetFile = targetFile.withFileExtension("sha256");
 
+        bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
         struct ProgressThread : public juce::ThreadWithProgressWindow {
             ProgressThread(const juce::String& title, std::function<void(ProgressThread*)> work)
                 : juce::ThreadWithProgressWindow(title, true, true), work_(work) {}
@@ -1511,13 +1993,20 @@ void BackupWorkspaceComponent::exportarChecksums() {
         };
 
         juce::String manifest;
-        ProgressThread thread("EXPORT METADATA - CHECKSUMS", [this, &manifest](ProgressThread* t) {
-            manifest = gerarManifestChecksumsBackup([t](int feito, int total) {
-                if (total > 0) {
-                    t->setStatusMessage("Generating SHA-256 Checksum: " + juce::String(feito + 1) + " of " + juce::String(total) + "...");
-                    t->setProgress(static_cast<double>(feito) / total);
-                }
-            });
+        ProgressThread thread("EXPORT METADATA - CHECKSUMS", [this, &manifest, isCatalogMode](ProgressThread* t) {
+            if (isCatalogMode || plano_.itens.empty()) {
+                t->setStatusMessage("Generating SHA-256 Checksum Manifest...");
+                t->setProgress(0.5);
+                manifest = projeto_.exportarFixityManifest({}, "SHA-256");
+                t->setProgress(1.0);
+            } else {
+                manifest = gerarManifestChecksumsBackup([t](int feito, int total) {
+                    if (total > 0) {
+                        t->setStatusMessage("Generating SHA-256 Checksum: " + juce::String(feito + 1) + " of " + juce::String(total) + "...");
+                        t->setProgress(static_cast<double>(feito) / total);
+                    }
+                });
+            }
         });
         thread.runThread();
 
@@ -1526,7 +2015,7 @@ void BackupWorkspaceComponent::exportarChecksums() {
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::InfoIcon)
                 .withTitle("EXPORT CHECKSUMS")
-                .withMessage("Checksum manifest (" + juce::String(static_cast<int>(plano_.itens.size())) + " files) exported to:\n" + targetFile.getFullPathName()
+                .withMessage("Checksum manifest exported to:\n" + targetFile.getFullPathName()
                              + "\n\nVerify with:  sha256sum -c " + targetFile.getFileName())
                 .withButton("OK"),
             static_cast<juce::ModalComponentManager::Callback*>(nullptr));
@@ -1654,8 +2143,16 @@ void BackupWorkspaceComponent::atualizarResumo() {
         else if (orgId == 5) h = hierarquiaCustom_;
     }
 
+    bool autoResolver = toggleAutoResolverConflitos_ ? toggleAutoResolverConflitos_->getToggleState() : true;
+    bool forcarRebackup = toggleForcarRebackup_ ? toggleForcarRebackup_->getToggleState() : false;
+
+    juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
+        resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : projeto_.projeto().raiz());
+    juce::File destinoMedia = destinoRaiz.getChildFile("Media");
+
     plano_ = matriz::consolidacao::planejarConsolidacao(
-        projeto_.projeto().registro(), projeto_.projeto().pasta(), resolvedDestFolder_, h, {}, prefixoCustomizado_);
+        projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
+        autoResolver, forcarRebackup);
 
     std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
     juce::int64 sz = 0; // space to copy
@@ -1677,6 +2174,11 @@ void BackupWorkspaceComponent::atualizarResumo() {
     }
     summary += (isPt ? juce::String::fromUTF8(" | Espaço: ") : " | Space: ") + juce::File::descriptionOfSizeInBytes(totalSz);
 
+    if (plano_.conflitosAutoResolvidos > 0) {
+        summary += (isPt ? juce::String::fromUTF8(" | ") : " | ") +
+                   matriz::i18n::t("backup.conflitos_resolvidos").replace("{n}", juce::String(plano_.conflitosAutoResolvidos));
+    }
+
     int semArquivo = static_cast<int>(itemIds.size() - plano_.itens.size());
     if (semArquivo > 0) {
         summary += isPt ? (juce::String::fromUTF8("  -  (") + juce::String(semArquivo) + juce::String::fromUTF8(" itens de metadado não têm arquivos físicos)"))
@@ -1687,8 +2189,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
     // o motivo vai junto do resumo sempre que o backup não puder rodar.
     bool pronto = plano_.podeConsolidar() && !plano_.itens.empty();
     if (plano_.itens.empty())
-        summary += isPt ? juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: nenhum item corresponde à origem selecionada.")
-                        : "  -  CANNOT RUN: no assets match the selected source.";
+        summary += isPt ? juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: nenhum item corresponde à seleção.")
+                        : "  -  CANNOT RUN: no assets match the selection.";
     else if (!plano_.podeConsolidar()) {
         bool preservando = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
         if (preservando) {
@@ -1697,10 +2199,13 @@ void BackupWorkspaceComponent::atualizarResumo() {
         } else {
             int qtd = static_cast<int>(plano_.nomesEmConflito.size());
             summary += isPt ? (juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: ") + juce::String(qtd) +
-                               juce::String::fromUTF8(" arquivo(s) com conflito de nomes no destino. Resolva as duplicatas ou altere a organização."))
+                               juce::String::fromUTF8(" arquivo(s) com conflito de nomes no destino. Resolva as duplicatas ou altere a estrutura de pastas."))
                             : ("  -  CANNOT RUN: " + juce::String(qtd) +
-                               " file(s) with naming conflicts at destination. Resolve duplicates or change organization.");
+                               " file(s) with naming conflicts at destination. Resolve duplicates or change folder structure.");
         }
+    } else if (sz == 0 && !plano_.itens.empty() && !forcarRebackup) {
+        summary += isPt ? juce::String::fromUTF8("  (Destino 100% atualizado)")
+                        : "  (Destination 100% up to date)";
     }
 
     labelResumo_->setText(summary, juce::dontSendNotification);
@@ -1781,10 +2286,63 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
     auto cancelamento = cancelamento_;
     auto plano = plano_;
-    auto destFolder = resolvedDestFolder_;
     auto& projeto = projeto_;
     bool gerarCatalogo = toggleGerarCatalogo_->getToggleState();
     bool embutirMeta = !isCatalogMode && toggleEmbutirMetadados_->getToggleState();
+
+    juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
+        resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : (isCatalogMode ? resolvedDestFolder_ : projeto.projeto().raiz()));
+    juce::File destinoMedia = destinoRaiz.getChildFile("Media");
+    destinoRaiz.createDirectory();
+    destinoMedia.createDirectory();
+    matriz::model::sanitizarEstruturaDestino(destinoRaiz);
+
+    // Coloca os arquivos do projeto (.mtz ou .bkm) DENTRO da pasta principal do backup (Tarefa 11)
+    juce::File pastaBackupRaiz = destinoRaiz;
+    pastaBackupRaiz.createDirectory();
+
+    juce::String extProj = isCatalogMode ? ".bkm" : ".mtz";
+    juce::String nomeDoProjeto = juce::String::fromUTF8(projeto.projeto().nome().c_str());
+    juce::File arqProjBackup = pastaBackupRaiz.getChildFile(juce::File::createLegalFileName(nomeDoProjeto) + extProj);
+    juce::File arqProjOrig = projeto.projeto().raiz().getChildFile(juce::File::createLegalFileName(nomeDoProjeto) + extProj);
+    if (arqProjOrig.existsAsFile()) {
+        arqProjOrig.copyFileTo(arqProjBackup);
+    } else {
+        juce::DynamicObject::Ptr projObj = new juce::DynamicObject();
+        projObj->setProperty("formato", 1);
+        projObj->setProperty("modo", isCatalogMode ? "catalogo" : "preservacao");
+        projObj->setProperty("nome", nomeDoProjeto);
+        projObj->setProperty("projeto_id", juce::String(projeto.projeto().projetoId()));
+        projObj->setProperty("destination_id", juce::String(projeto.projeto().destinationId()));
+        projObj->setProperty("criado_em", juce::Time::getCurrentTime().toISO8601(true));
+        arqProjBackup.replaceWithText(juce::JSON::toString(juce::var(projObj.get()), false));
+    }
+    // Garante destination.json e Project/ com SQLite no backup
+    juce::File destJsonBackup = pastaBackupRaiz.getChildFile("destination.json");
+    juce::File destJsonOrig = projeto.projeto().raiz().getChildFile("destination.json");
+    if (destJsonOrig.existsAsFile()) {
+        destJsonOrig.copyFileTo(destJsonBackup);
+    } else {
+        matriz::model::DestinationInfo dInfo;
+        dInfo.formato = 1;
+        dInfo.destinationId = matriz::model::novoUuid();
+        dInfo.projetoId = projeto.projeto().projetoId();
+        dInfo.papel = "CLONE";
+        dInfo.rotulo = pastaBackupRaiz.getFileName().toStdString();
+        dInfo.revisao = projeto.projeto().revisao();
+        dInfo.ultimaEdicaoUtc = matriz::model::agoraIso8601();
+        dInfo.criadoEm = matriz::model::agoraIso8601();
+        dInfo.gravarEmArquivo(destJsonBackup);
+    }
+
+    juce::File projectSubBackup = pastaBackupRaiz.getChildFile("Project");
+    if (!projectSubBackup.exists()) projectSubBackup.createDirectory();
+    juce::File regBackup = projectSubBackup.getChildFile("registro.sqlite");
+    juce::File indBackup = projectSubBackup.getChildFile("indice.sqlite");
+    juce::File regOrig = projeto.projeto().pasta().getChildFile("registro.sqlite");
+    juce::File indOrig = projeto.projeto().pasta().getChildFile("indice.sqlite");
+    if (regOrig.existsAsFile()) regOrig.copyFileTo(regBackup);
+    if (indOrig.existsAsFile()) indOrig.copyFileTo(indBackup);
 
     if (isCatalogMode) {
         auto colecoes = projeto.listarColecoesLinkadas();
@@ -1800,7 +2358,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
         juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-        juce::MessageManager::callAsync([safeThis, cancelamento, colecoes, destFolder, &projeto,
+        juce::MessageManager::callAsync([safeThis, cancelamento, colecoes, destinoRaiz, destinoMedia, &projeto,
                                           gerarCatalogo]() {
             if (!safeThis) return;
 
@@ -1808,7 +2366,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
             int falhas = 0;
             std::vector<juce::String> falhasLista;
 
-            destFolder.createDirectory();
+            destinoMedia.createDirectory();
 
             for (size_t i = 0; i < colecoes.size(); ++i) {
                 if (cancelamento->pedido()) break;
@@ -1816,7 +2374,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 if (!c.valido) continue;
 
                 juce::File colOrigem(c.caminhoProjeto);
-                juce::File colDestino = destFolder.getChildFile(c.nome);
+                juce::File colDestino = destinoMedia.getChildFile(c.nome);
 
                 if (safeThis) {
                     safeThis->progressoValor_ = static_cast<double>(i) / std::max<size_t>(1, colecoes.size());
@@ -1838,16 +2396,20 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
             if (!safeThis) return;
 
-            // Copy catalog database as well
+            // Copy catalog database as well into Project/
             juce::File catOrigemDb = projeto.projeto().pasta().getChildFile("registro.sqlite");
             if (catOrigemDb.existsAsFile()) {
-                catOrigemDb.copyFileTo(destFolder.getChildFile("registro.sqlite"));
+                juce::File projectSubBackup = destinoRaiz.getChildFile("Project");
+                projectSubBackup.createDirectory();
+                catOrigemDb.copyFileTo(projectSubBackup.getChildFile("registro.sqlite"));
             }
 
             safeThis->copiadoCount_ = copiado;
             safeThis->verificadoCount_ = copiado;
             safeThis->falhasCount_ = falhas;
             safeThis->falhasLista_ = falhasLista;
+
+            safeThis->registrarDestinoBackup(destinoRaiz, "Catalog Backup", copiado, 0, falhas, cancelamento->pedido());
 
             safeThis->executando_ = false;
             safeThis->estado_ = Estado::Done;
@@ -1883,14 +2445,14 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-    juce::MessageManager::callAsync([safeThis, cancelamento, plano, destFolder, &projeto,
+    juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto,
                                       gerarCatalogo, embutirMeta]() {
         if (!safeThis) return;
 
         auto resultado = matriz::consolidacao::executarConsolidacao(
             projeto.projeto().registro(),
             projeto.projeto().pasta(),
-            destFolder,
+            destinoMedia,
             plano,
             [safeThis, cancelamento](int feito, int total) {
                 if (!safeThis) return false;
@@ -1917,11 +2479,13 @@ void BackupWorkspaceComponent::iniciarBackup() {
             ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Generating HTML Catalog...");
             juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
             if (!safeThis) return;
+            juce::File catDestDir = projeto.projeto().pasta().getChildFile("catalogo");
+            catDestDir.createDirectory();
             auto resCatalogo = matriz::catalogo::gerar(
                 projeto.projeto().registro(),
                 projeto.projeto().indice(),
                 projeto.projeto().pasta(),
-                destFolder,
+                catDestDir,
                 [safeThis, cancelamento](int feito, int total) {
                     if (!safeThis) return false;
                     safeThis->labelProgressoStatus_->setText("Cataloging: " + juce::String(feito) + " of " + juce::String(total) + " files...", juce::dontSendNotification);
@@ -1943,11 +2507,41 @@ void BackupWorkspaceComponent::iniciarBackup() {
             // chamou embutirMarcadoresNoBackup no fim, e rodar de novo anexa
             // um segundo par de chunks cue/LIST/iXML no mesmo WAV.
             int metadados = matriz::consolidacao::embutirMetadadosNoBackup(
-                projeto.projeto().registro(), destFolder);
+                projeto.projeto().registro(), destinoMedia);
             (void)metadados;
         }
 
         if (!safeThis) return;
+
+        // Auto-export CSV, XLS, BKM to Project/relatorios folder
+        if (!resultado.cancelado) {
+            safeThis->labelProgressoStatus_->setText("Exporting CSV, XLS, Dublin Core and checksums...", juce::dontSendNotification);
+            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Exporting CSV, XLS & checksums...");
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            if (safeThis) {
+                juce::File relatoriosDir = safeThis->projeto_.projeto().pasta().getChildFile("relatorios");
+                relatoriosDir.createDirectory();
+                safeThis->exportarCsvPara(relatoriosDir);
+                safeThis->exportarXlsPara(relatoriosDir);
+                safeThis->exportarDublinCorePara(relatoriosDir);
+                safeThis->exportarChecksumsPara(relatoriosDir);
+            }
+        }
+
+        // Increment and confirm revision on active project
+        if (!resultado.cancelado) {
+            safeThis->projeto_.projeto().confirmarRevisao();
+        }
+
+        // Auto-mirroring to online clones
+        if (!resultado.cancelado) {
+            safeThis->labelProgressoStatus_->setText("Mirroring to connected clones...", juce::dontSendNotification);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            if (safeThis) {
+                auto espelhoRes = matriz::sync::SyncEngine::executarEspelhamentoAutomatico(safeThis->projeto_.projeto());
+                (void)espelhoRes;
+            }
+        }
 
         safeThis->executando_ = false;
         safeThis->estado_ = Estado::Done;
@@ -1956,20 +2550,12 @@ void BackupWorkspaceComponent::iniciarBackup() {
         // com sucesso" — dois sinais contraditórios na mesma tela.
         safeThis->progressoValor_ = 1.0;
 
-        // Auto-export CSV, XLS, BKM to backup root folder
-        if (!resultado.cancelado) {
-            safeThis->labelProgressoStatus_->setText("Exporting CSV, XLS, Dublin Core and checksums...", juce::dontSendNotification);
-            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Exporting CSV, XLS & checksums...");
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-            if (safeThis) {
-                safeThis->exportarCsvPara(destFolder);
-                safeThis->exportarXlsPara(destFolder);
-                safeThis->exportarDublinCorePara(destFolder);
-                safeThis->exportarChecksumsPara(destFolder);
-            }
-        }
-
         const bool houveFalha = safeThis->falhasCount_ > 0;
+        juce::String rotuloSugerido = safeThis->selectedDestinoIdx_ >= 0 && safeThis->selectedDestinoIdx_ < static_cast<int>(safeThis->destinosBackup_.size())
+            ? safeThis->destinosBackup_[static_cast<size_t>(safeThis->selectedDestinoIdx_)].rotulo
+            : (safeThis->googleDriveComoDestino_ ? juce::String("Google Drive") : destinoRaiz.getFileName());
+        safeThis->registrarDestinoBackup(destinoRaiz, rotuloSugerido, safeThis->copiadoCount_, resultado.pulados, safeThis->falhasCount_, resultado.cancelado);
+
         juce::String msgFinal = resultado.cancelado ? "Backup cancelled"
                                                    : (houveFalha ? "Backup finished with " + juce::String(safeThis->falhasCount_) + " errors"
                                                                  : "Backup completed: " + juce::String(safeThis->copiadoCount_) + " assets consolidated");
@@ -1989,7 +2575,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         finalMsg << safeThis->copiadoCount_ << " copied   |   "
                  << safeThis->verificadoCount_ << " verified";
         if (houveFalha) finalMsg << "   |   " << safeThis->falhasCount_ << " failed";
-        finalMsg << "\n" << destFolder.getFullPathName();
+        finalMsg << "\n" << destinoRaiz.getFullPathName();
         if (houveFalha) {
             finalMsg << "\n";
             int mostradas = 0;
@@ -2005,64 +2591,828 @@ void BackupWorkspaceComponent::iniciarBackup() {
         safeThis->labelTitulo_->setText(resultado.cancelado ? "Backup Cancelled" : "Backup Complete",
                                          juce::dontSendNotification);
         safeThis->btnStartBackup_->setVisible(false);
-        safeThis->btnCancel_->setVisible(false);
+        if (safeThis->btnCancelarExecucao_) safeThis->btnCancelarExecucao_->setVisible(false);
         safeThis->btnDone_->setVisible(true);
         safeThis->resized();
     });
 }
 
-// --- ListBoxModel implementation for Vaults list ---
+void BackupWorkspaceComponent::carregarDestinosBackup() {
+    destinosBackup_.clear();
+    projeto_.sincronizarBackupDestinoDeHistorico();
+
+    auto& db = projeto_.projeto().registro();
+    try {
+        auto stmt = db.prepare("SELECT id, rotulo, destino_path, papel, ativo FROM backup_destino WHERE ativo = 1 ORDER BY criado_em ASC");
+        while (stmt.step()) {
+            DestinoBackupItem d;
+            d.id = stmt.columnText(0);
+            d.rotulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            d.caminho = juce::String::fromUTF8(stmt.columnText(2).c_str());
+            d.papel = stmt.columnIsNull(3) ? "CLONE" : stmt.columnText(3);
+            d.online = juce::File(d.caminho).isDirectory();
+            d.ativo = (juce::File(d.caminho) == projeto_.projeto().raiz());
+            destinosBackup_.push_back(std::move(d));
+        }
+    } catch (...) {}
+
+    // Garante que a pasta oficial criada no início do projeto (DESTINATION Original) esteja sempre listada
+    juce::File raizProjeto = projeto_.projeto().raiz();
+    bool encontrouRaiz = false;
+    for (auto& d : destinosBackup_) {
+        if (juce::File(d.caminho) == raizProjeto) {
+            encontrouRaiz = true;
+            d.ativo = true;
+            if (projeto_.projeto().papel() == "ORIGINAL" || d.papel != "CLONE") {
+                d.papel = "ORIGINAL";
+            }
+            break;
+        }
+    }
+
+    if (!encontrouRaiz && raizProjeto.isDirectory()) {
+        DestinoBackupItem d;
+        d.id = projeto_.projeto().destinationId();
+        d.rotulo = raizProjeto.getFileName();
+        d.caminho = raizProjeto.getFullPathName();
+        d.papel = "ORIGINAL";
+        d.online = true;
+        d.ativo = true;
+        destinosBackup_.push_back(std::move(d));
+    }
+
+    // Remove entradas que são subpastas da raiz do projeto — ex: Media/ auto-registrada como clone.
+    destinosBackup_.erase(
+        std::remove_if(destinosBackup_.begin(), destinosBackup_.end(),
+            [&raizProjeto](const DestinoBackupItem& d) {
+                return juce::File(d.caminho).isAChildOf(raizProjeto);
+            }),
+        destinosBackup_.end());
+
+    // MAIN ORIGINAL aparece sempre em 1º lugar no topo da lista
+    std::stable_partition(destinosBackup_.begin(), destinosBackup_.end(),
+                          [](const DestinoBackupItem& d) { return d.papel == "ORIGINAL"; });
+
+    for (const auto& d : destinosBackup_) {
+        if (d.online) {
+            matriz::model::sanitizarEstruturaDestino(juce::File(d.caminho));
+        }
+    }
+
+    if (listVaults_) {
+        listVaults_->updateContent();
+        listVaults_->repaint();
+    }
+}
+
+void BackupWorkspaceComponent::adicionarOuAtivarDestino(const juce::File& pasta, const juce::String& rotuloSugerido) {
+    if (pasta == juce::File()) return;
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    auto dentroDeMediaOuProject = [](const juce::File& f) {
+        juce::File cur = f;
+        while (cur != juce::File() && cur != cur.getParentDirectory()) {
+            if (cur.getFileName().equalsIgnoreCase("Media") || cur.getFileName().equalsIgnoreCase("Project"))
+                return true;
+            cur = cur.getParentDirectory();
+        }
+        return false;
+    };
+
+    if (dentroDeMediaOuProject(pasta) || pasta.isAChildOf(projeto_.projeto().raiz()) || pasta.isAChildOf(projeto_.projeto().pasta())) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
+            isPt ? juce::String::fromUTF8("A pasta de destino não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
+                 : "The destination folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
+        return;
+    }
+
+    auto& db = projeto_.projeto().registro();
+    std::string destPath = pasta.getFullPathName().toStdString();
+    std::string rotulo = rotuloSugerido.trim().isNotEmpty() ? rotuloSugerido.toStdString() : pasta.getFileName().toStdString();
+    if (rotulo.empty()) rotulo = "Backup";
+
+    try {
+        auto stmtCheck = db.prepare("SELECT id, rotulo, ativo FROM backup_destino WHERE destino_path = ?");
+        stmtCheck.bind(1, matriz::db::Value::of(destPath));
+        if (stmtCheck.step()) {
+            int ativo = stmtCheck.columnInt(2);
+            if (ativo == 0) {
+                db.run("UPDATE backup_destino SET ativo = 1 WHERE destino_path = ?", {matriz::db::Value::of(destPath)});
+            }
+        } else {
+            std::string novoId = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+            db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, ultima_revisao_conhecida) VALUES (?, ?, ?, ?, 'CLONE', 1, ?, ?)",
+                   {matriz::db::Value::of(novoId), matriz::db::Value::of(novoId), matriz::db::Value::of(destPath),
+                    matriz::db::Value::of(rotulo), matriz::db::Value::of(agora),
+                    matriz::db::Value::of(static_cast<int64_t>(projeto_.projeto().revisao()))});
+
+            // Garante que destination.json exista no destino registrado
+            juce::File destJson = pasta.getChildFile("destination.json");
+            if (!destJson.existsAsFile()) {
+                matriz::model::DestinationInfo dInfo;
+                dInfo.formato = 1;
+                dInfo.destinationId = novoId;
+                dInfo.projetoId = projeto_.projeto().projetoId();
+                dInfo.papel = "CLONE";
+                dInfo.rotulo = rotulo;
+                dInfo.revisao = projeto_.projeto().revisao();
+                dInfo.ultimaEdicaoUtc = agora;
+                dInfo.criadoEm = agora;
+                dInfo.gravarEmArquivo(destJson);
+            }
+
+            // Log: Backup Version Created
+            matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
+            juce::StringArray details;
+            details.add("Label: " + juce::String::fromUTF8(rotulo.c_str()));
+            details.add("Path: " + pasta.getFullPathName());
+            pLog.appendEntry("Backup Version Created", details);
+        }
+    } catch (...) {}
+}
+
+void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
+    if (folder == juce::File()) return;
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    auto dentroDeMediaOuProject = [](const juce::File& f) {
+        juce::File cur = f;
+        while (cur != juce::File() && cur != cur.getParentDirectory()) {
+            if (cur.getFileName().equalsIgnoreCase("Media") || cur.getFileName().equalsIgnoreCase("Project"))
+                return true;
+            cur = cur.getParentDirectory();
+        }
+        return false;
+    };
+
+    if (dentroDeMediaOuProject(folder) || folder.isAChildOf(projeto_.projeto().raiz()) || folder.isAChildOf(projeto_.projeto().pasta())) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
+            isPt ? juce::String::fromUTF8("A pasta de destino não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
+                 : "The destination folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
+        return;
+    }
+
+    if (folder == projeto_.projeto().raiz() || folder == projeto_.projeto().pasta()) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
+            isPt ? juce::String::fromUTF8("A pasta de destino não pode ser a própria pasta do projeto atual.")
+                 : "The destination folder cannot be the active project's own folder.");
+        return;
+    }
+
+    juce::File destJsonFile = folder.getChildFile("destination.json");
+    if (destJsonFile.existsAsFile()) {
+        // Already a destination
+        auto destInfoOpt = matriz::model::DestinationInfo::lerDeArquivo(destJsonFile);
+        if (destInfoOpt.has_value()) {
+            if (destInfoOpt->destinationId == projeto_.projeto().destinationId()) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::InfoIcon,
+                    isPt ? juce::String::fromUTF8("Destino Existente") : juce::String("Existing Destination"),
+                    isPt ? juce::String::fromUTF8("Esta pasta já é o próprio DESTINATION ativo.")
+                         : "This folder is already the active DESTINATION.");
+                return;
+            }
+            // Link existing destination
+            auto& db = projeto_.projeto().registro();
+            try {
+                auto stmtCheck = db.prepare("SELECT id FROM backup_destino WHERE destino_path = ?");
+                stmtCheck.bind(1, matriz::db::Value::of(folder.getFullPathName().toStdString()));
+                if (stmtCheck.step()) {
+                    db.run(
+                        "UPDATE backup_destino SET ativo = 1, destination_id = ?, papel = ?, "
+                        "ultima_revisao_conhecida = ?, ultimo_visto_em = ?, ultima_edicao_conhecida = ? WHERE destino_path = ?",
+                        {matriz::db::Value::of(destInfoOpt->destinationId),
+                         matriz::db::Value::of(destInfoOpt->papel.empty() ? "CLONE" : destInfoOpt->papel),
+                         matriz::db::Value::of(static_cast<int64_t>(destInfoOpt->revisao)),
+                         matriz::db::Value::of(matriz::model::agoraIso8601()),
+                         matriz::db::Value::of(destInfoOpt->ultimaEdicaoUtc),
+                         matriz::db::Value::of(folder.getFullPathName().toStdString())});
+                } else {
+                    db.run(
+                        "INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+                        "ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
+                        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()),
+                         matriz::db::Value::of(destInfoOpt->destinationId),
+                         matriz::db::Value::of(folder.getFullPathName().toStdString()),
+                         matriz::db::Value::of(folder.getFileName().toStdString()),
+                         matriz::db::Value::of(destInfoOpt->papel.empty() ? "CLONE" : destInfoOpt->papel),
+                         matriz::db::Value::of(matriz::model::agoraIso8601()),
+                         matriz::db::Value::of(static_cast<int64_t>(destInfoOpt->revisao)),
+                         matriz::db::Value::of(matriz::model::agoraIso8601()),
+                         matriz::db::Value::of(destInfoOpt->ultimaEdicaoUtc)});
+                }
+            } catch (...) {}
+
+            carregarDestinosBackup();
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::InfoIcon,
+                isPt ? juce::String::fromUTF8("Destino Vinculado") : juce::String("Destination Linked"),
+                isPt ? juce::String::fromUTF8("Destino existente vinculado com sucesso ao projeto.")
+                     : "Existing destination linked successfully to the project.");
+            return;
+        }
+    }
+
+    if (folder.exists() && !folder.findChildFiles(juce::File::findFilesAndDirectories, false).isEmpty()) {
+        bool ok = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::WarningIcon,
+            isPt ? juce::String::fromUTF8("Pasta Não Vazia") : juce::String("Folder Not Empty"),
+            isPt ? juce::String::fromUTF8("A pasta selecionada não está vazia. Deseja criar o destino nesta pasta?")
+                 : "The selected folder is not empty. Do you want to create the destination here?",
+            isPt ? juce::String::fromUTF8("Continuar") : juce::String("Proceed"),
+            isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"));
+        if (!ok) return;
+    }
+
+    // Check disk space
+    juce::int64 espacoNecessario = 0;
+    for (auto& f : projeto_.projeto().pasta().findChildFiles(juce::File::findFiles, true)) {
+        espacoNecessario += f.getSize();
+    }
+    for (auto& f : projeto_.projeto().pastaMedia().findChildFiles(juce::File::findFiles, true)) {
+        espacoNecessario += f.getSize();
+    }
+    juce::int64 espacoLivre = folder.getBytesFreeOnVolume();
+    if (espacoLivre > 0 && espacoLivre < espacoNecessario) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            isPt ? juce::String::fromUTF8("Espaço Insuficiente") : juce::String("Insufficient Disk Space"),
+            isPt ? juce::String::fromUTF8("Espaço livre em disco insuficiente para criar o destino.\nNecessário: ") +
+                   juce::File::descriptionOfSizeInBytes(espacoNecessario) + juce::String::fromUTF8("\nDisponível: ") +
+                   juce::File::descriptionOfSizeInBytes(espacoLivre)
+                 : "Insufficient disk space to create destination.\nRequired: " +
+                   juce::File::descriptionOfSizeInBytes(espacoNecessario) + "\nAvailable: " +
+                   juce::File::descriptionOfSizeInBytes(espacoLivre));
+        return;
+    }
+
+    // Perform backup creation
+    ProgressoGlobal::obterInstancia().iniciarTarefa(
+        "clone",
+        isPt ? "Criando Destino de Backup" : "Creating Backup Destination",
+        100,
+        nullptr,
+        isPt ? "Copiando banco de dados e arquivos..." : "Copying database and project files...");
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    juce::File pastaProjeto = projeto_.projeto().pasta();
+    juce::File pastaMedia = projeto_.projeto().pastaMedia();
+    juce::File raizProjeto = projeto_.projeto().raiz();
+    std::string projId = projeto_.projeto().projetoId();
+    std::string destId = projeto_.projeto().destinationId();
+    int64_t projRev = static_cast<int64_t>(projeto_.projeto().revisao());
+
+    // Assegura que o projeto de origem esteja perfeitamente higienizado antes do clone
+    matriz::model::sanitizarEstruturaDestino(raizProjeto);
+
+    juce::Thread::launch([safeThis, folder, isPt, pastaProjeto, pastaMedia, raizProjeto, projId, destId, projRev]() {
+        try {
+            folder.createDirectory();
+            juce::File cloneProject = folder.getChildFile("Project");
+            cloneProject.createDirectory();
+            juce::File cloneMedia = folder.getChildFile("Media");
+            cloneMedia.createDirectory();
+
+            // Safe copy of databases
+            juce::File dbReg = cloneProject.getChildFile("registro.sqlite");
+            dbReg.deleteFile();
+            juce::File srcReg = pastaProjeto.getChildFile("registro.sqlite");
+            if (srcReg.existsAsFile()) {
+                matriz::db::Database srcDb(srcReg.getFullPathName().toStdString());
+                srcDb.copiarSeguroPara(dbReg.getFullPathName().toStdString());
+            }
+
+            juce::File dbInd = cloneProject.getChildFile("indice.sqlite");
+            dbInd.deleteFile();
+            juce::File srcInd = pastaProjeto.getChildFile("indice.sqlite");
+            if (srcInd.existsAsFile()) {
+                matriz::db::Database srcDbInd(srcInd.getFullPathName().toStdString());
+                srcDbInd.copiarSeguroPara(dbInd.getFullPathName().toStdString());
+            }
+
+            // Copy other project files
+            for (auto& child : pastaProjeto.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+                juce::String name = child.getFileName();
+                if (name == "registro.sqlite" || name == "indice.sqlite" ||
+                    name.startsWith("registro.sqlite-") || name.startsWith("indice.sqlite-") ||
+                    name == ".sync_em_andamento") {
+                    continue;
+                }
+                if (child.isDirectory()) {
+                    child.copyDirectoryTo(cloneProject.getChildFile(name));
+                } else {
+                    child.copyFileTo(cloneProject.getChildFile(name));
+                }
+            }
+
+            // Copy media files (only genuine media, never system/project folders)
+            if (pastaMedia.isDirectory()) {
+                for (auto& child : pastaMedia.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+                    juce::String name = child.getFileName();
+                    if (name == ".DS_Store" || name == "_lixeira" || name == "destination.json" ||
+                        name == "Project" || name == "log" || name == "relatorios" ||
+                        name == "catalogo" || name == "Media") {
+                        continue;
+                    }
+                    if (child.isDirectory()) {
+                        child.copyDirectoryTo(cloneMedia.getChildFile(name));
+                    } else {
+                        child.copyFileTo(cloneMedia.getChildFile(name));
+                    }
+                }
+            }
+
+            // Copy project file (.mtz / .bkm) to root and Project/ of clone
+            for (auto& fProj : raizProjeto.findChildFiles(juce::File::findFiles, false, "*.mtz;*.bkm")) {
+                fProj.copyFileTo(folder.getChildFile(fProj.getFileName()));
+                fProj.copyFileTo(cloneProject.getChildFile(fProj.getFileName()));
+            }
+
+            // Write destination.json in clone
+            matriz::model::DestinationInfo cloneInfo;
+            cloneInfo.destinationId = matriz::model::novoUuid();
+            cloneInfo.projetoId = projId;
+            cloneInfo.papel = "CLONE";
+            cloneInfo.rotulo = folder.getFileName().toStdString();
+            cloneInfo.revisao = projRev;
+            cloneInfo.ultimaEdicaoUtc = matriz::model::agoraIso8601();
+            cloneInfo.criadoEm = matriz::model::agoraIso8601();
+            cloneInfo.gravarEmArquivo(folder.getChildFile("destination.json"));
+
+            // Rigorously sanitize clone structure
+            matriz::model::sanitizarEstruturaDestino(folder);
+
+            // Register clone in active project's backup_destino
+            {
+                matriz::db::Database activeDb(pastaProjeto.getChildFile("registro.sqlite").getFullPathName().toStdString());
+                auto stmtCheck = activeDb.prepare("SELECT id FROM backup_destino WHERE destino_path = ?");
+                stmtCheck.bind(1, matriz::db::Value::of(folder.getFullPathName().toStdString()));
+                if (stmtCheck.step()) {
+                    activeDb.run(
+                        "UPDATE backup_destino SET ativo = 1, destination_id = ?, papel = 'CLONE', "
+                        "ultima_revisao_conhecida = ?, ultimo_visto_em = ?, ultima_edicao_conhecida = ? WHERE destino_path = ?",
+                        {matriz::db::Value::of(cloneInfo.destinationId),
+                         matriz::db::Value::of(static_cast<int64_t>(cloneInfo.revisao)),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(folder.getFullPathName().toStdString())});
+                } else {
+                    activeDb.run(
+                        "INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+                        "ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
+                        "VALUES (?, ?, ?, ?, 'CLONE', 1, ?, ?, ?, ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()),
+                         matriz::db::Value::of(cloneInfo.destinationId),
+                         matriz::db::Value::of(folder.getFullPathName().toStdString()),
+                         matriz::db::Value::of(folder.getFileName().toStdString()),
+                         matriz::db::Value::of(cloneInfo.criadoEm),
+                         matriz::db::Value::of(static_cast<int64_t>(cloneInfo.revisao)),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc)});
+                }
+            }
+
+            // Register active destination inside clone's backup_destino
+            try {
+                matriz::db::Database cloneDb(dbReg.getFullPathName().toStdString());
+                auto stmtCheck = cloneDb.prepare("SELECT id FROM backup_destino WHERE destino_path = ?");
+                stmtCheck.bind(1, matriz::db::Value::of(raizProjeto.getFullPathName().toStdString()));
+                if (stmtCheck.step()) {
+                    cloneDb.run(
+                        "UPDATE backup_destino SET ativo = 1, destination_id = ?, papel = 'ORIGINAL', "
+                        "ultima_revisao_conhecida = ?, ultimo_visto_em = ?, ultima_edicao_conhecida = ? WHERE destino_path = ?",
+                        {matriz::db::Value::of(destId),
+                         matriz::db::Value::of(static_cast<int64_t>(projRev)),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(raizProjeto.getFullPathName().toStdString())});
+                } else {
+                    cloneDb.run(
+                        "INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+                        "ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
+                        "VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()),
+                         matriz::db::Value::of(destId),
+                         matriz::db::Value::of(raizProjeto.getFullPathName().toStdString()),
+                         matriz::db::Value::of(raizProjeto.getFileName().toStdString()),
+                         matriz::db::Value::of(std::string("ORIGINAL")),
+                         matriz::db::Value::of(cloneInfo.criadoEm),
+                         matriz::db::Value::of(static_cast<int64_t>(projRev)),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc),
+                         matriz::db::Value::of(cloneInfo.ultimaEdicaoUtc)});
+                }
+            } catch (...) {}
+
+            // Logs
+            matriz::model::ProjectLog activeLog(pastaProjeto);
+            activeLog.appendEntry("Clone Created", {"Path: " + folder.getFullPathName(), "Destination ID: " + juce::String(cloneInfo.destinationId)});
+
+            matriz::model::ProjectLog cloneLog(cloneProject);
+            cloneLog.appendEntry("Clone Initialized", {"Origin: " + raizProjeto.getFullPathName()});
+
+            juce::MessageManager::callAsync([safeThis, folderPath = folder.getFullPathName(), isPt]() {
+                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Destino criado com sucesso." : "Destination created successfully.");
+                if (safeThis) {
+                    safeThis->carregarDestinosBackup();
+                    for (int i = 0; i < static_cast<int>(safeThis->destinosBackup_.size()); ++i) {
+                        if (safeThis->destinosBackup_[static_cast<size_t>(i)].caminho == folderPath) {
+                            safeThis->selectedDestinoIdx_ = i;
+                            if (safeThis->listVaults_) safeThis->listVaults_->selectRow(i);
+                            safeThis->resolvedDestFolder_ = juce::File(folderPath);
+                            safeThis->customDestFolder_ = safeThis->resolvedDestFolder_;
+                            safeThis->dispararScanDestino(true);
+                            break;
+                        }
+                    }
+                }
+
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::InfoIcon,
+                    isPt ? "Destino Criado" : "Destination Created",
+                    isPt ? juce::String::fromUTF8("Novo destino de backup criado com sucesso em:\n") + folderPath
+                         : "New backup destination created successfully at:\n" + folderPath);
+            });
+        } catch (const std::exception& e) {
+            juce::String erroMsg(e.what());
+            juce::MessageManager::callAsync([isPt, erroMsg]() {
+                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Erro ao criar destino." : "Error creating destination.");
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::WarningIcon,
+                    isPt ? "Erro ao Criar Destino" : "Destination Creation Error",
+                    erroMsg);
+            });
+        }
+    });
+}
+
+void BackupWorkspaceComponent::desvincularDestino(const DestinoBackupItem& dest) {
+    if (dest.papel == "ORIGINAL") return;
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+
+    juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon,
+        matriz::i18n::t("backup.desvincular"),
+        matriz::i18n::t("backup.desvincular_confirmacao"),
+        matriz::i18n::t("backup.desvincular"),
+        isPt ? "Cancelar" : "Cancel",
+        nullptr,
+        juce::ModalCallbackFunction::create([this, dest](int result) {
+            if (result != 1) return;
+
+            auto& db = projeto_.projeto().registro();
+            if (dest.id.empty()) {
+                db.run("UPDATE backup_destino SET ativo = 0 WHERE destino_path = ?",
+                       {matriz::db::Value::of(dest.caminho.toStdString())});
+            } else {
+                db.run("UPDATE backup_destino SET ativo = 0 WHERE id = ?",
+                       {matriz::db::Value::of(dest.id)});
+            }
+
+            matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
+            juce::StringArray details;
+            details.add("Label: " + dest.rotulo);
+            details.add("Path: " + dest.caminho);
+            pLog.appendEntry("Backup Version Unlinked", details);
+
+            carregarDestinosBackup();
+            carregarDestinoAtivoInicial();
+        }));
+}
+
+// --- ListBoxModel implementation for Destinations list ---
 
 int BackupWorkspaceComponent::getNumRows() {
-    return static_cast<int>(vaults_.size());
+    return static_cast<int>(destinosBackup_.size());
 }
 
 void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) {
-    if (rowNumber >= static_cast<int>(vaults_.size())) return;
+    if (rowNumber >= static_cast<int>(destinosBackup_.size())) return;
     const auto& tk = tema();
-    const auto& vault = vaults_[static_cast<size_t>(rowNumber)];
+    const auto& dest = destinosBackup_[static_cast<size_t>(rowNumber)];
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     if (rowIsSelected) {
-        g.fillAll(tk.acento.withAlpha(0.15f));
+        g.fillAll(tk.acento.withAlpha(0.18f));
         g.setColour(tk.bordaFoco);
         g.drawRect(0, 0, width, height, 1);
     } else {
         g.fillAll(rowNumber % 2 == 0 ? tk.painel : tk.painelAlt);
     }
 
-    g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-    g.drawText(vault.nome, 12, 2, 130, height - 4, juce::Justification::centredLeft, true);
+    int curX = 8;
+    bool isOriginal = (dest.papel == "ORIGINAL");
 
-    g.setColour(tk.textoSecundario);
-    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-    int pathX = 146;
-    int pathW = std::max(40, width - pathX - 86);
-    g.drawText(vault.localizacao, pathX, 2, pathW, height - 4, juce::Justification::centredLeft, true);
+    // Papel tag [MAIN ORIGINAL] or [DESTINATION]
+    int tagW = isOriginal ? 104 : (isPt ? 72 : 88);
+    juce::Rectangle<int> papelArea(curX, (height - 20) / 2, tagW, 20);
+    if (isOriginal) {
+        g.setColour(juce::Colours::black);
+        g.fillRoundedRectangle(papelArea.toFloat(), 4.0f);
+        g.setColour(juce::Colours::white);
+        g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.2f);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText("MAIN ORIGINAL", papelArea, juce::Justification::centred, true);
+    } else {
+        g.setColour(tk.painel.withAlpha(0.6f));
+        g.fillRoundedRectangle(papelArea.toFloat(), 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.0f);
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText(isPt ? "DESTINO" : "DESTINATION", papelArea, juce::Justification::centred, true);
+    }
+    curX += tagW + 10;
 
-    juce::Rectangle<int> statusArea(width - 82, (height - 18) / 2, 74, 18);
-    g.setColour(vault.online ? tk.estadoQcOk : tk.textoTerciario);
+    // Online/Offline status badge on the far right
+    int statusW = 68;
+    juce::Rectangle<int> statusArea(width - statusW - 8, (height - 18) / 2, statusW, 18);
+    g.setColour(dest.online ? tk.estadoQcOk.withAlpha(0.85f) : tk.textoTerciario.withAlpha(0.5f));
     g.fillRoundedRectangle(statusArea.toFloat(), 4.0f);
-    g.setColour(tk.textoSobreAcento);
-    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-    g.drawText(vault.online ? "ONLINE" : "OFFLINE", statusArea, juce::Justification::centred, true);
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+    g.drawText(dest.online ? "ONLINE" : "OFFLINE", statusArea, juce::Justification::centred, true);
+
+    // Cloud icon on right side before status area, if cloud destination
+    bool ehNuvem = ehDestinoNuvem(dest.caminho, dest.rotulo, dest.papel);
+    int labelRight = statusArea.getX() - 10;
+    if (ehNuvem) {
+        labelRight -= 24;
+        juce::Rectangle<float> cloudRect(static_cast<float>(labelRight + 4), static_cast<float>(height - 12) / 2.0f, 16.0f, 12.0f);
+        juce::Colour cloudCol = (tk.fundo.getBrightness() > 0.5f) ? juce::Colour(0xff0284c7) : juce::Colour(0xff38bdf8);
+        desenharIconeNuvem(g, cloudRect, cloudCol);
+    }
+
+    // Volume name gets all the breathing room between tag and status badge
+    int labelW = std::max(20, labelRight - curX);
+    g.setColour(isOriginal ? tk.textoPrimario : tk.textoPrimario.withAlpha(0.9f));
+    auto fontRotulo = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo - 0.5f, juce::Font::bold));
+    g.setFont(fontRotulo);
+    g.drawText(dest.rotulo, curX, 0, labelW, height, juce::Justification::centredLeft, true);
 }
 
-void BackupWorkspaceComponent::listBoxItemClicked(int rowNumber, const juce::MouseEvent&) {
-    if (rowNumber >= 0 && rowNumber < static_cast<int>(vaults_.size())) {
-        selectedVaultIdx_ = rowNumber;
-        juce::String loc = vaults_[static_cast<size_t>(rowNumber)].localizacao;
-        resolvedDestFolder_ = juce::File(loc);
-        labelDestInfo_->setText("Target: " + loc, juce::dontSendNotification);
-        labelDestInfo_->setTooltip("Target: " + loc);
-        atualizarResumo();
+void BackupWorkspaceComponent::listBoxItemClicked(int rowNumber, const juce::MouseEvent& e) {
+    if (rowNumber >= 0 && rowNumber < static_cast<int>(destinosBackup_.size())) {
+        selectedDestinoIdx_ = rowNumber;
+        if (listVaults_) listVaults_->selectRow(rowNumber);
+
+        const auto& dest = destinosBackup_[static_cast<size_t>(rowNumber)];
+        juce::String loc = dest.caminho;
+        resolvedDestFolder_ = matriz::model::normalizarParaRaizDestino(juce::File(loc));
+        customDestFolder_ = resolvedDestFolder_;
+        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+        juce::String tipoStr = (dest.papel == "ORIGINAL")
+            ? (isPt ? juce::String::fromUTF8("[MAIN ORIGINAL - Destino Oficial]") : "[MAIN ORIGINAL - Official Destination]")
+            : (isPt ? juce::String::fromUTF8("[DESTINO - Cópia de Backup]") : "[DESTINATION - Backup Copy]");
+        juce::String textoInfo = (isPt ? juce::String::fromUTF8("Selecionado: ") : "Selected: ") + loc + "  " + tipoStr;
+        labelDestInfo_->setText(textoInfo, juce::dontSendNotification);
+        labelDestInfo_->setTooltip(textoInfo);
+        dispararScanDestino(true);
+
+        if (e.mods.isPopupMenu()) {
+            juce::PopupMenu menu;
+            menu.addSectionHeader(dest.caminho);
+            juce::String itemTxt = isPt ? juce::String::fromUTF8("Revelar no Finder") : "Reveal in Finder";
+            juce::File f(dest.caminho);
+            menu.addItem(1, itemTxt, dest.online && f.exists());
+
+            juce::String copyTxt = isPt ? juce::String::fromUTF8("Copiar Caminho") : "Copy Path";
+            menu.addItem(3, copyTxt, true);
+
+            if (dest.papel != "ORIGINAL") {
+                menu.addSeparator();
+                juce::String unlinkTxt = isPt ? juce::String::fromUTF8("Desvincular do Backup...")
+                                              : "Unlink from Backup...";
+                menu.addItem(2, unlinkTxt, true);
+            }
+
+            juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, dest](int res) {
+                if (!safeThis) return;
+                if (res == 1) {
+                    juce::File alvo(dest.caminho);
+                    if (alvo.exists()) {
+                        alvo.revealToUser();
+                    }
+                } else if (res == 2) {
+                    safeThis->desvincularDestino(dest);
+                } else if (res == 3) {
+                    juce::SystemClipboard::copyTextToClipboard(dest.caminho);
+                }
+            });
+        }
     }
+}
+
+static juce::String formatarEspacoLivre(juce::int64 bytes) {
+    if (bytes <= 0) return "0 B";
+    if (bytes < 1024) return juce::String(bytes) + " B";
+    if (bytes < 1024 * 1024) return juce::String(bytes / 1024.0, 1) + " KB";
+    if (bytes < 1024 * 1024 * 1024) return juce::String(bytes / (1024.0 * 1024.0), 1) + " MB";
+    if (bytes < 1024LL * 1024LL * 1024LL * 1024LL) return juce::String(bytes / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
+    return juce::String(bytes / (1024.0 * 1024.0 * 1024.0 * 1024.0), 2) + " TB";
+}
+
+juce::String BackupWorkspaceComponent::getTooltipForRow(int rowNumber) {
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(destinosBackup_.size())) return {};
+    const auto& dest = destinosBackup_[static_cast<size_t>(rowNumber)];
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+
+    juce::File caminhoF(dest.caminho);
+    auto infoVol = matriz::vault::descreverVolume(caminhoF);
+    juce::String nomeVolume = infoVol.nome.empty()
+        ? (infoVol.hardware.volumeLabel.empty() ? caminhoF.getFileName() : juce::String(infoVol.hardware.volumeLabel))
+        : juce::String(infoVol.nome);
+    if (nomeVolume.isEmpty()) nomeVolume = "Macintosh HD";
+
+    juce::String caminhoCompleto = dest.caminho;
+    if (caminhoCompleto.isEmpty()) caminhoCompleto = caminhoF.getFullPathName();
+
+    juce::int64 freeBytes = caminhoF.getBytesFreeOnVolume();
+    juce::String freeSpaceStr = formatarEspacoLivre(freeBytes);
+
+    if (isPt) {
+        return juce::String::fromUTF8("Nome do Volume: ") + nomeVolume + "\n" +
+               juce::String::fromUTF8("Espaço Livre: ") + freeSpaceStr + "\n" +
+               juce::String::fromUTF8("Caminho Completo: ") + caminhoCompleto;
+    }
+    return "Volume Name: " + nomeVolume + "\n" +
+           "Free Space: " + freeSpaceStr + "\n" +
+           "Full Path: " + caminhoCompleto;
+}
+
+void BackupWorkspaceComponent::carregarDestinoAtivoInicial() {
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    resolvedDestFolder_ = projeto_.projeto().raiz();
+    customDestFolder_ = resolvedDestFolder_;
+    selectedDestinoIdx_ = -1;
+
+    for (size_t i = 0; i < destinosBackup_.size(); ++i) {
+        if (destinosBackup_[i].caminho == projeto_.projeto().raiz().getFullPathName() ||
+            (selectedDestinoIdx_ < 0 && destinosBackup_[i].papel == "ORIGINAL")) {
+            selectedDestinoIdx_ = static_cast<int>(i);
+            if (destinosBackup_[i].caminho == projeto_.projeto().raiz().getFullPathName()) break;
+        }
+    }
+    if (selectedDestinoIdx_ < 0 && !destinosBackup_.empty()) {
+        selectedDestinoIdx_ = 0;
+    }
+
+    if (selectedDestinoIdx_ >= 0 && selectedDestinoIdx_ < static_cast<int>(destinosBackup_.size())) {
+        if (listVaults_) listVaults_->selectRow(selectedDestinoIdx_);
+        const auto& dest = destinosBackup_[static_cast<size_t>(selectedDestinoIdx_)];
+        resolvedDestFolder_ = matriz::model::normalizarParaRaizDestino(juce::File(dest.caminho));
+        customDestFolder_ = resolvedDestFolder_;
+        if (labelDestInfo_) {
+            juce::String tipoStr = (dest.papel == "ORIGINAL")
+                ? (isPt ? juce::String::fromUTF8("[MAIN ORIGINAL - Destino Oficial]") : "[MAIN ORIGINAL - Official Destination]")
+                : (isPt ? juce::String::fromUTF8("[DESTINO - Cópia de Backup]") : "[DESTINATION - Backup Copy]");
+            juce::String activeInfo = (isPt ? juce::String::fromUTF8("Destino Ativo: ") : "Active Destination: ")
+                                    + dest.caminho + "  " + tipoStr;
+            labelDestInfo_->setText(activeInfo, juce::dontSendNotification);
+            labelDestInfo_->setTooltip(activeInfo);
+        }
+    }
+
+    dispararScanDestino(false);
+    atualizarResumo();
+}
+
+void BackupWorkspaceComponent::dispararScanDestino(bool forcado) {
+    (void)forcado;
+    bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    if (isCatalogMode) {
+        atualizarResumo();
+        return;
+    }
+
+    juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(resolvedDestFolder_);
+    juce::File targetDir = destinoRaiz.getChildFile("Media");
+    if (!targetDir.isDirectory() || plano_.itens.empty()) {
+        scanResult_.itensGrid.clear();
+        scanResult_.orfaos.clear();
+        scanResult_.totalVerdes = 0;
+        scanResult_.totalVermelhos = static_cast<int>(plano_.itens.size());
+        scanResult_.totalOrfaos = 0;
+        for (const auto& ip : plano_.itens) {
+            matriz::consolidacao::ItemStatusBackup isb;
+            isb.itemId = ip.itemId;
+            isb.arquivoId = ip.arquivoId;
+            isb.codigoAcervo = ip.codigoAcervo;
+            isb.nomeArquivo = ip.nomeOriginal;
+            isb.caminhoRelativoDestino = ip.caminhoRelativoDestino;
+            isb.tamanhoBytes = ip.tamanhoBytes;
+            isb.status = matriz::consolidacao::StatusArquivoBackup::Vermelho;
+            scanResult_.itensGrid.push_back(std::move(isb));
+        }
+        if (listPrevia_) {
+            listPrevia_->definirScan(scanResult_);
+            listPrevia_->definirOrfaos(scanResult_.orfaos, targetDir);
+        }
+        atualizarResumo();
+        return;
+    }
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    BackupScanProgressDialog::showModal(
+        projeto_.projeto().registro(),
+        projeto_.projeto().pasta(),
+        targetDir,
+        plano_,
+        [safeThis, targetDir](const matriz::consolidacao::ResultadoScanBackup& result) {
+            if (!safeThis) return;
+            safeThis->scanResult_ = result;
+            safeThis->scanRealizado_ = true;
+            if (safeThis->listPrevia_) {
+                safeThis->listPrevia_->definirScan(result);
+                safeThis->listPrevia_->definirOrfaos(result.orfaos, targetDir);
+            }
+            safeThis->atualizarResumo();
+        }
+    );
+}
+
+void BackupWorkspaceComponent::executarBackupAcao(bool forcarOverride) {
+    if (toggleForcarRebackup_)
+        toggleForcarRebackup_->setToggleState(forcarOverride, juce::dontSendNotification);
+    iniciarBackup();
+}
+
+void BackupWorkspaceComponent::iniciarSyncComOutroDestino() {
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    SyncDestinationDialog::abrirModal(projeto_.projeto(), [safeThis] {
+        if (safeThis) safeThis->recarregar();
+    });
+}
+
+void BackupWorkspaceComponent::registrarDestinoBackup(const juce::File& destFolder, const juce::String& rotuloSugerido,
+                                                      int copiado, int pulados, int falhas, bool cancelado)
+{
+    if (cancelado) return;
+
+    adicionarOuAtivarDestino(destFolder, rotuloSugerido);
+
+    std::string rotulo = rotuloSugerido.trim().isNotEmpty() ? rotuloSugerido.toStdString() : destFolder.getFileName().toStdString();
+    if (rotulo.empty()) rotulo = "Backup";
+
+    // Log: Backup Completed
+    matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
+    juce::StringArray details;
+    details.add("Destination: " + juce::String::fromUTF8(rotulo.c_str()) + " (" + destFolder.getFullPathName() + ")");
+    details.add(toggleForcarRebackup_ && toggleForcarRebackup_->getToggleState() ? "Mode: Force Override" : "Mode: Incremental");
+    details.add("Copied: " + juce::String(copiado));
+    details.add("Skipped: " + juce::String(pulados));
+    details.add("Failures: " + juce::String(falhas));
+    pLog.appendEntry("Backup Completed", details);
+
+    // Register in Device Usage Log (persists to DB and mirrors to destination external drive)
+    try {
+        auto& db = projeto_.projeto().registro();
+        std::string vId = matriz::vault::obterOuCriarVaultParaDestino(db, destFolder, projeto_.projeto().projetoId());
+
+        juce::StringArray arquivosCopiados;
+        juce::int64 bytesCopiados = 0;
+        for (const auto& item : scanResult_.itensGrid) {
+            arquivosCopiados.add(item.caminhoRelativoDestino);
+            bytesCopiados += item.tamanhoBytes;
+        }
+
+        juce::String detalhesUso = "Backup: " + juce::String(copiado) + " copied, "
+                                 + juce::String(pulados) + " skipped, "
+                                 + juce::String(falhas) + " failed";
+
+        matriz::vault::registrarUsoDoDispositivo(
+            db,
+            projeto_.projeto().pasta(),
+            vId,
+            "BACKUP",
+            copiado,
+            bytesCopiados,
+            arquivosCopiados,
+            detalhesUso.toStdString());
+    } catch (...) {}
+
+    // Update scanResult_ in memory
+    for (auto& isb : scanResult_.itensGrid) {
+        isb.status = matriz::consolidacao::StatusArquivoBackup::Verde;
+    }
+    scanResult_.totalVerdes = static_cast<int>(scanResult_.itensGrid.size());
+    scanResult_.totalVermelhos = 0;
+    if (listPrevia_) listPrevia_->definirScan(scanResult_);
 }
 
 void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
     if (configViewport_) configViewport_->setVisible(mostrar);
     if (listPreviaViewport_) listPreviaViewport_->setVisible(mostrar);
     if (labelResumo_) labelResumo_->setVisible(mostrar);
+    if (barraLegenda_) barraLegenda_->setVisible(mostrar && projeto_.projeto().modo() != matriz::model::Modo::Catalogo);
     if (comboColecoes_) comboColecoes_->setVisible(mostrar && comboSource_->getSelectedId() == 5);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setVisible(mostrar && comboOrg_->getSelectedId() == 5);
 }
@@ -2073,8 +3423,7 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
     g.fillAll(bg);
 
-    // Cabeçalho e rodapé como faixas, separados por fio de 1px: dá âncora
-    // visual fixa pro olho e impede que o conteúdo pareça flutuar solto.
+    // Cabeçalho e rodapé como faixas, separados por fio de 1px
     g.setColour(tk.borda);
     if (!faixaCabecalho_.isEmpty())
         g.fillRect(faixaCabecalho_.getX(), faixaCabecalho_.getBottom() - 1, faixaCabecalho_.getWidth(), 1);
@@ -2109,9 +3458,10 @@ void BackupWorkspaceComponent::resized() {
     // ---- Cabeçalho ----
     faixaCabecalho_ = area.removeFromTop(64);
     if (labelTitulo_) {
-        labelTitulo_->setBounds(faixaCabecalho_.reduced(tk.espacoGrande * 2, 0)
-                                    .withTrimmedBottom(tk.espacoMedio)
-                                    .removeFromBottom(34));
+        auto rCabecalho = faixaCabecalho_.reduced(tk.espacoGrande * 2, 0)
+                                         .withTrimmedBottom(tk.espacoMedio)
+                                         .removeFromBottom(34);
+        labelTitulo_->setBounds(rCabecalho);
     }
 
     // ---- Rodapé ----
@@ -2120,30 +3470,52 @@ void BackupWorkspaceComponent::resized() {
     const int alturaBotao = 40;
     botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
 
+    bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    bool temItens = !plano_.itens.empty();
+    if (isCatalogMode) {
+        auto colecoes = projeto_.listarColecoesLinkadas();
+        for (const auto& c : colecoes) {
+            if (c.valido && c.totalAssets > 0) {
+                temItens = true;
+                break;
+            }
+        }
+    }
+
     if (estado_ == Estado::Done) {
         btnDone_->setBounds(botoes.removeFromRight(110));
         btnDone_->setVisible(true);
         btnStartBackup_->setVisible(false);
-        btnCancel_->setVisible(false);
+        if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
+        if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
+        if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
         if (btnOpenCatalog_) {
-            btnOpenCatalog_->setBounds(botoes.removeFromRight(190));
+            btnOpenCatalog_->setBounds(botoes.removeFromRight(200));
             btnOpenCatalog_->setVisible(true);
         }
     } else {
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
         btnDone_->setVisible(false);
-        btnCancel_->setBounds(botoes.removeFromRight(110));
-        btnCancel_->setVisible(true);
-        botoes.removeFromRight(tk.espacoPainel);
+        if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         btnStartBackup_->setBounds(botoes.removeFromRight(170));
         btnStartBackup_->setVisible(true);
+        botoes.removeFromRight(tk.espacoPainel);
+        if (btnSyncDestino_) {
+            btnSyncDestino_->setBounds(botoes.removeFromRight(190));
+            btnSyncDestino_->setVisible(true);
+        }
+        botoes.removeFromRight(tk.espacoPainel);
+        if (btnPublishHtml_) {
+            btnPublishHtml_->setBounds(botoes.removeFromRight(160));
+            btnPublishHtml_->setVisible(true);
+            btnPublishHtml_->setEnabled(temItens);
+        }
     }
 
-    bool temItens = !plano_.itens.empty();
     if (btnExportJanela_) {
         botoes.removeFromRight(tk.espacoPainel);
-        btnExportJanela_->setBounds(botoes.removeFromRight(180));
+        btnExportJanela_->setBounds(botoes.removeFromRight(170));
         btnExportJanela_->setVisible(true);
         btnExportJanela_->setEnabled(temItens);
     }
@@ -2163,7 +3535,15 @@ void BackupWorkspaceComponent::resized() {
 
         if (barraProgresso_->isVisible()) {
             barraProgresso_->setBounds(dentro.removeFromTop(24));
-            dentro.removeFromTop(tk.espacoGrande);
+            dentro.removeFromTop(tk.espacoMedio);
+        }
+
+        if (estado_ == Estado::Running && btnCancelarExecucao_) {
+            btnCancelarExecucao_->setBounds(dentro.removeFromBottom(28).withSizeKeepingCentre(120, 28));
+            btnCancelarExecucao_->setVisible(true);
+            dentro.removeFromBottom(tk.espacoPequeno);
+        } else if (btnCancelarExecucao_) {
+            btnCancelarExecucao_->setVisible(false);
         }
 
         labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
@@ -2188,20 +3568,39 @@ void BackupWorkspaceComponent::resized() {
         configContainer_->resized();
     }
 
-    // PREVIEW — cartão único ocupando a coluna inteira, resumo no topo.
+    // PREVIEW — cartão único ocupando a coluna inteira com lista unificada de arquivos
     cartaoPrevia_ = colunaPrevia;
     const int padCartao = tk.espacoPainel + 2;
     const int alturaCabecalhoSecao = 26;
     auto dentroPrevia = colunaPrevia.reduced(padCartao, padCartao);
+
     labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     labelResumo_->setJustificationType(juce::Justification::centredLeft);
-    labelResumo_->setBounds(dentroPrevia.removeFromTop(alturaCabecalhoSecao + 4));
-    dentroPrevia.removeFromTop(tk.espacoMedio);
+    labelResumo_->setBounds(dentroPrevia.removeFromTop(alturaCabecalhoSecao));
+
+    dentroPrevia.removeFromTop(4);
+
+    if (barraLegenda_) {
+        barraLegenda_->setBounds(dentroPrevia.removeFromTop(20));
+        barraLegenda_->setVisible(!isCatalogMode);
+    }
+    dentroPrevia.removeFromTop(tk.espacoPequeno);
+
     listPreviaViewport_->setBounds(dentroPrevia);
     if (listPrevia_) listPrevia_->setSize(dentroPrevia.getWidth(), listPrevia_->getHeight());
 
     overlay_.setBounds(getLocalBounds());
+}
+
+void BackupWorkspaceComponent::recarregar() {
+    carregarOpcoesContent();
+    carregarColecoesBackupCatalogo();
+    carregarDestinosBackup();
+    carregarDestinoAtivoInicial();
+    atualizarResumo();
+    dispararScanDestino(false);
+    repaint();
 }
 
 } // namespace matriz::ui

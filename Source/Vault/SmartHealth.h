@@ -41,6 +41,9 @@ SmartHealthReport obterSaudeSmartNativoMac(const juce::File& path, const std::st
 // Dispatches smartctl command if present, with seamless native IOKit/DiskArbitration fallback
 SmartHealthReport consultarSaudeSmart(const std::string& bsdDeviceNode, const juce::File& mountPoint);
 
+// Loads the latest persistent SMART reading from the database without querying hardware
+SmartHealthReport obterUltimoLog(matriz::db::Database& db, const std::string& vaultId);
+
 // Loads the latest persistent SMART reading from the database, or runs an on-demand scan if none exists
 SmartHealthReport obterUltimoLogOuConsultar(matriz::db::Database& db, const std::string& vaultId,
                                            const std::string& bsdDeviceNode, const juce::File& mountPoint);

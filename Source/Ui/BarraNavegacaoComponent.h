@@ -42,6 +42,7 @@ public:
 
 private:
     void reconstruirTabs();
+    juce::String obterTextoAjuda(Tab tab) const;
 
     struct ItemTab {
         Tab tab;
@@ -59,6 +60,7 @@ private:
     bool isCatalog_ = false;
     bool hasParentCatalog_ = false;
 
+    std::unique_ptr<juce::TextButton> botaoAjuda_;
     std::unique_ptr<juce::TextButton> botaoFechar_;
 };
 

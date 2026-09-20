@@ -5,6 +5,7 @@
 
 #include "OriginalSourceMedium.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
 
@@ -116,6 +117,181 @@ static const std::vector<MediumCategoryGroup> kMediumVocab = {
     }
 };
 
+static const std::pair<const char*, const char*> kMediumTranslations[] = {
+    {"None / Unknown", "Nenhum / Desconhecido"},
+    {"Native Digital", "Digital Nativo"},
+    {"Other", "Outro"},
+    // Solid State & Flash
+    {"SD Card", "Cartão SD"},
+    {"microSD Card", "Cartão microSD"},
+    {"CF Card (CompactFlash)", "Cartão CF (CompactFlash)"},
+    {"CFexpress Card", "Cartão CFexpress"},
+    {"CFast Card", "Cartão CFast"},
+    {"XQD Card", "Cartão XQD"},
+    {"SxS Card", "Cartão SxS"},
+    {"P2 Card", "Cartão P2"},
+    {"Flash Drive / USB Drive", "Pendrive / Unidade USB"},
+    {"External SSD / Portable SSD", "SSD Externo / Portátil"},
+    {"External Hard Drive (HDD)", "Disco Rígido Externo (HDD)"},
+    {"Internal Storage / Smartphone", "Armazenamento Interno / Celular"},
+    // Audio Tape / Disc
+    {"1/4\" Tape", "Fita 1/4\""},
+    {"1/2\" Tape", "Fita 1/2\""},
+    {"1\" Tape", "Fita 1\""},
+    {"2\" Tape", "Fita 2\""},
+    {"Cassette Tape", "Fita Cassete"},
+    {"8-Track Cartridge", "Cartucho 8 Pistas"},
+    {"DAT", "DAT (Fita de Áudio Digital)"},
+    {"ADAT", "ADAT"},
+    {"DTRS / Hi8 Digital Audio Tape", "Fita DTRS / Hi8 Digital Audio"},
+    {"MiniDisc (MD)", "MiniDisc (MD)"},
+    {"Audio CD / CD-R", "CD de Áudio / CD-R"},
+    {"12\" Vinyl", "Disco de Vinil 12\""},
+    {"10\" Vinyl", "Disco de Vinil 10\""},
+    {"7\" Vinyl", "Disco de Vinil 7\" (Compacto)"},
+    {"Lacquer", "Acetato / Disco Master"},
+    {"Shellac", "Disco de Goma-Laca (78 RPM)"},
+    // Video Tape
+    {"VHS", "Fita VHS"},
+    {"VHS-C", "Fita VHS-C"},
+    {"S-VHS", "Fita S-VHS"},
+    {"Betamax", "Fita Betamax"},
+    {"Betacam / Betacam SP", "Fita Betacam / Betacam SP"},
+    {"U-matic", "Fita U-matic"},
+    {"1\" Type B / 1\" Type C", "Fita 1\" Tipo B / Tipo C"},
+    {"Video8", "Fita Video8"},
+    {"Hi8", "Fita Hi8"},
+    {"MiniDV", "Fita MiniDV"},
+    {"DV / DVCAM", "Fita DV / DVCAM"},
+    {"DVCPRO / DVCPRO HD", "Fita DVCPRO / DVCPRO HD"},
+    {"HDV", "Fita HDV"},
+    {"Digital8", "Fita Digital8"},
+    {"HDCAM / HDCAM SR", "Fita HDCAM / HDCAM SR"},
+    {"Digital Betacam", "Fita Betacam Digital"},
+    // Optical
+    {"Audio CD / CD-R / CD-RW", "CD de Áudio / CD-R / CD-RW"},
+    {"DVD / DVD-R / DVD-Video", "DVD / DVD-R / DVD-Vídeo"},
+    {"Blu-ray Disc (BD / BD-R)", "Disco Blu-ray (BD / BD-R)"},
+    {"LaserDisc", "LaserDisc"},
+    // Film motion
+    {"35mm Film", "Película 35mm"},
+    {"16mm Film", "Película 16mm"},
+    {"Super 16 Film", "Película Super 16"},
+    {"8mm Film", "Película 8mm"},
+    {"Super 8 Film", "Película Super 8"},
+    // Still
+    {"35mm Film (Still)", "Filme Fotográfico 35mm"},
+    {"120 / 220 Film", "Filme Médio Formato 120 / 220"},
+    {"4x5 / 5x7 / 8x10 Large Format Film", "Filme Grande Formato (4x5, 5x7, 8x10)"},
+    {"Instant Film", "Filme Instantâneo (Polaroid)"},
+    {"Glass Plate / Glass Negative", "Placa de Vidro / Negativo de Vidro"},
+    {"Photographic Print", "Cópia Fotográfica / Foto em Papel"},
+    // Document
+    {"Physical Paper / Document", "Papel Físico / Documento"},
+    {"Microfilm / Microfiche", "Microfilme / Microficha"}
+};
+
+static const std::pair<const char*, const char*> kGroupTranslations[] = {
+    {"SOLID STATE & FLASH MEMORY (PHOTO / VIDEO / AUDIO)", "MEMÓRIA FLASH E ESTADO SÓLIDO (FOTO / VÍDEO / ÁUDIO)"},
+    {"AUDIO (ANALOG & DIGITAL TAPE / DISC)", "ÁUDIO (FITA ANALÓGICA E DIGITAL / DISCO)"},
+    {"VIDEO (ANALOG & DIGITAL TAPE)", "VÍDEO (FITA ANALÓGICA E DIGITAL)"},
+    {"OPTICAL DISC (AUDIO / VIDEO / DATA)", "DISCO ÓPTICO (ÁUDIO / VÍDEO / DADOS)"},
+    {"FILM (MOTION PICTURE)", "FILME (CINEMATOGRÁFICO)"},
+    {"IMAGE (STILL FILM & PRINTS)", "IMAGEM (FILME FOTOGRÁFICO E CÓPIAS)"},
+    {"DOCUMENT", "DOCUMENTO"},
+    {"UNIVERSAL & BORN-DIGITAL", "UNIVERSAL E NATIVO DIGITAL"}
+};
+
+juce::String OriginalSourceMediumVocabulary::translateMedium(const juce::String& name, bool isPt) {
+    if (!isPt) return name;
+    for (const auto& p : kMediumTranslations) {
+        if (name.equalsIgnoreCase(p.first)) {
+            return juce::String::fromUTF8(p.second);
+        }
+    }
+    return name;
+}
+
+std::string OriginalSourceMediumVocabulary::canonicalMedium(const std::string& name) {
+    juce::String jName = juce::String::fromUTF8(name.c_str()).trim();
+    for (const auto& p : kMediumTranslations) {
+        if (jName.equalsIgnoreCase(p.first) || jName.equalsIgnoreCase(juce::String::fromUTF8(p.second))) {
+            return p.first;
+        }
+    }
+    return name;
+}
+
+static juce::String translateGroup(const juce::String& groupName, bool isPt) {
+    if (!isPt) return groupName;
+    for (const auto& p : kGroupTranslations) {
+        if (groupName.equalsIgnoreCase(p.first)) {
+            return juce::String::fromUTF8(p.second);
+        }
+    }
+    return groupName;
+}
+
+static juce::String traduzirRotuloSubcampo(const juce::String& rotulo, bool isPt) {
+    if (!isPt) return rotulo;
+    if (rotulo == "TAPE SPEED") return juce::String::fromUTF8("VELOCIDADE DA FITA");
+    if (rotulo == "TRACK FORMAT") return juce::String::fromUTF8("FORMATO DE PISTAS");
+    if (rotulo == "REFERENCE / EQ") return juce::String::fromUTF8("REFERÊNCIA / EQUALIZAÇÃO");
+    if (rotulo == "TAPE FORMULATION") return juce::String::fromUTF8("FORMULAÇÃO DA FITA");
+    if (rotulo == "TAPE TYPE") return juce::String::fromUTF8("TIPO DE FITA");
+    if (rotulo == "NOISE REDUCTION") return juce::String::fromUTF8("REDUÇÃO DE RUÍDO");
+    if (rotulo == "CARTRIDGE FORMAT") return juce::String::fromUTF8("FORMATO DO CARTUCHO");
+    if (rotulo == "RECORDING STANDARD") return juce::String::fromUTF8("PADRÃO DE GRAVAÇÃO");
+    if (rotulo == "RECORDING MODE") return juce::String::fromUTF8("MODO DE GRAVAÇÃO");
+    if (rotulo == "TRACK CONFIGURATION") return juce::String::fromUTF8("CONFIGURAÇÃO DE PISTAS");
+    if (rotulo == "SPEED") return juce::String::fromUTF8("VELOCIDADE");
+    if (rotulo == "DISC TYPE") return juce::String::fromUTF8("TIPO DE DISCO");
+    if (rotulo == "EQUALIZATION / REFERENCE") return juce::String::fromUTF8("EQUALIZAÇÃO / REFERÊNCIA");
+    if (rotulo == "FILM TYPE") return juce::String::fromUTF8("TIPO DE PELÍCULA");
+    if (rotulo == "SOUND") return juce::String::fromUTF8("ÁUDIO / SOM");
+    if (rotulo == "PROJECTION REFERENCE") return juce::String::fromUTF8("REFERÊNCIA DE PROJEÇÃO");
+    if (rotulo == "VIDEO STANDARD") return juce::String::fromUTF8("PADRÃO DE VÍDEO");
+    if (rotulo == "RECORDING FORMAT") return juce::String::fromUTF8("FORMATO DE GRAVAÇÃO");
+    if (rotulo == "AUDIO CONFIGURATION") return juce::String::fromUTF8("CONFIGURAÇÃO DE ÁUDIO");
+    if (rotulo == "PROCESS / TYPE") return juce::String::fromUTF8("PROCESSO / TIPO");
+    if (rotulo == "COLOR") return juce::String::fromUTF8("COR");
+    if (rotulo == "DOCUMENT FORMAT") return juce::String::fromUTF8("FORMATO DO DOCUMENTO");
+    if (rotulo == "ORIGINAL MEDIUM DESCRIPTION") return juce::String::fromUTF8("DESCRIÇÃO DA MÍDIA DE ORIGEM");
+    if (rotulo == "DEVICE") return juce::String::fromUTF8("DISPOSITIVO / EQUIPAMENTO");
+    return rotulo;
+}
+
+static juce::String traduzirOpcaoSubcampo(const juce::String& op, bool isPt) {
+    if (!isPt) return op;
+    if (op == "Other") return juce::String::fromUTF8("Outro");
+    if (op == "Unknown") return juce::String::fromUTF8("Desconhecido");
+    if (op == "None") return juce::String::fromUTF8("Nenhum");
+    if (op == "Silent") return juce::String::fromUTF8("Mudo");
+    if (op == "Optical Sound") return juce::String::fromUTF8("Som Óptico");
+    if (op == "Magnetic Sound") return juce::String::fromUTF8("Som Magnético");
+    if (op == "Sync Sound") return juce::String::fromUTF8("Som Sincronizado");
+    if (op == "Negative") return juce::String::fromUTF8("Negativo");
+    if (op == "Positive") return juce::String::fromUTF8("Positivo");
+    if (op == "Reversal") return juce::String::fromUTF8("Reversível (Cromo)");
+    if (op == "Reversal / Slide") return juce::String::fromUTF8("Reversível / Diapositivo (Slide)");
+    if (op == "Print") return juce::String::fromUTF8("Cópia em Papel / Filme");
+    if (op == "Color") return juce::String::fromUTF8("Colorido");
+    if (op == "B&W") return juce::String::fromUTF8("Preto e Branco (P&B)");
+    if (op == "Original Document") return juce::String::fromUTF8("Documento Original");
+    if (op == "Manuscript") return juce::String::fromUTF8("Manuscrito");
+    if (op == "Typed Paper") return juce::String::fromUTF8("Papel Datilografado / Impresso");
+    if (op == "Photocopy / Xerox") return juce::String::fromUTF8("Fotocópia / Xerox");
+    if (op == "Book / Bound Volume") return juce::String::fromUTF8("Livro / Volume Encadernado");
+    if (op == "35mm Roll Microfilm") return juce::String::fromUTF8("Rolo de Microfilme 35mm");
+    if (op == "16mm Roll Microfilm") return juce::String::fromUTF8("Rolo de Microfilme 16mm");
+    if (op == "Microfiche Card") return juce::String::fromUTF8("Cartão de Microficha");
+    if (op == "Hi-Fi Stereo") return juce::String::fromUTF8("Hi-Fi Estéreo");
+    if (op == "Linear Mono") return juce::String::fromUTF8("Mono Linear");
+    if (op == "AFM Stereo") return juce::String::fromUTF8("AFM Estéreo");
+    if (op == "PCM Digital Audio") return juce::String::fromUTF8("Áudio Digital PCM");
+    return op;
+}
+
 const std::vector<MediumCategoryGroup>& OriginalSourceMediumVocabulary::getMediumCategories() {
     return kMediumVocab;
 }
@@ -123,42 +299,47 @@ const std::vector<MediumCategoryGroup>& OriginalSourceMediumVocabulary::getMediu
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
 void OriginalSourceMediumVocabulary::populateMediumCombo(juce::ComboBox& combo, bool includeNone) {
     combo.clear(juce::dontSendNotification);
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     int id = 1;
     if (includeNone) {
-        combo.addItem("None / Unknown", id++);
-        combo.addItem("Native Digital", id++);
-        combo.addItem("Other", id++);
+        combo.addItem(translateMedium("None / Unknown", isPt), id++);
+        combo.addItem(translateMedium("Native Digital", isPt), id++);
+        combo.addItem(translateMedium("Other", isPt), id++);
         combo.addSeparator();
     }
     for (const auto& grp : kMediumVocab) {
-        combo.addSectionHeading(grp.groupName);
+        combo.addSectionHeading(translateGroup(grp.groupName, isPt));
         for (const auto& med : grp.mediums) {
             if (includeNone && (med == "None / Unknown" || med == "Native Digital" || med == "Other"))
                 continue;
-            combo.addItem(med, id++);
+            combo.addItem(translateMedium(med, isPt), id++);
         }
     }
 }
 #endif
 
 std::string OriginalSourceMediumInfo::toDisplaySummary() const {
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     if (isNoneOrUnknown()) {
-        if (!recordingDevice.empty()) return "None / Unknown (Device: " + recordingDevice + ")";
-        return "None / Unknown";
+        if (!recordingDevice.empty()) return isPt ? ("Nenhum / Desconhecido (Dispositivo: " + recordingDevice + ")") : ("None / Unknown (Device: " + recordingDevice + ")");
+        return isPt ? "Nenhum / Desconhecido" : "None / Unknown";
     }
     if (isNativeDigital()) {
-        if (!recordingDevice.empty()) return "Native Digital (Device: " + recordingDevice + ")";
-        return "Native Digital";
+        if (!recordingDevice.empty()) return isPt ? ("Digital Nativo (Dispositivo: " + recordingDevice + ")") : ("Native Digital (Device: " + recordingDevice + ")");
+        return isPt ? "Digital Nativo" : "Native Digital";
     }
-    if (medium == "Other") {
-        std::string s = customNote.empty() ? "Other" : ("Other: " + customNote);
-        if (!recordingDevice.empty()) s += " (Device: " + recordingDevice + ")";
+    std::string medDisp = OriginalSourceMediumVocabulary::translateMedium(juce::String::fromUTF8(medium.c_str()), isPt).toStdString();
+    if (medium == "Other" || medium == "Outro") {
+        std::string s = customNote.empty() ? (isPt ? "Outro" : "Other") : ((isPt ? "Outro: " : "Other: ") + customNote);
+        if (!recordingDevice.empty()) s += isPt ? (" (Dispositivo: " + recordingDevice + ")") : (" (Device: " + recordingDevice + ")");
         return s;
     }
 
     std::vector<std::string> parts;
     auto addIfVal = [&](const std::string& v) {
-        if (!v.empty() && v != "Unknown" && v != "None") parts.push_back(v);
+        if (!v.empty() && v != "Unknown" && v != "None" && v != "Desconhecido" && v != "Nenhum") {
+            parts.push_back(traduzirOpcaoSubcampo(juce::String::fromUTF8(v.c_str()), isPt).toStdString());
+        }
     };
 
     addIfVal(speed);
@@ -179,11 +360,11 @@ std::string OriginalSourceMediumInfo::toDisplaySummary() const {
     addIfVal(color);
     if (!tapeFormulation.empty()) parts.push_back(tapeFormulation);
     if (!customNote.empty()) parts.push_back(customNote);
-    if (!recordingDevice.empty()) parts.push_back("Device: " + recordingDevice);
+    if (!recordingDevice.empty()) parts.push_back((isPt ? "Dispositivo: " : "Device: ") + recordingDevice);
 
-    if (parts.empty()) return medium;
+    if (parts.empty()) return medDisp;
 
-    std::string summary = medium + " (";
+    std::string summary = medDisp + " (";
     for (size_t i = 0; i < parts.size(); ++i) {
         if (i > 0) summary += ", ";
         summary += parts[i];
@@ -257,9 +438,10 @@ OriginalSourceMediumInfo OriginalSourceMediumInfo::deserialize(const std::string
 OriginalSourceMediumEditorComponent::OriginalSourceMediumEditorComponent() {
     comboMedium_ = std::make_unique<juce::ComboBox>();
     OriginalSourceMediumVocabulary::populateMediumCombo(*comboMedium_, true);
-    comboMedium_->setText("None / Unknown", juce::dontSendNotification);
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    comboMedium_->setText(OriginalSourceMediumVocabulary::translateMedium("None / Unknown", isPt), juce::dontSendNotification);
     comboMedium_->onChange = [this] {
-        currentInfo_.medium = comboMedium_->getText().toStdString();
+        currentInfo_.medium = OriginalSourceMediumVocabulary::canonicalMedium(comboMedium_->getText().toStdString());
         rebuildSubfields();
         fireChange();
     };
@@ -277,10 +459,12 @@ void OriginalSourceMediumEditorComponent::setCompactMode(bool compact) {
 
 void OriginalSourceMediumEditorComponent::setValue(const OriginalSourceMediumInfo& info) {
     currentInfo_ = info;
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    std::string canon = OriginalSourceMediumVocabulary::canonicalMedium(currentInfo_.medium);
     int selId = 0;
-    juce::String target = juce::String::fromUTF8(currentInfo_.medium.c_str()).trim();
     for (int i = 0; i < comboMedium_->getNumItems(); ++i) {
-        if (comboMedium_->getItemText(i).trim().equalsIgnoreCase(target)) {
+        std::string itemCanon = OriginalSourceMediumVocabulary::canonicalMedium(comboMedium_->getItemText(i).toStdString());
+        if (itemCanon == canon) {
             selId = comboMedium_->getItemId(i);
             break;
         }
@@ -288,18 +472,25 @@ void OriginalSourceMediumEditorComponent::setValue(const OriginalSourceMediumInf
     if (selId > 0) {
         comboMedium_->setSelectedId(selId, juce::dontSendNotification);
     } else {
-        comboMedium_->setText(juce::String::fromUTF8(currentInfo_.medium.c_str()), juce::dontSendNotification);
+        comboMedium_->setText(OriginalSourceMediumVocabulary::translateMedium(juce::String::fromUTF8(currentInfo_.medium.c_str()), isPt), juce::dontSendNotification);
     }
     rebuildSubfields();
 }
 
 OriginalSourceMediumInfo OriginalSourceMediumEditorComponent::getValue() const {
     OriginalSourceMediumInfo info = currentInfo_;
-    info.medium = comboMedium_->getText().toStdString();
+    info.medium = OriginalSourceMediumVocabulary::canonicalMedium(comboMedium_->getText().toStdString());
     for (const auto& sf : subfields_) {
         std::string val;
-        if (sf.combo) val = sf.combo->getText().toStdString();
-        else if (sf.textEditor) val = sf.textEditor->getText().toStdString();
+        if (sf.combo) {
+            std::string raw = sf.combo->getText().toStdString();
+            if (raw == "Desconhecido") val = "Unknown";
+            else if (raw == "Nenhum") val = "None";
+            else if (raw == "Outro") val = "Other";
+            else val = raw;
+        } else if (sf.textEditor) {
+            val = sf.textEditor->getText().toStdString();
+        }
 
         if (sf.key == "recordingDevice") info.recordingDevice = val;
         else if (sf.key == "speed") info.speed = val;
@@ -334,11 +525,12 @@ std::string OriginalSourceMediumEditorComponent::getValueString() const {
 
 void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key, const juce::String& label, const std::vector<juce::String>& options, const std::string& selectedVal) {
     const auto& tk = tema();
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     Subfield sf;
     sf.key = key;
     sf.labelText = label;
 
-    sf.label = std::make_unique<juce::Label>("", label);
+    sf.label = std::make_unique<juce::Label>("", traduzirRotuloSubcampo(label, isPt));
     sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
     sf.label->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*sf.label);
@@ -346,12 +538,13 @@ void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key,
     sf.combo = std::make_unique<juce::ComboBox>();
     int id = 1;
     for (const auto& opt : options) {
-        sf.combo->addItem(opt, id++);
+        sf.combo->addItem(traduzirOpcaoSubcampo(opt, isPt), id++);
     }
     if (!selectedVal.empty()) {
-        sf.combo->setText(juce::String::fromUTF8(selectedVal.c_str()), juce::dontSendNotification);
+        juce::String sVal = juce::String::fromUTF8(selectedVal.c_str());
+        sf.combo->setText(traduzirOpcaoSubcampo(sVal, isPt), juce::dontSendNotification);
     } else {
-        sf.combo->setText("Unknown", juce::dontSendNotification);
+        sf.combo->setText(isPt ? juce::String::fromUTF8("Desconhecido") : juce::String("Unknown"), juce::dontSendNotification);
     }
     sf.combo->onChange = [this] { fireChange(); };
     addAndMakeVisible(*sf.combo);
@@ -361,11 +554,12 @@ void OriginalSourceMediumEditorComponent::addComboField(const juce::String& key,
 
 void OriginalSourceMediumEditorComponent::addTextField(const juce::String& key, const juce::String& label, const std::string& currentVal) {
     const auto& tk = tema();
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     Subfield sf;
     sf.key = key;
     sf.labelText = label;
 
-    sf.label = std::make_unique<juce::Label>("", label);
+    sf.label = std::make_unique<juce::Label>("", traduzirRotuloSubcampo(label, isPt));
     sf.label->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
     sf.label->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*sf.label);

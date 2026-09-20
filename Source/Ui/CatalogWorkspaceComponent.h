@@ -102,11 +102,13 @@ private:
     std::unique_ptr<ViewModeIconButton> btnVisaoLista_;
     std::unique_ptr<juce::TextButton> btnDestacarEditados_;
     std::unique_ptr<juce::TextButton> btnOcultarEditados_;
+    std::unique_ptr<juce::TextButton> btnOcultarNaoSelecionados_;
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
     bool modoVisaoGrade_ = true;
-    bool destacarEditados_ = true;
+    bool destacarEditados_ = false;
     bool ocultarEditados_ = false;
+    bool ocultarNaoSelecionados_ = false;
     bool editMode_ = true;
     std::optional<std::string> pastaNavegarAtual_;
     std::vector<std::string> caminhoNavegacao_;

@@ -6,6 +6,8 @@
 #include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
 #include "AboutDialog.h"
+#include "HelpDialog.h"
+#include "BatchWatermarkDialog.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "ConsolidacaoDialogo.h"
 #include "ProjectLogViewerDialog.h"
@@ -13,11 +15,12 @@
 #include "NovoProjetoDialogo.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
+#include "ProjectLoadingModalDialog.h"
 
 namespace matriz::ui {
 
 namespace {
-enum MenuIndices { kMenuArquivo = 0, kMenuEditar = 1, kMenuProjeto = 2, kMenuPreferencias = 3, kMenuAjuda = 4 };
+enum MenuIndices { kMenuArquivo = 0, kMenuEditar = 1, kMenuFerramentas = 2, kMenuPreferencias = 3, kMenuAjuda = 4 };
 enum ComandoMenu {
     kCmdNovoProjeto = 1,
     kCmdNovoCatalogo,
@@ -32,18 +35,39 @@ enum ComandoMenu {
     kCmdRemoverDoBackup,
     kCmdConfiguracoes,
     kCmdIngerirArquivos,
-    kCmdConsolidar,
-    kCmdPreferenciasGerais,
+    kCmdBatchWatermark,
+    kCmdBatchRename,
+    kCmdProjectLog,
+    kCmdRescanBackupSources,
+    kCmdLangPt,
+    kCmdLangEn,
+    kCmdThemeDark,
+    kCmdThemeLight,
     kCmdAudioDevice,
+    kCmdHelp,
     kCmdAbout,
     kCmdUndo,
-    kCmdProjectLog,
     kCmdRecenteBase = 2000
 };
+
+static juce::String obterNomeAppUI() {
+#if defined(MATRIZ_UI_APP_NAME_STRING)
+    return MATRIZ_UI_APP_NAME_STRING;
+#else
+    if (auto* app = juce::JUCEApplication::getInstance()) {
+        auto name = app->getApplicationName();
+        if (name.containsIgnoreCase("Trial"))
+            return name + " (NOT FOR SALE)";
+        return name;
+    }
+    return "BKR Matriz";
+#endif
+}
+
 } // namespace
 
 MainWindow::MainWindow(const juce::String& nome)
-    : DocumentWindow(nome, tema().fundo, DocumentWindow::allButtons) {
+    : DocumentWindow(nome.isEmpty() ? obterNomeAppUI() : nome, tema().fundo, DocumentWindow::allButtons) {
     setUsingNativeTitleBar(true);
 
     conteudo_ = std::make_unique<MainComponent>();
@@ -90,10 +114,10 @@ juce::StringArray MainWindow::getMenuBarNames() {
     bool isPt = locale.equalsIgnoreCase("pt_BR") || locale.equalsIgnoreCase("pt-BR") || locale.equalsIgnoreCase("pt");
     if (isPt) {
         return {juce::String::fromUTF8("Arquivo"), juce::String::fromUTF8("Editar"),
-                juce::String::fromUTF8("Projeto"), juce::String::fromUTF8("Preferências"),
+                juce::String::fromUTF8("Ferramentas"), juce::String::fromUTF8("Preferências"),
                 juce::String::fromUTF8("Ajuda")};
     }
-    return {"File", "Edit", "Project", "Preferences", "Help"};
+    return {"File", "Edit", "Tools", "Preferences", "Help"};
 }
 
 juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::String&) {
@@ -177,14 +201,35 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addSeparator();
         menu.addItem(kCmdRenomearItem, isPt ? juce::String::fromUTF8("Renomear Item(ns)... (R)") : "Rename Item(s)... (R)", conteudo_->temProjetoAberto());
         menu.addItem(kCmdRemoverDoBackup, isPt ? juce::String::fromUTF8("Remover Selecionado do Backup (C)") : "Remove Selected from Backup (C)", conteudo_->temProjetoAberto());
-    } else if (topLevelMenuIndex == kMenuProjeto) {
-        menu.addItem(kCmdConsolidar, isPt ? juce::String::fromUTF8("Consolidar / Relocar Arquivos...") : "Consolidate / Relocate Files...", conteudo_->temProjetoAberto());
+    } else if (topLevelMenuIndex == kMenuFerramentas) {
+        bool isCatalog = (conteudo_->projetoAberto() && conteudo_->projetoAberto()->projeto().modo() == matriz::model::Modo::Catalogo);
+        bool temColecao = conteudo_->temProjetoAberto() && !isCatalog;
+        menu.addItem(kCmdRescanBackupSources, isPt ? juce::String::fromUTF8("Rescanear Fontes de Backup...") : "Rescan Backup Sources...", temColecao);
+        menu.addSeparator();
+        menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
+        menu.addSeparator();
+        menu.addItem(kCmdBatchWatermark, isPt ? juce::String::fromUTF8("Marca d'Água em Lote...") : "Image Batch Watermark...");
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuPreferencias) {
-        menu.addItem(kCmdPreferenciasGerais, isPt ? juce::String::fromUTF8("Preferências / Tema / Chave de IA...") : "Preferences / Theme / AI Key...");
+        // Language Submenu
+        juce::PopupMenu langMenu;
+        langMenu.addItem(kCmdLangPt, juce::String::fromUTF8("Português (Brasil)"), true, isPt);
+        langMenu.addItem(kCmdLangEn, "English (US)", true, !isPt);
+        menu.addSubMenu(isPt ? juce::String::fromUTF8("Idioma") : "Language", langMenu);
+
+        // Theme Submenu
+        juce::PopupMenu themeMenu;
+        bool isDark = (matriz::app::lerTema() != "light");
+        themeMenu.addItem(kCmdThemeDark, isPt ? juce::String::fromUTF8("Tema Escuro (Dark)") : "Dark Theme", true, isDark);
+        themeMenu.addItem(kCmdThemeLight, isPt ? juce::String::fromUTF8("Tema Claro (Light)") : "Light Theme", true, !isDark);
+        menu.addSubMenu(isPt ? juce::String::fromUTF8("Tema") : "Theme", themeMenu);
+
+        menu.addSeparator();
         menu.addItem(kCmdAudioDevice, isPt ? juce::String::fromUTF8("Dispositivo de Áudio...") : "Audio Device...");
     } else if (topLevelMenuIndex == kMenuAjuda) {
+        menu.addItem(kCmdHelp, isPt ? juce::String::fromUTF8("Guia do Usuário e Ajuda...") : "User Guide & Help...");
+        menu.addSeparator();
         menu.addItem(kCmdAbout, isPt ? juce::String::fromUTF8("Sobre o BKR Matriz...") : "About BKR Matriz...");
     }
     return menu;
@@ -206,16 +251,36 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdRemoverDoBackup: conteudo_->removerItemSelecionadoDoBackup(); break;
         case kCmdConfiguracoes: pedirConfiguracoesProjeto(); break;
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
-        case kCmdConsolidar: pedirConsolidar(); break;
-        case kCmdAbout: mostrarAboutDialogo(); break;
+        case kCmdRescanBackupSources:
+            if (conteudo_) conteudo_->iniciarRescanBackupSources();
+            break;
+        case kCmdBatchWatermark: mostrarBatchWatermarkDialogo(); break;
+        case kCmdBatchRename:
+            if (conteudo_) conteudo_->renomearEmLoteSelecionados();
+            break;
         case kCmdProjectLog:
             if (conteudo_->temProjetoAberto()) {
                 matriz::model::ProjectLog pLog(conteudo_->pastaProjeto());
                 matriz::ui::ProjectLogViewerDialog::showModal(std::move(pLog));
             }
             break;
-        case kCmdPreferenciasGerais: mostrarPreferenciasDialogo(); break;
+        case kCmdLangPt: trocarIdioma("pt_BR"); break;
+        case kCmdLangEn: trocarIdioma("en"); break;
+        case kCmdThemeDark:
+            matriz::app::gravarTema("dark");
+            matriz::ui::aplicarTemaGlobal(this);
+            if (conteudo_) conteudo_->atualizarTema();
+            menuItemsChanged();
+            break;
+        case kCmdThemeLight:
+            matriz::app::gravarTema("light");
+            matriz::ui::aplicarTemaGlobal(this);
+            if (conteudo_) conteudo_->atualizarTema();
+            menuItemsChanged();
+            break;
         case kCmdAudioDevice: mostrarAudioDeviceDialogo(); break;
+        case kCmdHelp: HelpDialog::exibirModal(); break;
+        case kCmdAbout: mostrarAboutDialogo(); break;
         default: {
             if (menuItemID >= kCmdRecenteBase && menuItemID < kCmdRecenteBase + 100) {
                 auto recentes = matriz::app::lerRecentes();
@@ -225,11 +290,12 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
                     if (pastaRecente.isDirectory() || pastaRecente.existsAsFile()) {
                         abrirPasta(pastaRecente);
                     } else {
+                        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
                         juce::AlertWindow::showAsync(
                             juce::MessageBoxOptions()
                                 .withIconType(juce::MessageBoxIconType::InfoIcon)
-                                .withTitle("Project Not Found")
-                                .withMessage("Recent project location not found:\n" + recentes[idx].pasta)
+                                .withTitle(isPt ? juce::String::fromUTF8("Projeto Não Encontrado") : "Project Not Found")
+                                .withMessage((isPt ? juce::String::fromUTF8("Local do projeto recente não encontrado:\n") : "Recent project location not found:\n") + recentes[idx].pasta)
                                 .withButton("OK"),
                             nullptr);
                     }
@@ -250,10 +316,11 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoMudarEstadoProjeto = [this] {
         menuItemsChanged();
         if (conteudo_->temProjetoAberto()) {
+            auto appName = obterNomeAppUI();
             auto pNome = juce::String::fromUTF8(conteudo_->projetoAberto()->projeto().nome().c_str());
-            setName(pNome.isEmpty() ? "BKR Matriz" : (pNome + " — BKR Matriz"));
+            setName(pNome.isEmpty() ? appName : (pNome + " — " + appName));
         } else {
-            setName("BKR Matriz");
+            setName(obterNomeAppUI());
         }
     };
     conteudo_->aoTrocarIdioma = [this](const juce::String& locale) {
@@ -283,7 +350,7 @@ void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
         if (!resultado) return;
         try {
             auto projeto = matriz::model::Project::criar(resultado->pasta, resultado->params);
-            matriz::app::registrarRecente(projeto->pasta().getFullPathName(), projeto->nome(),
+            matriz::app::registrarRecente(projeto->raiz().getFullPathName(), projeto->nome(),
                                             matriz::model::modoToString(projeto->modo()));
             conteudo_->abrirProjeto(std::move(projeto));
         } catch (const std::exception& e) {
@@ -298,26 +365,50 @@ void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
 }
 
 void MainWindow::abrirPasta(const juce::File& pasta) {
-    // Pasta de backup com catálogo dentro abre em modo consulta (item 11),
-    // não como projeto — é o caso de "recebi um HD de backup e quero ver o
-    // que tem nele", onde não existe projeto nenhum pra abrir.
-    if (matriz::catalogo::ehPastaDeCatalogo(pasta)) {
-        if (conteudo_->abrirCatalogo(pasta)) return;
-    }
+    juce::Component::SafePointer<MainWindow> safeThis(this);
 
-    try {
-        auto projeto = matriz::model::Project::abrir(pasta);
-        matriz::app::registrarRecente(projeto->pasta().getFullPathName(), projeto->nome(),
-                                        matriz::model::modoToString(projeto->modo()));
-        conteudo_->abrirProjeto(std::move(projeto));
-    } catch (const std::exception& e) {
+    ProjectLoadingModalDialog::launch(pasta, this, [safeThis, pasta](std::unique_ptr<matriz::model::Project> projeto,
+                                                                      std::string rotuloMaisRecente,
+                                                                      int64_t revisaoMaisRecente,
+                                                                      bool isCatalog,
+                                                                      std::string erroMsg) {
+        if (!safeThis) return;
+
+        if (projeto) {
+            matriz::app::registrarRecente(projeto->raiz().getFullPathName(), projeto->nome(),
+                                            matriz::model::modoToString(projeto->modo()));
+
+            if (revisaoMaisRecente > projeto->revisao()) {
+                bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::InfoIcon)
+                        .withTitle(isPt ? juce::String::fromUTF8("Aviso de DESTINO") : "DESTINATION Notice")
+                        .withMessage(isPt ? (juce::String::fromUTF8("Este DESTINO parece desatualizado (Rev ") + juce::String(projeto->revisao()) +
+                                             juce::String::fromUTF8(") em comparação com \"") + juce::String::fromUTF8(rotuloMaisRecente.c_str()) + juce::String::fromUTF8("\" (Rev ") + juce::String(revisaoMaisRecente) +
+                                              juce::String::fromUTF8("). Use BACKUP SYNC na aba BACKUP."))
+                                          : ("This DESTINATION appears outdated (Rev " + juce::String(projeto->revisao()) +
+                                             ") compared to \"" + juce::String(rotuloMaisRecente) + "\" (Rev " + juce::String(revisaoMaisRecente) +
+                                             "). Use BACKUP SYNC on the BACKUP tab."))
+                        .withButton("OK"),
+                    nullptr);
+            }
+
+            safeThis->conteudo_->abrirProjeto(std::move(projeto));
+            return;
+        }
+
+        if (isCatalog) {
+            if (safeThis->conteudo_->abrirCatalogo(pasta)) return;
+        }
+
         juce::AlertWindow::showAsync(juce::MessageBoxOptions()
                                           .withIconType(juce::MessageBoxIconType::WarningIcon)
                                           .withTitle(matriz::i18n::t("dialogo_abrir_projeto.erro_titulo"))
-                                          .withMessage(juce::String(e.what()))
+                                          .withMessage(juce::String(erroMsg))
                                           .withButton(matriz::i18n::t("comum.ok")),
                                       static_cast<juce::ModalComponentManager::Callback*>(nullptr));
-    }
+    });
 }
 
 void MainWindow::pedirNovoCatalogo() {
@@ -325,7 +416,8 @@ void MainWindow::pedirNovoCatalogo() {
 }
 
 void MainWindow::pedirAbrirProjeto() {
-    auto chooser = std::make_shared<juce::FileChooser>("Open Collection (.mtz)");
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    auto chooser = std::make_shared<juce::FileChooser>(isPt ? juce::String::fromUTF8("Abrir Coleção (.mtz)") : "Open Collection (.mtz)");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectFiles,
                           [this, chooser](const juce::FileChooser& fc) {
                               juce::File pasta = fc.getResult();
@@ -335,7 +427,8 @@ void MainWindow::pedirAbrirProjeto() {
 }
 
 void MainWindow::pedirAbrirCatalogo() {
-    auto chooser = std::make_shared<juce::FileChooser>("Open Catalog (.bkm)");
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    auto chooser = std::make_shared<juce::FileChooser>(isPt ? juce::String::fromUTF8("Abrir Catálogo (.bkm)") : "Open Catalog (.bkm)");
     chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::canSelectDirectories,
                           [this, chooser](const juce::FileChooser& fc) {
                               juce::File file = fc.getResult();
@@ -357,8 +450,14 @@ void MainWindow::pedirConsolidar() {
 void MainWindow::mostrarAudioDeviceDialogo() {
     auto deviceManager = std::make_shared<juce::AudioDeviceManager>();
     deviceManager->initialiseWithDefaultDevices(0, 2);
+    {
+        auto setup = deviceManager->getAudioDeviceSetup();
+        setup.bufferSize = 1024;
+        deviceManager->setAudioDeviceSetup(setup, true);
+    }
 
-    auto janela = std::make_shared<juce::DialogWindow>("Audio Device", tema().painel, true);
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    auto janela = std::make_shared<juce::DialogWindow>(isPt ? juce::String::fromUTF8("Dispositivo de Áudio") : "Audio Device", tema().painel, true);
 
     struct PainelAudioDevice : public juce::Component {
         PainelAudioDevice(juce::AudioDeviceManager& dm, std::shared_ptr<juce::DialogWindow> win)
@@ -368,7 +467,8 @@ void MainWindow::mostrarAudioDeviceDialogo() {
             addAndMakeVisible(*selector_);
 
             const auto& tk = tema();
-            btnApply_ = std::make_unique<juce::TextButton>("APPLY");
+            bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+            btnApply_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("APLICAR") : "APPLY");
             btnApply_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnApply_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
             btnApply_->onClick = [this] {
@@ -376,7 +476,7 @@ void MainWindow::mostrarAudioDeviceDialogo() {
             };
             addAndMakeVisible(*btnApply_);
 
-            btnClose_ = std::make_unique<juce::TextButton>("CLOSE");
+            btnClose_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("FECHAR") : "CLOSE");
             btnClose_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
             btnClose_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
             btnClose_->onClick = [this] {
@@ -557,8 +657,7 @@ void MainWindow::trocarIdioma(const juce::String& locale) {
     menuItemsChanged();
 
     if (conteudo_) {
-        conteudo_->sendLookAndFeelChange();
-        conteudo_->repaint();
+        conteudo_->atualizarIdioma();
     }
     repaint();
 }
@@ -602,6 +701,27 @@ void MainWindow::pedirIngerirArquivos() {
 
 void MainWindow::mostrarAboutDialogo() {
     AboutDialog::exibirModal();
+}
+
+void MainWindow::mostrarBatchWatermarkDialogo() {
+    auto lambdaObterFotos = [this]() -> std::vector<juce::File> {
+        std::vector<juce::File> lista;
+        if (conteudo_ && conteudo_->temProjetoAberto()) {
+            auto itens = conteudo_->projetoAberto()->listarItens();
+            for (const auto& it : itens) {
+                juce::String ext = juce::String(it.extensaoArquivo).toLowerCase().replace(".", "");
+                if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" || ext == "tiff" || ext == "tif" || ext == "bmp" ||
+                    it.tipoMidia == "imagem" || it.tipoMidia == "image" || it.tipoMidia == "foto") {
+                    juce::File f(it.caminhoAbsolutoOrigem);
+                    if (f.existsAsFile()) {
+                        lista.push_back(f);
+                    }
+                }
+            }
+        }
+        return lista;
+    };
+    BatchWatermarkDialog::exibirModal(lambdaObterFotos);
 }
 
 } // namespace matriz::ui

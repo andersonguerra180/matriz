@@ -13,24 +13,7 @@ namespace {
 
 void pedirTexto(const juce::String& titulo, const juce::String& mensagem, const juce::String& valorInicial,
                  std::function<void(std::optional<juce::String>)> aoConcluir) {
-    juce::MessageManager::callAsync([titulo, mensagem, valorInicial, aoConcluir]() {
-        auto janela = std::make_shared<juce::AlertWindow>(titulo, mensagem, juce::MessageBoxIconType::NoIcon);
-        janela->addTextEditor("valor", valorInicial);
-        janela->addButton(matriz::i18n::t("comum.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
-        janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
-        
-        if (auto* editor = janela->getTextEditor("valor")) {
-            editor->grabKeyboardFocus();
-            editor->setHighlightedRegion(juce::Range<int>(0, valorInicial.length()));
-        }
-
-        janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, aoConcluir](int resultado) mutable {
-            retirarPeerDaTela(*janela);
-            if (resultado == 1) aoConcluir(janela->getTextEditorContents("valor"));
-            else aoConcluir(std::nullopt);
-            janela.reset();
-        }));
-    });
+    ModalTextoDialog::exibir(titulo, mensagem, valorInicial, aoConcluir);
 }
 
 const char* const kDescricaoPastaExplorer = "matriz:pasta-explorer";
@@ -517,7 +500,25 @@ void ArvoreComponent::mouseDown(const juce::MouseEvent& e) {
             return;
         }
 
-        if (indice < 0) return;
+        if (indice < 0) {
+            if (e.mods.isPopupMenu() && aba_ == Aba::Acervo) {
+                juce::PopupMenu menu;
+                menu.addItem(1, matriz::i18n::t("arvore.menu_nova_pasta"));
+                std::string paiId = pastaAtual_ ? pastaAtual_->id : "";
+                juce::Component::SafePointer<ArvoreComponent> safeThis(this);
+                menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, paiId](int resultado) {
+                    if (!safeThis || resultado != 1) return;
+                    pedirTexto(matriz::i18n::t("arvore.nome_nova_pasta_titulo"), matriz::i18n::t("arvore.nome_nova_pasta_mensagem"),
+                               "", [safeThis, paiId](std::optional<juce::String> nome) {
+                                   if (!safeThis || !nome || nome->trim().isEmpty()) return;
+                                   safeThis->projeto_.criarPastaAcervo(nome->trim().toStdString(), paiId.empty() ? std::nullopt : std::make_optional(paiId));
+                                   safeThis->recarregar();
+                                   if (safeThis->aoMudarOrganizacao) safeThis->aoMudarOrganizacao();
+                               });
+                });
+            }
+            return;
+        }
         auto& item = itensIcone_[static_cast<size_t>(indice)];
 
         if (e.mods.isPopupMenu() && item.ehPasta && aba_ == Aba::Acervo && !item.noPasta->id.empty()) {
@@ -599,7 +600,24 @@ void ArvoreComponent::mouseDown(const juce::MouseEvent& e) {
 
     // List mode
     int indice = indiceLinhaNaPosicao(e.getPosition().y);
-    if (indice < 0) return;
+    if (indice < 0) {
+        if (e.mods.isPopupMenu() && aba_ == Aba::Acervo) {
+            juce::PopupMenu menu;
+            menu.addItem(1, matriz::i18n::t("arvore.menu_nova_pasta"));
+            juce::Component::SafePointer<ArvoreComponent> safeThis(this);
+            menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis](int resultado) {
+                if (!safeThis || resultado != 1) return;
+                pedirTexto(matriz::i18n::t("arvore.nome_nova_pasta_titulo"), matriz::i18n::t("arvore.nome_nova_pasta_mensagem"),
+                           "", [safeThis](std::optional<juce::String> nome) {
+                               if (!safeThis || !nome || nome->trim().isEmpty()) return;
+                               safeThis->projeto_.criarPastaAcervo(nome->trim().toStdString(), std::nullopt);
+                               safeThis->recarregar();
+                               if (safeThis->aoMudarOrganizacao) safeThis->aoMudarOrganizacao();
+                           });
+            });
+        }
+        return;
+    }
     auto& linha = linhas_[static_cast<size_t>(indice)];
 
     // Check if click is on disclosure triangle

@@ -207,6 +207,16 @@ juce::String exportarCsv(db::Database& db,
 juce::String exportarFullCsv(db::Database& db,
                              const std::vector<std::string>& itemIds);
 
+juce::String gerarFullCsvSchemaJson();
+juce::String gerarFullCsvManifestJson(int assetCount, const juce::String& csvSha256);
+
+struct FullCsvValidationResult {
+    bool valid = true;
+    std::string error;
+    int assetCount = 0;
+};
+FullCsvValidationResult validarFullCsvFile(const juce::File& csvFile, int expectedAssetCount);
+
 // Exporta o pacote BKR Full CSV (BKR_FULL.csv, BKR_FULL.schema.json, manifest.json) com validação automática.
 bool exportarFullCsvPacote(db::Database& db,
                             const std::vector<std::string>& itemIds,

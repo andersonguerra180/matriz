@@ -3,6 +3,7 @@
 #include "../Ingest/Miniaturas.h"
 #include "../Ingest/ProcessoExterno.h"
 #include "../Vault/Resolucao.h"
+#include "../Model/Project.h"
 
 namespace matriz::catalogo {
 
@@ -30,22 +31,18 @@ juce::String gerarSlugColecao(const juce::String& nomeOriginal) {
             }
         }
     }
-
     while (out.endsWithChar('-')) out = out.dropLastCharacters(1);
-    while (out.startsWithChar('-')) out = out.substring(1);
-
-    if (out.isEmpty()) out = "collection";
-    return out;
+    return out.isEmpty() ? "collection" : out;
 }
 
 namespace {
 
-static juce::String formatarDuracao(double seg) {
-    if (seg <= 0.0) return {};
-    int totalSeg = static_cast<int>(std::round(seg));
-    int h = totalSeg / 3600;
-    int m = (totalSeg % 3600) / 60;
-    int s = totalSeg % 60;
+static juce::String formatarDuracao(double sec) {
+    if (sec <= 0.0) return {};
+    int s = static_cast<int>(sec);
+    int h = s / 3600;
+    int m = (s % 3600) / 60;
+    s = s % 60;
     if (h > 0) {
         return juce::String::formatted("%02d:%02d:%02d", h, m, s);
     }
@@ -53,6 +50,17 @@ static juce::String formatarDuracao(double seg) {
 }
 
 static juce::File resolverArquivoMaster(const juce::File& pastaProjeto, const ui::ItemResumo& item) {
+    if (!item.masterArquivoId.empty()) {
+        try {
+            juce::File resolvedPasta = matriz::model::Project::resolverPastaProjeto(pastaProjeto);
+            juce::File dbFile = resolvedPasta.getChildFile("registro.sqlite");
+            if (dbFile.existsAsFile()) {
+                matriz::db::Database db(dbFile.getFullPathName().toStdString());
+                auto fileOpt = matriz::vault::resolverArquivo(db, item.masterArquivoId, resolvedPasta);
+                if (fileOpt && fileOpt->existsAsFile()) return *fileOpt;
+            }
+        } catch (...) {}
+    }
     if (!item.caminhoAbsolutoOrigem.empty()) {
         juce::File f(item.caminhoAbsolutoOrigem);
         if (f.existsAsFile()) return f;
@@ -420,6 +428,22 @@ body.idle-hide-cursor, body.idle-hide-cursor * {
   padding: 0.5rem 1.25rem;
   font-size: 0.85rem;
   color: var(--text-secondary);
+}
+
+.catalog-custom-reader {
+  margin: 1.25rem 0 2rem 0;
+  padding: 1.25rem 1.75rem;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  font-size: 0.95rem;
+  line-height: 1.65;
+  color: var(--text-secondary);
+}
+.catalog-custom-reader p {
+  margin: 0;
+  white-space: pre-wrap;
 }
 .stat-pill strong {
   color: var(--text-primary);
@@ -1441,6 +1465,7 @@ static const char* kLandingHtmlTemplate = R"HTML(<!DOCTYPE html>
         <div class="stat-pill"><strong id="stat-assets-count">%TOTAL_ASSETS%</strong> Total Assets</div>
       </div>
     </header>
+    %CUSTOM_HEADER_HTML%
 
     <div class="collections-grid" id="collections-grid">
       <!-- Collection cards rendered via JS -->
@@ -1564,16 +1589,123 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
     ResultadoExportSite resultado;
     resultado.outputDirectory = destino;
 
-    if (projeto.projeto().modo() != matriz::model::Modo::Catalogo) {
-        resultado.errors.push_back("Export HTML Browser is only available for CATALOG projects.");
+    std::set<std::string> idFiltro;
+    if (!params.itemIdsFiltro.empty()) {
+        idFiltro.insert(params.itemIdsFiltro.begin(), params.itemIdsFiltro.end());
+    }
+
+    std::vector<std::pair<ui::ProjetoAberto::ColecaoLink, std::vector<ui::ItemResumo>>> colecoesProcessadas;
+
+    if (params.estrutura == ParamsExportSite::EstruturaHtml::PastasOriginais) {
+        auto colecoes = projeto.listarColecoesLinkadas();
+        if (!colecoes.empty()) {
+            for (const auto& c : colecoes) {
+                if (!c.valido) continue;
+                juce::File colDir(c.caminhoProjeto);
+                auto todosItens = projeto.listarItensDaColecao(colDir);
+                std::vector<ui::ItemResumo> itens;
+                for (auto& it : todosItens) {
+                    if (!idFiltro.empty() && idFiltro.count(it.id) == 0) continue;
+                    itens.push_back(std::move(it));
+                }
+                if (!itens.empty()) {
+                    colecoesProcessadas.push_back({c, std::move(itens)});
+                }
+            }
+        }
+
+        // If not a catalog with linked collections or if no collection matched, fallback to the project itself
+        if (colecoesProcessadas.empty()) {
+            ui::ProjetoAberto::ColecaoLink c;
+            c.id = juce::String(projeto.projeto().nome()).toStdString();
+            c.nome = juce::String(projeto.projeto().nome());
+            c.caminhoProjeto = projeto.projeto().pasta().getFullPathName();
+            c.grupo = "Archive";
+            c.valido = true;
+
+            auto todosItens = projeto.listarItens();
+            std::vector<ui::ItemResumo> itens;
+            for (auto& it : todosItens) {
+                if (!idFiltro.empty() && idFiltro.count(it.id) == 0) continue;
+                itens.push_back(std::move(it));
+            }
+            if (!itens.empty()) {
+                c.totalAssets = static_cast<uint64_t>(itens.size());
+                colecoesProcessadas.push_back({c, std::move(itens)});
+            }
+        }
+    } else {
+        std::vector<ui::ItemResumo> todosItens;
+        auto colecoes = projeto.listarColecoesLinkadas();
+        if (!colecoes.empty()) {
+            for (const auto& c : colecoes) {
+                if (!c.valido) continue;
+                juce::File colDir(c.caminhoProjeto);
+                auto itens = projeto.listarItensDaColecao(colDir);
+                for (auto& it : itens) {
+                    if (!idFiltro.empty() && idFiltro.count(it.id) == 0) continue;
+                    todosItens.push_back(std::move(it));
+                }
+            }
+        }
+        if (todosItens.empty()) {
+            auto itens = projeto.listarItens();
+            for (auto& it : itens) {
+                if (!idFiltro.empty() && idFiltro.count(it.id) == 0) continue;
+                todosItens.push_back(std::move(it));
+            }
+        }
+
+        std::map<juce::String, std::vector<ui::ItemResumo>> grupos;
+        juce::String grupoTitulo = "Collection";
+
+        if (params.estrutura == ParamsExportSite::EstruturaHtml::PorTipoMidia) {
+            grupoTitulo = "Media Type";
+            for (auto& it : todosItens) {
+                juce::String chave = it.tipoMidia.empty() ? "Other" : it.tipoMidia;
+                grupos[chave].push_back(std::move(it));
+            }
+        } else if (params.estrutura == ParamsExportSite::EstruturaHtml::PorAno) {
+            grupoTitulo = "Year";
+            for (auto& it : todosItens) {
+                juce::String chave = (it.ano.has_value() && *it.ano > 0) ? juce::String(*it.ano) : "Undated";
+                grupos[chave].push_back(std::move(it));
+            }
+        } else if (params.estrutura == ParamsExportSite::EstruturaHtml::PorConteudo) {
+            grupoTitulo = "Content Type";
+            for (auto& it : todosItens) {
+                juce::String chave = (it.contentType.has_value() && !it.contentType->empty())
+                    ? juce::String(*it.contentType)
+                    : (it.tipoMidia.empty() ? "Other" : it.tipoMidia);
+                grupos[chave].push_back(std::move(it));
+            }
+        }
+
+        for (auto& [nomeGrupo, itensGrupo] : grupos) {
+            if (itensGrupo.empty()) continue;
+            ui::ProjetoAberto::ColecaoLink c;
+            c.id = gerarSlugColecao(nomeGrupo).toStdString();
+            c.nome = nomeGrupo;
+            c.caminhoProjeto = projeto.projeto().pasta().getFullPathName();
+            c.grupo = grupoTitulo;
+            c.valido = true;
+            c.totalAssets = static_cast<uint64_t>(itensGrupo.size());
+            colecoesProcessadas.push_back({c, std::move(itensGrupo)});
+        }
+    }
+
+    if (colecoesProcessadas.empty()) {
+        resultado.errors.push_back("No assets found to export.");
         return resultado;
     }
 
-    auto colecoes = projeto.listarColecoesLinkadas();
-    if (colecoes.empty()) {
-        resultado.errors.push_back("No linked collections found in this catalog.");
-        return resultado;
+    int totalGeralAssets = 0;
+    for (const auto& pair : colecoesProcessadas) {
+        totalGeralAssets += static_cast<int>(pair.second.size());
     }
+
+    resultado.totalCollections = static_cast<int>(colecoesProcessadas.size());
+    resultado.totalAssets = totalGeralAssets;
 
     destino.createDirectory();
     juce::File dirMedia = destino.getChildFile("media");
@@ -1631,27 +1763,7 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
     dirCss.getChildFile("style.css").replaceWithText(kCssTemplate);
     dirJs.getChildFile("app.js").replaceWithText(kJsTemplate);
 
-    // Calculate total assets across all valid collections
-    std::vector<std::pair<ui::ProjetoAberto::ColecaoLink, std::vector<ui::ItemResumo>>> colecoesProcessadas;
     std::set<juce::String> usedSlugs;
-
-    int totalGeralAssets = 0;
-    for (const auto& c : colecoes) {
-        if (!c.valido) continue;
-        juce::File colDir(c.caminhoProjeto);
-        auto todosItens = projeto.listarItensDaColecao(colDir);
-        std::vector<ui::ItemResumo> itens;
-        for (auto& it : todosItens) {
-            if (it.marcadoPublicacao) {
-                itens.push_back(std::move(it));
-            }
-        }
-        totalGeralAssets += static_cast<int>(itens.size());
-        colecoesProcessadas.push_back({c, std::move(itens)});
-    }
-
-    resultado.totalCollections = static_cast<int>(colecoesProcessadas.size());
-    resultado.totalAssets = totalGeralAssets;
 
     auto manifestObj = std::make_unique<juce::DynamicObject>();
     manifestObj->setProperty("catalogName", juce::String(projeto.projeto().nome()));
@@ -1843,6 +1955,15 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
     landingHtml = landingHtml.replace("%BODY_CUSTOM_BG_STYLE%", rootBgStyle);
     landingHtml = landingHtml.replace("%SPLASH_LOGO_HTML%", splashLogoHtml);
     landingHtml = landingHtml.replace("%CATALOG_LOGO_HTML%", rootLogoHtml);
+
+    juce::String customHeaderHtml = "";
+    if (params.textoCabecalhoCustom.isNotEmpty()) {
+        customHeaderHtml = "<div class=\"catalog-custom-reader\"><p>" +
+                           params.textoCabecalhoCustom.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>") +
+                           "</p></div>";
+    }
+    landingHtml = landingHtml.replace("%CUSTOM_HEADER_HTML%", customHeaderHtml);
+
     landingHtml = landingHtml.replace("%MANIFEST_JSON%", manifestStr);
     destino.getChildFile("index.html").replaceWithText(landingHtml);
 

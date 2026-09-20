@@ -146,4 +146,21 @@ void registrarRecente(const juce::String& pasta, const juce::String& nome, const
     arquivo().saveIfNeeded();
 }
 
+void removerRecente(const juce::String& pasta) {
+    auto atuais = lerRecentes();
+    atuais.erase(std::remove_if(atuais.begin(), atuais.end(),
+                                [&](const ProjetoRecente& r) { return r.pasta == pasta; }),
+                 atuais.end());
+
+    juce::XmlElement raiz("recentes");
+    for (auto& r : atuais) {
+        auto* item = raiz.createNewChildElement("item");
+        item->setAttribute("pasta", r.pasta);
+        item->setAttribute("nome", r.nome);
+        item->setAttribute("modo", r.modo);
+    }
+    arquivo().setValue("recentes", &raiz);
+    arquivo().saveIfNeeded();
+}
+
 } // namespace matriz::app

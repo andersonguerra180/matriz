@@ -58,6 +58,8 @@ struct MediumCategoryGroup {
 class OriginalSourceMediumVocabulary {
 public:
     static const std::vector<MediumCategoryGroup>& getMediumCategories();
+    static juce::String translateMedium(const juce::String& name, bool isPt);
+    static std::string canonicalMedium(const std::string& name);
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
     static void populateMediumCombo(juce::ComboBox& combo, bool includeNone = true);
 #endif

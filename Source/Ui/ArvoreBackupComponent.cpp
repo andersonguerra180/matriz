@@ -164,22 +164,7 @@ namespace {
 
 void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, const juce::String& valorInicial,
                       std::function<void(std::optional<juce::String>)> aoConcluir) {
-    juce::MessageManager::callAsync([titulo, mensagem, valorInicial, aoConcluir]() {
-        auto janela = std::make_shared<juce::AlertWindow>(titulo, mensagem, juce::MessageBoxIconType::NoIcon);
-        janela->addTextEditor("valor", valorInicial);
-        janela->addButton(i18n::t("dialogo.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
-        janela->addButton(i18n::t("dialogo.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
-        if (auto* editor = janela->getTextEditor("valor")) {
-            editor->grabKeyboardFocus();
-            editor->setHighlightedRegion(juce::Range<int>(0, valorInicial.length()));
-        }
-        janela->enterModalState(true, juce::ModalCallbackFunction::create([janela, aoConcluir](int resultado) mutable {
-            retirarPeerDaTela(*janela);
-            if (resultado == 1) aoConcluir(janela->getTextEditorContents("valor"));
-            else aoConcluir(std::nullopt);
-            janela.reset();
-        }));
-    });
+    ModalTextoDialog::exibir(titulo, mensagem, valorInicial, aoConcluir);
 }
 
 } // namespace
@@ -928,6 +913,19 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     }
 
     if (!hitNode) {
+        if (e.mods.isPopupMenu()) {
+            juce::PopupMenu menu;
+            menu.addItem(i18n::t("arvore_backup.btn_criar_pasta"), [this] {
+                juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+                pedirTextoBackup(i18n::t("arvore_backup.criar_pasta_titulo"), i18n::t("arvore_backup.criar_pasta_msg"), i18n::t("arvore_backup.criar_pasta_padrao"),
+                    [safeThis](std::optional<juce::String> nome) {
+                        if (!safeThis || !nome || nome->trim().isEmpty()) return;
+                        safeThis->criarNovaPasta(nome->trim().toStdString(), std::nullopt);
+                    });
+            });
+            menu.showMenuAsync(juce::PopupMenu::Options());
+            return;
+        }
         panning_ = true;
         panStart_ = e.getPosition();
         atualizarPainelDetalhe("");

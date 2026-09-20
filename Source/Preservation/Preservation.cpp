@@ -568,8 +568,6 @@ juce::String exportarCsv(db::Database& db, const std::vector<std::string>& itemI
     return csv;
 }
 
-namespace {
-
 juce::String gerarFullCsvSchemaJson() {
     return R"schema({
   "schema": "BKR_FULL_CSV",
@@ -642,12 +640,6 @@ juce::String gerarFullCsvManifestJson(int assetCount, const juce::String& csvSha
     obj->setProperty("csv_sha256", csvSha256);
     return juce::JSON::toString(juce::var(obj.release()), true);
 }
-
-struct FullCsvValidationResult {
-    bool valid = true;
-    std::string error;
-    int assetCount = 0;
-};
 
 FullCsvValidationResult validarFullCsvFile(const juce::File& csvFile, int expectedAssetCount) {
     FullCsvValidationResult res;
@@ -759,8 +751,6 @@ FullCsvValidationResult validarFullCsvFile(const juce::File& csvFile, int expect
     res.assetCount = recordCount;
     return res;
 }
-
-} // namespace
 
 juce::String exportarFullCsv(db::Database& db, const std::vector<std::string>& itemIds)
 {

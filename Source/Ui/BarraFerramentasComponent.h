@@ -99,7 +99,7 @@ private:
 
     // Mark edited items toggle button
     std::unique_ptr<juce::TextButton> btnDestacarEditados_;
-    bool destacarEditados_ = true;
+    bool destacarEditados_ = false;
 
     int tamanhoAtivo_ = 1; // médio, mesmo padrão de MosaicoComponent
     bool detalhesAbertos_ = false;

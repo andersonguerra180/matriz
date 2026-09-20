@@ -29,11 +29,21 @@ struct ResultadoExportSite {
 };
 
 struct ParamsExportSite {
+    enum class EstruturaHtml {
+        PastasOriginais,
+        PorTipoMidia,
+        PorAno,
+        PorConteudo
+    };
+
     int previewDurationSec = 15;
     int thumbnailMaxPx = 1200;
     int paginationLimit = 250;
     juce::File backgroundImageFile; // Optional: custom background (.jpg/.jpeg/.png)
     juce::File logoFile;            // Optional: custom logo (.jpg/.jpeg/.png)
+    std::vector<std::string> itemIdsFiltro; // Optional: if non-empty, only export items with these IDs
+    EstruturaHtml estrutura = EstruturaHtml::PastasOriginais;
+    juce::String textoCabecalhoCustom; // Optional: custom text for page header / reader
 };
 
 // Generates a self-contained, responsive static HTML browser

@@ -72,6 +72,7 @@ struct PlanoConsolidacao {
     std::vector<ItemPlanejado> itens;
     std::vector<juce::String> nomesEmConflito; // caminhos que aparecem em mais de um item — bloqueiam consolidar
     int itensNaoOrganizados = 0;               // §5.5 — fora do plano, só contados pro aviso
+    int conflitosAutoResolvidos = 0;           // Nomes duplicados auto-resolvidos com sufixo único
     juce::int64 espacoNecessarioBytes = 0;     // soma dos itens que NÃO estão jaConsolidado
     juce::int64 espacoDisponivelBytes = 0;
 
@@ -92,12 +93,22 @@ juce::String resolverNomeFinalBackup(const juce::File& arquivoOrigem, const std:
 
 using RotuloTipoMidia = std::function<juce::String(const std::string& tipoMidia)>;
 
+enum class ModoPrefixoArquivo {
+    Mascara = 0,  // Avalia a máscara da hierarquia/projeto (padrão da engine)
+    Nenhum = 1,   // Sem prefixo: preserva o nome original do arquivo (default da UI de backup)
+    Auto = 2,     // Prefixo automático do projeto (prefixo_nomenclatura)
+    Custom = 3    // Prefixo customizado informado pelo usuário
+};
+
 // `hierarquia` vazia = usa o que estiver gravado em projeto.hierarquia_backup
 // (ou o padrão, se não houver nada gravado).
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquia = {},
                                         const RotuloTipoMidia& rotuloTipoMidia = {},
-                                        const juce::String& prefixoCustomizado = {});
+                                        ModoPrefixoArquivo modoPrefixo = ModoPrefixoArquivo::Mascara,
+                                        const juce::String& prefixoCustomizado = {},
+                                        bool autoResolverConflitos = false,
+                                        bool forcarRebackup = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);

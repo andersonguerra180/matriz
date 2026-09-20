@@ -7,14 +7,24 @@ namespace matriz::ui {
 BarraNavegacaoComponent::BarraNavegacaoComponent() {
     reconstruirTabs();
 
+    const auto& tk = tema();
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    botaoAjuda_ = std::make_unique<juce::TextButton>("?");
+    botaoAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    botaoAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    botaoAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
+    botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
+    addAndMakeVisible(*botaoAjuda_);
+
     botaoFechar_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("FECHAR PROJETO") : "CLOSE PROJECT");
     botaoFechar_->onClick = [this] { if (aoClicarFechar) aoClicarFechar(); };
     
-    // Style Close button
-    const auto& tk = tema();
-    botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-    botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    // Style Close button - exact same colors and typography as MAKE BACKUP
+    botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
+    botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
+    botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
     addAndMakeVisible(*botaoFechar_);
     
     setInterceptsMouseClicks(true, true);
@@ -41,11 +51,13 @@ void BarraNavegacaoComponent::setHasParentCatalog(bool hasParent) {
     if (botaoFechar_) {
         if (hasParentCatalog_) {
             botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("VOLTAR AO CATÁLOGO") : "RETURN TO CATALOG");
-            botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.acento);
         } else {
             botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("FECHAR PROJETO") : "CLOSE PROJECT");
-            botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.perigo);
         }
+        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
+        botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
+        botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
     }
     resized();
     repaint();
@@ -54,9 +66,17 @@ void BarraNavegacaoComponent::setHasParentCatalog(bool hasParent) {
 void BarraNavegacaoComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    if (botaoAjuda_) {
+        botaoAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        botaoAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
+        botaoAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
+        botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
+    }
     if (botaoFechar_) {
-        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-        botaoFechar_->setColour(juce::TextButton::textColourOffId, hasParentCatalog_ ? tk.acento : tk.perigo);
+        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
+        botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
+        botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
         if (hasParentCatalog_) {
             botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("VOLTAR AO CATÁLOGO") : "RETURN TO CATALOG");
         } else {
@@ -75,25 +95,26 @@ void BarraNavegacaoComponent::reconstruirTabs() {
     tabs_.clear();
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (isCatalog_) {
-        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("COLEÇÕES") : "COLLECTIONS", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("DUPLICATAS") : "DUPLICATES", {}, {}, false });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("ARMAZENAMENTO") : "STORAGE", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("DISCO") : "DISK", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "BACKUP", {}, {}, false });
+        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("1 - Coleções") : "1 - Collections", {}, {}, false });
+        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("2 - Duplicatas") : "2 - Duplicates", {}, {}, false });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("3 - Armazenamento") : "3 - Storage", {}, {}, false });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("4 - Disco") : "4 - Disk", {}, {}, false });
+        tabs_.push_back({ Tab::Backup, "5 - Backup", {}, {}, false });
     } else {
-        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("INGESTÃO") : "INTAKE", {}, {}, false });
-        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("METADADOS") : "METADATA", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("DUPLICATAS") : "DUPLICATES", {}, {}, false });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("ARMAZENAMENTO") : "STORAGE", {}, {}, false });
-        tabs_.push_back({ Tab::Tree, isPt ? juce::String::fromUTF8("MAPA") : "TREEMAP", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("DISCO") : "DISK", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "BACKUP", {}, {}, false });
+        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("1 - Ingestão") : "1 - Intake", {}, {}, false });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("2 - Metadados") : "2 - Metadata", {}, {}, false });
+        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("4 - Armazenamento") : "4 - Storage", {}, {}, false });
+        tabs_.push_back({ Tab::Tree, isPt ? juce::String::fromUTF8("5 - Mapa") : "5 - Treemap", {}, {}, false });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("6 - Disco") : "6 - Disk", {}, {}, false });
+        tabs_.push_back({ Tab::Backup, "7 - Backup", {}, {}, false });
     }
 }
 
 void BarraNavegacaoComponent::setSelectedTab(Tab tab) {
     if (selectedTab_ != tab) {
         selectedTab_ = tab;
+        if (botaoAjuda_) botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
         repaint();
     }
 }
@@ -187,14 +208,14 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
             auto cy = static_cast<float>(tab.sepBounds.getCentreY());
             juce::Path arrow;
             // Horizontal arrow shaft
-            arrow.startNewSubPath(cx - 4.5f, cy);
-            arrow.lineTo(cx + 4.0f, cy);
+            arrow.startNewSubPath(cx - 6.0f, cy);
+            arrow.lineTo(cx + 6.0f, cy);
             // Arrowhead
-            arrow.startNewSubPath(cx + 0.5f, cy - 3.5f);
-            arrow.lineTo(cx + 4.5f, cy);
-            arrow.lineTo(cx + 0.5f, cy + 3.5f);
-            g.setColour(tk.acento.withAlpha(0.85f));
-            g.strokePath(arrow, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            arrow.startNewSubPath(cx + 1.5f, cy - 4.5f);
+            arrow.lineTo(cx + 6.5f, cy);
+            arrow.lineTo(cx + 1.5f, cy + 4.5f);
+            g.setColour(tk.acento);
+            g.strokePath(arrow, juce::PathStrokeType(2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
     }
 }
@@ -202,10 +223,14 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
 void BarraNavegacaoComponent::resized() {
     const auto& tk = tema();
     
-    // Close button sizing on the right
+    // Close and Help buttons sizing on the right
     int btnWidth = hasParentCatalog_ ? 175 : 130;
     int btnHeight = 28;
+    int helpBtnSize = 28;
     botaoFechar_->setBounds(getWidth() - btnWidth - 16, (getHeight() - btnHeight) / 2, btnWidth, btnHeight);
+    if (botaoAjuda_) {
+        botaoAjuda_->setBounds(getWidth() - btnWidth - 16 - helpBtnSize - 8, (getHeight() - helpBtnSize) / 2, helpBtnSize, helpBtnSize);
+    }
     
     // Brand padding (dynamic based on brand text width) on the left
     auto fonteBrand = juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold));
@@ -213,7 +238,7 @@ void BarraNavegacaoComponent::resized() {
     brandWidth = std::max(160, brandWidth);
     
     int leftBoundary = brandWidth + 16;
-    int rightBoundary = getWidth() - btnWidth - 24;
+    int rightBoundary = getWidth() - btnWidth - 16 - helpBtnSize - 16;
     int availableWidth = std::max(0, rightBoundary - leftBoundary);
     
     // Measure tabs width dynamically to ensure words like "ARMAZENAMENTO" fit without truncation
@@ -221,7 +246,7 @@ void BarraNavegacaoComponent::resized() {
     std::vector<int> tabWidths;
     tabWidths.reserve(tabs_.size());
     int totalTabsW = 0;
-    const int sepWidth = 18;
+    const int sepWidth = 22;
     
     for (const auto& tab : tabs_) {
         int textW = juce::GlyphArrangement::getStringWidthInt(fonteTab, tab.label);
@@ -292,24 +317,59 @@ void BarraNavegacaoComponent::mouseExit(const juce::MouseEvent&) {
     if (mudou) repaint();
 }
 
+juce::String BarraNavegacaoComponent::obterTextoAjuda(Tab tab) const {
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    switch (tab) {
+        case Tab::Grid:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você pode selecionar um arquivo ou múltiplos arquivos em lote para editar seus metadados e categorização. Preencha com o máximo de detalhes possível.")
+                        : "On this tab, you will be able to select a file or a batch of files to edit the metadata and categorize. Fill it with as much details as you can.";
+        case Tab::Intake:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você pode inspecionar arquivos recém-ingeridos aguardando verificação e integrá-los ao catálogo de metadados.")
+                        : "On this tab, you can inspect recently ingested files awaiting verification and confirm them into the metadata catalog.";
+        case Tab::Duplicates:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você pode identificar e revisar arquivos duplicados na coleção, comparando assinaturas e resolvendo redundâncias.")
+                        : "On this tab, you can identify and resolve duplicate files across the project, comparing signatures and managing redundancy.";
+        case Tab::Analytics:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você visualiza a distribuição de espaço, tipos de mídia, integridade e métricas de armazenamento.")
+                        : "On this tab, you can analyze storage usage, media distribution breakdown, and fixity preservation metrics.";
+        case Tab::Tree:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você navega pela estrutura hierárquica de pastas e volumes do projeto através de um mapa visual.")
+                        : "On this tab, you can explore the directory structure and assets distribution through an interactive treemap.";
+        case Tab::Storage:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você inspeciona discos físicos conectados, volumes externos e saúde dos dispositivos.")
+                        : "On this tab, you can monitor connected storage drives, external volumes, and physical disk health.";
+        case Tab::Backup:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você configura destinos de backup, verifica integridade e sincroniza arquivos pendentes com segurança.")
+                        : "On this tab, you can configure backup destinations, review sync/orphan statuses, and replicate assets safely.";
+        case Tab::Catalog:
+            return isPt ? juce::String::fromUTF8("Nesta aba, você visualiza e gerencia todas as coleções associadas a este catálogo mestre.")
+                        : "On this tab, you can browse and manage all sub-collections linked to this master catalog.";
+    }
+    return "";
+}
+
 juce::String BarraNavegacaoComponent::getTooltip() {
     auto pos = getMouseXYRelative();
+    if (botaoAjuda_ && botaoAjuda_->getBounds().contains(pos)) {
+        return obterTextoAjuda(selectedTab_);
+    }
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     for (const auto& tab : tabs_) {
         if (tab.bounds.contains(pos)) {
             switch (tab.tab) {
-                case Tab::Catalog: return "Manage and explore collections linked to this catalog";
-                case Tab::Intake: return "Manage recently ingested files awaiting verification to METADATA";
-                case Tab::Grid: return "Browse, filter, and edit metadata of all assets";
-                case Tab::Duplicates: return "Scan and resolve duplicate files in active project";
-                case Tab::Analytics: return "View storage capacity, charts, and preservation metrics";
-                case Tab::Tree: return "Explore assets structure via vault directories treemap";
-                case Tab::Backup: return "Plan, check conflicts, and consolidate backup publication package";
-                case Tab::Storage: return "Inspect and manage physical disk devices and history";
+                case Tab::Catalog: return isPt ? juce::String::fromUTF8("Gerenciar e explorar coleções vinculadas a este catálogo") : "Manage and explore collections linked to this catalog";
+                case Tab::Intake: return isPt ? juce::String::fromUTF8("Gerenciar arquivos recém-ingeridos aguardando verificação para METADADOS") : "Manage recently ingested files awaiting verification to METADATA";
+                case Tab::Grid: return isPt ? juce::String::fromUTF8("Navegar, filtrar e editar metadados de todos os arquivos") : "Browse, filter, and edit metadata of all assets";
+                case Tab::Duplicates: return isPt ? juce::String::fromUTF8("Escanear e resolver arquivos duplicados no projeto ativo") : "Scan and resolve duplicate files in active project";
+                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Ver capacidade de armazenamento, gráficos e métricas de preservação") : "View storage capacity, charts, and preservation metrics";
+                case Tab::Tree: return isPt ? juce::String::fromUTF8("Explorar estrutura de arquivos através do mapa visual de diretórios") : "Explore assets structure via vault directories treemap";
+                case Tab::Backup: return isPt ? juce::String::fromUTF8("Planejar, verificar conflitos e consolidar pacote de publicação do backup") : "Plan, check conflicts, and consolidate backup publication package";
+                case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico") : "Inspect and manage physical disk devices and history";
             }
         }
     }
     if (botaoFechar_ && botaoFechar_->getBounds().contains(pos)) {
-        return "Close project and return to start screen";
+        return isPt ? juce::String::fromUTF8("Fechar projeto e voltar à tela inicial") : "Close project and return to start screen";
     }
     return "";
 }

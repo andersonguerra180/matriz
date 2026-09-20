@@ -273,11 +273,8 @@ void gravarLogSmart(matriz::db::Database& db, const std::string& vaultId, const 
     } catch (...) {}
 }
 
-SmartHealthReport obterUltimoLogOuConsultar(matriz::db::Database& db, const std::string& vaultId,
-                                           const std::string& bsdDeviceNode, const juce::File& mountPoint) {
-    if (vaultId.empty()) {
-        return consultarSaudeSmart(bsdDeviceNode, mountPoint);
-    }
+SmartHealthReport obterUltimoLog(matriz::db::Database& db, const std::string& vaultId) {
+    if (vaultId.empty()) return SmartHealthReport{};
 
     try {
         auto stmt = db.prepare(
@@ -324,6 +321,20 @@ SmartHealthReport obterUltimoLogOuConsultar(matriz::db::Database& db, const std:
             return rep;
         }
     } catch (...) {}
+
+    return SmartHealthReport{};
+}
+
+SmartHealthReport obterUltimoLogOuConsultar(matriz::db::Database& db, const std::string& vaultId,
+                                           const std::string& bsdDeviceNode, const juce::File& mountPoint) {
+    if (vaultId.empty()) {
+        return consultarSaudeSmart(bsdDeviceNode, mountPoint);
+    }
+
+    auto existing = obterUltimoLog(db, vaultId);
+    if (existing.state != HealthState::Unavailable || existing.smartStatus != "-") {
+        return existing;
+    }
 
     // No previous log found: run live check and record
     auto rep = consultarSaudeSmart(bsdDeviceNode, mountPoint);

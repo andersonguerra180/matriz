@@ -1,18 +1,20 @@
 #include "ProjectLogViewerDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
 
 ProjectLogViewerDialog::ProjectLogViewerDialog(matriz::model::ProjectLog log)
     : log_(std::move(log)) {
     const auto& tk = tema();
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
-    lblTitle_.setText("PROJECT LOG (log.md)", juce::dontSendNotification);
+    lblTitle_.setText(isPt ? juce::String::fromUTF8("LOG DO PROJETO (log.md)") : "PROJECT LOG (log.md)", juce::dontSendNotification);
     lblTitle_.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
     lblTitle_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblTitle_);
 
-    lblSubtitle_.setText("Location: " + log_.getLogFile().getFullPathName(), juce::dontSendNotification);
+    lblSubtitle_.setText((isPt ? juce::String::fromUTF8("Local: ") : "Location: ") + log_.getLogFile().getFullPathName(), juce::dontSendNotification);
     lblSubtitle_.setFont(juce::Font(juce::FontOptions(12.0f)));
     lblSubtitle_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblSubtitle_);
@@ -31,19 +33,20 @@ ProjectLogViewerDialog::ProjectLogViewerDialog(matriz::model::ProjectLog log)
     lblStatus_.setColour(juce::Label::textColourId, juce::Colour(0xff22c55e)); // Green
     addAndMakeVisible(lblStatus_);
 
-    btnSave_.setButtonText("SAVE LOG");
+    btnSave_.setButtonText(isPt ? juce::String::fromUTF8("SALVAR LOG") : "SAVE LOG");
     btnSave_.setColour(juce::TextButton::buttonColourId, tk.acento);
     btnSave_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnSave_.onClick = [this] {
+        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
         if (log_.saveContent(txtEditor_.getText())) {
-            lblStatus_.setText("Changes saved to log.md successfully.", juce::dontSendNotification);
+            lblStatus_.setText(isPt ? juce::String::fromUTF8("Alterações salvas em log.md com sucesso.") : "Changes saved to log.md successfully.", juce::dontSendNotification);
         } else {
-            lblStatus_.setText("Error saving log.md.", juce::dontSendNotification);
+            lblStatus_.setText(isPt ? juce::String::fromUTF8("Erro ao salvar log.md.") : "Error saving log.md.", juce::dontSendNotification);
         }
     };
     addAndMakeVisible(btnSave_);
 
-    btnClose_.setButtonText("CLOSE");
+    btnClose_.setButtonText(isPt ? juce::String::fromUTF8("FECHAR") : "CLOSE");
     btnClose_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnClose_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnClose_.onClick = [this] {
@@ -81,10 +84,11 @@ void ProjectLogViewerDialog::resized() {
 }
 
 void ProjectLogViewerDialog::showModal(matriz::model::ProjectLog log) {
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     auto* dialog = new ProjectLogViewerDialog(std::move(log));
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
-    options.dialogTitle = "Project Log (log.md)";
+    options.dialogTitle = isPt ? juce::String::fromUTF8("Log do Projeto (log.md)") : "Project Log (log.md)";
     options.dialogBackgroundColour = tema().painel;
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = false;

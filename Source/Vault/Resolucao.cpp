@@ -10,12 +10,26 @@ std::vector<juce::File> candidatos(const juce::File& pastaProjeto, const std::st
                                    const std::string& caminhoRelativo,
                                    const std::string& caminhoAbsolutoOrigem) {
     std::vector<juce::File> out;
+    juce::File pastaRaiz = pastaProjeto.getParentDirectory();
+
+    // 1. Prioridade para projeto auto-contido: caminhos relativos dentro da pasta principal do backup (Media/ ou raiz)
+    if (!caminhoRelativo.empty()) {
+        if (pastaRaiz.isDirectory()) {
+            out.push_back(pastaRaiz.getChildFile("Media").getChildFile(juce::String(caminhoRelativo)));
+            out.push_back(pastaRaiz.getChildFile(juce::String(caminhoRelativo)));
+        }
+        if (pastaProjeto.isDirectory()) {
+            out.push_back(pastaProjeto.getChildFile("Media").getChildFile(juce::String(caminhoRelativo)));
+            out.push_back(pastaProjeto.getChildFile(juce::String(caminhoRelativo)));
+        }
+    }
+
+    // 2. Vault registrado ou caminho absoluto original
     if (!localizacaoVault.empty() && !caminhoRelativo.empty())
         out.push_back(juce::File(juce::String(localizacaoVault)).getChildFile(juce::String(caminhoRelativo)));
     if (!caminhoAbsolutoOrigem.empty())
         out.push_back(juce::File(juce::String(caminhoAbsolutoOrigem)));
-    if (!caminhoRelativo.empty() && pastaProjeto != juce::File())
-        out.push_back(pastaProjeto.getChildFile(juce::String(caminhoRelativo)));
+
     return out;
 }
 

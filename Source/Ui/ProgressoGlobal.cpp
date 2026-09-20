@@ -153,6 +153,7 @@ void ProgressoGlobal::notificarListeners(const EstadoProgresso& estado) {
         for (auto* l : lista) {
             if (l) l->aoProgressoAtualizado(estado);
         }
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
     } else {
         juce::MessageManager::callAsync([this, estado] {
             std::vector<ProgressoGlobalListener*> lista;

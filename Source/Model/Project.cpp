@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "ProjectLog.h"
 
 #include <ctime>
 
@@ -6,6 +7,74 @@
 #include "../Ingest/LeituraTecnica.h"
 
 namespace matriz::model {
+
+std::optional<DestinationInfo> DestinationInfo::lerDeArquivo(const juce::File& arquivoJson) {
+    if (!arquivoJson.existsAsFile()) return std::nullopt;
+    juce::var parsed = juce::JSON::parse(arquivoJson);
+    if (!parsed.isObject()) return std::nullopt;
+
+    DestinationInfo info;
+    info.formato = parsed.getProperty("formato", 1);
+    info.destinationId = parsed.getProperty("destination_id", "").toString().toStdString();
+    info.projetoId = parsed.getProperty("projeto_id", "").toString().toStdString();
+    info.papel = parsed.getProperty("papel", "ORIGINAL").toString().toStdString();
+    info.rotulo = parsed.getProperty("rotulo", "").toString().toStdString();
+    info.revisao = static_cast<int64_t>(static_cast<juce::int64>(parsed.getProperty("revisao", 1)));
+    info.ultimaEdicaoUtc = parsed.getProperty("ultima_edicao_utc", "").toString().toStdString();
+    info.criadoEm = parsed.getProperty("criado_em", "").toString().toStdString();
+    return info;
+}
+
+bool DestinationInfo::gravarEmArquivo(const juce::File& arquivoJson) const {
+    juce::DynamicObject::Ptr obj = new juce::DynamicObject();
+    obj->setProperty("formato", formato);
+    obj->setProperty("destination_id", juce::String(destinationId));
+    obj->setProperty("projeto_id", juce::String(projetoId));
+    obj->setProperty("papel", juce::String(papel));
+    obj->setProperty("rotulo", juce::String(rotulo));
+    obj->setProperty("revisao", static_cast<juce::int64>(revisao));
+    obj->setProperty("ultima_edicao_utc", juce::String(ultimaEdicaoUtc));
+    obj->setProperty("criado_em", juce::String(criadoEm));
+
+    juce::String jsonStr = juce::JSON::toString(juce::var(obj.get()), false);
+
+    // Escrita atômica: arquivo temporário no mesmo diretório + renomear/substituir
+    juce::File parentDir = arquivoJson.getParentDirectory();
+    if (!parentDir.exists()) parentDir.createDirectory();
+
+    juce::File tempFile = parentDir.getChildFile(arquivoJson.getFileName() + ".tmp_" + juce::String::toHexString(juce::Random::getSystemRandom().nextInt64()));
+    if (!tempFile.replaceWithText(jsonStr)) return false;
+
+    if (arquivoJson.exists()) arquivoJson.deleteFile();
+    return tempFile.moveFileTo(arquivoJson);
+}
+
+juce::File Project::resolverPastaProjeto(const juce::File& qualquerPasta) {
+    if (!qualquerPasta.exists()) return qualquerPasta;
+
+    juce::File pastaBase = qualquerPasta;
+    if (qualquerPasta.existsAsFile()) {
+        pastaBase = qualquerPasta.getParentDirectory();
+    }
+
+    // Caso 1: Raiz de um DESTINATION contendo a subpasta Project/ com registro.sqlite
+    juce::File projectSub = pastaBase.getChildFile("Project");
+    if (projectSub.isDirectory() && projectSub.getChildFile("registro.sqlite").existsAsFile()) {
+        return projectSub;
+    }
+
+    // Caso 2: A própria pasta Project/ ou pasta legada contendo registro.sqlite
+    if (pastaBase.getChildFile("registro.sqlite").existsAsFile()) {
+        return pastaBase;
+    }
+
+    // Caso 3: destination.json presente na raiz com subpasta Project
+    if (pastaBase.getChildFile("destination.json").existsAsFile() && projectSub.isDirectory()) {
+        return projectSub;
+    }
+
+    return pastaBase;
+}
 
 std::string modoToString(Modo m) { return m == Modo::Preservacao ? "preservacao" : "catalogo"; }
 
@@ -28,7 +97,156 @@ std::string novoUuid() {
     return juce::Uuid().toDashedString().toLowerCase().toStdString();
 }
 
+juce::File normalizarParaRaizDestino(const juce::File& f) {
+    if (f == juce::File()) return f;
+
+    juce::File cur = f;
+    if (cur.existsAsFile()) {
+        cur = cur.getParentDirectory();
+    }
+
+    // Se o caminho estiver dentro de (ou for) uma pasta "Media" ou "Project",
+    // encontrar o ancestral mais alto com esse nome e subir para o pai dele.
+    juce::File temp = cur;
+    juce::File highestMediaOrProject;
+    while (temp != juce::File() && temp != temp.getParentDirectory()) {
+        juce::String name = temp.getFileName();
+        if (name.equalsIgnoreCase("Media") || name.equalsIgnoreCase("Project")) {
+            highestMediaOrProject = temp;
+        }
+        temp = temp.getParentDirectory();
+    }
+
+    if (highestMediaOrProject != juce::File()) {
+        cur = highestMediaOrProject.getParentDirectory();
+    }
+
+    // Se a raiz encontrada ainda não tem destination.json, mas algum ancestral tem,
+    // subir até a raiz que contém destination.json.
+    if (!cur.getChildFile("destination.json").existsAsFile()) {
+        juce::File check = cur;
+        while (check != juce::File() && check != check.getParentDirectory()) {
+            if (check.getChildFile("destination.json").existsAsFile()) {
+                cur = check;
+                break;
+            }
+            check = check.getParentDirectory();
+        }
+    }
+
+    return cur;
+}
+
+void sanitizarEstruturaDestino(const juce::File& pasta) {
+    if (pasta == juce::File()) return;
+    juce::File raiz = normalizarParaRaizDestino(pasta);
+    if (!raiz.isDirectory()) return;
+
+    juce::File projDir = raiz.getChildFile("Project");
+    juce::File mediaDir = raiz.getChildFile("Media");
+
+    auto moverConteudoDiretorio = [](const juce::File& origemDir, const juce::File& destinoDir) {
+        if (!origemDir.isDirectory()) return;
+        if (!destinoDir.isDirectory()) destinoDir.createDirectory();
+        for (const auto& f : origemDir.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+            juce::File destFile = destinoDir.getChildFile(f.getFileName());
+            if (f.isDirectory()) {
+                if (destFile.exists()) {
+                    for (const auto& sub : f.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+                        juce::File subDest = destFile.getChildFile(sub.getFileName());
+                        if (!subDest.exists()) sub.moveFileTo(subDest);
+                    }
+                    f.deleteRecursively();
+                } else {
+                    f.moveFileTo(destFile);
+                }
+            } else {
+                if (destFile.exists()) f.deleteFile();
+                else f.moveFileTo(destFile);
+            }
+        }
+        origemDir.deleteRecursively();
+    };
+
+    // 1. Limpeza na raiz do destino:
+    // log/ na raiz -> mover para Project/log/
+    juce::File rootLog = raiz.getChildFile("log");
+    if (rootLog.isDirectory()) {
+        moverConteudoDiretorio(rootLog, projDir.getChildFile("log"));
+    }
+
+    // _lixeira/ na raiz -> mover para Project/_lixeira/
+    juce::File rootLixeira = raiz.getChildFile("_lixeira");
+    if (rootLixeira.isDirectory()) {
+        moverConteudoDiretorio(rootLixeira, projDir.getChildFile("_lixeira"));
+    }
+
+    // 2. Limpeza profunda dentro de Media/:
+    if (mediaDir.isDirectory()) {
+        // destination.json dentro de Media/ -> mover para raiz se faltar, ou apagar
+        juce::File mediaDestJson = mediaDir.getChildFile("destination.json");
+        if (mediaDestJson.existsAsFile()) {
+            juce::File raizDestJson = raiz.getChildFile("destination.json");
+            if (!raizDestJson.existsAsFile()) {
+                mediaDestJson.moveFileTo(raizDestJson);
+            } else {
+                mediaDestJson.deleteFile();
+            }
+        }
+
+        // _lixeira dentro de Media/ -> mover para Project/_lixeira/
+        juce::File mediaLixeira = mediaDir.getChildFile("_lixeira");
+        if (mediaLixeira.isDirectory()) {
+            moverConteudoDiretorio(mediaLixeira, projDir.getChildFile("_lixeira"));
+        }
+
+        // log dentro de Media/ -> mover para Project/log/
+        juce::File mediaLog = mediaDir.getChildFile("log");
+        if (mediaLog.isDirectory()) {
+            moverConteudoDiretorio(mediaLog, projDir.getChildFile("log"));
+        }
+
+        // relatorios dentro de Media/ -> mover para Project/relatorios/
+        juce::File mediaRel = mediaDir.getChildFile("relatorios");
+        if (mediaRel.isDirectory()) {
+            moverConteudoDiretorio(mediaRel, projDir.getChildFile("relatorios"));
+        }
+
+        // catalogo dentro de Media/ -> mover para Project/catalogo/
+        juce::File mediaCat = mediaDir.getChildFile("catalogo");
+        if (mediaCat.isDirectory()) {
+            moverConteudoDiretorio(mediaCat, projDir.getChildFile("catalogo"));
+        }
+
+        // Project dentro de Media/ -> mover conteúdo para Project/ e remover
+        juce::File mediaProject = mediaDir.getChildFile("Project");
+        if (mediaProject.isDirectory()) {
+            moverConteudoDiretorio(mediaProject, projDir);
+        }
+
+        // Media aninhada dentro de Media/ (Media/Media) -> mover conteúdo para Media/ e remover
+        juce::File mediaNested = mediaDir.getChildFile("Media");
+        if (mediaNested.isDirectory()) {
+            moverConteudoDiretorio(mediaNested, mediaDir);
+        }
+
+        // Arquivos de sistema/banco soltos dentro de Media/ -> mover para Project/
+        for (const auto& f : mediaDir.findChildFiles(juce::File::findFiles, false)) {
+            juce::String ext = f.getFileExtension().toLowerCase();
+            juce::String name = f.getFileName();
+            if (ext == ".sqlite" || ext.startsWith(".sqlite-") || ext == ".mtz" || ext == ".bkm" ||
+                name == "matriz_operacoes.log" || name == "log.md") {
+                if (!projDir.isDirectory()) projDir.createDirectory();
+                juce::File dest = projDir.getChildFile(name);
+                if (!dest.exists()) f.moveFileTo(dest);
+                else f.deleteFile();
+            }
+        }
+    }
+}
+
 namespace {
+
 
 std::string readBinarySql(const char* data, int size) { return std::string(data, static_cast<size_t>(size)); }
 
@@ -168,10 +386,10 @@ void migrarConsolidacaoRegistro(matriz::db::Database& registro) {
             "SELECT sql FROM sqlite_master WHERE type='table' AND name='consolidacao_registro'");
         if (checkStmt.step()) {
             std::string sql = checkStmt.columnText(0);
-            if (sql.find("acervo_pasta") != std::string::npos) {
+            if (sql.find("destino_path") == std::string::npos || sql.find("acervo_pasta") != std::string::npos) {
                 registro.exec("PRAGMA foreign_keys = OFF");
                 registro.run(
-                    "CREATE TABLE IF NOT EXISTS consolidacao_registro_v2 ("
+                    "CREATE TABLE IF NOT EXISTS consolidacao_registro_v3 ("
                     "id TEXT PRIMARY KEY, "
                     "item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE, "
                     "pasta_id TEXT NOT NULL DEFAULT '', "
@@ -179,15 +397,23 @@ void migrarConsolidacaoRegistro(matriz::db::Database& registro) {
                     "caminho_relativo_destino TEXT NOT NULL, "
                     "checksum_sha256 TEXT NOT NULL, "
                     "consolidado_em TEXT NOT NULL, "
-                    "UNIQUE (item_id, pasta_id, arquivo_id))", {});
+                    "destino_path TEXT NOT NULL DEFAULT '', "
+                    "UNIQUE (item_id, pasta_id, arquivo_id, destino_path))", {});
 
-                registro.run(
-                    "INSERT OR IGNORE INTO consolidacao_registro_v2 "
-                    "SELECT id, item_id, COALESCE(pasta_id, ''), arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em "
-                    "FROM consolidacao_registro", {});
+                if (sql.find("destino_path") != std::string::npos) {
+                    registro.run(
+                        "INSERT OR IGNORE INTO consolidacao_registro_v3 "
+                        "SELECT id, item_id, COALESCE(pasta_id, ''), arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em, COALESCE(destino_path, '') "
+                        "FROM consolidacao_registro", {});
+                } else {
+                    registro.run(
+                        "INSERT OR IGNORE INTO consolidacao_registro_v3 "
+                        "SELECT id, item_id, COALESCE(pasta_id, ''), arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em, '' "
+                        "FROM consolidacao_registro", {});
+                }
 
                 registro.run("DROP TABLE consolidacao_registro", {});
-                registro.run("ALTER TABLE consolidacao_registro_v2 RENAME TO consolidacao_registro", {});
+                registro.run("ALTER TABLE consolidacao_registro_v3 RENAME TO consolidacao_registro", {});
                 registro.exec("PRAGMA foreign_keys = ON");
             }
         }
@@ -204,12 +430,30 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
 
     // Colunas acrescentadas depois da primeira versão do schema.
+    garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");
+    registro.exec(
+        "CREATE TABLE IF NOT EXISTS backup_destino ("
+        "id            TEXT PRIMARY KEY, "
+        "destino_path  TEXT NOT NULL UNIQUE, "
+        "rotulo        TEXT NOT NULL, "
+        "ativo         INTEGER NOT NULL DEFAULT 1, "
+        "criado_em     TEXT NOT NULL"
+        ")");
+    try {
+        registro.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_backup_destino_path ON backup_destino(destino_path)");
+    } catch (...) {}
+    garantirColuna(registro, "backup_destino", "destination_id", "TEXT");
+    garantirColuna(registro, "backup_destino", "papel", "TEXT NOT NULL DEFAULT 'CLONE'");
+    garantirColuna(registro, "backup_destino", "ultima_revisao_conhecida", "INTEGER NOT NULL DEFAULT 0");
+    garantirColuna(registro, "backup_destino", "ultimo_visto_em", "TEXT");
+    garantirColuna(registro, "backup_destino", "ultima_edicao_conhecida", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "filtros_origem", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "filtros_content_type", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "filtros_collection_type", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "ano_de", "INTEGER");
     garantirColuna(registro, "colecao_inteligente", "ano_ate", "INTEGER");
     garantirColuna(registro, "projeto", "hierarquia_backup", "TEXT");
+    garantirColuna(registro, "projeto", "destino_backup_ativo_path", "TEXT NOT NULL DEFAULT ''");
     garantirColuna(registro, "arquivo", "tamanho_bytes", "INTEGER");
 
     garantirColuna(registro, "acervo_pasta", "posicao_x", "INTEGER NOT NULL DEFAULT 0");
@@ -549,44 +793,60 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
 } // namespace
 
 Project::Project(juce::File pastaProjeto, std::unique_ptr<matriz::db::Database> registro,
-                  std::unique_ptr<matriz::db::Database> indice, std::string projetoId)
+                  std::unique_ptr<matriz::db::Database> indice, std::string projetoId,
+                  DestinationInfo destinationInfo)
     : pastaProjeto_(std::move(pastaProjeto)),
       registro_(std::move(registro)),
       indice_(std::move(indice)),
-      projetoId_(std::move(projetoId)) {
+      projetoId_(std::move(projetoId)),
+      destinationInfo_(std::move(destinationInfo)) {
     // Uma leitura só, aqui. Ver a nota em Project::modo().
     auto stmt = registro_->prepare("SELECT modo FROM projeto LIMIT 1");
     if (stmt.step()) modo_ = modoFromString(stmt.columnText(0));
 }
 
-std::unique_ptr<Project> Project::criar(const juce::File& pastaProjeto, const NovoProjetoParams& params) {
+std::unique_ptr<Project> Project::criar(const juce::File& pastaRaiz, const NovoProjetoParams& params) {
     if (params.nome.empty())
         throw ProjectError("project name is required");
     if (params.prefixoNomenclatura.empty())
         throw ProjectError("naming prefix is required");
 
-    if (!pastaProjeto.exists()) {
-        if (!pastaProjeto.createDirectory())
-            throw ProjectError("could not create the project folder: " + pastaProjeto.getFullPathName().toStdString());
-    } else if (!pastaProjeto.isDirectory()) {
-        throw ProjectError("the project path exists and is not a folder: " + pastaProjeto.getFullPathName().toStdString());
+    if (!pastaRaiz.exists()) {
+        if (!pastaRaiz.createDirectory())
+            throw ProjectError("could not create the destination root folder: " + pastaRaiz.getFullPathName().toStdString());
+    } else if (!pastaRaiz.isDirectory()) {
+        throw ProjectError("the destination root path exists and is not a folder: " + pastaRaiz.getFullPathName().toStdString());
     }
 
-    juce::File registroFile = pastaProjeto.getChildFile("registro.sqlite");
-    juce::File indiceFile = pastaProjeto.getChildFile("indice.sqlite");
-    if (registroFile.exists() || indiceFile.exists())
-        throw ProjectError("this folder already holds a MATRIZ project: " + pastaProjeto.getFullPathName().toStdString());
+    juce::File pastaProject = pastaRaiz.getChildFile("Project");
+    juce::File pastaMedia = pastaRaiz.getChildFile("Media");
+    juce::File destJsonFile = pastaRaiz.getChildFile("destination.json");
+
+    if (destJsonFile.exists() || pastaProject.getChildFile("registro.sqlite").exists() || pastaRaiz.getChildFile("registro.sqlite").exists())
+        throw ProjectError("this folder already holds a MATRIZ project: " + pastaRaiz.getFullPathName().toStdString());
+
+    if (!pastaProject.exists() && !pastaProject.createDirectory())
+        throw ProjectError("could not create Project directory: " + pastaProject.getFullPathName().toStdString());
+    if (!pastaMedia.exists() && !pastaMedia.createDirectory())
+        throw ProjectError("could not create Media directory: " + pastaMedia.getFullPathName().toStdString());
+
+    juce::File registroFile = pastaProject.getChildFile("registro.sqlite");
+    juce::File indiceFile = pastaProject.getChildFile("indice.sqlite");
 
     auto registro = std::make_unique<matriz::db::Database>(registroFile.getFullPathName().toStdString());
     auto indice = std::make_unique<matriz::db::Database>(indiceFile.getFullPathName().toStdString());
+
+    registro->setRastrearSujo(false);
+    indice->setRastrearSujo(false);
     aplicarSchemas(*registro, *indice);
 
     std::string projetoId = novoUuid();
+    std::string destinationId = novoUuid();
     std::string agora = agoraIso8601();
 
     registro->run(
         "INSERT INTO projeto (id, modo, nome, instituicao_ou_selo, responsavel, prefixo_nomenclatura, "
-        "isrc_registrante, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "isrc_registrante, criado_em, atualizado_em, destino_backup_ativo_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         {
             matriz::db::Value::of(projetoId),
             matriz::db::Value::of(modoToString(params.modo)),
@@ -597,12 +857,59 @@ std::unique_ptr<Project> Project::criar(const juce::File& pastaProjeto, const No
             params.isrcRegistrante.empty() ? matriz::db::Value::null() : matriz::db::Value::of(params.isrcRegistrante),
             matriz::db::Value::of(agora),
             matriz::db::Value::of(agora),
+            matriz::db::Value::of(pastaRaiz.getFullPathName().toStdString()),
         });
 
-    return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));
+    registro->run(
+        "INSERT OR REPLACE INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
+        "VALUES (?, ?, ?, 1, ?, ?, 'ORIGINAL', 1, ?, ?)",
+        {
+            matriz::db::Value::of(destinationId),
+            matriz::db::Value::of(pastaRaiz.getFullPathName().toStdString()),
+            matriz::db::Value::of(params.nome),
+            matriz::db::Value::of(agora),
+            matriz::db::Value::of(destinationId),
+            matriz::db::Value::of(agora),
+            matriz::db::Value::of(agora),
+        });
+
+    DestinationInfo destInfo;
+    destInfo.formato = 1;
+    destInfo.destinationId = destinationId;
+    destInfo.projetoId = projetoId;
+    destInfo.papel = "ORIGINAL";
+    destInfo.rotulo = params.nome;
+    destInfo.revisao = 1;
+    destInfo.ultimaEdicaoUtc = agora;
+    destInfo.criadoEm = agora;
+    destInfo.gravarEmArquivo(destJsonFile);
+
+    // Arquivo do projeto (.mtz para coleção ou .bkm para catálogo) dentro da pasta principal do backup (Tarefa 11)
+    juce::String ext = (params.modo == Modo::Catalogo ? ".bkm" : ".mtz");
+    juce::File arquivoProjeto = pastaRaiz.getChildFile(juce::File::createLegalFileName(params.nome) + ext);
+    juce::DynamicObject::Ptr projObj = new juce::DynamicObject();
+    projObj->setProperty("formato", 1);
+    projObj->setProperty("modo", juce::String(modoToString(params.modo)));
+    projObj->setProperty("nome", juce::String(params.nome));
+    projObj->setProperty("projeto_id", juce::String(projetoId));
+    projObj->setProperty("destination_id", juce::String(destinationId));
+    projObj->setProperty("criado_em", juce::String(agora));
+    arquivoProjeto.replaceWithText(juce::JSON::toString(juce::var(projObj.get()), false));
+
+    // Initial log entry
+    matriz::model::ProjectLog pl(pastaProject);
+    pl.appendEntry("Project created", {"Mode: " + juce::String(modoToString(params.modo)), "Root: " + pastaRaiz.getFullPathName(), "Destination ID: " + juce::String(destinationId)});
+
+    registro->limparSujo();
+    indice->limparSujo();
+    registro->setRastrearSujo(true);
+    indice->setRastrearSujo(true);
+
+    return std::unique_ptr<Project>(new Project(pastaProject, std::move(registro), std::move(indice), projetoId, destInfo));
 }
 
-std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
+std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
+    juce::File pastaProjeto = resolverPastaProjeto(qualquerPasta);
     if (!pastaProjeto.isDirectory())
         throw ProjectError("project folder not found: " + pastaProjeto.getFullPathName().toStdString());
 
@@ -614,9 +921,9 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
 
     auto registro = std::make_unique<matriz::db::Database>(registroFile.getFullPathName().toStdString());
     auto indice = std::make_unique<matriz::db::Database>(indiceFile.getFullPathName().toStdString());
-    // Scripts de schema são idempotentes (CREATE TABLE/INDEX/TRIGGER IF NOT
-    // EXISTS) — reaplicar ao abrir é o mecanismo de auto-atualização de
-    // schema entre versões até a Etapa 10 trazer migração formal.
+
+    registro->setRastrearSujo(false);
+    indice->setRastrearSujo(false);
     aplicarSchemas(*registro, *indice);
 
     matriz::db::Statement stmt = registro->prepare("SELECT id FROM projeto LIMIT 1");
@@ -624,6 +931,52 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
         throw ProjectError("projeto corrompido: nenhuma linha em \"projeto\" no registro: " +
                             pastaProjeto.getFullPathName().toStdString());
     std::string projetoId = stmt.columnText(0);
+
+    // Read or initialize DestinationInfo
+    juce::File raiz = pastaProjeto.getParentDirectory();
+    juce::File destJsonFile = raiz.getChildFile("destination.json");
+    auto destOpt = DestinationInfo::lerDeArquivo(destJsonFile);
+    DestinationInfo destInfo;
+    std::string agora = agoraIso8601();
+
+    if (destOpt && destOpt->projetoId == projetoId) {
+        destInfo = *destOpt;
+        // Update backup_destino row
+        registro->run(
+            "INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
+            "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET destino_path = excluded.destino_path, ultimo_visto_em = excluded.ultimo_visto_em, "
+            "ultima_edicao_conhecida = excluded.ultima_edicao_conhecida, ultima_revisao_conhecida = excluded.ultima_revisao_conhecida",
+            {
+                matriz::db::Value::of(destInfo.destinationId),
+                matriz::db::Value::of(raiz.getFullPathName().toStdString()),
+                matriz::db::Value::of(destInfo.rotulo.empty() ? raiz.getFileName().toStdString() : destInfo.rotulo),
+                matriz::db::Value::of(destInfo.criadoEm.empty() ? agora : destInfo.criadoEm),
+                matriz::db::Value::of(destInfo.destinationId),
+                matriz::db::Value::of(destInfo.papel),
+                matriz::db::Value::of(static_cast<long long>(destInfo.revisao)),
+                matriz::db::Value::of(agora),
+                matriz::db::Value::of(destInfo.ultimaEdicaoUtc.empty() ? agora : destInfo.ultimaEdicaoUtc)
+            });
+    } else {
+        // Fallback / legacy project without destination.json
+        destInfo.formato = 1;
+        destInfo.destinationId = novoUuid();
+        destInfo.projetoId = projetoId;
+        destInfo.papel = "ORIGINAL";
+        destInfo.rotulo = raiz.getFileName().toStdString();
+        destInfo.revisao = 1;
+        destInfo.ultimaEdicaoUtc = agora;
+        destInfo.criadoEm = agora;
+    }
+
+    // Set active destination path
+    registro->run("UPDATE projeto SET destino_backup_ativo_path = ? WHERE id = ?",
+                  {matriz::db::Value::of(raiz.getFullPathName().toStdString()), matriz::db::Value::of(projetoId)});
+
+    // Ensure Media directory exists
+    juce::File mediaDir = raiz.getChildFile("Media");
+    if (!mediaDir.exists()) mediaDir.createDirectory();
 
     // Legacy migration compatibility: convert internal files to local vault
     try {
@@ -657,6 +1010,35 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
     } catch (...) {
         // Safe fallback in case of errors
     }
+
+    // Higieniza a estrutura física do projeto para garantir Media/ estritamente limpa
+    sanitizarEstruturaDestino(raiz);
+
+    // 0. Desativar destinos inválidos que apontam para /Media ou /Project (sem apagar nada do disco)
+    try {
+        auto stmtBad = registro->prepare(
+            "SELECT id, destino_path, rotulo FROM backup_destino "
+            "WHERE ativo = 1 AND (destino_path LIKE '%/Media' OR destino_path LIKE '%/Media/' "
+            "OR destino_path LIKE '%/Project' OR destino_path LIKE '%/Project/')");
+        struct BadDest {
+            std::string id;
+            std::string path;
+            std::string rotulo;
+        };
+        std::vector<BadDest> badDests;
+        while (stmtBad.step()) {
+            badDests.push_back({stmtBad.columnText(0), stmtBad.columnText(1), stmtBad.columnText(2)});
+        }
+        for (const auto& bd : badDests) {
+            registro->run("UPDATE backup_destino SET ativo = 0 WHERE id = ?", {matriz::db::Value::of(bd.id)});
+            matriz::model::ProjectLog pLog(pastaProjeto);
+            juce::StringArray details;
+            details.add("Path: " + juce::String::fromUTF8(bd.path.c_str()));
+            details.add("Label: " + juce::String::fromUTF8(bd.rotulo.c_str()));
+            details.add("Reason: Pointing to Media or Project subfolder");
+            pLog.appendEntry("Destination Deactivated (Invalid Subfolder)", details);
+        }
+    } catch (...) {}
 
     // 1. Remove empty/invalid ghost arquivo rows where no paths exist
     try {
@@ -759,6 +1141,16 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
                 juce::File inProj = pastaProjeto.getChildFile(rel);
                 if (inProj.existsAsFile()) {
                     pathFixes.push_back({arqId, inProj.getFullPathName().toStdString()});
+                } else {
+                    juce::File inMedia = pastaProjeto.getParentDirectory().getChildFile("Media").getChildFile(rel);
+                    if (inMedia.existsAsFile()) {
+                        pathFixes.push_back({arqId, inMedia.getFullPathName().toStdString()});
+                    } else {
+                        juce::File inRaiz = pastaProjeto.getParentDirectory().getChildFile(rel);
+                        if (inRaiz.existsAsFile()) {
+                            pathFixes.push_back({arqId, inRaiz.getFullPathName().toStdString()});
+                        }
+                    }
                 }
             }
         }
@@ -768,13 +1160,82 @@ std::unique_ptr<Project> Project::abrir(const juce::File& pastaProjeto) {
         }
     } catch (...) {}
 
-    return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId));
+    // Garante que o arquivo de projeto auto-contido (.mtz ou .bkm) existe na raiz do projeto/backup (Tarefa 11)
+    try {
+        juce::File pastaRaiz = pastaProjeto.getParentDirectory();
+        std::string modoStr = "preservacao";
+        {
+            auto stmtModo = registro->prepare("SELECT modo FROM projeto LIMIT 1");
+            if (stmtModo.step()) modoStr = stmtModo.columnText(0);
+        }
+        juce::String ext = (modoStr == "catalogo" ? ".bkm" : ".mtz");
+        std::string nomeProj = "";
+        {
+            auto stmtNome = registro->prepare("SELECT nome FROM projeto LIMIT 1");
+            if (stmtNome.step()) nomeProj = stmtNome.columnText(0);
+        }
+        if (nomeProj.empty()) nomeProj = pastaRaiz.getFileName().toStdString();
+        juce::File arquivoProjeto = pastaRaiz.getChildFile(juce::File::createLegalFileName(nomeProj) + ext);
+        if (!arquivoProjeto.existsAsFile()) {
+            juce::DynamicObject::Ptr projObj = new juce::DynamicObject();
+            projObj->setProperty("formato", 1);
+            projObj->setProperty("modo", juce::String(modoStr));
+            projObj->setProperty("nome", juce::String(nomeProj));
+            projObj->setProperty("projeto_id", juce::String(projetoId));
+            projObj->setProperty("destination_id", juce::String(destInfo.destinationId));
+            projObj->setProperty("criado_em", juce::String(agora));
+            arquivoProjeto.replaceWithText(juce::JSON::toString(juce::var(projObj.get()), false));
+        }
+    } catch (...) {}
+
+    registro->limparSujo();
+    indice->limparSujo();
+    registro->setRastrearSujo(true);
+    indice->setRastrearSujo(true);
+
+    return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId, destInfo));
+}
+
+void Project::confirmarRevisao() {
+    if (!registro_ || !registro_->estaSujo()) return;
+
+    destinationInfo_.revisao++;
+    destinationInfo_.ultimaEdicaoUtc = agoraIso8601();
+    juce::File destJsonFile = raiz().getChildFile("destination.json");
+    destinationInfo_.gravarEmArquivo(destJsonFile);
+
+    // Update backup_destino for this destination
+    try {
+        registro_->run("UPDATE backup_destino SET ultima_revisao_conhecida = ?, ultima_edicao_conhecida = ?, ultimo_visto_em = ? WHERE destination_id = ?",
+                       {matriz::db::Value::of(static_cast<long long>(destinationInfo_.revisao)),
+                        matriz::db::Value::of(destinationInfo_.ultimaEdicaoUtc),
+                        matriz::db::Value::of(destinationInfo_.ultimaEdicaoUtc),
+                        matriz::db::Value::of(destinationInfo_.destinationId)});
+    } catch (...) {}
+
+    registro_->limparSujo();
 }
 
 std::string Project::nome() {
     auto stmt = registro_->prepare("SELECT nome FROM projeto LIMIT 1");
     stmt.step();
     return stmt.columnText(0);
+}
+
+std::string Project::destinoBackupAtivo() {
+    try {
+        auto stmt = registro_->prepare("SELECT destino_backup_ativo_path FROM projeto LIMIT 1");
+        if (stmt.step() && !stmt.columnIsNull(0)) {
+            return stmt.columnText(0);
+        }
+    } catch (...) {}
+    return {};
+}
+
+void Project::definirDestinoBackupAtivo(const std::string& path) {
+    try {
+        registro_->run("UPDATE projeto SET destino_backup_ativo_path = ?", {matriz::db::Value::of(path)});
+    } catch (...) {}
 }
 
 } // namespace matriz::model

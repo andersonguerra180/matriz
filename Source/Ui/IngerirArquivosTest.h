@@ -9,5 +9,6 @@
 namespace matriz::ui {
 
 int rodarTestIngerirArquivos();
+int rodarTestLightroom();
 
 } // namespace matriz::ui

@@ -166,7 +166,7 @@ public:
         bool isPt = (matriz::i18n::localeAtivo().startsWith("pt"));
         const char** meses = isPt ? mesesPt : mesesEn;
         int m = juce::jlimit(0, 11, mesAnoAtual_.getMonth());
-        lblMesAno_->setText(juce::String(meses[m]) + " " + juce::String(mesAnoAtual_.getYear()), juce::dontSendNotification);
+        lblMesAno_->setText(juce::String::fromUTF8(meses[m]) + " " + juce::String(mesAnoAtual_.getYear()), juce::dontSendNotification);
     }
 
     void resized() override {
@@ -436,7 +436,15 @@ public:
             g.drawText(capStr, headerRow.removeFromRight(68), juce::Justification::centredRight);
 
             // Name & Online / Offline on the left
-            juce::String displayTitle = d.nome.isNotEmpty() ? d.nome : juce::String(d.modelo);
+            juce::String displayTitle = d.nome;
+            if (d.localizacao.isNotEmpty() && d.tipo != "cloud" && d.categoriaDispositivo != "cloud") {
+                juce::File f(d.localizacao);
+                juce::String vol = f.getVolumeLabel();
+                if (vol.isEmpty()) vol = matriz::vault::raizDoVault(f).getFileName();
+                if (vol.isEmpty() && matriz::vault::raizDoVault(f).getFullPathName() == "/") vol = "Macintosh HD";
+                if (vol.isNotEmpty()) displayTitle = vol;
+            }
+            if (displayTitle.isEmpty()) displayTitle = juce::String(d.modelo);
             if (displayTitle.isEmpty()) displayTitle = i18n::t("storage.storage_device");
 
             auto titleFont = juce::Font(juce::FontOptions(13.5f, juce::Font::bold));
@@ -638,6 +646,9 @@ public:
         }
     }
 
+    void resized() override {
+    }
+
     void atualizarAltura() {
         const auto& devs = getDevices();
         int availW = getWidth();
@@ -678,8 +689,25 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     btnRefresh_ = std::make_unique<juce::TextButton>(i18n::t("storage.btn_refresh"));
     btnRefresh_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnRefresh_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
-    btnRefresh_->onClick = [this] { recarregar(); };
+    btnRefresh_->onClick = [this] {
+        for (const auto& dev : sourceDevices_) {
+            if (dev.online) atualizarSaudeSmartDoDevice(dev.id, true);
+        }
+        for (const auto& dev : backupDevices_) {
+            if (dev.online) atualizarSaudeSmartDoDevice(dev.id, true);
+        }
+        recarregar();
+    };
     addAndMakeVisible(*btnRefresh_);
+
+    btnAjudaStorage_ = std::make_unique<juce::TextButton>("?");
+    btnAjudaStorage_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnAjudaStorage_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+    btnAjudaStorage_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+    btnAjudaStorage_->setTooltip(i18n::t("storage.help_disk_card"));
+    btnAjudaStorage_->setWantsKeyboardFocus(false);
+    btnAjudaStorage_->setMouseClickGrabsKeyboardFocus(false);
+    addAndMakeVisible(*btnAjudaStorage_);
 
     // Top 80%: Source & Backup Cards Columns
     lblSourceColumnTitle_ = std::make_unique<juce::Label>("lblSrcCol", i18n::t("storage.col_source"));
@@ -712,9 +740,9 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     logDockContainer_->addAndMakeVisible(*logCalendarComp_);
 
     lblDayLogsTitle_ = std::make_unique<juce::Label>("lblDayLogs", "");
-    lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+    lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
     lblDayLogsTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
-    logDockContainer_->addAndMakeVisible(*lblDayLogsTitle_);
+    addAndMakeVisible(*lblDayLogsTitle_);
 
     btnShowAllLogs_ = std::make_unique<juce::TextButton>(i18n::t("storage.btn_all_sessions"));
     btnShowAllLogs_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
@@ -724,13 +752,22 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
         atualizarListaLogsFiltrada();
         if (logCalendarComp_) logCalendarComp_->repaint();
     };
-    logDockContainer_->addAndMakeVisible(*btnShowAllLogs_);
+    addAndMakeVisible(*btnShowAllLogs_);
 
     btnOpenLogFolder_ = std::make_unique<juce::TextButton>(i18n::t("storage.btn_open_folder"));
     btnOpenLogFolder_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
     btnOpenLogFolder_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnOpenLogFolder_->onClick = [this] { abrirPastaLogs(); };
-    logDockContainer_->addAndMakeVisible(*btnOpenLogFolder_);
+    addAndMakeVisible(*btnOpenLogFolder_);
+
+    btnAjudaMediaLog_ = std::make_unique<juce::TextButton>("?");
+    btnAjudaMediaLog_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnAjudaMediaLog_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+    btnAjudaMediaLog_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+    btnAjudaMediaLog_->setTooltip(i18n::t("storage.help_media_log"));
+    btnAjudaMediaLog_->setWantsKeyboardFocus(false);
+    btnAjudaMediaLog_->setMouseClickGrabsKeyboardFocus(false);
+    addAndMakeVisible(*btnAjudaMediaLog_);
 
     tableHistory_ = std::make_unique<juce::TableListBox>("StorageHistoryTable", this);
     tableHistory_->setColour(juce::ListBox::backgroundColourId, tk.painel);
@@ -773,6 +810,12 @@ void StorageWorkspaceComponent::recarregar() {
         projeto_.reavaliarVaults();
     } catch (...) {}
     carregarDados();
+}
+
+void StorageWorkspaceComponent::visibilityChanged() {
+    if (isVisible()) {
+        recarregar();
+    }
 }
 
 void StorageWorkspaceComponent::carregarDados() {
@@ -874,9 +917,9 @@ void StorageWorkspaceComponent::carregarDados() {
                 dev.espacoTotalBytes = dev.capacidadeBytes;
             }
 
-            // Retrieve SMART report for this device
+            // Retrieve persistent SMART report for this device (live query only on SCAN / REFRESH ALL)
             try {
-                dev.smartReport = matriz::vault::obterUltimoLogOuConsultar(db, dev.id, dev.numeroSerie, juce::File(dev.localizacao));
+                dev.smartReport = matriz::vault::obterUltimoLog(db, dev.id);
             } catch (...) {}
 
             allDevs.push_back(std::move(dev));
@@ -929,6 +972,57 @@ void StorageWorkspaceComponent::carregarDados() {
             }
         }
     }
+
+    // Garantir que todos os backup_destino registrados apareçam em backupDevices_
+    try {
+        auto stmtDest = db.prepare(
+            "SELECT id, destino_path, rotulo, papel FROM backup_destino WHERE ativo = 1 AND destino_path IS NOT NULL AND destino_path != ''");
+        while (stmtDest.step()) {
+            juce::String dPath = stmtDest.columnText(1);
+            juce::String dRotulo = stmtDest.columnText(2);
+            juce::File dFile(dPath);
+
+            bool jaExiste = false;
+            for (auto& b : backupDevices_) {
+                if (!b.localizacao.isEmpty() && (dPath.startsWithIgnoreCase(b.localizacao) || b.localizacao.startsWithIgnoreCase(dPath))) {
+                    jaExiste = true;
+                    b.isBackup = true;
+                    break;
+                }
+            }
+            if (!jaExiste && dFile.exists()) {
+                StorageDevice bdev;
+                std::string destVaultId = matriz::vault::obterOuCriarVaultParaDestino(db, dFile, projeto_.projeto().projetoId());
+                bdev.id = destVaultId.empty() ? stmtDest.columnText(0) : destVaultId;
+                bdev.projetoId = projeto_.projeto().projetoId();
+
+                juce::File volFile = matriz::vault::raizDoVault(dFile);
+                juce::String volName = dFile.getVolumeLabel();
+                if (volName.isEmpty()) volName = volFile.getFileName();
+                if (volName.isEmpty() && volFile.getFullPathName() == "/") volName = "Macintosh HD";
+                bdev.nome = volName.isNotEmpty() ? volName : (dRotulo.isNotEmpty() ? dRotulo : dFile.getFileName());
+
+                bdev.tipo = "backup";
+                bdev.categoriaDispositivo = "backup";
+                bdev.localizacao = dFile.getFullPathName();
+                bdev.online = dFile.isDirectory();
+                bdev.isBackup = true;
+                if (bdev.online) {
+                    juce::int64 volTotal = dFile.getVolumeTotalSize();
+                    juce::int64 volFree = dFile.getBytesFreeOnVolume();
+                    if (volTotal > 0 && volFree >= 0) {
+                        bdev.espacoTotalBytes = volTotal;
+                        bdev.espacoLivreBytes = volFree;
+                        bdev.espacoUsadoBytes = juce::jmax<juce::int64>(0, volTotal - volFree);
+                        bdev.pctUsado = juce::jlimit(0.0, 100.0, (static_cast<double>(bdev.espacoUsadoBytes) / static_cast<double>(volTotal)) * 100.0);
+                        bdev.pctLivre = juce::jlimit(0.0, 100.0, 100.0 - bdev.pctUsado);
+                        bdev.metricasEspacoDisponiveis = true;
+                    }
+                }
+                backupDevices_.push_back(std::move(bdev));
+            }
+        }
+    } catch (...) {}
 
     // Injetar card virtual do Google Drive se a pasta local estiver montada
     {
@@ -1043,6 +1137,8 @@ void StorageWorkspaceComponent::selecionarDevice(const std::string& vaultId, boo
         }
     }
 
+    selectedDeviceName_ = selectedDev ? selectedDev->nome : juce::String();
+
     auto& db = projeto_.projeto().registro();
     if (selectedDev) {
         allDeviceUsageLogs_ = matriz::vault::listarHistoricoUsoDoDispositivo(db, selectedDev->id);
@@ -1124,15 +1220,20 @@ void StorageWorkspaceComponent::atualizarListaLogsFiltrada() {
         }
     }
 
+    juce::String baseLogTitle = "MEDIA LOG";
+    if (selectedDeviceName_.isNotEmpty()) {
+        baseLogTitle += " - " + selectedDeviceName_;
+    }
+
     if (selectedDate_.isNotEmpty()) {
-        juce::String title = juce::String(i18n::t("storage.logs_for_date"))
+        juce::String details = juce::String(i18n::t("storage.logs_for_date"))
             .replace("{d}", selectedDate_)
             .replace("{n}", juce::String(displayedUsageLogs_.size()));
-        lblDayLogsTitle_->setText(title, juce::dontSendNotification);
+        lblDayLogsTitle_->setText(baseLogTitle + "  (" + details + ")", juce::dontSendNotification);
     } else {
-        juce::String title = juce::String(i18n::t("storage.all_sessions"))
+        juce::String details = juce::String(i18n::t("storage.all_sessions"))
             .replace("{n}", juce::String(displayedUsageLogs_.size()));
-        lblDayLogsTitle_->setText(title, juce::dontSendNotification);
+        lblDayLogsTitle_->setText(baseLogTitle + "  (" + details + ")", juce::dontSendNotification);
     }
 
     if (tableHistory_) {
@@ -1305,7 +1406,7 @@ void StorageWorkspaceComponent::lookAndFeelChanged() {
         lblBackupColumnTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (lblDayLogsTitle_) {
-        lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblDayLogsTitle_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
         lblDayLogsTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (btnShowAllLogs_) {
@@ -1317,6 +1418,12 @@ void StorageWorkspaceComponent::lookAndFeelChanged() {
         btnOpenLogFolder_->setButtonText(i18n::t("storage.btn_open_folder"));
         btnOpenLogFolder_->setColour(juce::TextButton::buttonColourId, tk.painelAlt.withAlpha(0.6f));
         btnOpenLogFolder_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    }
+    if (btnAjudaMediaLog_) {
+        btnAjudaMediaLog_->setTooltip(i18n::t("storage.help_media_log"));
+        btnAjudaMediaLog_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaMediaLog_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaMediaLog_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
     }
     if (tableHistory_) {
         tableHistory_->setColour(juce::ListBox::backgroundColourId, tk.painel);
@@ -1333,24 +1440,44 @@ void StorageWorkspaceComponent::lookAndFeelChanged() {
         hdr.setColumnName(kColReport, i18n::t("storage.col_report"));
         tableHistory_->repaint();
     }
+    if (btnAjudaStorage_) {
+        btnAjudaStorage_->setTooltip(i18n::t("storage.help_disk_card"));
+        btnAjudaStorage_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaStorage_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaStorage_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+    }
     atualizarListaLogsFiltrada();
     if (logCalendarComp_) {
         logCalendarComp_->atualizarRotuloMes();
         logCalendarComp_->repaint();
     }
-    if (sourceCardsContainer_) sourceCardsContainer_->repaint();
-    if (backupCardsContainer_) backupCardsContainer_->repaint();
+    if (sourceCardsContainer_) {
+        sourceCardsContainer_->repaint();
+    }
+    if (backupCardsContainer_) {
+        backupCardsContainer_->repaint();
+    }
     repaint();
 }
 
 void StorageWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    bool isLight = (tk.fundo.getBrightness() > 0.5f);
-    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
-    g.fillAll(bg);
+    g.fillAll(tk.fundo);
 
-    g.setColour(tk.borda);
-    g.fillRect(0, 62, getWidth(), 1);
+    if (!sourceBounds_.isEmpty()) {
+        auto sb = sourceBounds_.toFloat().expanded(4.0f, 4.0f);
+        g.setColour(tk.painel.withAlpha(0.40f));
+        g.fillRoundedRectangle(sb, tk.raioMedio);
+        g.setColour(tk.borda.withAlpha(0.30f));
+        g.drawRoundedRectangle(sb, tk.raioMedio, 1.0f);
+    }
+    if (!backupBounds_.isEmpty()) {
+        auto bb = backupBounds_.toFloat().expanded(4.0f, 4.0f);
+        g.setColour(tk.painelAlt.withAlpha(0.60f));
+        g.fillRoundedRectangle(bb, tk.raioMedio);
+        g.setColour(tk.borda.withAlpha(0.30f));
+        g.drawRoundedRectangle(bb, tk.raioMedio, 1.0f);
+    }
 }
 
 void StorageWorkspaceComponent::resized() {
@@ -1358,6 +1485,10 @@ void StorageWorkspaceComponent::resized() {
 
     // Header Area
     auto headerArea = area.removeFromTop(44);
+    if (btnAjudaStorage_) {
+        btnAjudaStorage_->setBounds(headerArea.removeFromRight(22).reduced(0, 11));
+        headerArea.removeFromRight(6);
+    }
     btnRefresh_->setBounds(headerArea.removeFromRight(150).reduced(0, 6));
     lblTitle_->setBounds(headerArea.removeFromTop(22));
     lblSubtitle_->setBounds(headerArea);
@@ -1377,6 +1508,9 @@ void StorageWorkspaceComponent::resized() {
     auto leftColArea = topArea.removeFromLeft(colW);
     topArea.removeFromLeft(14);
     auto rightColArea = topArea;
+
+    sourceBounds_ = leftColArea;
+    backupBounds_ = rightColArea;
 
     // Left Column (Source Drives)
     lblSourceColumnTitle_->setBounds(leftColArea.removeFromTop(22));
@@ -1398,12 +1532,26 @@ void StorageWorkspaceComponent::resized() {
 
     area.removeFromTop(8);
 
+    // MEDIA LOG Section Header: Aligned with left edge (same as STORAGE) with same typography
+    auto mediaLogHdr = area.removeFromTop(24);
+    if (btnAjudaMediaLog_) {
+        btnAjudaMediaLog_->setBounds(mediaLogHdr.removeFromRight(20).reduced(0, 3));
+        mediaLogHdr.removeFromRight(6);
+    }
+    btnOpenLogFolder_->setBounds(mediaLogHdr.removeFromRight(125).reduced(0, 1));
+    mediaLogHdr.removeFromRight(6);
+    btnShowAllLogs_->setBounds(mediaLogHdr.removeFromRight(95).reduced(0, 1));
+    mediaLogHdr.removeFromRight(10);
+    lblDayLogsTitle_->setBounds(mediaLogHdr);
+
+    area.removeFromTop(6);
+
     // Bottom Section: Interactive Log Calendar (Left) + Day Sessions Table (Right)
     logDockContainer_->setBounds(area);
 
     auto dockArea = logDockContainer_->getLocalBounds();
 
-    // Left Calendar Widget (Fixed width ~220px, +22% wider)
+    // Left Calendar Widget (Fixed width ~220px)
     int calW = 220;
     auto calArea = dockArea.removeFromLeft(calW);
     dockArea.removeFromLeft(16); // Gap
@@ -1412,15 +1560,6 @@ void StorageWorkspaceComponent::resized() {
     auto tableArea = dockArea;
 
     logCalendarComp_->setBounds(calArea);
-
-    auto tableHdr = tableArea.removeFromTop(24);
-    btnOpenLogFolder_->setBounds(tableHdr.removeFromRight(125).reduced(0, 1));
-    tableHdr.removeFromRight(6);
-    btnShowAllLogs_->setBounds(tableHdr.removeFromRight(95).reduced(0, 1));
-    tableHdr.removeFromRight(10);
-    lblDayLogsTitle_->setBounds(tableHdr);
-
-    tableArea.removeFromTop(4);
     tableHistory_->setBounds(tableArea);
 }
 

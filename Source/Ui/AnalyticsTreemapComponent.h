@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 #include "../Db/Database.h"
 #include "ProjetoAberto.h"
+#include "Tokens.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -58,9 +59,70 @@ private:
 
     uint64_t totalAssetsNoCatalogo_ = 0;
     uint64_t totalTamanhoNoCatalogo_ = 0;
+    class NavTreemapIconButton : public juce::Button {
+    public:
+        enum class TipoIcone { Home, Subir };
+        explicit NavTreemapIconButton(TipoIcone tipo)
+            : juce::Button("nav_btn"), tipo_(tipo) {}
 
-    juce::TextButton btnUp_{"UP"};
-    juce::TextButton btnRoot_{"GLOBAL ROOT"};
+        void paintButton(juce::Graphics& g, bool isHover, bool isDown) override {
+            const auto& tk = tema();
+            auto bounds = getLocalBounds().toFloat().reduced(0.5f);
+            float corner = tk.raioPequeno;
+
+            if (isDown) {
+                g.setColour(tk.painelAlt.withAlpha(0.8f));
+            } else if (isHover) {
+                g.setColour(tk.painelAlt.withAlpha(0.5f));
+            } else {
+                g.setColour(tk.painelAlt.withAlpha(0.2f));
+            }
+            g.fillRoundedRectangle(bounds, corner);
+
+            g.setColour(isEnabled() ? tk.borda.withAlpha(0.6f) : tk.borda.withAlpha(0.2f));
+            g.drawRoundedRectangle(bounds, corner, 1.0f);
+
+            juce::Colour iconCol = !isEnabled() ? tk.textoTerciario.withAlpha(0.4f)
+                                 : (isDown || isHover ? tk.textoPrimario : tk.textoSecundario);
+            g.setColour(iconCol);
+
+            float cx = bounds.getCentreX();
+            float cy = bounds.getCentreY();
+
+            if (tipo_ == TipoIcone::Home) {
+                juce::Path roof;
+                roof.startNewSubPath(cx - 6.5f, cy + 0.5f);
+                roof.lineTo(cx, cy - 5.5f);
+                roof.lineTo(cx + 6.5f, cy + 0.5f);
+                g.strokePath(roof, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+                juce::Path body;
+                body.startNewSubPath(cx - 4.5f, cy);
+                body.lineTo(cx - 4.5f, cy + 5.5f);
+                body.lineTo(cx - 1.2f, cy + 5.5f);
+                body.lineTo(cx - 1.2f, cy + 2.0f);
+                body.lineTo(cx + 1.2f, cy + 2.0f);
+                body.lineTo(cx + 1.2f, cy + 5.5f);
+                body.lineTo(cx + 4.5f, cy + 5.5f);
+                body.lineTo(cx + 4.5f, cy);
+                g.strokePath(body, juce::PathStrokeType(1.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::square));
+            } else {
+                juce::Path arrow;
+                arrow.startNewSubPath(cx - 5.0f, cy - 1.0f);
+                arrow.lineTo(cx, cy - 6.0f);
+                arrow.lineTo(cx + 5.0f, cy - 1.0f);
+                arrow.startNewSubPath(cx, cy - 5.5f);
+                arrow.lineTo(cx, cy + 5.5f);
+                g.strokePath(arrow, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+        }
+
+    private:
+        TipoIcone tipo_;
+    };
+
+    NavTreemapIconButton btnUp_{NavTreemapIconButton::TipoIcone::Subir};
+    NavTreemapIconButton btnRoot_{NavTreemapIconButton::TipoIcone::Home};
 
     struct BreadcrumbSegment {
         std::string label;

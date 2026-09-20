@@ -37,6 +37,7 @@ private:
     void mostrarPreferenciasDialogo();
     void mostrarAudioDeviceDialogo();
     void mostrarAboutDialogo();
+    void mostrarBatchWatermarkDialogo();
     void trocarIdioma(const juce::String& locale);
     void conectarConteudo();
 

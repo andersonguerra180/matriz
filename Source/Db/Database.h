@@ -99,10 +99,22 @@ public:
     // Roda um INSERT/UPDATE parametrizado de uma vez só.
     void run(const std::string& sql, const std::vector<Value>& params);
 
+    // Cópia segura e atômica via SQLite Backup API (nunca corrompe nem trava banco aberto)
+    void copiarSeguroPara(const std::string& destinoPath);
+
+    // Controle de alterações (dirty flag para revisão do projeto)
+    bool estaSujo() const { return sujo_; }
+    void marcarSujo() { if (rastrearSujo_) sujo_ = true; }
+    void limparSujo() { sujo_ = false; }
+    void setRastrearSujo(bool rastrear) { rastrearSujo_ = rastrear; }
+    bool rastrearSujo() const { return rastrearSujo_; }
+
     sqlite3* handle() const { return db_; }
 
 private:
     sqlite3* db_ = nullptr;
+    bool sujo_ = false;
+    bool rastrearSujo_ = true;
 };
 
 } // namespace matriz::db

@@ -118,9 +118,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnToggleFicha_);
 
     campoBusca_ = std::make_unique<juce::TextEditor>();
-    campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), tema().textoTerciario);
-    campoBusca_->setColour(juce::TextEditor::backgroundColourId, tema().painelAlt);
-    campoBusca_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
+    campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), juce::Colours::grey);
+    campoBusca_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+    campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
     campoBusca_->setColour(juce::TextEditor::outlineColourId, tema().borda);
     campoBusca_->onTextChange = [this] {
         if (mosaico_) mosaico_->definirBusca(campoBusca_->getText());
@@ -195,9 +195,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnVisaoLista_);
 
-    btnDestacarEditados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.destacar_editados_on"));
-    btnDestacarEditados_->setColour(juce::TextButton::buttonColourId, tema().acento);
-    btnDestacarEditados_->setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
+    btnDestacarEditados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.destacar_editados_off"));
+    btnDestacarEditados_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnDestacarEditados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnDestacarEditados_->setTooltip("Toggle zebra highlight for edited items (ON/OFF)");
     btnDestacarEditados_->onClick = [this] {
         destacarEditados_ = !destacarEditados_;
@@ -220,6 +220,19 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) mosaico_->definirOcultarEditados(ocultarEditados_);
     };
     addAndMakeVisible(*btnOcultarEditados_);
+
+    btnOcultarNaoSelecionados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+    btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnOcultarNaoSelecionados_->setTooltip("Hide unselected assets from the grid (ON/OFF)");
+    btnOcultarNaoSelecionados_->onClick = [this] {
+        ocultarNaoSelecionados_ = !ocultarNaoSelecionados_;
+        btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+        btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tema().acento : tema().painelAlt);
+        btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tema().textoSobreAcento : tema().textoSecundario);
+        if (mosaico_) mosaico_->definirOcultarNaoSelecionados(ocultarNaoSelecionados_);
+    };
+    addAndMakeVisible(*btnOcultarNaoSelecionados_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -273,9 +286,22 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
 void CatalogWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (campoBusca_) {
-        campoBusca_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
-        campoBusca_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), juce::Colours::grey);
+        campoBusca_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
+    if (comboDataDe_) {
+        comboDataDe_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboDataDe_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboDataDe_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboDataDe_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    }
+    if (comboDataAte_) {
+        comboDataAte_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboDataAte_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboDataAte_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboDataAte_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (btnLimparBusca_) {
         btnLimparBusca_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
@@ -305,6 +331,11 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnOcultarEditados_->setColour(juce::TextButton::textColourOffId, ocultarEditados_ ? tk.textoSobreAcento : tk.textoSecundario);
         btnOcultarEditados_->setButtonText(ocultarEditados_ ? matriz::i18n::t("catwork.ocultar_editados_on") : matriz::i18n::t("catwork.ocultar_editados_off"));
     }
+    if (btnOcultarNaoSelecionados_) {
+        btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tk.acento : tk.painelAlt);
+        btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tk.textoSobreAcento : tk.textoSecundario);
+        btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+    }
     if (btnSelecionarTodos_) {
         btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnSelecionarTodos_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
@@ -315,18 +346,27 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnLimparSelecao_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         btnLimparSelecao_->setButtonText(matriz::i18n::t("catwork.desmarcar"));
     }
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour corDataLabel = isLight ? tk.textoPrimario : juce::Colours::white;
     if (lblDataDe_) {
         lblDataDe_->setText(matriz::i18n::t("catwork.data_from"), juce::dontSendNotification);
+        lblDataDe_->setColour(juce::Label::textColourId, corDataLabel);
     }
     if (lblDataAte_) {
         lblDataAte_->setText(matriz::i18n::t("catwork.data_to"), juce::dontSendNotification);
+        lblDataAte_->setColour(juce::Label::textColourId, corDataLabel);
     }
     if (btnLimparData_) {
         btnLimparData_->setButtonText(matriz::i18n::t("comum.limpar"));
+        btnLimparData_->setColour(juce::TextButton::textColourOffId, corDataLabel);
     }
     if (lblCaminhoNavegacao_) {
         lblCaminhoNavegacao_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblCaminhoNavegacao_->setColour(juce::Label::backgroundColourId, tk.painelAlt);
+    }
+    if (fichaPanel_) {
+        fichaPanel_->sendLookAndFeelChange();
+        fichaPanel_->repaint();
     }
     if (btnToggleFicha_) {
         btnToggleFicha_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -434,10 +474,13 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
 
     const auto& tk = tema();
 
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour corDataLabel = isLight ? tk.textoTerciario : juce::Colours::white;
+
     if (!lblDataDe_) {
         lblDataDe_ = std::make_unique<juce::Label>("", matriz::i18n::t("catwork.data_from"));
         lblDataDe_->setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
-        lblDataDe_->setColour(juce::Label::textColourId, tk.textoTerciario);
+        lblDataDe_->setColour(juce::Label::textColourId, corDataLabel);
         lblDataDe_->setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(*lblDataDe_);
     }
@@ -445,10 +488,10 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
     if (!comboDataDe_) {
         comboDataDe_ = std::make_unique<juce::ComboBox>();
         comboDataDe_->setTextWhenNothingSelected("");
-        comboDataDe_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboDataDe_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         comboDataDe_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboDataDe_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
-        comboDataDe_->setColour(juce::ComboBox::arrowColourId, tk.textoSecundario);
+        comboDataDe_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboDataDe_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboDataDe_->onChange = [this] { aplicarFiltroPeriodo(); };
         addAndMakeVisible(*comboDataDe_);
     }
@@ -456,7 +499,7 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
     if (!lblDataAte_) {
         lblDataAte_ = std::make_unique<juce::Label>("", matriz::i18n::t("catwork.data_to"));
         lblDataAte_->setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
-        lblDataAte_->setColour(juce::Label::textColourId, tk.textoTerciario);
+        lblDataAte_->setColour(juce::Label::textColourId, corDataLabel);
         lblDataAte_->setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(*lblDataAte_);
     }
@@ -464,10 +507,10 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
     if (!comboDataAte_) {
         comboDataAte_ = std::make_unique<juce::ComboBox>();
         comboDataAte_->setTextWhenNothingSelected("");
-        comboDataAte_->setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+        comboDataAte_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         comboDataAte_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboDataAte_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
-        comboDataAte_->setColour(juce::ComboBox::arrowColourId, tk.textoSecundario);
+        comboDataAte_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboDataAte_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboDataAte_->onChange = [this] { aplicarFiltroPeriodo(); };
         addAndMakeVisible(*comboDataAte_);
     }
@@ -475,7 +518,7 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
     if (!btnLimparData_) {
         btnLimparData_ = std::make_unique<juce::TextButton>(matriz::i18n::t("comum.limpar"));
         btnLimparData_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-        btnLimparData_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnLimparData_->setColour(juce::TextButton::textColourOffId, corDataLabel);
         btnLimparData_->onClick = [this] {
             if (comboDataDe_) comboDataDe_->setSelectedId(0, juce::dontSendNotification);
             if (comboDataAte_) comboDataAte_->setSelectedId(0, juce::dontSendNotification);
@@ -1181,17 +1224,18 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
 }
 
 void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
-    g.fillAll(tema().fundo);
+    const auto& tk = tema();
+    g.fillAll(tk.fundo);
 
     auto sidebar = getLocalBounds().removeFromLeft(kLarguraSidebar);
-    g.setColour(tema().painel);
+    g.setColour(tk.fundo);
     g.fillRect(sidebar);
-    g.setColour(tema().borda);
+    g.setColour(tk.borda);
     g.fillRect(sidebar.getRight() - 1, sidebar.getY(), 1, sidebar.getHeight());
 
     for (auto& [titulo, bounds] : secaoHeaderBounds_) {
-        g.setColour(tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
         g.drawText(titulo, bounds, juce::Justification::centredLeft);
     }
 
@@ -1222,6 +1266,36 @@ void CatalogWorkspaceComponent::resized() {
     auto area = getLocalBounds();
 
     auto sidebar = area.removeFromLeft(kLarguraSidebar);
+    int availH = sidebar.getHeight();
+
+    // Symmetrical, uniform button dimensions and typography
+    const int kBtnH = 24;
+    const int kHeaderH = 20;
+    const int kItemGap = 2;
+
+    // Calculate total required vertical height to distribute gaps without squashing bottom buttons
+    int totalRequiredH = 8 + 28; // top margin + search
+    totalRequiredH += kHeaderH + kItemGap + (indiceInicioMediaType_ * (kBtnH + kItemGap)); // 1. Library
+    totalRequiredH += kHeaderH + kItemGap + ((indiceInicioStatus_ - indiceInicioMediaType_) * (kBtnH + kItemGap)); // 2. Media Type
+    if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += kBtnH + kItemGap;
+    totalRequiredH += kHeaderH + kItemGap; // 3. Date
+    if (comboDataDe_ && comboDataAte_) {
+        totalRequiredH += 2 * (kBtnH + kItemGap);
+        if (btnLimparData_) totalRequiredH += (kBtnH - 4 + kItemGap);
+    }
+    if (!botoesAnos_.empty()) {
+        int numAnoRows = (static_cast<int>(botoesAnos_.size()) + 1) / 2;
+        totalRequiredH += numAnoRows * (kBtnH + kItemGap);
+    }
+    totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioStatus_) * (kBtnH + kItemGap)); // 4. Status
+    if (!botoesCollection_.empty()) {
+        totalRequiredH += kHeaderH + kItemGap + (static_cast<int>(botoesCollection_.size()) * (kBtnH + kItemGap)); // 5. Content
+    }
+
+    int extraSpace = availH - totalRequiredH;
+    int numGaps = !botoesCollection_.empty() ? 5 : 4;
+    int sectionSpacing = juce::jlimit(10, 32, extraSpace > 0 ? (extraSpace / (numGaps + 1)) : 8);
+
     sidebar.removeFromTop(8);
 
     auto buscaArea = sidebar.removeFromTop(28).reduced(8, 2);
@@ -1230,88 +1304,94 @@ void CatalogWorkspaceComponent::resized() {
         btnLimparBusca_->setBounds(clearArea);
     }
     campoBusca_->setBounds(buscaArea);
-    sidebar.removeFromTop(4);
+    sidebar.removeFromTop(sectionSpacing);
 
-    sidebar.removeFromTop(4);
+    // 1. LIBRARY
+    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_library"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+    for (int i = 0; i < indiceInicioMediaType_ && i < static_cast<int>(botoesCategorias_.size()); ++i) {
+        auto btnArea = sidebar.removeFromTop(kBtnH).reduced(4, 0);
+        botoesCategorias_[static_cast<size_t>(i)]->setBounds(btnArea);
+        sidebar.removeFromTop(kItemGap);
+    }
+    sidebar.removeFromTop(sectionSpacing);
+
+    // 2. MEDIA TYPE
+    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_media_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+    for (int i = indiceInicioMediaType_; i < indiceInicioStatus_ && i < static_cast<int>(botoesCategorias_.size()); ++i) {
+        auto btnArea = sidebar.removeFromTop(kBtnH).reduced(4, 0);
+        btnArea.removeFromLeft(14);
+        botoesCategorias_[static_cast<size_t>(i)]->setBounds(btnArea);
+        sidebar.removeFromTop(kItemGap);
+    }
+    sidebar.removeFromTop(kItemGap);
 
     if (btnSelecionarTodos_ && btnLimparSelecao_) {
-        auto selRow = sidebar.removeFromBottom(30).reduced(8, 2);
+        auto selRow = sidebar.removeFromTop(kBtnH).reduced(8, 0);
         int halfW = selRow.getWidth() / 2;
         btnSelecionarTodos_->setBounds(selRow.removeFromLeft(halfW - 2));
         selRow.removeFromLeft(4);
         btnLimparSelecao_->setBounds(selRow);
+        sidebar.removeFromTop(kItemGap);
     }
+    sidebar.removeFromTop(sectionSpacing);
 
-    // 1. LIBRARY
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_library"), sidebar.removeFromTop(20).reduced(8, 0)});
-    sidebar.removeFromTop(2);
-    for (int i = 0; i < indiceInicioMediaType_ && i < static_cast<int>(botoesCategorias_.size()); ++i) {
-        auto btnArea = sidebar.removeFromTop(24).reduced(4, 0);
-        botoesCategorias_[static_cast<size_t>(i)]->setBounds(btnArea);
-    }
-    sidebar.removeFromTop(4);
-
-    // 2. MEDIA TYPE
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_media_type"), sidebar.removeFromTop(20).reduced(8, 0)});
-    sidebar.removeFromTop(2);
-    for (int i = indiceInicioMediaType_; i < indiceInicioStatus_ && i < static_cast<int>(botoesCategorias_.size()); ++i) {
-        auto btnArea = sidebar.removeFromTop(24).reduced(4, 0);
-        btnArea.removeFromLeft(14);
-        botoesCategorias_[static_cast<size_t>(i)]->setBounds(btnArea);
-    }
-    sidebar.removeFromTop(4);
-
-    // 3. DATE (Swapped before STATUS as requested!)
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_date"), sidebar.removeFromTop(20).reduced(8, 0)});
-    sidebar.removeFromTop(2);
+    // 3. DATE
+    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_date"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
 
     if (comboDataDe_ && comboDataAte_) {
-        auto fromRow = sidebar.removeFromTop(22).reduced(6, 0);
+        auto fromRow = sidebar.removeFromTop(kBtnH).reduced(6, 0);
         lblDataDe_->setBounds(fromRow.removeFromLeft(38));
         comboDataDe_->setBounds(fromRow);
 
-        sidebar.removeFromTop(4);
+        sidebar.removeFromTop(kItemGap);
 
-        auto toRow = sidebar.removeFromTop(22).reduced(6, 0);
+        auto toRow = sidebar.removeFromTop(kBtnH).reduced(6, 0);
         lblDataAte_->setBounds(toRow.removeFromLeft(38));
         comboDataAte_->setBounds(toRow);
 
         if (btnLimparData_) {
-            sidebar.removeFromTop(3);
-            auto clearRow = sidebar.removeFromTop(20).reduced(6, 0);
+            sidebar.removeFromTop(kItemGap);
+            auto clearRow = sidebar.removeFromTop(kBtnH - 4).reduced(6, 0);
             btnLimparData_->setBounds(clearRow);
         }
 
-        sidebar.removeFromTop(4);
+        sidebar.removeFromTop(kItemGap);
     }
 
     if (!botoesAnos_.empty()) {
         for (size_t i = 0; i < botoesAnos_.size(); i += 2) {
-            auto rowArea = sidebar.removeFromTop(22).reduced(4, 0);
+            auto rowArea = sidebar.removeFromTop(kBtnH).reduced(4, 0);
             int halfW = rowArea.getWidth() / 2;
             botoesAnos_[i]->setBounds(rowArea.removeFromLeft(halfW).reduced(2, 0));
             if (i + 1 < botoesAnos_.size()) {
                 botoesAnos_[i + 1]->setBounds(rowArea.reduced(2, 0));
             }
+            sidebar.removeFromTop(kItemGap);
         }
-        sidebar.removeFromTop(4);
     }
+    sidebar.removeFromTop(sectionSpacing);
 
-    // 4. STATUS (Following DATE!)
-    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_status"), sidebar.removeFromTop(20).reduced(8, 0)});
-    sidebar.removeFromTop(2);
+    // 4. STATUS
+    secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_status"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
     for (size_t i = static_cast<size_t>(indiceInicioStatus_); i < botoesCategorias_.size(); ++i) {
-        auto btnArea = sidebar.removeFromTop(24).reduced(4, 0);
+        auto btnArea = sidebar.removeFromTop(kBtnH).reduced(4, 0);
         botoesCategorias_[i]->setBounds(btnArea);
+        sidebar.removeFromTop(kItemGap);
     }
-    sidebar.removeFromTop(4);
 
     // 5. CONTENT
     if (!botoesCollection_.empty()) {
-        secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_content"), sidebar.removeFromTop(20).reduced(8, 0)});
-        sidebar.removeFromTop(2);
-        for (auto& btn : botoesCollection_)
-            btn->setBounds(sidebar.removeFromTop(22).reduced(4, 0));
+        sidebar.removeFromTop(sectionSpacing);
+        secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_content"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+        sidebar.removeFromTop(kItemGap);
+        for (auto& btn : botoesCollection_) {
+            btn->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+            sidebar.removeFromTop(kItemGap);
+        }
     }
 
     if (!fichaColapsada_ && fichaPanel_) {
@@ -1358,6 +1438,10 @@ void CatalogWorkspaceComponent::resized() {
     }
     if (btnOcultarEditados_) {
         btnOcultarEditados_->setBounds(toolbar.removeFromLeft(130));
+        toolbar.removeFromLeft(6);
+    }
+    if (btnOcultarNaoSelecionados_) {
+        btnOcultarNaoSelecionados_->setBounds(toolbar.removeFromLeft(160));
     }
 
     if (lblCaminhoNavegacao_ && lblCaminhoNavegacao_->isVisible()) {

@@ -628,6 +628,11 @@ void AudioWorkspace::abrirDispositivoDeAudio() {
     // explicitamente fora de escopo (§1).
     juce::String erro = dispositivos_.initialiseWithDefaultDevices(0, 2);
     if (erro.isNotEmpty()) return;  // sem placa: o resto da tela continua
+    {
+        auto setup = dispositivos_.getAudioDeviceSetup();
+        setup.bufferSize = 1024;
+        dispositivos_.setAudioDeviceSetup(setup, true);
+    }
     dispositivos_.addAudioCallback(&motor_);
     dispositivoAberto_ = true;
 }

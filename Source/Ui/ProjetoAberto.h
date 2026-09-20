@@ -97,6 +97,10 @@ public:
     // inutilizável depois — só existe pra sobreviver à troca.
     std::unique_ptr<matriz::model::Project> destacarProjeto() { return std::move(projeto_); }
 
+    std::string destinoBackupAtivo() const { return projeto_ ? projeto_->destinoBackupAtivo() : std::string(); }
+    void definirDestinoBackupAtivo(const std::string& path) { if (projeto_) projeto_->definirDestinoBackupAtivo(path); }
+    void sincronizarBackupDestinoDeHistorico();
+
     std::vector<ItemResumo> listarItens() const;
     int contarItens() const { return static_cast<int>(listarItens().size()); }
     std::vector<ItemResumo> listarItensEmQuarentena() const;
@@ -166,22 +170,19 @@ public:
     // opcao_livre (marca, formulação, ...), não só marca de fita.
     std::vector<std::string> valoresUsadosNoCampo(const std::string& campoId) const;
 
-    // --- Undo (up to 10 levels) ---
-    struct UndoChange {
-        std::string itemId;
-        std::string coluna;
-        std::string valorAnterior;
-    };
-    struct UndoGroup {
+    // --- Undo (up to 25 levels) ---
+    struct UndoEntry {
         std::string descricao;
-        std::vector<UndoChange> mudancas;
+        std::vector<std::function<void()>> acoesReversas;
     };
+    void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
     bool desfazer();
     bool podeDesfazer() const { return !pilhaUndo_.empty(); }
     std::string descricaoUndoAtual() const;
     std::function<void()> aoMudarUndo;
+    void restaurarItensParaBackup(const std::vector<std::pair<std::string, std::string>>& itensPastas);
 
     // --- Unified Metadata (direct item columns) ---
     // Reads a direct column from the item table (ano, caminho_catalogo, content_type, source_media, collection_type, isrc, notas_livres)
@@ -537,9 +538,9 @@ private:
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
     bool dirty_ = false;
 
-    static constexpr int kMaxUndo = 10;
-    std::vector<UndoGroup> pilhaUndo_;
-    std::optional<UndoGroup> grupoAberto_;
+    static constexpr int kMaxUndo = 25;
+    std::vector<UndoEntry> pilhaUndo_;
+    std::optional<UndoEntry> grupoAberto_;
     bool desfazendo_ = false;
     std::set<std::string> selecionadosNoGrid_;
 };

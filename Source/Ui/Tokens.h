@@ -77,14 +77,14 @@ struct Tema {
 inline const Tema& temaBkrDark() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xff14161c);          // Deep matte background
-        x.painel = juce::Colour(0xff252934);         // Clearly lighter elevated card surface (matching UI reference)
-        x.painelAlt = juce::Colour(0xff313746);      // Secondary card / hover / table header
-        x.borda = juce::Colour(0xff434a5d);          // Crisp elegant borders
+        x.fundo = juce::Colour(0xff14161c).brighter(0.30f);          // 30% brighter gray background
+        x.painel = juce::Colour(0xff252934).brighter(0.30f);         // 30% brighter elevated card surface
+        x.painelAlt = juce::Colour(0xff313746).brighter(0.30f);      // 30% brighter secondary card / hover
+        x.borda = juce::Colour(0xff75859e);          // Crisp light-tone gray border for high contrast
         x.bordaFoco = juce::Colour(0xff38bdf8);      // Electric cyan / sky blue focus
 
         x.textoPrimario = juce::Colour(0xffffffff);   // Pure 100% white
-        x.textoSecundario = juce::Colour(0xffe2e8f0); // High-contrast bright slate
+        x.textoSecundario = juce::Colour(0xfff1f5f9); // High-contrast bright slate
         x.textoTerciario = juce::Colour(0xffcbd5e1);  // Clean readable off-white
         x.textoSobreAcento = juce::Colour(0xff0b0f17); // Maximum contrast on accent
 
@@ -123,60 +123,59 @@ inline const Tema& temaBkrDark() {
     return t;
 }
 
-// BKR Light — cinza claro neutro, mesmo acento azul frio do BKR Dark pra
-// manter a identidade visual entre os dois. Estrutura idêntica ao Dark
-// campo a campo, de propósito: adicionar o terceiro tema (System CRT,
-// item 15 da ordem de trabalho) não deve exigir tocar nesta função nem em
-// nenhum Component, só escrever temaSystemCrt() e trocar o que tema()
-// devolve — mesma garantia que já valia pra este ser o segundo tema.
+// BKR Light — paleta creme quente inspirada na splash screen (Assets/splash.png).
+// Progressão tonal: creme puro (#F5F2EC) → cinza quente escuro (#2D2A26).
+// Conforme escurece, puxa pro cinza mas sempre com calor residual (sem azulado).
+// Texto sempre escuro-quente para máxima legibilidade sobre fundos creme.
 inline const Tema& temaBkrLight() {
     static const Tema t = [] {
         Tema x;
-        x.fundo = juce::Colour(0xfff8f2ec);
-        x.painel = juce::Colour(0xffefe8e0);
-        x.painelAlt = juce::Colour(0xffe6ded5);
-        x.borda = juce::Colour(0xffc8bfb5);
-        x.bordaFoco = juce::Colour(0xff3d7fd6);
+        x.fundo    = juce::Colour(0xffede8df);   // Creme base — tom exato da splash screen
+        x.painel   = juce::Colour(0xfff5f2ec);   // Creme levemente claro — cards/painéis
+        x.painelAlt = juce::Colour(0xffd8d2c7);  // Creme-cinza médio — inputs/controles/tags
+        x.borda    = juce::Colour(0xffb8b2a7);   // Cinza quente médio — bordas visíveis
+        x.bordaFoco = juce::Colour(0xff5a5550);  // Cinza quente escuro — anel de foco
 
-        x.textoPrimario = juce::Colour(0xff000000);
-        x.textoSecundario = juce::Colour(0xff2c2c2e);
-        x.textoTerciario = juce::Colour(0xff68686d);
-        x.textoSobreAcento = juce::Colour(0xffffffff);
+        x.textoPrimario   = juce::Colour(0xff1a1815); // Preto quente (não azulado)
+        x.textoSecundario = juce::Colour(0xff3d3a35); // Cinza escuro quente
+        x.textoTerciario  = juce::Colour(0xff6b6560); // Cinza médio quente
+        x.textoSobreAcento = juce::Colour(0xfff5f2ec); // Creme claro sobre botão escuro
 
-        x.acento = juce::Colour(0xff3d7fd6);
-        x.acentoHover = juce::Colour(0xff5b9dff);
-        x.perigo = juce::Colour(0xffb83232);
-        x.alerta = juce::Colour(0xffb87a1a);
+        x.acento      = juce::Colour(0xff4a4540); // Cinza quente muito escuro — ações primárias
+        x.acentoHover = juce::Colour(0xff2d2a26); // Quase-preto quente — hover
+        x.perigo      = juce::Colour(0xffdc2626); // Vermelho — mantido (semântico)
+        x.alerta      = juce::Colour(0xffd97706); // Âmbar — mantido (semântico)
 
-        x.estadoNaoDigitalizado = juce::Colour(0xff68686d);
-        x.estadoCapturado = juce::Colour(0xff3d7fd6);
-        x.estadoQcOk = juce::Colour(0xff2d8a4e);
-        x.estadoAlerta = juce::Colour(0xffb87a1a);
-        x.haloSincronizado = juce::Colour(0xff1f9d85);
+        x.estadoNaoDigitalizado = juce::Colour(0xff6b6560); // Cinza quente médio
+        x.estadoCapturado       = juce::Colour(0xff4a4540); // Cinza quente escuro (acento)
+        x.estadoQcOk            = juce::Colour(0xff16a34a); // Verde — mantido (semântico)
+        x.estadoAlerta          = juce::Colour(0xffd97706); // Âmbar — mantido (semântico)
+        x.haloSincronizado      = juce::Colour(0xff0d9488); // Teal — mantido (semântico)
 
-        x.campoHumano = juce::Colour(0xff000000);
-        x.campoHerdado = juce::Colour(0xff2c2c2e);
-        x.campoLeituraTecnica = juce::Colour(0xff2c2c2e);
-        x.campoSugestaoIa = juce::Colour(0xff8a5700);
-        x.campoSugestaoIaFundo = juce::Colour(0x33b87a1a);
+        x.campoHumano          = juce::Colour(0xff1a1815); // Preto quente
+        x.campoHerdado         = juce::Colour(0xff3d3a35); // Cinza escuro quente
+        x.campoLeituraTecnica  = juce::Colour(0xff3d3a35); // Cinza escuro quente
+        x.campoSugestaoIa      = juce::Colour(0xffb45309); // Âmbar — mantido
+        x.campoSugestaoIaFundo = juce::Colour(0x22f59e0b); // Fundo âmbar tênue — mantido
 
-        x.tamanhoFonteTitulo = 18.0f;
+        x.tamanhoFonteTitulo    = 18.0f;
         x.tamanhoFonteSubtitulo = 14.0f;
-        x.tamanhoFonteCorpo = 12.5f;
-        x.tamanhoFontePequena = 11.0f;
-        x.tamanhoFonteMicro = 9.5f;
+        x.tamanhoFonteCorpo     = 12.5f;
+        x.tamanhoFontePequena   = 11.0f;
+        x.tamanhoFonteMicro     = 9.5f;
 
         x.espacoPequeno = 4;
-        x.espacoMedio = 8;
-        x.espacoGrande = 16;
-        x.espacoPainel = 12;
+        x.espacoMedio   = 8;
+        x.espacoGrande  = 16;
+        x.espacoPainel  = 12;
 
         x.raioPequeno = 4.0f;
-        x.raioMedio = 6.0f;
+        x.raioMedio   = 6.0f;
         return x;
     }();
     return t;
 }
+
 
 // Active theme — reads preference on first call, caches until recarregarTema().
 // Not inline: defined in Tokens.cpp (linked via CMakeLists).

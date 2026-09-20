@@ -25,6 +25,7 @@ public:
 
     void paint(juce::Graphics& g) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
     juce::ComboBox& getComboBoxForTest() { return comboPeople_; }
     juce::TextButton& getAddButtonForTest() { return btnAddPerson_; }

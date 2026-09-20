@@ -24,11 +24,11 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     addAndMakeVisible(*botaoNavegar_);
 
     campoBusca_ = std::make_unique<juce::TextEditor>();
-    campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), tema().textoTerciario);
-    campoBusca_->setColour(juce::TextEditor::backgroundColourId, tema().fundo);
+    campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), juce::Colours::grey);
+    campoBusca_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
     campoBusca_->setColour(juce::TextEditor::outlineColourId, tema().borda);
     campoBusca_->setColour(juce::TextEditor::focusedOutlineColourId, tema().bordaFoco);
-    campoBusca_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
+    campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
     campoBusca_->onTextChange = [this] {
         if (btnLimparBusca_) btnLimparBusca_->setVisible(campoBusca_->getText().isNotEmpty());
         if (aoBuscar) aoBuscar(campoBusca_->getText());
@@ -193,7 +193,7 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     atualizarBotoesFiltroStatus();
 
     // Mark edited items toggle
-    btnDestacarEditados_ = std::make_unique<juce::TextButton>("MARK EDITED: ON");
+    btnDestacarEditados_ = std::make_unique<juce::TextButton>("MARK EDITED: OFF");
     btnDestacarEditados_->setTooltip("Toggle zebra highlight for edited items (ON/OFF)");
     btnDestacarEditados_->onClick = [this] {
         destacarEditados_ = !destacarEditados_;
@@ -315,11 +315,11 @@ void BarraFerramentasComponent::definirTextoBuscaSemNotificar(const juce::String
 void BarraFerramentasComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (campoBusca_) {
-        campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), tk.textoTerciario);
-        campoBusca_->setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+        campoBusca_->setTextToShowWhenEmpty(matriz::i18n::t("barra.buscar"), juce::Colours::grey);
+        campoBusca_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
         campoBusca_->setColour(juce::TextEditor::focusedOutlineColourId, tk.bordaFoco);
-        campoBusca_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
     }
     if (btnLimparBusca_) {
         btnLimparBusca_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);

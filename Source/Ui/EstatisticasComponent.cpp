@@ -221,7 +221,7 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
         kpi.path = c.caminhoProjeto;
 
         juce::File colDir(c.caminhoProjeto);
-        juce::File dbFile = colDir.getChildFile("registro.sqlite");
+        juce::File dbFile = matriz::model::Project::resolverPastaProjeto(colDir).getChildFile("registro.sqlite");
         if (dbFile.existsAsFile()) {
             try {
                 matriz::db::Database colDb(dbFile.getFullPathName().toStdString());

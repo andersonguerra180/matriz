@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS projeto (
     -- tipo_arquivo). Valores em Source/Consolidacao/Consolidacao.h.
     hierarquia_backup               TEXT,
     destino_local                   TEXT,
+    destino_backup_ativo_path       TEXT NOT NULL DEFAULT '',
     vocabulario_assuntos_livre      INTEGER NOT NULL DEFAULT 1 CHECK (vocabulario_assuntos_livre IN (0, 1)),
     formato_padrao_captura          TEXT,
     isrc_registrante                TEXT,
@@ -452,7 +453,8 @@ CREATE TABLE IF NOT EXISTS consolidacao_registro (
     caminho_relativo_destino TEXT NOT NULL, -- relativo à raiz de destino escolhida, ex.: "consolidado/01 Fitas/ACR-001.wav"
     checksum_sha256         TEXT NOT NULL,   -- da CÓPIA consolidada (sem embedding), verificado depois de copiar
     consolidado_em          TEXT NOT NULL,
-    UNIQUE (item_id, pasta_id, arquivo_id)
+    destino_path            TEXT NOT NULL DEFAULT '',
+    UNIQUE (item_id, pasta_id, arquivo_id, destino_path)
 );
 
 CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_arquivo ON consolidacao_registro(arquivo_id);

@@ -65,13 +65,28 @@ void AboutDialog::paint(juce::Graphics& g) {
     // Title: BKR Matriz
     g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
     g.setColour(tk.textoPrimario);
-    g.drawText("BKR MATRIZ", infoBounds.removeFromTop(26.0f), juce::Justification::centredLeft, true);
+    juce::String appTitle = "BKR MATRIZ";
+    if (auto* app = juce::JUCEApplication::getInstance()) {
+        auto name = app->getApplicationName();
+        if (name.containsIgnoreCase("Trial"))
+            appTitle = "BKR MATRIZ TRIAL (NOT FOR SALE)";
+        else
+            appTitle = name.toUpperCase();
+    }
+    g.drawText(appTitle, infoBounds.removeFromTop(26.0f), juce::Justification::centredLeft, true);
 
     // Subtitle / Version tag
     auto versionRow = infoBounds.removeFromTop(20.0f);
     g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
     g.setColour(tk.acento);
-    g.drawText(i18n::t("sobre.versao"), versionRow, juce::Justification::centredLeft, true);
+    juce::String versionLabel = i18n::t("sobre.versao");
+    if (auto* app = juce::JUCEApplication::getInstance()) {
+        auto ver = app->getApplicationVersion();
+        if (ver.containsIgnoreCase("TRIAL")) {
+            versionLabel = (i18n::localeAtivo() == "pt_BR" ? "Versão " : "Version ") + ver;
+        }
+    }
+    g.drawText(versionLabel, versionRow, juce::Justification::centredLeft, true);
 
     infoBounds.removeFromTop(6.0f);
 

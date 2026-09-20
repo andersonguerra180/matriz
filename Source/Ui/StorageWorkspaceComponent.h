@@ -22,6 +22,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    void visibilityChanged() override;
 
     void recarregar();
 
@@ -98,11 +99,15 @@ private:
     std::vector<StorageDevice> backupDevices_;
 
     std::string selectedVaultId_;
+    juce::String selectedDeviceName_;
     bool selectedIsSource_ = true;
     std::vector<matriz::vault::DeviceUsageEntry> allDeviceUsageLogs_;
     std::vector<matriz::vault::DeviceUsageEntry> displayedUsageLogs_;
     std::map<juce::String, int> datesWithLogs_;
     juce::String selectedDate_; // "YYYY-MM-DD" or empty for all
+
+    juce::Rectangle<int> sourceBounds_;
+    juce::Rectangle<int> backupBounds_;
 
     juce::String lastStorageError_;
     juce::String lastStorageErrorDetails_;
@@ -111,6 +116,7 @@ private:
     std::unique_ptr<juce::Label> lblTitle_;
     std::unique_ptr<juce::Label> lblSubtitle_;
     std::unique_ptr<juce::TextButton> btnRefresh_;
+    std::unique_ptr<juce::TextButton> btnAjudaStorage_;
 
     // Two Columns (Top Area - 80% screen)
     std::unique_ptr<juce::Label> lblSourceColumnTitle_;
@@ -128,6 +134,7 @@ private:
     std::unique_ptr<juce::Label> lblDayLogsTitle_;
     std::unique_ptr<juce::TextButton> btnShowAllLogs_;
     std::unique_ptr<juce::TextButton> btnOpenLogFolder_;
+    std::unique_ptr<juce::TextButton> btnAjudaMediaLog_;
     std::unique_ptr<juce::TableListBox> tableHistory_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(StorageWorkspaceComponent)

@@ -174,8 +174,9 @@ void testarProjetoPortavel() {
 
     try {
         auto projeto = matriz::model::Project::criar(pastaProjeto, params);
-        check(pastaProjeto.getChildFile("registro.sqlite").existsAsFile(), "registro.sqlite created");
-        check(pastaProjeto.getChildFile("indice.sqlite").existsAsFile(), "indice.sqlite created");
+        check(pastaProjeto.getChildFile("Project").getChildFile("registro.sqlite").existsAsFile(), "registro.sqlite created");
+        check(pastaProjeto.getChildFile("Project").getChildFile("indice.sqlite").existsAsFile(), "indice.sqlite created");
+        check(pastaProjeto.getChildFile("destination.json").existsAsFile(), "destination.json created");
         projetoId = projeto->projetoId();
         check(!projetoId.empty(), "project has id: " + projetoId);
 

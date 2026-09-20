@@ -1,5 +1,6 @@
 #include "IngestProgressModalDialog.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
 
@@ -9,14 +10,15 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles, std::functi
       progressBar_(progressFraction_),
       startTime_(std::chrono::steady_clock::now()) {
     const auto& tk = tema();
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
-    lblHeader_.setText("INGESTING FILES", juce::dontSendNotification);
+    lblHeader_.setText(isPt ? juce::String::fromUTF8("INGERINDO ARQUIVOS") : "INGESTING FILES", juce::dontSendNotification);
     lblHeader_.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblHeader_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblHeader_);
 
-    lblFileName_.setText("Preparing files...", juce::dontSendNotification);
+    lblFileName_.setText(isPt ? juce::String::fromUTF8("Preparando arquivos...") : "Preparing files...", juce::dontSendNotification);
     lblFileName_.setFont(juce::Font(juce::FontOptions(13.0f)));
     lblFileName_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblFileName_.setJustificationType(juce::Justification::centred);
@@ -26,13 +28,14 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles, std::functi
     progressBar_.setColour(juce::ProgressBar::foregroundColourId, tk.acento);
     addAndMakeVisible(progressBar_);
 
-    lblEta_.setText("Processing " + juce::String(totalFiles_) + " files — calculating estimated time...", juce::dontSendNotification);
+    lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
+                         : ("Processing " + juce::String(totalFiles_) + " files — calculating estimated time..."), juce::dontSendNotification);
     lblEta_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
     lblEta_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblEta_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblEta_);
 
-    btnCancel_.setButtonText("CANCEL");
+    btnCancel_.setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
     btnCancel_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffdc2626)); // Red
     btnCancel_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     btnCancel_.onClick = [this] {
@@ -94,26 +97,31 @@ void IngestProgressModalDialog::updateProgress(int completedCount, const juce::S
 }
 
 void IngestProgressModalDialog::setCancelling() {
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     isCancelling_.store(true);
-    lblHeader_.setText("CANCELLING INGESTION...", juce::dontSendNotification);
+    lblHeader_.setText(isPt ? juce::String::fromUTF8("CANCELANDO INGESTÃO...") : "CANCELLING INGESTION...", juce::dontSendNotification);
     lblHeader_.setColour(juce::Label::textColourId, juce::Colour(0xfff97316));
-    lblEta_.setText("Discarding partial proxies and rolling back changes...", juce::dontSendNotification);
+    lblEta_.setText(isPt ? juce::String::fromUTF8("Descartando proxies parciais e revertendo alterações...")
+                         : "Discarding partial proxies and rolling back changes...", juce::dontSendNotification);
     btnCancel_.setEnabled(false);
 }
 
 juce::String IngestProgressModalDialog::formatRemainingTime(double secondsRemaining) {
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     if (secondsRemaining <= 1.0) {
-        return "almost finished";
+        return isPt ? juce::String::fromUTF8("quase concluído") : "almost finished";
     }
     if (secondsRemaining < 60.0) {
         int secs = static_cast<int>(std::round(secondsRemaining));
-        return "estimated " + juce::String(secs) + " seconds remaining";
+        return isPt ? (juce::String::fromUTF8("estimado ") + juce::String(secs) + juce::String::fromUTF8(" segundos restantes"))
+                    : ("estimated " + juce::String(secs) + " seconds remaining");
     }
     int mins = static_cast<int>(std::round(secondsRemaining / 60.0));
     if (mins == 1) {
-        return "estimated 1 minute remaining";
+        return isPt ? juce::String::fromUTF8("estimado 1 minuto restante") : "estimated 1 minute remaining";
     }
-    return "estimated " + juce::String(mins) + " minutes remaining";
+    return isPt ? (juce::String::fromUTF8("estimado ") + juce::String(mins) + juce::String::fromUTF8(" minutos restantes"))
+                : ("estimated " + juce::String(mins) + " minutes remaining");
 }
 
 void IngestProgressModalDialog::closeDialog() {
@@ -157,14 +165,16 @@ void IngestProgressModalDialog::timerCallback() {
     progressFraction_ = juce::jlimit(0.0, 1.0, static_cast<double>(completed) / static_cast<double>(totalFiles_));
     progressBar_.repaint();
 
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     int remaining = juce::jmax(0, totalFiles_ - completed);
     if (remaining == 0) {
         if (!isComplete_) {
             isComplete_ = true;
-            lblHeader_.setText("INGESTION COMPLETE", juce::dontSendNotification);
+            lblHeader_.setText(isPt ? juce::String::fromUTF8("INGESTÃO CONCLUÍDA") : "INGESTION COMPLETE", juce::dontSendNotification);
             lblHeader_.setColour(juce::Label::textColourId, tema().acento);
-            lblEta_.setText("All " + juce::String(totalFiles_) + " files processed successfully!", juce::dontSendNotification);
-            btnCancel_.setButtonText("DONE");
+            lblEta_.setText(isPt ? (juce::String::fromUTF8("Todos os ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos processados com sucesso!"))
+                                 : ("All " + juce::String(totalFiles_) + " files processed successfully!"), juce::dontSendNotification);
+            btnCancel_.setButtonText(isPt ? juce::String::fromUTF8("CONCLUIR") : "DONE");
             btnCancel_.setColour(juce::TextButton::buttonColourId, tema().acento);
             btnCancel_.onClick = [this] { closeDialog(); };
 
@@ -198,19 +208,27 @@ void IngestProgressModalDialog::timerCallback() {
     if (avgSecsPerFile > 0.0001) {
         double secondsRemaining = avgSecsPerFile * remaining;
         juce::String timeStr = formatRemainingTime(secondsRemaining);
-        lblEta_.setText("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
-                        " files — " + timeStr, juce::dontSendNotification);
+        if (isPt) {
+            lblEta_.setText(juce::String::fromUTF8("Processando ") + juce::String(completed) + " de " + juce::String(totalFiles_) +
+                            juce::String::fromUTF8(" arquivos — ") + timeStr, juce::dontSendNotification);
+        } else {
+            lblEta_.setText("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
+                            " files — " + timeStr, juce::dontSendNotification);
+        }
     } else {
-        lblEta_.setText("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
-                        " files — calculating estimated time...", juce::dontSendNotification);
+        lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(completed) + " de " + juce::String(totalFiles_) +
+                                juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
+                             : ("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
+                                " files — calculating estimated time..."), juce::dontSendNotification);
     }
 }
 
 IngestProgressModalDialog* IngestProgressModalDialog::showModal(int totalFiles, std::function<void()> onCancel) {
     auto* dialog = new IngestProgressModalDialog(totalFiles, std::move(onCancel));
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
-    options.dialogTitle = "Ingest Files";
+    options.dialogTitle = isPt ? juce::String::fromUTF8("Ingerir Arquivos") : "Ingest Files";
     options.dialogBackgroundColour = tema().painel;
     options.escapeKeyTriggersCloseButton = false; // Must click Cancel button to abort atomically
     options.useNativeTitleBar = false;

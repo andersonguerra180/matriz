@@ -218,12 +218,49 @@ void registrarUsoDoDispositivo(matriz::db::Database& db,
     if (!localizacaoVault.empty()) {
         juce::File driveLoc(localizacaoVault);
         if (driveLoc.isDirectory()) {
-            juce::File driveLogDir = driveLoc.getChildFile("log").getChildFile("disk").getChildFile(safeDisk);
+            juce::File driveProj = driveLoc.getChildFile("Project");
+            juce::File baseDir = (driveProj.isDirectory() || driveLoc.getChildFile("destination.json").existsAsFile())
+                ? driveProj
+                : driveLoc;
+            juce::File driveLogDir = baseDir.getChildFile("log").getChildFile("disk").getChildFile(safeDisk);
             driveLogDir.createDirectory();
             juce::File driveReportFile = driveLogDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".txt");
             driveReportFile.replaceWithText(txtContent);
         }
     }
+
+    // Also mirror directly to any active backup destination directories on this drive/volume
+    try {
+        auto stmtDest = db.prepare("SELECT destino_path FROM backup_destino WHERE ativo = 1;");
+        while (stmtDest.step()) {
+            juce::String dPath = stmtDest.columnText(0);
+            if (dPath.isNotEmpty()) {
+                juce::File dFile = matriz::model::normalizarParaRaizDestino(juce::File(dPath));
+                if (dFile.isDirectory()) {
+                    bool pertenceAoMesmoVolume = false;
+                    if (!localizacaoVault.empty() && (dPath.startsWithIgnoreCase(localizacaoVault) || juce::String(localizacaoVault).startsWithIgnoreCase(dPath))) {
+                        pertenceAoMesmoVolume = true;
+                    } else if (matriz::vault::raizDoVault(dFile) == matriz::vault::raizDoVault(juce::File(localizacaoVault))) {
+                        pertenceAoMesmoVolume = true;
+                    }
+                    if (pertenceAoMesmoVolume) {
+                        juce::File dProj = dFile.getChildFile("Project");
+                        if (!dProj.exists()) dProj.createDirectory();
+                        juce::File dLogDir = dProj.getChildFile("log").getChildFile("disk").getChildFile(safeDisk);
+                        dLogDir.createDirectory();
+                        juce::File dReportFile = dLogDir.getChildFile(safeDisk + "_" + juce::String(dataDia) + ".txt");
+                        dReportFile.replaceWithText(txtContent);
+
+                        // Clean up legacy log directory directly on destination root if it exists
+                        juce::File legacyRootLog = dFile.getChildFile("log");
+                        if (legacyRootLog.isDirectory()) {
+                            legacyRootLog.deleteRecursively();
+                        }
+                    }
+                }
+            }
+        }
+    } catch (...) {}
 }
 
 std::vector<DeviceUsageEntry> listarHistoricoUsoDoDispositivo(matriz::db::Database& db, const std::string& vaultId) {
@@ -240,8 +277,10 @@ std::vector<DeviceUsageEntry> listarHistoricoUsoDoDispositivo(matriz::db::Databa
             "       COALESCE(relatorio_md_caminho, ''), criado_em "
             "FROM vault_uso_log "
             "WHERE vault_id = ? "
+            "   OR vault_id IN (SELECT v2.id FROM vault v1 JOIN vault v2 ON (v1.uuid_volume <> '' AND v1.uuid_volume = v2.uuid_volume) OR (v1.localizacao = v2.localizacao) WHERE v1.id = ?) "
             "ORDER BY criado_em DESC;");
         stmt.bind(1, matriz::db::Value::of(vaultId));
+        stmt.bind(2, matriz::db::Value::of(vaultId));
 
         while (stmt.step()) {
             DeviceUsageEntry e;

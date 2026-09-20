@@ -49,10 +49,12 @@ private:
     std::unique_ptr<juce::TextButton> btnRelocar_;
     std::unique_ptr<juce::TextButton> btnDesvincular_;
     std::unique_ptr<juce::TextButton> btnBackup_;
+    std::unique_ptr<juce::TextButton> btnPublicarSite_;
 
     std::unique_ptr<juce::TableListBox> tabela_;
 
     void importarColecaoDialogo();
+    void publicarHtmlDialogo();
     void abrirSelecionada();
     void relocarSelecionada();
     void desvincularSelecionada();

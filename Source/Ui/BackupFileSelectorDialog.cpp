@@ -76,7 +76,7 @@ BackupFileSelectorDialog::BackupFileSelectorDialog(ProjetoAberto& projeto, const
     sliderTamanho_->onValueChange = [this] {
         if (mosaico_) mosaico_->definirTamanhoContinuo(sliderTamanho_->getValue());
     };
-    sliderTamanho_->setTooltip("Adjust thumbnail display size");
+    sliderTamanho_->setTooltip(isPt ? juce::String::fromUTF8("Ajustar tamanho da miniatura") : "Adjust thumbnail display size");
     addAndMakeVisible(*sliderTamanho_);
 
     lblTamanho_ = std::make_unique<juce::Label>("", isPt ? "TAMANHO" : "SIZE");

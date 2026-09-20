@@ -9,10 +9,10 @@ PeoplePickerComponent::PeoplePickerComponent(ProjetoAberto& projeto, const std::
     const auto& tk = tema();
 
     comboPeople_.setTextWhenNothingSelected("Select a person in collection...");
-    comboPeople_.setColour(juce::ComboBox::backgroundColourId, tk.painelAlt);
+    comboPeople_.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
     comboPeople_.setColour(juce::ComboBox::outlineColourId, tk.borda);
-    comboPeople_.setColour(juce::ComboBox::textColourId, tk.textoPrimario);
-    comboPeople_.setColour(juce::ComboBox::arrowColourId, tk.textoSecundario);
+    comboPeople_.setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboPeople_.setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     comboPeople_.onChange = [this] { onComboChanged(); };
     addAndMakeVisible(comboPeople_);
 
@@ -237,6 +237,19 @@ void PeoplePickerComponent::resized() {
     btnAddPerson_.setBounds(b.removeFromRight(btnW));
     b.removeFromRight(gap);
     comboPeople_.setBounds(b);
+}
+
+void PeoplePickerComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    comboPeople_.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboPeople_.setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboPeople_.setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboPeople_.setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    btnAddPerson_.setColour(juce::TextButton::buttonColourId, tk.acento);
+    btnAddPerson_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    btnRemovePerson_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc3333));
+    btnRemovePerson_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    repaint();
 }
 
 } // namespace matriz::ui

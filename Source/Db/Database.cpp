@@ -105,6 +105,7 @@ void Database::execScript(const std::string& sqlScript) {
         sqlite3_free(errMsg);
         throw DatabaseError("failed to run SQL script: " + msg);
     }
+    marcarSujo();
 }
 
 void Database::exec(const std::string& sql) { execScript(sql); }
@@ -116,6 +117,30 @@ void Database::run(const std::string& sql, const std::vector<Value>& params) {
     for (size_t i = 0; i < params.size(); ++i)
         stmt.bind(static_cast<int>(i) + 1, params[i]);
     stmt.step();
+    marcarSujo();
+}
+
+void Database::copiarSeguroPara(const std::string& destinoPath) {
+    sqlite3* pDest = nullptr;
+    if (sqlite3_open(destinoPath.c_str(), &pDest) != SQLITE_OK) {
+        std::string err = pDest ? sqlite3_errmsg(pDest) : "unknown error";
+        if (pDest) sqlite3_close(pDest);
+        throw DatabaseError("failed to open destination database for backup: " + err);
+    }
+    sqlite3_backup* pBackup = sqlite3_backup_init(pDest, "main", db_, "main");
+    if (!pBackup) {
+        std::string err = sqlite3_errmsg(pDest);
+        sqlite3_close(pDest);
+        throw DatabaseError("failed to initialize backup: " + err);
+    }
+    int rc = sqlite3_backup_step(pBackup, -1);
+    sqlite3_backup_finish(pBackup);
+    if (rc != SQLITE_DONE) {
+        std::string err = sqlite3_errmsg(pDest);
+        sqlite3_close(pDest);
+        throw DatabaseError("failed to complete safe database backup: " + err);
+    }
+    sqlite3_close(pDest);
 }
 
 } // namespace matriz::db

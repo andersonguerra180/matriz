@@ -103,7 +103,10 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     pastaLabel->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     pastaLabel->setColour(juce::Label::textColourId, tema().textoTerciario);
     auto pastaEscolhida = std::make_shared<juce::File>();
-    auto seletorPasta = std::make_shared<juce::FileChooser>(matriz::i18n::t("dialogo_novo_projeto.campo_pasta"));
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    juce::String rotuloPasta = isPt ? juce::String::fromUTF8("Pasta do DESTINATION (onde ficam o projeto e o backup)")
+                                    : "DESTINATION folder (where project and backup live)";
+    auto seletorPasta = std::make_shared<juce::FileChooser>(rotuloPasta);
 
     auto* pastaBotaoPtr = pastaBotao.get();
     pastaBotaoPtr->onClick = [seletorPasta, pastaEscolhida, pastaLabel] {
@@ -118,7 +121,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     };
     // O botão ocupa uma faixa própria de 40px (alvo de clique inteiro) e o
     // caminho escolhido aparece ABAIXO dele — nada é desenhado por cima.
-    auto linhaPasta = std::make_unique<LinhaFormulario>(matriz::i18n::t("dialogo_novo_projeto.campo_pasta"),
+    auto linhaPasta = std::make_unique<LinhaFormulario>(rotuloPasta,
                                                          std::move(pastaBotao), 40);
     pastaLabel->setInterceptsMouseClicks(false, false);
     linhaPasta->addAndMakeVisible(*pastaLabel);

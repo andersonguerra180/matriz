@@ -43,6 +43,16 @@ BarraProgressoGlobalComponent::~BarraProgressoGlobalComponent() {
 
 void BarraProgressoGlobalComponent::aoProgressoAtualizado(const EstadoProgresso& estado) {
     estado_ = estado;
+    progressoSuavizado_ = (estado_.fracao >= 0.0) ? estado_.fracao : 0.0;
+    atualizarVisual();
+}
+
+void BarraProgressoGlobalComponent::lookAndFeelChanged() {
+    const auto& tk = tema();
+    if (btnCancelar_) {
+        btnCancelar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnCancelar_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    }
     atualizarVisual();
 }
 

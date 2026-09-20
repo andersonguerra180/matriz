@@ -13,6 +13,7 @@
 
 #include "Catalogo/CatalogoProxies.h"
 #include "Consolidacao/Consolidacao.h"
+#include "Consolidacao/BackupScanEngine.h"
 #include "Consolidacao/MetadadoEmbutido.h"
 #include "Consolidacao/Mascara.h"
 #include "Ficha/FichaDefinition.h"
@@ -28,6 +29,7 @@
 #include "Ingest/PainelInconsistencias.h"
 #include "Ingest/CacheArquivo.h"
 #include "Model/Project.h"
+#include "Model/ProjectLog.h"
 #include "Publicacao/Publicacao.h"
 #include "Vault/Reconciliacao.h"
 #include "Vault/Resolucao.h"
@@ -1329,6 +1331,120 @@ void testarConsolidacao(const juce::File& dirTemp) {
 }
 
 // ---------------------------------------------------------------------------
+// Item 10b — BackupScanEngine & Destino Único Ativo por Hash SHA-256
+// ---------------------------------------------------------------------------
+void testarBackupScanEngine(const juce::File& dirTemp) {
+    std::cout << "== Backup scan engine & active destination ==\n";
+
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_scan_backup_" + juce::Uuid().toDashedString());
+    juce::File destino = dirTemp.getChildFile("destino_scan_backup_" + juce::Uuid().toDashedString());
+    destino.createDirectory();
+
+    matriz::model::NovoProjetoParams params;
+    params.nome = "Backup Scan Test";
+    params.modo = matriz::model::Modo::Preservacao;
+    params.prefixoNomenclatura = "SCN";
+
+    try {
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        std::string agora = matriz::model::agoraIso8601();
+        std::string projetoId = projeto->projetoId();
+
+        check(projeto->destinoBackupAtivo() == pastaProjeto.getFullPathName().toStdString(), "initial destination is project root");
+        projeto->definirDestinoBackupAtivo(destino.getFullPathName().toStdString());
+        check(projeto->destinoBackupAtivo() == destino.getFullPathName().toStdString(), "destino_backup_ativo_path persisted and read back");
+
+        // Create 2 items organized in folder
+        std::string pastaTopo = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mascara_nomenclatura, criado_em, atualizado_em) "
+            "VALUES (?, ?, NULL, 'Audio', 0, '{codigo}-{titulo}', ?, ?)",
+            {matriz::db::Value::of(pastaTopo), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+        std::string item1 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'SCN-001', 'Item 1', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item1), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+        juce::File master1 = dirTemp.getChildFile("scan_master1.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=440:duration=1", master1.getFullPathName()});
+        matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, item1, master1, "preservation_master", true);
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1),
+             matriz::db::Value::of(pastaTopo), matriz::db::Value::of(agora)});
+
+        std::string item2 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'SCN-002', 'Item 2', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item2), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+        juce::File master2 = dirTemp.getChildFile("scan_master2.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=880:duration=1", master2.getFullPathName()});
+        matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, item2, master2, "preservation_master", true);
+        projeto->registro().run(
+            "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item2),
+             matriz::db::Value::of(pastaTopo), matriz::db::Value::of(agora)});
+
+        // Plan backup
+        auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino, soPastaManual());
+        check(plano.itens.size() == 2, "plan has 2 items");
+
+        // Initial scan before any backup is executed
+        auto scanRes1 = matriz::consolidacao::BackupScanEngine::executarScanDestino(projeto->registro(), pastaProjeto, destino, plano, nullptr);
+        check(scanRes1.totalVerdes == 0, "before backup: 0 green items");
+        check(scanRes1.totalVermelhos == 2, "before backup: 2 red items");
+        check(scanRes1.orfaos.empty(), "before backup: 0 orphan files");
+
+        // Execute incremental backup for item 1 only
+        matriz::consolidacao::PlanoConsolidacao planoItem1 = plano;
+        planoItem1.itens.resize(1);
+        auto resExec1 = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, planoItem1);
+        check(resExec1.consolidados == 1, "item 1 backed up");
+
+        // Create an orphan file in destination
+        juce::File orphan = destino.getChildFile("orphan_document.txt");
+        orphan.replaceWithText("some uncataloged content");
+
+        // Rescan destination
+        auto scanRes2 = matriz::consolidacao::BackupScanEngine::executarScanDestino(projeto->registro(), pastaProjeto, destino, plano, nullptr);
+        check(scanRes2.totalVerdes == 1, "after 1 backup: 1 green item (SHA-256 match)");
+        check(scanRes2.totalVermelhos == 1, "after 1 backup: 1 red item (missing in dest)");
+        check(scanRes2.orfaos.size() == 1, "1 orphan file found in destination");
+        if (!scanRes2.orfaos.empty()) {
+            check(scanRes2.orfaos[0].caminhoRelativo == "orphan_document.txt", "orphan file relative path matches");
+        }
+
+        // Corrupt item 1 in backup destination
+        juce::File item1DestFile = destino.getChildFile(plano.itens[0].caminhoRelativoDestino);
+        check(item1DestFile.existsAsFile(), "dest file exists for item 1");
+        {
+            juce::FileOutputStream fos(item1DestFile);
+            fos.setPosition(0);
+            fos.write("CORRUPTED", 9);
+        }
+
+        // Rescan destination after corruption
+        auto scanRes3 = matriz::consolidacao::BackupScanEngine::executarScanDestino(projeto->registro(), pastaProjeto, destino, plano, nullptr);
+        check(scanRes3.totalVerdes == 0, "after corruption: 0 green items");
+        check(scanRes3.totalVermelhos == 2, "after corruption: 2 red items (divergent hash caught)");
+
+        // Check ProjectLog recorded scan entry
+        matriz::model::ProjectLog pLog(pastaProjeto);
+        juce::String logText = pLog.readContent();
+        check(logText.contains("Backup Destination Scanned"), "ProjectLog contains 'Backup Destination Scanned' audit entry");
+
+    } catch (const std::exception& e) {
+        check(false, std::string("testarBackupScanEngine: ") + e.what());
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Item 11 — catálogo de proxies. A propriedade que justifica o subsistema:
 // o catálogo é AUTÔNOMO. Abre sem o projeto que o gerou e sem o material
 // original conectado, e ainda assim diz onde cada arquivo está.
@@ -2128,6 +2244,7 @@ int main() {
     testarHierarquiaBackup(tmpDir);
     testarLoudnessEMarcadores(tmpDir);
     testarConsolidacao(tmpDir);
+    testarBackupScanEngine(tmpDir);
     testarCatalogoProxies(tmpDir);
     testarCacheDeArquivo(tmpDir);
     testarReconciliacaoDeVault(tmpDir);

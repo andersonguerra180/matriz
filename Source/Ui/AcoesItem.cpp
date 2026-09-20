@@ -198,10 +198,20 @@ void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, 
     ProjetoAberto* p = &projeto;
     auto ids = itemIds;
     menu.showMenuAsync(juce::PopupMenu::Options(), [p, ids, ganchos, tipos](int resultado) {
-        if (resultado <= 0) return;
+        if (resultado <= 0 || resultado > static_cast<int>(tipos.size())) return;
         const std::string& tipo = tipos[static_cast<size_t>(resultado - 1)].id;
-        for (auto& itemId : ids)
-            p->atualizarTipoMidia(itemId, tipo);
+        if (ids.size() > 1) {
+            ProgressoGlobal::obterInstancia().iniciarTarefa("batch_type", "Changing Media Type", (int)ids.size(), nullptr, "Updating " + juce::String((int)ids.size()) + " assets...");
+            int proc = 0;
+            for (auto& itemId : ids) {
+                p->atualizarTipoMidia(itemId, tipo);
+                ++proc;
+                ProgressoGlobal::obterInstancia().atualizarProgresso("batch_type", proc, juce::String(proc) + " of " + juce::String((int)ids.size()) + " updated");
+            }
+            ProgressoGlobal::obterInstancia().concluirTarefa("batch_type", juce::String((int)ids.size()) + " assets updated");
+        } else {
+            p->atualizarTipoMidia(ids.front(), tipo);
+        }
         if (ganchos.aoMudarDados) ganchos.aoMudarDados();
     });
 }
@@ -214,7 +224,13 @@ void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& ite
               matriz::i18n::t("acoes.remover_do_backup_mensagem")
                   .replace("{n}", juce::String(static_cast<int>(itemIds.size()))),
               matriz::i18n::t("acoes.remover_do_backup"), [p, ids, ganchos] {
+                  if (ids.size() > 1) {
+                      ProgressoGlobal::obterInstancia().iniciarTarefa("batch_remove_backup", "Removing from Backup", (int)ids.size(), nullptr, "Updating " + juce::String((int)ids.size()) + " assets...");
+                  }
                   p->removerItensDoBackup(ids);
+                  if (ids.size() > 1) {
+                      ProgressoGlobal::obterInstancia().concluirTarefa("batch_remove_backup", juce::String((int)ids.size()) + " assets updated");
+                  }
                   if (ganchos.aoMudarDados) ganchos.aoMudarDados();
               });
 }
@@ -226,7 +242,13 @@ void limparMetadados(ProjetoAberto& projeto, const std::vector<std::string>& ite
     confirmar(matriz::i18n::t("metadados.confirmar_limpar_titulo"),
               matriz::i18n::t("metadados.confirmar_limpar_msg"),
               matriz::i18n::t("menu.limpar_metadados"), [p, ids, ganchos] {
+                  if (ids.size() > 1) {
+                      ProgressoGlobal::obterInstancia().iniciarTarefa("batch_clear_metadata", "Clearing Metadata", (int)ids.size(), nullptr, "Clearing metadata for " + juce::String((int)ids.size()) + " assets...");
+                  }
                   p->redefinirMetadadosItens(ids);
+                  if (ids.size() > 1) {
+                      ProgressoGlobal::obterInstancia().concluirTarefa("batch_clear_metadata", juce::String((int)ids.size()) + " assets metadata cleared");
+                  }
                   if (ganchos.aoMudarDados) ganchos.aoMudarDados();
               });
 }
@@ -257,9 +279,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     juce::PopupMenu menu;
     bool umSo = itemIds.size() == 1;
 
-    menu.addItem(kCategorizar, matriz::i18n::t("acoes.categorizar"));
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
-    if (!umSo) menu.addItem(kRenomearEmLote, matriz::i18n::t("renomear_lote.titulo"));
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
 
 #if JUCE_MAC
@@ -307,7 +327,13 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
         auto pastas = pastasDoBackup(projeto);
         size_t indice = static_cast<size_t>(resultado - kPrimeiraPasta);
         if (indice >= pastas.size()) return;
+        if (itemIds.size() > 1) {
+            ProgressoGlobal::obterInstancia().iniciarTarefa("batch_move", "Moving to Folder", (int)itemIds.size(), nullptr, "Moving " + juce::String((int)itemIds.size()) + " assets...");
+        }
         projeto.adicionarItensAPasta(itemIds, pastas[indice].first);
+        if (itemIds.size() > 1) {
+            ProgressoGlobal::obterInstancia().concluirTarefa("batch_move", juce::String((int)itemIds.size()) + " assets moved");
+        }
         if (ganchos.aoMudarDados) ganchos.aoMudarDados();
         return;
     }
@@ -332,7 +358,13 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             break;
 
         case kAlternarPublicacao:
+            if (itemIds.size() > 1) {
+                ProgressoGlobal::obterInstancia().iniciarTarefa("batch_publish", "Updating Publication", (int)itemIds.size(), nullptr, "Updating " + juce::String((int)itemIds.size()) + " assets...");
+            }
             projeto.alternarPublicacaoItens(itemIds);
+            if (itemIds.size() > 1) {
+                ProgressoGlobal::obterInstancia().concluirTarefa("batch_publish", juce::String((int)itemIds.size()) + " assets updated");
+            }
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
 
@@ -354,7 +386,13 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             confirmar(matriz::i18n::t("acoes.remover_da_lista_titulo"),
                       matriz::i18n::t("acoes.remover_da_lista_mensagem").replace("{n}", juce::String(quantidade)),
                       matriz::i18n::t("acoes.remover_da_lista"), [p, itemIds, ganchos] {
+                          if (itemIds.size() > 1) {
+                              ProgressoGlobal::obterInstancia().iniciarTarefa("batch_remove_list", "Removing from List", (int)itemIds.size(), nullptr, "Removing " + juce::String((int)itemIds.size()) + " assets...");
+                          }
                           p->removerItensDoProjeto(itemIds);
+                          if (itemIds.size() > 1) {
+                              ProgressoGlobal::obterInstancia().concluirTarefa("batch_remove_list", juce::String((int)itemIds.size()) + " assets removed");
+                          }
                           if (ganchos.aoMudarDados) ganchos.aoMudarDados();
                       });
             break;

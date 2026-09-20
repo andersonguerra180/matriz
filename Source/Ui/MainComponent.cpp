@@ -34,8 +34,14 @@
 #include "InitialRelinkDialog.h"
 #include "OfflineAssetRelinkDialog.h"
 #include "IngestProgressModalDialog.h"
+#include "RescanBackupSourcesDialog.h"
+#include "RescanProgressModalDialog.h"
+#include "../Vault/RescanEngine.h"
 #include "../Vault/AssetRelinkEngine.h"
 #include "../Vault/Resolucao.h"
+#include "../Vault/DeviceUsageLog.h"
+#include "../Ingest/LightroomImporter.h"
+#include "ProjectLoadingModalDialog.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
@@ -267,16 +273,16 @@ public:
         auto miolo = getLocalBounds().reduced(static_cast<int>(tema().espacoGrande));
         g.setColour(tema().textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
-        g.drawText(titulo_, miolo.removeFromTop(32), juce::Justification::centredLeft);
+        g.drawText(titulo_, miolo.removeFromTop(28), juce::Justification::centredLeft);
 
-        miolo.removeFromTop(tema().espacoGrande);
+        miolo.removeFromTop(tema().espacoPequeno);
         g.setColour(tema().textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
-        g.drawFittedText(descricao_, miolo.removeFromTop(40), juce::Justification::topLeft, 2);
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo - 0.5f)));
+        g.drawFittedText(descricao_, miolo.removeFromTop(84), juce::Justification::topLeft, 4);
 
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
-        g.drawText(publico_, miolo.removeFromBottom(20), juce::Justification::bottomLeft);
+        g.drawFittedText(publico_, miolo, juce::Justification::bottomLeft, 2);
     }
 
     void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
@@ -290,14 +296,22 @@ private:
     bool emHover_ = false;
 };
 
-// Uma linha clicável na lista de "Recentes" — nome + selo de modo.
+// Uma linha clicável na lista de "Recentes" — nome + selo de modo + botão de remover.
 class LinhaProjetoRecente : public juce::Component {
 public:
     LinhaProjetoRecente(juce::String nome, juce::String seloModo) : nome_(std::move(nome)), selo_(std::move(seloModo)) {
-        setInterceptsMouseClicks(true, false);
+        btnRemover_.setButtonText(juce::CharPointer_UTF8("\xc3\x97")); // ×
+        btnRemover_.setTooltip(matriz::i18n::localeAtivo().startsWith("pt") ? juce::String::fromUTF8("Remover da lista") : "Remove from list");
+        btnRemover_.setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnRemover_.setColour(juce::TextButton::textColourOffId, tema().textoTerciario);
+        btnRemover_.onClick = [this] {
+            if (aoRemover) aoRemover();
+        };
+        addAndMakeVisible(btnRemover_);
     }
 
     std::function<void()> aoClicar;
+    std::function<void()> aoRemover;
 
     void paint(juce::Graphics& g) override {
         auto area = getLocalBounds();
@@ -306,6 +320,7 @@ public:
             g.fillRoundedRectangle(area.toFloat(), tema().raioPequeno);
         }
         auto miolo = area.reduced(tema().espacoMedio, 0);
+        miolo.removeFromRight(26);
 
         auto areaSelo = miolo.removeFromRight(100).reduced(2, 4);
         bool isCatalog = (selo_.equalsIgnoreCase("catalogo") || selo_.equalsIgnoreCase("catalog"));
@@ -324,14 +339,39 @@ public:
         g.drawText(nome_, miolo, juce::Justification::centredLeft);
     }
 
-    void mouseEnter(const juce::MouseEvent&) override { emHover_ = true; repaint(); }
-    void mouseExit(const juce::MouseEvent&) override { emHover_ = false; repaint(); }
+    void resized() override {
+        auto r = getLocalBounds().reduced(4, 2);
+        btnRemover_.setBounds(r.removeFromRight(20).withSizeKeepingCentre(18, 18));
+    }
+
+    void mouseEnter(const juce::MouseEvent&) override {
+        emHover_ = true;
+        btnRemover_.setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+        repaint();
+    }
+    void mouseExit(const juce::MouseEvent&) override {
+        emHover_ = false;
+        btnRemover_.setColour(juce::TextButton::textColourOffId, tema().textoTerciario);
+        repaint();
+    }
     void mouseUp(const juce::MouseEvent& e) override {
-        if (getLocalBounds().contains(e.getPosition()) && aoClicar) aoClicar();
+        if (e.mods.isPopupMenu()) {
+            juce::PopupMenu m;
+            bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+            m.addItem(1, isPt ? juce::String::fromUTF8("Remover da lista de recentes") : "Remove from recent list");
+            m.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(this), [this](int result) {
+                if (result == 1 && aoRemover) aoRemover();
+            });
+            return;
+        }
+        if (getLocalBounds().contains(e.getPosition()) && !btnRemover_.getBounds().contains(e.getPosition()) && aoClicar) {
+            aoClicar();
+        }
     }
 
 private:
     juce::String nome_, selo_;
+    juce::TextButton btnRemover_;
     bool emHover_ = false;
 };
 
@@ -410,6 +450,12 @@ void MainComponent::atualizarTema() {
     if (telaInicialRecentesTitulo_) {
         telaInicialRecentesTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
         telaInicialRecentesTitulo_->setColour(juce::Label::textColourId, tk.textoTerciario);
+    }
+    if (telaInicialComboIdioma_) {
+        telaInicialComboIdioma_->setColour(juce::ComboBox::backgroundColourId, tk.painel);
+        telaInicialComboIdioma_->setColour(juce::ComboBox::textColourId, tk.textoPrimario);
+        telaInicialComboIdioma_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        telaInicialComboIdioma_->setColour(juce::ComboBox::arrowColourId, tk.textoSecundario);
     }
     if (labelSource_) {
         labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
@@ -525,6 +571,53 @@ void MainComponent::atualizarTema() {
     repaint();
 }
 
+void MainComponent::atualizarIdioma() {
+    if (!temProjetoAberto()) {
+        reconstruirTelaInicial();
+        return;
+    }
+
+    if (barraNavegacao_) {
+        barraNavegacao_->lookAndFeelChanged();
+    }
+
+    auto tabAtual = barraNavegacao_ ? barraNavegacao_->getSelectedTab() : BarraNavegacaoComponent::Tab::Grid;
+
+    intakeWorkspace_.reset();
+    catalogWorkspace_.reset();
+    duplicatesWorkspace_.reset();
+    analyticsWorkspace_.reset();
+    treeWorkspace_.reset();
+    backupWorkspace_.reset();
+    storageWorkspace_.reset();
+    preservationWorkspace_.reset();
+    catalogHubWorkspace_.reset();
+
+    if (fichaPanel_) {
+        fichaPanel_->lookAndFeelChanged();
+    }
+
+    if (barraFerramentas_) {
+        barraFerramentas_->sendLookAndFeelChange();
+        barraFerramentas_->repaint();
+    }
+
+    if (barraNavegacao_) {
+        if (tabAtual == BarraNavegacaoComponent::Tab::Catalog) mostrarCatalogHub();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
+    }
+
+    sendLookAndFeelChange();
+    resized();
+    repaint();
+}
+
 MainComponent::~MainComponent() {
     stopTimer();
     if (cancelamentoLote_) cancelamentoLote_->pedir();
@@ -627,10 +720,18 @@ void MainComponent::reconstruirTelaInicial() {
         if (recentes.size() > kMaxRecentesExibidos) recentes.resize(kMaxRecentesExibidos);
         for (auto& r : recentes) {
             bool isCatalog = (r.modo.equalsIgnoreCase("catalogo") || r.modo.equalsIgnoreCase("catalog"));
-            juce::String selo = isCatalog ? "CATALOG" : "COLLECTION";
+            bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+            juce::String selo = isCatalog ? (isPt ? juce::String::fromUTF8("CATÁLOGO") : "CATALOG")
+                                          : (isPt ? juce::String::fromUTF8("COLEÇÃO") : "COLLECTION");
             auto linha = std::make_unique<LinhaProjetoRecente>(r.nome, selo);
             juce::File pasta(r.pasta);
+            juce::String pastaStr = r.pasta;
             linha->aoClicar = [this, pasta] { if (aoAbrirRecente) aoAbrirRecente(pasta); };
+            linha->aoRemover = [this, pastaStr] {
+                matriz::app::removerRecente(pastaStr);
+                reconstruirTelaInicial();
+                resized();
+            };
             addAndMakeVisible(*linha);
             telaInicialLinhasRecentes_.push_back(std::move(linha));
         }
@@ -638,32 +739,26 @@ void MainComponent::reconstruirTelaInicial() {
         telaInicialRecentesTitulo_.reset();
     }
 
-    // Botões discretos de idioma no canto inferior direito
+    // Dropdown de idioma no canto superior direito
     bool isPtAtivo = (matriz::i18n::localeAtivo() == "pt_BR");
-
-    telaInicialBtnIdiomaPt_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xf0\x9f\x87\xa7\xf0\x9f\x87\xb7")); // 🇧🇷
-    telaInicialBtnIdiomaPt_->setTooltip("Português (Brasil)");
-    telaInicialBtnIdiomaPt_->setColour(juce::TextButton::buttonColourId,
-        isPtAtivo ? tema().acento.withAlpha(0.25f) : juce::Colours::transparentBlack);
-    telaInicialBtnIdiomaPt_->setColour(juce::TextButton::textColourOffId,
-        isPtAtivo ? tema().acento : tema().textoTerciario);
-    telaInicialBtnIdiomaPt_->onClick = [this] {
-        matriz::app::gravarLocale("pt_BR");
-        if (aoTrocarIdioma) aoTrocarIdioma("pt_BR");
+    telaInicialComboIdioma_ = std::make_unique<juce::ComboBox>("telaInicialComboIdioma");
+    telaInicialComboIdioma_->addItem("English", 1);
+    telaInicialComboIdioma_->addItem(juce::String::fromUTF8("Portugu\xc3\xaas"), 2);
+    telaInicialComboIdioma_->setSelectedId(isPtAtivo ? 2 : 1, juce::dontSendNotification);
+    telaInicialComboIdioma_->setColour(juce::ComboBox::backgroundColourId, tema().painel);
+    telaInicialComboIdioma_->setColour(juce::ComboBox::textColourId, tema().textoPrimario);
+    telaInicialComboIdioma_->setColour(juce::ComboBox::outlineColourId, tema().borda);
+    telaInicialComboIdioma_->setColour(juce::ComboBox::arrowColourId, tema().textoSecundario);
+    telaInicialComboIdioma_->onChange = [this] {
+        int id = telaInicialComboIdioma_->getSelectedId();
+        juce::String novoLocale = (id == 2 ? "pt_BR" : "en");
+        if (novoLocale != matriz::i18n::localeAtivo()) {
+            matriz::app::gravarLocale(novoLocale);
+            if (aoTrocarIdioma) aoTrocarIdioma(novoLocale);
+            reconstruirTelaInicial();
+        }
     };
-    addAndMakeVisible(*telaInicialBtnIdiomaPt_);
-
-    telaInicialBtnIdiomaEn_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xf0\x9f\x87\xac\xf0\x9f\x87\xa7")); // 🇬🇧
-    telaInicialBtnIdiomaEn_->setTooltip("English");
-    telaInicialBtnIdiomaEn_->setColour(juce::TextButton::buttonColourId,
-        !isPtAtivo ? tema().acento.withAlpha(0.25f) : juce::Colours::transparentBlack);
-    telaInicialBtnIdiomaEn_->setColour(juce::TextButton::textColourOffId,
-        !isPtAtivo ? tema().acento : tema().textoTerciario);
-    telaInicialBtnIdiomaEn_->onClick = [this] {
-        matriz::app::gravarLocale("en");
-        if (aoTrocarIdioma) aoTrocarIdioma("en");
-    };
-    addAndMakeVisible(*telaInicialBtnIdiomaEn_);
+    addAndMakeVisible(*telaInicialComboIdioma_);
 
     resized();
     repaint();
@@ -681,8 +776,7 @@ void MainComponent::reconstruirLayoutProjeto() {
     telaInicialBotaoAbrir_.reset();
     telaInicialRecentesTitulo_.reset();
     telaInicialLinhasRecentes_.clear();
-    telaInicialBtnIdiomaPt_.reset();
-    telaInicialBtnIdiomaEn_.reset();
+    telaInicialComboIdioma_.reset();
 
     // A grade é o protagonista (Reorientação completa §3.1) — ocupa o
     // essencial da janela; o preview (quando aberto) troca de lugar com
@@ -1346,22 +1440,25 @@ void MainComponent::abrirColecaoDoCatalogo(const juce::File& pastaColecao) {
     if (!projetoAberto_) return;
     catalogoPai_ = pastaProjeto();
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("collection_open", "Opening Collection", 100, nullptr, pastaColecao.getFileName());
-
-    auto projColecao = matriz::model::Project::abrir(pastaColecao);
-    if (!projColecao) {
-        ProgressoGlobal::obterInstancia().concluirTarefa("collection_open", "Failed to open collection");
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions()
-                .withIconType(juce::MessageBoxIconType::WarningIcon)
-                .withTitle("Failed to Open Collection")
-                .withMessage("Could not open collection at:\n" + pastaColecao.getFullPathName())
-                .withButton("OK"),
-            nullptr);
-        return;
-    }
-    abrirProjeto(std::move(projColecao));
-    ProgressoGlobal::obterInstancia().concluirTarefa("collection_open", "Collection loaded: " + pastaColecao.getFileName());
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjectLoadingModalDialog::launch(pastaColecao, this, [safeThis, pastaColecao](std::unique_ptr<matriz::model::Project> projColecao,
+                                                                                  std::string,
+                                                                                  int64_t,
+                                                                                  bool,
+                                                                                  std::string) {
+        if (!safeThis) return;
+        if (!projColecao) {
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::WarningIcon)
+                    .withTitle("Failed to Open Collection")
+                    .withMessage("Could not open collection at:\n" + pastaColecao.getFullPathName())
+                    .withButton("OK"),
+                nullptr);
+            return;
+        }
+        safeThis->abrirProjeto(std::move(projColecao));
+    });
 }
 
 void MainComponent::retornarAoCatalogo() {
@@ -1463,6 +1560,9 @@ void MainComponent::mostrarIntake() {
                         ingerirArquivos(files);
                     }
                 });
+        };
+        intakeWorkspace_->aoIngerirDeLightroom = [this] {
+            importarCatalogoLightroom();
         };
         intakeWorkspace_->aoConfirmarParaGrid = [this] {
             if (catalogWorkspace_) catalogWorkspace_->recarregar();
@@ -1695,6 +1795,16 @@ void MainComponent::mostrarBackup() {
                 safeThis->mostrarDuplicates();
                 if (safeThis->duplicatesWorkspace_) {
                     safeThis->duplicatesWorkspace_->iniciarScan();
+                }
+            }
+        });
+    };
+    backupWorkspace_->aoAbrirNoGrid = [safeThis](const std::set<std::string>& ids) {
+        juce::MessageManager::callAsync([safeThis, ids] {
+            if (safeThis) {
+                safeThis->mostrarGrid();
+                if (safeThis->catalogWorkspace_) {
+                    safeThis->catalogWorkspace_->filtrarPorIds(ids);
                 }
             }
         });
@@ -2252,6 +2362,223 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     processarLoteEmBackground(std::move(arquivos), "", "");
 }
 
+void MainComponent::importarCatalogoLightroom() {
+    if (!projetoAberto_) return;
+
+    auto chooser = std::make_shared<juce::FileChooser>(
+        i18n::t("intake.importar_lightroom"),
+        juce::File::getSpecialLocation(juce::File::userPicturesDirectory),
+        "*.lrcat");
+
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this, chooser](const juce::FileChooser& fc) {
+            auto lrcat = fc.getResult();
+            if (!lrcat.existsAsFile()) return;
+
+            // Checagem de catálogo aberto / bloqueado
+            juce::File lockFile = lrcat.getSiblingFile(lrcat.getFileName() + ".lock");
+            if (lockFile.existsAsFile()) {
+                bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,
+                    isPt ? juce::String::fromUTF8("Catálogo Bloqueado") : "Catalog Locked",
+                    i18n::t("intake.lightroom_aberto_aviso"));
+            }
+
+            // Validar se é catálogo do Classic
+            juce::String erroVal;
+            if (!matriz::ingest::LightroomImporter::validarCatalogoClassic(lrcat, erroVal)) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::WarningIcon,
+                    "Lightroom Classic",
+                    i18n::t("intake.lightroom_invalido") + "\n" + erroVal);
+                return;
+            }
+
+            ProgressoGlobal::obterInstancia().iniciarTarefa(
+                "lightroom_import",
+                "Lightroom Import",
+                100,
+                [this] { cancelarLoteIngest(); },
+                "Importing Lightroom catalog...");
+
+            if (!cancelamentoLote_) cancelamentoLote_ = matriz::app::novoCancelamento();
+            cancelamentoLote_->rearmar();
+            auto cancelamento = cancelamentoLote_;
+
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            auto* registro = &projetoAberto_->projeto().registro();
+            auto* indice = &projetoAberto_->projeto().indice();
+            juce::File pastaProjeto = projetoAberto_->projeto().pasta();
+            std::string projetoId = projetoAberto_->projeto().projetoId();
+            juce::String prefixoAcervo = "ACV";
+            auto stmtProjeto = registro->prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
+            if (stmtProjeto.step() && !stmtProjeto.columnIsNull(0)) {
+                prefixoAcervo = juce::String::fromUTF8(stmtProjeto.columnText(0).c_str());
+            }
+            if (prefixoAcervo.isEmpty()) prefixoAcervo = "ACV";
+
+            ingestPool_.addJob([safeThis, lrcat, registro, indice, pastaProjeto, projetoId, prefixoAcervo, cancelamento]() mutable {
+                auto onProg = [cancelamento](int atual, int total, const juce::String& status) {
+                    if (total > 0) {
+                        double pct = (static_cast<double>(atual) / static_cast<double>(total)) * 100.0;
+                        ProgressoGlobal::obterInstancia().atualizarProgresso("lightroom_import", pct, status);
+                    }
+                };
+
+                auto onPedirNovaRaiz = [safeThis](const juce::String& exemploEsperado, const juce::String& nomeFoto) -> juce::File {
+                    juce::File escolhida;
+                    return escolhida;
+                };
+
+                auto res = matriz::ingest::LightroomImporter::importarCatalogo(
+                    lrcat, *registro, *indice, pastaProjeto, projetoId, prefixoAcervo,
+                    cancelamento, onProg, onPedirNovaRaiz);
+
+                juce::MessageManager::callAsync([safeThis, res]() mutable {
+                    if (!safeThis) return;
+                    ProgressoGlobal::obterInstancia().concluirTarefa("lightroom_import");
+
+                    if (safeThis->intakeWorkspace_) safeThis->intakeWorkspace_->recarregar();
+                    if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+
+                    if (res.erro.isNotEmpty()) {
+                        juce::AlertWindow::showMessageBoxAsync(
+                            juce::MessageBoxIconType::WarningIcon,
+                            i18n::t("intake.lightroom_resumo_titulo"),
+                            res.erro);
+                    } else {
+                        juce::String resumo = i18n::t("intake.lightroom_resumo")
+                            .replace("{importadas}", juce::String(res.fotosImportadas))
+                            .replace("{nao_encontradas}", juce::String(res.fotosNaoEncontradas))
+                            .replace("{duplicadas}", juce::String(res.fotosDuplicadas))
+                            .replace("{metadados}", juce::String(res.metadadosAplicados))
+                            .replace("{sessao}", juce::String(res.arquivosSessaoImportados));
+
+                        juce::AlertWindow::showMessageBoxAsync(
+                            juce::MessageBoxIconType::InfoIcon,
+                            i18n::t("intake.lightroom_resumo_titulo"),
+                            resumo);
+                    }
+                });
+            });
+        });
+}
+
+void MainComponent::iniciarRescanBackupSources() {
+    if (!projetoAberto_) return;
+    if (temCatalogoAberto() || projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) return;
+
+    auto pares = matriz::vault::RescanEngine::obterParesDeBackup(*projetoAberto_);
+    if (pares.empty()) {
+        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            isPt ? juce::String::fromUTF8("Rescan de Fontes de Backup") : "Rescan Backup Sources",
+            isPt ? juce::String::fromUTF8("Nenhum par de fontes de backup encontrado para esta coleção.")
+                 : "No backup source pairs found for this collection.");
+        return;
+    }
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    RescanBackupSourcesDialog::showDialog(std::move(pares), [safeThis](std::vector<matriz::vault::RescanPair> paresEscolhidos) {
+        if (!safeThis || !safeThis->projetoAberto_) return;
+
+        auto* registro = &safeThis->projetoAberto_->projeto().registro();
+        int numPares = static_cast<int>(paresEscolhidos.size());
+        RescanProgressModalDialog::showModal(
+            std::move(paresEscolhidos),
+            *registro,
+            [safeThis, numPares](bool sucesso, std::vector<matriz::vault::RescanFileResult> resultados) {
+                if (!safeThis || !safeThis->projetoAberto_) return;
+
+                if (!sucesso) {
+                    // Cancelled or aborted: discard everything as mandated by Section 3
+                    return;
+                }
+
+                int numNovos = 0;
+                int numModificados = 0;
+                for (const auto& res : resultados) {
+                    if (res.status == matriz::vault::RescanFileResult::Status::Novo) numNovos++;
+                    else if (res.status == matriz::vault::RescanFileResult::Status::Modificado) numModificados++;
+                }
+
+                matriz::model::ProjectLog pLog(safeThis->projetoAberto_->projeto().pasta());
+                juce::StringArray details;
+                details.add("Pairs scanned: " + juce::String(numPares));
+                details.add("New files: " + juce::String(numNovos));
+                details.add("Modified files: " + juce::String(numModificados));
+                pLog.appendEntry("Backup Sources Rescanned", details);
+
+                if (resultados.empty()) {
+                    // Caso A: nenhum MODIFICADO/NOVO em nenhum par processado
+                    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::AlertWindow::InfoIcon,
+                        isPt ? juce::String::fromUTF8("Rescan de Fontes de Backup") : "Rescan Backup Sources",
+                        isPt ? juce::String::fromUTF8("Nenhuma alteração detectada nas fontes.")
+                             : "No changes detected in sources.");
+                    return;
+                }
+
+                // Caso B: houver ao menos um MODIFICADO e/ou NOVO
+                auto* db = &safeThis->projetoAberto_->projeto().registro();
+                std::string projId = safeThis->projetoAberto_->projeto().projetoId();
+                std::vector<std::pair<std::string, IntakeWorkspaceComponent::RescanOrigem>> novosItensBadges;
+
+                db->run("BEGIN", {});
+                try {
+                    for (const auto& res : resultados) {
+                        std::string itemId = matriz::model::novoUuid();
+                        std::string agora = matriz::model::agoraIso8601();
+                        std::string tipoMidia = res.tipoMidia;
+                        std::string estado = tipoMidia.empty() ? "capturado" : "catalogado";
+                        auto tipoVal = tipoMidia.empty() ? matriz::db::Value::null() : matriz::db::Value::of(tipoMidia);
+
+                        db->run(
+                            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, em_quarentena, criado_em, atualizado_em) "
+                            "VALUES (?, ?, NULL, ?, ?, ?, 1, ?, ?)",
+                            {matriz::db::Value::of(itemId), matriz::db::Value::of(projId),
+                             matriz::db::Value::of(res.novoTitulo),
+                             tipoVal, matriz::db::Value::of(estado),
+                             matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+                        std::string arqId = matriz::model::novoUuid();
+                        db->run(
+                            "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, checksum_sha256, criado_em, atualizado_em) "
+                            "VALUES (?, ?, ?, ?, 'preservation_master', 1, ?, ?, ?, ?)",
+                            {matriz::db::Value::of(arqId), matriz::db::Value::of(itemId),
+                             matriz::db::Value::of(res.file.getFileName().toStdString()),
+                             matriz::db::Value::of(res.caminhoAbsoluto),
+                             matriz::db::Value::of(res.tamanhoBytes),
+                             matriz::db::Value::of(res.sha256Calculado),
+                             matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+                        auto badge = (res.status == matriz::vault::RescanFileResult::Status::Novo)
+                                         ? IntakeWorkspaceComponent::RescanOrigem::Novo
+                                         : IntakeWorkspaceComponent::RescanOrigem::Modificado;
+                        novosItensBadges.push_back({itemId, badge});
+                    }
+                    db->run("COMMIT", {});
+                } catch (...) {
+                    db->run("ROLLBACK", {});
+                    return;
+                }
+
+                // Switch tab to INTAKE and register newly injected items
+                safeThis->mostrarIntake();
+                if (safeThis->intakeWorkspace_) {
+                    safeThis->intakeWorkspace_->registrarItensRescan(novosItensBadges);
+                }
+                if (safeThis->mosaico_) {
+                    safeThis->mosaico_->recarregar();
+                }
+            });
+    });
+}
+
 // Navegador estilo Finder embutido (item 3) — segunda porta de entrada,
 // coexistindo com arrastar direto do Finder. Ao clicar ADD TO BACKUP, a
 // janela fecha sozinha (item 3.1) e a seleção entra pelo MESMO caminho de
@@ -2794,6 +3121,20 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
         details.add("Duplicates recognized: " + juce::String(duplicatas));
         if (totalErros > 0) details.add("Errors encountered: " + juce::String(totalErros));
         pLog.appendEntry("Ingest Batch Completed", details);
+
+        try {
+            auto& db = projetoAberto_->projeto().registro();
+            std::string projVaultId = matriz::vault::obterOuCriarVaultParaDestino(db, projetoAberto_->projeto().raiz(), projetoAberto_->projeto().projetoId());
+            matriz::vault::registrarUsoDoDispositivo(
+                db,
+                projetoAberto_->projeto().pasta(),
+                projVaultId,
+                "INGEST",
+                sucessos,
+                0,
+                {},
+                ("Ingest batch completed: " + juce::String(sucessos) + " files processed (" + juce::String(duplicatas) + " duplicates)").toStdString());
+        } catch (...) {}
     }
 
     mostrarResumoLote(sucessos - duplicatas, duplicatas, totalErros);
@@ -2864,6 +3205,37 @@ void MainComponent::renomearItemSelecionado() {
     else if (mosaico_) mosaico_->renomearSelecao();
 }
 
+void MainComponent::renomearEmLoteSelecionados() {
+    if (!projetoAberto_) return;
+    std::vector<std::string> itemIds;
+    if (catalogWorkspace_) {
+        auto sel = catalogWorkspace_->itensSelecionados();
+        itemIds.assign(sel.begin(), sel.end());
+    } else if (mosaico_) {
+        const auto& sel = mosaico_->itensSelecionados();
+        itemIds.assign(sel.begin(), sel.end());
+        if (itemIds.empty() && !mosaico_->itemSelecionado().empty()) {
+            itemIds.push_back(mosaico_->itemSelecionado());
+        }
+    }
+    if (itemIds.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::InfoIcon,
+            matriz::i18n::t("renomear_lote.titulo"),
+            matriz::i18n::localeAtivo().startsWith("pt")
+                ? juce::String::fromUTF8("Selecione um ou mais arquivos no grid para renomear em lote.")
+                : "Select one or more assets in the grid to batch rename.");
+        return;
+    }
+    acoes::Ganchos ganchos;
+    ganchos.aoMudarDados = [this] {
+        if (mosaico_) mosaico_->recarregar();
+        if (catalogWorkspace_) catalogWorkspace_->recarregar();
+        atualizarPainelDeApoio();
+    };
+    acoes::renomearEmLote(*projetoAberto_, itemIds, ganchos);
+}
+
 void MainComponent::removerItemSelecionadoDoBackup() {
     if (catalogWorkspace_) catalogWorkspace_->removerSelecionadosDoBackup();
     else if (mosaico_) mosaico_->removerSelecaoDoBackup();
@@ -2880,15 +3252,23 @@ void MainComponent::executarUndo() {
         if (mosaico_) mosaico_->recarregar();
         if (arvoreOrigem_) arvoreOrigem_->recarregar();
         if (arvoreAcervo_) arvoreAcervo_->recarregar();
+        if (treeWorkspace_) treeWorkspace_->recarregar();
+        if (backupWorkspace_) backupWorkspace_->recarregar();
+        if (duplicatesWorkspace_) duplicatesWorkspace_->recarregar();
+        if (catalogWorkspace_) catalogWorkspace_->recarregar();
+        if (fichaPanel_ && !itemEmEscuta_.empty()) fichaPanel_->mostrarItem(itemEmEscuta_);
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();
+        repaint();
         if (auto* win = findParentComponentOfClass<juce::DocumentWindow>()) {
             auto titulo = win->getName();
-            win->setName(titulo + "  [Undo: " + juce::String(desc) + "]");
-            juce::Component::SafePointer<juce::DocumentWindow> safeWin(win);
-            juce::Timer::callAfterDelay(1500, [safeWin, titulo] {
-                if (safeWin) safeWin->setName(titulo);
-            });
+            if (!titulo.contains("[Undo:")) {
+                win->setName(titulo + "  [Undo: " + juce::String(desc) + "]");
+                juce::Component::SafePointer<juce::DocumentWindow> safeWin(win);
+                juce::Timer::callAfterDelay(1500, [safeWin, titulo] {
+                    if (safeWin) safeWin->setName(titulo);
+                });
+            }
         }
     }
 }
@@ -2918,13 +3298,7 @@ bool MainComponent::keyPressed(const juce::KeyPress& key) {
 
 void MainComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    bool isLight = (tk.fundo.getBrightness() > 0.5f);
-    juce::Colour bg = isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f);
-    if (!projetoAberto_ || telaAtiva_ == TelaAtiva::Inicial) {
-        g.fillAll(bg);
-    } else {
-        g.fillAll(tk.fundo);
-    }
+    g.fillAll(tk.fundo);
 
     // Highlight do painel ativo (item 9): borda colorida no painel que
     // está recebendo os comandos de filtro (MEDIA TYPE / STATUS / FILE TYPE).
@@ -3042,8 +3416,14 @@ void MainComponent::resized() {
     }
 
     if (!temProjetoAberto() && telaInicialTitulo_) {
-        constexpr int kLarguraCartao = 320;
-        constexpr int kAlturaCartao = 180;
+        // Dropdown de idioma — canto superior direito
+        if (telaInicialComboIdioma_) {
+            auto fullArea = getLocalBounds();
+            telaInicialComboIdioma_->setBounds(fullArea.getRight() - 150 - 24, 24, 150, 28);
+        }
+
+        constexpr int kLarguraCartao = 350;
+        constexpr int kAlturaCartao = 210;
         constexpr int kLarguraColuna = kLarguraCartao * 2 + 24; // dois cartões + espaço entre eles
 
         int alturaRecentes = telaInicialRecentesTitulo_ ? (24 + static_cast<int>(telaInicialLinhasRecentes_.size()) * 30) : 0;
@@ -3071,13 +3451,6 @@ void MainComponent::resized() {
             coluna.removeFromTop(tema().espacoGrande);
             telaInicialRecentesTitulo_->setBounds(coluna.removeFromTop(20));
             for (auto& linha : telaInicialLinhasRecentes_) linha->setBounds(coluna.removeFromTop(28));
-        }
-
-        // Botões de idioma — canto inferior direito, discretos
-        if (telaInicialBtnIdiomaPt_ && telaInicialBtnIdiomaEn_) {
-            auto fullArea = getLocalBounds();
-            telaInicialBtnIdiomaEn_->setBounds(fullArea.getRight() - 48, fullArea.getBottom() - 40, 40, 30);
-            telaInicialBtnIdiomaPt_->setBounds(fullArea.getRight() - 92, fullArea.getBottom() - 40, 40, 30);
         }
         return;
     }

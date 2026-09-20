@@ -2,6 +2,7 @@
 
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
+#include "../Model/ProjectLog.h"
 #include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
@@ -255,14 +256,17 @@ void gravarHierarquiaDoProjeto(matriz::db::Database& registro, const HierarquiaB
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquiaPedida,
                                         const RotuloTipoMidia& rotuloTipoMidia,
-                                        const juce::String& prefixoCustomizado) {
+                                        ModoPrefixoArquivo modoPrefixo,
+                                        const juce::String& prefixoCustomizado,
+                                        bool autoResolverConflitos,
+                                        bool forcarRebackup) {
     PlanoConsolidacao plano;
     HierarquiaBackup hierarquia = hierarquiaPedida.empty() ? hierarquiaDoProjeto(registro) : hierarquiaPedida;
     auto rotuloTipo = rotuloTipoMidia ? rotuloTipoMidia
                                        : RotuloTipoMidia([](const std::string& t) { return juce::String(t); });
 
     std::string prefixoEfetivo;
-    if (prefixoCustomizado.trim().isNotEmpty()) {
+    if (modoPrefixo == ModoPrefixoArquivo::Custom && prefixoCustomizado.trim().isNotEmpty()) {
         prefixoEfetivo = prefixoCustomizado.trim().toStdString();
     } else {
         auto stmtPref = registro.prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
@@ -274,11 +278,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
     bool usaEstruturaOriginal = std::find(hierarquia.begin(), hierarquia.end(),
                                           NivelHierarquia::EstruturaOriginal) != hierarquia.end();
+    bool usaPastaManual = std::find(hierarquia.begin(), hierarquia.end(),
+                                    NivelHierarquia::PastaManual) != hierarquia.end();
 
-    // Um contador de sequência POR PASTA (não global) — "{seq:03}" dentro
-    // de uma pasta numera os itens daquela pasta, na ordem em que a
-    // consulta devolve (por código de acervo, estável e previsível).
-    std::map<std::string, int> seqPorPasta;
+    // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
+    std::map<std::string, int> seqPorDestino;
 
     auto stmt = registro.prepare(
         "SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
@@ -294,9 +298,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
     while (stmt.step()) {
         std::string itemId = stmt.columnText(0);
-        if (usaEstruturaOriginal) {
+        if (!usaPastaManual || usaEstruturaOriginal) {
             if (!itensProcessados.insert(itemId).second)
-                continue; // Mesmo item em múltiplas pastas virtuais: na estrutura original só copia uma vez
+                continue; // Na estrutura original ou por tipo/ano, cada item do projeto é copiado uma única vez
         }
 
         ItemPlanejado ip;
@@ -321,9 +325,6 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         }
 
         auto cadeia = cadeiaAncestral(registro, ip.pastaId);
-        juce::String mascara = prefixoCustomizado.trim().isNotEmpty()
-            ? juce::String("{prefix}_{name}_{number}_{year}")
-            : mascaraEfetiva(registro, cadeia);
 
         matriz::consolidacao::ContextoMascara ctx;
         ctx.prefixo = prefixoEfetivo;
@@ -336,7 +337,6 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             ctx.nomeAcervo = stmtProjeto.step() ? stmtProjeto.columnText(0) : pastaProjeto.getFileNameWithoutExtension().toStdString();
         }
         ctx.nomePasta = cadeia.empty() ? std::string() : cadeia.back().second.toStdString();
-        ctx.seq = ++seqPorPasta[ip.pastaId];
         ctx.camposFicha = camposFichaDoItem(registro, ip.itemId);
         bool temAnoNaFicha = false;
         {
@@ -348,7 +348,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     temAnoNaFicha = true;
                 }
             }
-            if (!temAnoNaFicha && (mascara.contains("{year}") || mascara.contains("{ano}"))) {
+            if (!temAnoNaFicha) {
                 std::string anoInferido = resolverAnoEfetivo(registro, ip.itemId, ip.arquivoId, arquivoNoProjeto);
                 if (!anoInferido.empty()) {
                     ctx.camposFicha["ano"] = anoInferido;
@@ -356,12 +356,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             }
         }
 
-        std::string nomeBase = resolverMascara(mascara, ctx);
         juce::String extensao = arquivoNoProjeto.getFileExtension(); // já inclui o "."
 
-        // Caminho de pastas montado nível a nível conforme a hierarquia
-        // escolhida (item 5.2). Campo ausente vira "sem <campo>" — nunca
-        // some, nunca trava.
+        // Caminho de pastas montado nível a nível conforme a hierarquia escolhida
         juce::StringArray segmentosPasta;
         for (auto nivel : hierarquia) {
             switch (nivel) {
@@ -395,8 +392,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     break;
                 }
                 case NivelHierarquia::PastaManual:
-                    // A subárvore que o operador montou à mão na árvore
-                    // BACKUP, com todos os seus níveis (não só a folha).
+                    // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
@@ -412,19 +408,59 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 }
             }
         }
-        juce::String nomeArquivoFinal = resolverNomeFinalBackup(arquivoNoProjeto, nomeBase, usaEstruturaOriginal);
+
+        juce::String pastaDestinoStr = segmentosPasta.joinIntoString("/");
+        ctx.seq = ++seqPorDestino[pastaDestinoStr.toStdString()];
+
+        juce::String nomeArquivoFinal;
+        if (modoPrefixo == ModoPrefixoArquivo::Nenhum) {
+            nomeArquivoFinal = arquivoNoProjeto.getFileName();
+        } else {
+            juce::String mascara = (modoPrefixo == ModoPrefixoArquivo::Custom && prefixoCustomizado.trim().isNotEmpty())
+                ? juce::String("{prefix}_{name}_{number}_{year}")
+                : (modoPrefixo == ModoPrefixoArquivo::Auto ? juce::String("{prefix}_{name}_{number}_{year}") : mascaraEfetiva(registro, cadeia));
+
+            std::string nomeBase = resolverMascara(mascara, ctx);
+            nomeArquivoFinal = resolverNomeFinalBackup(arquivoNoProjeto, nomeBase, usaEstruturaOriginal);
+        }
         juce::String caminhoRelDestino =
-            (segmentosPasta.isEmpty() ? juce::String() : segmentosPasta.joinIntoString("/") + "/") + nomeArquivoFinal;
+            (segmentosPasta.isEmpty() ? juce::String() : pastaDestinoStr + "/") + nomeArquivoFinal;
+
+        // Auto-resolver conflito de nomes se ativado
+        if (autoResolverConflitos && indicesPorDestino.find(caminhoRelDestino.toStdString()) != indicesPorDestino.end()) {
+            juce::File fNome(nomeArquivoFinal);
+            juce::String baseSemExt = fNome.getFileNameWithoutExtension();
+            juce::String ext = fNome.getFileExtension();
+            int tentativa = 1;
+            juce::String novoCaminhoRelDestino;
+            do {
+                juce::String novoNome = baseSemExt + "_" + juce::String(tentativa++) + ext;
+                novoCaminhoRelDestino = (segmentosPasta.isEmpty() ? juce::String() : pastaDestinoStr + "/") + novoNome;
+            } while (indicesPorDestino.find(novoCaminhoRelDestino.toStdString()) != indicesPorDestino.end());
+
+            caminhoRelDestino = novoCaminhoRelDestino;
+            plano.conflitosAutoResolvidos++;
+        }
+
         ip.caminhoRelativoDestino = caminhoRelDestino;
 
         // Incremental: já existe um registro pra esta combinação com o
-        // MESMO checksum do arquivo hoje? Então não precisa copiar de novo.
-        auto stmtJa = registro.prepare(
-            "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ?");
-        stmtJa.bind(1, Value::of(ip.itemId));
-        stmtJa.bind(2, Value::of(ip.pastaId));
-        stmtJa.bind(3, Value::of(ip.arquivoId));
-        if (stmtJa.step()) ip.jaConsolidado = true;
+        // MESMO checksum do arquivo hoje e o arquivo existe no destino?
+        if (forcarRebackup) {
+            ip.jaConsolidado = false;
+        } else {
+            auto stmtJa = registro.prepare(
+                "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? LIMIT 1");
+            stmtJa.bind(1, Value::of(ip.itemId));
+            stmtJa.bind(2, Value::of(ip.pastaId));
+            stmtJa.bind(3, Value::of(ip.arquivoId));
+            if (stmtJa.step()) {
+                juce::File arqDestino = destino.getChildFile(caminhoRelDestino);
+                if (arqDestino.existsAsFile()) {
+                    ip.jaConsolidado = true;
+                }
+            }
+        }
 
         indicesPorDestino[caminhoRelDestino.toStdString()].push_back(plano.itens.size());
         plano.itens.push_back(std::move(ip));
@@ -484,10 +520,38 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
 
             juce::File destinoArquivo = destino.getChildFile(ip.caminhoRelativoDestino);
             destinoArquivo.getParentDirectory().createDirectory();
-            destinoArquivo.deleteFile(); // reconsolidação: substitui a cópia anterior, nunca acumula lixo
 
-            if (!origem.copyFileTo(destinoArquivo))
-                throw std::runtime_error("falha ao copiar pra " + destinoArquivo.getFullPathName().toStdString());
+            // Se o caminho mudou mas o arquivo antigo já existia no destino com o mesmo tamanho,
+            // podemos apenas mover/renomear em vez de recopiar:
+            bool movidoLocalmente = false;
+            try {
+                auto stmtAntigo = registro.prepare(
+                    "SELECT caminho_relativo_destino, checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? LIMIT 1");
+                stmtAntigo.bind(1, Value::of(ip.itemId));
+                stmtAntigo.bind(2, Value::of(ip.pastaId));
+                stmtAntigo.bind(3, Value::of(ip.arquivoId));
+                if (stmtAntigo.step()) {
+                    std::string antRel = stmtAntigo.columnText(0);
+                    if (!antRel.empty() && antRel != ip.caminhoRelativoDestino.toStdString()) {
+                        juce::File arqAntigo = destino.getChildFile(antRel);
+                        if (arqAntigo.existsAsFile() && arqAntigo.getSize() == origem.getSize()) {
+                            destinoArquivo.deleteFile();
+                            if (arqAntigo.moveFileTo(destinoArquivo)) {
+                                movidoLocalmente = true;
+                                matriz::model::ProjectLog pLog(pastaProjeto);
+                                pLog.appendEntry("Media Relocated", {"From: " + juce::String::fromUTF8(antRel.c_str()), "To: " + ip.caminhoRelativoDestino});
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            if (!movidoLocalmente) {
+                destinoArquivo.deleteFile(); // reconsolidação: substitui a cópia anterior, nunca acumula lixo
+
+                if (!origem.copyFileTo(destinoArquivo))
+                    throw std::runtime_error("falha ao copiar pra " + destinoArquivo.getFullPathName().toStdString());
+            }
 
             if (!destinoArquivo.existsAsFile()) throw std::runtime_error("cópia não existe depois de copiar");
             if (destinoArquivo.getSize() != origem.getSize())
@@ -509,18 +573,32 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
             matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
 
+            std::string destPathStr = "";
             try {
                 registro.run(
                     "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
-                    "checksum_sha256, consolidado_em) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(item_id, pasta_id, arquivo_id) DO UPDATE SET "
+                    "checksum_sha256, consolidado_em, destino_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(item_id, pasta_id, arquivo_id, destino_path) DO UPDATE SET "
                     "caminho_relativo_destino = excluded.caminho_relativo_destino, "
                     "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em",
                     {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
-                     Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
+                     Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora),
+                     Value::of(destPathStr)});
             } catch (...) {
                 try {
-                    registro.exec("PRAGMA foreign_keys = OFF");
+                    // Fallback para esquema legado sem destino_path no UNIQUE
+                    registro.run(
+                        "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                        "checksum_sha256, consolidado_em, destino_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                        "ON CONFLICT(item_id, pasta_id, arquivo_id) DO UPDATE SET "
+                        "caminho_relativo_destino = excluded.caminho_relativo_destino, "
+                        "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em, "
+                        "destino_path = excluded.destino_path",
+                        {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
+                         Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora),
+                         Value::of(destPathStr)});
+                } catch (...) {
+                    // Último recurso: sem coluna destino_path
                     registro.run(
                         "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
                         "checksum_sha256, consolidado_em) VALUES (?, ?, ?, ?, ?, ?, ?) "
@@ -529,10 +607,6 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                         "checksum_sha256 = excluded.checksum_sha256, consolidado_em = excluded.consolidado_em",
                         {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
                          Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
-                    registro.exec("PRAGMA foreign_keys = ON");
-                } catch (...) {
-                    registro.exec("PRAGMA foreign_keys = ON");
-                    throw;
                 }
             }
 

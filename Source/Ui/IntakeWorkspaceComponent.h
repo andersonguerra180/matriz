@@ -27,6 +27,14 @@ public:
     void recarregar();
     std::set<std::string> itensSelecionados() const;
 
+    enum class RescanOrigem {
+        Nenhum,
+        Novo,
+        Modificado
+    };
+
+    void registrarItensRescan(const std::vector<std::pair<std::string, RescanOrigem>>& itensRescan);
+
     // TableListBoxModel
     int getNumRows() override;
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
@@ -52,12 +60,17 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    void mouseDown(const juce::MouseEvent& e) override;
+    void mouseDrag(const juce::MouseEvent& e) override;
+    void mouseUp(const juce::MouseEvent& e) override;
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
     // Called with the Google Drive root folder when the GD button is clicked
     // and the mount point exists. Host should open a FileChooser at that path.
     std::function<void(const juce::File& gdFolder)> aoIngerirDeGoogleDrive;
+    // Called when the Lightroom import button is clicked
+    std::function<void()> aoIngerirDeLightroom;
     std::function<void()> aoConfirmarParaGrid;
 
     // Static helper to get controlled collections vocabulary
@@ -82,6 +95,7 @@ private:
         juce::String sourceMedia; // assigned original source medium or ""
         bool offline = false;
         bool selecionado = false;
+        RescanOrigem rescanOrigem = RescanOrigem::Nenhum;
     };
 
     class ThumbnailsGridComponent;
@@ -111,6 +125,7 @@ private:
     void mostrarMenuColecaoParaItem(int itemIndex, juce::Rectangle<int> screenBounds);
 
     ProjetoAberto& projeto_;
+    std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
     juce::String filtroCategoriaAtual_ = "ALL"; // "ALL", "Audio", "Video", "Image", "Document", "Other"
@@ -132,6 +147,7 @@ private:
     std::unique_ptr<ViewModeIconButton> btnVisaoIcones_;
     std::unique_ptr<juce::TextButton> btnIngerir_;
     std::unique_ptr<juce::Button> btnGoogleDrive_;
+    std::unique_ptr<juce::Button> btnLightroom_;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
     std::unique_ptr<juce::TextButton> btnRemoverSelecao_;
@@ -155,6 +171,10 @@ private:
 
     // Table List & Thumbnails Grid
     std::unique_ptr<juce::TableListBox> tabela_;
+    std::unique_ptr<juce::ToggleButton> chkSelectAllHeader_;
+    bool isDraggingRows_ = false;
+    int dragStartRow_ = -1;
+    bool dragSelectState_ = true;
     std::unique_ptr<juce::Viewport> gridViewport_;
     std::unique_ptr<ThumbnailsGridComponent> gridComponent_;
     std::unique_ptr<IntakeDragDropEmptyState> emptyState_;

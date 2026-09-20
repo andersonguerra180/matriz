@@ -112,6 +112,15 @@ public:
     }
     bool ocultarEditados() const { return ocultarEditados_; }
 
+    void definirOcultarNaoSelecionados(bool ocultar) {
+        if (ocultarNaoSelecionados_ != ocultar) {
+            ocultarNaoSelecionados_ = ocultar;
+            aplicarFiltrosEOrdenacao();
+            repaint();
+        }
+    }
+    bool ocultarNaoSelecionados() const { return ocultarNaoSelecionados_; }
+
     // Busca (Acréscimos §10.1): código/título, campo de ficha e assunto —
     // consulta o banco via ProjetoAberto::buscarItens a cada chamada (OCR/
     // transcrição não existem ainda, gap declarado). "" limpa a busca.
@@ -313,8 +322,9 @@ private:
 
     ModoVisao modoVisao_ = ModoVisao::Grade;
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;
-    bool destacarEditados_ = true;
+    bool destacarEditados_ = false;
     bool ocultarEditados_ = false;
+    bool ocultarNaoSelecionados_ = false;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;
 

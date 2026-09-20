@@ -1,6 +1,8 @@
 #include "CatalogHubComponent.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
+#include "../Catalogo/CatalogSiteExport.h"
+#include "PublishHtmlDialog.h"
 
 namespace matriz::ui {
 
@@ -28,6 +30,12 @@ CatalogHubComponent::CatalogHubComponent(ProjetoAberto& projeto)
     btnImportar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     btnImportar_->onClick = [this] { importarColecaoDialogo(); };
     addAndMakeVisible(*btnImportar_);
+
+    btnPublicarSite_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_publicar"));
+    btnPublicarSite_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnPublicarSite_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    btnPublicarSite_->onClick = [this] { publicarHtmlDialogo(); };
+    addAndMakeVisible(*btnPublicarSite_);
 
     btnAbrir_ = std::make_unique<juce::TextButton>(i18n::t("hub.btn_abrir"));
     btnAbrir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -94,6 +102,11 @@ void CatalogHubComponent::lookAndFeelChanged() {
         btnImportar_->setColour(juce::TextButton::buttonColourId, tk.acento);
         btnImportar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
     }
+    if (btnPublicarSite_) {
+        btnPublicarSite_->setButtonText(i18n::t("hub.btn_publicar"));
+        btnPublicarSite_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnPublicarSite_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    }
     if (btnAbrir_) {
         btnAbrir_->setButtonText(i18n::t("hub.btn_abrir"));
         btnAbrir_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -157,6 +170,7 @@ void CatalogHubComponent::recarregar() {
     btnRelocar_->setEnabled(temSel);
     btnDesvincular_->setEnabled(temSel);
     btnBackup_->setEnabled(!colecoes_.empty());
+    if (btnPublicarSite_) btnPublicarSite_->setEnabled(!colecoes_.empty());
 }
 
 void CatalogHubComponent::paint(juce::Graphics& g) {
@@ -176,14 +190,16 @@ void CatalogHubComponent::resized() {
 
     auto barraAcoes = area.removeFromTop(36);
     btnImportar_->setBounds(barraAcoes.removeFromLeft(180));
-    barraAcoes.removeFromLeft(12);
-    btnAbrir_->setBounds(barraAcoes.removeFromLeft(150));
-    barraAcoes.removeFromLeft(12);
-    btnRelocar_->setBounds(barraAcoes.removeFromLeft(170));
-    barraAcoes.removeFromLeft(12);
+    barraAcoes.removeFromLeft(10);
+    btnAbrir_->setBounds(barraAcoes.removeFromLeft(140));
+    barraAcoes.removeFromLeft(10);
+    btnRelocar_->setBounds(barraAcoes.removeFromLeft(160));
+    barraAcoes.removeFromLeft(10);
     btnDesvincular_->setBounds(barraAcoes.removeFromLeft(90));
-    barraAcoes.removeFromLeft(16);
-    btnBackup_->setBounds(barraAcoes.removeFromLeft(180));
+    barraAcoes.removeFromLeft(14);
+    btnPublicarSite_->setBounds(barraAcoes.removeFromLeft(180));
+    barraAcoes.removeFromLeft(10);
+    btnBackup_->setBounds(barraAcoes.removeFromLeft(170));
 
     lblResumo_->setBounds(barraAcoes);
 
@@ -259,7 +275,8 @@ void CatalogHubComponent::importarColecaoDialogo() {
                               juce::File folder = fc.getResult();
                               if (folder == juce::File() || !folder.exists()) return;
 
-                              juce::File dbFile = folder.getChildFile("registro.sqlite");
+                              juce::File resolvedFolder = matriz::model::Project::resolverPastaProjeto(folder);
+                              juce::File dbFile = resolvedFolder.getChildFile("registro.sqlite");
                               if (!dbFile.existsAsFile()) {
                                   juce::AlertWindow::showAsync(
                                       juce::MessageBoxOptions()
@@ -274,6 +291,10 @@ void CatalogHubComponent::importarColecaoDialogo() {
                               safeThis->projeto_.linkarColecao(folder);
                               safeThis->recarregar();
                           });
+}
+
+void CatalogHubComponent::publicarHtmlDialogo() {
+    PublishHtmlDialog::exibirModal(projeto_);
 }
 
 void CatalogHubComponent::abrirSelecionada() {

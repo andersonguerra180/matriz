@@ -66,6 +66,7 @@ public:
 
     void atualizarTooltips();
     void atualizarTema();
+    void atualizarIdioma();
     void lookAndFeelChanged() override;
 
     void abrirProjeto(std::unique_ptr<matriz::model::Project> projeto);
@@ -128,6 +129,8 @@ public:
     // (Etapa 2, headless) e a UI — chamada tanto pelo botão "Add material"
     // quanto por arrastar arquivos do Finder na janela inteira.
     void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas);
+    void iniciarRescanBackupSources();
+    void importarCatalogoLightroom();
 
     // Abre o navegador estilo Finder embutido (item 3) — segunda porta de
     // entrada, ao lado de arrastar do Finder. Público porque é uma ação de
@@ -154,6 +157,7 @@ public:
     void cancelarLoteIngest();
 
     void renomearItemSelecionado();
+    void renomearEmLoteSelecionados();
     void removerItemSelecionadoDoBackup();
 
     bool podeDesfazer() const;
@@ -264,8 +268,7 @@ private:
     std::unique_ptr<juce::TextButton> telaInicialBotaoAbrir_;
     std::unique_ptr<juce::Label> telaInicialRecentesTitulo_;
     std::vector<std::unique_ptr<LinhaProjetoRecente>> telaInicialLinhasRecentes_;
-    std::unique_ptr<juce::TextButton> telaInicialBtnIdiomaPt_;
-    std::unique_ptr<juce::TextButton> telaInicialBtnIdiomaEn_;
+    std::unique_ptr<juce::ComboBox> telaInicialComboIdioma_;
 
     PainelAtivo painelAtivo_ = PainelAtivo::Source;
     std::unique_ptr<juce::Label> labelSource_;

@@ -14,11 +14,11 @@ TagChipsEditor::~TagChipsEditor() {
 TagChipsEditor::TagChipsEditor() {
     input_ = std::make_unique<TagInput>();
     input_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
-    input_->setColour(juce::TextEditor::textColourId, tema().textoPrimario);
+    input_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
     input_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
     input_->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     input_->setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
-    input_->setTextToShowWhenEmpty("Add tag...", tema().textoTerciario);
+    input_->setTextToShowWhenEmpty("Add tag...", juce::Colours::grey);
     input_->setScrollbarsShown(false);
 
     input_->onCommit = [this] { commitText(); };
@@ -192,7 +192,7 @@ void TagChipsEditor::paint(juce::Graphics& g) {
     auto font = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
     g.setFont(font);
 
-    g.setColour(tk.painelAlt);
+    g.setColour(juce::Colours::white);
     g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioPequeno);
 
     g.setColour(tk.borda);

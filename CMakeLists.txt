@@ -33,6 +33,7 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dependencies.cmake")
 #   cmake -B build-asan -DMATRIZ_ASAN=ON && cmake --build build-asan --target matriz
 # ------------------------------------------------------------------------------
 option(MATRIZ_ASAN "Compila os alvos do MATRIZ com AddressSanitizer" OFF)
+option(MATRIZ_TRIAL "Compila a versao Trial do MATRIZ" OFF)
 
 function(matriz_aplicar_asan alvo)
     if(MATRIZ_ASAN)
@@ -65,7 +66,7 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png)
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
@@ -86,9 +87,11 @@ target_sources(matriz_selftest PRIVATE
     Source/Ingest/Loudness.cpp
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/Checksum.cpp
+    Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
-    Source/Vault/DiskIdentity_mac.mm)
+    Source/Vault/DiskIdentity_mac.mm
+    Source/Model/ProjectLog.cpp)
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -152,6 +155,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
@@ -159,6 +163,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Db/Database.cpp
     Source/Analytics/AssetGeolocation.cpp
     Source/Ui/OriginalSourceMedium.cpp
+    Source/I18n/Strings.cpp
     Source/Model/ProjectLog.cpp
     Source/Model/Project.cpp)
 
@@ -202,11 +207,25 @@ matriz_aplicar_asan(matriz_ingest_selftest)
 # genérica, configurações do projeto, i18n. Tira de diagnóstico, transporte,
 # marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
 # ------------------------------------------------------------------------------
+if(MATRIZ_TRIAL)
+    set(MATRIZ_PRODUCT_NAME "BKR Matriz Trial")
+    set(MATRIZ_BUNDLE_ID "com.bkr.matriz.trial")
+    set(MATRIZ_VERSION_STRING "1.0 TRIAL")
+    set(MATRIZ_UI_APP_NAME "BKR Matriz Trial (NOT FOR SALE)")
+    set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=1")
+else()
+    set(MATRIZ_PRODUCT_NAME "BKR Matriz")
+    set(MATRIZ_BUNDLE_ID "com.bkr.matriz")
+    set(MATRIZ_VERSION_STRING "1.0")
+    set(MATRIZ_UI_APP_NAME "BKR Matriz")
+    set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=0")
+endif()
+
 juce_add_gui_app(matriz
-    PRODUCT_NAME "BKR Matriz"
+    PRODUCT_NAME "${MATRIZ_PRODUCT_NAME}"
     VERSION 1.0.0
     COMPANY_NAME "BKR"
-    BUNDLE_ID "com.bkr.matriz"
+    BUNDLE_ID "${MATRIZ_BUNDLE_ID}"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_256x256.png"
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_32x32.png")
 juce_generate_juce_header(matriz)
@@ -224,6 +243,10 @@ target_sources(matriz PRIVATE
     Source/Diag/NSExceptionGuard.mm
     Source/I18n/Strings.cpp
     Source/Ui/AboutDialog.cpp
+    Source/Ui/HelpDialog.cpp
+    Source/Ui/BatchWatermarkDialog.cpp
+    Source/Ui/PublishHtmlDialog.cpp
+    Source/Ui/TrialNagDialog.cpp
     Source/Ui/Tokens.h
     Source/Ui/Tokens.cpp
     Source/Ui/ProjetoAberto.cpp
@@ -259,6 +282,9 @@ target_sources(matriz PRIVATE
     Source/Ui/AudioWorkspace.cpp
     Source/Ui/BackupFileSelectorDialog.cpp
     Source/Ui/BackupWorkspaceComponent.cpp
+    Source/Ui/BackupVersionsComponent.cpp
+    Source/Ui/BackupSyncDialog.cpp
+    Source/Ui/BackupRecoveryDialog.cpp
     Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
@@ -297,6 +323,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/Checksum.cpp
     Source/Ingest/CacheArquivo.cpp
@@ -315,9 +342,11 @@ target_sources(matriz PRIVATE
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
+    Source/Vault/RescanEngine.cpp
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Catalogo/CatalogSiteExport.cpp
@@ -329,15 +358,23 @@ target_sources(matriz PRIVATE
     Source/Model/Project.cpp
     Source/Model/ProjectLog.cpp
     Source/Ui/ProjectLogViewerDialog.cpp
-    Source/Ui/IngestProgressModalDialog.cpp)
+    Source/Ui/IngestProgressModalDialog.cpp
+    Source/Ui/ProjectLoadingModalDialog.cpp
+    Source/Ui/RescanBackupSourcesDialog.cpp
+    Source/Ui/RescanProgressModalDialog.cpp
+    Source/Ui/BackupScanProgressDialog.cpp
+    Source/Sync/SyncEngine.cpp
+    Source/Ui/SyncDestinationDialog.cpp)
 
 target_include_directories(matriz PRIVATE Source)
 
 target_compile_definitions(matriz PRIVATE
     JUCE_WEB_BROWSER=1
     JUCE_USE_CURL=1
-    JUCE_APPLICATION_NAME_STRING="BKR Matriz"
-    JUCE_APPLICATION_VERSION_STRING="1.0"
+    JUCE_APPLICATION_NAME_STRING="${MATRIZ_PRODUCT_NAME}"
+    JUCE_APPLICATION_VERSION_STRING="${MATRIZ_VERSION_STRING}"
+    MATRIZ_UI_APP_NAME_STRING="${MATRIZ_UI_APP_NAME}"
+    ${MATRIZ_TRIAL_DEF}
     MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
     MATRIZ_DEV_BUILD=1
     JUCE_MODAL_LOOPS_PERMITTED=1)
@@ -392,6 +429,7 @@ target_sources(matriz_analytics_selftest PRIVATE
     Source/Ingest/ProcessoExterno.cpp
     Source/Ingest/Loudness.cpp
     Source/Db/Database.cpp
+    Source/Model/ProjectLog.cpp
     Source/Model/Project.cpp
     Source/I18n/Strings.cpp
     Source/App/Preferencias.cpp)

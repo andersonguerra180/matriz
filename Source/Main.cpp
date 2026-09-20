@@ -10,6 +10,7 @@
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/MosaicoStressTest.h"
 #include "Ui/Tokens.h"
+#include "Ui/TrialNagDialog.h"
 #include "Ui/UiSelfTest.h"
 
 #include <csignal>
@@ -77,6 +78,51 @@ void crashHandler(int sig, siginfo_t* info, void* ctx) {
     _exit(128 + sig);
 }
 
+class SplashComponent : public juce::Component {
+public:
+    SplashComponent(const juce::Image& img, bool isTrial)
+        : image_(img), isTrial_(isTrial) {}
+
+    void paint(juce::Graphics& g) override {
+        if (image_.isValid()) {
+            g.drawImage(image_, getLocalBounds().toFloat(), juce::RectanglePlacement::stretchToFit);
+        } else {
+            g.fillAll(juce::Colour(0xff18181b));
+        }
+
+        if (isTrial_) {
+            auto bounds = getLocalBounds().toFloat();
+
+            // Top-right TRIAL badge overlay
+            float badgeW = 160.0f;
+            float badgeH = 34.0f;
+            auto badgeRect = juce::Rectangle<float>(bounds.getRight() - badgeW - 20.0f, 20.0f, badgeW, badgeH);
+
+            g.setColour(juce::Colour(0xdd1a1a1e));
+            g.fillRoundedRectangle(badgeRect, 6.0f);
+
+            g.setColour(juce::Colour(0xffff9900));
+            g.drawRoundedRectangle(badgeRect, 6.0f, 1.5f);
+
+            g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+            g.setColour(juce::Colour(0xffffa826));
+            g.drawText("TRIAL EDITION", badgeRect, juce::Justification::centred, false);
+
+            // Bottom banner: NOT FOR SALE
+            auto botRect = juce::Rectangle<float>(0.0f, bounds.getBottom() - 26.0f, bounds.getWidth(), 26.0f);
+            g.setColour(juce::Colour(0xb8000000));
+            g.fillRect(botRect);
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setColour(juce::Colour(0xffffaa33));
+            g.drawText("EVALUATION COPY — NOT FOR SALE", botRect, juce::Justification::centred, false);
+        }
+    }
+
+private:
+    juce::Image image_;
+    bool isTrial_{false};
+};
+
 class SplashWindow : public juce::DocumentWindow, private juce::Timer {
 public:
     std::function<void()> onFinished;
@@ -84,15 +130,19 @@ public:
     SplashWindow() : juce::DocumentWindow("", juce::Colours::transparentBlack, 0) {
         auto imgData = juce::MemoryBlock(AssetsBinaryData::splash_png, AssetsBinaryData::splash_pngSize);
         auto img = juce::ImageFileFormat::loadFrom(imgData.getData(), imgData.getSize());
+        bool isTrial = matriz::ui::TrialNagDialog::isTrial();
+
         if (img.isValid()) {
             int w = std::min(img.getWidth(), 900);
             float ratio = static_cast<float>(w) / static_cast<float>(img.getWidth());
             int h = static_cast<int>(img.getHeight() * ratio);
-            auto* comp = new juce::ImageComponent();
-            comp->setImage(img, juce::RectanglePlacement::stretchToFit);
+            auto* comp = new SplashComponent(img, isTrial);
             comp->setSize(w, h);
             setContentOwned(comp, true);
         } else {
+            auto* comp = new SplashComponent(img, isTrial);
+            comp->setSize(600, 340);
+            setContentOwned(comp, true);
             setSize(600, 340);
         }
         setUsingNativeTitleBar(false);
@@ -121,8 +171,8 @@ private:
 
 class MatrizApplication : public juce::JUCEApplication {
 public:
-    const juce::String getApplicationName() override { return "BKR Matriz"; }
-    const juce::String getApplicationVersion() override { return "1.0"; }
+    const juce::String getApplicationName() override { return JUCE_APPLICATION_NAME_STRING; }
+    const juce::String getApplicationVersion() override { return JUCE_APPLICATION_VERSION_STRING; }
     bool moreThanOneInstanceAllowed() override { return true; }
 
     void initialise(const juce::String& commandLine) override {
@@ -162,6 +212,13 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-lightroom")) {
+            monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
+            setApplicationReturnValue(matriz::ui::rodarTestLightroom());
+            monitorLoop_.reset();
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-uitest")) {
             setApplicationReturnValue(matriz::ui::rodarUiSelfTest());
             quit();
@@ -175,7 +232,11 @@ public:
 
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
 
-        janela_ = std::make_unique<matriz::ui::MainWindow>(matriz::i18n::t("janela_principal.titulo"));
+#if defined(MATRIZ_UI_APP_NAME_STRING)
+        janela_ = std::make_unique<matriz::ui::MainWindow>(MATRIZ_UI_APP_NAME_STRING);
+#else
+        janela_ = std::make_unique<matriz::ui::MainWindow>(getApplicationName());
+#endif
         janela_->setVisible(false);
 
         splash_ = std::make_unique<SplashWindow>();
@@ -185,6 +246,8 @@ public:
                     janela_->setBounds(tela->userBounds.toNearestInt());
                 janela_->setVisible(true);
                 janela_->toFront(true);
+
+                matriz::ui::TrialNagDialog::exibirSeNecessario(janela_.get());
             }
             splash_.reset();
         };

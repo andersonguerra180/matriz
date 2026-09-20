@@ -8,8 +8,9 @@
 namespace matriz::ui {
 
 AnalyticsTreemapComponent::AnalyticsTreemapComponent() {
-    btnUp_.setButtonText(i18n::t("analytics.btn_up"));
-    btnRoot_.setButtonText(i18n::t("analytics.btn_root"));
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    btnRoot_.setTooltip(isPt ? juce::String::fromUTF8("Ir para a raiz") : "Go to global root");
+    btnUp_.setTooltip(isPt ? juce::String::fromUTF8("Subir um nível") : "Go up one level");
     addAndMakeVisible(btnUp_);
     addAndMakeVisible(btnRoot_);
 
@@ -28,8 +29,9 @@ AnalyticsTreemapComponent::AnalyticsTreemapComponent() {
 
 void AnalyticsTreemapComponent::lookAndFeelChanged() {
     juce::Component::lookAndFeelChanged();
-    btnUp_.setButtonText(i18n::t("analytics.btn_up"));
-    btnRoot_.setButtonText(i18n::t("analytics.btn_root"));
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    btnRoot_.setTooltip(isPt ? juce::String::fromUTF8("Ir para a raiz") : "Go to global root");
+    btnUp_.setTooltip(isPt ? juce::String::fromUTF8("Subir um nível") : "Go up one level");
     repaint();
 }
 
@@ -431,9 +433,9 @@ void AnalyticsTreemapComponent::desenharTopBar(juce::Graphics& g, juce::Rectangl
     auto inner = topArea.reduced(12, 6);
 
     // Navigation buttons
-    btnRoot_.setBounds(inner.removeFromLeft(90));
+    btnRoot_.setBounds(inner.removeFromLeft(28));
     inner.removeFromLeft(6);
-    btnUp_.setBounds(inner.removeFromLeft(60));
+    btnUp_.setBounds(inner.removeFromLeft(28));
     inner.removeFromLeft(16);
 
     btnUp_.setEnabled(noAtual_ && noAtual_->parent != nullptr);

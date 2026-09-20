@@ -9,9 +9,11 @@
 
 #include "ProjetoAberto.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "../Consolidacao/BackupScanEngine.h"
 #include "HierarquiaEditorComponent.h"
 #include "../App/Cancelamento.h"
 #include "OverlayComponent.h"
+#include "BackupScanProgressDialog.h"
 
 namespace matriz::ui {
 
@@ -31,10 +33,12 @@ public:
     std::function<void()> aoVoltarHome;
     std::function<void(const juce::File&)> aoAbrirCatalogo;
     std::function<void()> aoPedirIrParaDuplicatas;
+    std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;
 
     void paint(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    void recarregar();
 
 private:
     class PreviaLista;
@@ -43,9 +47,14 @@ private:
     int getNumRows() override;
     void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override;
     void listBoxItemClicked(int rowNumber, const juce::MouseEvent&) override;
+    juce::String getTooltipForRow(int rowNumber) override;
 
     void atualizarResumo();
     void iniciarBackup();
+    void dispararScanDestino(bool forcado = false);
+    void executarBackupAcao(bool forcarOverride);
+    void iniciarSyncComOutroDestino();
+    void carregarDestinoAtivoInicial();
 
     ProjetoAberto& projeto_;
     std::set<std::string> selectedItemIds_;
@@ -73,10 +82,27 @@ private:
     int selectedCollectionIdx_ = 0;
 
     // Target Selection
-    std::vector<ProjetoAberto::VaultResumo> vaults_;
-    int selectedVaultIdx_ = -1;
+    struct DestinoBackupItem {
+        std::string id;
+        juce::String rotulo;
+        juce::String caminho;
+        std::string papel;
+        bool online = false;
+        bool ativo = false;
+    };
+    std::vector<DestinoBackupItem> destinosBackup_;
+    int selectedDestinoIdx_ = -1;
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
+
+    void carregarDestinosBackup();
+    void adicionarOuAtivarDestino(const juce::File& pasta, const juce::String& rotuloSugerido);
+    void criarNovoClone(const juce::File& folder);
+    void desvincularDestino(const DestinoBackupItem& dest);
+
+    // Scan & Integrity State
+    matriz::consolidacao::ResultadoScanBackup scanResult_;
+    bool scanRealizado_ = false;
 
     // Plan & Execution
     matriz::consolidacao::PlanoConsolidacao plano_;
@@ -92,6 +118,9 @@ private:
 
     // UI elements — ALL visible at once in Config state
     std::unique_ptr<juce::Label> labelTitulo_;
+
+    void registrarDestinoBackup(const juce::File& destFolder, const juce::String& rotuloSugerido,
+                                int copiado, int pulados, int falhas, bool cancelado);
 
     // === CONFIG CONTAINER & VIEWPORT ===
     class ConfigContainerComponent;
@@ -147,17 +176,24 @@ private:
     std::unique_ptr<juce::ToggleButton> togglePreservarEstrutura_;
     std::unique_ptr<juce::ToggleButton> toggleUsarEstruturaMapa_;
     std::unique_ptr<juce::Label> labelPrefixo_;
+    std::unique_ptr<juce::ComboBox> comboModoPrefixo_;
     std::unique_ptr<juce::TextEditor> editPrefixo_;
-    juce::String prefixoCustomizado_;
+    matriz::consolidacao::ModoPrefixoArquivo modoPrefixo_ = matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+    juce::String prefixoAuto_ = "BKR";
+    juce::String prefixoCustomizado_ = "BKR";
 
     // === OPTIONS section ===
     std::unique_ptr<juce::Label> labelOpcoes_;
     std::unique_ptr<juce::ToggleButton> toggleGerarCatalogo_;
     std::unique_ptr<juce::ToggleButton> toggleEmbutirMetadados_;
     std::unique_ptr<juce::ToggleButton> toggleVerificarChecksum_;
+    std::unique_ptr<juce::ToggleButton> toggleAutoResolverConflitos_;
+    std::unique_ptr<juce::ToggleButton> toggleForcarRebackup_;
 
     // === PREVIEW section ===
+    class LegendaStatusComponent;
     std::unique_ptr<juce::Label> labelResumo_;
+    std::unique_ptr<LegendaStatusComponent> barraLegenda_;
     std::unique_ptr<juce::Viewport> listPreviaViewport_;
     std::unique_ptr<PreviaLista> listPrevia_;
 
@@ -167,7 +203,9 @@ private:
 
     // === BUTTONS ===
     std::unique_ptr<juce::TextButton> btnStartBackup_;
-    std::unique_ptr<juce::TextButton> btnCancel_;
+    std::unique_ptr<juce::TextButton> btnSyncDestino_;
+    std::unique_ptr<juce::TextButton> btnPublishHtml_;
+    std::unique_ptr<juce::TextButton> btnCancelarExecucao_;
     std::unique_ptr<juce::TextButton> btnDone_;
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;
     std::unique_ptr<juce::TextButton> btnExportXls_;
@@ -181,6 +219,7 @@ private:
     void exportarCsv();
     void exportarDublinCore();
     void exportarChecksums();
+    void publicarHtml();
 
     // Auto-export to a specific folder (no FileChooser dialog)
     void exportarCsvPara(const juce::File& destFolder);

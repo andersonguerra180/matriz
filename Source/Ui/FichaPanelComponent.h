@@ -60,6 +60,7 @@ public:
 
     void paint(juce::Graphics&) override;
     void resized() override;
+    void lookAndFeelChanged() override;
 
 private:
     ProjetoAberto& projeto_;
