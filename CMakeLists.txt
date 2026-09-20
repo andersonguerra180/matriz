@@ -247,6 +247,7 @@ target_sources(matriz PRIVATE
     Source/Ui/BatchWatermarkDialog.cpp
     Source/Ui/PublishHtmlDialog.cpp
     Source/Ui/ExportZipDialog.cpp
+    Source/Imagem/ProcessamentoImagem.cpp
     Source/Ui/TrialNagDialog.cpp
     Source/Ui/Tokens.h
     Source/Ui/Tokens.cpp

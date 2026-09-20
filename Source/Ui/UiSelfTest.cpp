@@ -28,6 +28,7 @@
 #include "../Ingest/FluxoLote.h"
 #include "../Sync/SyncEngine.h"
 #include "ExportZipDialog.h"
+#include "../Imagem/ProcessamentoImagem.h"
 
 #include <JuceHeader.h>
 
@@ -2898,6 +2899,170 @@ int rodarUiSelfTest() {
             tempManifest.deleteFile();
             tempChecksums.deleteFile();
             targetZip.deleteFile();
+        }
+
+        // ===================================================================
+        // SEND TO PRINT - ETAPA 1: Módulo Imagem/ (Funções Puras e Testes)
+        // ===================================================================
+        std::cout << "\n== SEND TO PRINT - ETAPA 1: Modulo Imagem/ ==\n";
+        {
+            using namespace matriz::imagem;
+
+            // 1. Parser APP1/EXIF para os 8 valores de orientação
+            for (uint16_t oriEsperada = 1; oriEsperada <= 8; ++oriEsperada) {
+                // Monta cabeçalho JPEG sintético com APP1 EXIF (Big Endian 'MM')
+                uint8_t dummyJpeg[64] = {
+                    0xFF, 0xD8,             // SOI
+                    0xFF, 0xE1,             // APP1
+                    0x00, 0x22,             // Comprimento = 34 bytes
+                    'E', 'x', 'i', 'f', 0x00, 0x00, // Header Exif
+                    'M', 'M',               // Big Endian
+                    0x00, 0x2A,             // Magic 42
+                    0x00, 0x00, 0x00, 0x08, // Offset IFD0 = 8 (a partir de 'MM')
+                    0x00, 0x01,             // 1 tag no IFD0
+                    0x01, 0x12,             // Tag 0x0112 (Orientation)
+                    0x00, 0x03,             // Tipo SHORT = 3
+                    0x00, 0x00, 0x00, 0x01, // Count = 1
+                    static_cast<uint8_t>((oriEsperada >> 8) & 0xFF),
+                    static_cast<uint8_t>(oriEsperada & 0xFF), // Valor da orientação
+                    0x00, 0x00,             // Padding valor 32-bit
+                    0x00, 0x00, 0x00, 0x00  // Próximo IFD = 0
+                };
+
+                int oriLida = orientacaoExif(dummyJpeg, sizeof(dummyJpeg));
+                checar(oriLida == oriEsperada, "ETAPA 1: EXIF orientation " + juce::String(oriEsperada) + " decodificada corretamente");
+            }
+
+            // Bytes corrompidos retornam orientação 1 padrão
+            checar(orientacaoExif(nullptr, 0) == 1, "ETAPA 1: Dados nulos retornam orientacao 1");
+            uint8_t lixo[10] = { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+            checar(orientacaoExif(lixo, 10) == 1, "ETAPA 1: Bytes sem SOI retornam orientacao 1");
+
+            // 2. Aplicação pura de orientação em pixels (os 8 casos)
+            // Cria imagem 2x3 assimétrica:
+            // (0,0)=R  (1,0)=G
+            // (0,1)=B  (1,1)=Y
+            // (0,2)=C  (1,2)=M
+            ImagemBuffer imgTeste(2, 3);
+            imgTeste.definirPixel(0, 0, 255, 0, 0);     // Red
+            imgTeste.definirPixel(1, 0, 0, 255, 0);     // Green
+            imgTeste.definirPixel(0, 1, 0, 0, 255);     // Blue
+            imgTeste.definirPixel(1, 1, 255, 255, 0);   // Yellow
+            imgTeste.definirPixel(0, 2, 0, 255, 255);   // Cyan
+            imgTeste.definirPixel(1, 2, 255, 0, 255);   // Magenta
+
+            // Caso 1: Normal (2x3)
+            auto o1 = aplicarOrientacao(imgTeste, 1);
+            checar(o1.largura == 2 && o1.altura == 3 && o1.pixel(0, 0)[0] == 255 && o1.pixel(0, 0)[1] == 0, "ETAPA 1: Caso 1 Normal");
+
+            // Caso 2: Flip Horizontal (2x3)
+            auto o2 = aplicarOrientacao(imgTeste, 2);
+            checar(o2.largura == 2 && o2.altura == 3 && o2.pixel(0, 0)[1] == 255 && o2.pixel(1, 0)[0] == 255, "ETAPA 1: Caso 2 Flip H");
+
+            // Caso 3: 180° (2x3)
+            auto o3 = aplicarOrientacao(imgTeste, 3);
+            checar(o3.largura == 2 && o3.altura == 3 && o3.pixel(0, 0)[0] == 255 && o3.pixel(0, 0)[2] == 255 && o3.pixel(1, 2)[0] == 255, "ETAPA 1: Caso 3 180 graus");
+
+            // Caso 4: Flip Vertical (2x3)
+            auto o4 = aplicarOrientacao(imgTeste, 4);
+            checar(o4.largura == 2 && o4.altura == 3 && o4.pixel(0, 0)[1] == 255 && o4.pixel(0, 0)[2] == 255, "ETAPA 1: Caso 4 Flip V");
+
+            // Caso 5: Transpose (3x2)
+            auto o5 = aplicarOrientacao(imgTeste, 5);
+            checar(o5.largura == 3 && o5.altura == 2 && o5.pixel(0, 0)[0] == 255 && o5.pixel(2, 0)[2] == 255, "ETAPA 1: Caso 5 Transpose");
+
+            // Caso 6: Rotate 90° CW (3x2)
+            auto o6 = aplicarOrientacao(imgTeste, 6);
+            checar(o6.largura == 3 && o6.altura == 2 && o6.pixel(0, 0)[1] == 255 && o6.pixel(0, 0)[2] == 255 && o6.pixel(2, 0)[0] == 255, "ETAPA 1: Caso 6 90 graus CW");
+
+            // Caso 7: Transverse (3x2)
+            auto o7 = aplicarOrientacao(imgTeste, 7);
+            checar(o7.largura == 3 && o7.altura == 2 && o7.pixel(0, 0)[0] == 255 && o7.pixel(0, 0)[2] == 255, "ETAPA 1: Caso 7 Transverse");
+
+            // Caso 8: Rotate 270° CW (3x2)
+            auto o8 = aplicarOrientacao(imgTeste, 8);
+            checar(o8.largura == 3 && o8.altura == 2 && o8.pixel(0, 0)[1] == 255 && o8.pixel(0, 1)[0] == 255, "ETAPA 1: Caso 8 270 graus CW");
+
+            // 3. Redimensionamento de alta qualidade por média de área
+            ImagemBuffer imgRedimSrc(4, 4);
+            for (int y = 0; y < 4; ++y) {
+                for (int x = 0; x < 4; ++x) {
+                    uint8_t val = (x < 2) ? 0 : 255;
+                    imgRedimSrc.definirPixel(x, y, val, val, val);
+                }
+            }
+            auto imgRedim2x2 = redimensionar(imgRedimSrc, 2, 2);
+            checar(imgRedim2x2.largura == 2 && imgRedim2x2.altura == 2, "ETAPA 1: Redimensionamento 4x4 para 2x2 com dimensoes corretas");
+            checar(imgRedim2x2.pixel(0, 0)[0] == 0, "ETAPA 1: Pixel esquerdo preservado escuro");
+            checar(imgRedim2x2.pixel(1, 0)[0] == 255, "ETAPA 1: Pixel direito preservado claro");
+
+            // 4. Enquadramento no papel (Preencher e Encaixar)
+            ImagemBuffer fotoPanoramica(400, 200, 100, 150, 200);
+            auto enqPreencher = enquadrar(fotoPanoramica, 200, 200, ModoEnquadramento::Preencher, 0.0f, 0.0f);
+            checar(enqPreencher.largura == 200 && enqPreencher.altura == 200, "ETAPA 1: Enquadrar Preencher gera papel 200x200");
+
+            auto enqEncaixar = enquadrar(fotoPanoramica, 200, 200, ModoEnquadramento::Encaixar, 0.0f, 0.0f);
+            checar(enqEncaixar.largura == 200 && enqEncaixar.altura == 200, "ETAPA 1: Enquadrar Encaixar gera papel 200x200");
+            // Margens superior e inferior em Encaixar devem ser brancas
+            checar(enqEncaixar.pixel(100, 10)[0] == 255 && enqEncaixar.pixel(100, 10)[1] == 255, "ETAPA 1: Margem superior em Encaixar e branca");
+            checar(enqEncaixar.pixel(100, 190)[0] == 255 && enqEncaixar.pixel(100, 190)[1] == 255, "ETAPA 1: Margem inferior em Encaixar e branca");
+
+            // 5. Ajustes via LUT por canal
+            ImagemBuffer imgAjuste(10, 10, 128, 128, 128);
+            aplicarAjustes(imgAjuste, 0.1f, 0.0f, 1.0f, 0, 255, 1.0f);
+            checar(imgAjuste.pixel(0, 0)[0] > 128, "ETAPA 1: Ajuste de brilho via LUT aumentou luminancia");
+
+            ImagemBuffer imgSat(10, 10, 200, 100, 50);
+            aplicarAjustes(imgSat, 0.0f, 0.0f, 0.0f, 0, 255, 1.0f); // Sat = 0 -> monocromático
+            uint8_t cr = imgSat.pixel(0, 0)[0];
+            uint8_t cg = imgSat.pixel(0, 0)[1];
+            uint8_t cb = imgSat.pixel(0, 0)[2];
+            checar(cr == cg && cg == cb, "ETAPA 1: Saturacao zero converteu para monocromatico (R == G == B)");
+
+            // 6. Nitidez leve (unsharp mask)
+            ImagemBuffer imgNitidez(6, 6, 100, 100, 100);
+            imgNitidez.definirPixel(3, 3, 200, 200, 200); // Ponto brilhante central
+            nitidez(imgNitidez, 1.0f);
+            checar(imgNitidez.pixel(3, 3)[0] >= 200, "ETAPA 1: Nitidez preservou/acentuou pico do ponto brilhante");
+
+            // 7. Gravação com injeção de DPI (JPEG JFIF e PNG pHYs) e conferência nos bytes
+            ImagemBuffer imgParaGravar(50, 50, 60, 120, 180);
+            juce::File pastaEtapa1 = tmpRoot.getChildFile("test_etapa1_imagem");
+            pastaEtapa1.createDirectory();
+
+            juce::File fileJpg = pastaEtapa1.getChildFile("teste_300dpi.jpg");
+            bool okJpg = gravar(imgParaGravar, fileJpg, FormatoSaida::Jpeg, 95, 300.0);
+            checar(okJpg, "ETAPA 1: Gravou JPEG com sucesso");
+
+            double dpiX_jpg = 0.0, dpiY_jpg = 0.0;
+            bool okDpiJpg = lerDpiDosBytes(fileJpg, dpiX_jpg, dpiY_jpg);
+            checar(okDpiJpg, "ETAPA 1: Leu densidade JFIF dos bytes JPEG");
+            checar(std::abs(dpiX_jpg - 300.0) < 1.0 && std::abs(dpiY_jpg - 300.0) < 1.0, "ETAPA 1: JPEG gravado possui exatamente 300 DPI nos bytes JFIF");
+
+            juce::File filePng = pastaEtapa1.getChildFile("teste_300dpi.png");
+            bool okPng = gravar(imgParaGravar, filePng, FormatoSaida::Png, 100, 300.0);
+            checar(okPng, "ETAPA 1: Gravou PNG com sucesso");
+
+            double dpiX_png = 0.0, dpiY_png = 0.0;
+            bool okDpiPng = lerDpiDosBytes(filePng, dpiX_png, dpiY_png);
+            checar(okDpiPng, "ETAPA 1: Leu chunk pHYs dos bytes PNG");
+            checar(std::abs(dpiX_png - 300.0) < 1.0 && std::abs(dpiY_png - 300.0) < 1.0, "ETAPA 1: PNG gravado possui exatamente 300 DPI no chunk pHYs");
+
+            // 8. Teste de lerImagem (validação de formato, decodificação e achatamento de transparência)
+            auto lidoJpg = lerImagem(fileJpg);
+            checar(lidoJpg.sucesso, "ETAPA 1: lerImagem abriu o JPEG gerado");
+            checar(lidoJpg.buffer.largura == 50 && lidoJpg.buffer.altura == 50, "ETAPA 1: Dimensoes do JPEG corretas");
+
+            auto lidoPng = lerImagem(filePng);
+            checar(lidoPng.sucesso, "ETAPA 1: lerImagem abriu o PNG gerado");
+            checar(lidoPng.buffer.largura == 50 && lidoPng.buffer.altura == 50, "ETAPA 1: Dimensoes do PNG corretas");
+
+            // Formato rejeitado
+            juce::File fakeTxt = pastaEtapa1.getChildFile("invalido.txt");
+            fakeTxt.replaceWithText("nao e imagem");
+            auto lidoInvalido = lerImagem(fakeTxt);
+            checar(!lidoInvalido.sucesso, "ETAPA 1: Arquivo .txt rejeitado corretamente com mensagem de erro");
+            checar(lidoInvalido.erro.isNotEmpty(), "ETAPA 1: Mensagem de erro informativa presente");
         }
 
     } catch (const std::exception& e) {
