@@ -1422,7 +1422,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnPublishHtml_->onClick = [this] { publicarHtml(); };
     addChildComponent(*btnPublishHtml_);
 
-    btnExportZip_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("backup.exportar_zip").toRawUTF8(), 0));
+    btnExportZip_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.exportar_zip").replace("{n}", "0"));
     aplicarEstiloBotao(*btnExportZip_, false);
     btnExportZip_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff0077ff));
     btnExportZip_->setTooltip(isPt ? juce::String::fromUTF8("Exportar itens marcados com K como arquivo ZIP")
@@ -1441,7 +1441,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnLimparZip_);
 
-    btnSendToPrint_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("backup.enviar_print").toRawUTF8(), 0));
+    btnSendToPrint_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.enviar_print").replace("{n}", "0"));
     aplicarEstiloBotao(*btnSendToPrint_, false);
     btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
     btnSendToPrint_->setTooltip(isPt ? juce::String::fromUTF8("Enviar fotos marcadas com P para impressão")
@@ -1843,7 +1843,7 @@ void BackupWorkspaceComponent::atualizarBotoesListas() {
     const size_t countPrint = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print);
 
     if (btnExportZip_) {
-        btnExportZip_->setButtonText(juce::String::formatted(matriz::i18n::t("backup.exportar_zip").toRawUTF8(), (int)countZip));
+        btnExportZip_->setButtonText(matriz::i18n::t("backup.exportar_zip").replace("{n}", juce::String((int)countZip)));
         btnExportZip_->setEnabled(countZip > 0);
     }
     if (btnLimparZip_) {
@@ -1851,8 +1851,8 @@ void BackupWorkspaceComponent::atualizarBotoesListas() {
         btnLimparZip_->setTooltip(matriz::i18n::t("backup.limpar_zip_dica"));
     }
     if (btnSendToPrint_) {
-        btnSendToPrint_->setButtonText(juce::String::formatted(matriz::i18n::t("backup.enviar_print").toRawUTF8(), (int)countPrint));
-        btnSendToPrint_->setEnabled(false);
+        btnSendToPrint_->setButtonText(matriz::i18n::t("backup.enviar_print").replace("{n}", juce::String((int)countPrint)));
+        btnSendToPrint_->setEnabled(countPrint > 0);
     }
     if (btnLimparPrint_) {
         btnLimparPrint_->setEnabled(countPrint > 0);
