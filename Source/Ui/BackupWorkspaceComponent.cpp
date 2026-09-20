@@ -4,6 +4,7 @@
 #include "BackupScanProgressDialog.h"
 #include "SyncDestinationDialog.h"
 #include "PublishHtmlDialog.h"
+#include "ExportZipDialog.h"
 #include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
@@ -1426,7 +1427,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnExportZip_->setTooltip(isPt ? juce::String::fromUTF8("Exportar itens marcados com K como arquivo ZIP")
                                    : "Export assets marked with K as ZIP package");
     btnExportZip_->onClick = [this] {
-        // Wired in FASE 2
+        ExportZipDialog::exibirModal(projeto_);
     };
     addChildComponent(*btnExportZip_);
 

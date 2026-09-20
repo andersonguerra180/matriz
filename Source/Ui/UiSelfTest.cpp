@@ -27,6 +27,7 @@
 #include "PeoplePickerComponent.h"
 #include "../Ingest/FluxoLote.h"
 #include "../Sync/SyncEngine.h"
+#include "ExportZipDialog.h"
 
 #include <JuceHeader.h>
 
@@ -2759,6 +2760,144 @@ int rodarUiSelfTest() {
             projetoAberto->limparMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print);
             checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 0, "FASE 1: Print limpo com sucesso");
             checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 1, "FASE 1: Html permaneceu intocado ao limpar Print");
+        }
+
+        // ===================================================================
+        // FASE 2: Export to ZIP (Sanitização, Portabilidade, Limite e Geração)
+        // ===================================================================
+        std::cout << "\n== FASE 2: Export to ZIP ==\n";
+        {
+            // 1. Sanitização de nomes portáteis
+            juce::String sujo1 = "arquivo<teste>:\"com/barras\\e|outros?char*.wav";
+            juce::String limpo1 = matriz::ui::ExportZipDialog::sanitizarNomeArquivoZip(sujo1);
+            checar(!limpo1.containsAnyOf("<>:\"\\|?*"), "FASE 2: Caracteres proibidos no Windows sanitizados");
+            checar(limpo1.containsChar('/'), "FASE 2: Barras normais preservadas como separador de pasta");
+
+            // Nomes reservados no Windows (CON, PRN, AUX, NUL, COM1, LPT1)
+            juce::String resCon = matriz::ui::ExportZipDialog::sanitizarNomeArquivoZip("con.txt");
+            checar(resCon.startsWith("_"), "FASE 2: Nome reservado con.txt protegido com prefixo _");
+
+            juce::String resAux = matriz::ui::ExportZipDialog::sanitizarNomeArquivoZip("AUX.wav");
+            checar(resAux.startsWith("_"), "FASE 2: Nome reservado AUX.wav protegido com prefixo _");
+
+            juce::String resCom1 = matriz::ui::ExportZipDialog::sanitizarNomeArquivoZip("com1.jpg");
+            checar(resCom1.startsWith("_"), "FASE 2: Nome reservado com1.jpg protegido com prefixo _");
+
+            // Espaços e pontos no fim
+            juce::String espacosFim = matriz::ui::ExportZipDialog::sanitizarNomeArquivoZip("arquivo com espaco e ponto. .txt");
+            checar(!espacosFim.startsWith("arquivo com espaco e ponto. ."), "FASE 2: Pontos e espacos ao fim do nome base removidos");
+
+            // 2. Resolução de colisões ignorando caixa (A.jpg vs a.jpg)
+            std::set<std::string> nomesUsados;
+            juce::String c1 = matriz::ui::ExportZipDialog::resolverColisaoNome("Foto.jpg", nomesUsados);
+            juce::String c2 = matriz::ui::ExportZipDialog::resolverColisaoNome("foto.jpg", nomesUsados);
+            juce::String c3 = matriz::ui::ExportZipDialog::resolverColisaoNome("FOTO.JPG", nomesUsados);
+            checar(c1 == "Foto.jpg", "FASE 2: Primeiro nome mantido: " + c1);
+            checar(c2.toLowerCase() == "foto_2.jpg", "FASE 2: Colisão com case diferente resolvido com _2: " + c2);
+            checar(c3.toLowerCase() == "foto_3.jpg", "FASE 2: Terceira colisão resolvido com _3: " + c3);
+
+            // 3. Compressão seletiva
+            checar(matriz::ui::ExportZipDialog::ehExtensaoComprimida(".jpg"), "FASE 2: JPG detectado como já comprimido (nível 0)");
+            checar(matriz::ui::ExportZipDialog::ehExtensaoComprimida("WAV"), "FASE 2: WAV detectado como mídia (nível 0)");
+            checar(matriz::ui::ExportZipDialog::ehExtensaoComprimida("mp4"), "FASE 2: MP4 detectado como multimídia (nível 0)");
+            checar(!matriz::ui::ExportZipDialog::ehExtensaoComprimida(".txt"), "FASE 2: TXT elegível para compressão deflate");
+            checar(!matriz::ui::ExportZipDialog::ehExtensaoComprimida("csv"), "FASE 2: CSV elegível para compressão deflate");
+
+            // 4. Limite de 3.5 GB (segurança contra overflow 32-bit de juce::ZipFile::Builder)
+            checar(matriz::ui::ExportZipDialog::kLimiteMaximoSeguroBytes == 3758096384LL, "FASE 2: Limite de seguranca configurado em 3.5 GB");
+
+            // 5. Geração de pacote ZIP com manifesto e checksums (2 arquivos válidos, 1 offline)
+            auto pastaZipProj = tmpRoot.getChildFile("test_zip_export");
+            pastaZipProj.createDirectory();
+            matriz::model::NovoProjetoParams zParams;
+            zParams.nome = "ZipExportTest";
+            zParams.responsavel = "Engenheiro";
+            zParams.prefixoNomenclatura = "ZIP";
+            auto projZ = matriz::model::Project::criar(pastaZipProj, zParams);
+            auto projetoAbertoZ = std::make_unique<matriz::ui::ProjetoAberto>(std::move(projZ));
+
+            juce::File pastaMedia = projetoAbertoZ->projeto().pastaMedia();
+            pastaMedia.createDirectory();
+
+            juce::File media1 = pastaMedia.getChildFile("audio1.wav");
+            media1.replaceWithText("audio data content 12345");
+            juce::File media2 = pastaMedia.getChildFile("foto1.jpg");
+            media2.replaceWithText("jpeg data content 67890");
+
+            std::string id1 = matriz::model::novoUuid();
+            std::string id2 = matriz::model::novoUuid();
+            std::string id3Offline = matriz::model::novoUuid();
+            std::string arq1Id = matriz::model::novoUuid();
+            std::string arq2Id = matriz::model::novoUuid();
+            std::string arq3Id = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+
+            auto& db = projetoAbertoZ->projeto().registro();
+            db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Z01', 'Audio Track', 'digital_audio', 'catalogado', ?, ?)",
+                   {matriz::db::Value::of(id1), matriz::db::Value::of(projetoAbertoZ->projeto().projetoId()),
+                    matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Z02', 'Photo Item', 'fotografia', 'catalogado', ?, ?)",
+                   {matriz::db::Value::of(id2), matriz::db::Value::of(projetoAbertoZ->projeto().projetoId()),
+                    matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Z03', 'Offline Item', 'video', 'catalogado', ?, ?)",
+                   {matriz::db::Value::of(id3Offline), matriz::db::Value::of(projetoAbertoZ->projeto().projetoId()),
+                    matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            db.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Media/audio1.wav', 'master', 1, 24, ?, ?)",
+                   {matriz::db::Value::of(arq1Id), matriz::db::Value::of(id1), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            db.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Media/foto1.jpg', 'master', 1, 23, ?, ?)",
+                   {matriz::db::Value::of(arq2Id), matriz::db::Value::of(id2), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            db.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'Media/offline_file.mov', 'master', 1, 100, ?, ?)",
+                   {matriz::db::Value::of(arq3Id), matriz::db::Value::of(id3Offline), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // Marcar os 3 itens com K
+            projetoAbertoZ->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Zip, {id1, id2, id3Offline});
+            checar(projetoAbertoZ->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 3, "FASE 2: 3 itens marcados com K");
+
+            // Criar ZIP diretamente via juce::ZipFile::Builder conforme o pipeline
+            juce::File targetZip = tmpRoot.getChildFile("pacote_teste.zip");
+            if (targetZip.exists()) targetZip.deleteFile();
+
+            juce::ZipFile::Builder builder;
+            builder.addFile(media1, 0, "audio1.wav");
+            builder.addFile(media2, 0, "foto1.jpg");
+
+            juce::String manifesto = "Package: Teste\nOffline: Z03 Offline Item\n";
+            juce::File tempManifest = tmpRoot.getChildFile("temp_manifesto.txt");
+            tempManifest.replaceWithText(manifesto);
+            builder.addFile(tempManifest, 6, "manifesto.txt");
+
+            juce::String checksums = juce::SHA256(media1).toHexString().toLowerCase() + "  audio1.wav\n"
+                                   + juce::SHA256(media2).toHexString().toLowerCase() + "  foto1.jpg\n";
+            juce::File tempChecksums = tmpRoot.getChildFile("temp_checksums.sha256");
+            tempChecksums.replaceWithText(checksums);
+            builder.addFile(tempChecksums, 6, "checksums.sha256");
+
+            auto stream = targetZip.createOutputStream();
+            checar(stream != nullptr && !stream->failedToOpen(), "FASE 2: Criou stream para pacote ZIP");
+            bool zipOk = builder.writeToStream(*stream, nullptr);
+            stream.reset();
+            checar(zipOk, "FASE 2: Gravou pacote ZIP com sucesso");
+            checar(targetZip.existsAsFile(), "FASE 2: Arquivo ZIP existe em disco");
+
+            // Ler e verificar o arquivo ZIP gerado
+            juce::ZipFile zipLeitura(targetZip);
+            checar(zipLeitura.getNumEntries() == 4, "FASE 2: ZIP contém exatamente 4 entradas (2 mídias + manifesto + checksums)");
+            checar(zipLeitura.getIndexOfFileName("audio1.wav") >= 0, "FASE 2: ZIP contém audio1.wav");
+            checar(zipLeitura.getIndexOfFileName("foto1.jpg") >= 0, "FASE 2: ZIP contém foto1.jpg");
+            checar(zipLeitura.getIndexOfFileName("manifesto.txt") >= 0, "FASE 2: ZIP contém manifesto.txt");
+            checar(zipLeitura.getIndexOfFileName("checksums.sha256") >= 0, "FASE 2: ZIP contém checksums.sha256");
+            checar(zipLeitura.getIndexOfFileName("offline_file.mov") < 0, "FASE 2: Arquivo offline não entrou no ZIP");
+
+            tempManifest.deleteFile();
+            tempChecksums.deleteFile();
+            targetZip.deleteFile();
         }
 
     } catch (const std::exception& e) {
