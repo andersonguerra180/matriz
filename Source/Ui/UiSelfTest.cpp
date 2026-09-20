@@ -3153,9 +3153,15 @@ int rodarUiSelfTest() {
             }
 
             // 4. Dialogo SendToPrintDialog com itens na fila e validacao
-            auto* projeto = janelaArchive.projetoAberto();
             auto pastaEtapa2 = tmpRoot.getChildFile("etapa2");
             pastaEtapa2.createDirectory();
+            matriz::model::NovoProjetoParams pParams;
+            pParams.nome = "Print Test";
+            pParams.prefixoNomenclatura = "PRT";
+            auto projPrint = matriz::model::Project::criar(pastaEtapa2.getChildFile("projeto"), pParams);
+            matriz::ui::ProjetoAberto projetoAbertoPrint(std::move(projPrint));
+            auto* projeto = &projetoAbertoPrint;
+
             auto arqFoto = pastaEtapa2.getChildFile("foto_fila.jpg");
             matriz::imagem::ImagemBuffer buf(400, 300, 200, 150, 100, 255);
             matriz::imagem::gravar(buf, arqFoto, matriz::imagem::FormatoSaida::Jpeg, 95, 300.0);
@@ -3199,6 +3205,94 @@ int rodarUiSelfTest() {
             // Simula atalho Escape para fechar
             bool escTratado = dlg.keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));
             checar(escTratado, "ETAPA 2: Tecla Escape tratada pelo dialogo");
+        }
+
+        // ===================================================================
+        // SEND TO PRINT - ETAPA 3: Pipeline de Exportacao a 300 DPI
+        // ===================================================================
+        std::cout << "\n== SEND TO PRINT - ETAPA 3: Pipeline de Exportacao a 300 DPI ==\n";
+
+        {
+            auto pastaEtapa3 = tmpRoot.getChildFile("etapa3");
+            pastaEtapa3.createDirectory();
+
+            const auto& papeis = SendToPrintDialog::papeisPadrao();
+            const DefinicaoPapel* p10x15 = nullptr;
+            const DefinicaoPapel* pPolaroid = nullptr;
+            for (const auto& p : papeis) {
+                if (p.id == "10x15") p10x15 = &p;
+                if (p.id == "polaroid") pPolaroid = &p;
+            }
+            checar(p10x15 != nullptr && pPolaroid != nullptr, "ETAPA 3: Formatos 10x15 e Polaroid disponiveis");
+
+            // 1. Processamento de foto para 10x15 paisagem a 300 DPI (Preencher / Crop)
+            matriz::imagem::ImagemBuffer fotoOrig(200, 100, 255, 0, 0, 255); // vermelha 2:1
+            if (p10x15) {
+                auto resPreencher = SendToPrintDialog::processarFotoParaPapel(
+                    fotoOrig, *p10x15, true,
+                    matriz::imagem::ModoEnquadramento::Preencher,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 300.0);
+
+                checar(resPreencher.largura == 1772 && resPreencher.altura == 1181,
+                       "ETAPA 3: Preencher 10x15 paisagem gerou buffer exatamente 1772x1181 px");
+
+                // 2. Processamento de foto para 10x15 paisagem a 300 DPI (Encaixar / Margens)
+                auto resEncaixar = SendToPrintDialog::processarFotoParaPapel(
+                    fotoOrig, *p10x15, true,
+                    matriz::imagem::ModoEnquadramento::Encaixar,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 300.0);
+
+                checar(resEncaixar.largura == 1772 && resEncaixar.altura == 1181,
+                       "ETAPA 3: Encaixar 10x15 paisagem gerou buffer exatamente 1772x1181 px");
+
+                // Como a foto é 2:1 e o papel é 1.5:1 (1772x1181), no Encaixar a foto tem 1772x886 e as margens verticais são brancas
+                const uint8_t* topo = resEncaixar.pixel(resEncaixar.largura / 2, 10);
+                checar(topo[0] == 255 && topo[1] == 255 && topo[2] == 255,
+                       "ETAPA 3: Margem superior em Encaixar e branca pura");
+            }
+
+            // 3. Processamento para Polaroid a 300 DPI
+            if (pPolaroid) {
+                auto resPolaroid = SendToPrintDialog::processarFotoParaPapel(
+                    fotoOrig, *pPolaroid, false,
+                    matriz::imagem::ModoEnquadramento::Preencher,
+                    0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 300.0);
+
+                checar(resPolaroid.largura == 1039 && resPolaroid.altura == 1264,
+                       "ETAPA 3: Polaroid gerou dimensoes fisicas 1039x1264 px a 300 DPI");
+
+                // Borda inferior larga classica da Polaroid (y = 1200 deve ser branca)
+                const uint8_t* chin = resPolaroid.pixel(resPolaroid.largura / 2, 1200);
+                checar(chin[0] == 255 && chin[1] == 255 && chin[2] == 255,
+                       "ETAPA 3: Borda inferior Polaroid e branca solida");
+            }
+
+            // 4. Resolucao de Colisao de Nomes
+            auto arq1 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
+            checar(arq1.getFileName() == "Viagem_print_10x15.jpg", "ETAPA 3: Nome inicial gerado sem colisao");
+            arq1.replaceWithText("conteudo 1");
+
+            auto arq2 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
+            checar(arq2.getFileName() == "Viagem_print_10x15_2.jpg", "ETAPA 3: Primeira colisao resolvida com _2");
+            arq2.replaceWithText("conteudo 2");
+
+            auto arq3 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
+            checar(arq3.getFileName() == "Viagem_print_10x15_3.jpg", "ETAPA 3: Segunda colisao resolvida com _3");
+
+            // 5. Gravacao final e verificacao de bytes de 300 DPI
+            juce::File exportJpg = pastaEtapa3.getChildFile("foto_exportada.jpg");
+            matriz::imagem::ImagemBuffer bufExport(1772, 1181, 100, 150, 200, 255);
+            bool gravouJpg = matriz::imagem::gravar(bufExport, exportJpg, matriz::imagem::FormatoSaida::Jpeg, 95, 300.0);
+            checar(gravouJpg, "ETAPA 3: Gravou JPEG para impressao a 300 DPI");
+
+            double dpiX = 0, dpiY = 0;
+            bool okDpi = matriz::imagem::lerDpiDosBytes(exportJpg, dpiX, dpiY);
+            checar(okDpi && std::abs(dpiX - 300.0) < 1.0 && std::abs(dpiY - 300.0) < 1.0,
+                   "ETAPA 3: JPEG exportado contem densidade exata de 300 DPI nos bytes");
+
+            auto lido = matriz::imagem::lerImagem(exportJpg);
+            checar(lido.sucesso && lido.buffer.largura == 1772 && lido.buffer.altura == 1181,
+                   "ETAPA 3: Imagem exportada tem dimensoes exatas de 1772x1181 px");
         }
 
     } catch (const std::exception& e) {

@@ -26,6 +26,75 @@ const std::vector<DefinicaoPapel>& SendToPrintDialog::papeisPadrao() {
 }
 
 // ==============================================================================
+// Processamento Central e Resolução de Nomes
+// ==============================================================================
+
+matriz::imagem::ImagemBuffer SendToPrintDialog::processarFotoParaPapel(
+    const matriz::imagem::ImagemBuffer& src,
+    const DefinicaoPapel& papel,
+    bool paisagem,
+    matriz::imagem::ModoEnquadramento modo,
+    float offsetX,
+    float offsetY,
+    float brilho,
+    float contraste,
+    float saturacao,
+    float nitidezVal,
+    double dpi) {
+    if (!src.valido()) return {};
+
+    if (papel.polaroid) {
+        int papelW = papel.larguraPixels(dpi, false);
+        int papelH = papel.alturaPixels(dpi, false);
+        int fotoDim = static_cast<int>(std::round((7.9 / 2.54) * dpi));
+
+        auto fotoArea = matriz::imagem::enquadrar(src, fotoDim, fotoDim, modo, offsetX, offsetY);
+        matriz::imagem::aplicarAjustes(fotoArea, brilho, contraste, saturacao, 0, 255, 1.0f);
+        if (nitidezVal > 0.0f) {
+            matriz::imagem::nitidez(fotoArea, nitidezVal);
+        }
+
+        matriz::imagem::ImagemBuffer papelPolaroid(papelW, papelH, 255, 255, 255, 255);
+        int marginX = (papelW - fotoDim) / 2;
+        int marginY = marginX;
+
+        for (int y = 0; y < fotoDim; ++y) {
+            const uint8_t* pSrc = fotoArea.pixel(0, y);
+            uint8_t* pDst = papelPolaroid.pixel(marginX, marginY + y);
+            std::memcpy(pDst, pSrc, static_cast<size_t>(fotoDim * 4));
+        }
+        return papelPolaroid;
+    }
+
+    int targetW = papel.larguraPixels(dpi, paisagem);
+    int targetH = papel.alturaPixels(dpi, paisagem);
+
+    auto processada = matriz::imagem::enquadrar(src, targetW, targetH, modo, offsetX, offsetY);
+    matriz::imagem::aplicarAjustes(processada, brilho, contraste, saturacao, 0, 255, 1.0f);
+    if (nitidezVal > 0.0f) {
+        matriz::imagem::nitidez(processada, nitidezVal);
+    }
+    return processada;
+}
+
+juce::File SendToPrintDialog::resolverColisaoArquivo(const juce::File& pasta,
+                                                     const juce::String& nomeBase,
+                                                     const juce::String& sufixo,
+                                                     const juce::String& extensao) {
+    juce::String nomeArquivo = nomeBase + sufixo + "." + extensao;
+    juce::File cand = pasta.getChildFile(nomeArquivo);
+    if (!cand.exists()) return cand;
+
+    int counter = 2;
+    while (true) {
+        juce::String nomeComNum = nomeBase + sufixo + "_" + juce::String(counter) + "." + extensao;
+        juce::File candNum = pasta.getChildFile(nomeComNum);
+        if (!candNum.exists()) return candNum;
+        counter++;
+    }
+}
+
+// ==============================================================================
 // PreviaPapelComponent (Coluna Central)
 // ==============================================================================
 
@@ -269,6 +338,143 @@ void PreviaPapelComponent::mouseUp(const juce::MouseEvent&) {
 }
 
 // ==============================================================================
+// Thread de Exportação em Segundo Plano
+// ==============================================================================
+
+class SendToPrintDialog::ExportPrintThread : public juce::Thread {
+public:
+    struct ItemExport {
+        juce::File arquivoOrigem;
+        float offsetX = 0.0f;
+        float offsetY = 0.0f;
+        float brilho = 0.0f;
+        float contraste = 0.0f;
+        float saturacao = 1.0f;
+        float nitidez = 0.0f;
+    };
+
+    struct Params {
+        juce::File pastaDestino;
+        DefinicaoPapel papel;
+        OrientacaoPapel orientacao = OrientacaoPapel::Auto;
+        matriz::imagem::ModoEnquadramento modo = matriz::imagem::ModoEnquadramento::Preencher;
+        matriz::imagem::FormatoSaida formato = matriz::imagem::FormatoSaida::Jpeg;
+        int qualidade = 95;
+        double dpi = 300.0;
+        std::vector<ItemExport> itens;
+    };
+
+    ExportPrintThread(Params params,
+                      std::function<void(double, const juce::String&)> onProgresso,
+                      std::function<void(bool, int, const juce::File&, const juce::StringArray&)> onConcluido)
+        : juce::Thread("ExportPrintThread"),
+          params_(std::move(params)),
+          onProgresso_(std::move(onProgresso)),
+          onConcluido_(std::move(onConcluido)) {}
+
+    ~ExportPrintThread() override {
+        stopThread(4000);
+    }
+
+    void run() override {
+        int total = static_cast<int>(params_.itens.size());
+        int exportados = 0;
+        juce::StringArray erros;
+
+        notificarProgresso(0.0, matriz::i18n::t("print.progresso_iniciando"));
+
+        for (int i = 0; i < total; ++i) {
+            if (threadShouldExit()) break;
+
+            const auto& item = params_.itens[i];
+            juce::String nomeArq = item.arquivoOrigem.getFileName();
+            double p = static_cast<double>(i) / std::max(1, total);
+
+            juce::String msg = juce::String::formatted(
+                matriz::i18n::t("print.progresso_foto").toRawUTF8(),
+                i + 1, total, nomeArq.toRawUTF8());
+            notificarProgresso(p, msg);
+
+            // 1. Lê a imagem original e valida
+            auto res = matriz::imagem::lerImagem(item.arquivoOrigem);
+            if (!res.sucesso || !res.buffer.valido()) {
+                erros.add(nomeArq + ": " + res.erro);
+                continue;
+            }
+
+            // 2. Aplica orientação EXIF
+            auto bufOrientado = matriz::imagem::aplicarOrientacao(res.buffer, res.orientacaoExif);
+
+            // 3. Determina se orientação efetiva é paisagem
+            bool paisagem = false;
+            if (params_.orientacao == OrientacaoPapel::Paisagem) paisagem = true;
+            else if (params_.orientacao == OrientacaoPapel::Retrato) paisagem = false;
+            else paisagem = (bufOrientado.largura >= bufOrientado.altura);
+
+            // 4. Processa enquadramento, redimensionamento 300 DPI e ajustes
+            auto bufFinal = processarFotoParaPapel(
+                bufOrientado,
+                params_.papel,
+                paisagem,
+                params_.modo,
+                item.offsetX,
+                item.offsetY,
+                item.brilho,
+                item.contraste,
+                item.saturacao,
+                item.nitidez,
+                params_.dpi);
+
+            if (!bufFinal.valido()) {
+                erros.add(nomeArq + ": falha no processamento de imagem");
+                continue;
+            }
+
+            // 5. Determina nome e caminho do arquivo de saída
+            juce::String nomeBase = item.arquivoOrigem.getFileNameWithoutExtension();
+            juce::String sufixo = "_print_" + params_.papel.id;
+            juce::String ext = (params_.formato == matriz::imagem::FormatoSaida::Jpeg) ? "jpg" : "png";
+
+            juce::File arquivoDestino = resolverColisaoArquivo(params_.pastaDestino, nomeBase, sufixo, ext);
+
+            // 6. Grava com injeção em nível de bytes de 300 DPI
+            bool gravou = matriz::imagem::gravar(
+                bufFinal,
+                arquivoDestino,
+                params_.formato,
+                params_.qualidade,
+                params_.dpi);
+
+            if (gravou) {
+                exportados++;
+            } else {
+                erros.add(nomeArq + ": falha ao gravar arquivo em disco");
+            }
+        }
+
+        notificarProgresso(1.0, "Concluído");
+        notificarFim(!threadShouldExit() && exportados > 0, exportados, params_.pastaDestino, erros);
+    }
+
+private:
+    void notificarProgresso(double p, const juce::String& msg) {
+        juce::MessageManager::callAsync([this, p, msg] {
+            if (onProgresso_) onProgresso_(p, msg);
+        });
+    }
+
+    void notificarFim(bool sucesso, int totalExportados, const juce::File& pasta, const juce::StringArray& erros) {
+        juce::MessageManager::callAsync([this, sucesso, totalExportados, pasta, erros] {
+            if (onConcluido_) onConcluido_(sucesso, totalExportados, pasta, erros);
+        });
+    }
+
+    Params params_;
+    std::function<void(double, const juce::String&)> onProgresso_;
+    std::function<void(bool, int, const juce::File&, const juce::StringArray&)> onConcluido_;
+};
+
+// ==============================================================================
 // SendToPrintDialog (Diálogo Pro de 3 Colunas)
 // ==============================================================================
 
@@ -508,15 +714,16 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addChildComponent(*lblStatusProgresso_);
 
     btnCancelar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("print.btn_cancelar"));
-    btnCancelar_->onClick = [this] { fecharDialogo(); };
+    btnCancelar_->onClick = [this] {
+        if (exportando_) cancelarExportacao();
+        else fecharDialogo();
+    };
     addAndMakeVisible(*btnCancelar_);
 
     btnExportar_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("print.btn_exportar").toRawUTF8(), 0));
     btnExportar_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xffff6b00));
     btnExportar_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-    btnExportar_->onClick = [this] {
-        // Será ativado na Etapa 3 (Pipeline de Exportação)
-    };
+    btnExportar_->onClick = [this] { iniciarExportacao(); };
     addAndMakeVisible(*btnExportar_);
 
     carregarFila();
@@ -524,6 +731,10 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
 }
 
 SendToPrintDialog::~SendToPrintDialog() {
+    if (threadExportacao_) {
+        threadExportacao_->stopThread(4000);
+        threadExportacao_.reset();
+    }
     poolCarregamento_.removeAllJobs(true, 2000);
 }
 
@@ -985,6 +1196,134 @@ void SendToPrintDialog::resetarAjustes() {
 
         previaPapel_->repaint();
     }
+}
+
+void SendToPrintDialog::iniciarExportacao() {
+    if (exportando_) return;
+
+    if (!pastaDestinoSelecionada_.isDirectory()) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            matriz::i18n::t("print.titulo"),
+            matriz::i18n::t("zip.erro_sem_destino"));
+        return;
+    }
+
+    ExportPrintThread::Params params;
+    params.pastaDestino = pastaDestinoSelecionada_;
+
+    int selPapel = std::clamp(cboTamanhoPapel_->getSelectedId() - 1, 0, static_cast<int>(papeisPadrao().size()) - 1);
+    params.papel = papeisPadrao()[selPapel];
+    params.orientacao = static_cast<OrientacaoPapel>(cboOrientacao_->getSelectedId());
+    params.modo = radPreencher_->getToggleState() ? matriz::imagem::ModoEnquadramento::Preencher
+                                                  : matriz::imagem::ModoEnquadramento::Encaixar;
+    params.formato = matriz::imagem::FormatoSaida::Jpeg;
+    params.qualidade = 95;
+    params.dpi = 300.0;
+
+    for (const auto& item : fila_) {
+        if (item.valido && item.arquivo.existsAsFile()) {
+            ExportPrintThread::ItemExport ie;
+            ie.arquivoOrigem = item.arquivo;
+            ie.offsetX = item.offsetX;
+            ie.offsetY = item.offsetY;
+            ie.brilho = item.brilho;
+            ie.contraste = item.contraste;
+            ie.saturacao = item.saturacao;
+            ie.nitidez = item.nitidez;
+            params.itens.push_back(std::move(ie));
+        }
+    }
+
+    if (params.itens.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::WarningIcon,
+            matriz::i18n::t("print.titulo"),
+            matriz::i18n::t("print.nenhuma_foto_valida"));
+        return;
+    }
+
+    exportando_ = true;
+    btnExportar_->setEnabled(false);
+    btnLimparLista_->setEnabled(false);
+    cboTamanhoPapel_->setEnabled(false);
+    cboOrientacao_->setEnabled(false);
+    radPreencher_->setEnabled(false);
+    radEncaixar_->setEnabled(false);
+    btnEscolherPasta_->setEnabled(false);
+    btnResetarAjustes_->setEnabled(false);
+    btnCancelar_->setButtonText(matriz::i18n::t("zip.btn_cancelar"));
+
+    barraProgresso_->setVisible(true);
+    lblStatusProgresso_->setVisible(true);
+    progressoValor_ = 0.0;
+    lblStatusProgresso_->setText(matriz::i18n::t("print.progresso_iniciando"), juce::dontSendNotification);
+
+    juce::Component::SafePointer<SendToPrintDialog> safeThis(this);
+
+    threadExportacao_ = std::make_unique<ExportPrintThread>(
+        std::move(params),
+        [safeThis](double progresso, const juce::String& msg) {
+            if (!safeThis) return;
+            safeThis->progressoValor_ = progresso;
+            safeThis->lblStatusProgresso_->setText(msg, juce::dontSendNotification);
+        },
+        [safeThis](bool sucesso, int totalExportados, const juce::File& pasta, const juce::StringArray& erros) {
+            if (!safeThis) return;
+            safeThis->exportando_ = false;
+            safeThis->btnExportar_->setEnabled(true);
+            safeThis->btnLimparLista_->setEnabled(true);
+            safeThis->cboTamanhoPapel_->setEnabled(true);
+            safeThis->cboOrientacao_->setEnabled(true);
+            safeThis->radPreencher_->setEnabled(true);
+            safeThis->radEncaixar_->setEnabled(true);
+            safeThis->btnEscolherPasta_->setEnabled(true);
+            safeThis->btnResetarAjustes_->setEnabled(true);
+            safeThis->btnCancelar_->setButtonText(matriz::i18n::t("print.btn_cancelar"));
+            safeThis->barraProgresso_->setVisible(false);
+            safeThis->lblStatusProgresso_->setVisible(false);
+
+            if (sucesso) {
+                juce::String msg = juce::String::formatted(
+                    matriz::i18n::t("print.sucesso_msg").toRawUTF8(),
+                    totalExportados,
+                    pasta.getFullPathName().toRawUTF8());
+
+                if (!erros.isEmpty()) {
+                    msg += "\n\nErros:\n" + erros.joinIntoString("\n");
+                }
+
+                auto* alert = new juce::AlertWindow(
+                    matriz::i18n::t("print.sucesso_titulo"),
+                    msg,
+                    juce::AlertWindow::InfoIcon);
+
+                alert->addButton(matriz::i18n::t("print.btn_revelar"), 1);
+                alert->addButton(matriz::i18n::t("print.btn_fechar"), 0);
+
+                alert->enterModalState(true, juce::ModalCallbackFunction::create([pasta, safeThis](int result) {
+                    if (result == 1) {
+                        pasta.revealToUser();
+                    }
+                    if (safeThis) {
+                        safeThis->fecharDialogo();
+                    }
+                }), true);
+            } else if (!erros.isEmpty()) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::WarningIcon,
+                    matriz::i18n::t("print.titulo"),
+                    erros.joinIntoString("\n"));
+            }
+        });
+
+    threadExportacao_->startThread();
+}
+
+void SendToPrintDialog::cancelarExportacao() {
+    if (!exportando_ || !threadExportacao_) return;
+    lblStatusProgresso_->setText(matriz::i18n::t("print.progresso_cancelando"), juce::dontSendNotification);
+    threadExportacao_->signalThreadShouldExit();
 }
 
 void SendToPrintDialog::fecharDialogo() {

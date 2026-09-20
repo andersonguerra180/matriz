@@ -145,6 +145,26 @@ public:
     // Lista estática de papéis fotográficos padrão
     static const std::vector<DefinicaoPapel>& papeisPadrao();
 
+    // Processamento central puro da imagem para o papel especificado (testável sem UI)
+    static matriz::imagem::ImagemBuffer processarFotoParaPapel(
+        const matriz::imagem::ImagemBuffer& src,
+        const DefinicaoPapel& papel,
+        bool paisagem,
+        matriz::imagem::ModoEnquadramento modo,
+        float offsetX,
+        float offsetY,
+        float brilho,
+        float contraste,
+        float saturacao,
+        float nitidez,
+        double dpi = 300.0);
+
+    // Resolução de colisão de nomes na pasta de destino
+    static juce::File resolverColisaoArquivo(const juce::File& pasta,
+                                             const juce::String& nomeBase,
+                                             const juce::String& sufixo,
+                                             const juce::String& extensao);
+
 private:
     void carregarFila();
     void selecionarFoto(int indice);
@@ -153,6 +173,14 @@ private:
     void limparListaPrint();
     void fecharDialogo();
     void resetarAjustes();
+
+    void iniciarExportacao();
+    void cancelarExportacao();
+
+    // Thread assíncrona de exportação em lote
+    class ExportPrintThread;
+    std::unique_ptr<ExportPrintThread> threadExportacao_;
+    bool exportando_ = false;
 
     ProjetoAberto& projeto_;
     std::vector<ItemFilaPrint> fila_;
