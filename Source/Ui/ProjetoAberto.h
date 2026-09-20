@@ -70,6 +70,8 @@ struct ItemResumo {
     std::string dataCriacao;
     std::vector<std::string> tags;
     bool marcadoPublicacao = false;
+    bool marcadoZip = false;
+    bool marcadoPrint = false;
     bool metadadosEditados = false;
 };
 

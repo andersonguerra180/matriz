@@ -335,6 +335,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), inMemoryRelinkedPaths_);
     for (auto& item : items) {
         item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
+        item.marcadoZip = marcadosZip_.count(item.id) > 0;
+        item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
     }
     return items;
 }
@@ -358,6 +360,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
         }
         for (auto& item : items) {
             item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
+            item.marcadoZip = marcadosZip_.count(item.id) > 0;
+            item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
         }
         return items;
     } catch (...) {
@@ -424,6 +428,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
                 r.criadoEm = stmt.columnText(17);
                 r.marcadoPublicacao = marcadosHtml_.count(r.id) > 0;
+                r.marcadoZip = marcadosZip_.count(r.id) > 0;
+                r.marcadoPrint = marcadosPrint_.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);

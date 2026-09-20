@@ -30,16 +30,22 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
     juce::MessageManager::callAsync([safeThis, e]() {
         if (safeThis == nullptr) return;
         if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
-            bool marcado = safeThis->projeto_.itemMarcadoPublicacao(e.itemId);
+            bool marcadoH = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, e.itemId);
+            bool marcadoK = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, e.itemId);
+            bool marcadoP = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, e.itemId);
             for (auto& item : safeThis->itensTodos_) {
                 if (item.id == e.itemId) {
-                    item.marcadoPublicacao = marcado;
+                    item.marcadoPublicacao = marcadoH;
+                    item.marcadoZip = marcadoK;
+                    item.marcadoPrint = marcadoP;
                     break;
                 }
             }
             for (auto& item : safeThis->itensFiltrados_) {
                 if (item.id == e.itemId) {
-                    item.marcadoPublicacao = marcado;
+                    item.marcadoPublicacao = marcadoH;
+                    item.marcadoZip = marcadoK;
+                    item.marcadoPrint = marcadoP;
                     break;
                 }
             }
@@ -981,6 +987,19 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
         if (!alvos.empty()) {
             projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Zip, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoZip = novoEstado;
+                }
+            }
+            for (auto& item : itensFiltrados_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoZip = novoEstado;
+                }
+            }
+            repaint();
             return true;
         }
     }
@@ -990,6 +1009,19 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
         if (!alvos.empty()) {
             projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoPrint = novoEstado;
+                }
+            }
+            for (auto& item : itensFiltrados_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoPrint = novoEstado;
+                }
+            }
+            repaint();
             return true;
         }
     }
@@ -1377,18 +1409,44 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (modoVisao_ == ModoVisao::Lista) {
                 juce::Colour corCat = corPorCategoria(item.tipoMidia);
 
-                bool marcadoP = item.marcadoPublicacao;
-                if (marcadoP) {
-                    g.setColour(juce::Colour(0xff39ff14).withAlpha(0.20f));
+                bool marcadoH = item.marcadoPublicacao;
+                bool marcadoK = item.marcadoZip;
+                bool marcadoP = item.marcadoPrint;
+                bool temMarcacao = marcadoH || marcadoK || marcadoP;
+
+                if (marcadoH) {
+                    g.setColour(juce::Colour(0xff39ff14).withAlpha(0.18f));
                     g.fillRect(bounds);
-                    g.setColour(juce::Colour(0xff39ff14));
-                    g.drawRoundedRectangle(bounds.toFloat(), 4.0f, 4.0f);
+                } else if (marcadoK) {
+                    g.setColour(juce::Colour(0xff0077ff).withAlpha(0.15f));
+                    g.fillRect(bounds);
+                } else if (marcadoP) {
+                    g.setColour(juce::Colour(0xffff6b00).withAlpha(0.15f));
+                    g.fillRect(bounds);
                 } else if (selecionado) {
                     g.setColour(tk.acento.withAlpha(0.12f));
                     g.fillRect(bounds);
                 } else if (sobHover) {
                     g.setColour(tk.painelAlt.withAlpha(0.6f));
                     g.fillRect(bounds);
+                }
+
+                // Anéis concêntricos na visualização em lista
+                float listOffset = 0.0f;
+                if (marcadoH) {
+                    g.setColour(juce::Colour(0xff39ff14));
+                    g.drawRoundedRectangle(bounds.reduced(static_cast<int>(listOffset)).toFloat(), 3.0f, 2.0f);
+                    listOffset += 2.0f;
+                }
+                if (marcadoK) {
+                    g.setColour(juce::Colour(0xff0077ff));
+                    g.drawRoundedRectangle(bounds.reduced(static_cast<int>(listOffset)).toFloat(), 3.0f, 2.5f);
+                    listOffset += 2.5f;
+                }
+                if (marcadoP) {
+                    g.setColour(juce::Colour(0xffff6b00));
+                    g.drawRoundedRectangle(bounds.reduced(static_cast<int>(listOffset)).toFloat(), 3.0f, 2.0f);
+                    listOffset += 2.0f;
                 }
 
                 // Category color bar (left edge) — zebra striped for edited items if enabled
@@ -1471,6 +1529,35 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(corCat);
                 g.setFont(font10Bold);
                 g.drawText(ext, extBadge, juce::Justification::centred);
+
+                // Selos de marcação H / K / P na lista
+                if (item.marcadoPrint) {
+                    auto pBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
+                    g.setColour(juce::Colour(0xffff6b00));
+                    g.fillRoundedRectangle(pBadge.toFloat(), 3.0f);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(font9Bold);
+                    g.drawText("P", pBadge, juce::Justification::centred);
+                    linha.removeFromRight(3);
+                }
+                if (item.marcadoZip) {
+                    auto kBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
+                    g.setColour(juce::Colour(0xff0077ff));
+                    g.fillRoundedRectangle(kBadge.toFloat(), 3.0f);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(font9Bold);
+                    g.drawText("K", kBadge, juce::Justification::centred);
+                    linha.removeFromRight(3);
+                }
+                if (item.marcadoPublicacao) {
+                    auto hBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
+                    g.setColour(juce::Colour(0xff39ff14));
+                    g.fillRoundedRectangle(hBadge.toFloat(), 3.0f);
+                    g.setColour(juce::Colours::black);
+                    g.setFont(font9Bold);
+                    g.drawText("H", hBadge, juce::Justification::centred);
+                    linha.removeFromRight(3);
+                }
 
                 auto areaTexto = linha.reduced(4, 0);
                 int metadeAltura = areaTexto.getHeight() / 2;
@@ -1567,60 +1654,103 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText(durText, durBadge, juce::Justification::centred);
             }
 
-            // Card border:
-            // 1. Marked for Publish: thick lime green (8.75f)
-            // 2. Edited item: High-contrast transverse black zebra stripes over category color border
-            // 3. Selected: thick accent border
-            // 4. Unedited (intake original): Clean subtle thin category border (1.8f)
-            bool marcadoP = item.marcadoPublicacao;
-            if (marcadoP) {
+            // Corner stamps H / K / P (top-right of areaImagem)
+            int stampRight = (selecionado && !modoQuarentena_) ? (areaImagem.getRight() - 28) : (areaImagem.getRight() - 4);
+            if (item.marcadoPrint) {
+                juce::Rectangle<int> stampP(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(juce::Colour(0xffff6b00));
+                g.fillRoundedRectangle(stampP.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("P", stampP, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoZip) {
+                juce::Rectangle<int> stampK(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(juce::Colour(0xff0077ff));
+                g.fillRoundedRectangle(stampK.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("K", stampK, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoPublicacao) {
+                juce::Rectangle<int> stampH(stampRight - 16, areaImagem.getY() + 4, 16, 16);
                 g.setColour(juce::Colour(0xff39ff14));
-                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 8.75f);
-                if (selecionado) {
-                    g.setColour(tk.acento);
-                    g.drawRoundedRectangle(bounds.reduced(5).toFloat(), tk.raioMedio, 2.0f);
-                }
-            } else if (destacarEditados_ && item.metadadosEditados) {
-                // High-contrast diagonal zebra striped border — vivid yellow
+                g.fillRoundedRectangle(stampH.toFloat(), 3.0f);
+                g.setColour(juce::Colours::black);
+                g.setFont(font9Bold);
+                g.drawText("H", stampH, juce::Justification::centred);
+                stampRight -= 19;
+            }
+
+            // Card border: anéis concêntricos (H verde por fora, K azul grosso no meio, P laranja por dentro)
+            bool temMarcacao = item.marcadoPublicacao || item.marcadoZip || item.marcadoPrint;
+            float offsetRing = 0.0f;
+
+            if (item.marcadoPublicacao) {
+                g.setColour(juce::Colour(0xff39ff14));
+                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
+                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 3.5f);
+                offsetRing += 3.5f;
+            }
+            if (item.marcadoZip) {
+                g.setColour(juce::Colour(0xff0077ff));
+                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
+                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 4.5f);
+                offsetRing += 4.5f;
+            }
+            if (item.marcadoPrint) {
+                g.setColour(juce::Colour(0xffff6b00));
+                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
+                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 3.0f);
+                offsetRing += 3.0f;
+            }
+
+            if (destacarEditados_ && item.metadadosEditados) {
+                // Zebrado de editado
                 const juce::Colour kZebraYellow{0xffFFEE00}; // vivid yellow
                 const juce::Colour kZebraStripe{0xdd000000}; // near-black stripe
+                auto zebraBounds = bounds.reduced(static_cast<int>(offsetRing));
+                float zebraR = juce::jmax(1.0f, tk.raioMedio - offsetRing);
                 {
                     juce::Graphics::ScopedSaveState saveState(g);
                     juce::Path ringPath;
-                    ringPath.addRoundedRectangle(bounds.toFloat(), tk.raioMedio);
-                    ringPath.addRoundedRectangle(bounds.reduced(5).toFloat(), juce::jmax(1.0f, tk.raioMedio - 3.0f));
+                    ringPath.addRoundedRectangle(zebraBounds.toFloat(), zebraR);
+                    ringPath.addRoundedRectangle(zebraBounds.reduced(5).toFloat(), juce::jmax(1.0f, zebraR - 3.0f));
                     ringPath.setUsingNonZeroWinding(false); // Even-odd hollow ring
                     g.reduceClipRegion(ringPath);
 
                     // Vivid yellow base background
                     g.setColour(kZebraYellow);
-                    g.fillRect(bounds);
+                    g.fillRect(zebraBounds);
 
                     // Transverse dark zebra stripes
                     g.setColour(kZebraStripe);
                     float stripePitch = 12.0f;
                     float stripeWidth = 5.0f;
-                    float minCoord = static_cast<float>(bounds.getX() - bounds.getHeight() - 10);
-                    float maxCoord = static_cast<float>(bounds.getRight() + bounds.getHeight() + 10);
+                    float minCoord = static_cast<float>(zebraBounds.getX() - zebraBounds.getHeight() - 10);
+                    float maxCoord = static_cast<float>(zebraBounds.getRight() + zebraBounds.getHeight() + 10);
                     for (float x = minCoord; x <= maxCoord; x += stripePitch) {
-                        g.drawLine(x, static_cast<float>(bounds.getY() - 5),
-                                   x + static_cast<float>(bounds.getHeight() + 10),
-                                   static_cast<float>(bounds.getBottom() + 5),
+                        g.drawLine(x, static_cast<float>(zebraBounds.getY() - 5),
+                                   x + static_cast<float>(zebraBounds.getHeight() + 10),
+                                   static_cast<float>(zebraBounds.getBottom() + 5),
                                    stripeWidth);
                     }
                 }
                 // Crisp outer border outline
                 g.setColour(kZebraYellow);
-                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.2f);
+                g.drawRoundedRectangle(zebraBounds.toFloat(), zebraR, 1.2f);
+                offsetRing += 5.0f;
+            }
 
-                if (selecionado) {
-                    g.setColour(tk.acento);
-                    g.drawRoundedRectangle(bounds.reduced(5).toFloat(), juce::jmax(1.0f, tk.raioMedio - 3.0f), 2.5f);
-                }
-            } else if (selecionado) {
+            if (selecionado) {
                 g.setColour(tk.acento);
-                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 3.5f);
-            } else {
+                auto selBounds = bounds.reduced(static_cast<int>(offsetRing));
+                float selR = juce::jmax(1.0f, tk.raioMedio - offsetRing);
+                float selThick = temMarcacao ? 2.5f : 3.5f;
+                g.drawRoundedRectangle(selBounds.toFloat(), selR, selThick);
+            } else if (!temMarcacao && (!destacarEditados_ || !item.metadadosEditados)) {
                 g.setColour(corCat.withAlpha(0.65f));
                 g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.8f);
             }

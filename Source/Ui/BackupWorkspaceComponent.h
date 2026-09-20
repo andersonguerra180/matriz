@@ -14,10 +14,12 @@
 #include "../App/Cancelamento.h"
 #include "OverlayComponent.h"
 #include "BackupScanProgressDialog.h"
+#include "EventBus.h"
 
 namespace matriz::ui {
 
 class BackupWorkspaceComponent : public juce::Component,
+                                 public EventBusListener,
                                  private juce::ListBoxModel {
 public:
     enum class Estado {
@@ -39,6 +41,7 @@ public:
     void resized() override;
     void lookAndFeelChanged() override;
     void recarregar();
+    void aoItemAlterado(const EventoItemAlterado& e) override;
 
 private:
     class PreviaLista;
@@ -205,6 +208,10 @@ private:
     std::unique_ptr<juce::TextButton> btnStartBackup_;
     std::unique_ptr<juce::TextButton> btnSyncDestino_;
     std::unique_ptr<juce::TextButton> btnPublishHtml_;
+    std::unique_ptr<juce::TextButton> btnExportZip_;
+    std::unique_ptr<juce::TextButton> btnLimparZip_;
+    std::unique_ptr<juce::TextButton> btnSendToPrint_;
+    std::unique_ptr<juce::TextButton> btnLimparPrint_;
     std::unique_ptr<juce::TextButton> btnCancelarExecucao_;
     std::unique_ptr<juce::TextButton> btnDone_;
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;
@@ -220,6 +227,7 @@ private:
     void exportarDublinCore();
     void exportarChecksums();
     void publicarHtml();
+    void atualizarBotoesListas();
 
     // Auto-export to a specific folder (no FileChooser dialog)
     void exportarCsvPara(const juce::File& destFolder);

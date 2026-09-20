@@ -2700,6 +2700,67 @@ int rodarUiSelfTest() {
             checar(abertoNovo->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 0, "Ao reabrir projeto, lista Print esta vazia (volatil)");
         }
 
+        // ===================================================================
+        // FASE 1: Marcações K (ZIP) e P (Print), Resumo e Limpeza Isolada
+        // ===================================================================
+        std::cout << "\n== FASE 1: Marcacoes K (ZIP), P (Print) e Limpeza Isolada ==\n";
+        {
+            auto pastaProj = tmpRoot.getChildFile("test_marcacoes_fase1");
+            pastaProj.createDirectory();
+            matriz::model::NovoProjetoParams mParams;
+            mParams.nome = "Fase 1 Test";
+            mParams.responsavel = "Teste";
+            mParams.prefixoNomenclatura = "FS1";
+            auto proj = matriz::model::Project::criar(pastaProj, mParams);
+            auto projetoAberto = std::make_unique<matriz::ui::ProjetoAberto>(std::move(proj));
+
+            std::string idA = matriz::model::novoUuid();
+            std::string idB = matriz::model::novoUuid();
+            std::string idC = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+
+            for (const auto& [id, cod] : { std::pair{idA, "A1"}, std::pair{idB, "B1"}, std::pair{idC, "C1"} }) {
+                projetoAberto->projeto().registro().run(
+                    "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, 'Item', 'digital_audio', 'catalogado', ?, ?)",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(projetoAberto->projeto().projetoId()),
+                     matriz::db::Value::of(cod), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            }
+
+            // Mark idA in Html and Zip, idB in Zip and Print, idC only in Print
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, {idA});
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Zip, {idA, idB});
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Print, {idB, idC});
+
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 1, "FASE 1: 1 item em Html");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 2, "FASE 1: 2 itens em Zip");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 2, "FASE 1: 2 itens em Print");
+
+            // Verify ItemResumo fields in listarItens
+            auto itens = projetoAberto->listarItens();
+            checar(itens.size() == 3, "FASE 1: listarItens retornou 3 itens");
+            for (const auto& it : itens) {
+                if (it.id == idA) {
+                    checar(it.marcadoPublicacao && it.marcadoZip && !it.marcadoPrint, "FASE 1: idA tem Html e Zip marcados, Print desmarcado");
+                } else if (it.id == idB) {
+                    checar(!it.marcadoPublicacao && it.marcadoZip && it.marcadoPrint, "FASE 1: idB tem Zip e Print marcados, Html desmarcado");
+                } else if (it.id == idC) {
+                    checar(!it.marcadoPublicacao && !it.marcadoZip && it.marcadoPrint, "FASE 1: idC tem apenas Print marcado");
+                }
+            }
+
+            // Test isolated limparMarcacoes for Zip
+            projetoAberto->limparMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip);
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 0, "FASE 1: Zip limpo com sucesso");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 1, "FASE 1: Html permaneceu intocado ao limpar Zip");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 2, "FASE 1: Print permaneceu intocado ao limpar Zip");
+
+            // Test isolated limparMarcacoes for Print
+            projetoAberto->limparMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print);
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 0, "FASE 1: Print limpo com sucesso");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 1, "FASE 1: Html permaneceu intocado ao limpar Print");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("harness de UI: ") + e.what());
     }

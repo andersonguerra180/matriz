@@ -1420,6 +1420,42 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnPublishHtml_->onClick = [this] { publicarHtml(); };
     addChildComponent(*btnPublishHtml_);
 
+    btnExportZip_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("backup.exportar_zip").toRawUTF8(), 0));
+    aplicarEstiloBotao(*btnExportZip_, false);
+    btnExportZip_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff0077ff));
+    btnExportZip_->setTooltip(isPt ? juce::String::fromUTF8("Exportar itens marcados com K como arquivo ZIP")
+                                   : "Export assets marked with K as ZIP package");
+    btnExportZip_->onClick = [this] {
+        // Wired in FASE 2
+    };
+    addChildComponent(*btnExportZip_);
+
+    btnLimparZip_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("×"));
+    aplicarEstiloBotao(*btnLimparZip_, false);
+    btnLimparZip_->setTooltip(matriz::i18n::t("backup.limpar_zip_dica"));
+    btnLimparZip_->onClick = [this] {
+        projeto_.limparMarcacoes(ProjetoAberto::TipoMarcacao::Zip);
+        atualizarBotoesListas();
+    };
+    addChildComponent(*btnLimparZip_);
+
+    btnSendToPrint_ = std::make_unique<juce::TextButton>(juce::String::formatted(matriz::i18n::t("backup.enviar_print").toRawUTF8(), 0));
+    aplicarEstiloBotao(*btnSendToPrint_, false);
+    btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
+    btnSendToPrint_->setTooltip(isPt ? juce::String::fromUTF8("Enviar itens marcados com P para impressão (em breve)")
+                                     : "Send assets marked with P to print (coming soon)");
+    btnSendToPrint_->setEnabled(false);
+    addChildComponent(*btnSendToPrint_);
+
+    btnLimparPrint_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("×"));
+    aplicarEstiloBotao(*btnLimparPrint_, false);
+    btnLimparPrint_->setTooltip(matriz::i18n::t("backup.limpar_print_dica"));
+    btnLimparPrint_->onClick = [this] {
+        projeto_.limparMarcacoes(ProjetoAberto::TipoMarcacao::Print);
+        atualizarBotoesListas();
+    };
+    addChildComponent(*btnLimparPrint_);
+
     btnCancelarExecucao_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
     aplicarEstiloBotao(*btnCancelarExecucao_, false);
     btnCancelarExecucao_->setColour(juce::TextButton::textColourOffId, tk.perigo);
@@ -1463,11 +1499,15 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     addChildComponent(overlay_);
 
+    EventBus::obterInstancia().registrarListener(this);
     carregarDestinoAtivoInicial();
     atualizarResumo();
+    atualizarBotoesListas();
 }
 
-BackupWorkspaceComponent::~BackupWorkspaceComponent() = default;
+BackupWorkspaceComponent::~BackupWorkspaceComponent() {
+    EventBus::obterInstancia().removerListener(this);
+}
 
 void BackupWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
@@ -1678,6 +1718,20 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         btnExportJanela_->setButtonText(matriz::i18n::t("backup.btn_exportar_metadados"));
         aplicarEstiloBotao(*btnExportJanela_, false);
     }
+    if (btnExportZip_) {
+        aplicarEstiloBotao(*btnExportZip_, false);
+        btnExportZip_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff0077ff));
+    }
+    if (btnLimparZip_) {
+        aplicarEstiloBotao(*btnLimparZip_, false);
+    }
+    if (btnSendToPrint_) {
+        aplicarEstiloBotao(*btnSendToPrint_, false);
+        btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
+    }
+    if (btnLimparPrint_) {
+        aplicarEstiloBotao(*btnLimparPrint_, false);
+    }
     if (btnBrowseVault_) {
         btnBrowseVault_->setButtonText(matriz::i18n::t("backup.escolher_pasta"));
         aplicarEstiloBotao(*btnBrowseVault_, false);
@@ -1685,6 +1739,7 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
 
     if (listPrevia_) listPrevia_->repaint();
     atualizarResumo();
+    atualizarBotoesListas();
     repaint();
 }
 
@@ -1769,6 +1824,36 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
 
 void BackupWorkspaceComponent::publicarHtml() {
     PublishHtmlDialog::exibirModal(projeto_);
+}
+
+void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado&) {
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<BackupWorkspaceComponent>(this)] {
+        if (safe != nullptr) {
+            safe->atualizarBotoesListas();
+        }
+    });
+}
+
+void BackupWorkspaceComponent::atualizarBotoesListas() {
+    const size_t countZip = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip);
+    const size_t countPrint = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print);
+
+    if (btnExportZip_) {
+        btnExportZip_->setButtonText(juce::String::formatted(matriz::i18n::t("backup.exportar_zip").toRawUTF8(), (int)countZip));
+        btnExportZip_->setEnabled(countZip > 0);
+    }
+    if (btnLimparZip_) {
+        btnLimparZip_->setEnabled(countZip > 0);
+        btnLimparZip_->setTooltip(matriz::i18n::t("backup.limpar_zip_dica"));
+    }
+    if (btnSendToPrint_) {
+        btnSendToPrint_->setButtonText(juce::String::formatted(matriz::i18n::t("backup.enviar_print").toRawUTF8(), (int)countPrint));
+        btnSendToPrint_->setEnabled(false);
+    }
+    if (btnLimparPrint_) {
+        btnLimparPrint_->setEnabled(countPrint > 0);
+        btnLimparPrint_->setTooltip(matriz::i18n::t("backup.limpar_print_dica"));
+    }
 }
 
 void BackupWorkspaceComponent::exportarCsv() {
@@ -3488,6 +3573,10 @@ void BackupWorkspaceComponent::resized() {
         btnStartBackup_->setVisible(false);
         if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
         if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
+        if (btnExportZip_) btnExportZip_->setVisible(false);
+        if (btnLimparZip_) btnLimparZip_->setVisible(false);
+        if (btnSendToPrint_) btnSendToPrint_->setVisible(false);
+        if (btnLimparPrint_) btnLimparPrint_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
         if (btnOpenCatalog_) {
@@ -3510,6 +3599,24 @@ void BackupWorkspaceComponent::resized() {
             btnPublishHtml_->setBounds(botoes.removeFromRight(160));
             btnPublishHtml_->setVisible(true);
             btnPublishHtml_->setEnabled(temItens);
+        }
+        botoes.removeFromRight(tk.espacoPainel);
+        if (btnLimparZip_) {
+            btnLimparZip_->setBounds(botoes.removeFromRight(26));
+            btnLimparZip_->setVisible(true);
+        }
+        if (btnExportZip_) {
+            btnExportZip_->setBounds(botoes.removeFromRight(145));
+            btnExportZip_->setVisible(true);
+        }
+        botoes.removeFromRight(tk.espacoPainel);
+        if (btnLimparPrint_) {
+            btnLimparPrint_->setBounds(botoes.removeFromRight(26));
+            btnLimparPrint_->setVisible(true);
+        }
+        if (btnSendToPrint_) {
+            btnSendToPrint_->setBounds(botoes.removeFromRight(155));
+            btnSendToPrint_->setVisible(true);
         }
     }
 
@@ -3599,6 +3706,7 @@ void BackupWorkspaceComponent::recarregar() {
     carregarDestinosBackup();
     carregarDestinoAtivoInicial();
     atualizarResumo();
+    atualizarBotoesListas();
     dispararScanDestino(false);
     repaint();
 }
