@@ -1250,7 +1250,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"vulnerabilidades.clique_grid", "Click to view & select in Grid \u2192"},
         {"vulnerabilidades.dialog_titulo", "Backup Health & Vulnerability Diagnostics"},
         {"sobre.dialog_titulo", "About BKR Matriz"},
-        {"sobre.versao", "Version 1.0"},
+        {"sobre.versao", "Version 1.5.0"},
         {"sobre.desenvolvido_por", "Developed by Anderson Guerra"},
         {"sobre.direitos_reservados", "© 2026 BKR Systems. All rights reserved."},
         {"relink.inicial_titulo", "ASSET LOCATION NOT FOUND"},

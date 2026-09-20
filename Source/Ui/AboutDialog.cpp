@@ -82,7 +82,7 @@ void AboutDialog::paint(juce::Graphics& g) {
     juce::String versionLabel = i18n::t("sobre.versao");
     if (auto* app = juce::JUCEApplication::getInstance()) {
         auto ver = app->getApplicationVersion();
-        if (ver.containsIgnoreCase("TRIAL")) {
+        if (ver.isNotEmpty()) {
             versionLabel = (i18n::localeAtivo() == "pt_BR" ? "Versão " : "Version ") + ver;
         }
     }

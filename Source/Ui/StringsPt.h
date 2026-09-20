@@ -1273,7 +1273,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"vulnerabilidades.clique_grid", "Clique para ver e selecionar na Grade \u2192"},
         {"vulnerabilidades.dialog_titulo", "Diagnóstico de Saúde e Riscos do Backup"},
         {"sobre.dialog_titulo", "Sobre o BKR Matriz"},
-        {"sobre.versao", "Versão 1.0"},
+        {"sobre.versao", "Versão 1.5.0"},
         {"sobre.desenvolvido_por", "Desenvolvido por Anderson Guerra"},
         {"sobre.direitos_reservados", "© 2026 BKR Systems. Todos os direitos reservados."},
         {"relink.inicial_titulo", "LOCALIZAÇÃO DOS ATIVOS NÃO ENCONTRADA"},

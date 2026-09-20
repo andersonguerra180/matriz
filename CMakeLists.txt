@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(MATRIZ VERSION 1.0.0 LANGUAGES C CXX)
+project(MATRIZ VERSION 1.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -210,20 +210,20 @@ matriz_aplicar_asan(matriz_ingest_selftest)
 if(MATRIZ_TRIAL)
     set(MATRIZ_PRODUCT_NAME "BKR Matriz Trial")
     set(MATRIZ_BUNDLE_ID "com.bkr.matriz.trial")
-    set(MATRIZ_VERSION_STRING "1.0 TRIAL")
+    set(MATRIZ_VERSION_STRING "1.5.0 TRIAL")
     set(MATRIZ_UI_APP_NAME "BKR Matriz Trial (NOT FOR SALE)")
     set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=1")
 else()
     set(MATRIZ_PRODUCT_NAME "BKR Matriz")
     set(MATRIZ_BUNDLE_ID "com.bkr.matriz")
-    set(MATRIZ_VERSION_STRING "1.0")
+    set(MATRIZ_VERSION_STRING "1.5.0")
     set(MATRIZ_UI_APP_NAME "BKR Matriz")
     set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=0")
 endif()
 
 juce_add_gui_app(matriz
     PRODUCT_NAME "${MATRIZ_PRODUCT_NAME}"
-    VERSION 1.0.0
+    VERSION 1.5.0
     COMPANY_NAME "BKR"
     BUNDLE_ID "${MATRIZ_BUNDLE_ID}"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_256x256.png"
