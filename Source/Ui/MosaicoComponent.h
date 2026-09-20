@@ -301,7 +301,6 @@ private:
     int colunas_ = 1;
     std::string selecionadoId_;       // âncora — última célula clicada (single-click), o que a ficha mostra
     std::set<std::string> selecionados_; // seleção múltipla completa (§3.3 — clique/Shift/Cmd)
-    std::set<std::string> itensMarcadosP_; // itens marcados com tecla P (borda azul)
     int indiceAncoraShift_ = -1;          // início do intervalo pra Shift+clique
     int indiceHover_ = -1;                // célula sob o cursor, -1 = nenhuma
     bool arrastandoArquivo_ = false;

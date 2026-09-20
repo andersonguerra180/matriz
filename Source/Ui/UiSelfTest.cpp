@@ -2623,6 +2623,83 @@ int rodarUiSelfTest() {
                    "Test 7: Root destination.json exists");
         }
 
+        // ===================================================================
+        // FASE 0: Marcações de Sessão Voláteis (H, K, P)
+        // ===================================================================
+        std::cout << "\n== FASE 0: Marcacoes de Sessao Volateis (H, K, P) ==\n";
+        {
+            auto pastaProj = tmpRoot.getChildFile("test_marcacoes_fase0");
+            pastaProj.createDirectory();
+            matriz::model::NovoProjetoParams mParams;
+            mParams.nome = "Marcacoes Test";
+            mParams.responsavel = "Teste";
+            mParams.prefixoNomenclatura = "TST";
+            auto proj = matriz::model::Project::criar(pastaProj, mParams);
+            auto projetoAberto = std::make_unique<matriz::ui::ProjetoAberto>(std::move(proj));
+
+            std::string id1 = matriz::model::novoUuid();
+            std::string id2 = matriz::model::novoUuid();
+            std::string agora = matriz::model::agoraIso8601();
+
+            projetoAberto->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'M01', 'Item 1', 'digital_audio', 'catalogado', ?, ?)",
+                {matriz::db::Value::of(id1), matriz::db::Value::of(projetoAberto->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            projetoAberto->projeto().registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'M02', 'Item 2', 'digital_audio', 'catalogado', ?, ?)",
+                {matriz::db::Value::of(id2), matriz::db::Value::of(projetoAberto->projeto().projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+            // 1. Initially empty
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 0, "Html list initially empty");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 0, "Zip list initially empty");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 0, "Print list initially empty");
+
+            // 2. Marking doesn't dirty the project
+            projetoAberto->setDirty(false);
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, {id1});
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Zip, {id1, id2});
+            projetoAberto->alternarMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Print, {id2});
+
+            checar(!projetoAberto->isDirty(), "Marcacoes de sessao nao sujam o projeto (dirty == false)");
+            checar(projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, id1), "Html contem id1");
+            checar(!projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, id2), "Html nao contem id2");
+            checar(projetoAberto->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 2, "Zip contem 2 itens");
+            checar(projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Print, id2), "Print contem id2");
+
+            // 3. listarItens reflects Html session marking without reading from DB
+            auto itens = projetoAberto->listarItens();
+            bool id1Marcado = false, id2Marcado = false;
+            for (const auto& it : itens) {
+                if (it.id == id1) id1Marcado = it.marcadoPublicacao;
+                if (it.id == id2) id2Marcado = it.marcadoPublicacao;
+            }
+            checar(id1Marcado && !id2Marcado, "listarItens reflete marcadoPublicacao da sessao Html");
+
+            // Verify item.marcado_publicacao in DB remains 0
+            auto checkDb = projetoAberto->projeto().registro().prepare("SELECT COALESCE(marcado_publicacao, 0) FROM item WHERE id = ?");
+            checkDb.bind(1, matriz::db::Value::of(id1));
+            checar(checkDb.step() && checkDb.columnInt(0) == 0, "item.marcado_publicacao no SQLite permanece 0 (nao gravado em banco)");
+
+            // 4. Relink transfers markings to new ID
+            std::string id1Novo = matriz::model::novoUuid();
+            projetoAberto->transferirMarcacoes(id1, id1Novo);
+            checar(!projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, id1), "transferirMarcacoes remove id1 antigo");
+            checar(projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Html, id1Novo), "transferirMarcacoes adiciona id1Novo");
+            checar(!projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Zip, id1), "transferirMarcacoes remove id1 do Zip");
+            checar(projetoAberto->contemMarcacao(matriz::ui::ProjetoAberto::TipoMarcacao::Zip, id1Novo), "transferirMarcacoes adiciona id1Novo no Zip");
+
+            // 5. Reopening project from disk starts with empty markings (volatile)
+            projetoAberto.reset();
+            auto projReaberto = matriz::model::Project::abrir(pastaProj);
+            auto abertoNovo = std::make_unique<matriz::ui::ProjetoAberto>(std::move(projReaberto));
+            checar(abertoNovo->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Html) == 0, "Ao reabrir projeto, lista Html esta vazia (volatil)");
+            checar(abertoNovo->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Zip) == 0, "Ao reabrir projeto, lista Zip esta vazia (volatil)");
+            checar(abertoNovo->contarMarcacoes(matriz::ui::ProjetoAberto::TipoMarcacao::Print) == 0, "Ao reabrir projeto, lista Print esta vazia (volatil)");
+        }
+
     } catch (const std::exception& e) {
         checar(false, juce::String("harness de UI: ") + e.what());
     }

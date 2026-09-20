@@ -16,6 +16,8 @@ enum Comando {
     kRenomear,
     kRenomearEmLote,
     kAlternarPublicacao,
+    kAlternarZip,
+    kAlternarPrint,
     kRemoverDoBackup,
     kRemoverDaLista,
     kMostrarNaOrigem,
@@ -282,12 +284,26 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
 
-#if JUCE_MAC
-    juce::String atalhoPublish = " (Cmd+P)";
-#else
-    juce::String atalhoPublish = " (Ctrl+P)";
-#endif
-    menu.addItem(kAlternarPublicacao, "PUBLISH" + atalhoPublish);
+    bool todosHtml = true;
+    for (const auto& id : itemIds) {
+        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, id)) { todosHtml = false; break; }
+    }
+    juce::String labelHtml = (todosHtml ? matriz::i18n::t("acoes.remover_html") : matriz::i18n::t("acoes.adicionar_html")) + " (H)";
+    menu.addItem(kAlternarPublicacao, labelHtml);
+
+    bool todosZip = true;
+    for (const auto& id : itemIds) {
+        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, id)) { todosZip = false; break; }
+    }
+    juce::String labelZip = (todosZip ? matriz::i18n::t("acoes.remover_zip") : matriz::i18n::t("acoes.adicionar_zip")) + " (K)";
+    menu.addItem(kAlternarZip, labelZip);
+
+    bool todosPrint = true;
+    for (const auto& id : itemIds) {
+        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, id)) { todosPrint = false; break; }
+    }
+    juce::String labelPrint = (todosPrint ? matriz::i18n::t("acoes.remover_print") : matriz::i18n::t("acoes.adicionar_print")) + " (P)";
+    menu.addItem(kAlternarPrint, labelPrint);
 
     juce::PopupMenu submenuPastas;
     auto pastas = pastasDoBackup(projeto);
@@ -358,13 +374,17 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             break;
 
         case kAlternarPublicacao:
-            if (itemIds.size() > 1) {
-                ProgressoGlobal::obterInstancia().iniciarTarefa("batch_publish", "Updating Publication", (int)itemIds.size(), nullptr, "Updating " + juce::String((int)itemIds.size()) + " assets...");
-            }
-            projeto.alternarPublicacaoItens(itemIds);
-            if (itemIds.size() > 1) {
-                ProgressoGlobal::obterInstancia().concluirTarefa("batch_publish", juce::String((int)itemIds.size()) + " assets updated");
-            }
+            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Html, itemIds);
+            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+            break;
+
+        case kAlternarZip:
+            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Zip, itemIds);
+            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+            break;
+
+        case kAlternarPrint:
+            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, itemIds);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
 

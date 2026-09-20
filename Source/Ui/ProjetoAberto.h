@@ -516,10 +516,34 @@ public:
     const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
     void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
 
-    // Marcação para Publicação (Micro-site / Publish)
-    void alternarPublicacaoItens(const std::vector<std::string>& itemIds);
-    void definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado);
-    bool itemMarcadoPublicacao(const std::string& itemId) const;
+    // Tipos de marcação volátil de sessão (em memória, sem persistência em banco)
+    enum class TipoMarcacao {
+        Html,
+        Zip,
+        Print
+    };
+
+    // Operações sobre conjuntos de marcação de sessão
+    void alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds);
+    void definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado);
+    bool contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const;
+    size_t contarMarcacoes(TipoMarcacao tipo) const;
+    void limparMarcacoes(TipoMarcacao tipo);
+    void limparTodasMarcacoes();
+    std::vector<std::string> idsMarcados(TipoMarcacao tipo) const;
+    void transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId);
+
+    // Aliases funcionais
+    void alternar(TipoMarcacao tipo, const std::vector<std::string>& itemIds) { alternarMarcacao(tipo, itemIds); }
+    bool contem(TipoMarcacao tipo, const std::string& itemId) const { return contemMarcacao(tipo, itemId); }
+    size_t contar(TipoMarcacao tipo) const { return contarMarcacoes(tipo); }
+    void limpar(TipoMarcacao tipo) { limparMarcacoes(tipo); }
+    std::vector<std::string> idsDe(TipoMarcacao tipo) const { return idsMarcados(tipo); }
+
+    // Marcação para Publicação (compatibilidade: direcionado à lista Html em memória)
+    void alternarPublicacaoItens(const std::vector<std::string>& itemIds) { alternarMarcacao(TipoMarcacao::Html, itemIds); }
+    void definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado) { definirMarcacao(TipoMarcacao::Html, itemIds, marcado); }
+    bool itemMarcadoPublicacao(const std::string& itemId) const { return contemMarcacao(TipoMarcacao::Html, itemId); }
 
     // In-memory relinking and two-stage persistence
     bool isDirty() const { return dirty_; }
@@ -532,6 +556,13 @@ public:
     std::optional<juce::File> resolverArquivoComMemoria(const std::string& arquivoId) const;
 
 private:
+    std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
+    const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
+
+    std::set<std::string> marcadosHtml_;
+    std::set<std::string> marcadosZip_;
+    std::set<std::string> marcadosPrint_;
+
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
 

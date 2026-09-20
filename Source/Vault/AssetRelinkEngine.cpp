@@ -377,7 +377,7 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
             std::string newArqId = matriz::model::novoUuid();
 
             // 1. Fetch old item info
-            auto sItem = db.prepare("SELECT projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, marcado_publicacao FROM item WHERE id = ?");
+            auto sItem = db.prepare("SELECT projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena FROM item WHERE id = ?");
             sItem.bind(1, matriz::db::Value::of(oldItemId));
             if (!sItem.step()) {
                 outError = "Original item record missing.";
@@ -390,7 +390,6 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
             std::string estado = sItem.columnText(3);
             std::string notas = sItem.columnIsNull(4) ? "" : sItem.columnText(4);
             int quarentena = sItem.columnInt(5);
-            int marcadoPub = sItem.columnInt(6);
 
             // Archive old item's codigo_acervo to avoid unique constraint conflict
             std::string archivedCod = codAcervo + "_archived_" + std::to_string(juce::Time::getCurrentTime().toMilliseconds());
@@ -402,8 +401,8 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
 
             // 2. Insert new item with active codigo_acervo
             auto sInsItem = db.prepare(
-                "INSERT INTO item (id, projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, marcado_publicacao, criado_em, atualizado_em) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+                "INSERT INTO item (id, projeto_id, tipo_midia, codigo_acervo, estado, notas_livres, em_quarentena, criado_em, atualizado_em) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
             sInsItem.bind(1, matriz::db::Value::of(newItemId));
             sInsItem.bind(2, matriz::db::Value::of(projId));
             sInsItem.bind(3, matriz::db::Value::of(tipoMidia));
@@ -411,9 +410,8 @@ bool AssetRelinkEngine::executarRelinkIndividual(matriz::db::Database& db,
             sInsItem.bind(5, matriz::db::Value::of(estado));
             sInsItem.bind(6, matriz::db::Value::of(notas));
             sInsItem.bind(7, matriz::db::Value::of(static_cast<int64_t>(quarentena)));
-            sInsItem.bind(8, matriz::db::Value::of(static_cast<int64_t>(marcadoPub)));
+            sInsItem.bind(8, matriz::db::Value::of(agoraIso.toStdString()));
             sInsItem.bind(9, matriz::db::Value::of(agoraIso.toStdString()));
-            sInsItem.bind(10, matriz::db::Value::of(agoraIso.toStdString()));
             sInsItem.step();
 
             // 3. Clone descriptive metadata fields (item_campo)

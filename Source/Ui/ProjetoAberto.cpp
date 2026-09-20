@@ -175,7 +175,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "i.isrc, "
-        "COALESCE(i.marcado_publicacao, 0), "
+        "0, "
         "COALESCE(i.metadados_editados, 0) != 0 "
         "FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
     while (stmt.step()) {
@@ -332,7 +332,11 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
 
 std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     if (!projeto_) return {};
-    return listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), inMemoryRelinkedPaths_);
+    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), inMemoryRelinkedPaths_);
+    for (auto& item : items) {
+        item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
+    }
+    return items;
 }
 
 std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pastaColecao) const {
@@ -343,14 +347,19 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
 
     try {
         matriz::db::Database regDb(regFile.getFullPathName().toStdString());
+        std::vector<ItemResumo> items;
         if (indFile.existsAsFile()) {
             matriz::db::Database indDb(indFile.getFullPathName().toStdString());
-            return listarItensDeProjeto(regDb, indDb, resolvedDir);
+            items = listarItensDeProjeto(regDb, indDb, resolvedDir);
         } else {
             // Temporary in-memory dummy db if indice.sqlite is missing
             matriz::db::Database dummyInd(":memory:");
-            return listarItensDeProjeto(regDb, dummyInd, resolvedDir);
+            items = listarItensDeProjeto(regDb, dummyInd, resolvedDir);
         }
+        for (auto& item : items) {
+            item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
+        }
+        return items;
     } catch (...) {
         return {};
     }
@@ -382,7 +391,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 "i.content_type, i.collection_type, i.criado_em, "
                 "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
                 "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-                "COALESCE(i.marcado_publicacao, 0), "
+                "0, "
                 "COALESCE(i.metadados_editados, 0) != 0, "
                 "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'source_media'), "
                 "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
@@ -414,7 +423,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
                 if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
                 r.criadoEm = stmt.columnText(17);
-                if (!stmt.columnIsNull(20)) r.marcadoPublicacao = stmt.columnInt(20) != 0;
+                r.marcadoPublicacao = marcadosHtml_.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -3192,94 +3201,100 @@ std::optional<juce::File> ProjetoAberto::resolverArquivoComMemoria(const std::st
     return matriz::vault::resolverArquivo(projeto_->registro(), arquivoId, projeto_->pasta());
 }
 
-void ProjetoAberto::alternarPublicacaoItens(const std::vector<std::string>& itemIds) {
-    if (!projeto_ || itemIds.empty()) return;
-    auto& db = projeto_->registro();
+std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao tipo) {
+    switch (tipo) {
+        case TipoMarcacao::Html: return marcadosHtml_;
+        case TipoMarcacao::Zip: return marcadosZip_;
+        case TipoMarcacao::Print: return marcadosPrint_;
+    }
+    return marcadosHtml_;
+}
 
-    // Check if all are currently marked
-    bool allMarked = true;
+const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao tipo) const {
+    switch (tipo) {
+        case TipoMarcacao::Html: return marcadosHtml_;
+        case TipoMarcacao::Zip: return marcadosZip_;
+        case TipoMarcacao::Print: return marcadosPrint_;
+    }
+    return marcadosHtml_;
+}
+
+void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {
+    if (itemIds.empty()) return;
+    auto& s = obterConjuntoMarcacao(tipo);
+    bool todosMarcados = true;
     for (const auto& id : itemIds) {
-        auto checkStmt = db.prepare("SELECT COALESCE(marcado_publicacao, 0) FROM item WHERE id = ?");
-        checkStmt.bind(1, matriz::db::Value::of(id));
-        if (checkStmt.step()) {
-            if (checkStmt.columnInt(0) == 0) {
-                allMarked = false;
-                break;
-            }
-        } else {
-            allMarked = false;
+        if (s.find(id) == s.end()) {
+            todosMarcados = false;
             break;
         }
     }
-
-    int novoValor = allMarked ? 0 : 1;
-    std::string agora = matriz::model::agoraIso8601();
-
-    db.run("BEGIN TRANSACTION", {});
-    try {
+    if (todosMarcados) {
         for (const auto& id : itemIds) {
-            auto updateStmt = db.prepare("UPDATE item SET marcado_publicacao = ?, atualizado_em = ? WHERE id = ?");
-            updateStmt.bind(1, matriz::db::Value::of(novoValor));
-            updateStmt.bind(2, matriz::db::Value::of(agora));
-            updateStmt.bind(3, matriz::db::Value::of(id));
-            updateStmt.step();
+            s.erase(id);
         }
-        db.run("COMMIT", {});
-    } catch (...) {
-        db.run("ROLLBACK", {});
+    } else {
+        for (const auto& id : itemIds) {
+            s.insert(id);
+        }
     }
-
     for (const auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "publicacao");
+        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
     }
 }
 
-void ProjetoAberto::definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado) {
-    if (!projeto_ || itemIds.empty()) return;
-    if (!desfazendo_) {
-        std::map<std::string, bool> statusAntigos;
-        for (const auto& id : itemIds) {
-            statusAntigos[id] = itemMarcadoPublicacao(id);
-        }
-        registrarUndo("Toggle Publication", [this, statusAntigos]() {
-            for (const auto& [id, st] : statusAntigos) {
-                definirPublicacaoItens({id}, st);
-            }
-        });
-    }
-    auto& db = projeto_->registro();
-    int novoValor = marcado ? 1 : 0;
-    std::string agora = matriz::model::agoraIso8601();
-
-    db.run("BEGIN TRANSACTION", {});
-    try {
-        for (const auto& id : itemIds) {
-            auto updateStmt = db.prepare("UPDATE item SET marcado_publicacao = ?, atualizado_em = ? WHERE id = ?");
-            updateStmt.bind(1, matriz::db::Value::of(novoValor));
-            updateStmt.bind(2, matriz::db::Value::of(agora));
-            updateStmt.bind(3, matriz::db::Value::of(id));
-            updateStmt.step();
-        }
-        db.run("COMMIT", {});
-    } catch (...) {
-        db.run("ROLLBACK", {});
-    }
-
+void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado) {
+    if (itemIds.empty()) return;
+    auto& s = obterConjuntoMarcacao(tipo);
     for (const auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "publicacao");
+        if (marcado) s.insert(id);
+        else s.erase(id);
+    }
+    for (const auto& id : itemIds) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
     }
 }
 
-bool ProjetoAberto::itemMarcadoPublicacao(const std::string& itemId) const {
-    if (!projeto_ || itemId.empty()) return false;
-    try {
-        auto checkStmt = projeto_->registro().prepare("SELECT COALESCE(marcado_publicacao, 0) FROM item WHERE id = ?");
-        checkStmt.bind(1, matriz::db::Value::of(itemId));
-        if (checkStmt.step()) {
-            return checkStmt.columnInt(0) != 0;
+bool ProjetoAberto::contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const {
+    if (itemId.empty()) return false;
+    const auto& s = obterConjuntoMarcacao(tipo);
+    return s.find(itemId) != s.end();
+}
+
+size_t ProjetoAberto::contarMarcacoes(TipoMarcacao tipo) const {
+    return obterConjuntoMarcacao(tipo).size();
+}
+
+void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
+    auto& s = obterConjuntoMarcacao(tipo);
+    if (s.empty()) return;
+    std::vector<std::string> afetados(s.begin(), s.end());
+    s.clear();
+    for (const auto& id : afetados) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
+    }
+}
+
+void ProjetoAberto::limparTodasMarcacoes() {
+    limparMarcacoes(TipoMarcacao::Html);
+    limparMarcacoes(TipoMarcacao::Zip);
+    limparMarcacoes(TipoMarcacao::Print);
+}
+
+std::vector<std::string> ProjetoAberto::idsMarcados(TipoMarcacao tipo) const {
+    const auto& s = obterConjuntoMarcacao(tipo);
+    return std::vector<std::string>(s.begin(), s.end());
+}
+
+void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId) {
+    if (oldItemId.empty() || newItemId.empty() || oldItemId == newItemId) return;
+    for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print }) {
+        auto& s = obterConjuntoMarcacao(tipo);
+        if (s.erase(oldItemId) > 0) {
+            s.insert(newItemId);
         }
-    } catch (...) {}
-    return false;
+    }
+    EventBus::obterInstancia().dispararItemAlterado(newItemId, "marcacao");
 }
 
 } // namespace matriz::ui

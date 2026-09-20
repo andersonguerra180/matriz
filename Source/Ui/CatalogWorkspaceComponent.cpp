@@ -1072,6 +1072,7 @@ void CatalogWorkspaceComponent::abrirRelinkOffline(const std::string& itemId) {
                 novoItemId,
                 err);
             if (ok) {
+                safeThis->projeto_.transferirMarcacoes(itemId, novoItemId);
                 safeThis->projeto_.salvar();
                 if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
             }

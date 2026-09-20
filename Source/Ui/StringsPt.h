@@ -7,6 +7,12 @@ namespace matriz::i18n {
 
 inline const std::unordered_map<std::string, std::string>& getPortugueseStrings() {
     static const std::unordered_map<std::string, std::string> strings = {
+        {"acoes.adicionar_html", "Adicionar à Lista HTML"},
+        {"acoes.remover_html", "Remover da Lista HTML"},
+        {"acoes.adicionar_zip", "Adicionar à Lista ZIP"},
+        {"acoes.remover_zip", "Remover da Lista ZIP"},
+        {"acoes.adicionar_print", "Adicionar à Lista Print"},
+        {"acoes.remover_print", "Remover da Lista Print"},
         {"acoes.categorizar", "Categorizar…"},
         {"acoes.copiar_caminho", "Copiar caminho"},
         {"acoes.definir_capa", "Usar imagem como capa…"},

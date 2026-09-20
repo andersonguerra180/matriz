@@ -39,9 +39,9 @@ private:
     // Escopo
     std::unique_ptr<juce::GroupComponent> grpEscopo_;
     std::unique_ptr<juce::Label> lblDicaPublicacao_;
-    std::unique_ptr<juce::ToggleButton> rbApenasMarcadosP_;
-    std::unique_ptr<juce::Component> badgeP_;
-    std::unique_ptr<juce::Label> lblSufixoP_;
+    std::unique_ptr<juce::ToggleButton> rbApenasMarcadosH_;
+    std::unique_ptr<juce::Component> badgeH_;
+    std::unique_ptr<juce::Label> lblSufixoH_;
     std::unique_ptr<juce::ToggleButton> rbTodosAssets_;
 
     // Estrutura

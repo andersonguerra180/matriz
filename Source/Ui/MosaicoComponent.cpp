@@ -29,7 +29,7 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
     juce::MessageManager::callAsync([safeThis, e]() {
         if (safeThis == nullptr) return;
-        if (e.tipoAlteracao == "publicacao") {
+        if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
             bool marcado = safeThis->projeto_.itemMarcadoPublicacao(e.itemId);
             for (auto& item : safeThis->itensTodos_) {
                 if (item.id == e.itemId) {
@@ -950,13 +950,16 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         return true;
     }
 
-    bool isCmdOrCtrl = tecla.getModifiers().isCommandDown() || tecla.getModifiers().isCtrlDown();
-    if ((tecla.getKeyCode() == 'P' || c == 'p' || c == 'P') && (isCmdOrCtrl || (!tecla.getModifiers().isAltDown() && !tecla.getModifiers().isShiftDown()))) {
+    bool semModificadores = !tecla.getModifiers().isCommandDown() &&
+                            !tecla.getModifiers().isCtrlDown() &&
+                            !tecla.getModifiers().isAltDown();
+
+    if ((tecla.getKeyCode() == 'H' || c == 'h' || c == 'H') && semModificadores) {
         std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
         if (!alvos.empty()) {
-            projeto_.alternarPublicacaoItens(alvos);
-            bool novoEstado = projeto_.itemMarcadoPublicacao(alvos.front());
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Html, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, alvos.front());
             std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
             for (auto& item : itensTodos_) {
                 if (alvosSet.count(item.id)) {
@@ -969,6 +972,24 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
                 }
             }
             repaint();
+            return true;
+        }
+    }
+
+    if ((tecla.getKeyCode() == 'K' || c == 'k' || c == 'K') && semModificadores) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Zip, alvos);
+            return true;
+        }
+    }
+
+    if ((tecla.getKeyCode() == 'P' || c == 'p' || c == 'P') && semModificadores) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, alvos);
             return true;
         }
     }

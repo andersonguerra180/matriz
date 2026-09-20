@@ -4,7 +4,7 @@
 
 namespace matriz::ui {
 
-class BadgePComponent : public juce::Component {
+class BadgeHComponent : public juce::Component {
 public:
     std::function<void()> onClick;
 
@@ -13,7 +13,7 @@ public:
         g.setColour(juce::Colour(0xff22c55e)); // Emerald green
         g.drawRoundedRectangle(b, 3.0f, 1.5f);
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.drawText("P", getLocalBounds(), juce::Justification::centred);
+        g.drawText("H", getLocalBounds(), juce::Justification::centred);
     }
 
     void mouseDown(const juce::MouseEvent&) override {
@@ -54,27 +54,27 @@ PublishHtmlDialog::PublishHtmlDialog(ProjetoAberto& projeto)
     lblDicaPublicacao_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblDicaPublicacao_);
 
-    rbApenasMarcadosP_ = std::make_unique<juce::ToggleButton>(
+    rbApenasMarcadosH_ = std::make_unique<juce::ToggleButton>(
         isPt ? juce::String::fromUTF8("Apenas arquivos marcados com")
              : "Only assets marked with");
-    rbApenasMarcadosP_->setRadioGroupId(1001);
-    rbApenasMarcadosP_->setToggleState(true, juce::dontSendNotification);
-    rbApenasMarcadosP_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
-    addAndMakeVisible(*rbApenasMarcadosP_);
+    rbApenasMarcadosH_->setRadioGroupId(1001);
+    rbApenasMarcadosH_->setToggleState(true, juce::dontSendNotification);
+    rbApenasMarcadosH_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
+    addAndMakeVisible(*rbApenasMarcadosH_);
 
-    auto badge = std::make_unique<BadgePComponent>();
-    badge->onClick = [this] { rbApenasMarcadosP_->setToggleState(true, juce::sendNotification); };
-    badgeP_ = std::move(badge);
-    addAndMakeVisible(*badgeP_);
+    auto badge = std::make_unique<BadgeHComponent>();
+    badge->onClick = [this] { rbApenasMarcadosH_->setToggleState(true, juce::sendNotification); };
+    badgeH_ = std::move(badge);
+    addAndMakeVisible(*badgeH_);
 
-    lblSufixoP_ = std::make_unique<juce::Label>(
-        "lblSufixoP",
+    lblSufixoH_ = std::make_unique<juce::Label>(
+        "lblSufixoH",
         isPt ? juce::String::fromUTF8("(borda verde no grid)")
              : "(green border in grid)");
-    lblSufixoP_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-    lblSufixoP_->setColour(juce::Label::textColourId, tk.textoSecundario);
-    lblSufixoP_->addMouseListener(this, false);
-    addAndMakeVisible(*lblSufixoP_);
+    lblSufixoH_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+    lblSufixoH_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    lblSufixoH_->addMouseListener(this, false);
+    addAndMakeVisible(*lblSufixoH_);
 
     rbTodosAssets_ = std::make_unique<juce::ToggleButton>(
         isPt ? juce::String::fromUTF8("Todos os arquivos do projeto")
@@ -236,22 +236,17 @@ void PublishHtmlDialog::escolherImagemLogo() {
 
 void PublishHtmlDialog::iniciarPublicacao() {
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
-    bool apenasMarcadosP = rbApenasMarcadosP_->getToggleState();
+    bool apenasMarcadosH = rbApenasMarcadosH_->getToggleState();
 
     std::vector<std::string> itemIdsFiltro;
-    if (apenasMarcadosP) {
-        auto todosItens = projeto_.listarItens();
-        for (const auto& item : todosItens) {
-            if (projeto_.itemMarcadoPublicacao(item.id)) {
-                itemIdsFiltro.push_back(item.id);
-            }
-        }
+    if (apenasMarcadosH) {
+        itemIdsFiltro = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Html);
         if (itemIdsFiltro.empty()) {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::MessageBoxIconType::WarningIcon,
                 isPt ? juce::String::fromUTF8("Nenhum Arquivo Marcado") : "No Marked Assets",
-                isPt ? juce::String::fromUTF8("Nenhum arquivo está marcado para publicação com o atalho [P].\n\nMarque os arquivos desejados no grid pressionando [P] ou selecione a opção 'Todos os arquivos do projeto'.")
-                     : "No assets are marked for publication with [P].\n\nMark assets in the grid using [P] or select 'All assets in project'.");
+                isPt ? juce::String::fromUTF8("Nenhum arquivo está marcado para publicação com o atalho [H].\n\nMarque os arquivos desejados no grid pressionando [H] ou selecione a opção 'Todos os arquivos do projeto'.")
+                     : "No assets are marked for publication with [H].\n\nMark assets in the grid using [H] or select 'All assets in project'.");
             return;
         }
     }
@@ -362,16 +357,16 @@ void PublishHtmlDialog::resized() {
     lblDicaPublicacao_->setBounds(escopoArea.removeFromTop(16));
     escopoArea.removeFromTop(2);
 
-    auto rowP = escopoArea.removeFromTop(24);
+    auto rowH = escopoArea.removeFromTop(24);
     auto fontCorpo = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo));
-    int textW = static_cast<int>(juce::GlyphArrangement::getStringWidth(fontCorpo, rbApenasMarcadosP_->getButtonText())) + 26;
-    rbApenasMarcadosP_->setBounds(rowP.removeFromLeft(textW));
-    rowP.removeFromLeft(6);
-    badgeP_->setBounds(rowP.removeFromLeft(20).withSizeKeepingCentre(20, 18));
-    rowP.removeFromLeft(6);
-    lblSufixoP_->setBounds(rowP.removeFromLeft(170));
-    rowP.removeFromLeft(14);
-    rbTodosAssets_->setBounds(rowP);
+    int textW = static_cast<int>(juce::GlyphArrangement::getStringWidth(fontCorpo, rbApenasMarcadosH_->getButtonText())) + 26;
+    rbApenasMarcadosH_->setBounds(rowH.removeFromLeft(textW));
+    rowH.removeFromLeft(6);
+    badgeH_->setBounds(rowH.removeFromLeft(20).withSizeKeepingCentre(20, 18));
+    rowH.removeFromLeft(6);
+    lblSufixoH_->setBounds(rowH.removeFromLeft(170));
+    rowH.removeFromLeft(14);
+    rbTodosAssets_->setBounds(rowH);
 
     area.removeFromTop(10);
 

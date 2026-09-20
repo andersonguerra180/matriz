@@ -517,6 +517,9 @@ void HelpDialog::inicializarTopicos() {
             "- Barra de Espaço: Play / Pause no player de áudio ou vídeo.\n"
             "- R: Renomear item selecionado.\n"
             "- C: Excluir/Restaurar item selecionado do backup.\n"
+            "- H: Marcar/desmarcar item para publicação HTML.\n"
+            "- K: Marcar/desmarcar item para exportação ZIP.\n"
+            "- P: Marcar/desmarcar item para impressão (Print).\n"
             "- Teclas 1 a 8: Navegação rápida entre as abas da barra superior.\n"
             "- F: Focar no campo de busca rápida."
         ),
@@ -528,6 +531,9 @@ void HelpDialog::inicializarTopicos() {
             "- Spacebar: Play / Pause audio or video playback.\n"
             "- R: Rename selected item.\n"
             "- C: Exclude/Include selected item from backup.\n"
+            "- H: Toggle HTML Publish mark on selected items.\n"
+            "- K: Toggle ZIP Export mark on selected items.\n"
+            "- P: Toggle Print mark on selected items.\n"
             "- Keys 1 to 8: Fast navigation across upper workspace tabs.\n"
             "- F: Focus global search filter bar."
         ),

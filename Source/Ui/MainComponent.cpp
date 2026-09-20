@@ -2306,6 +2306,7 @@ void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {
                 novoItemId,
                 err);
             if (ok) {
+                safeThis->projetoAberto_->transferirMarcacoes(itemId, novoItemId);
                 safeThis->projetoAberto_->salvar();
                 if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
                 if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
