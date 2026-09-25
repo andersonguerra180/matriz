@@ -460,6 +460,167 @@ void migrarEscopoGatilhoBusca(matriz::db::Database& registro) {
     } catch (...) {}
 }
 
+// Fase 2a (freeze de edição de metadado): busca_fts_map(fts_rowid, item_id,
+// conteudo) espelha cada linha de busca_fts com o rowid dela, pra os
+// gatilhos apagarem por rowid (rápido) em vez de "item_id = ? AND
+// conteudo = ?" (varredura completa da FTS -- ver comentário em
+// schema/registro.sql). CREATE TRIGGER IF NOT EXISTS não recria um gatilho
+// que já existe, então projetos criados antes desta correção continuam com
+// os gatilhos antigos presos no banco pra sempre -- é isso que esta
+// migração resolve.
+//
+// Detecção: inspeciona o SQL de um gatilho representativo
+// (trg_item_campo_busca_delete) em vez de checar se busca_fts_map existe --
+// a tabela já foi criada pelo execScript() (CREATE TABLE IF NOT EXISTS)
+// alguns instantes atrás, tanto em bancos novos quanto antigos, então sua
+// mera existência não diferencia os dois casos.
+//
+// Reconstrução: mais simples e seguro reconstruir busca_fts + o mapa do
+// zero a partir das tabelas de origem do que tentar inferir a qual linha
+// de origem cada linha já existente na FTS pertence (sem essa informação,
+// não haveria como preencher fts_rowid nela). Rowid do FTS5 é sequencial
+// na ordem de inserção -- depois de repopular busca_fts, um único
+// INSERT...SELECT copia (rowid, item_id, conteudo) pro mapa de uma vez,
+// sem precisar rastrear rowid linha por linha como os gatilhos fazem.
+void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
+    try {
+        matriz::db::Statement check = registro.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='trg_item_campo_busca_delete'");
+        if (check.step()) {
+            std::string sql = check.columnText(0);
+            if (sql.find("busca_fts_map") != std::string::npos) return; // já migrado (ou banco novo)
+        } else {
+            return; // gatilho nem existe ainda -- execScript() cuida disso
+        }
+
+        registro.exec("BEGIN IMMEDIATE");
+
+        const char* gatilhosAntigos[] = {
+            "trg_item_busca_insert", "trg_item_busca_delete", "trg_item_busca_update",
+            "trg_item_campo_busca_insert", "trg_item_campo_busca_delete", "trg_item_campo_busca_update",
+            "trg_item_assunto_busca_insert", "trg_item_assunto_busca_delete",
+            "trg_item_tag_busca_insert", "trg_item_tag_busca_delete",
+            "trg_item_observacao_busca_insert", "trg_item_observacao_busca_delete",
+            "trg_arquivo_busca_insert", "trg_arquivo_busca_delete"
+        };
+        for (const char* nome : gatilhosAntigos) {
+            registro.exec(std::string("DROP TRIGGER IF EXISTS ") + nome);
+        }
+
+        // Mesmos corpos de schema/registro.sql — CREATE TRIGGER (sem IF NOT
+        // EXISTS: acabamos de garantir que não existem mais).
+        registro.execScript(
+            "CREATE TRIGGER trg_item_busca_insert AFTER INSERT ON item FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL; "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.id, new.titulo); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_busca_delete AFTER DELETE ON item FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.id); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.id; "
+            "END;"
+
+            "CREATE TRIGGER trg_item_busca_update AFTER UPDATE OF titulo, codigo_acervo ON item FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.id "
+            "AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo)); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.id "
+            "AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo); "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL; "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.id, new.titulo); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_campo_busca_delete AFTER DELETE ON item_campo FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor; "
+            "END;"
+
+            "CREATE TRIGGER trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor; "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_assunto_busca_insert AFTER INSERT ON item_assunto FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, (SELECT termo FROM assunto WHERE id = new.assunto_id)); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, (SELECT termo FROM assunto WHERE id = new.assunto_id)); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_assunto_busca_delete AFTER DELETE ON item_assunto FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id)); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_tag_busca_insert AFTER INSERT ON item_tag FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.tag); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.tag); "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, '#' || new.tag); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, '#' || new.tag); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_tag_busca_delete AFTER DELETE ON item_tag FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag)); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_observacao_busca_insert AFTER INSERT ON item_observacao FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.texto); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.texto); "
+            "END;"
+
+            "CREATE TRIGGER trg_item_observacao_busca_delete AFTER DELETE ON item_observacao FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.texto); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.texto; "
+            "END;"
+
+            "CREATE TRIGGER trg_arquivo_busca_insert AFTER INSERT ON arquivo FOR EACH ROW BEGIN "
+            "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.caminho_relativo); "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.caminho_relativo); "
+            "INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL; "
+            "INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL; "
+            "END;"
+
+            "CREATE TRIGGER trg_arquivo_busca_delete AFTER DELETE ON arquivo FOR EACH ROW BEGIN "
+            "DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, ''))); "
+            "DELETE FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, '')); "
+            "END;"
+        );
+
+        // Reconstrução completa: TRUNCATE + repopular a partir das tabelas
+        // de origem, mesma lógica de conteúdo dos gatilhos de INSERT acima.
+        registro.exec("DELETE FROM busca_fts");
+        registro.exec("DELETE FROM busca_fts_map");
+
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT id, codigo_acervo FROM item WHERE codigo_acervo IS NOT NULL");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT id, titulo FROM item");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, valor FROM item_campo");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT ia.item_id, a.termo FROM item_assunto ia JOIN assunto a ON a.id = ia.assunto_id");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, tag FROM item_tag");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, '#' || tag FROM item_tag");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, texto FROM item_observacao");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, caminho_relativo FROM arquivo");
+        registro.exec("INSERT INTO busca_fts(item_id, conteudo) SELECT item_id, caminho_absoluto_origem FROM arquivo WHERE caminho_absoluto_origem IS NOT NULL");
+
+        // rowid do FTS5 já está lá pra cada linha recém-inserida -- copia
+        // tudo de uma vez, sem precisar dos INSERTs intercalados que os
+        // gatilhos usam pra capturar rowid por linha.
+        registro.exec("INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT rowid, item_id, conteudo FROM busca_fts");
+
+        registro.exec("COMMIT");
+    } catch (...) {
+        try { registro.exec("ROLLBACK"); } catch (...) {}
+    }
+}
+
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     migrarItemParaCodigoOpcional(registro);
     migrarAiScanParaIndice(registro, indice);
@@ -470,6 +631,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // ele ainda não existir) e ANTES das migrações de item_campo -> item
     // logo abaixo, que são justamente o UPDATE em massa que ficava lento.
     migrarEscopoGatilhoBusca(registro);
+    // Idem: gatilhos antigos de busca_fts (sem busca_fts_map) precisam ser
+    // substituídos antes de qualquer UPDATE/INSERT em massa que os dispare.
+    migrarBuscaFtsIndexada(registro);
 
     // Colunas acrescentadas depois da primeira versão do schema.
     garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");

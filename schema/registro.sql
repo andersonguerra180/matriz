@@ -588,80 +588,126 @@ CREATE VIRTUAL TABLE IF NOT EXISTS busca_fts USING fts5(
     tokenize='unicode61'
 );
 
--- Triggers para manter busca_fts em sincronia
+-- Fase 2a (freeze de edição de metadado): busca_fts é FTS5 com item_id
+-- UNINDEXED -- SQLite não tem b-tree nenhuma pra podar por ele, e
+-- "conteudo" é tokenizado, não indexado pra igualdade exata. Todo
+-- "DELETE FROM busca_fts WHERE item_id = ? AND conteudo = ?" (usado por
+-- TODOS os gatilhos abaixo pra remover o valor antigo antes de reinserir o
+-- novo) varria o índice FTS inteiro. Cada edição de UM campo de UM item
+-- (salvarMetadado, uma tecla) disparava essa varredura completa.
+--
+-- busca_fts_map(fts_rowid, item_id, conteudo) é uma tabela comum (b-tree,
+-- PRIMARY KEY em fts_rowid, índice em item_id) espelhando cada linha da
+-- FTS, mantida pelos MESMOS gatilhos: todo INSERT em busca_fts é seguido
+-- por um INSERT aqui com o rowid que o SQLite acabou de gerar
+-- (last_insert_rowid() -- válido porque cada INSERT em busca_fts()/o
+-- espelho correspondente rodam em sequência, mesma conexão). Pra apagar,
+-- o gatilho acha o(s) rowid(s) certo(s) aqui primeiro (rápido -- tabela
+-- comum indexada) e só então faz "DELETE FROM busca_fts WHERE rowid IN
+-- (...)" -- rowid é o único jeito de o FTS5 apagar sem varrer tudo.
+CREATE TABLE IF NOT EXISTS busca_fts_map (
+    fts_rowid INTEGER PRIMARY KEY,
+    item_id   TEXT NOT NULL,
+    conteudo  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_busca_fts_map_item ON busca_fts_map(item_id);
+
+-- Triggers para manter busca_fts (e busca_fts_map) em sincronia
 -- codigo_acervo é NULL enquanto o ingest não confirma (§5): indexar o NULL
 -- encheria a FTS de linhas sem conteúdo, então cada trigger filtra.
 CREATE TRIGGER IF NOT EXISTS trg_item_busca_insert AFTER INSERT ON item FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.id, new.titulo);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_busca_delete AFTER DELETE ON item FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.id;
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.id);
+    DELETE FROM busca_fts_map WHERE item_id = old.id;
 END;
 
 -- "OF titulo, codigo_acervo" (não um AFTER UPDATE genérico): o corpo só usa
 -- essas duas colunas, mas um UPDATE genérico dispara pra QUALQUER coluna de
 -- `item` que mude — inclusive updates em massa que não têm nada a ver com
 -- busca (ex.: a migração de item_campo pra colunas em aplicarSchemas, que
--- roda em todo item que abre o projeto). Cada disparo faz um DELETE por
--- valor na busca_fts (FTS5 sem índice pra isso — é uma varredura do
--- índice inteiro), então um UPDATE em lote de milhares de itens virava
--- milhares de varreduras completas da FTS. Era a causa real do projeto
+-- roda em todo item que abre o projeto). Era a causa real do projeto
 -- ficando preso em "Loading Project..." depois de um lote de ingest
--- grande — não era storage lento, era este gatilho disparando à toa.
+-- grande — não era storage lento, era este gatilho disparando à toa (mais
+-- grave ainda antes do índice acima, quando cada disparo também varria a
+-- FTS inteira).
 CREATE TRIGGER IF NOT EXISTS trg_item_busca_update AFTER UPDATE OF titulo, codigo_acervo ON item FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.id
+    DELETE FROM busca_fts WHERE rowid IN (
+        SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.id
+          AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo)
+    );
+    DELETE FROM busca_fts_map WHERE item_id = old.id
       AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo);
     INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.id, new.titulo);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_insert AFTER INSERT ON item_campo FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_delete AFTER DELETE ON item_campo FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.valor;
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor);
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_campo_busca_update AFTER UPDATE ON item_campo FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.valor;
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor);
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.valor;
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.valor);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.valor);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_insert AFTER INSERT ON item_assunto FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, (SELECT termo FROM assunto WHERE id = new.assunto_id));
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, (SELECT termo FROM assunto WHERE id = new.assunto_id));
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_assunto_busca_delete AFTER DELETE ON item_assunto FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id);
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id));
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = (SELECT termo FROM assunto WHERE id = old.assunto_id);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_insert AFTER INSERT ON item_tag FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.tag);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.tag);
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, '#' || new.tag);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, '#' || new.tag);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_tag_busca_delete AFTER DELETE ON item_tag FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag);
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag));
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.tag OR conteudo = '#' || old.tag);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_insert AFTER INSERT ON item_observacao FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.texto);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.texto);
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_item_observacao_busca_delete AFTER DELETE ON item_observacao FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND conteudo = old.texto;
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.texto);
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND conteudo = old.texto;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_insert AFTER INSERT ON arquivo FOR EACH ROW BEGIN
     INSERT INTO busca_fts(item_id, conteudo) VALUES (new.item_id, new.caminho_relativo);
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) VALUES (last_insert_rowid(), new.item_id, new.caminho_relativo);
     INSERT INTO busca_fts(item_id, conteudo) SELECT new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL;
+    INSERT INTO busca_fts_map(fts_rowid, item_id, conteudo) SELECT last_insert_rowid(), new.item_id, new.caminho_absoluto_origem WHERE new.caminho_absoluto_origem IS NOT NULL;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_arquivo_busca_delete AFTER DELETE ON arquivo FOR EACH ROW BEGIN
-    DELETE FROM busca_fts WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, ''));
+    DELETE FROM busca_fts WHERE rowid IN (SELECT fts_rowid FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, '')));
+    DELETE FROM busca_fts_map WHERE item_id = old.item_id AND (conteudo = old.caminho_relativo OR conteudo = IFNULL(old.caminho_absoluto_origem, ''));
 END;
 
 -- ---------------------------------------------------------------------------
