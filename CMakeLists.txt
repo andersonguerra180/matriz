@@ -43,6 +43,24 @@ function(matriz_aplicar_asan alvo)
 endfunction()
 
 # ------------------------------------------------------------------------------
+# ThreadSanitizer opcional (Fase 1c do diagnostico de crash/freeze — data
+# races em ProjetoAberto e afins). Mesmo motivo do ASan acima pra nao aplicar
+# globalmente via CMAKE_CXX_FLAGS (quebra o try_run do exiv2 na configuracao).
+# ASan e TSan sao mutuamente exclusivos no mesmo alvo — nunca ligar os dois
+# ao mesmo tempo.
+#
+#   cmake -B build-tsan -DMATRIZ_TSAN=ON && cmake --build build-tsan --target matriz
+# ------------------------------------------------------------------------------
+option(MATRIZ_TSAN "Compila os alvos do MATRIZ com ThreadSanitizer" OFF)
+
+function(matriz_aplicar_tsan alvo)
+    if(MATRIZ_TSAN)
+        target_compile_options(${alvo} PRIVATE -fsanitize=thread -g)
+        target_link_options(${alvo} PRIVATE -fsanitize=thread)
+    endif()
+endfunction()
+
+# ------------------------------------------------------------------------------
 # Schema do banco (schema/registro.sql, schema/indice.sql) embutido no binário
 # — aplicado (idempotente, CREATE ... IF NOT EXISTS) toda vez que um projeto é
 # criado ou aberto (Source/Model/Project.cpp).
@@ -120,6 +138,7 @@ target_link_libraries(matriz_selftest PRIVATE
     juce::juce_recommended_config_flags)
 
 matriz_aplicar_asan(matriz_selftest)
+matriz_aplicar_tsan(matriz_selftest)
 
 # ------------------------------------------------------------------------------
 # Etapa 2 — self-test headless: motor de ingestão (leitura técnica, checksum,
@@ -203,6 +222,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_recommended_config_flags)
 
 matriz_aplicar_asan(matriz_ingest_selftest)
+matriz_aplicar_tsan(matriz_ingest_selftest)
 
 # ------------------------------------------------------------------------------
 # Etapa 3 — app principal (B.1.1-B.1.3, B.4, B.5): janela, criação/abertura de
@@ -427,6 +447,7 @@ if(APPLE)
 endif()
 
 matriz_aplicar_asan(matriz)
+matriz_aplicar_tsan(matriz)
 
 # ------------------------------------------------------------------------------
 # Selftest - Analytics Multidimensional Engine & Benchmarks
@@ -476,4 +497,5 @@ target_link_libraries(matriz_analytics_selftest PRIVATE
     juce::juce_recommended_config_flags)
 
 matriz_aplicar_asan(matriz_analytics_selftest)
+matriz_aplicar_tsan(matriz_analytics_selftest)
 
