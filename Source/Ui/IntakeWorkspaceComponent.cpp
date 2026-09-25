@@ -10,9 +10,14 @@
 #include "ProjetoAberto.h"
 #include "ProgressoGlobal.h"
 #include "Tokens.h"
+#include "HierarquiaEditorComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
+#include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 namespace matriz::ui {
 
@@ -77,6 +82,11 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Live Performance", "Show / Ao Vivo"},
         {"NLE Project", juce::String::fromUTF8("Projeto de Edição (NLE)")},
         {"Social Media Video", juce::String::fromUTF8("Vídeos para Redes Sociais")},
+        {"WhatsApp Video", juce::String::fromUTF8("Vídeo do WhatsApp")},
+        {"TV Video", juce::String::fromUTF8("Vídeo de TV")},
+        {"YouTube Video", juce::String::fromUTF8("Vídeo do YouTube")},
+        {"360 Video", juce::String::fromUTF8("Vídeo 360°")},
+        {"Making Of", juce::String::fromUTF8("Making Of")},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -413,14 +423,23 @@ private:
 
 class GeoLocationPopupContent : public juce::Component {
 public:
-    GeoLocationPopupContent(bool isBatch, std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply)
-        : onApply_(std::move(onApply)) {
+    GeoLocationPopupContent(matriz::db::Database& registro, bool isBatch,
+                             std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply)
+        : registro_(registro), onApply_(std::move(onApply)) {
         const auto& tk = tema();
 
         lblTitle_ = std::make_unique<juce::Label>("", isBatch ? i18n::t("intake.popup_geo_batch") : i18n::t("intake.popup_geo"));
         lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
+
+        // Favoritos (item 3 da correção "BACKUP e INTAKE"): mesmo
+        // GeoFavoritosRepository que a ficha usa — sem lista paralela.
+        btnFavoritos_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x96\xbe Favorites"));
+        btnFavoritos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnFavoritos_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnFavoritos_->onClick = [this] { mostrarMenuFavoritos(); };
+        addAndMakeVisible(*btnFavoritos_);
 
         auto makeField = [this, &tk](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed,
                                      const juce::String& labelText, const juce::String& placeholder) {
@@ -462,12 +481,14 @@ public:
         };
         addAndMakeVisible(*btnApply_);
 
-        setSize(380, 360);
+        setSize(380, 400);
     }
 
     void resized() override {
         auto area = getLocalBounds().reduced(14, 12);
-        lblTitle_->setBounds(area.removeFromTop(24));
+        auto topRow = area.removeFromTop(24);
+        lblTitle_->setBounds(topRow.removeFromLeft(topRow.getWidth() - 110));
+        btnFavoritos_->setBounds(topRow);
         area.removeFromTop(6);
 
         auto layoutSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
@@ -486,7 +507,40 @@ public:
     }
 
 private:
+    void mostrarMenuFavoritos() {
+        auto favs = matriz::analytics::GeoFavoritosRepository::listar(registro_);
+        if (favs.empty()) {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::InfoIcon, "Favorites",
+                "No favorite places saved yet. Save one from the ficha's GEO LOCATION section first.");
+            return;
+        }
+        juce::PopupMenu menu;
+        for (int i = 0; i < static_cast<int>(favs.size()); ++i) {
+            juce::String label = juce::String(favs[static_cast<size_t>(i)].nome);
+            if (favs[static_cast<size_t>(i)].city)
+                label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
+            menu.addItem(i + 1, label);
+        }
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFavoritos_.get()),
+            [this, favs](int result) {
+                if (result < 1 || result > static_cast<int>(favs.size())) return;
+                const auto& fav = favs[static_cast<size_t>(result - 1)];
+                if (edCoords_ && fav.latitude && fav.longitude) {
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(6) << *fav.latitude << ", " << *fav.longitude;
+                    edCoords_->setText(ss.str());
+                }
+                if (edAddress_ && fav.formattedAddress) edAddress_->setText(juce::String(*fav.formattedAddress));
+                if (edCity_ && fav.city) edCity_->setText(juce::String(*fav.city));
+                if (edState_ && fav.stateProvince) edState_->setText(juce::String(*fav.stateProvince));
+                if (edCountry_ && fav.country) edCountry_->setText(juce::String(*fav.country));
+            });
+    }
+
+    matriz::db::Database& registro_;
     std::unique_ptr<juce::Label> lblTitle_;
+    std::unique_ptr<juce::TextButton> btnFavoritos_;
     std::unique_ptr<juce::Label> lblCoords_;
     std::unique_ptr<juce::TextEditor> edCoords_;
     std::unique_ptr<juce::Label> lblAddress_;
@@ -499,6 +553,201 @@ private:
     std::unique_ptr<juce::TextEditor> edCountry_;
     std::unique_ptr<PillButton> btnApply_;
     std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply_;
+};
+
+// Campo de texto com autocomplete (item 4 da correção "BACKUP e INTAKE"):
+// mostra os valores já usados nessa mesma coluna em qualquer lugar do
+// projeto (CREATOR/SUBJECT), filtra por prefixo conforme digita, sempre em
+// ordem alfabética. Não cria uma base de valores paralela — os valores vêm
+// prontos de fora (query direta na tabela item, ver
+// IntakeWorkspaceComponent::valoresExistentesParaColuna).
+class AutocompleteAssistedField : public juce::Component, private juce::ListBoxModel {
+public:
+    AutocompleteAssistedField(std::vector<juce::String> valoresExistentes, const juce::String& placeholder) {
+        valores_ = std::move(valoresExistentes);
+        std::sort(valores_.begin(), valores_.end(),
+                  [](const juce::String& a, const juce::String& b) { return a.compareIgnoreCase(b) < 0; });
+
+        const auto& tk = tema();
+        editor_ = std::make_unique<FocusAwareTextEditor>();
+        editor_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        editor_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        editor_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        editor_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+        editor_->setTextToShowWhenEmpty(placeholder, juce::Colours::grey);
+        editor_->onTextChange = [this] { atualizarSugestoes(); };
+        editor_->onFocus = [this] { mostrarTodasSugestoes(); };
+        editor_->onFocusLost = [this] {
+            juce::Component::SafePointer<AutocompleteAssistedField> safe(this);
+            juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->lista_) safe->lista_->setVisible(false); });
+        };
+        addAndMakeVisible(*editor_);
+
+        lista_ = std::make_unique<juce::ListBox>();
+        lista_->setModel(this);
+        lista_->setRowHeight(22);
+        lista_->setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
+        lista_->setColour(juce::ListBox::outlineColourId, tk.borda);
+        lista_->setVisible(false);
+        addAndMakeVisible(*lista_);
+        lista_->toFront(false);
+    }
+
+    juce::String getText() const { return editor_->getText().trim(); }
+    void setText(const juce::String& t) { editor_->setText(t, false); }
+
+    void resized() override {
+        auto area = getLocalBounds();
+        editor_->setBounds(area.removeFromTop(26));
+        area.removeFromTop(2);
+        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
+        lista_->setBounds(area.removeFromTop(rows * 22));
+    }
+
+private:
+    int getNumRows() override { return static_cast<int>(sugestoes_.size()); }
+
+    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override {
+        if (rowNumber < 0 || rowNumber >= static_cast<int>(sugestoes_.size())) return;
+        g.fillAll(rowIsSelected ? tema().acento.withAlpha(0.25f) : juce::Colours::white);
+        g.setColour(juce::Colours::black);
+        g.setFont(juce::Font(juce::FontOptions(13.0f)));
+        g.drawText(sugestoes_[static_cast<size_t>(rowNumber)], 6, 0, width - 12, height, juce::Justification::centredLeft);
+    }
+
+    void listBoxItemClicked(int row, const juce::MouseEvent&) override {
+        if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
+        editor_->setText(sugestoes_[static_cast<size_t>(row)], false);
+        lista_->setVisible(false);
+    }
+
+    void mostrarTodasSugestoes() {
+        sugestoes_ = valores_;
+        lista_->updateContent();
+        lista_->setVisible(!sugestoes_.empty());
+        resized();
+        if (auto* parent = getParentComponent()) parent->resized();
+    }
+
+    void atualizarSugestoes() {
+        juce::String q = editor_->getText().trim();
+        if (q.isEmpty()) { mostrarTodasSugestoes(); return; }
+        sugestoes_.clear();
+        for (auto& v : valores_)
+            if (v.startsWithIgnoreCase(q)) sugestoes_.push_back(v);
+        lista_->updateContent();
+        lista_->setVisible(!sugestoes_.empty());
+        resized();
+        if (auto* parent = getParentComponent()) parent->resized();
+    }
+
+    class FocusAwareTextEditor : public juce::TextEditor {
+    public:
+        std::function<void()> onFocus;
+        void focusGained(FocusChangeType) override { if (onFocus) onFocus(); }
+    };
+
+    std::vector<juce::String> valores_;
+    std::vector<juce::String> sugestoes_;
+    std::unique_ptr<FocusAwareTextEditor> editor_;
+    std::unique_ptr<juce::ListBox> lista_;
+};
+
+class AutocompleteLotePopupContent : public juce::Component {
+public:
+    AutocompleteLotePopupContent(const juce::String& title, const juce::String& placeholder,
+                                  std::vector<juce::String> valoresExistentes, juce::Colour corDestaque,
+                                  std::function<void(const juce::String&)> onApply)
+        : onApply_(std::move(onApply)) {
+        const auto& tk = tema();
+
+        lblTitle_ = std::make_unique<juce::Label>("", title);
+        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        addAndMakeVisible(*lblTitle_);
+
+        campo_ = std::make_unique<AutocompleteAssistedField>(std::move(valoresExistentes), placeholder);
+        addAndMakeVisible(*campo_);
+
+        btnApply_ = std::make_unique<PillButton>(i18n::t("intake.btn_aplicar_selecionados"));
+        btnApply_->corTextoCustom = corDestaque;
+        btnApply_->corBordaCustom = corDestaque;
+        btnApply_->tamanhoFonte = 13.0f;
+        btnApply_->onClick = [this] {
+            if (onApply_) onApply_(campo_->getText());
+            if (auto* callout = findParentComponentOfClass<juce::CallOutBox>()) callout->dismiss();
+        };
+        addAndMakeVisible(*btnApply_);
+
+        setSize(340, 240);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().reduced(14, 12);
+        lblTitle_->setBounds(area.removeFromTop(24));
+        area.removeFromTop(8);
+        campo_->setBounds(area.removeFromTop(140));
+        area.removeFromTop(8);
+        btnApply_->setBounds(area.removeFromBottom(30).removeFromRight(170));
+    }
+
+private:
+    std::unique_ptr<juce::Label> lblTitle_;
+    std::unique_ptr<AutocompleteAssistedField> campo_;
+    std::unique_ptr<PillButton> btnApply_;
+    std::function<void(const juce::String&)> onApply_;
+};
+
+class ContentLotePopupContent : public juce::Component {
+public:
+    ContentLotePopupContent(juce::Colour corDestaque, std::function<void(const juce::String&)> onApply)
+        : onApply_(std::move(onApply)) {
+        const auto& tk = tema();
+
+        lblTitle_ = std::make_unique<juce::Label>("", "Set CONTENT for Selected");
+        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        addAndMakeVisible(*lblTitle_);
+
+        combo_ = std::make_unique<juce::ComboBox>();
+        combo_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        combo_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        combo_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        combo_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        IntakeWorkspaceComponent::popularComboColecoes(*combo_, true);
+        addAndMakeVisible(*combo_);
+
+        btnApply_ = std::make_unique<PillButton>(i18n::t("intake.btn_aplicar_selecionados"));
+        btnApply_->corTextoCustom = corDestaque;
+        btnApply_->corBordaCustom = corDestaque;
+        btnApply_->tamanhoFonte = 13.0f;
+        btnApply_->onClick = [this] {
+            juce::String chosen = combo_->getText();
+            if (onApply_) {
+                if (combo_->getSelectedId() == 1 || chosen.equalsIgnoreCase("None")) onApply_("");
+                else onApply_(chosen);
+            }
+            if (auto* callout = findParentComponentOfClass<juce::CallOutBox>()) callout->dismiss();
+        };
+        addAndMakeVisible(*btnApply_);
+
+        setSize(320, 150);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().reduced(14, 12);
+        lblTitle_->setBounds(area.removeFromTop(24));
+        area.removeFromTop(8);
+        combo_->setBounds(area.removeFromTop(28));
+        area.removeFromTop(10);
+        btnApply_->setBounds(area.removeFromBottom(30).removeFromRight(170));
+    }
+
+private:
+    std::unique_ptr<juce::Label> lblTitle_;
+    std::unique_ptr<juce::ComboBox> combo_;
+    std::unique_ptr<PillButton> btnApply_;
+    std::function<void(const juce::String&)> onApply_;
 };
 
 } // namespace
@@ -783,6 +1032,9 @@ public:
 
     void mouseDown(const juce::MouseEvent& e) override {
         int idx = indiceNaPosicao(e.getPosition());
+        matriz::diag::WatchdogLogger::getInstance().log(
+            "[IntakeGrid] mouseDown pos=" + e.getPosition().toString() + " idx=" + juce::String(idx) +
+            " colunas_=" + juce::String(colunas_) + " cardW_=" + juce::String(cardW_) + " cardH_=" + juce::String(cardH_));
 
         if (e.mods.isPopupMenu()) {
             if (idx >= 0 && idx < static_cast<int>(owner_.indicesFiltrados_.size())) {
@@ -813,6 +1065,12 @@ public:
     }
 
     void mouseDrag(const juce::MouseEvent& e) override {
+        static int contadorLog = 0;
+        if (++contadorLog % 5 == 1) { // não loga TODO evento de drag (spam) — só 1 em 5
+            matriz::diag::WatchdogLogger::getInstance().log(
+                "[IntakeGrid] mouseDrag pos=" + e.getPosition().toString() +
+                " dist=" + juce::String(e.getDistanceFromDragStart()) + " lacoAtivo_=" + juce::String((int)lacoAtivo_));
+        }
         if (e.getDistanceFromDragStart() >= 5) {
             lacoAtivo_ = true;
             lacoAtual_ = juce::Rectangle<int>(lacoInicio_, e.getPosition());
@@ -848,7 +1106,7 @@ public:
         }
     }
 
-    void mouseUp(const juce::MouseEvent&) override {
+    void mouseUp(const juce::MouseEvent& e) override {
         if (lacoAtivo_) {
             lacoAtivo_ = false;
             lacoAtual_ = {};
@@ -863,7 +1121,21 @@ public:
         if (clickedCardIdx_ >= 0 && clickedCardIdx_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
             int realIdx = owner_.indicesFiltrados_[static_cast<size_t>(clickedCardIdx_)];
             if (realIdx >= 0 && realIdx < static_cast<int>(owner_.todosItens_.size())) {
-                owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado = !owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado;
+                // item (shift-clique seleciona intervalo): mesma âncora
+                // compartilhada com a visão em lista (cellClicked).
+                if (e.mods.isShiftDown() && owner_.ultimaPosicaoClicadaParaSelecao_ >= 0 &&
+                    owner_.ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
+                    int de = std::min(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
+                    int ate = std::max(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
+                    for (int p = de; p <= ate; ++p) {
+                        int ri = owner_.indicesFiltrados_[static_cast<size_t>(p)];
+                        if (ri >= 0 && ri < static_cast<int>(owner_.todosItens_.size()))
+                            owner_.todosItens_[static_cast<size_t>(ri)].selecionado = true;
+                    }
+                } else {
+                    owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado = !owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado;
+                    owner_.ultimaPosicaoClicadaParaSelecao_ = clickedCardIdx_;
+                }
                 owner_.atualizarContagens();
                 if (owner_.tabela_) owner_.tabela_->repaint();
                 repaint();
@@ -920,7 +1192,8 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         { "VIDEO", {
             "Raw Footage", "Home Video", "Music Video", "Film",
             "Documentary", "Corporate Video", "Commercial", "Live Performance",
-            "NLE Project", "Social Media Video"
+            "NLE Project", "Social Media Video",
+            "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"
         }},
         { "IMAGE", {
             "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
@@ -1107,6 +1380,21 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
     const auto& tk = tema();
 
+    // Ícone GEO LOCATION — o PNG vem com fundo branco chapado; aqui ele vira
+    // transparente para o ícone assentar sobre o fundo do card.
+    iconeGeo_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::geo_png, AssetsBinaryData::geo_pngSize);
+    if (iconeGeo_.isValid()) {
+        iconeGeo_ = iconeGeo_.convertedToFormat(juce::Image::ARGB);
+        juce::Image::BitmapData bmp(iconeGeo_, juce::Image::BitmapData::readWrite);
+        for (int y = 0; y < bmp.height; ++y) {
+            for (int x = 0; x < bmp.width; ++x) {
+                auto cor = bmp.getPixelColour(x, y);
+                if (cor.getRed() >= 240 && cor.getGreen() >= 240 && cor.getBlue() >= 240)
+                    bmp.setPixelColour(x, y, juce::Colours::transparentBlack);
+            }
+        }
+    }
+
     // 1. LINHA 1 (BatchHeaderBar)
     lblTitulo_ = std::make_unique<juce::Label>("", i18n::t("intake.titulo"));
     lblTitulo_->setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
@@ -1185,6 +1473,18 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnLightroom_ = std::move(btnLR);
     addAndMakeVisible(*btnLightroom_);
 
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    // CLOSE PROJECT / RETURN TO CATALOG saíram da barra desta aba (e de todas
+    // as outras): ambos vivem agora só no menu File.
+
+    btnAjuda_ = std::make_unique<juce::TextButton>("?");
+    btnAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
+    btnAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
+    btnAjuda_->setTooltip(isPt ? juce::String::fromUTF8("Gerenciar arquivos recém-ingeridos aguardando verificação para METADADOS") : "Manage recently ingested files awaiting verification to METADATA");
+    btnAjuda_->onClick = [this] { if (aoPedirAjuda) aoPedirAjuda(); };
+    addAndMakeVisible(*btnAjuda_);
+
     // 2. LINHA 2 (FilterBar)
     auto setupPill = [this](std::unique_ptr<juce::TextButton>& btn, const juce::String& text, const juce::String& cat, juce::Colour dotCol) {
         auto pill = std::make_unique<PillButton>(text);
@@ -1224,41 +1524,60 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnLimparSelecao_ = std::move(btnLimpar);
     addAndMakeVisible(*btnLimparSelecao_);
 
-    // Cluster B (Center)
-    lblRotuloColecao_ = std::make_unique<juce::Label>("", i18n::t("intake.rotulo_conteudo"));
-    lblRotuloColecao_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-    lblRotuloColecao_->setColour(juce::Label::textColourId, tk.textoPrimario);
-    addAndMakeVisible(*lblRotuloColecao_);
-
-    comboColecaoLote_ = std::make_unique<juce::ComboBox>();
-    comboColecaoLote_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-    comboColecaoLote_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
-    comboColecaoLote_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-    comboColecaoLote_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
-    popularComboColecoes(*comboColecaoLote_, true);
-    addAndMakeVisible(*comboColecaoLote_);
-
-    auto btnAplicar = std::make_unique<PillButton>(i18n::t("intake.btn_aplicar"));
-    btnAplicar->tamanhoFonte = 12.5f;
-    btnAplicar->onClick = [this] {
-        juce::String chosen = comboColecaoLote_->getText();
-        if (comboColecaoLote_->getSelectedId() == 1 || chosen == i18n::t("intake.nenhuma_colecao") || chosen == "None" || chosen.equalsIgnoreCase("Nenhum")) {
-            aplicarColecaoAosSelecionados("");
-        } else {
-            aplicarColecaoAosSelecionados(traduzirContent(chosen, false));
-        }
+    // Cluster B (Center) — Batch Assignment: um botão colorido por campo,
+    // mesma cor do bloco correspondente no Visual Editor da aba BACKUP
+    // (item 2 da correção "BACKUP e INTAKE").
+    using NH = matriz::consolidacao::NivelHierarquia;
+    auto criarBotaoLote = [this](const juce::String& texto, juce::Colour cor, std::function<void()> aoClicar) {
+        auto btn = std::make_unique<PillButton>(texto);
+        btn->tamanhoFonte = 12.5f;
+        btn->corFundoCustom = cor;
+        btn->corTextoCustom = juce::Colours::white;
+        btn->corBordaCustom = cor.darker(0.2f);
+        btn->onClick = std::move(aoClicar);
+        return btn;
     };
-    btnAplicarColecaoLote_ = std::move(btnAplicar);
-    addAndMakeVisible(*btnAplicarColecaoLote_);
 
-    auto btnOrigMed = std::make_unique<PillButton>(i18n::t("intake.btn_origem_lote"));
-    btnOrigMed->tamanhoFonte = 12.5f;
-    btnOrigMed->onClick = [this] {
-        if (btnOriginalMediumLote_) mostrarEditorOriginalSourceMediumLote(btnOriginalMediumLote_->getScreenBounds());
-    };
-    btnOriginalMediumLote_ = std::move(btnOrigMed);
-    addAndMakeVisible(*btnOriginalMediumLote_);
+    auto btnOrigMed = criarBotaoLote("SOURCE MEDIUM", corDoNivelHierarquia(NH::Origem), [this] {
+        if (btnSourceMediumLote_) mostrarEditorOriginalSourceMediumLote(btnSourceMediumLote_->getScreenBounds());
+    });
+    btnSourceMediumLote_ = std::move(btnOrigMed);
+    addAndMakeVisible(*btnSourceMediumLote_);
 
+    auto btnCreator = criarBotaoLote("CREATOR", corDoNivelHierarquia(NH::Artista), [this] {
+        if (btnCreatorLote_) mostrarEditorCreatorLote(btnCreatorLote_->getScreenBounds());
+    });
+    btnCreatorLote_ = std::move(btnCreator);
+    addAndMakeVisible(*btnCreatorLote_);
+
+    auto btnContent = criarBotaoLote("CONTENT", corDoNivelHierarquia(NH::ContentType), [this] {
+        if (btnContentLote_) mostrarEditorContentLote(btnContentLote_->getScreenBounds());
+    });
+    btnContentLote_ = std::move(btnContent);
+    addAndMakeVisible(*btnContentLote_);
+
+    auto btnSubject = criarBotaoLote("SUBJECT", corDoNivelHierarquia(NH::Subject), [this] {
+        if (btnSubjectLote_) mostrarEditorSubjectLote(btnSubjectLote_->getScreenBounds());
+    });
+    btnSubjectLote_ = std::move(btnSubject);
+    addAndMakeVisible(*btnSubjectLote_);
+
+    // Item 2 (nova lista) — o default (herdar o ano de DATE CREATED) já
+    // existe em FichaPanelComponent; este botão só dá ao operador um jeito
+    // rápido de sobrescrever em lote no INTAKE, antes de mandar pra GRID.
+    // Cor fixa em roxo clarinho (item 2, lista nova de hoje) só neste
+    // botão — corDoNivelHierarquia(Ano) é o mesmo verde de CONTENT
+    // (ContentType) e ficava fácil de confundir um com o outro aqui; o
+    // Visual Editor do BACKUP continua usando o verde original pro nível
+    // Ano, não mexi nisso.
+    auto btnEventDate = criarBotaoLote("EVENT DATE", juce::Colour(0xff9575cd), [this] {
+        if (btnEventDateLote_) mostrarEditorEventDateLote(btnEventDateLote_->getScreenBounds());
+    });
+    btnEventDateLote_ = std::move(btnEventDate);
+    addAndMakeVisible(*btnEventDateLote_);
+
+    // GEO LOCATION vive numa seção própria (item 3), separada dos quatro
+    // campos de metadata acima — cor neutra, não é um bloco do Visual Editor.
     auto btnGeo = std::make_unique<PillButton>(i18n::t("intake.btn_geo_lote"));
     btnGeo->tamanhoFonte = 12.5f;
     btnGeo->onClick = [this] {
@@ -1509,15 +1828,22 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     contagemDoc_ = 0;
     contagemOther_ = 0;
 
-    int totalSelecionados = 0;
     for (const auto& item : todosItens_) {
         if (item.categoria == "Audio") contagemAudio_++;
         else if (item.categoria == "Video") contagemVideo_++;
         else if (item.categoria == "Image") contagemImage_++;
         else if (item.categoria == "Document") contagemDoc_++;
         else contagemOther_++;
+    }
 
-        if (item.selecionado) totalSelecionados++;
+    // Item 1 (lista nova de hoje): a contagem/estado dos botões de lote tem
+    // que bater com o que a ação de verdade vai atingir — só o que está
+    // presente sob o filtro atual, mesmo que esteja marcado "selecionado"
+    // por baixo do pano.
+    int totalSelecionados = 0;
+    for (int idx : indicesFiltrados_) {
+        if (idx >= 0 && idx < static_cast<int>(todosItens_.size()) && todosItens_[static_cast<size_t>(idx)].selecionado)
+            totalSelecionados++;
     }
 
     if (btnFiltroAll_) btnFiltroAll_->setButtonText(i18n::t("intake.filtro_all").replace("{n}", juce::String(todosItens_.size())));
@@ -1541,8 +1867,9 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     }
 
     if (btnConfirmarTodos_) {
-        btnConfirmarTodos_->setEnabled(!todosItens_.empty());
-        btnConfirmarTodos_->setAlpha(!todosItens_.empty() ? 1.0f : 0.4f);
+        // "Send All" agora significa "todos os visíveis sob o filtro atual".
+        btnConfirmarTodos_->setEnabled(!indicesFiltrados_.empty());
+        btnConfirmarTodos_->setAlpha(!indicesFiltrados_.empty() ? 1.0f : 0.4f);
     }
 
     if (btnRemoverSelecao_) {
@@ -1569,8 +1896,13 @@ void IntakeWorkspaceComponent::recarregar() {
 }
 
 std::set<std::string> IntakeWorkspaceComponent::itensSelecionados() const {
+    // Item 1 (lista nova de hoje): só os que estão presentes sob o filtro
+    // ativo — os escondidos por um filtro (media type etc.) não entram,
+    // mesmo que continuem marcados "selecionado" por baixo do pano.
     std::set<std::string> ids;
-    for (const auto& item : todosItens_) {
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        const auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) ids.insert(item.id);
     }
     return ids;
@@ -1611,7 +1943,11 @@ void IntakeWorkspaceComponent::selecionarPorCategoria(const juce::String& catego
 }
 
 void IntakeWorkspaceComponent::aplicarColecaoAosSelecionados(const juce::String& colecao) {
-    for (auto& item : todosItens_) {
+    // Item 1 (lista nova de hoje): só os selecionados que também estão
+    // visíveis sob o filtro ativo.
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) {
             definirColecaoItem(item.id, colecao);
             item.collection = colecao;
@@ -1628,7 +1964,9 @@ void IntakeWorkspaceComponent::definirColecaoItem(const std::string& itemId, con
 }
 
 void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const std::string& sourceMediaJson) {
-    for (auto& item : todosItens_) {
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) {
             definirSourceMediaItem(item.id, sourceMediaJson);
             item.sourceMedia = juce::String::fromUTF8(sourceMediaJson.c_str());
@@ -1640,6 +1978,94 @@ void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const 
 
 void IntakeWorkspaceComponent::definirSourceMediaItem(const std::string& itemId, const std::string& sourceMediaJson) {
     projeto_.salvarMetadado(itemId, "source_media", sourceMediaJson);
+}
+
+// CREATOR e SUBJECT (item 2 da correção "BACKUP e INTAKE"): mesma coluna
+// que a ficha grava (dc_creator/dc_subject via ProjetoAberto::salvarMetadado)
+// — o valor aparece direto no ASSET & USER METADATA e no DUBLIN CORE do
+// item assim que ele chega no Grid, sem estrutura própria de metadado.
+void IntakeWorkspaceComponent::aplicarCreatorAosSelecionados(const juce::String& valor) {
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        if (todosItens_[static_cast<size_t>(idx)].selecionado)
+            projeto_.salvarMetadado(todosItens_[static_cast<size_t>(idx)].id, "dc_creator", valor.toStdString());
+    }
+}
+
+void IntakeWorkspaceComponent::aplicarSubjectAosSelecionados(const juce::String& valor) {
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        if (todosItens_[static_cast<size_t>(idx)].selecionado)
+            projeto_.salvarMetadado(todosItens_[static_cast<size_t>(idx)].id, "dc_subject", valor.toStdString());
+    }
+}
+
+void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::String& valor) {
+    juce::String v = valor.trim();
+    if (v.isEmpty()) return;
+    // Item 1 (lista nova de hoje): só os selecionados visíveis sob o
+    // filtro ativo. Item 3: EVENT DATE passa a alimentar também DATE
+    // CREATED (dc_created, a mesma coluna que a lista exibe) — a partir de
+    // agora o arquivo assume esta data como data de criação, refletindo
+    // na hora na lista sem esperar um recarregar().
+    for (int idx : indicesFiltrados_) {
+        if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+        auto& item = todosItens_[static_cast<size_t>(idx)];
+        if (!item.selecionado) continue;
+        projeto_.salvarMetadado(item.id, "ano", v.toStdString());
+        projeto_.salvarMetadado(item.id, "dc_created", v.toStdString());
+        item.dataCriacao = v;
+    }
+    if (tabela_) {
+        tabela_->updateContent();
+        tabela_->repaint();
+    }
+    atualizarContagens();
+}
+
+std::vector<juce::String> IntakeWorkspaceComponent::valoresExistentesParaColuna(const std::string& coluna) const {
+    std::vector<juce::String> out;
+    try {
+        auto stmt = projeto_.projeto().registro().prepare(
+            "SELECT DISTINCT " + coluna + " FROM item WHERE " + coluna + " IS NOT NULL AND TRIM(" + coluna + ") <> '' "
+            "ORDER BY " + coluna + " COLLATE NOCASE ASC");
+        while (stmt.step()) out.push_back(juce::String(stmt.columnText(0)));
+    } catch (...) {}
+    return out;
+}
+
+void IntakeWorkspaceComponent::mostrarEditorCreatorLote(juce::Rectangle<int> screenBounds) {
+    auto content = std::make_unique<AutocompleteLotePopupContent>(
+        "Set CREATOR for Selected", "Creator name...",
+        valoresExistentesParaColuna("dc_creator"),
+        corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::Artista),
+        [this](const juce::String& valor) { aplicarCreatorAosSelecionados(valor); });
+    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
+}
+
+void IntakeWorkspaceComponent::mostrarEditorSubjectLote(juce::Rectangle<int> screenBounds) {
+    auto content = std::make_unique<AutocompleteLotePopupContent>(
+        "Set SUBJECT for Selected", "Subject...",
+        valoresExistentesParaColuna("dc_subject"),
+        corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::Subject),
+        [this](const juce::String& valor) { aplicarSubjectAosSelecionados(valor); });
+    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
+}
+
+void IntakeWorkspaceComponent::mostrarEditorEventDateLote(juce::Rectangle<int> screenBounds) {
+    auto content = std::make_unique<AutocompleteLotePopupContent>(
+        "Set EVENT DATE for Selected", "YYYY",
+        valoresExistentesParaColuna("ano"),
+        corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::Ano),
+        [this](const juce::String& valor) { aplicarEventDateAosSelecionados(valor); });
+    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
+}
+
+void IntakeWorkspaceComponent::mostrarEditorContentLote(juce::Rectangle<int> screenBounds) {
+    auto content = std::make_unique<ContentLotePopupContent>(
+        corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia::ContentType),
+        [this](const juce::String& valor) { aplicarColecaoAosSelecionados(traduzirContent(valor, false)); });
+    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
 }
 
 void IntakeWorkspaceComponent::mostrarEditorOriginalSourceMediumLote(juce::Rectangle<int> screenBounds) {
@@ -1682,7 +2108,8 @@ void IntakeWorkspaceComponent::mostrarEditorOriginalSourceMedium(int itemIndex, 
 
 void IntakeWorkspaceComponent::mostrarEditorGeolocationLote(juce::Rectangle<int> screenBounds) {
     auto content = std::make_unique<GeoLocationPopupContent>(
-        true, [this](const std::string& coords, const std::string& addr, const std::string& city, const std::string& state, const std::string& country) {
+        projeto_.projeto().registro(), true,
+        [this](const std::string& coords, const std::string& addr, const std::string& city, const std::string& state, const std::string& country) {
             aplicarGeolocationAosSelecionados(coords, addr, city, state, country);
         });
     juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
@@ -1723,10 +2150,10 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
 
     if (!geoTemplate.hasAnyLocationData()) return;
 
-    std::vector<std::string> ids;
-    for (const auto& item : todosItens_) {
-        if (item.selecionado) ids.push_back(item.id);
-    }
+    // Item 1 (lista nova de hoje): itensSelecionados() já respeita o filtro
+    // ativo — o que estiver escondido não entra, mesmo marcado.
+    auto selecionados = itensSelecionados();
+    std::vector<std::string> ids(selecionados.begin(), selecionados.end());
     if (ids.empty()) return;
 
     matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto_.projeto().registro(), ids, geoTemplate);
@@ -1734,10 +2161,10 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
 }
 
 void IntakeWorkspaceComponent::confirmarSelecaoParaGrid() {
-    std::vector<std::string> ids;
-    for (const auto& item : todosItens_) {
-        if (item.selecionado) ids.push_back(item.id);
-    }
+    // Item 1 (lista nova de hoje): idem — só o que está selecionado E
+    // visível sob o filtro atual.
+    auto selecionados = itensSelecionados();
+    std::vector<std::string> ids(selecionados.begin(), selecionados.end());
     if (ids.empty()) return;
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(
@@ -1754,12 +2181,16 @@ void IntakeWorkspaceComponent::confirmarSelecaoParaGrid() {
 }
 
 void IntakeWorkspaceComponent::confirmarTodosParaGrid() {
-    if (todosItens_.empty()) return;
+    // Item 1 (lista nova de hoje): "ALL" passa a significar "todos os
+    // visíveis sob o filtro atual" — não literalmente cada item do INTAKE.
+    if (indicesFiltrados_.empty()) return;
     std::vector<std::string> ids;
-    ids.reserve(todosItens_.size());
-    for (const auto& item : todosItens_) {
-        ids.push_back(item.id);
+    ids.reserve(indicesFiltrados_.size());
+    for (int idx : indicesFiltrados_) {
+        if (idx >= 0 && idx < static_cast<int>(todosItens_.size()))
+            ids.push_back(todosItens_[static_cast<size_t>(idx)].id);
     }
+    if (ids.empty()) return;
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(
         "intake_confirm_all", "Promoting to GRID", static_cast<int>(ids.size()), nullptr,
@@ -1775,10 +2206,10 @@ void IntakeWorkspaceComponent::confirmarTodosParaGrid() {
 }
 
 void IntakeWorkspaceComponent::removerSelecionadosDoIntake() {
-    std::vector<std::string> ids;
-    for (const auto& item : todosItens_) {
-        if (item.selecionado) ids.push_back(item.id);
-    }
+    // Item 1 (lista nova de hoje): REJECT SELECTED só atinge o que está
+    // selecionado E visível sob o filtro ativo.
+    auto selecionados = itensSelecionados();
+    std::vector<std::string> ids(selecionados.begin(), selecionados.end());
     if (ids.empty()) return;
 
     projeto_.removerItensDoProjeto(ids);
@@ -1899,7 +2330,11 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
     } else if (columnId == kColDateCreated) {
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
-        g.drawText(item.dataCriacao.isNotEmpty() ? item.dataCriacao : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
+        // Item 3 (nova lista): a coluna mostra só o ano (AAAA) — a data
+        // completa continua guiando a ordenação por esta coluna (ver
+        // compareElements, kColDateCreated), só a exibição encolheu.
+        juce::String ano = item.dataCriacao.length() >= 4 ? item.dataCriacao.substring(0, 4) : juce::String();
+        g.drawText(ano.isNotEmpty() ? ano : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColSize) {
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(12.0f)));
@@ -2059,7 +2494,24 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 
     if (columnId != kColSelect && columnId != kColAction) {
-        todosItens_[static_cast<size_t>(realIndex)].selecionado = !todosItens_[static_cast<size_t>(realIndex)].selecionado;
+        // item (shift-clique seleciona intervalo): segura shift e clica em
+        // outra linha — tudo entre a âncora (último clique simples) e esta
+        // linha vira selecionado, igual Finder/Explorer. A âncora só muda
+        // num clique simples (sem shift), pra dar pra esticar/encolher o
+        // intervalo repetindo o shift+clique a partir do mesmo ponto.
+        if (e.mods.isShiftDown() && ultimaPosicaoClicadaParaSelecao_ >= 0 &&
+            ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(indicesFiltrados_.size())) {
+            int de = std::min(ultimaPosicaoClicadaParaSelecao_, rowNumber);
+            int ate = std::max(ultimaPosicaoClicadaParaSelecao_, rowNumber);
+            for (int p = de; p <= ate; ++p) {
+                int ri = indicesFiltrados_[static_cast<size_t>(p)];
+                if (ri >= 0 && ri < static_cast<int>(todosItens_.size()))
+                    todosItens_[static_cast<size_t>(ri)].selecionado = true;
+            }
+        } else {
+            todosItens_[static_cast<size_t>(realIndex)].selecionado = !todosItens_[static_cast<size_t>(realIndex)].selecionado;
+            ultimaPosicaoClicadaParaSelecao_ = rowNumber;
+        }
         if (tabela_) {
             tabela_->updateContent();
             tabela_->repaint();
@@ -2276,47 +2728,134 @@ void IntakeWorkspaceComponent::paint(juce::Graphics& g) {
 
     g.fillAll(tk.fundo);
 
-    // Top Header background (44px)
-    g.setColour(tk.painel);
-    g.fillRect(0, 0, getWidth(), 44);
+    // A faixa superior de 44px saiu (itens 2 e 3 do ajuste de layout do
+    // INTAKE): INGEST/GOOGLE DRIVE/LIGHTROOM e HELP/CLOSE PROJECT subiram
+    // para a linha das tabs, e a linha que sobrou foi eliminada — o
+    // conteúdo começa direto no topo do workspace.
 
-    // Left Sidebar background (230px wide, from y=44 to bottom)
+    // Left Sidebar background (230px wide, full height)
     g.setColour(tk.fundo);
-    g.fillRect(0, 44, 230, getHeight() - 44);
+    g.fillRect(0, 0, 230, getHeight());
 
-    // Dividers
+    // Divider
     g.setColour(tk.borda);
-    g.fillRect(0, 43, getWidth(), 1);
-    g.fillRect(229, 44, 1, getHeight() - 44);
+    g.fillRect(229, 0, 1, getHeight());
+
+    // Cards da coluna esquerda (FILTER / SELECTION / BATCH ASSIGNMENT /
+    // ACTIONS) — mesmo tratamento visual da aba METADATA.
+    for (const auto& cardBounds : secaoCardBounds_) {
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(cardBounds.toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+    }
+
+    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    for (const auto& [titulo, bounds] : secaoHeaderBounds_) {
+        auto textoBounds = bounds;
+        if (titulo == "GEO LOCATION" && iconeGeo_.isValid()) {
+            const int iconeAltura = juce::jmin(bounds.getHeight(), 14);
+            auto iconeBounds = textoBounds.removeFromLeft(iconeAltura).withSizeKeepingCentre(iconeAltura, iconeAltura);
+            g.drawImage(iconeGeo_, iconeBounds.toFloat(), juce::RectanglePlacement::centred);
+            textoBounds.removeFromLeft(4);
+        }
+        g.setColour(tk.textoPrimario);
+        g.drawText(titulo, textoBounds, juce::Justification::centredLeft);
+    }
+}
+
+void IntakeWorkspaceComponent::setHasParentCatalog(bool hasParent) {
+    hasParentCatalog_ = hasParent;
+    resized();
+}
+
+void IntakeWorkspaceComponent::componentesBarraSuperior(
+        std::vector<std::pair<juce::Component*, int>>& esquerda,
+        std::vector<std::pair<juce::Component*, int>>& direita) {
+    esquerda.clear();
+    direita.clear();
+    // INGEST FILES / GOOGLE DRIVE / LIGHTROOM saíram da linha das tabs e
+    // moraram no card IMPORT, no topo da coluna esquerda (acima do FILTER)
+    // — ver resized(). A barra de navegação continua hospedando só o HELP.
+    if (btnAjuda_)        direita.push_back({btnAjuda_.get(), 28});
 }
 
 void IntakeWorkspaceComponent::resized() {
     auto area = getLocalBounds();
 
-    // Top Header Bar (44px high)
-    auto topBar = area.removeFromTop(44).reduced(14, 6);
-    lblTitulo_->setBounds(topBar.removeFromLeft(120));
-    topBar.removeFromLeft(8);
-    lblContadorTotal_->setBounds(topBar.removeFromLeft(160));
-    topBar.removeFromLeft(12);
-    if (btnVisaoLista_) btnVisaoLista_->setBounds(topBar.removeFromLeft(34));
-    topBar.removeFromLeft(4);
-    if (btnVisaoIcones_) btnVisaoIcones_->setBounds(topBar.removeFromLeft(34));
+    // Hide old labels
+    if (lblTitulo_) lblTitulo_->setVisible(false);
+    if (lblContadorTotal_) lblContadorTotal_->setVisible(false);
 
-    btnIngerir_->setBounds(topBar.removeFromRight(180));
-    if (btnGoogleDrive_) {
-        topBar.removeFromRight(8);
-        btnGoogleDrive_->setBounds(topBar.removeFromRight(36));
-    }
-    if (btnLightroom_) {
-        topBar.removeFromRight(8);
-        btnLightroom_->setBounds(topBar.removeFromRight(36));
-    }
+    // A barra superior de 44px não existe mais aqui: os cinco comandos
+    // (INGEST FILES / GOOGLE DRIVE / LIGHTROOM à esquerda, HELP / CLOSE
+    // PROJECT à direita) são posicionados pela barra de navegação, que os
+    // hospeda na mesma linha das tabs — ver componentesBarraSuperior().
 
     // Left Sidebar (230px wide)
     auto sidebar = area.removeFromLeft(230).reduced(10, 8);
 
-    // 1. Category Filter Pills
+    // O seletor de modo de visualização (List / Miniatures) é posicionado
+    // dentro do card FILTER, logo abaixo — não há mais um bloco solto aqui.
+
+    // Cards da coluna esquerda (mesmo tratamento da aba METADATA, item 4 do
+    // segundo lote de correções): cada cluster lógico vira um card com
+    // título e borda próprios, no lugar das linhas divisórias soltas.
+    if (divisor1_) divisor1_->setVisible(false);
+    if (divisor2_) divisor2_->setVisible(false);
+
+    secaoHeaderBounds_.clear();
+    secaoCardBounds_.clear();
+    const int kCardPad = 6;
+    const int kHeaderH = 18;
+    int cardTop = 0;
+    auto iniciarCard = [&] {
+        sidebar.removeFromTop(kCardPad);
+        cardTop = sidebar.getY();
+    };
+    auto finalizarCard = [&] {
+        sidebar.removeFromTop(kCardPad);
+        secaoCardBounds_.push_back(juce::Rectangle<int>(sidebar.getX() - 4, cardTop - kCardPad,
+                                                          sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
+    };
+
+    // 0. IMPORT — os três comandos de entrada de arquivo (INGEST FILES,
+    // GOOGLE DRIVE, LIGHTROOM) vivem aqui, em card próprio no topo da
+    // coluna esquerda, em vez de emprestados para a linha das tabs.
+    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_) {
+        for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
+                                   static_cast<juce::Component*>(btnGoogleDrive_.get()),
+                                   static_cast<juce::Component*>(btnLightroom_.get())}) {
+            if (c->getParentComponent() != this) addAndMakeVisible(*c);
+        }
+        iniciarCard();
+        secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
+        sidebar.removeFromTop(4);
+        btnIngerir_->setBounds(sidebar.removeFromTop(28));
+        sidebar.removeFromTop(4);
+        {
+            auto importRow = sidebar.removeFromTop(28);
+            int half = (importRow.getWidth() - 6) / 2;
+            btnGoogleDrive_->setBounds(importRow.removeFromLeft(half));
+            importRow.removeFromLeft(6);
+            btnLightroom_->setBounds(importRow);
+        }
+        finalizarCard();
+        sidebar.removeFromTop(8);
+    }
+
+    // 1. FILTER (view mode + category pills)
+    iniciarCard();
+    secaoHeaderBounds_.push_back({i18n::t("intake.secao_filter"), sidebar.removeFromTop(kHeaderH)});
+    sidebar.removeFromTop(4);
+    if (btnVisaoLista_ && btnVisaoIcones_) {
+        auto viewRow = sidebar.removeFromTop(26);
+        int half = (viewRow.getWidth() - 6) / 2;
+        btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
+        viewRow.removeFromLeft(6);
+        btnVisaoIcones_->setBounds(viewRow);
+        sidebar.removeFromTop(6);
+    }
     btnFiltroAll_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroAudio_->setBounds(sidebar.removeFromTop(24));
@@ -2328,13 +2867,13 @@ void IntakeWorkspaceComponent::resized() {
     btnFiltroDoc_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(10);
+    finalizarCard();
+    sidebar.removeFromTop(8);
 
-    // Divider line 1
-    if (divisor1_) divisor1_->setBounds(sidebar.removeFromTop(1));
-    sidebar.removeFromTop(10);
-
-    // 2. Selection Cluster
+    // 2. SELECTION
+    iniciarCard();
+    secaoHeaderBounds_.push_back({i18n::t("intake.secao_selection"), sidebar.removeFromTop(kHeaderH)});
+    sidebar.removeFromTop(4);
     lblSubtitulo_->setBounds(sidebar.removeFromTop(18));
     sidebar.removeFromTop(4);
     {
@@ -2344,32 +2883,48 @@ void IntakeWorkspaceComponent::resized() {
         selRow.removeFromLeft(6);
         btnLimparSelecao_->setBounds(selRow);
     }
-    sidebar.removeFromTop(10);
+    finalizarCard();
+    sidebar.removeFromTop(8);
 
-    // 3. Batch Assignment Cluster
-    lblRotuloColecao_->setBounds(sidebar.removeFromTop(18));
+    // 3. BATCH ASSIGNMENT — quatro botões coloridos, um por campo de
+    // metadata (item 2 da correção "BACKUP e INTAKE"), sem rótulo/combo
+    // genérico. GEO LOCATION fica de fora, em card próprio logo abaixo
+    // (item 3 — "deixar clara a separação").
+    iniciarCard();
+    secaoHeaderBounds_.push_back({i18n::t("intake.secao_batch"), sidebar.removeFromTop(kHeaderH)});
     sidebar.removeFromTop(4);
-    comboColecaoLote_->setBounds(sidebar.removeFromTop(26));
+    btnSourceMediumLote_->setBounds(sidebar.removeFromTop(26));
     sidebar.removeFromTop(4);
-    btnAplicarColecaoLote_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(6);
-    btnOriginalMediumLote_->setBounds(sidebar.removeFromTop(24));
+    btnCreatorLote_->setBounds(sidebar.removeFromTop(26));
     sidebar.removeFromTop(4);
-    btnGeolocationLote_->setBounds(sidebar.removeFromTop(24));
-    sidebar.removeFromTop(10);
+    btnContentLote_->setBounds(sidebar.removeFromTop(26));
+    sidebar.removeFromTop(4);
+    btnSubjectLote_->setBounds(sidebar.removeFromTop(26));
+    sidebar.removeFromTop(4);
+    btnEventDateLote_->setBounds(sidebar.removeFromTop(26));
+    finalizarCard();
+    sidebar.removeFromTop(8);
 
-    // Divider line 2
-    if (divisor2_) divisor2_->setBounds(sidebar.removeFromTop(1));
-    sidebar.removeFromTop(10);
+    // 3b. GEO LOCATION — seção separada dos quatro campos de metadata acima.
+    iniciarCard();
+    secaoHeaderBounds_.push_back({"GEO LOCATION", sidebar.removeFromTop(kHeaderH)});
+    sidebar.removeFromTop(4);
+    btnGeolocationLote_->setBounds(sidebar.removeFromTop(26));
+    finalizarCard();
+    sidebar.removeFromTop(8);
 
-    // 4. Batch Actions (Send to Grid / Reject)
+    // 4. ACTIONS (Send to Grid / Reject)
+    iniciarCard();
+    secaoHeaderBounds_.push_back({i18n::t("intake.secao_actions"), sidebar.removeFromTop(kHeaderH)});
+    sidebar.removeFromTop(4);
     btnConfirmarSelecao_->setBounds(sidebar.removeFromTop(28));
     sidebar.removeFromTop(4);
     btnConfirmarTodos_->setBounds(sidebar.removeFromTop(28));
     sidebar.removeFromTop(4);
     btnRemoverSelecao_->setBounds(sidebar.removeFromTop(28));
+    finalizarCard();
 
-    // Right Area fills the remaining workspace (x = 230 to width, y = 44 to height)
+    // Right Area fills the remaining workspace (x = 230 to width, full height)
     if (tabela_) {
         tabela_->setBounds(area);
         if (chkSelectAllHeader_) {
@@ -2396,11 +2951,6 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         lblSubtitulo_->setFont(juce::Font(juce::FontOptions(13.0f)));
         lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
-    if (lblRotuloColecao_) {
-        lblRotuloColecao_->setText(i18n::t("intake.rotulo_conteudo"), juce::dontSendNotification);
-        lblRotuloColecao_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        lblRotuloColecao_->setColour(juce::Label::textColourId, tk.textoPrimario);
-    }
     if (btnVisaoLista_) {
         btnVisaoLista_->setAtivo(modoVisao_ == ModoVisao::Lista);
         btnVisaoLista_->setTooltip(i18n::t("intake.tooltip_lista"));
@@ -2412,13 +2962,6 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     if (btnIngerir_) {
         btnIngerir_->setButtonText(i18n::t("intake.btn_ingerir"));
         btnIngerir_->setTooltip(i18n::t("intake.tooltip_ingerir"));
-    }
-    if (comboColecaoLote_) {
-        popularComboColecoes(*comboColecaoLote_, true);
-        comboColecaoLote_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-        comboColecaoLote_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
-        comboColecaoLote_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboColecaoLote_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (chkSelectAllHeader_) {
         chkSelectAllHeader_->setTooltip(matriz::i18n::localeAtivo().startsWith("pt") ? juce::String::fromUTF8("Selecionar / Desmarcar Todos") : "Select / Deselect All");
@@ -2440,14 +2983,9 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         btnLimparSelecao_->setButtonText(i18n::t("intake.limpar_selecao"));
         updatePill(btnLimparSelecao_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
     }
-    if (btnAplicarColecaoLote_) {
-        btnAplicarColecaoLote_->setButtonText(i18n::t("intake.btn_aplicar"));
-        updatePill(btnAplicarColecaoLote_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
-    }
-    if (btnOriginalMediumLote_) {
-        btnOriginalMediumLote_->setButtonText(i18n::t("intake.btn_origem_lote"));
-        updatePill(btnOriginalMediumLote_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
-    }
+    // SOURCE MEDIUM/CREATOR/CONTENT/SUBJECT mantêm a cor fixa do bloco
+    // correspondente no Visual Editor (setada no construtor) — não passam
+    // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
         btnGeolocationLote_->setButtonText(i18n::t("intake.btn_geo_lote"));
         updatePill(btnGeolocationLote_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
@@ -2463,6 +3001,11 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     if (btnRemoverSelecao_) {
         btnRemoverSelecao_->setButtonText(i18n::t("intake.btn_rejeitar_selecionados"));
         updatePill(btnRemoverSelecao_.get(), juce::Colours::white, tk.perigo);
+    }
+    if (btnAjuda_) {
+        btnAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
+        btnAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
     }
     if (tabela_) {
         auto& hdr = tabela_->getHeader();

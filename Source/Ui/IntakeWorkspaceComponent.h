@@ -11,6 +11,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace matriz::ui {
@@ -72,6 +73,15 @@ public:
     // Called when the Lightroom import button is clicked
     std::function<void()> aoIngerirDeLightroom;
     std::function<void()> aoConfirmarParaGrid;
+    std::function<void()> aoPedirAjuda;
+    void setHasParentCatalog(bool hasParent);
+
+    // Os comandos do topo do INTAKE moraram numa faixa própria de 44px logo
+    // abaixo das tabs; agora são hospedados pela barra de navegação, na mesma
+    // linha das tabs (itens 2 e 3 do ajuste de layout). Os botões continuam
+    // sendo destes objeto — a barra só os posiciona.
+    void componentesBarraSuperior(std::vector<std::pair<juce::Component*, int>>& esquerda,
+                                  std::vector<std::pair<juce::Component*, int>>& direita);
 
     // Static helper to get controlled collections vocabulary
     struct CategoriaColecao {
@@ -114,6 +124,25 @@ private:
     void mostrarEditorOriginalSourceMediumLote(juce::Rectangle<int> screenBounds);
     void aplicarGeolocationAosSelecionados(const std::string& coords, const std::string& addr, const std::string& city, const std::string& state, const std::string& country);
     void mostrarEditorGeolocationLote(juce::Rectangle<int> screenBounds);
+
+    // Batch Assignment — CREATOR/SUBJECT (texto com autocomplete) e CONTENT
+    // (dropdown, substitui o combo+botão inline antigo por um popup, igual
+    // aos outros três campos).
+    void aplicarCreatorAosSelecionados(const juce::String& valor);
+    void aplicarSubjectAosSelecionados(const juce::String& valor);
+    void mostrarEditorCreatorLote(juce::Rectangle<int> screenBounds);
+    void mostrarEditorSubjectLote(juce::Rectangle<int> screenBounds);
+    void mostrarEditorContentLote(juce::Rectangle<int> screenBounds);
+    // Item 2 (nova lista): EVENT DATE em lote — mesmo campo "ano" que a
+    // ficha já edita, só que com um botão dedicado aqui no INTAKE. O
+    // default (herdar de DATE CREATED) continua intocado: isto só grava
+    // quando o operador de fato escolhe um valor no popup.
+    void aplicarEventDateAosSelecionados(const juce::String& valor);
+    void mostrarEditorEventDateLote(juce::Rectangle<int> screenBounds);
+    // Valores já usados nessa coluna no projeto inteiro, sem duplicata,
+    // ordenados alfabeticamente — base do autocomplete (item 4), lida
+    // direto da tabela item (mesma fonte que a ficha grava).
+    std::vector<juce::String> valoresExistentesParaColuna(const std::string& coluna) const;
     void confirmarSelecaoParaGrid();
     void confirmarTodosParaGrid();
     void removerSelecionadosDoIntake();
@@ -128,6 +157,11 @@ private:
     std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
+    // item (shift-click seleciona intervalo): âncora do último clique
+    // simples (não-shift), em índice de indicesFiltrados_ (posição visível,
+    // não realIdx) — shift+clique seleciona tudo entre esta âncora e o novo
+    // clique. Compartilhado entre a lista (cellClicked) e o grid de ícones.
+    int ultimaPosicaoClicadaParaSelecao_ = -1;
     juce::String filtroCategoriaAtual_ = "ALL"; // "ALL", "Audio", "Video", "Image", "Document", "Other"
     int ultimoSortColumnId_ = 0;
     bool sortAscendente_ = true;
@@ -148,6 +182,8 @@ private:
     std::unique_ptr<juce::TextButton> btnIngerir_;
     std::unique_ptr<juce::Button> btnGoogleDrive_;
     std::unique_ptr<juce::Button> btnLightroom_;
+    std::unique_ptr<juce::TextButton> btnAjuda_;
+    bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
     std::unique_ptr<juce::TextButton> btnRemoverSelecao_;
@@ -163,10 +199,16 @@ private:
 
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
-    std::unique_ptr<juce::Label> lblRotuloColecao_;
-    std::unique_ptr<juce::ComboBox> comboColecaoLote_;
-    std::unique_ptr<juce::TextButton> btnAplicarColecaoLote_;
-    std::unique_ptr<juce::TextButton> btnOriginalMediumLote_;
+    // Batch Assignment (item 2 da correção "BACKUP e INTAKE"): um botão
+    // colorido por campo, cor idêntica ao bloco correspondente no Visual
+    // Editor da aba BACKUP (HierarquiaEditorComponent::corDoNivel) — cada
+    // um abre um popup próprio e grava direto na mesma coluna de metadado
+    // que a ficha usa, sem estrutura paralela.
+    std::unique_ptr<juce::TextButton> btnSourceMediumLote_;
+    std::unique_ptr<juce::TextButton> btnCreatorLote_;
+    std::unique_ptr<juce::TextButton> btnContentLote_;
+    std::unique_ptr<juce::TextButton> btnSubjectLote_;
+    std::unique_ptr<juce::TextButton> btnEventDateLote_;
     std::unique_ptr<juce::TextButton> btnGeolocationLote_;
 
     // Table List & Thumbnails Grid
@@ -183,6 +225,12 @@ private:
 
     std::unique_ptr<juce::Component> divisor1_;
     std::unique_ptr<juce::Component> divisor2_;
+
+    // Cards da coluna esquerda (mesmo tratamento aplicado na aba METADATA):
+    // um retângulo com título por seção, em vez das linhas divisórias soltas.
+    std::vector<std::pair<juce::String, juce::Rectangle<int>>> secaoHeaderBounds_;
+    std::vector<juce::Rectangle<int>> secaoCardBounds_;
+    juce::Image iconeGeo_; // geo.png, fundo branco removido — ao lado do título GEO LOCATION
 };
 
 } // namespace matriz::ui

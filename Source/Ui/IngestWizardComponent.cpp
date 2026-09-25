@@ -564,6 +564,21 @@ void IngestWizardComponent::iniciarImportacao() {
     std::string projetoId = stmtProjeto.columnText(0);
     juce::String prefixo = stmtProjeto.columnText(1);
 
+    // D1: número sequencial do acervo lido UMA vez pro lote inteiro (era um
+    // SELECT MAX(...) por arquivo, sem índice em codigo_acervo — custo
+    // O(n²) no lote). Cada job só incrementa este contador em memória, sob
+    // o mesmo mutex de escrita (escritaRegistro) que já protege a escrita.
+    int maxAcervoAtual = 0;
+    {
+        auto stmtMax = registro->prepare(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+            "FROM item WHERE codigo_acervo LIKE ?");
+        stmtMax.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
+        if (stmtMax.step())
+            maxAcervoAtual = static_cast<int>(stmtMax.columnInt(0));
+    }
+    auto proximoNumeroAcervo = std::make_shared<std::atomic<int>>(maxAcervoAtual);
+
     auto importadosPtr = importados_;
     auto escritaRegistro = std::make_shared<std::mutex>();
     juce::Component::SafePointer<IngestWizardComponent> safeThis(this);
@@ -616,7 +631,7 @@ void IngestWizardComponent::iniciarImportacao() {
         auto& res = resultados_[idx];
 
         pool_.addJob([this, registro, indice, pastaProjeto, itemId, idx, prefixo,
-                      escritaRegistro, importadosPtr, safeThis]() {
+                      escritaRegistro, proximoNumeroAcervo, importadosPtr, safeThis]() {
             auto& res = resultados_[idx];
             bool sucesso = false;
             bool duplicata = false;
@@ -656,13 +671,7 @@ void IngestWizardComponent::iniciarImportacao() {
                         auto resultado = matriz::ingest::gravarArquivoAnalisado(
                             *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
 
-                        int proximoNumero = 1;
-                        auto stmtContagem = registro->prepare(
-                            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
-                            "FROM item WHERE codigo_acervo LIKE ?");
-                        stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
-                        if (stmtContagem.step())
-                            proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+                        int proximoNumero = proximoNumeroAcervo->fetch_add(1) + 1;
                         juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
 
                         std::string tipoMidia = "";
@@ -696,15 +705,9 @@ void IngestWizardComponent::iniciarImportacao() {
                         *registro, itemId, res.analise, papelInfo.papel, papelInfo.ehMaster);
 
                     // Sequencial permanente SÓ no sucesso (critério 6).
-                    // Busca o maior sufixo numérico existente para este prefixo no banco,
-                    // evitando conflitos causados por itens excluídos ou lacunas de id.
-                    int proximoNumero = 1;
-                    auto stmtContagem = registro->prepare(
-                        "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
-                        "FROM item WHERE codigo_acervo LIKE ?");
-                    stmtContagem.bind(1, matriz::db::Value::of(prefixo.toStdString() + "-%"));
-                    if (stmtContagem.step())
-                        proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+                    // D1: contador cacheado no início do lote (ver acima),
+                    // em vez de um SELECT MAX(...) por arquivo.
+                    int proximoNumero = proximoNumeroAcervo->fetch_add(1) + 1;
                     juce::String codigo = prefixo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
 
                     std::string tipoMidia = "";
