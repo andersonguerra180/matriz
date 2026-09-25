@@ -2264,9 +2264,16 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
             std::string novaPastaId = criarPastaAcervo(atual.no->nome.toStdString(), pai);
 
             if (!atual.no->itemIdsDiretos.empty()) {
-                std::vector<std::string> ids(atual.no->itemIdsDiretos.begin(), atual.no->itemIdsDiretos.end());
-                adicionarItensAPasta(ids, novaPastaId);
-                vinculados += static_cast<int>(ids.size());
+                std::string agoraItem = matriz::model::agoraIso8601();
+                for (const auto& itemId : atual.no->itemIdsDiretos) {
+                    projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                                             {matriz::db::Value::of(itemId)});
+                    projeto_->registro().run(
+                        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                         matriz::db::Value::of(novaPastaId), matriz::db::Value::of(agoraItem)});
+                }
+                vinculados += static_cast<int>(atual.no->itemIdsDiretos.size());
             }
 
             for (auto& filho : atual.no->filhos) pilha.push_back({&filho, novaPastaId});
