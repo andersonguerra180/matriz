@@ -245,8 +245,13 @@ PlanoSync SyncEngine::escanearEComparar(const juce::File& referenciaRaiz,
         return plano;
     }
 
-    // Auto-reconciliação do projetoId entre destinos vinculados à mesma sessão de sincronização
-    if (destJsonRef->projetoId != destJsonAlvo->projetoId) {
+    // Proteção de Backup: validação de projetoId entre destinos
+    if (!destJsonRef->projetoId.empty() && !destJsonAlvo->projetoId.empty() && destJsonRef->projetoId != destJsonAlvo->projetoId) {
+        plano.errosValidacao.push_back("Target destination belongs to a different project (ID: " +
+                                       destJsonAlvo->projetoId + ", expected: " + destJsonRef->projetoId + ")");
+        return plano;
+    }
+    if (destJsonAlvo->projetoId.empty() && !destJsonRef->projetoId.empty()) {
         destJsonAlvo->projetoId = destJsonRef->projetoId;
         destJsonAlvo->gravarEmArquivo(alvoRaiz.getChildFile("destination.json"));
     }
@@ -708,6 +713,12 @@ std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAuto
                 continue;
             }
             if (cloneInfo->projetoId != projeto.projetoId()) {
+                if (!cloneInfo->projetoId.empty()) {
+                    st.estado = StatusEspelhamento::Estado::Falha;
+                    st.mensagem = "Target destination belongs to a different project (" + juce::String(cloneInfo->projetoId) + ")";
+                    resultados.push_back(st);
+                    continue;
+                }
                 cloneInfo->projetoId = projeto.projetoId();
                 cloneInfo->gravarEmArquivo(cloneRaiz.getChildFile("destination.json"));
             }
