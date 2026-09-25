@@ -85,6 +85,7 @@ struct LeituraTecnicaResultado {
     std::optional<std::string> metaSource;
     std::optional<std::string> metaCoverage;
     std::optional<int> pageCount;
+    std::optional<std::string> metaUnmappedExtras;
 };
 
 // Roda ffprobe (áudio/vídeo/imagem) ou o leitor de PDF conforme a categoria

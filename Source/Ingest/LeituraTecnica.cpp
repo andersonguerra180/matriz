@@ -363,6 +363,34 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
         r.exifGpsLatitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLatitude", "Exif.GPSInfo.GPSLatitudeRef");
         r.exifGpsLongitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLongitude", "Exif.GPSInfo.GPSLongitudeRef");
 
+        // --- Collect unmapped EXIF fields ---
+        // Keys already consumed above or intentionally ignored (GPS handled separately)
+        static const std::set<std::string> chavesConhecidas = {
+            "Exif.Photo.DateTimeOriginal", "Exif.Photo.DateTimeDigitized", "Exif.Image.DateTime",
+            "Exif.Image.Make", "Exif.Image.Model",
+            "Exif.Photo.LensModel",
+            "Exif.Image.Artist",
+            "Exif.Image.ImageDescription", "Exif.Photo.UserComment",
+            "Exif.Image.Copyright",
+            "Exif.Image.Orientation",
+        };
+        // GPS keys are handled separately; skip entire GPSInfo subtree
+        std::string extras;
+        for (const auto& datum : exifData) {
+            std::string key = datum.key();
+            if (chavesConhecidas.count(key)) continue;
+            if (key.find("Exif.GPSInfo") == 0) continue;   // GPS — already in geolocation
+            if (key.find("Exif.Thumbnail") == 0) continue; // embedded thumbnail — not useful
+            std::string val = datum.toString();
+            if (val.empty()) continue;
+            if (!extras.empty()) extras += "\n";
+            // Use the human-readable tag name (e.g. "FocalLength") not the full key
+            std::string tagName = datum.tagName();
+            extras += tagName + ": " + val;
+        }
+        if (!extras.empty())
+            r.metaUnmappedExtras = std::move(extras);
+
         auto exifObj = std::make_unique<juce::DynamicObject>();
         for (auto& datum : exifData)
             exifObj->setProperty(juce::String(datum.key()), juce::String(datum.toString()));
@@ -651,7 +679,7 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
     if (ext == "ai" || ext == "ait" || ext == "eps" || ext == "svg")
         return "adobeillustrator.png";
     if (ext == "indd" || ext == "indt" || ext == "indl" || ext == "indb" || ext == "idml" || ext == "idms" || ext == "inx")
-        return "adobeindesign.png";
+        return "indesign.png";
     if (ext == "ptx" || ext == "ptf" || ext == "pts" || ext == "wfm" || ext == "aan")
         return "pro tools.png";
     if (ext == "rpp" || ext == "rpp-bak" || ext == "rpp-undo")
@@ -668,6 +696,15 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "logic.png";
     if (ext == "lrcat" || ext == "lrcat-journal" || ext == "lrcat-wal" || ext == "lrcat-shm" || ext == "lrtemplate" || ext == "lrsmcol")
         return "lrlogo.png";
+    // Item 4 (lista nova de hoje): capa/miniatura de ícone pra formatos de
+    // escritório sem preview real (não são imagem/áudio/vídeo, então nunca
+    // teriam uma miniatura gerada no ingest).
+    if (ext == "xls" || ext == "xlsx" || ext == "xlsm" || ext == "xlsb" || ext == "csv")
+        return "excel.jpeg";
+    if (ext == "psd" || ext == "psb")
+        return "photoshop.jpeg";
+    if (ext == "doc" || ext == "docx" || ext == "txt" || ext == "rtf")
+        return "word.jpeg";
     return "";
 }
 
