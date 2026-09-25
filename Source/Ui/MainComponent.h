@@ -230,7 +230,12 @@ private:
     // cancelamento passam os dois por aqui, senão a contagem de pendentes
     // nunca zeraria num lote cancelado e o lote ficaria "em andamento" pra
     // sempre — travando fechar projeto, trocar idioma e sair.
-    void finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLote,
+    // Retorna true se não havia nada a finalizar ainda OU se a finalização
+    // foi de fato iniciada; false se foi ADIADA porque outra unidade de
+    // lote ainda está finalizando (finalizandoLote_) — nesse caso quem
+    // chama NÃO PODE descartar loteEmCurso_/estadoLoteAtual_, senão este
+    // lote nunca seria finalizado (modal preso perto de 100%).
+    bool finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLote,
                                  std::shared_ptr<std::atomic<int>> contadorParaAtualizar);
     // Chamado da THREAD DE TRABALHO ao fim de cada arquivo. Não toca no
     // Component — só no contador compartilhado.

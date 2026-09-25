@@ -2161,8 +2161,12 @@ void MainComponent::timerCallback() {
     //  - reavaliar Vaults montados: a cada 5 s, porque conectar um disco não
     //    é evento que precise de resposta em décimos de segundo.
     if (loteEmCurso_) {
-        finalizarUnidadeDeLote(estadoLoteAtual_, nullptr);
-        if (pendentes_->load() <= 0) {
+        bool finalizado = finalizarUnidadeDeLote(estadoLoteAtual_, nullptr);
+        // Só descarta o lote atual quando a finalização de fato aconteceu
+        // (ou ainda nem era hora dela) — se foi ADIADA porque outra
+        // finalização estava em andamento, o lote fica retido e o próprio
+        // timer tenta de novo no próximo tick, até finalizandoLote_ liberar.
+        if (finalizado && pendentes_->load() <= 0) {
             loteEmCurso_ = false;
             estadoLoteAtual_.reset();
         }
@@ -3319,6 +3323,12 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         ingestModalDialog_->setOnSkipCurrent([safeThis] {
             if (safeThis) safeThis->pularArquivoAtualDoLote();
         });
+        // Lote reaproveitando o modal já aberto (loteEmCurso_ já era true
+        // acima, contadores somados em vez de zerados): o total baked no
+        // construtor do modal (ex.: 586) fica defasado assim que este novo
+        // lote de arquivos (ex.: 560) entra — corrige pra bater com
+        // ingestsTotalLote_, a fonte de verdade dos contadores.
+        ingestModalDialog_->ajustarTotalArquivos(ingestsTotalLote_.load());
     }
 
     // 100 ms: rápido o bastante pra grade parecer viva, devagar o bastante
@@ -3585,11 +3595,11 @@ void MainComponent::registrarUnidadeConcluida(const std::shared_ptr<std::atomic<
 // Agora o worker só decrementa um átomo (registrarUnidadeConcluida) e a
 // message thread consulta o estado no seu próprio ritmo. O custo de
 // acompanhar um lote deixa de depender do tamanho do lote.
-void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLote,
+bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLote,
                                             std::shared_ptr<std::atomic<int>> contadorParaAtualizar) {
     MATRIZ_TRACE("MainComponent::finalizarUnidadeDeLote");
     juce::ignoreUnused(contadorParaAtualizar);
-    if (estadoLote == nullptr || !projetoAberto_) return;
+    if (estadoLote == nullptr || !projetoAberto_) return true;
     constexpr int kIntervaloAtualizacaoMs = 1500;
 
     bool ultimo = pendentes_->load() <= 0;
@@ -3612,7 +3622,7 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
         atualizarPainelDeApoio();
     }
 
-    if (!ultimo) return;
+    if (!ultimo) return true;
 
     // Daqui pra baixo, UMA vez, no fim do lote — a "finalização", que fecha
     // índices, árvore, listas e histórico.
@@ -3629,7 +3639,17 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
     // pintado antes do trabalho começar), e as que disparam trabalho
     // assíncrono esperam esse trabalho terminar de verdade antes de passar
     // adiante. O modal só fecha depois da última.
-    if (finalizandoLote_) return;
+    if (finalizandoLote_) {
+        // Outra unidade de lote ainda está finalizando — NÃO pode descartar
+        // o estado deste lote (quem chama mantém loteEmCurso_/
+        // estadoLoteAtual_ e tenta de novo no próximo tick do timer),
+        // senão este lote nunca seria finalizado e o modal ficaria preso.
+        matriz::diag::WatchdogLogger::getInstance().log(
+            "[ingest-finalize] adiado: unidade de lote pronta para finalizar "
+            "(pendentes=0) mas finalizandoLote_ ja esta true (outra finalizacao em andamento) "
+            "- retentando no proximo tick");
+        return false;
+    }
     finalizandoLote_ = true;
 
     const double tInicioFinalizacao = juce::Time::getMillisecondCounterHiRes();
@@ -3712,7 +3732,7 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
 
         if (ingestModalDialog_) ingestModalDialog_->beginFinalizing(static_cast<int>(passos->size()));
         executarPassosFinalizacao(passos, 0, aoTerminar);
-        return;
+        return true;
     }
 
     // --- caminho normal ---
@@ -3803,6 +3823,7 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
 
     if (ingestModalDialog_) ingestModalDialog_->beginFinalizing(static_cast<int>(passos->size()));
     executarPassosFinalizacao(passos, 0, aoTerminar);
+    return true;
 }
 
 // Executa UMA etapa da finalização por volta do loop de mensagens. O atraso
@@ -3812,7 +3833,12 @@ void MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
 void MainComponent::executarPassosFinalizacao(std::shared_ptr<std::vector<PassoFinalizacao>> passos,
                                                size_t indice,
                                                std::shared_ptr<std::function<void()>> aoTerminar) {
-    if (passos == nullptr) { finalizandoLote_ = false; return; }
+    if (passos == nullptr) {
+        matriz::diag::WatchdogLogger::getInstance().log(
+            "[ingest-finalize] executarPassosFinalizacao saiu sem fechar o modal: passos == nullptr");
+        finalizandoLote_ = false;
+        return;
+    }
 
     if (indice >= passos->size()) {
         // AGORA sim: nada pesado sobrou rodando atrás da barra.
@@ -3858,7 +3884,13 @@ void MainComponent::aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFi
                                               size_t indice,
                                               std::shared_ptr<std::function<void()>> aoTerminar,
                                               double inicioEsperaMs) {
-    if (passos == nullptr || indice >= passos->size()) { finalizandoLote_ = false; return; }
+    if (passos == nullptr || indice >= passos->size()) {
+        matriz::diag::WatchdogLogger::getInstance().log(
+            "[ingest-finalize] aguardarPassoFinalizacao saiu sem fechar o modal: "
+            "passos == nullptr ou indice (" + juce::String(static_cast<int>(indice)) + ") fora do range");
+        finalizandoLote_ = false;
+        return;
+    }
 
     auto& pronto = (*passos)[indice].concluido;
     const double esperaMs = juce::Time::getMillisecondCounterHiRes() - inicioEsperaMs;

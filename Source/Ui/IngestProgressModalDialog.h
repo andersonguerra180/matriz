@@ -41,6 +41,13 @@ public:
     // Updates processed count and checks completion
     void updateProgress(int completedCount, const juce::String& currentFileName = {});
 
+    // Mais arquivos entraram no MESMO lote em andamento (ex.: um segundo
+    // drag-and-drop antes do primeiro terminar de copiar) — ao contrário de
+    // startIngestMode(), NÃO reseta completedFiles_/progressFraction_; só
+    // corrige o total mostrado ("X of TOTAL") pra bater com o que o modal
+    // vai de fato processar.
+    void ajustarTotalArquivos(int novoTotal) { totalFiles_ = juce::jmax(totalFiles_, novoTotal); }
+
     // Sets cancelling state
     void setCancelling(bool mantendoArquivos = false);
 
