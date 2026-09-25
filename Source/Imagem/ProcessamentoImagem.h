@@ -48,7 +48,8 @@ void aplicarAjustes(ImagemBuffer& img,
                     float saturacao = 1.0f,
                     int levelMin = 0,
                     int levelMax = 255,
-                    float gamma = 1.0f);
+                    float gamma = 1.0f,
+                    float temperatura = 0.0f);
 
 // 7. Nitidez leve (unsharp mask)
 void nitidez(ImagemBuffer& img, float forca = 0.5f);

@@ -343,7 +343,8 @@ void aplicarAjustes(ImagemBuffer& img,
                     float saturacao,
                     int levelMin,
                     int levelMax,
-                    float gamma) {
+                    float gamma,
+                    float temperatura) {
     if (!img.valido()) return;
 
     brilho = std::clamp(brilho, -1.0f, 1.0f);
@@ -352,12 +353,14 @@ void aplicarAjustes(ImagemBuffer& img,
     levelMin = std::clamp(levelMin, 0, 254);
     levelMax = std::clamp(levelMax, levelMin + 1, 255);
     gamma = std::clamp(gamma, 0.2f, 3.0f);
+    temperatura = std::clamp(temperatura, -1.0f, 1.0f);
 
     bool precisaAjusteLuma = (brilho != 0.0f || contraste != 0.0f ||
                              levelMin != 0 || levelMax != 255 || gamma != 1.0f);
     bool precisaAjusteSat = (saturacao != 1.0f);
+    bool precisaAjusteTemp = (temperatura != 0.0f);
 
-    if (!precisaAjusteLuma && !precisaAjusteSat) return;
+    if (!precisaAjusteLuma && !precisaAjusteSat && !precisaAjusteTemp) return;
 
     // Pré-computa tabela LUT de 256 valores para luminância
     uint8_t lut[256];
@@ -379,6 +382,10 @@ void aplicarAjustes(ImagemBuffer& img,
         lut[i] = static_cast<uint8_t>(std::clamp(std::round(v * 255.0f), 0.0f, 255.0f));
     }
 
+    const float rScale = 1.0f + (temperatura > 0.0f ? 0.30f * temperatura : 0.20f * temperatura);
+    const float gScale = 1.0f + 0.06f * temperatura;
+    const float bScale = 1.0f - (temperatura > 0.0f ? 0.30f * temperatura : 0.25f * temperatura);
+
     const size_t totalPixels = static_cast<size_t>(img.largura * img.altura);
     uint8_t* p = img.pixels.data();
 
@@ -392,6 +399,12 @@ void aplicarAjustes(ImagemBuffer& img,
             r = static_cast<uint8_t>(std::clamp(std::round(luma + (r - luma) * saturacao), 0.0f, 255.0f));
             g = static_cast<uint8_t>(std::clamp(std::round(luma + (g - luma) * saturacao), 0.0f, 255.0f));
             b = static_cast<uint8_t>(std::clamp(std::round(luma + (b - luma) * saturacao), 0.0f, 255.0f));
+        }
+
+        if (precisaAjusteTemp) {
+            r = static_cast<uint8_t>(std::clamp(std::round(r * rScale), 0.0f, 255.0f));
+            g = static_cast<uint8_t>(std::clamp(std::round(g * gScale), 0.0f, 255.0f));
+            b = static_cast<uint8_t>(std::clamp(std::round(b * bScale), 0.0f, 255.0f));
         }
 
         p[0] = r;

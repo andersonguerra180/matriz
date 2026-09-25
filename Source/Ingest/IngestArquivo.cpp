@@ -9,6 +9,7 @@
 #include "../Vault/Resolucao.h"
 #include "LeituraTecnica.h"
 #include "../Ui/OriginalSourceMedium.h"
+#include "../Model/NotasEstruturadas.h"
 
 namespace matriz::ingest {
 
@@ -78,7 +79,7 @@ AnaliseDeArquivo analisarArquivo(const juce::File& arquivoOrigem) {
 
 ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, const std::string& itemId,
                                                const AnaliseDeArquivo& analise, const std::string& papel,
-                                               bool ehMaster) {
+                                               bool ehMaster, std::optional<std::string> derivadaDeArquivoId) {
     std::string projetoId;
     auto stmtProj = registro.prepare("SELECT id FROM projeto LIMIT 1");
     if (stmtProj.step()) projetoId = stmtProj.columnText(0);
@@ -99,12 +100,14 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
     std::string agora = matriz::model::agoraIso8601();
 
     registro.run(
-        "INSERT INTO arquivo (id, item_id, vault_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, "
+        "INSERT INTO arquivo (id, item_id, vault_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, "
+        "derivada_de_arquivo_id, tamanho_bytes, "
         "checksum_md5, checksum_sha256, checksum_gerado_em, caracteristicas_tecnicas_json, estado_presenca, criado_em, atualizado_em) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         {Value::of(resultado.arquivoId), Value::of(itemId), Value::of(vaultId),
          Value::of(caminhoRelativo),
          Value::of(analise.arquivo.getFullPathName().toStdString()), Value::of(papel), Value::of(ehMaster),
+         derivadaDeArquivoId ? Value::of(*derivadaDeArquivoId) : Value::null(),
          Value::of(static_cast<long long>(analise.arquivo.getSize())),
          analise.ehPlaceholderNuvem ? Value::null() : Value::of(analise.checksums.md5),
          analise.ehPlaceholderNuvem ? Value::null() : Value::of(analise.checksums.sha256),
@@ -224,6 +227,33 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
         } else if (analise.leitura.metaDate && !analise.leitura.metaDate->empty()) {
             gravarCampoNativo("dc_created", *analise.leitura.metaDate);
             gravarCampoNativo("data_criacao", *analise.leitura.metaDate);
+
+            // EVENT DATE ("as 3 datas do sistema", item 10): a data extraída
+            // também preenche EVENT DATE (item.ano) na ingestão inicial —
+            // igual ao ramo EXIF acima. Depois disso os campos são
+            // independentes (editar um não deve alterar o outro).
+            juce::String dtMeta(*analise.leitura.metaDate);
+            if (dtMeta.length() >= 4) {
+                std::string anoStr = dtMeta.substring(0, 4).toStdString();
+                registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
+                             {Value::of(anoStr), Value::of(itemId)});
+            }
+        } else {
+            // Terceiro fallback do EVENT DATE: sem EXIF e sem metaDate, usa a
+            // data de CRIAÇÃO do arquivo em disco — a mesma última fonte que a
+            // ficha já usa para exibir DATE CREATED. Sem isso o campo nascia
+            // vazio e o arquivo ficava fora de qualquer filtro de data.
+            //
+            // Só "ano" é preenchido aqui (não dc_created/data_criacao): esses
+            // dois continuam significando "metadado lido do arquivo", e a
+            // ficha já resolve a exibição deles por conta própria.
+            auto criacao = analise.arquivo.getCreationTime();
+            if (criacao != juce::Time()) {
+                std::string anoStr = criacao.formatted("%Y").toStdString();
+                if (anoStr.size() == 4)
+                    registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
+                                 {Value::of(anoStr), Value::of(itemId)});
+            }
         }
 
         // Camera / Device / Original Source Medium
@@ -275,6 +305,27 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
             gravarCampoNativo("dc_language", *analise.leitura.metaLanguage);
         if (analise.leitura.metaSource && !analise.leitura.metaSource->empty())
             gravarCampoNativo("dc_source", *analise.leitura.metaSource);
+
+        // Unmapped EXIF extras → Notes (only if notes are currently empty)
+        if (analise.leitura.metaUnmappedExtras && !analise.leitura.metaUnmappedExtras->empty()) {
+            auto sNotas = registro.prepare("SELECT notas_livres FROM item WHERE id = ?");
+            sNotas.bind(1, Value::of(itemId));
+            std::string existing;
+            if (sNotas.step() && !sNotas.columnIsNull(0)) {
+                existing = sNotas.columnText(0);
+            }
+            if (existing.empty()) {
+                // Seção OTHER METADATA (item "NOTES — estrutura de metadados
+                // e notas"): mesmo texto de sempre, agora dentro do formato
+                // "[TÍTULO]\nconteúdo" que a ficha reconhece e reconstrói
+                // como seção colapsável somente-leitura.
+                std::vector<matriz::model::SecaoNota> secoes = {
+                    {matriz::model::kOutraMetadataTitulo, *analise.leitura.metaUnmappedExtras, true}
+                };
+                registro.run("UPDATE item SET notas_livres = ? WHERE id = ?",
+                             {Value::of(matriz::model::serializarNotasEstruturadas(secoes)), Value::of(itemId)});
+            }
+        }
     } catch (...) {}
 
     return resultado;

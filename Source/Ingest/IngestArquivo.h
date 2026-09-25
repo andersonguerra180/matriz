@@ -78,9 +78,14 @@ AnaliseDeArquivo analisarArquivo(const juce::File& arquivoOrigem);
 // Chamar sob o mutex de escrita do lote.
 // `papel` casa com arquivo.papel (§5.4) — preservation_master, access_copy,
 // capa_frente, capa_verso, encarte, documento, stem, foto_suporte, etc.
+// `derivadaDeArquivoId`: preenchido só por "Reload File"/"Replace File"
+// (item D) — o master é travado por trigger (P1, schema/registro.sql), então
+// essas ações NUNCA sobrescrevem o master: sempre entram como uma derivada
+// nova (eh_master=false aqui), e o master original permanece intacto.
 ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, const std::string& itemId,
                                                const AnaliseDeArquivo& analise, const std::string& papel,
-                                               bool ehMaster);
+                                               bool ehMaster,
+                                               std::optional<std::string> derivadaDeArquivoId = std::nullopt);
 
 // Conveniência: as duas fases juntas. É o caminho de quem ingere um arquivo
 // só (capa, documento avulso) e o dos self-tests headless.

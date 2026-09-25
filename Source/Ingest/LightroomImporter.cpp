@@ -479,6 +479,20 @@ LightroomImportResultado LightroomImporter::importarCatalogo(
     int totalTarefas = static_cast<int>(fotosParaIngerir.size() + arquivosSessao.size());
     int feitos = 0;
 
+    // D1: número sequencial do acervo lido UMA vez pra esta importação (era
+    // um SELECT MAX(...) por foto/arquivo de sessão, sem índice em
+    // codigo_acervo — custo O(n²) no catálogo inteiro). As duas seções
+    // abaixo (fotos e arquivos de sessão) usam o mesmo prefixoAcervo e
+    // rodam em sequência nesta função, então um único contador cobre as duas.
+    int proximoNumeroAcervo = 0;
+    {
+        auto stmtMax = registro.prepare(
+            "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
+            "FROM item WHERE codigo_acervo LIKE ?");
+        stmtMax.bind(1, Value::of(prefixoAcervo.toStdString() + "-%"));
+        if (stmtMax.step()) proximoNumeroAcervo = static_cast<int>(stmtMax.columnInt(0));
+    }
+
     // 2. Ingerir Fotos
     for (auto* fotoPtr : fotosParaIngerir) {
         if (cancelamento && cancelamento->pedido()) break;
@@ -508,13 +522,8 @@ LightroomImportResultado LightroomImporter::importarCatalogo(
                 {Value::of(itemId), Value::of(projetoId), Value::of(tituloFinal),
                  Value::of(tipoMidia), Value::of(estado), Value::of(agora), Value::of(agora)});
 
-            // Gerar código de acervo
-            int proximoNumero = 1;
-            auto stmtContagem = registro.prepare(
-                "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
-                "FROM item WHERE codigo_acervo LIKE ?");
-            stmtContagem.bind(1, Value::of(prefixoAcervo.toStdString() + "-%"));
-            if (stmtContagem.step()) proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+            // Gerar código de acervo (D1: contador cacheado, ver acima)
+            int proximoNumero = ++proximoNumeroAcervo;
             juce::String codigo = prefixoAcervo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
 
             registro.run("UPDATE item SET codigo_acervo = ? WHERE id = ?",
@@ -691,12 +700,8 @@ LightroomImportResultado LightroomImporter::importarCatalogo(
                  Value::of(arqSessao.getFileNameWithoutExtension().toStdString()),
                  Value::of(agora), Value::of(agora)});
 
-            int proximoNumero = 1;
-            auto stmtContagem = registro.prepare(
-                "SELECT COALESCE(MAX(CAST(SUBSTR(codigo_acervo, INSTR(codigo_acervo, '-') + 1) AS INTEGER)), 0) "
-                "FROM item WHERE codigo_acervo LIKE ?");
-            stmtContagem.bind(1, Value::of(prefixoAcervo.toStdString() + "-%"));
-            if (stmtContagem.step()) proximoNumero = static_cast<int>(stmtContagem.columnInt(0)) + 1;
+            // Gerar código de acervo (D1: contador cacheado, ver acima)
+            int proximoNumero = ++proximoNumeroAcervo;
             juce::String codigo = prefixoAcervo + "-" + juce::String(proximoNumero).paddedLeft('0', 5);
 
             registro.run("UPDATE item SET codigo_acervo = ? WHERE id = ?",
