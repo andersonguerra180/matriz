@@ -66,7 +66,7 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png)
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
@@ -137,6 +137,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/Miniaturas.cpp
+    Source/Ingest/MiniaturaPsd.mm
     Source/Ingest/Duplicata.cpp
     Source/Ingest/Pcm.cpp
     Source/Ingest/ClassificadorFalaMusica.cpp
@@ -165,6 +166,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ui/OriginalSourceMedium.cpp
     Source/I18n/Strings.cpp
     Source/Model/ProjectLog.cpp
+    Source/Model/NotasEstruturadas.cpp
     Source/Model/Project.cpp)
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -196,6 +198,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
+    $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -252,6 +255,8 @@ target_sources(matriz PRIVATE
     Source/Ui/TrialNagDialog.cpp
     Source/Ui/Tokens.h
     Source/Ui/Tokens.cpp
+    Source/Ui/MatrizLookAndFeel.h
+    Source/Ui/MatrizLookAndFeel.cpp
     Source/Ui/ProjetoAberto.cpp
     Source/Ui/AcoesItem.cpp
     Source/Ui/ArvoreComponent.cpp
@@ -260,6 +265,7 @@ target_sources(matriz PRIVATE
     Source/Ui/BarraNavegacaoComponent.cpp
     Source/Ui/BarraProgressoGlobalComponent.cpp
     Source/Ui/ProgressoGlobal.cpp
+    Source/Ui/TarefaGlobalModalDialog.cpp
     Source/Ui/BarraSelecaoComponent.cpp
     Source/Ui/FiltrosComponent.cpp
     Source/Ui/MetadadosOriginaisComponent.cpp
@@ -293,9 +299,11 @@ target_sources(matriz PRIVATE
     Source/Ui/IntakeWorkspaceComponent.cpp
     Source/Ui/StorageWorkspaceComponent.cpp
     Source/Ui/DuplicatesWorkspaceComponent.cpp
+    Source/Ui/DuplicateResolutionDialog.cpp
     Source/Ui/HierarquiaEditorComponent.cpp
     Source/Ui/TagChipsEditor.cpp
     Source/Ui/PeoplePickerComponent.cpp
+    Source/Ui/AutoCompleteTextEditor.cpp
     Source/Ui/OriginalSourceMedium.cpp
     Source/Ui/FichaPanelComponent.cpp
     Source/Ui/HomePanelComponent.cpp
@@ -326,6 +334,8 @@ target_sources(matriz PRIVATE
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
+    Source/Model/NotasEstruturadas.cpp
+    Source/Ui/NotesEstruturadasComponent.cpp
     Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/Checksum.cpp
@@ -335,6 +345,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/PainelInconsistencias.cpp
     Source/Preservation/Preservation.cpp
     Source/Ingest/Miniaturas.cpp
+    Source/Ingest/MiniaturaPsd.mm
     Source/Ingest/ClassificadorFalaMusica.cpp
     Source/Ingest/Pcm.cpp
     Source/Ingest/Duplicata.cpp
@@ -357,6 +368,7 @@ target_sources(matriz PRIVATE
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Ficha/FichaI18n.cpp
     Source/Ficha/OrigemPadrao.cpp
+    Source/Ficha/AutocompleteHistorico.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp
     Source/Model/ProjectLog.cpp
@@ -406,6 +418,7 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>
     $<$<PLATFORM_ID:Darwin>:-framework\ WebKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ QuickLookUI>
+    $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
     PUBLIC
     juce::juce_recommended_config_flags)
 
