@@ -7,6 +7,13 @@
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
 #include "MetadadoEmbutido.h"
+// matriz_ingest_selftest (console app) não linka juce_gui_basics — Ui/BatchWatermarkDialog.h
+// declara um juce::Component e não compila nesse alvo. A aplicação de watermark no backup
+// só existe no app gráfico; no self-test o bloco abaixo simplesmente não entra.
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
+#include "../Ui/ProjetoAberto.h"
+#include "../Ui/BatchWatermarkDialog.h"
+#endif
 
 #include <algorithm>
 #include <map>
@@ -36,6 +43,25 @@ std::vector<std::pair<std::string, juce::String>> cadeiaAncestral(matriz::db::Da
     }
     std::reverse(cadeia.begin(), cadeia.end()); // raiz primeiro
     return cadeia;
+}
+
+// Verdadeiro se a pasta (ou qualquer ancestral até a raiz) estiver marcada
+// como DESATIVADA — desativar uma pasta na TREEMAP tem que dar bypass em
+// tudo dentro dela, então a checagem sobe a cadeia inteira, não só o nível
+// direto.
+bool pastaOuAncestralDesativada(matriz::db::Database& registro, const std::string& pastaId) {
+    if (pastaId.empty()) return false;
+    std::string atual = pastaId;
+    std::set<std::string> visitados;
+    while (!atual.empty() && !visitados.count(atual)) {
+        visitados.insert(atual);
+        auto stmt = registro.prepare("SELECT ativo, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        stmt.bind(1, Value::of(atual));
+        if (!stmt.step()) break;
+        if (!stmt.columnIsNull(0) && stmt.columnInt(0) == 0) return true;
+        atual = stmt.columnIsNull(1) ? std::string() : stmt.columnText(1);
+    }
+    return false;
 }
 
 // Máscara efetiva de uma pasta: a dela mesma se tiver, senão sobe a cadeia
@@ -197,6 +223,8 @@ std::string nivelHierarquiaToString(NivelHierarquia n) {
         case NivelHierarquia::TipoArquivo: return "tipo_arquivo";
         case NivelHierarquia::Origem: return "origem";
         case NivelHierarquia::Artista: return "artista";
+        case NivelHierarquia::ContentType: return "content_type";
+        case NivelHierarquia::Subject: return "subject";
         case NivelHierarquia::PastaManual: return "pasta_manual";
         case NivelHierarquia::EstruturaOriginal: return "estrutura_original";
     }
@@ -210,6 +238,8 @@ NivelHierarquia nivelHierarquiaFromString(const std::string& s) {
     if (s == "tipo_arquivo") return NivelHierarquia::TipoArquivo;
     if (s == "origem") return NivelHierarquia::Origem;
     if (s == "artista") return NivelHierarquia::Artista;
+    if (s == "content_type") return NivelHierarquia::ContentType;
+    if (s == "subject") return NivelHierarquia::Subject;
     if (s == "pasta_manual") return NivelHierarquia::PastaManual;
     throw std::runtime_error("nível de hierarquia de backup desconhecido: \"" + s + "\"");
 }
@@ -284,13 +314,21 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
     std::map<std::string, int> seqPorDestino;
 
+    // item (Duplicates): 'duplicata' já era documentado no schema como
+    // "nunca copiado de novo" (conteúdo reconhecido, não reimportado), mas
+    // esta consulta nunca filtrava por estado — um item validado como
+    // duplicata pelo workspace de Duplicates continuava entrando em todo
+    // Make Backup normalmente. Exclui aqui, sem apagar nada do catálogo
+    // nem do disco: só tira da PRÓXIMA leva de backup.
     auto stmt = registro.prepare(
         "SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
-        "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes "
+        "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
+        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media "
         "FROM item i "
         "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id "
         "JOIN arquivo a ON a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id "
         "                          ORDER BY eh_master DESC, id LIMIT 1) "
+        "WHERE i.estado != 'duplicata' "
         "ORDER BY i.codigo_acervo");
 
     std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
@@ -303,15 +341,22 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 continue; // Na estrutura original ou por tipo/ano, cada item do projeto é copiado uma única vez
         }
 
+        std::string pastaIdCandidata = stmt.columnText(1);
+        if (pastaOuAncestralDesativada(registro, pastaIdCandidata)) continue; // pasta desabilitada na TREEMAP — bypass total
+
         ItemPlanejado ip;
         ip.itemId = std::move(itemId);
-        ip.pastaId = stmt.columnText(1);
+        ip.pastaId = std::move(pastaIdCandidata);
         ip.codigoAcervo = stmt.columnText(2);
         std::string titulo = stmt.columnText(3);
         std::string tipoMidia = stmt.columnText(4);
         ip.arquivoId = stmt.columnText(5);
         juce::String caminhoRelativoOrigem = stmt.columnText(6);
         std::string checksumAtual = stmt.columnText(7);
+        std::string dcCreatorAtual = stmt.columnIsNull(9) ? std::string() : stmt.columnText(9);
+        std::string collectionTypeAtual = stmt.columnIsNull(10) ? std::string() : stmt.columnText(10);
+        std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
+        std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
 
         auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
         juce::File arquivoNoProjeto = resolvido ? *resolvido : pastaProjeto.getChildFile(caminhoRelativoOrigem);
@@ -338,6 +383,15 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         }
         ctx.nomePasta = cadeia.empty() ? std::string() : cadeia.back().second.toStdString();
         ctx.camposFicha = camposFichaDoItem(registro, ip.itemId);
+        // dc_creator e collection_type são colunas de item, não item_campo
+        // (salvarMetadado grava direto na coluna) — camposFichaDoItem só
+        // veria um valor velho da leitura técnica do ingest. Sobrescreve
+        // com o valor atual da coluna pra CREATOR/CONTENT (itens 1 e 2 da
+        // correção de UI) refletirem a última edição da ficha.
+        if (!dcCreatorAtual.empty()) ctx.camposFicha["dc_creator"] = dcCreatorAtual;
+        if (!collectionTypeAtual.empty()) ctx.camposFicha["collection_type"] = collectionTypeAtual;
+        if (!dcSubjectAtual.empty()) ctx.camposFicha["dc_subject"] = dcSubjectAtual;
+        if (!sourceMediaAtual.empty()) ctx.camposFicha["source_media"] = sourceMediaAtual;
         bool temAnoNaFicha = false;
         {
             auto itAno = ctx.camposFicha.find("ano");
@@ -380,15 +434,50 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     break;
                 }
                 case NivelHierarquia::Origem: {
-                    auto it = ctx.camposFicha.find("origem");
-                    juce::String origem = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
-                    segmentosPasta.add(segmentoSeguro(origem, "No origin"));
+                    // Renomeado pra SOURCE MEDIUM na UI (item 1 da correção
+                    // "BACKUP e INTAKE"): organiza pelo mesmo source_media
+                    // (ORIGINAL SOURCE MEDIUM da ficha / "Source media..." do
+                    // INTAKE), não mais pelo flag simples Digital/Analógico.
+                    // source_media grava um JSON (OriginalSourceMediumInfo::
+                    // serialize, em Ui/OriginalSourceMedium.cpp — não incluído
+                    // aqui de propósito, esse .cpp não linka no alvo de
+                    // selftest console); só a chave "medium" interessa pro
+                    // nome da pasta, o resto (device, speed, etc.) fica na ficha.
+                    auto it = ctx.camposFicha.find("source_media");
+                    juce::String medium;
+                    if (it != ctx.camposFicha.end() && !it->second.empty()) {
+                        juce::var parsed = juce::JSON::parse(juce::String(it->second));
+                        if (auto* obj = parsed.getDynamicObject()) {
+                            if (obj->hasProperty("medium")) medium = obj->getProperty("medium").toString();
+                        } else {
+                            medium = juce::String(it->second); // valor legado, não-JSON
+                        }
+                    }
+                    segmentosPasta.add(segmentoSeguro(medium.trim(), "No source medium"));
                     break;
                 }
                 case NivelHierarquia::Artista: {
-                    auto it = ctx.camposFicha.find("artista_principal");
-                    juce::String artista = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
-                    segmentosPasta.add(segmentoSeguro(artista, "No artist"));
+                    // Renomeado pra CREATOR na UI (item 2 da correção de UI):
+                    // organiza pelo mesmo dc_creator da ficha, não mais por
+                    // artista_principal.
+                    auto it = ctx.camposFicha.find("dc_creator");
+                    juce::String criador = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    segmentosPasta.add(segmentoSeguro(criador, "No creator"));
+                    break;
+                }
+                case NivelHierarquia::ContentType: {
+                    auto it = ctx.camposFicha.find("collection_type");
+                    juce::String content = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    segmentosPasta.add(segmentoSeguro(content, "No content"));
+                    break;
+                }
+                case NivelHierarquia::Subject: {
+                    // Substitui MANUAL FOLDERS no editor visual (item da 4ª
+                    // correção de UI): organiza pelo mesmo dc_subject da
+                    // ficha (ASSET & USER / DUBLIN CORE, já sincronizados).
+                    auto it = ctx.camposFicha.find("dc_subject");
+                    juce::String assunto = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    segmentosPasta.add(segmentoSeguro(assunto, "No subject"));
                     break;
                 }
                 case NivelHierarquia::PastaManual:
@@ -414,7 +503,16 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         juce::String nomeArquivoFinal;
         if (modoPrefixo == ModoPrefixoArquivo::Nenhum) {
-            nomeArquivoFinal = arquivoNoProjeto.getFileName();
+            // "NO PREFIX" não quer dizer "nome físico original": o nome do
+            // arquivo copiado é comandado pelo título da ficha de metadados
+            // (renomear na ficha renomeia no backup). Só quando o item ainda
+            // não tem título é que o nome físico de origem prevalece — e a
+            // hierarquia "estrutura original" continua preservando o master,
+            // via resolverNomeFinalBackup.
+            juce::String tituloBase = juce::String(resolverMascara("{titulo}", ctx)).trim();
+            nomeArquivoFinal = tituloBase.isEmpty()
+                ? arquivoNoProjeto.getFileName()
+                : resolverNomeFinalBackup(arquivoNoProjeto, tituloBase.toStdString(), usaEstruturaOriginal);
         } else {
             juce::String mascara = (modoPrefixo == ModoPrefixoArquivo::Custom && prefixoCustomizado.trim().isNotEmpty())
                 ? juce::String("{prefix}_{name}_{number}_{year}")
@@ -490,10 +588,14 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const juce::File& destino, const PlanoConsolidacao& plano,
-                                            const AoProgredir& aoProgredir) {
+                                            const AoProgredir& aoProgredir,
+                                            const std::set<std::string>& itensMarcadosWatermark) {
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
+#if !JUCE_MODULE_AVAILABLE_juce_gui_basics
+    (void)itensMarcadosWatermark;
+#endif
 
     int processados = 0;
     for (auto& ip : plano.itens) {
@@ -556,6 +658,16 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             if (!destinoArquivo.existsAsFile()) throw std::runtime_error("cópia não existe depois de copiar");
             if (destinoArquivo.getSize() != origem.getSize())
                 throw std::runtime_error("tamanho da cópia não bate com o original");
+
+            // Apply watermark if item is marked for watermark and configured
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
+            if (itensMarcadosWatermark.count(ip.itemId) > 0) {
+                auto cfgWm = ui::ProjetoAberto::carregarConfiguracaoWatermarkDePasta(pastaProjeto);
+                if (cfgWm.valida()) {
+                    ui::BatchWatermarkDialog::aplicarMarcaDaguaEmArquivo(destinoArquivo, destinoArquivo, cfgWm);
+                }
+            }
+#endif
 
             // Embed WAV markers into backup copy if applicable (idempotent)
             if (destinoArquivo.hasFileExtension("wav")) {
@@ -684,6 +796,177 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
     }
 
     return resultado;
+}
+
+void sincronizarNomeDeBackupAposRenomear(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                          const std::string& itemId, const std::string& tituloAntigo,
+                                          const std::string& tituloNovo) {
+    if (itemId.empty() || tituloAntigo == tituloNovo) return;
+
+    // Hierarquia "estrutura original" preserva o nome do arquivo master — o
+    // título nunca fez parte desse nome, então não há o que sincronizar.
+    HierarquiaBackup hierarquia = hierarquiaDoProjeto(registro);
+    if (std::find(hierarquia.begin(), hierarquia.end(), NivelHierarquia::EstruturaOriginal) != hierarquia.end())
+        return;
+
+    // Destinos de backup conhecidos, ativos e montados agora mesmo.
+    std::vector<juce::File> mediaOnline;
+    {
+        auto stmt = registro.prepare(
+            "SELECT destino_path FROM backup_destino WHERE ativo = 1 AND destino_path IS NOT NULL AND destino_path != ''");
+        while (stmt.step()) {
+            juce::File media = juce::File(juce::String(stmt.columnText(0))).getChildFile("Media");
+            if (media.isDirectory()) mediaOnline.push_back(media);
+        }
+    }
+    if (mediaOnline.empty()) return; // nada montado agora — sem fila; alinha no próximo backup manual
+
+    std::string codigoAcervo, tipoMidia;
+    {
+        auto stmt = registro.prepare("SELECT codigo_acervo, tipo_midia FROM item WHERE id = ?");
+        stmt.bind(1, Value::of(itemId));
+        if (!stmt.step()) return;
+        codigoAcervo = stmt.columnText(0);
+        tipoMidia = stmt.columnText(1);
+    }
+
+    std::string prefixoEfetivo;
+    {
+        auto stmt = registro.prepare("SELECT prefixo_nomenclatura FROM projeto LIMIT 1");
+        if (stmt.step() && !stmt.columnIsNull(0)) prefixoEfetivo = stmt.columnText(0);
+    }
+    if (prefixoEfetivo.empty()) prefixoEfetivo = "BKR";
+
+    std::string nomeAcervo;
+    {
+        auto stmt = registro.prepare("SELECT nome FROM projeto LIMIT 1");
+        nomeAcervo = stmt.step() ? stmt.columnText(0) : pastaProjeto.getFileNameWithoutExtension().toStdString();
+    }
+
+    auto camposFichaBase = camposFichaDoItem(registro, itemId);
+
+    // Uma linha por (pasta, arquivo) em que o item já foi consolidado alguma
+    // vez — pode haver mais de uma se o item está em várias pastas do mapa
+    // BACKUP.
+    struct LinhaRegistro { std::string pastaId, arquivoId, caminhoRelativo; };
+    std::vector<LinhaRegistro> linhas;
+    {
+        auto stmt = registro.prepare(
+            "SELECT pasta_id, arquivo_id, caminho_relativo_destino FROM consolidacao_registro WHERE item_id = ?");
+        stmt.bind(1, Value::of(itemId));
+        while (stmt.step()) {
+            if (stmt.columnIsNull(2)) continue;
+            std::string rel = stmt.columnText(2);
+            if (rel.empty()) continue;
+            linhas.push_back({stmt.columnText(0), stmt.columnText(1), rel});
+        }
+    }
+
+    matriz::model::ProjectLog log(pastaProjeto);
+
+    for (auto& lr : linhas) {
+        auto cadeia = cadeiaAncestral(registro, lr.pastaId);
+        juce::String mascara = mascaraEfetiva(registro, cadeia);
+
+        auto resolvido = matriz::vault::resolverArquivo(registro, lr.arquivoId, pastaProjeto);
+        juce::File arquivoNoProjeto = resolvido ? *resolvido
+                                                 : pastaProjeto.getChildFile(juce::String(lr.caminhoRelativo));
+
+        ContextoMascara ctx;
+        ctx.prefixo = prefixoEfetivo;
+        ctx.codigoAcervo = codigoAcervo;
+        ctx.tipoMidia = tipoMidia;
+        ctx.nomeOriginalSemExtensao = arquivoNoProjeto.getFileNameWithoutExtension().toStdString();
+        ctx.nomeAcervo = nomeAcervo;
+        ctx.nomePasta = cadeia.empty() ? std::string() : cadeia.back().second.toStdString();
+        ctx.camposFicha = camposFichaBase;
+        {
+            auto itAno = ctx.camposFicha.find("ano");
+            bool temAno = itAno != ctx.camposFicha.end() && !itAno->second.empty();
+            if (temAno) {
+                std::string anoTratado = extrairAnoDeTexto(itAno->second);
+                if (!anoTratado.empty()) ctx.camposFicha["ano"] = anoTratado;
+                else temAno = false;
+            }
+            if (!temAno) {
+                std::string anoInferido = resolverAnoEfetivo(registro, itemId, lr.arquivoId, arquivoNoProjeto);
+                if (!anoInferido.empty()) ctx.camposFicha["ano"] = anoInferido;
+            }
+        }
+
+        juce::File relFile(juce::String(lr.caminhoRelativo));
+        juce::String extensao = relFile.getFileExtension(); // já inclui o "."
+        juce::String nomeAntigoEsperado = relFile.getFileName();
+        juce::String pastaPrefixo = relFile.getParentDirectory().getFullPathName();
+        if (pastaPrefixo == ".") pastaPrefixo = {};
+
+        juce::String nomeNovo;
+
+        // Caminho do modo "NO PREFIX" (o default da aba BACKUP): lá o nome
+        // gravado é o próprio título da ficha, sem máscara — a varredura de
+        // {seq} abaixo nunca reproduziria esse nome, e o rename era
+        // descartado com "naming mask no longer reproduces...".
+        ctx.titulo = tituloAntigo;
+        juce::String tituloAntigoSanitizado = juce::String(resolverMascara("{titulo}", ctx)).trim();
+        bool nomeVeioDoTitulo = tituloAntigoSanitizado.isNotEmpty()
+                                 && relFile.getFileNameWithoutExtension() == tituloAntigoSanitizado;
+
+        if (nomeVeioDoTitulo) {
+            ctx.titulo = tituloNovo;
+            juce::String tituloNovoSanitizado = juce::String(resolverMascara("{titulo}", ctx)).trim();
+            if (tituloNovoSanitizado.isEmpty()) continue; // título apagado — mantém o nome já consolidado
+            nomeNovo = tituloNovoSanitizado + extensao;
+        } else {
+            // Redescobre o {seq} usado originalmente reproduzindo o nome antigo —
+            // seq nunca foi persistido à parte, só embutido no nome já gravado.
+            int seqEncontrado = -1;
+            ctx.titulo = tituloAntigo;
+            for (int seq = 1; seq <= 9999; ++seq) {
+                ctx.seq = seq;
+                juce::String candidato = juce::String(resolverMascara(mascara, ctx)) + extensao;
+                if (candidato == nomeAntigoEsperado) { seqEncontrado = seq; break; }
+            }
+            if (seqEncontrado < 0) {
+                log.appendEntry("Backup Rename Skipped", {
+                    "Item: " + juce::String(codigoAcervo),
+                    juce::String::fromUTF8("Reason: current naming mask no longer reproduces the existing backup "
+                                            "file name — rename skipped, run Backup again to resync.")});
+                continue;
+            }
+
+            ctx.titulo = tituloNovo;
+            ctx.seq = seqEncontrado;
+            nomeNovo = juce::String(resolverMascara(mascara, ctx)) + extensao;
+        }
+        if (nomeNovo == nomeAntigoEsperado) continue; // máscara não usa {titulo} (ou sanitização deu igual) — nada a fazer
+
+        juce::String novoRelativo = pastaPrefixo.isEmpty() ? nomeNovo : (pastaPrefixo + "/" + nomeNovo);
+
+        for (auto& media : mediaOnline) {
+            juce::File origemArq = media.getChildFile(juce::String(lr.caminhoRelativo));
+            if (!origemArq.existsAsFile()) continue; // não consolidado nesse destino específico
+
+            juce::File destinoArq = media.getChildFile(novoRelativo);
+            if (destinoArq.exists()) {
+                log.appendEntry("Backup Rename Skipped", {
+                    "Item: " + juce::String(codigoAcervo),
+                    juce::String::fromUTF8("Reason: a file already exists at the new planned name — not overwritten."),
+                    "Existing: " + destinoArq.getFullPathName(),
+                    "Would-be new name: " + novoRelativo});
+                continue;
+            }
+
+            destinoArq.getParentDirectory().createDirectory();
+            if (origemArq.moveFileTo(destinoArq)) {
+                registro.run(
+                    "UPDATE consolidacao_registro SET caminho_relativo_destino = ? WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ?",
+                    {Value::of(novoRelativo.toStdString()), Value::of(itemId), Value::of(lr.pastaId), Value::of(lr.arquivoId)});
+                log.appendEntry("Backup Media Renamed", {
+                    "From: " + juce::String(lr.caminhoRelativo),
+                    "To: " + novoRelativo});
+            }
+        }
+    }
 }
 
 } // namespace matriz::consolidacao

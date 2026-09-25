@@ -40,7 +40,7 @@ namespace matriz::consolidacao {
 // vai pra uma pasta "sem <campo>" em vez de desaparecer ou travar o backup
 // (§5.2 — "nunca desaparece nem trava").
 // EstruturaOriginal preserves the relative folder structure from the source path.
-enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, PastaManual, EstruturaOriginal };
+enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, PastaManual, EstruturaOriginal };
 
 std::string nivelHierarquiaToString(NivelHierarquia n);
 NivelHierarquia nivelHierarquiaFromString(const std::string& s); // lança std::runtime_error se desconhecido
@@ -145,6 +145,23 @@ using AoProgredir = std::function<bool(int feito, int total)>;
 // mesma resiliência por-item já usada na ficha em lote (item 8).
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const juce::File& destino, const PlanoConsolidacao& plano,
-                                            const AoProgredir& aoProgredir = {});
+                                            const AoProgredir& aoProgredir = {},
+                                            const std::set<std::string>& itensMarcadosWatermark = {});
+
+// Depois que o título de um item muda (ProjetoAberto::renomearItens), o nome
+// físico do arquivo já consolidado no(s) backup(s) ativo(s) fica desatualizado
+// — a máscara de nomenclatura ("{codigo}-{seq:03}-{titulo}") incorpora o
+// título. Esta função sincroniza: pra cada backup_destino ativo e montado
+// agora, se o arquivo antigo existir, renomeia (move, nunca recopia) pro nome
+// que a máscara produziria com o título novo, sem mudar de pasta.
+//
+// Nunca sobrescreve: se já existir um arquivo com o nome novo, pula e
+// registra no ProjectLog. Backups cuja hierarquia é "estrutura original"
+// preservam o nome do arquivo master e não são tocados (o título nunca fez
+// parte desse nome). Destino que não está montado agora é só ignorado — sem
+// fila de pendência; fica alinhado da próxima vez que rodar o Backup manual.
+void sincronizarNomeDeBackupAposRenomear(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                          const std::string& itemId, const std::string& tituloAntigo,
+                                          const std::string& tituloNovo);
 
 } // namespace matriz::consolidacao

@@ -8,7 +8,10 @@ juce::String valorToken(const juce::String& nomeToken, const juce::String& espec
                          bool& encontrado) {
     encontrado = true;
     if (nomeToken == "prefix" || nomeToken == "prefixo") return ctx.prefixo;
-    if (nomeToken == "name" || nomeToken == "nome") return ctx.nomeOriginalSemExtensao.empty() ? ctx.titulo : ctx.nomeOriginalSemExtensao;
+    // {name} é o nome "de exibição" do arquivo, e quem manda nele é o título
+    // da ficha de metadados; o nome físico de origem só entra quando o item
+    // ainda não tem título. Para o nome físico sempre, existe {original}.
+    if (nomeToken == "name" || nomeToken == "nome") return ctx.titulo.empty() ? ctx.nomeOriginalSemExtensao : ctx.titulo;
     if (nomeToken == "number" || nomeToken == "numero") {
         int largura = especificador.isNotEmpty() ? especificador.getIntValue() : 3;
         return juce::String(ctx.seq).paddedLeft('0', largura);
