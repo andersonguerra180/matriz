@@ -4952,6 +4952,17 @@ private:
 
         projeto_.iniciarGrupoUndo("Batch edit: " + linha->campoId);
         int sucessos = 0, falhas = 0;
+        // Fase 2b (freeze de edição em lote): uma transação só pros N itens
+        // em vez de uma implícita por INSERT/UPDATE (salvarMetadado/
+        // adicionarTag/removerTag chamados por item, dentro do loop
+        // abaixo). Continua na message thread -- os efeitos por campo
+        // (tags, notas concatenadas, toggles de AI GENERATED) têm lógica
+        // condicional demais por item pra mover com segurança sem uma
+        // revisão própria; isto já elimina o custo de N transações
+        // separadas, que era o grosso do problema.
+        auto& dbLote = projeto_.projeto().registro();
+        bool emTransacao = false;
+        try { dbLote.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
         for (const auto& id : itemIds_) {
             try {
                 if (linha->ehTags) {
@@ -5006,6 +5017,9 @@ private:
                                           juce::Time::getCurrentTime().toISO8601(true) +
                                           " erro=" + juce::String(e.what()));
             }
+        }
+        if (emTransacao) {
+            try { dbLote.exec("COMMIT"); } catch (...) { try { dbLote.exec("ROLLBACK"); } catch (...) {} }
         }
         projeto_.finalizarGrupoUndo();
         juce::Logger::writeToLog("[ficha-lote] campo='" + juce::String(linha->campoId) + "' aplicado em " +
@@ -5095,10 +5109,15 @@ private:
 
         projeto_.iniciarGrupoUndo("Batch edit: geo location");
         int concluidos = 0;
+        // Fase 2b: uma transação só pros N itens em vez de uma por INSERT
+        // (AssetGeolocationRepository::salvar chamado por item).
+        auto& dbGeoLote = projeto_.projeto().registro();
+        bool emTransacaoGeo = false;
+        try { dbGeoLote.exec("BEGIN IMMEDIATE"); emTransacaoGeo = true; } catch (...) {}
         for (const auto& id : itemIds_) {
             geoTemplate.assetId = id;
             try {
-                matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geoTemplate);
+                matriz::analytics::AssetGeolocationRepository::salvar(dbGeoLote, geoTemplate);
                 if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
             } catch (...) {}
             ++concluidos;
@@ -5106,6 +5125,9 @@ private:
                 ProgressoGlobal::obterInstancia().atualizarProgresso(
                     kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
             }
+        }
+        if (emTransacaoGeo) {
+            try { dbGeoLote.exec("COMMIT"); } catch (...) { try { dbGeoLote.exec("ROLLBACK"); } catch (...) {} }
         }
         projeto_.finalizarGrupoUndo();
         if (ehLote) {
@@ -5118,6 +5140,12 @@ private:
     void desfazer() {
         ProgressoGlobal::obterInstancia().iniciarTarefa("batch_undo", "Reverting Batch Edits", (int)undoSnapshot_.size(), nullptr, "Reverting changes...");
         int restaurados = 0;
+        // Fase 2b: uma transação só pro lote de restauração inteiro (cada
+        // item já dispara até 6 salvarMetadado + escritas cruas + geo, sem
+        // isto viravam dezenas de transações implícitas separadas).
+        auto& dbUndo = projeto_.projeto().registro();
+        bool emTransacaoUndo = false;
+        try { dbUndo.exec("BEGIN IMMEDIATE"); emTransacaoUndo = true; } catch (...) {}
         for (const auto& [id, snap] : undoSnapshot_) {
             try {
                 for (const auto& [coluna, valor] : snap.campos) {
@@ -5154,6 +5182,9 @@ private:
             } catch (const std::exception&) {
             }
             ProgressoGlobal::obterInstancia().atualizarProgresso("batch_undo", restaurados, juce::String(restaurados) + " restored");
+        }
+        if (emTransacaoUndo) {
+            try { dbUndo.exec("COMMIT"); } catch (...) { try { dbUndo.exec("ROLLBACK"); } catch (...) {} }
         }
         resultado_->setText(matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)),
                              juce::dontSendNotification);
