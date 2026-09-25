@@ -168,6 +168,34 @@ private:
     std::chrono::steady_clock::time_point lastTick_;
 };
 
+// Rastreio de operações em BACKGROUND (jobs de ThreadPool) — diferente de
+// Watchdog acima (orçamento de frame de 16ms, só loga estouro, pensado pra
+// callbacks na message thread), este sempre loga INÍCIO e FIM com duração,
+// sem limiar. Pensado pra jobs raros e potencialmente longos (ingest por
+// arquivo, recarga de coleções de backup, busca) — se o app travar de
+// verdade, a última linha "INICIO" sem um "FIM" correspondente no log é
+// exatamente a operação (e o arquivo/nome) que nunca voltou.
+class LogOperacao {
+public:
+    explicit LogOperacao(const juce::String& nome) : nome_(nome), inicio_(std::chrono::steady_clock::now()) {
+        WatchdogLogger::getInstance().log("[" + horaAtual() + "] [Op] INICIO " + nome_);
+    }
+    ~LogOperacao() {
+        auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - inicio_).count();
+        WatchdogLogger::getInstance().log("[" + horaAtual() + "] [Op] FIM " + nome_ +
+                                           " (" + juce::String(ms) + " ms)");
+    }
+
+private:
+    static juce::String horaAtual() {
+        return juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S.%s");
+    }
+
+    juce::String nome_;
+    std::chrono::steady_clock::time_point inicio_;
+};
+
 } // namespace matriz::diag
 
 #define MATRIZ_TRACE_COLAR_(a, b) a##b
