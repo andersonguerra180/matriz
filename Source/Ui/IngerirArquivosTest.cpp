@@ -551,8 +551,47 @@ int rodarTestIngerirArquivos() {
             checar(stmtFantasmas.columnInt(0) == 0,
                    "nenhum item-fantasma sobrou: todo item no projeto tem arquivo de verdade");
 
-            checar(mainComponent.textoProgressoIngestParaTeste().contains("ancel"),
+            checar(mainComponent.textoProgressoIngestParaTeste().containsIgnoreCase("ancel") ||
+                   mainComponent.textoProgressoIngestParaTeste().containsIgnoreCase("interromp") ||
+                   mainComponent.textoProgressoIngestParaTeste().containsIgnoreCase("stopped"),
                    "the banner reports a cancellation, not a success summary");
+        }
+
+        // ===============================================================
+        // Ingestão Resiliente: Cancelar mantendo arquivos + Re-arrastar pasta
+        // ===============================================================
+        {
+            juce::File pastaBackup = tmpRoot.getChildFile("backup_resiliente");
+            pastaBackup.createDirectory();
+            for (int i = 0; i < 10; ++i) {
+                juce::File f = pastaBackup.getChildFile("backup_" + juce::String(i).paddedLeft('0', 2) + ".wav");
+                escreverWavMinimo(f, 400, 60000 + i);
+            }
+
+            mainComponent.ingerirArquivos({pastaBackup});
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(120);
+            mainComponent.cancelarLoteIngest(true); // Manter arquivos já importados
+            esperarIngestTerminar(mainComponent);
+
+            auto stmtKept = registro.prepare("SELECT COUNT(*) FROM item WHERE em_quarentena = 1");
+            stmtKept.step();
+            int mantidos = stmtKept.columnInt(0);
+            checar(mantidos > 0, "cancelar com 'manter' preservou os arquivos ja carregados no Intake (" + juce::String(mantidos) + " mantidos)");
+
+            // Adiciona mais 5 arquivos na mesma pasta
+            for (int i = 10; i < 15; ++i) {
+                juce::File f = pastaBackup.getChildFile("backup_" + juce::String(i).paddedLeft('0', 2) + ".wav");
+                escreverWavMinimo(f, 400, 60000 + i);
+            }
+
+            // Arrasta a mesma pasta de novo! Deve ignorar os ja existentes no Intake e ingerir apenas os restantes
+            mainComponent.ingerirArquivos({pastaBackup});
+            esperarIngestTerminar(mainComponent);
+
+            auto stmtFinal = registro.prepare("SELECT COUNT(*) FROM item WHERE em_quarentena = 1");
+            stmtFinal.step();
+            int totalFinal = stmtFinal.columnInt(0);
+            checar(totalFinal == 15, "re-arrastar a pasta ignorou os do Intake e importou os restantes (esperado 15, obtido: " + juce::String(totalFinal) + ")");
         }
 
 

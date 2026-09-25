@@ -87,15 +87,29 @@ private:
         int fileType = 1;
         int sizeFilter = 1;
         juce::int64 sizeLimitBytes = 0;
+        // item: filtro por ano — 0 em qualquer um dos dois = sem limite
+        // naquela ponta (ex.: só "De" preenchido = "esse ano em diante").
+        int anoDe = 0;
+        int anoAte = 0;
     } activeFilters_;
 
     void resolverTudo(bool ehDuplicataReal);
+    void resolverSelecionados(bool ehDuplicataReal);
+    // item (VALIDATE ALL em lote): uma escolha só (manter arquivo 1 / 2 /
+    // ambos), aplicada de uma vez a TODOS os grupos detectados — não apaga
+    // nada do catálogo nem do disco, só marca o lado descartado como
+    // 'duplicata' pra sair da próxima leva de Make Backup.
+    void aplicarEscolhaGlobal(int escolha);
+    void atualizarBotoesSelecionados();
+    void atualizarListaEStatusAposResolucao();
 
     // UI Elements
     std::unique_ptr<juce::TextButton> btnScan_;
     std::unique_ptr<juce::Label> lblStatus_;
     std::unique_ptr<juce::TextButton> btnValidateAll_;
     std::unique_ptr<juce::TextButton> btnDismissAll_;
+    std::unique_ptr<juce::TextButton> btnValidateSelected_;
+    std::unique_ptr<juce::TextButton> btnDismissSelected_;
 
     // Filter Bar UI Elements
     std::unique_ptr<juce::Label> lblScope_;
@@ -106,6 +120,11 @@ private:
     std::unique_ptr<juce::ComboBox> cbSizeFilter_;
     std::unique_ptr<juce::TextEditor> txtSizeValue_;
     std::unique_ptr<juce::ComboBox> cbSizeUnit_;
+    // item: filtro por ano (De/Até) — mesmo padrão de campo numérico do size filter.
+    std::unique_ptr<juce::Label> lblAno_;
+    std::unique_ptr<juce::TextEditor> txtAnoDe_;
+    std::unique_ptr<juce::Label> lblAnoAte_;
+    std::unique_ptr<juce::TextEditor> txtAnoAte_;
     
     // Results list viewport
     class ListaResultadosComponent;
