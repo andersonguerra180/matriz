@@ -221,21 +221,6 @@ void PeoplePickerComponent::importarListaPessoasDeOutraColecao() {
                     }
                 }
             } catch (...) {}
-
-            // 2. Read distinct creators/artists
-            try {
-                auto stmt2 = dbOutra.prepare(
-                    "SELECT DISTINCT valor FROM item_campo "
-                    "WHERE campo_id IN ('dc_creator', 'artista_principal', 'artista') "
-                    "AND valor IS NOT NULL AND valor != '' "
-                    "AND fonte = 'humano'");
-                while (stmt2.step()) {
-                    std::string nome = stmt2.columnText(0);
-                    if (!nome.empty() && safeThis->projeto_.adicionarPessoa(nome)) {
-                        countImported++;
-                    }
-                }
-            } catch (...) {}
         } catch (...) {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::WarningIcon,
@@ -250,7 +235,7 @@ void PeoplePickerComponent::importarListaPessoasDeOutraColecao() {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::InfoIcon,
             "Names Imported Successfully",
-            "Imported " + juce::String(countImported) + " person name(s) from collection into this collection.",
+            "Imported " + juce::String(countImported) + " name(s) from collection into this collection.",
             "OK");
     });
 }
