@@ -1942,16 +1942,32 @@ void IntakeWorkspaceComponent::selecionarPorCategoria(const juce::String& catego
     atualizarContagens();
 }
 
+// Fase 2b (freeze de edição em lote): mesmo tratamento de
+// aplicarCreatorAosSelecionados/aplicarSubjectAosSelecionados/
+// aplicarEventDateAosSelecionados abaixo -- a gravação em si sai da
+// message thread via poolMetadadoLote_ e vira UMA transação com UM
+// evento amplo, em vez de N chamadas síncronas de salvarMetadado. Content
+// (collection_type) e Source Medium tinham ficado de fora da primeira
+// passada desta correção -- Source Medium em especial é o campo do
+// freeze originalmente diagnosticado nesta sessão.
 void IntakeWorkspaceComponent::aplicarColecaoAosSelecionados(const juce::String& colecao) {
+    std::vector<std::string> ids;
     // Item 1 (lista nova de hoje): só os selecionados que também estão
     // visíveis sob o filtro ativo.
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) {
-            definirColecaoItem(item.id, colecao);
+            ids.push_back(item.id);
             item.collection = colecao;
         }
+    }
+    if (!ids.empty()) {
+        ProjetoAberto* projeto = &projeto_;
+        std::string colecaoStd = colecao.toStdString();
+        poolMetadadoLote_.addJob([projeto, ids, colecaoStd] {
+            projeto->salvarMetadadoEmLote(ids, {{"collection_type", colecaoStd}});
+        });
     }
 
     if (tabela_) tabela_->repaint();
@@ -1964,13 +1980,21 @@ void IntakeWorkspaceComponent::definirColecaoItem(const std::string& itemId, con
 }
 
 void IntakeWorkspaceComponent::aplicarOriginalSourceMediumAosSelecionados(const std::string& sourceMediaJson) {
+    std::vector<std::string> ids;
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (item.selecionado) {
-            definirSourceMediaItem(item.id, sourceMediaJson);
+            ids.push_back(item.id);
             item.sourceMedia = juce::String::fromUTF8(sourceMediaJson.c_str());
         }
+    }
+    if (!ids.empty()) {
+        ProjetoAberto* projeto = &projeto_;
+        std::string valorStd = sourceMediaJson;
+        poolMetadadoLote_.addJob([projeto, ids, valorStd] {
+            projeto->salvarMetadadoEmLote(ids, {{"source_media", valorStd}});
+        });
     }
     if (tabela_) tabela_->repaint();
     if (gridComponent_) gridComponent_->repaint();
@@ -2182,7 +2206,12 @@ void IntakeWorkspaceComponent::aplicarGeolocationAosSelecionados(const std::stri
     std::vector<std::string> ids(selecionados.begin(), selecionados.end());
     if (ids.empty()) return;
 
-    matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto_.projeto().registro(), ids, geoTemplate);
+    // Fase 2b: mesmo motivo dos outros aplicarXAosSelecionados -- sai da
+    // message thread. salvarEmLote() já virou uma transação só.
+    ProjetoAberto* projeto = &projeto_;
+    poolMetadadoLote_.addJob([projeto, ids, geoTemplate] {
+        matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto->projeto().registro(), ids, geoTemplate);
+    });
     if (tabela_) tabela_->repaint();
 }
 

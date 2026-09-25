@@ -203,10 +203,18 @@ GeolocationCoverageStats AssetGeolocationRepository::obterEstatisticasCobertura(
 }
 
 void AssetGeolocationRepository::salvarEmLote(matriz::db::Database& db, const std::vector<std::string>& assetIds, const AssetGeolocation& geoTemplate) {
-    for (const auto& id : assetIds) {
-        AssetGeolocation g = geoTemplate;
-        g.assetId = id;
-        salvar(db, g);
+    // Fase 2b (freeze de edição em lote): uma transação só pros N itens,
+    // em vez de uma transação implícita por INSERT (uma por asset).
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& id : assetIds) {
+            AssetGeolocation g = geoTemplate;
+            g.assetId = id;
+            salvar(db, g);
+        }
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
     }
 }
 
