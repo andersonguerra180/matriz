@@ -1426,11 +1426,17 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     janela->addButton(isPt ? juce::String::fromUTF8("MANTER AMBOS") : "KEEP BOTH", 3);
     janela->addButton(isPt ? juce::String::fromUTF8("VOLTAR") : "RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
 
-    janela->enterModalState(true, juce::ModalCallbackFunction::create([this, janela, grupoIdx, group, isPt](int buttonResult) {
+    // safeThis: enterModalState() não impede o componente de ser destruído
+    // enquanto a janela de confirmação está aberta (ex.: trocar de aba) —
+    // sem isso, tanto o callback do ModalCallbackFunction quanto o
+    // callAsync aninhado dentro dele desreferenciariam `this` já liberado.
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, janela, grupoIdx, group, isPt](int buttonResult) {
         retirarPeerDaTela(*janela);
         if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
+        if (!safeThis) return;
 
-        auto& db = projeto_.projeto().registro();
+        auto& db = safeThis->projeto_.projeto().registro();
         try {
             db.run("BEGIN TRANSACTION", {});
             
@@ -1462,22 +1468,23 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         }
 
         // Run UI update on MessageThread context
-        juce::MessageManager::callAsync([this, grupoIdx, isPt]() {
-            if (grupoIdx >= 0 && grupoIdx < static_cast<int>(gruposDetectados_.size())) {
-                gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
+        juce::MessageManager::callAsync([safeThis, grupoIdx, isPt]() {
+            if (!safeThis) return;
+            if (grupoIdx >= 0 && grupoIdx < static_cast<int>(safeThis->gruposDetectados_.size())) {
+                safeThis->gruposDetectados_.erase(safeThis->gruposDetectados_.begin() + grupoIdx);
 
-                if (gruposDetectados_.empty()) {
-                    estado_ = State::Clean;
-                    lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
+                if (safeThis->gruposDetectados_.empty()) {
+                    safeThis->estado_ = State::Clean;
+                    safeThis->lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
                                              : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
-                    viewport_->setVisible(false);
+                    safeThis->viewport_->setVisible(false);
                 } else {
-                    lblStatus_->setText(isPt ? (juce::String::fromUTF8("Encontrados ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos de duplicatas."))
-                                             : ("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups."), juce::dontSendNotification);
-                    listaComponent_->updateList(gruposDetectados_);
+                    safeThis->lblStatus_->setText(isPt ? (juce::String::fromUTF8("Encontrados ") + juce::String(safeThis->gruposDetectados_.size()) + juce::String::fromUTF8(" grupos de duplicatas."))
+                                             : ("Found " + juce::String(safeThis->gruposDetectados_.size()) + " duplicate groups."), juce::dontSendNotification);
+                    safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
                 }
-                resized();
-                repaint();
+                safeThis->resized();
+                safeThis->repaint();
             }
         });
     }));

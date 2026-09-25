@@ -367,10 +367,23 @@ void SyncDestinationDialog::carregarDestinos() {
 }
 
 void SyncDestinationDialog::calcularTamanhosBackground() {
-    juce::Thread::launch([this] {
-        for (size_t i = 0; i < destinos_.size(); ++i) {
-            if (!destinos_[i].online) continue;
-            juce::File pasta(destinos_[i].caminho);
+    // Copia os caminhos ANTES de lançar a thread — o loop roda em background
+    // e ~SyncDestinationDialog() só pede cancelamento_->pedir(), nunca junta
+    // essa thread; sem essa cópia, ler destinos_ (membro do diálogo) de
+    // dentro dela era um use-after-free em potencial assim que o diálogo
+    // fechasse no meio do cálculo. safeThis (mesmo padrão usado em
+    // MosaicoComponent::recarregar) garante que só o resultado final toca o
+    // diálogo, e só se ele ainda existir, de volta na message thread.
+    std::vector<std::pair<size_t, juce::File>> pastas;
+    for (size_t i = 0; i < destinos_.size(); ++i) {
+        if (destinos_[i].online) pastas.emplace_back(i, juce::File(destinos_[i].caminho));
+    }
+
+    juce::Component::SafePointer<SyncDestinationDialog> safeThis(this);
+    juce::Thread::launch([safeThis, pastas] {
+        for (const auto& par : pastas) {
+            size_t i = par.first;
+            const juce::File& pasta = par.second;
             juce::int64 total = 0;
 
             auto calcPasta = [&](const juce::File& dir) {
@@ -383,10 +396,11 @@ void SyncDestinationDialog::calcularTamanhosBackground() {
             calcPasta(pasta.getChildFile("Media"));
             calcPasta(pasta.getChildFile("Project"));
 
-            juce::MessageManager::callAsync([this, i, total] {
-                if (i < destinos_.size()) {
-                    destinos_[i].tamanhoBytes = total;
-                    listDestinos_->repaint();
+            juce::MessageManager::callAsync([safeThis, i, total] {
+                if (!safeThis) return;
+                if (i < safeThis->destinos_.size()) {
+                    safeThis->destinos_[i].tamanhoBytes = total;
+                    safeThis->listDestinos_->repaint();
                 }
             });
         }
@@ -534,37 +548,49 @@ void SyncDestinationDialog::iniciarEscaneamento() {
     progressoTexto_ = isPt ? juce::String::fromUTF8("Escaneando arquivos e calculando somas de verificação SHA-256...")
                            : "Scanning files and calculating SHA-256 checksums...";
     cancelamento_ = std::make_shared<matriz::app::Cancelamento>();
+    auto cancelamento = cancelamento_; // cópia local — lida só por esta operação, ver nota abaixo
 
     resized();
     repaint();
 
-    juce::Thread::launch([this, refRaiz, alvoRaiz] {
+    // safeThis em vez de `this` bruto: esta lambda roda numa juce::Thread
+    // detached (sem handle guardado, sem join no destrutor — só
+    // cancelamento_->pedir()) e chama callAsync de dentro dela mesma. Se o
+    // diálogo fechar enquanto o escaneamento ainda roda, `this` bruto vira
+    // um ponteiro pendurado tanto na thread quanto no callAsync.
+    // `cancelamento` (cópia local do shared_ptr) evita precisar ler
+    // safeThis->cancelamento_ fora da message thread.
+    juce::Component::SafePointer<SyncDestinationDialog> safeThis(this);
+    juce::Thread::launch([safeThis, refRaiz, alvoRaiz, cancelamento] {
         auto plano = matriz::sync::SyncEngine::escanearEComparar(
             refRaiz, alvoRaiz, true,
-            [this](int atual, int total, const juce::String& msg) {
-                juce::MessageManager::callAsync([this, atual, total, msg] {
-                    progressoValor_ = (total > 0) ? static_cast<double>(atual) / total : 0.0;
-                    progressoTexto_ = msg;
-                    labelProgressoMensagem_->setText(msg, juce::dontSendNotification);
+            [safeThis](int atual, int total, const juce::String& msg) {
+                juce::MessageManager::callAsync([safeThis, atual, total, msg] {
+                    if (!safeThis) return;
+                    safeThis->progressoValor_ = (total > 0) ? static_cast<double>(atual) / total : 0.0;
+                    safeThis->progressoTexto_ = msg;
+                    safeThis->labelProgressoMensagem_->setText(msg, juce::dontSendNotification);
                 });
                 return true;
             },
-            cancelamento_);
+            cancelamento);
 
-        juce::MessageManager::callAsync([this, plano] {
-            if (cancelamento_ && cancelamento_->pedido()) {
-                fase_ = Fase::Selecao;
-                resized();
-                repaint();
+        juce::MessageManager::callAsync([safeThis, plano, cancelamento] {
+            if (!safeThis) return;
+            if (cancelamento && cancelamento->pedido()) {
+                safeThis->fase_ = Fase::Selecao;
+                safeThis->resized();
+                safeThis->repaint();
                 return;
             }
 
             bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
-            planoAtual_ = plano;
-            if (!planoAtual_.podeAplicar()) {
+            safeThis->planoAtual_ = plano;
+            auto& planoAtual = safeThis->planoAtual_; // alias local — safeThis já confirmado vivo acima
+            if (!planoAtual.podeAplicar()) {
                 juce::String msgErro;
-                if (!planoAtual_.errosValidacao.empty()) {
-                    msgErro = juce::String(planoAtual_.errosValidacao.front());
+                if (!planoAtual.errosValidacao.empty()) {
+                    msgErro = juce::String(planoAtual.errosValidacao.front());
                     if (isPt) {
                         if (msgErro.startsWith("Insufficient free disk space")) {
                             msgErro = msgErro.replace("Insufficient free disk space on target destination", juce::String::fromUTF8("Espaço em disco insuficiente no destino alvo"))
@@ -591,34 +617,34 @@ void SyncDestinationDialog::iniciarEscaneamento() {
                         .withMessage(msgErro)
                         .withButton("OK"),
                     nullptr);
-                fase_ = Fase::Selecao;
+                safeThis->fase_ = Fase::Selecao;
             } else {
-                fase_ = Fase::Revisao;
+                safeThis->fase_ = Fase::Revisao;
                 juce::String resumo;
                 if (isPt) {
-                    resumo << juce::String::fromUTF8("Resumo: ") << planoAtual_.totalNovos << juce::String::fromUTF8(" Novos, ")
-                           << planoAtual_.totalModificados << juce::String::fromUTF8(" Modificados, ")
-                           << planoAtual_.totalMovidos << juce::String::fromUTF8(" Movidos, ")
-                           << planoAtual_.totalRemovidos << juce::String::fromUTF8(" Para a Lixeira, ")
-                           << planoAtual_.totalIguais << juce::String::fromUTF8(" Inalterados | A Copiar: ")
-                           << juce::File::descriptionOfSizeInBytes(planoAtual_.bytesParaCopiar)
+                    resumo << juce::String::fromUTF8("Resumo: ") << planoAtual.totalNovos << juce::String::fromUTF8(" Novos, ")
+                           << planoAtual.totalModificados << juce::String::fromUTF8(" Modificados, ")
+                           << planoAtual.totalMovidos << juce::String::fromUTF8(" Movidos, ")
+                           << planoAtual.totalRemovidos << juce::String::fromUTF8(" Para a Lixeira, ")
+                           << planoAtual.totalIguais << juce::String::fromUTF8(" Inalterados | A Copiar: ")
+                           << juce::File::descriptionOfSizeInBytes(planoAtual.bytesParaCopiar)
                            << juce::String::fromUTF8(" | Para a Lixeira: ")
-                           << juce::File::descriptionOfSizeInBytes(planoAtual_.bytesParaLixeira);
+                           << juce::File::descriptionOfSizeInBytes(planoAtual.bytesParaLixeira);
                 } else {
-                    resumo << "Summary: " << planoAtual_.totalNovos << " New, "
-                           << planoAtual_.totalModificados << " Modified, "
-                           << planoAtual_.totalMovidos << " Moved, "
-                           << planoAtual_.totalRemovidos << " To Trash, "
-                           << planoAtual_.totalIguais << " Unchanged | To Copy: "
-                           << juce::File::descriptionOfSizeInBytes(planoAtual_.bytesParaCopiar)
+                    resumo << "Summary: " << planoAtual.totalNovos << " New, "
+                           << planoAtual.totalModificados << " Modified, "
+                           << planoAtual.totalMovidos << " Moved, "
+                           << planoAtual.totalRemovidos << " To Trash, "
+                           << planoAtual.totalIguais << " Unchanged | To Copy: "
+                           << juce::File::descriptionOfSizeInBytes(planoAtual.bytesParaCopiar)
                            << " | To Trash: "
-                           << juce::File::descriptionOfSizeInBytes(planoAtual_.bytesParaLixeira);
+                           << juce::File::descriptionOfSizeInBytes(planoAtual.bytesParaLixeira);
                 }
-                labelResumoRevisao_->setText(resumo, juce::dontSendNotification);
-                listaRevisao_->setItens(planoAtual_.itens, 0);
+                safeThis->labelResumoRevisao_->setText(resumo, juce::dontSendNotification);
+                safeThis->listaRevisao_->setItens(planoAtual.itens, 0);
             }
-            resized();
-            repaint();
+            safeThis->resized();
+            safeThis->repaint();
         });
     });
 }
@@ -635,26 +661,33 @@ void SyncDestinationDialog::aplicarSincronizacao() {
     progressoTexto_ = isPt ? juce::String::fromUTF8("Aplicando alterações de sincronização ao Alvo...")
                            : "Applying synchronization changes to Target...";
     cancelamento_ = std::make_shared<matriz::app::Cancelamento>();
+    auto cancelamento = cancelamento_; // cópia local — mesma razão de iniciarEscaneamento()
+    auto plano = planoAtual_;
 
     resized();
     repaint();
 
-    juce::Thread::launch([this, refRaiz, alvoRaiz] {
+    // safeThis em vez de `this` bruto — mesmo risco de iniciarEscaneamento():
+    // juce::Thread detached, sem join no destrutor.
+    juce::Component::SafePointer<SyncDestinationDialog> safeThis(this);
+    juce::Thread::launch([safeThis, refRaiz, alvoRaiz, plano, cancelamento] {
         auto res = matriz::sync::SyncEngine::aplicarSync(
-            refRaiz, alvoRaiz, planoAtual_,
-            [this](int atual, int total, const juce::String& msg) {
-                juce::MessageManager::callAsync([this, atual, total, msg] {
-                    progressoValor_ = (total > 0) ? static_cast<double>(atual) / total : 0.0;
-                    progressoTexto_ = msg;
-                    labelProgressoMensagem_->setText(msg, juce::dontSendNotification);
+            refRaiz, alvoRaiz, plano,
+            [safeThis](int atual, int total, const juce::String& msg) {
+                juce::MessageManager::callAsync([safeThis, atual, total, msg] {
+                    if (!safeThis) return;
+                    safeThis->progressoValor_ = (total > 0) ? static_cast<double>(atual) / total : 0.0;
+                    safeThis->progressoTexto_ = msg;
+                    safeThis->labelProgressoMensagem_->setText(msg, juce::dontSendNotification);
                 });
                 return true;
             },
-            cancelamento_);
+            cancelamento);
 
-        juce::MessageManager::callAsync([this, res] {
-            resultadoAtual_ = res;
-            fase_ = Fase::Concluido;
+        juce::MessageManager::callAsync([safeThis, res] {
+            if (!safeThis) return;
+            safeThis->resultadoAtual_ = res;
+            safeThis->fase_ = Fase::Concluido;
 
             bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
             juce::String resumo;
@@ -691,9 +724,9 @@ void SyncDestinationDialog::aplicarSincronizacao() {
                     for (const auto& f : res.falhas) resumo << "- " << f << "\n";
                 }
             }
-            labelResumoConcluido_->setText(resumo, juce::dontSendNotification);
-            resized();
-            repaint();
+            safeThis->labelResumoConcluido_->setText(resumo, juce::dontSendNotification);
+            safeThis->resized();
+            safeThis->repaint();
         });
     });
 }

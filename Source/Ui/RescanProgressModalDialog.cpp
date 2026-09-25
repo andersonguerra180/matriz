@@ -136,10 +136,12 @@ void RescanProgressModalDialog::cancelarVarredura() {
     btnCancel_.setButtonText("Cancelling...");
     lblFileName_.setText("Aborting rescan...", juce::dontSendNotification);
 
-    juce::Timer::callAfterDelay(100, [this] {
-        closeDialog();
-        if (onCompleto_) {
-            onCompleto_(false, {});
+    juce::Component::SafePointer<RescanProgressModalDialog> safeThis(this);
+    juce::Timer::callAfterDelay(100, [safeThis] {
+        if (!safeThis) return;
+        safeThis->closeDialog();
+        if (safeThis->onCompleto_) {
+            safeThis->onCompleto_(false, {});
         }
     });
 }

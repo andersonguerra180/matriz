@@ -155,7 +155,17 @@ void ProgressoGlobal::notificarListeners(const EstadoProgresso& estado) {
         for (auto* l : lista) {
             if (l) l->aoProgressoAtualizado(estado);
         }
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+        // NÃO chamar runDispatchLoopUntil() aqui: notificarListeners() é
+        // invocado de dentro de cadeias de Timer::callAfterDelay (ver
+        // MainComponent::executarPassosFinalizacao/aguardarPassoFinalizacao),
+        // e bombear o run loop nesse ponto reentra no mesmo
+        // juce::LambdaInvoker::timerCallback() que já está no meio da pilha
+        // — confirmado sob ASan como heap-use-after-free em
+        // LambdaInvoker::~LambdaInvoker() -> Timer::stopTimer() (o
+        // LambdaInvoker se destrói uma segunda vez antes do primeiro
+        // retornar). O listener (repaint do modal) já roda sincronamente
+        // acima; o próximo frame do loop de mensagens normal é suficiente
+        // pra pintar, sem precisar de um loop aninhado.
     } else {
         juce::MessageManager::callAsync([this, estado] {
             std::vector<ProgressoGlobalListener*> lista;

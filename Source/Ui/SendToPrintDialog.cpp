@@ -543,15 +543,24 @@ public:
     }
 
 private:
+    // callAsync captura uma CÓPIA do std::function (não `this`): o destrutor
+    // do diálogo faz stopThread() e destrói este worker logo em seguida, mas
+    // stopThread() não espera a fila de mensagens drenar — um callAsync
+    // disparado nas últimas linhas de run() pode rodar depois deste objeto
+    // já ter sido liberado. onProgresso_/onConcluido_ já carregam seu
+    // próprio SafePointer pro diálogo (ver iniciarExportacao), então a cópia
+    // é auto-suficiente e segura mesmo com o worker e o diálogo mortos.
     void notificarProgresso(double p, const juce::String& msg) {
-        juce::MessageManager::callAsync([this, p, msg] {
-            if (onProgresso_) onProgresso_(p, msg);
+        auto callback = onProgresso_;
+        juce::MessageManager::callAsync([callback, p, msg] {
+            if (callback) callback(p, msg);
         });
     }
 
     void notificarFim(bool sucesso, int totalExportados, const juce::File& pasta, const juce::StringArray& erros) {
-        juce::MessageManager::callAsync([this, sucesso, totalExportados, pasta, erros] {
-            if (onConcluido_) onConcluido_(sucesso, totalExportados, pasta, erros);
+        auto callback = onConcluido_;
+        juce::MessageManager::callAsync([callback, sucesso, totalExportados, pasta, erros] {
+            if (callback) callback(sucesso, totalExportados, pasta, erros);
         });
     }
 

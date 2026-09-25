@@ -410,8 +410,11 @@ public:
         std::thread monitorThread([this, &progressFraction, &escritaAtiva, totalArquivos = (int)arquivosNoZip.size()] {
             while (escritaAtiva.load()) {
                 double p = 0.15 + (progressFraction * 0.80);
-                juce::MessageManager::callAsync([this, p] {
-                    if (onProgresso_) onProgresso_(p, matriz::i18n::t("zip.progresso_processando"));
+                // Cópia do std::function, não `this` (worker) — ver nota em
+                // notificarProgresso() abaixo.
+                auto callback = onProgresso_;
+                juce::MessageManager::callAsync([callback, p] {
+                    if (callback) callback(p, matriz::i18n::t("zip.progresso_processando"));
                 });
                 for (int k = 0; k < 10 && escritaAtiva.load(); ++k) {
                     juce::Thread::sleep(50);
@@ -452,15 +455,25 @@ private:
         if (f.exists()) f.deleteFile();
     }
 
+    // callAsync captura uma CÓPIA do std::function (não `this`): o destrutor
+    // do diálogo faz stopThread() e destrói este worker logo em seguida, mas
+    // stopThread() não espera a fila de mensagens drenar — um callAsync
+    // disparado nas últimas linhas de run() pode rodar depois deste objeto
+    // já ter sido liberado. onProgresso_/onConcluido_ já carregam seu
+    // próprio SafePointer pro diálogo (ver os construtores de ExportThread),
+    // então a cópia é auto-suficiente e segura mesmo com o worker e o
+    // diálogo mortos.
     void notificarProgresso(double p, const juce::String& msg) {
-        juce::MessageManager::callAsync([this, p, msg] {
-            if (onProgresso_) onProgresso_(p, msg);
+        auto callback = onProgresso_;
+        juce::MessageManager::callAsync([callback, p, msg] {
+            if (callback) callback(p, msg);
         });
     }
 
     void notificarFim(bool sucesso, const juce::String& erro, const juce::File& arq, int totalItens, int exportados, const juce::StringArray& ignorados) {
-        juce::MessageManager::callAsync([this, sucesso, erro, arq, totalItens, exportados, ignorados] {
-            if (onConcluido_) onConcluido_(sucesso, erro, arq, totalItens, exportados, ignorados);
+        auto callback = onConcluido_;
+        juce::MessageManager::callAsync([callback, sucesso, erro, arq, totalItens, exportados, ignorados] {
+            if (callback) callback(sucesso, erro, arq, totalItens, exportados, ignorados);
         });
     }
 
