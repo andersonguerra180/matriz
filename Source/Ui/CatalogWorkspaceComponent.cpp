@@ -1011,10 +1011,18 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     std::optional<std::string> filtroTipoMidiaAnos = tipoMidiaSelecionado_;
     std::set<int> anosParaTipo = anosSelecionados_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo]() {
+    // Fase 3c: reutilizar itens já em memória no Mosaico — evita segunda query
+    // completa para o mesmo evento. Cópia feita aqui na message thread; se o
+    // Mosaico ainda estiver vazio (snapshot não chegou) cai no listarItens().
+    std::vector<ItemResumo> itensCopia;
+    if (mosaico_ && mosaico_->totalItensCarregados() > 0)
+        itensCopia = mosaico_->todosItensEmMemoria();
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo,
+                           itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
-            auto itens = proj->listarItens();
+            auto itens = itensCopia.empty() ? proj->listarItens() : std::move(itensCopia);
             res.total = static_cast<int>(itens.size());
 
             std::map<int, int> contagemPorAno;
