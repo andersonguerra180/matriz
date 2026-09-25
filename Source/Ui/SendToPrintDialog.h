@@ -55,6 +55,13 @@ struct ItemFilaPrint {
     juce::String motivoInvalido;
     juce::Image miniatura;
     juce::Image imagemPreview; // Cache da imagem carregada para o preview central
+    juce::Image imagemPreviewAjustada; // Cache com ajustes aplicados em tempo real
+    matriz::imagem::ImagemBuffer bufferPreviewOriginal; // Buffer RGB bruto para recalcular ajustes rapidamente
+
+    // Configurações individuais por foto (papel, orientação e enquadramento)
+    int papelIndex = 0; // Índice no vetor papeisPadrao()
+    OrientacaoPapel orientacao = OrientacaoPapel::Auto;
+    matriz::imagem::ModoEnquadramento modoEnquadramento = matriz::imagem::ModoEnquadramento::Preencher;
 
     // Parâmetros individuais de enquadramento (pan)
     float offsetX = 0.0f; // -1.0 a +1.0
@@ -65,6 +72,8 @@ struct ItemFilaPrint {
     float contraste = 0.0f;
     float saturacao = 1.0f;
     float nitidez = 0.0f;
+    float temperaturaCor = 0.0f;
+    bool carregado = false;
 
     // Calcula se a foto tem resolução nativa adequada para o papel
     int calcularDpiEfetivo(int papelPixelW, int papelPixelH) const {
@@ -94,7 +103,7 @@ public:
     void mouseMove(const juce::MouseEvent& e) override;
 
     void configurarItem(ItemFilaPrint* item, const DefinicaoPapel& papel, OrientacaoPapel orientacao,
-                        matriz::imagem::ModoEnquadramento modo, ZoomPrevia zoom);
+                        matriz::imagem::ModoEnquadramento modo, ZoomPrevia zoom, bool bypass = false);
 
     std::function<void(float offsetX, float offsetY)> aoMudarOffset;
 
@@ -107,6 +116,7 @@ private:
     OrientacaoPapel orientacaoConfig_ = OrientacaoPapel::Auto;
     matriz::imagem::ModoEnquadramento modoEnquadramento_ = matriz::imagem::ModoEnquadramento::Preencher;
     ZoomPrevia zoom_ = ZoomPrevia::AjustarJanela;
+    bool bypass_ = false;
 
     // Estado do arrasto do mouse (pan)
     bool arrastando_ = false;
@@ -157,7 +167,8 @@ public:
         float contraste,
         float saturacao,
         float nitidez,
-        double dpi = 300.0);
+        double dpi = 300.0,
+        float temperatura = 0.0f);
 
     // Resolução de colisão de nomes na pasta de destino
     static juce::File resolverColisaoArquivo(const juce::File& pasta,
@@ -167,12 +178,14 @@ public:
 
 private:
     void carregarFila();
+    void iniciarCarregamentoAssincrono();
     void selecionarFoto(int indice);
     void atualizarDetalhesFotoAtiva();
     void escolherPastaDestino();
     void limparListaPrint();
     void fecharDialogo();
     void resetarAjustes();
+    void atualizarPreviewAjustada();
 
     void iniciarExportacao();
     void cancelarExportacao();
@@ -216,6 +229,7 @@ private:
     std::unique_ptr<juce::GroupComponent> grpDestino_;
     std::unique_ptr<juce::Label> lblCaminhoDestino_;
     std::unique_ptr<juce::TextButton> btnEscolherPasta_;
+    std::unique_ptr<juce::ToggleButton> chkExportarZip_;
 
     std::unique_ptr<juce::GroupComponent> grpAjustes_;
     std::unique_ptr<juce::Label> lblBrilho_;
@@ -226,7 +240,11 @@ private:
     std::unique_ptr<juce::Slider> sldSaturacao_;
     std::unique_ptr<juce::Label> lblNitidez_;
     std::unique_ptr<juce::Slider> sldNitidez_;
+    std::unique_ptr<juce::Label> lblTemperatura_;
+    std::unique_ptr<juce::Slider> sldTemperatura_;
     std::unique_ptr<juce::TextButton> btnResetarAjustes_;
+    std::unique_ptr<juce::TextButton> btnBypass_;
+    bool bypassAtivo_ = false;
 
     // --- Barra Inferior: Ações e Progresso ---
     std::unique_ptr<juce::TextButton> btnLimparLista_;

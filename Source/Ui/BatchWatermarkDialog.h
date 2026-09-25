@@ -1,91 +1,99 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include <vector>
 #include <functional>
+#include <vector>
+#include <string>
+#include "ProjetoAberto.h"
+#include "../Imagem/ImagemBuffer.h"
 
 namespace matriz::ui {
 
 class BatchWatermarkDialog : public juce::Component,
-                             public juce::FileDragAndDropTarget,
-                             public juce::ListBoxModel,
-                             private juce::Thread {
+                             public juce::FileDragAndDropTarget {
 public:
-    enum class Position {
-        BottomRight,
-        BottomLeft,
-        TopRight,
-        TopLeft,
-        Center,
-        TopCenter,
-        BottomCenter,
-        Custom
-    };
-
-    enum class OutputMode {
-        SameFolderWithSuffix,
-        CustomFolder
-    };
-
-    explicit BatchWatermarkDialog(std::function<std::vector<juce::File>()> obterFotosDoGrid = nullptr);
+    explicit BatchWatermarkDialog(ProjetoAberto* projeto = nullptr);
     ~BatchWatermarkDialog() override;
 
-    static void exibirModal(std::function<std::vector<juce::File>()> obterFotosDoGrid = nullptr);
+    static void exibirModal(ProjetoAberto* projeto = nullptr);
+    static void exibirModal(std::function<std::vector<juce::File>()> obterFotosDoGrid);
 
     void paint(juce::Graphics& g) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
     // juce::FileDragAndDropTarget
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
-    // juce::ListBoxModel
-    int getNumRows() override;
-    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override;
-    void selectedRowsChanged(int lastRowSelected) override;
+    std::function<void()> aoFechar;
+
+    // Static watermark application helpers
+    static juce::Rectangle<float> calcularPosicaoLogo(float imgW, float imgH, float logoW, float logoH, const ConfiguracaoWatermark& cfg);
+    static bool aplicarMarcaDaguaEmImagem(juce::Image& img, const ConfiguracaoWatermark& cfg);
+    static bool aplicarMarcaDaguaEmBuffer(matriz::imagem::ImagemBuffer& buf, const ConfiguracaoWatermark& cfg);
+    static bool aplicarMarcaDaguaEmArquivo(const juce::File& srcFile, const juce::File& dstFile, const ConfiguracaoWatermark& cfg);
+    static juce::File resolverColisaoArquivo(const juce::File& pasta, const juce::String& nomeBase, const juce::String& sufixo, const juce::String& extensao);
 
 private:
-    std::function<std::vector<juce::File>()> obterFotosDoGrid_;
+    void fecharDialogo();
+    void escolherPastaDestino();
+    void iniciarExportacao();
+    void cancelarExportacao();
 
-    struct PhotoItem {
-        juce::File file;
-        juce::String name;
-        juce::int64 sizeBytes = 0;
-        int width = 0;
-        int height = 0;
+    ProjetoAberto* projeto_ = nullptr;
+    ConfiguracaoWatermark cfg_;
+    juce::File pastaDestinoSelecionada_;
+
+    class ExportWatermarkThread;
+    std::unique_ptr<ExportWatermarkThread> threadExportacao_;
+    bool exportando_ = false;
+    double progressoValor_ = 0.0;
+
+    enum class OrientacaoPreview {
+        Horizontal, // 3:2
+        Vertical    // 2:3
     };
+    OrientacaoPreview orientacaoAtual_ = OrientacaoPreview::Horizontal;
 
-    std::vector<PhotoItem> photos_;
-    juce::File logoFile_;
     juce::Image logoImage_;
-    juce::Image sampleImage_;
-    int selectedPhotoIndex_ = -1;
+    juce::Image dummyLandscape_;
+    juce::Image dummyPortrait_;
 
-    // Controls - Header
+    // Header controls
     std::unique_ptr<juce::Label> lblTitulo_;
     std::unique_ptr<juce::Label> lblSubtitulo_;
 
-    // Controls - Left (Photos)
-    std::unique_ptr<juce::TextButton> btnFromGrid_;
-    std::unique_ptr<juce::TextButton> btnAddPhotos_;
-    std::unique_ptr<juce::TextButton> btnClearPhotos_;
-    std::unique_ptr<juce::ListBox> photoListBox_;
-    std::unique_ptr<juce::Label> lblPhotoCount_;
+    // Orientation toggle buttons
+    std::unique_ptr<juce::TextButton> btnOrientacaoH_;
+    std::unique_ptr<juce::TextButton> btnOrientacaoV_;
 
-    // Controls - Middle/Right (Watermark Settings & Preview)
-    std::unique_ptr<juce::TextButton> btnChooseLogo_;
+    // Logo picker
+    std::unique_ptr<juce::Label> lblSecaoLogo_;
+    std::unique_ptr<juce::TextButton> btnEscolherLogo_;
     std::unique_ptr<juce::Label> lblLogoInfo_;
-    std::unique_ptr<juce::Slider> sliderOpacity_;
-    std::unique_ptr<juce::Label> lblOpacity_;
-    std::unique_ptr<juce::Slider> sliderScale_;
-    std::unique_ptr<juce::Label> lblScale_;
-    std::unique_ptr<juce::ComboBox> comboPosition_;
-    std::unique_ptr<juce::Label> lblPosition_;
-    std::unique_ptr<juce::Slider> sliderMargin_;
-    std::unique_ptr<juce::Label> lblMargin_;
 
-    // Preview Component
+    // Settings
+    std::unique_ptr<juce::Label> lblSecaoAjustes_;
+    std::unique_ptr<juce::Label> lblOpacidade_;
+    std::unique_ptr<juce::Slider> sldOpacidade_;
+    std::unique_ptr<juce::Label> lblEscala_;
+    std::unique_ptr<juce::Slider> sldEscala_;
+    std::unique_ptr<juce::Label> lblMargem_;
+    std::unique_ptr<juce::Slider> sldMargem_;
+    std::unique_ptr<juce::Label> lblPosicao_;
+    std::unique_ptr<juce::ComboBox> cboPosicao_;
+    std::unique_ptr<juce::Label> lblDicaArrastar_;
+
+    // Destination and Options
+    std::unique_ptr<juce::Label> lblSecaoDestino_;
+    std::unique_ptr<juce::Label> lblCaminhoDestino_;
+    std::unique_ptr<juce::TextButton> btnEscolherPasta_;
+    std::unique_ptr<juce::ToggleButton> chkExportarZip_;
+    std::unique_ptr<juce::Label> lblItensMarcados_;
+
+    // Preview Canvas
     class PreviewCanvas : public juce::Component {
     public:
         PreviewCanvas(BatchWatermarkDialog& owner);
@@ -97,34 +105,18 @@ private:
     };
     std::unique_ptr<PreviewCanvas> previewCanvas_;
 
-    // Output settings
-    std::unique_ptr<juce::ToggleButton> radioSameFolder_;
-    std::unique_ptr<juce::ToggleButton> radioCustomFolder_;
-    std::unique_ptr<juce::TextEditor> editCustomFolder_;
-    std::unique_ptr<juce::TextButton> btnBrowseCustomFolder_;
+    // Progress
+    std::unique_ptr<juce::ProgressBar> barraProgresso_;
+    std::unique_ptr<juce::Label> lblStatusProgresso_;
 
-    // Action & Progress
-    std::unique_ptr<juce::ProgressBar> progressBar_;
-    std::unique_ptr<juce::Label> lblStatus_;
-    std::unique_ptr<juce::TextButton> btnApply_;
-    std::unique_ptr<juce::TextButton> btnCancel_;
+    // Bottom Action Buttons
+    std::unique_ptr<juce::TextButton> btnCancelar_;
+    std::unique_ptr<juce::TextButton> btnExportar_;
 
-    // State
-    double progress_ = 0.0;
-    std::atomic<bool> isProcessing_{false};
-    juce::Point<float> customLogoPos_{0.5f, 0.5f};
-    juce::File lastOutputDir_;
-
-    void addPhotosFromFiles(const juce::Array<juce::File>& files);
     void carregarLogo(const juce::File& file);
-    void carregarFotoAmostra();
-    void iniciarProcessamento();
-    void run() override; // juce::Thread
-    void finalizarProcessamento(int sucessos, int falhas);
-
-    juce::Rectangle<float> calcularPosicaoLogo(float imgW, float imgH, float logoW, float logoH) const;
-
-    std::function<void()> aoFechar;
+    void criarImagensDummy();
+    void atualizarControlesParaOrientacao();
+    void salvarConfiguracaoAtual();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(BatchWatermarkDialog)
 };
