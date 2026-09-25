@@ -14,6 +14,13 @@ não devem ser revertidas.
 
 Commits de defeito real (não-WIP) desta sessão, mais recente primeiro:
 
+- `7cf8da3` — `CatalogWorkspaceComponent::atualizarContagens` reutiliza
+  `itensTodos_` já em memória no Mosaico (cópia na message thread antes do
+  job), evita segunda `listarItens()` para o mesmo evento (Fase 3c)
+- `759dbd2` — `listarItensDeProjeto` sem N+1 queries (LEFT JOIN arquivo+vault,
+  statements preparados uma vez, `json_extract`/`json_valid` em SQL, offline
+  via `itensOfflineCache_`); `IntakeWorkspaceComponent::recarregar` em
+  background com throttle/geração/SafePointer (Fase 3a/3b)
 - `8dd5709` — Batch engine do Catalog (aplicarCampoAgora/aplicarGeoAgora/
   desfazer em FichaPanelComponent) grava numa única transação (Fase 2b,
   parte 3)
@@ -72,11 +79,20 @@ Plano original em 3 fases (diagnóstico de crash/freeze/lentidão):
 - **Fase 2 (freeze de edição de metadado)**: a e b completos (e
   estendidos pra todos os batch assignments do Intake e do Catalog, não
   só os 3 originais). **c pulada** por decisão do usuário — ver Decisões.
-- **Fase 3 (CPU/N+1)**: não iniciada. Itens do pedido original:
-  `listarItensDeProjeto` (N+1 query, prepare dentro do loop, JSON parse
-  por item, `existsAsFile` por item), `IntakeWorkspaceComponent::
-  recarregar` rodando a 10 Hz durante lote, `atualizarContagens`/snapshot
-  do Mosaico chamando `listarItens` em paralelo pro mesmo evento.
+- **Fase 3 (CPU/N+1)**: 3a, 3b, 3c **concluídas** (commit `759dbd2` e
+  `7cf8da3`). Items restantes do plano original:
+  - **Item 4** — Freeze no fim do ingest: `executarComPrazoOuSkip`,
+    `snapshotPendente`/`recargaPendente` no finalizarUnidadeDeLote —
+    investigar se há travamento real após a Fase 3b (IntakeWorkspace em
+    background). **PRÓXIMO**.
+  - **Item 6** — Reload completo em ações simples: auditar ~31 chamadas
+    `recarregar()`, ~26 `atualizarContagens()`, ~26 `listarItens()`.
+  - **Item 7** — Proteção do Backup (SyncEngine: projetoId diferente → erro).
+  - **Item 8** — Barras de progresso (progresso real, tabela "item" vs
+    "items", `setStatus` em background).
+  - **Pendência Fase 2b** — FichaPanelComponent: transação única nos loops
+    de `aplicarCampoAgora` — selftest ainda falha com "cannot start a
+    transaction within a transaction" (linha 746).
 
 Fora do plano de 3 fases, pedido e depois cancelado pelo usuário nesta
 sessão: feature de "relink em lote por busca em pasta" (varrer pasta,
