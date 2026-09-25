@@ -85,6 +85,11 @@ public:
 
     std::function<void()> onChange;
 
+    // Fase 4 (autocomplete por projeto): quem monta este componente injeta
+    // aqui o histórico de valores de DEVICE já usados no projeto. Vazio/nulo
+    // = campo DEVICE fica um TextEditor comum, sem popup.
+    std::function<std::vector<juce::String>()> provedorHistoricoDevice;
+
 private:
     void rebuildSubfields();
     void layoutSubfields();

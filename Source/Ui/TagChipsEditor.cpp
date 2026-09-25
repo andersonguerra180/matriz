@@ -154,6 +154,10 @@ void TagChipsEditor::layoutChips() {
     const int hPad = 6;
     const int gap = 4;
     const int closeW = 14;
+    // item 2/item 1 (nova lista): reserva o canto superior direito pros
+    // ícones de copiar e colar — só na primeira linha, onde eles realmente
+    // ficam desenhados.
+    const int larguraIconeCopiar = (areaIconeCopiar().getRight() - areaIconeColar().getX()) + 6;
     auto font = juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
 
     int x = 4;
@@ -164,7 +168,8 @@ void TagChipsEditor::layoutChips() {
         int chipW = hPad + textW + 4 + closeW + hPad;
         chipW = std::min(chipW, w - 8);
 
-        if (x + chipW > w - 4 && x > 4) {
+        int wDisponivel = (y == 4) ? (w - larguraIconeCopiar) : w;
+        if (x + chipW > wDisponivel - 4 && x > 4) {
             x = 4;
             y += chipH + gap;
         }
@@ -187,6 +192,52 @@ void TagChipsEditor::layoutChips() {
     emLayout_ = false;
 }
 
+juce::Rectangle<int> TagChipsEditor::areaIconeCopiar() const {
+    return { getWidth() - 20, 3, 14, 14 };
+}
+
+juce::Rectangle<int> TagChipsEditor::areaIconeColar() const {
+    // Item 1 (nova lista): mesmo estilo do ícone de copiar, logo à esquerda dele.
+    return areaIconeCopiar().translated(-20, 0);
+}
+
+void TagChipsEditor::copiarTagsParaClipboard() {
+    if (chips_.empty()) return;
+    juce::StringArray tags;
+    for (const auto& c : chips_) tags.add(c.display);
+    juce::SystemClipboard::copyTextToClipboard(tags.joinIntoString(", "));
+
+    flashIconeCopiarCounter_ = 4;
+    auto safeThis = juce::Component::SafePointer<TagChipsEditor>(this);
+    auto tick = [safeThis]() {
+        if (!safeThis) return;
+        safeThis->flashIconeCopiarCounter_--;
+        safeThis->repaint();
+    };
+    for (int i = 1; i <= 4; ++i)
+        juce::Timer::callAfterDelay(i * 80, tick);
+}
+
+void TagChipsEditor::colarTagsDoClipboard() {
+    juce::String clipText = juce::SystemClipboard::getTextFromClipboard();
+    if (clipText.trim().isEmpty()) return;
+
+    juce::StringArray parts;
+    parts.addTokens(clipText, ",\n\t", "");
+    for (auto& p : parts)
+        addTag(p.trim());
+
+    flashIconeColarCounter_ = 4;
+    auto safeThis = juce::Component::SafePointer<TagChipsEditor>(this);
+    auto tick = [safeThis]() {
+        if (!safeThis) return;
+        safeThis->flashIconeColarCounter_--;
+        safeThis->repaint();
+    };
+    for (int i = 1; i <= 4; ++i)
+        juce::Timer::callAfterDelay(i * 80, tick);
+}
+
 void TagChipsEditor::paint(juce::Graphics& g) {
     const auto& tk = tema();
     auto font = juce::Font(juce::FontOptions(tk.tamanhoFontePequena));
@@ -197,6 +248,35 @@ void TagChipsEditor::paint(juce::Graphics& g) {
 
     g.setColour(tk.borda);
     g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+
+    // item 2 (correção METADATA): ícone de copiar no canto superior
+    // direito — mesma ação do "Copy tags" que já existia só no menu de
+    // botão direito, agora também visível/descobrível como ícone.
+    {
+        bool flashing = (flashIconeCopiarCounter_ % 2) == 1;
+        auto icone = areaIconeCopiar().toFloat();
+        g.setColour(flashing ? tk.acento : tk.textoTerciario);
+        // Dois retângulos arredondados sobrepostos — glifo padrão de "copiar".
+        auto retFundo = icone.withTrimmedLeft(icone.getWidth() * 0.28f).withTrimmedTop(icone.getHeight() * 0.28f);
+        auto retFrente = icone.withTrimmedRight(icone.getWidth() * 0.28f).withTrimmedBottom(icone.getHeight() * 0.28f);
+        g.drawRoundedRectangle(retFundo, 2.0f, 1.3f);
+        g.setColour(juce::Colours::white);
+        g.fillRoundedRectangle(retFrente, 2.0f);
+        g.setColour(flashing ? tk.acento : tk.textoTerciario);
+        g.drawRoundedRectangle(retFrente, 2.0f, 1.3f);
+    }
+
+    // item 1 (nova lista): ícone de colar, mesmo estilo — prancheta com uma
+    // aba no topo, pra diferenciar visualmente do ícone de copiar ao lado.
+    {
+        bool flashing = (flashIconeColarCounter_ % 2) == 1;
+        auto icone = areaIconeColar();
+        g.setColour(flashing ? tk.acento : tk.textoTerciario);
+        auto prancheta = icone.toFloat().withTrimmedTop(2.0f);
+        g.drawRoundedRectangle(prancheta, 2.0f, 1.3f);
+        auto aba = juce::Rectangle<float>(icone.getCentreX() - 3.0f, static_cast<float>(icone.getY()), 6.0f, 3.0f);
+        g.fillRoundedRectangle(aba, 1.0f);
+    }
 
     for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
         auto& c = chips_[static_cast<size_t>(i)];
@@ -232,33 +312,32 @@ void TagChipsEditor::mouseUp(const juce::MouseEvent& e) {
     if (e.mods.isPopupMenu()) {
         juce::PopupMenu menu;
         menu.addItem(1, "Copy tags");
-        
+
         juce::String clipText = juce::SystemClipboard::getTextFromClipboard();
         bool hasPaste = !clipText.trim().isEmpty();
         menu.addItem(2, "Paste tags", hasPaste);
-        
+
         juce::Component::SafePointer<TagChipsEditor> safeThis(this);
         menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis](int r) {
             if (!safeThis) return;
             if (r == 1) {
-                juce::StringArray tags;
-                for (const auto& c : safeThis->chips_) {
-                    tags.add(c.display);
-                }
-                juce::SystemClipboard::copyTextToClipboard(tags.joinIntoString(", "));
+                safeThis->copiarTagsParaClipboard();
             } else if (r == 2) {
-                juce::String clipText = juce::SystemClipboard::getTextFromClipboard();
-                juce::StringArray parts;
-                parts.addTokens(clipText, ",\n\t", "");
-                for (auto& p : parts) {
-                    safeThis->addTag(p.trim());
-                }
+                safeThis->colarTagsDoClipboard();
             }
         });
         return;
     }
 
     auto pos = e.getPosition();
+    if (areaIconeColar().expanded(3).contains(pos)) {
+        colarTagsDoClipboard();
+        return;
+    }
+    if (areaIconeCopiar().expanded(3).contains(pos)) {
+        copiarTagsParaClipboard();
+        return;
+    }
     for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
         if (chips_[static_cast<size_t>(i)].closeBounds.contains(pos)) {
             removeTag(i);

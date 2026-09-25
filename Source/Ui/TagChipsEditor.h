@@ -67,10 +67,19 @@ private:
     juce::String canonicalize(const juce::String& text) const;
     void layoutChips();
     void flashChip(int index);
+    void copiarTagsParaClipboard();
+    void colarTagsDoClipboard();
+    juce::Rectangle<int> areaIconeCopiar() const;
+    juce::Rectangle<int> areaIconeColar() const;
 
     int flashIndex_ = -1;
     int flashCounter_ = 0;
     bool emLayout_ = false;
+    // item 2 (correção METADATA): pisca o ícone de copiar por um instante
+    // pra dar feedback visual de que copiou, já que não há toast/status.
+    int flashIconeCopiarCounter_ = 0;
+    // item 1 (nova lista): mesmo feedback de flash pro ícone de colar.
+    int flashIconeColarCounter_ = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(TagChipsEditor)
 };

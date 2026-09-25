@@ -7,6 +7,10 @@
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
+#include "AutoCompleteTextEditor.h"
+#endif
+
 namespace matriz::ui {
 
 static const std::vector<MediumCategoryGroup> kMediumVocab = {
@@ -564,7 +568,13 @@ void OriginalSourceMediumEditorComponent::addTextField(const juce::String& key, 
     sf.label->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*sf.label);
 
-    sf.textEditor = std::make_unique<juce::TextEditor>();
+    // Fase 4: só DEVICE tem histórico pra sugerir — os outros textFields
+    // (tapeFormulation, customNote) continuam um TextEditor comum.
+    if (key == "recordingDevice" && provedorHistoricoDevice) {
+        sf.textEditor = std::make_unique<AutoCompleteTextEditor>(provedorHistoricoDevice);
+    } else {
+        sf.textEditor = std::make_unique<juce::TextEditor>();
+    }
     sf.textEditor->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
     sf.textEditor->setText(juce::String::fromUTF8(currentVal.c_str()), false);
     sf.textEditor->onTextChange = [this] { fireChange(); };
