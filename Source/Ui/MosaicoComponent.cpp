@@ -119,9 +119,19 @@ void MosaicoComponent::recarregar() {
         }
 
         juce::MessageManager::callAsync([safeThis, geracao, itens = std::move(itens)]() mutable {
-            if (!safeThis) return;
+            if (!safeThis) {
+                ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
+                return;
+            }
             auto* self = safeThis.getComponent();
-            if (geracao != self->geracaoSnapshot_) return;  // snapshot superado
+            if (geracao != self->geracaoSnapshot_) {
+                // snapshot superado (ex.: atualizarItemEmMemoria() bumped a
+                // geração enquanto este job estava em voo) — a tarefa global
+                // precisa fechar mesmo assim, senão o modal "Loading Catalog"
+                // fica preso em 0% pra sempre.
+                ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
+                return;
+            }
             MATRIZ_TRACE("MosaicoComponent::aplicarSnapshot");
             self->snapshotPendente_ = false;
             self->itensTodos_ = std::move(itens);
