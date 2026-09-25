@@ -913,6 +913,77 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
     EventBus::obterInstancia().dispararItemAlterado(itemId, coluna == "ano" ? "metadado_data" : "metadado");
 }
 
+void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
+                                          const std::vector<std::pair<std::string, std::string>>& camposEValores) {
+    if (!projeto_ || itemIds.empty() || camposEValores.empty()) return;
+
+    // Uma entrada de Undo só pro lote inteiro (não uma por item x campo):
+    // captura o valor antigo de cada combinação antes de escrever. Desfazer
+    // restaura item por item via salvarMetadado() normal — ação rara e
+    // pequena o bastante pra não precisar ser transacional.
+    if (!desfazendo_) {
+        struct ValorAntigo { std::string itemId, coluna, valor; };
+        auto anteriores = std::make_shared<std::vector<ValorAntigo>>();
+        anteriores->reserve(itemIds.size() * camposEValores.size());
+        for (const auto& itemId : itemIds) {
+            for (const auto& campoValor : camposEValores) {
+                anteriores->push_back({itemId, campoValor.first,
+                                        lerMetadado(itemId, campoValor.first).value_or("")});
+            }
+        }
+        registrarUndo("Edit " + camposEValores.front().first + " (lote)", [this, anteriores]() {
+            for (const auto& v : *anteriores) {
+                salvarMetadado(v.itemId, v.coluna, v.valor);
+            }
+        });
+    }
+
+    auto& db = projeto_->registro();
+    std::string agora = matriz::model::agoraIso8601();
+
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        for (const auto& itemId : itemIds) {
+            for (const auto& campoValor : camposEValores) {
+                const std::string& coluna = campoValor.first;
+                const std::string& valor = campoValor.second;
+                try {
+                    db.run(
+                        "UPDATE item SET " + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                        {matriz::db::Value::of(valor), matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+                } catch (...) {
+                    try {
+                        db.run("UPDATE item SET atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                               {matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+                    } catch (...) {}
+                }
+                try {
+                    db.run(
+                        "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                        "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+                        "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                         matriz::db::Value::of(coluna), matriz::db::Value::of(valor), matriz::db::Value::of(agora)});
+                } catch (...) {}
+            }
+        }
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return;
+    }
+
+    // EventBus/juce::ListenerList não é thread-safe pra iterar/chamar de uma
+    // thread que não seja a message thread -- este método pode ser chamado
+    // de background (ver IntakeWorkspaceComponent::aplicarXAosSelecionados),
+    // então o disparo do evento amplo sempre volta pra message thread via
+    // callAsync, nunca direto.
+    bool ehData = camposEValores.front().first == "ano";
+    juce::MessageManager::callAsync([ehData] {
+        EventBus::obterInstancia().dispararItemAlterado("", ehData ? "metadado_data" : "metadado");
+    });
+}
+
 bool ProjetoAberto::preencherAnoPadraoSeVazio(const std::string& itemId, const std::string& ano) {
     if (!projeto_ || itemId.empty() || ano.size() != 4) return false;
     for (char c : ano) if (c < '0' || c > '9') return false;

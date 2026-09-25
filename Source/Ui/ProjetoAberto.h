@@ -212,6 +212,17 @@ public:
     std::optional<std::string> lerMetadado(const std::string& itemId, const std::string& coluna) const;
     // Writes a direct column on the item table
     void salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor);
+    // Fase 2b (freeze de edição em lote): grava N itens x M campos numa
+    // ÚNICA transação (em vez de uma transação implícita por
+    // UPDATE/INSERT — N*M delas hoje, via salvarMetadado em loop) e dispara
+    // UM evento amplo no final (itemId vazio = "recarregar tudo", mesmo
+    // idioma que MosaicoComponent::aoItemAlterado já usa) em vez de um
+    // evento por item. Seguro de chamar de qualquer thread — não toca
+    // Component nenhum, e o disparo do evento sempre volta pra message
+    // thread via callAsync internamente (EventBus/ListenerList não é
+    // thread-safe pra chamar direto de background).
+    void salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
+                               const std::vector<std::pair<std::string, std::string>>& camposEValores);
     // Backfill silencioso do EVENT DATE (item.ano) quando ele ainda está
     // vazio. Deliberadamente NÃO passa por salvarMetadado: não marca
     // metadados_editados, não entra no Undo e não dispara evento — isto é

@@ -1984,20 +1984,38 @@ void IntakeWorkspaceComponent::definirSourceMediaItem(const std::string& itemId,
 // que a ficha grava (dc_creator/dc_subject via ProjetoAberto::salvarMetadado)
 // — o valor aparece direto no ASSET & USER METADATA e no DUBLIN CORE do
 // item assim que ele chega no Grid, sem estrutura própria de metadado.
+// Fase 2b (freeze de edição em lote): a gravação em si (N itens) sai da
+// message thread via poolMetadadoLote_ e vira UMA transação com UM evento
+// amplo no fim, em vez de N chamadas síncronas de salvarMetadado — cada
+// uma com sua própria transação implícita e seu próprio evento.
 void IntakeWorkspaceComponent::aplicarCreatorAosSelecionados(const juce::String& valor) {
+    std::vector<std::string> ids;
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         if (todosItens_[static_cast<size_t>(idx)].selecionado)
-            projeto_.salvarMetadado(todosItens_[static_cast<size_t>(idx)].id, "dc_creator", valor.toStdString());
+            ids.push_back(todosItens_[static_cast<size_t>(idx)].id);
     }
+    if (ids.empty()) return;
+    ProjetoAberto* projeto = &projeto_;
+    std::string valorStd = valor.toStdString();
+    poolMetadadoLote_.addJob([projeto, ids, valorStd] {
+        projeto->salvarMetadadoEmLote(ids, {{"dc_creator", valorStd}});
+    });
 }
 
 void IntakeWorkspaceComponent::aplicarSubjectAosSelecionados(const juce::String& valor) {
+    std::vector<std::string> ids;
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         if (todosItens_[static_cast<size_t>(idx)].selecionado)
-            projeto_.salvarMetadado(todosItens_[static_cast<size_t>(idx)].id, "dc_subject", valor.toStdString());
+            ids.push_back(todosItens_[static_cast<size_t>(idx)].id);
     }
+    if (ids.empty()) return;
+    ProjetoAberto* projeto = &projeto_;
+    std::string valorStd = valor.toStdString();
+    poolMetadadoLote_.addJob([projeto, ids, valorStd] {
+        projeto->salvarMetadadoEmLote(ids, {{"dc_subject", valorStd}});
+    });
 }
 
 void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::String& valor) {
@@ -2006,16 +2024,24 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
     // Item 1 (lista nova de hoje): só os selecionados visíveis sob o
     // filtro ativo. Item 3: EVENT DATE passa a alimentar também DATE
     // CREATED (dc_created, a mesma coluna que a lista exibe) — a partir de
-    // agora o arquivo assume esta data como data de criação, refletindo
-    // na hora na lista sem esperar um recarregar().
+    // agora o arquivo assume esta data como data de criação. A atualização
+    // do modelo em memória (item.dataCriacao) e o refresh da tabela
+    // continuam síncronos (baratos, só tocam o vetor local); só a gravação
+    // no banco sai da message thread.
+    std::vector<std::string> ids;
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (!item.selecionado) continue;
-        projeto_.salvarMetadado(item.id, "ano", v.toStdString());
-        projeto_.salvarMetadado(item.id, "dc_created", v.toStdString());
+        ids.push_back(item.id);
         item.dataCriacao = v;
     }
+    if (ids.empty()) return;
+    ProjetoAberto* projeto = &projeto_;
+    std::string vStd = v.toStdString();
+    poolMetadadoLote_.addJob([projeto, ids, vStd] {
+        projeto->salvarMetadadoEmLote(ids, {{"ano", vStd}, {"dc_created", vStd}});
+    });
     if (tabela_) {
         tabela_->updateContent();
         tabela_->repaint();

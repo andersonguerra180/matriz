@@ -154,6 +154,12 @@ private:
     void mostrarMenuColecaoParaItem(int itemIndex, juce::Rectangle<int> screenBounds);
 
     ProjetoAberto& projeto_;
+    // Fase 2b (freeze de edição em lote): aplicarXAosSelecionados grava
+    // metadado de N itens de uma vez — sai da message thread via este pool
+    // dedicado (ver ProjetoAberto::salvarMetadadoEmLote). 1 thread só:
+    // essas chamadas são raras (ação explícita do operador), nunca
+    // concorrentes entre si.
+    juce::ThreadPool poolMetadadoLote_{1};
     std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
