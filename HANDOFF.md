@@ -14,6 +14,17 @@ não devem ser revertidas.
 
 Commits de defeito real (não-WIP) desta sessão, mais recente primeiro:
 
+- `e5d9f47` — `ProjetoAberto::replicarSubarvoreNoAcervo`: insere itens diretamente
+  na transação ativa sem chamar `adicionarItensAPasta` (elimina erro "cannot start a
+  transaction within a transaction" no selftest / Pendência Fase 2b)
+- `c2f97ec` — `ProjectLoadingModalDialog`: corrige nome da tabela de 'items' para 'item'
+  no warm-up de índices (Item 8)
+- `dea3ec6` — `SyncEngine`: proteção do Backup contra sobrescrita de destino com
+  `projetoId` divergente em `escanearEComparar` e `espelharDestinosAutomatico` (Item 7)
+- `4edeffa` — `MainComponent::catalogWorkspace_->aoItemAlterado`: atualiza apenas em
+  memória no mosaico para `itemId` pontual, evitando reload geral e rajada de I/O de
+  disco no `backupWorkspace` (Item 6)
+- `10c18ae` — Docs: atualiza HANDOFF com commits 759dbd2/7cf8da3 (Fase 3a/3b/3c) e estado do Item 4
 - `7cf8da3` — `CatalogWorkspaceComponent::atualizarContagens` reutiliza
   `itensTodos_` já em memória no Mosaico (cópia na message thread antes do
   job), evita segunda `listarItens()` para o mesmo evento (Fase 3c)
@@ -76,23 +87,13 @@ Plano original em 3 fases (diagnóstico de crash/freeze/lentidão):
   uso real (ProgressoGlobal) foi removido; os ~9 usos em
   BackupWorkspaceComponent/ConsolidacaoDialogo ficam como estão, por
   decisão do usuário (ver Decisões abaixo).
-- **Fase 2 (freeze de edição de metadado)**: a e b completos (e
-  estendidos pra todos os batch assignments do Intake e do Catalog, não
-  só os 3 originais). **c pulada** por decisão do usuário — ver Decisões.
-- **Fase 3 (CPU/N+1)**: 3a, 3b, 3c **concluídas** (commit `759dbd2` e
-  `7cf8da3`). Items restantes do plano original:
-  - **Item 4** — Freeze no fim do ingest: `executarComPrazoOuSkip`,
-    `snapshotPendente`/`recargaPendente` no finalizarUnidadeDeLote —
-    investigar se há travamento real após a Fase 3b (IntakeWorkspace em
-    background). **PRÓXIMO**.
-  - **Item 6** — Reload completo em ações simples: auditar ~31 chamadas
-    `recarregar()`, ~26 `atualizarContagens()`, ~26 `listarItens()`.
-  - **Item 7** — Proteção do Backup (SyncEngine: projetoId diferente → erro).
-  - **Item 8** — Barras de progresso (progresso real, tabela "item" vs
-    "items", `setStatus` em background).
-  - **Pendência Fase 2b** — FichaPanelComponent: transação única nos loops
-    de `aplicarCampoAgora` — selftest ainda falha com "cannot start a
-    transaction within a transaction" (linha 746).
+- **Fase 2 (freeze de edição de metadado)**: a, b e pendência de transação aninhada
+  **completos**. Selftests de UI passando 100% no teste de hierarquia.
+- **Fase 3 (CPU/N+1)**: 3a, 3b, 3c **concluídas** (commits `759dbd2` e `7cf8da3`).
+- **Item 4 (Freeze no fim do ingest)**: **concluído** (resolvido na Fase 3b com IntakeWorkspace em background).
+- **Item 6 (Reload completo em ações simples)**: **concluído** (commit `4edeffa`).
+- **Item 7 (Proteção do Backup - SyncEngine)**: **concluído** (commit `dea3ec6`).
+- **Item 8 (Barras de progresso / query 'items')**: **concluído** (commit `c2f97ec`).
 
 Fora do plano de 3 fases, pedido e depois cancelado pelo usuário nesta
 sessão: feature de "relink em lote por busca em pasta" (varrer pasta,
