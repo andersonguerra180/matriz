@@ -45,9 +45,13 @@ struct KeyframeGerado {
 // `duracaoSegundos` do vídeo `origem`, salvando em `dirDestino` com o
 // prefixo dado. Usado tanto para a miniatura única (quantidade=1) quanto
 // para a faixa de keyframes da tira de diagnóstico (§11.3).
+// Quando `quantidade` == 1: por padrão o frame é sorteado entre 10%-90% da
+// duração (evita telas pretas de abertura); com `primeiroFrame` = true, o
+// frame extraído é sempre t=0 — usado pela miniatura principal (DUPLICATES
+// precisa de um resultado determinístico pra comparar visualmente).
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
-                                                 int larguraPx = 320);
+                                                 int larguraPx = 320, bool primeiroFrame = false);
 
 struct FormaDeOnda {
     double duracaoSegundos = 0.0;

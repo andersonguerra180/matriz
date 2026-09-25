@@ -2,6 +2,7 @@
 
 #include "../Model/Project.h"
 #include "ProcessoExterno.h"
+#include "MiniaturaPsd.h"
 
 #include <exiv2/exiv2.hpp>
 #include <cstring>
@@ -67,8 +68,28 @@ DimensaoImagem dimensoesImagem(const juce::File& imagem) {
 
 DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& destino, int ladoMaximoPx) {
     juce::Image img = juce::ImageFileFormat::loadFrom(origem);
-    if (img.isNull())
+    if (img.isNull()) {
+        // JUCE só decodifica PNG/JPEG/GIF — PSD/PSB/TIFF/CR2 caem aqui
+        // sempre. Fallback nativo (ImageIO do macOS, que já decodifica
+        // esses formatos nativamente) só pra esses; se também falhar,
+        // segue o mesmo throw de antes e quem chama isto
+        // (gerarEGravarMiniaturaPrincipal) cai pro ícone genérico da
+        // categoria — comportamento inalterado pros outros formatos.
+        juce::String ext = origem.getFileExtension().toLowerCase();
+        if (ext == ".psd" || ext == ".psb" || ext == ".tif" || ext == ".tiff" || ext == ".cr2") {
+            destino.getParentDirectory().createDirectory();
+            int w = 0, h = 0;
+            if (gerarMiniaturaPsdNativa(origem.getFullPathName().toRawUTF8(),
+                                        destino.getFullPathName().toRawUTF8(),
+                                        ladoMaximoPx, &w, &h)) {
+                DimensaoImagem d;
+                d.largura = w;
+                d.altura = h;
+                return d;
+            }
+        }
         throw MiniaturaError("Falha ao decodificar imagem para miniatura: " + origem.getFullPathName().toStdString());
+    }
 
     int orient = lerOrientacaoExif(origem);
     if (orient > 1) {
@@ -98,7 +119,7 @@ DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& 
 
 std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double duracaoSegundos, int quantidade,
                                                  const juce::File& dirDestino, const juce::String& prefixo,
-                                                 int larguraPx) {
+                                                 int larguraPx, bool primeiroFrame) {
     if (quantidade <= 0)
         throw MiniaturaError("quantidade de keyframes deve ser positiva");
     if (duracaoSegundos <= 0.0)
@@ -114,7 +135,7 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
 
     for (int i = 0; i < quantidade; ++i) {
         double tempo = quantidade == 1
-            ? duracaoSegundos * (0.1 + rng.nextDouble() * 0.8)
+            ? (primeiroFrame ? 0.0 : duracaoSegundos * (0.1 + rng.nextDouble() * 0.8))
             : duracaoSegundos * (i + 0.5) / quantidade;
         juce::File destino = dirDestino.getChildFile(prefixo + "_" + juce::String(i).paddedLeft('0', 4) + ".jpg");
 
@@ -299,7 +320,8 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
         } else if (categoria == CategoriaMidia::Video) {
             double duracao = duracaoSegundosConhecida.value_or(0.0);
             if (duracao <= 0.0) return;
-            auto frames = gerarKeyframesVideo(arquivoNoProjeto, duracao, 1, pastaMiniaturas, arquivoId);
+            auto frames = gerarKeyframesVideo(arquivoNoProjeto, duracao, 1, pastaMiniaturas, arquivoId,
+                                               320, /*primeiroFrame=*/true);
             if (frames.empty()) return;
             if (frames.front().arquivo != destino) frames.front().arquivo.moveFileTo(destino);
             largura = frames.front().dimensao.largura;
