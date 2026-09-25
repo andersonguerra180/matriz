@@ -116,7 +116,11 @@ void configurarLookAndFeel(juce::LookAndFeel_V4& lf) {
 
     // ScrollBar
     lf.setColour(juce::ScrollBar::backgroundColourId, juce::Colours::transparentBlack);
-    lf.setColour(juce::ScrollBar::thumbColourId, tk.borda.brighter(0.15f));
+    // Item 7 (nova lista): o handle com a borda só levemente clareada ficava
+    // fraco/difícil de enxergar (e de acertar) contra o fundo escuro — um
+    // tom bem mais claro e neutro deixa só o handle mais ostensivo, sem
+    // mudar a trilha (que continua transparente).
+    lf.setColour(juce::ScrollBar::thumbColourId, tk.textoTerciario);
     lf.setColour(juce::ScrollBar::trackColourId, juce::Colours::transparentBlack);
 
     // Dialog / AlertWindow / FileBrowser

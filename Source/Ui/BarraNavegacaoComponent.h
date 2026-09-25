@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include <utility>
 #include <vector>
 
 namespace matriz::ui {
@@ -23,13 +24,20 @@ public:
     ~BarraNavegacaoComponent() override;
 
     void setProjectInfo(const juce::String& projectName, bool isCatalog);
-    void setHasParentCatalog(bool hasParent);
 
     void setSelectedTab(Tab tab);
     Tab getSelectedTab() const { return selectedTab_; }
 
+    // Componentes que a aba ativa empresta para esta barra: o grupo da
+    // esquerda encosta na margem esquerda, o da direita na margem direita, e
+    // o cluster de tabs continua centralizado no que sobra (mesmo cálculo de
+    // sempre). Cada par é {componente, largura}. A barra só posiciona — a
+    // posse continua com quem criou o botão.
+    using ComponenteExtra = std::pair<juce::Component*, int>;
+    void setComponentesExtras(const std::vector<ComponenteExtra>& esquerda,
+                              const std::vector<ComponenteExtra>& direita);
+
     std::function<void(Tab)> aoMudarTab;
-    std::function<void()> aoClicarFechar;
 
     juce::String getTooltip() override;
 
@@ -55,13 +63,17 @@ private:
     std::vector<ItemTab> tabs_;
     Tab selectedTab_ = Tab::Grid;
 
-    juce::String brandText_{"COLLECTION"};
-    juce::String projectName_;
     bool isCatalog_ = false;
-    bool hasParentCatalog_ = false;
 
     std::unique_ptr<juce::TextButton> botaoAjuda_;
-    std::unique_ptr<juce::TextButton> botaoFechar_;
+
+    struct ExtraSlot {
+        juce::Component::SafePointer<juce::Component> comp;
+        int largura = 0;
+    };
+    std::vector<ExtraSlot> extrasEsquerda_;
+    std::vector<ExtraSlot> extrasDireita_;
+    int larguraExtras(const std::vector<ExtraSlot>& slots) const;
 };
 
 } // namespace matriz::ui

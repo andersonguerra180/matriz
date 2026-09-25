@@ -8,7 +8,6 @@ BarraNavegacaoComponent::BarraNavegacaoComponent() {
     reconstruirTabs();
 
     const auto& tk = tema();
-    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     botaoAjuda_ = std::make_unique<juce::TextButton>("?");
     botaoAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -17,75 +16,32 @@ BarraNavegacaoComponent::BarraNavegacaoComponent() {
     botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
     addAndMakeVisible(*botaoAjuda_);
 
-    botaoFechar_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("FECHAR PROJETO") : "CLOSE PROJECT");
-    botaoFechar_->onClick = [this] { if (aoClicarFechar) aoClicarFechar(); };
-    
-    // Style Close button - exact same colors and typography as MAKE BACKUP
-    botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
-    botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
-    botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
-    botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
-    addAndMakeVisible(*botaoFechar_);
-    
+    // CLOSE PROJECT saiu da barra: fechar a coleção/catálogo (e voltar ao
+    // catálogo pai) vive só no menu File.
     setInterceptsMouseClicks(true, true);
 }
 
 BarraNavegacaoComponent::~BarraNavegacaoComponent() = default;
 
 void BarraNavegacaoComponent::setProjectInfo(const juce::String& projectName, bool isCatalog) {
+    // O selo "COLLECTION - <projeto>" saiu do canto superior esquerdo de
+    // todas as abas; o nome do projeto continua no título da janela. Aqui só
+    // interessa o modo, que define o conjunto de tabs.
+    juce::ignoreUnused(projectName);
     isCatalog_ = isCatalog;
-    projectName_ = projectName;
-    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
-    juce::String prefixo = isCatalog ? (isPt ? juce::String::fromUTF8("CATÁLOGO") : "CATALOG")
-                                     : (isPt ? juce::String::fromUTF8("COLEÇÃO") : "COLLECTION");
-    brandText_ = projectName.isNotEmpty() ? prefixo + " - " + projectName : prefixo;
     reconstruirTabs();
-    resized();
-    repaint();
-}
-
-void BarraNavegacaoComponent::setHasParentCatalog(bool hasParent) {
-    hasParentCatalog_ = hasParent;
-    const auto& tk = tema();
-    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
-    if (botaoFechar_) {
-        if (hasParentCatalog_) {
-            botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("VOLTAR AO CATÁLOGO") : "RETURN TO CATALOG");
-        } else {
-            botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("FECHAR PROJETO") : "CLOSE PROJECT");
-        }
-        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
-        botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
-        botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
-        botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
-    }
     resized();
     repaint();
 }
 
 void BarraNavegacaoComponent::lookAndFeelChanged() {
     const auto& tk = tema();
-    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (botaoAjuda_) {
         botaoAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         botaoAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
         botaoAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
         botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
     }
-    if (botaoFechar_) {
-        botaoFechar_->setColour(juce::TextButton::buttonColourId, tk.acento);
-        botaoFechar_->setColour(juce::TextButton::buttonOnColourId, tk.acento);
-        botaoFechar_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
-        botaoFechar_->setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
-        if (hasParentCatalog_) {
-            botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("VOLTAR AO CATÁLOGO") : "RETURN TO CATALOG");
-        } else {
-            botaoFechar_->setButtonText(isPt ? juce::String::fromUTF8("FECHAR PROJETO") : "CLOSE PROJECT");
-        }
-    }
-    juce::String prefixo = isCatalog_ ? (isPt ? juce::String::fromUTF8("CATÁLOGO") : "CATALOG")
-                                      : (isPt ? juce::String::fromUTF8("COLEÇÃO") : "COLLECTION");
-    brandText_ = projectName_.isNotEmpty() ? prefixo + " - " + projectName_ : prefixo;
     reconstruirTabs();
     resized();
     repaint();
@@ -104,17 +60,69 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("1 - Ingestão") : "1 - Intake", {}, {}, false });
         tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("2 - Metadados") : "2 - Metadata", {}, {}, false });
         tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("4 - Armazenamento") : "4 - Storage", {}, {}, false });
-        tabs_.push_back({ Tab::Tree, isPt ? juce::String::fromUTF8("5 - Mapa") : "5 - Treemap", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("6 - Disco") : "6 - Disk", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "7 - Backup", {}, {}, false });
+        // Item 4 (nova lista): STORAGE (Analytics) e TREEMAP (Tree) viraram
+        // uma aba só — "Structure" — com sub-abas FOLDER MAP/SPACE MAP
+        // dentro (ver MainComponent::mostrarStructure). Tab::Tree fica sem
+        // entrada própria na barra; Tab::Analytics passa a representar a
+        // aba combinada.
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("4 - Estrutura") : "4 - Structure", {}, {}, false });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("5 - Armazenamento") : "5 - Storage", {}, {}, false });
+        tabs_.push_back({ Tab::Backup, "6 - Backup", {}, {}, false });
     }
+}
+
+void BarraNavegacaoComponent::setComponentesExtras(const std::vector<ComponenteExtra>& esquerda,
+                                                   const std::vector<ComponenteExtra>& direita) {
+    auto mesmoConteudo = [](const std::vector<ExtraSlot>& atual, const std::vector<ComponenteExtra>& novo) {
+        if (atual.size() != novo.size()) return false;
+        for (size_t i = 0; i < novo.size(); ++i) {
+            if (atual[i].comp.getComponent() != novo[i].first || atual[i].largura != novo[i].second)
+                return false;
+        }
+        return true;
+    };
+    if (mesmoConteudo(extrasEsquerda_, esquerda) && mesmoConteudo(extrasDireita_, direita)) return;
+
+    for (auto& slot : extrasEsquerda_)
+        if (auto* c = slot.comp.getComponent(); c != nullptr && c->getParentComponent() == this) removeChildComponent(c);
+    for (auto& slot : extrasDireita_)
+        if (auto* c = slot.comp.getComponent(); c != nullptr && c->getParentComponent() == this) removeChildComponent(c);
+
+    extrasEsquerda_.clear();
+    extrasDireita_.clear();
+
+    auto adotar = [this](const std::vector<ComponenteExtra>& origem, std::vector<ExtraSlot>& destino) {
+        for (const auto& par : origem) {
+            if (par.first == nullptr) continue;
+            addAndMakeVisible(*par.first);
+            destino.push_back({juce::Component::SafePointer<juce::Component>(par.first), par.second});
+        }
+    };
+    adotar(esquerda, extrasEsquerda_);
+    adotar(direita, extrasDireita_);
+
+    resized();
+    repaint();
+}
+
+int BarraNavegacaoComponent::larguraExtras(const std::vector<ExtraSlot>& slots) const {
+    int total = 0;
+    int visiveis = 0;
+    for (const auto& slot : slots) {
+        if (slot.comp.getComponent() == nullptr) continue;
+        total += slot.largura;
+        ++visiveis;
+    }
+    if (visiveis > 1) total += (visiveis - 1) * 8;
+    return total;
 }
 
 void BarraNavegacaoComponent::setSelectedTab(Tab tab) {
     if (selectedTab_ != tab) {
         selectedTab_ = tab;
         if (botaoAjuda_) botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
+        if (botaoAjuda_) botaoAjuda_->setVisible(selectedTab_ != Tab::Intake);
+        resized();
         repaint();
     }
 }
@@ -128,13 +136,6 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
     // Bottom border separating header from content
     g.setColour(tk.borda);
     g.fillRect(0, getHeight() - 1, getWidth(), 1);
-    
-    // Draw Brand text (COLLECTION - project or CATALOG - project)
-    auto fonteBrand = juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold));
-    int maxBrandW = 320;
-    g.setColour(tk.textoPrimario);
-    g.setFont(fonteBrand);
-    g.drawText(brandText_, 16, 0, maxBrandW, getHeight(), juce::Justification::centredLeft, true);
     
     // Draw Tabs in Folder-Tab style with rounded top corners
     for (const auto& tab : tabs_) {
@@ -157,23 +158,20 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
         tabPath.lineTo(bx + bw, by + bh);
         
         if (ativo) {
-            // Active folder tab: elevated background matching the workspace panel below
+            // Active folder tab: interior inteiro em amarelo clarinho a 30%
+            // de opacidade; contorno preto sólido (como era antes das
+            // últimas duas tentativas — nem tk.acento, nem cor cheia sem
+            // opacidade, nem só uma tarja fina no topo).
+            static const juce::Colour corAmareloClaro(0xfffde047);
             juce::Path fillPath(tabPath);
             fillPath.closeSubPath();
-            g.setColour(tk.painel);
+            g.setColour(corAmareloClaro.withAlpha(0.30f));
             g.fillPath(fillPath);
-            
-            // Highlighted folder tab border
-            g.setColour(tk.acento.withAlpha(0.75f));
+
+            // Contorno da aba pressionada
+            g.setColour(juce::Colours::black);
             g.strokePath(tabPath, juce::PathStrokeType(1.5f));
-            
-            // Accent stripe on the top of the active tab
-            juce::Path topStripe;
-            topStripe.startNewSubPath(bx + r, by);
-            topStripe.lineTo(bx + bw - r, by);
-            g.setColour(tk.acento);
-            g.strokePath(topStripe, juce::PathStrokeType(2.5f));
-            
+
             g.setColour(tk.acento);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         } else if (tab.hover) {
@@ -222,23 +220,43 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
 
 void BarraNavegacaoComponent::resized() {
     const auto& tk = tema();
-    
-    // Close and Help buttons sizing on the right
-    int btnWidth = hasParentCatalog_ ? 175 : 130;
-    int btnHeight = 28;
+
+    // Help button on the right edge (a aba INTAKE traz o "?" dela própria
+    // entre os componentes extras, então o daqui fica oculto lá).
+    bool hideNavButtons = (selectedTab_ == Tab::Intake);
+    if (botaoAjuda_) botaoAjuda_->setVisible(!hideNavButtons);
+
     int helpBtnSize = 28;
-    botaoFechar_->setBounds(getWidth() - btnWidth - 16, (getHeight() - btnHeight) / 2, btnWidth, btnHeight);
-    if (botaoAjuda_) {
-        botaoAjuda_->setBounds(getWidth() - btnWidth - 16 - helpBtnSize - 8, (getHeight() - helpBtnSize) / 2, helpBtnSize, helpBtnSize);
+    if (!hideNavButtons && botaoAjuda_)
+        botaoAjuda_->setBounds(getWidth() - helpBtnSize - 16, (getHeight() - helpBtnSize) / 2, helpBtnSize, helpBtnSize);
+
+    // Comandos emprestados pela aba ativa (hoje só o INTAKE usa): o grupo da
+    // esquerda encosta na margem esquerda, o da direita na margem direita.
+    const int kExtraH = 28;
+    int extrasDirW = larguraExtras(extrasDireita_);
+    {
+        int x = 16;
+        for (auto& slot : extrasEsquerda_) {
+            auto* c = slot.comp.getComponent();
+            if (c == nullptr) continue;
+            c->setBounds(x, (getHeight() - kExtraH) / 2, slot.largura, kExtraH);
+            x += slot.largura + 8;
+        }
+        int xDir = getWidth() - 16 - extrasDirW;
+        for (auto& slot : extrasDireita_) {
+            auto* c = slot.comp.getComponent();
+            if (c == nullptr) continue;
+            c->setBounds(xDir, (getHeight() - kExtraH) / 2, slot.largura, kExtraH);
+            xDir += slot.largura + 8;
+        }
     }
-    
-    // Brand padding (dynamic based on brand text width) on the left
-    auto fonteBrand = juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold));
-    int brandWidth = std::min(340, juce::GlyphArrangement::getStringWidthInt(fonteBrand, brandText_) + 32);
-    brandWidth = std::max(160, brandWidth);
-    
-    int leftBoundary = brandWidth + 16;
-    int rightBoundary = getWidth() - btnWidth - 16 - helpBtnSize - 16;
+
+    // O cluster de tabs ocupa exatamente a mesma posição nas 7 abas: é
+    // centralizado na largura inteira da barra, sem depender do que cada aba
+    // pendura nas extremidades (o "?" e, no INTAKE, os botões de ingestão).
+    // Era essa dependência que deslocava o menu numerado de uma aba pra outra.
+    int leftBoundary = 16;
+    int rightBoundary = getWidth() - 16;
     int availableWidth = std::max(0, rightBoundary - leftBoundary);
     
     // Measure tabs width dynamically to ensure words like "ARMAZENAMENTO" fit without truncation
@@ -262,6 +280,13 @@ void BarraNavegacaoComponent::resized() {
     
     // Center the entire tabs cluster between leftBoundary and rightBoundary
     int startX = leftBoundary + std::max(0, (availableWidth - totalTabsW) / 2);
+
+    // Rede de segurança só para janelas estreitas: a centralização acima é a
+    // mesma nas 7 abas, mas numa janela pequena o cluster chegaria a cobrir os
+    // botões de ingestão do INTAKE. Nesse caso — e só nesse — ele desliza o
+    // mínimo necessário para não sobrepô-los.
+    int extrasEsqW = larguraExtras(extrasEsquerda_);
+    if (extrasEsqW > 0) startX = std::max(startX, 16 + extrasEsqW + 8);
     int tabY = 5;
     int tabH = getHeight() - 6; // Rests on bottom edge like a folder tab
     
@@ -367,9 +392,6 @@ juce::String BarraNavegacaoComponent::getTooltip() {
                 case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico") : "Inspect and manage physical disk devices and history";
             }
         }
-    }
-    if (botaoFechar_ && botaoFechar_->getBounds().contains(pos)) {
-        return isPt ? juce::String::fromUTF8("Fechar projeto e voltar à tela inicial") : "Close project and return to start screen";
     }
     return "";
 }
