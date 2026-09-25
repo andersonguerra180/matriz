@@ -348,12 +348,27 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
 
 std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     if (!projeto_) return {};
-    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), inMemoryRelinkedPaths_);
+    // Cópia das marcações/relinks em memória sob marcacoesMutex_ (comentário
+    // no membro, ProjetoAberto.h) -- este método roda em background
+    // (MosaicoComponent::recarregar() via poolSnapshot_/thread
+    // "MatrizSnapshot") enquanto a message thread pode estar escrevendo
+    // nesses mesmos sets/map ao mesmo tempo (H/K/P/W, relink).
+    std::map<std::string, std::string> relinkCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        relinkCopia = inMemoryRelinkedPaths_;
+        htmlCopia = marcadosHtml_;
+        zipCopia = marcadosZip_;
+        printCopia = marcadosPrint_;
+        watermarkCopia = marcadosWatermark_;
+    }
+    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia);
     for (auto& item : items) {
-        item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
-        item.marcadoZip = marcadosZip_.count(item.id) > 0;
-        item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
-        item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
+        item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
+        item.marcadoZip = zipCopia.count(item.id) > 0;
+        item.marcadoPrint = printCopia.count(item.id) > 0;
+        item.marcadoWatermark = watermarkCopia.count(item.id) > 0;
     }
     return items;
 }
@@ -375,11 +390,14 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
             matriz::db::Database dummyInd(":memory:");
             items = listarItensDeProjeto(regDb, dummyInd, resolvedDir);
         }
-        for (auto& item : items) {
-            item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
-            item.marcadoZip = marcadosZip_.count(item.id) > 0;
-            item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
-            item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            for (auto& item : items) {
+                item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
+                item.marcadoZip = marcadosZip_.count(item.id) > 0;
+                item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
+                item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
+            }
         }
         return items;
     } catch (...) {
@@ -390,6 +408,20 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
 std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     std::vector<ItemResumo> out;
     if (!projeto_) return out;
+
+    // Mesma cópia sob lock de listarItens() -- este método também roda em
+    // background (IntakeWorkspaceComponent) enquanto a message thread pode
+    // escrever nesses sets/map ao mesmo tempo.
+    std::map<std::string, std::string> relinkCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        relinkCopia = inMemoryRelinkedPaths_;
+        htmlCopia = marcadosHtml_;
+        zipCopia = marcadosZip_;
+        printCopia = marcadosPrint_;
+        watermarkCopia = marcadosWatermark_;
+    }
 
     // Retry loop in case SQLite is momentarily busy during ingest transactions
     for (int tentativa = 0; tentativa < 3; ++tentativa) {
@@ -445,10 +477,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
                 if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
                 r.criadoEm = stmt.columnText(17);
-                r.marcadoPublicacao = marcadosHtml_.count(r.id) > 0;
-                r.marcadoZip = marcadosZip_.count(r.id) > 0;
-                r.marcadoPrint = marcadosPrint_.count(r.id) > 0;
-                r.marcadoWatermark = marcadosWatermark_.count(r.id) > 0;
+                r.marcadoPublicacao = htmlCopia.count(r.id) > 0;
+                r.marcadoZip = zipCopia.count(r.id) > 0;
+                r.marcadoPrint = printCopia.count(r.id) > 0;
+                r.marcadoWatermark = watermarkCopia.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -462,8 +494,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
 
                 bool fileExists = false;
                 if (!masterArqId.empty()) {
-                    auto it = inMemoryRelinkedPaths_.find(masterArqId);
-                    if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
+                    auto it = relinkCopia.find(masterArqId);
+                    if (it != relinkCopia.end() && !it->second.empty()) {
                         fileExists = juce::File(it->second).existsAsFile();
                     } else {
                         auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
@@ -3570,13 +3602,19 @@ juce::String ProjetoAberto::exportarFixityManifest(const std::vector<std::string
 }
 
 void ProjetoAberto::aplicarRelinkEmMemoria(const std::string& arquivoId, const std::string& newPath) {
-    inMemoryRelinkedPaths_[arquivoId] = newPath;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        inMemoryRelinkedPaths_[arquivoId] = newPath;
+    }
     dirty_ = true;
 }
 
 void ProjetoAberto::aplicarBatchRelinkEmMemoria(const std::map<std::string, std::string>& newPaths) {
-    for (const auto& [arqId, p] : newPaths) {
-        inMemoryRelinkedPaths_[arqId] = p;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& [arqId, p] : newPaths) {
+            inMemoryRelinkedPaths_[arqId] = p;
+        }
     }
     dirty_ = true;
 }
@@ -3584,8 +3622,14 @@ void ProjetoAberto::aplicarBatchRelinkEmMemoria(const std::map<std::string, std:
 void ProjetoAberto::salvar() {
     if (!projeto_) return;
     try {
+        std::map<std::string, std::string> paraGravar;
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            paraGravar = inMemoryRelinkedPaths_;
+        }
+
         auto& db = projeto_->registro();
-        for (const auto& [arqId, newPath] : inMemoryRelinkedPaths_) {
+        for (const auto& [arqId, newPath] : paraGravar) {
             auto stmt = db.prepare("UPDATE arquivo SET caminho_absoluto_origem = ?, atualizado_em = ? WHERE id = ?");
             stmt.bind(1, matriz::db::Value::of(newPath));
             stmt.bind(2, matriz::db::Value::of(matriz::model::agoraIso8601()));
@@ -3603,20 +3647,31 @@ void ProjetoAberto::salvar() {
         db.run("PRAGMA wal_checkpoint(TRUNCATE)", {});
         projeto_->indice().run("PRAGMA wal_checkpoint(TRUNCATE)", {});
 
-        inMemoryRelinkedPaths_.clear();
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            inMemoryRelinkedPaths_.clear();
+        }
         dirty_ = false;
     } catch (...) {}
 }
 
 void ProjetoAberto::descartarAlteracoesEmMemoria() {
-    inMemoryRelinkedPaths_.clear();
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        inMemoryRelinkedPaths_.clear();
+    }
     dirty_ = false;
 }
 
 std::optional<juce::File> ProjetoAberto::resolverArquivoComMemoria(const std::string& arquivoId) const {
-    auto it = inMemoryRelinkedPaths_.find(arquivoId);
-    if (it != inMemoryRelinkedPaths_.end() && !it->second.empty()) {
-        juce::File f(it->second);
+    std::string pathEmMemoria;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        auto it = inMemoryRelinkedPaths_.find(arquivoId);
+        if (it != inMemoryRelinkedPaths_.end()) pathEmMemoria = it->second;
+    }
+    if (!pathEmMemoria.empty()) {
+        juce::File f(pathEmMemoria);
         if (f.existsAsFile()) return f;
     }
     if (!projeto_) return std::nullopt;
@@ -3643,23 +3698,29 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
     return marcadosHtml_;
 }
 
+// obterConjuntoMarcacao() não tranca sozinha -- quem chama precisa segurar
+// marcacoesMutex_ (ver comentário no membro, ProjetoAberto.h). É privada e
+// só usada pelas funções abaixo, cada uma já tranca a sua parte.
 void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {
     if (itemIds.empty()) return;
-    auto& s = obterConjuntoMarcacao(tipo);
-    bool todosMarcados = true;
-    for (const auto& id : itemIds) {
-        if (s.find(id) == s.end()) {
-            todosMarcados = false;
-            break;
-        }
-    }
-    if (todosMarcados) {
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        auto& s = obterConjuntoMarcacao(tipo);
+        bool todosMarcados = true;
         for (const auto& id : itemIds) {
-            s.erase(id);
+            if (s.find(id) == s.end()) {
+                todosMarcados = false;
+                break;
+            }
         }
-    } else {
-        for (const auto& id : itemIds) {
-            s.insert(id);
+        if (todosMarcados) {
+            for (const auto& id : itemIds) {
+                s.erase(id);
+            }
+        } else {
+            for (const auto& id : itemIds) {
+                s.insert(id);
+            }
         }
     }
     for (const auto& id : itemIds) {
@@ -3669,10 +3730,13 @@ void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::s
 
 void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado) {
     if (itemIds.empty()) return;
-    auto& s = obterConjuntoMarcacao(tipo);
-    for (const auto& id : itemIds) {
-        if (marcado) s.insert(id);
-        else s.erase(id);
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        auto& s = obterConjuntoMarcacao(tipo);
+        for (const auto& id : itemIds) {
+            if (marcado) s.insert(id);
+            else s.erase(id);
+        }
     }
     for (const auto& id : itemIds) {
         EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
@@ -3681,19 +3745,25 @@ void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::st
 
 bool ProjetoAberto::contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const {
     if (itemId.empty()) return false;
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
     const auto& s = obterConjuntoMarcacao(tipo);
     return s.find(itemId) != s.end();
 }
 
 size_t ProjetoAberto::contarMarcacoes(TipoMarcacao tipo) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
     return obterConjuntoMarcacao(tipo).size();
 }
 
 void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
-    auto& s = obterConjuntoMarcacao(tipo);
-    if (s.empty()) return;
-    std::vector<std::string> afetados(s.begin(), s.end());
-    s.clear();
+    std::vector<std::string> afetados;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        auto& s = obterConjuntoMarcacao(tipo);
+        if (s.empty()) return;
+        afetados.assign(s.begin(), s.end());
+        s.clear();
+    }
     for (const auto& id : afetados) {
         EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
     }
@@ -3707,16 +3777,20 @@ void ProjetoAberto::limparTodasMarcacoes() {
 }
 
 std::vector<std::string> ProjetoAberto::idsMarcados(TipoMarcacao tipo) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
     const auto& s = obterConjuntoMarcacao(tipo);
     return std::vector<std::string>(s.begin(), s.end());
 }
 
 void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId) {
     if (oldItemId.empty() || newItemId.empty() || oldItemId == newItemId) return;
-    for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
-        auto& s = obterConjuntoMarcacao(tipo);
-        if (s.erase(oldItemId) > 0) {
-            s.insert(newItemId);
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
+            auto& s = obterConjuntoMarcacao(tipo);
+            if (s.erase(oldItemId) > 0) {
+                s.insert(newItemId);
+            }
         }
     }
     EventBus::obterInstancia().dispararItemAlterado(newItemId, "marcacao");

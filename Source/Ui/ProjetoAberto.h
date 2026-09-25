@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -630,7 +631,17 @@ public:
     // In-memory relinking and two-stage persistence
     bool isDirty() const { return dirty_; }
     void setDirty(bool d) { dirty_ = d; }
-    const std::map<std::string, std::string>& inMemoryRelinkedPaths() const { return inMemoryRelinkedPaths_; }
+    // Cópia (não referência): marcadosHtml_/Zip_/Print_/Watermark_ e
+    // inMemoryRelinkedPaths_ são lidos por listarItens()/
+    // listarItensDaColecao()/listarItensEmQuarentena() nas threads de
+    // background MatrizSnapshot/MatrizContagens enquanto a message thread
+    // escreve via alternarMarcacao()/aplicarRelinkEmMemoria()/etc — ver
+    // marcacoesMutex_. Uma referência devolvida aqui sobreviveria ao escopo
+    // do lock e voltaria a ser uma leitura desprotegida.
+    std::map<std::string, std::string> inMemoryRelinkedPaths() const {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        return inMemoryRelinkedPaths_;
+    }
     void aplicarRelinkEmMemoria(const std::string& arquivoId, const std::string& newPath);
     void aplicarBatchRelinkEmMemoria(const std::map<std::string, std::string>& newPaths);
     void salvar();
@@ -641,6 +652,16 @@ private:
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
 
+    // Protege os 4 sets de marcação e inMemoryRelinkedPaths_ abaixo: lidos
+    // por listarItens()/listarItensDaColecao()/listarItensEmQuarentena() nas
+    // threads de background MatrizSnapshot/MatrizContagens (ver
+    // MosaicoComponent::recarregar(), FiltrosComponent) enquanto a message
+    // thread escreve via alternarMarcacao()/definirMarcacao()/
+    // limparMarcacoes()/transferirMarcacoes()/aplicarRelinkEmMemoria()/
+    // aplicarBatchRelinkEmMemoria()/salvar()/descartarAlteracoesEmMemoria() —
+    // std::set/std::map não são thread-safe pra leitura concorrente com
+    // escrita, era um data race real (confirmado sob TSan).
+    mutable std::mutex marcacoesMutex_;
     std::set<std::string> marcadosHtml_;
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
