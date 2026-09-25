@@ -36,12 +36,21 @@ public:
     std::function<void(const juce::File&)> aoAbrirCatalogo;
     std::function<void()> aoPedirIrParaDuplicatas;
     std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;
+    // Consulta a seleção atual do grid de metadados (item 4) — usada para
+    // popular "Selected Files" sem depender do snapshot passado no construtor,
+    // já que o componente agora persiste entre visitas à aba (item 3).
+    std::function<std::set<std::string>()> obterSelecaoAtualDoGrid;
 
     void paint(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
     void recarregar();
     void aoItemAlterado(const EventoItemAlterado& e) override;
+
+    // Chamado pelo MainComponent toda vez que a aba Backup é reaberta, para
+    // manter "Selected Files" em dia com o grid sem resetar o restante do
+    // setup (item 3 e item 4).
+    void atualizarSelecaoDoGridSeNecessario();
 
 private:
     class PreviaLista;
@@ -147,6 +156,14 @@ private:
     std::unique_ptr<CatalogBackupContainerComponent> catalogBackupContainer_;
     std::vector<CatalogBackupItem> catalogBackupItems_;
     CatalogBackupItem catalogBackupTotal_;
+    // item 3 (correção METADATA — lentidão remanescente): antes rodava
+    // síncrono na message thread, abrindo um banco SQLite por coleção
+    // vinculada só pra contar itens — travava a UI a cada recarregar(),
+    // inclusive depois de REMOVE FROM THIS LIST. Agora roda em background;
+    // geracaoCatalogoBackup_ descarta resposta atrasada de uma recarga já
+    // superada por uma mais nova.
+    juce::ThreadPool poolCatalogoBackup_{1};
+    int geracaoCatalogoBackup_ = 0;
 
     void carregarColecoesBackupCatalogo();
 
@@ -212,6 +229,8 @@ private:
     std::unique_ptr<juce::TextButton> btnLimparZip_;
     std::unique_ptr<juce::TextButton> btnSendToPrint_;
     std::unique_ptr<juce::TextButton> btnLimparPrint_;
+    std::unique_ptr<juce::TextButton> btnExportWatermark_;
+    std::unique_ptr<juce::TextButton> btnLimparWatermark_;
     std::unique_ptr<juce::TextButton> btnCancelarExecucao_;
     std::unique_ptr<juce::TextButton> btnDone_;
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;

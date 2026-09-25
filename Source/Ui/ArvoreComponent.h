@@ -47,6 +47,12 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
     void mouseDrag(const juce::MouseEvent&) override;
 
+    // true enquanto uma recarga disparada por recarregar() ainda está em voo
+    // (o job no pool + o callAsync que remonta a árvore). A finalização do
+    // lote de ingest usa isto pra só fechar a barra de progresso quando a
+    // árvore de fato terminou de se reconstruir.
+    bool recargaPendente() const { return arvorePendente_; }
+
     bool isInterestedInDragSource(const SourceDetails&) override;
     void itemDragMove(const SourceDetails&) override;
     void itemDragExit(const SourceDetails&) override;
@@ -88,6 +94,13 @@ private:
                                  .withDesiredThreadPriority(juce::Thread::Priority::low)};
     int geracaoArvore_ = 0;
     bool arvorePendente_ = false;
+    // Correção do bug de rename não refletido (Bug 2): se recarregar() for
+    // chamado enquanto uma recarga já está em voo, essa chamada não pode
+    // simplesmente ser descartada — senão a árvore fica com um nome antigo
+    // até a próxima edição por acaso disparar outro recarregar(). Em vez
+    // disso, marca aqui e o próprio callback da recarga em voo dispara mais
+    // uma ao terminar.
+    bool arvoreRecargaSolicitadaDeNovo_ = false;
     std::vector<LinhaAchatada> linhas_;
     const ProjetoAberto::NoArvore* selecionado_ = nullptr;
 

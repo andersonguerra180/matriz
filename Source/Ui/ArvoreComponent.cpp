@@ -99,7 +99,13 @@ void ArvoreComponent::definirModoVisao(ModoVisao modo) {
 }
 
 void ArvoreComponent::recarregar() {
-    if (arvorePendente_) return;
+    if (arvorePendente_) {
+        // Não descarta: uma recarga já em voo pode ter lido o banco antes
+        // desta mudança (ex.: rename) ser gravada. Marca pra recarregar de
+        // novo assim que a atual terminar, em vez de perder esta chamada.
+        arvoreRecargaSolicitadaDeNovo_ = true;
+        return;
+    }
     arvorePendente_ = true;
     const int geracao = ++geracaoArvore_;
     auto aba = aba_;
@@ -131,6 +137,10 @@ void ArvoreComponent::recarregar() {
                 self->reconstruirLinhas();
             self->resized();
             self->repaint();
+            if (self->arvoreRecargaSolicitadaDeNovo_) {
+                self->arvoreRecargaSolicitadaDeNovo_ = false;
+                self->recarregar();
+            }
         });
     });
 }

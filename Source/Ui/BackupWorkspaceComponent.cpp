@@ -6,12 +6,14 @@
 #include "PublishHtmlDialog.h"
 #include "ExportZipDialog.h"
 #include "SendToPrintDialog.h"
+#include "BatchWatermarkDialog.h"
 #include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
 #include "../Catalogo/CatalogSiteExport.h"
+#include "../Diag/Watchdog.h"
 #include "../Consolidacao/MetadadoEmbutido.h"
 #include "../Vault/Resolucao.h"
 #include "../Vault/Volume.h"
@@ -53,6 +55,84 @@ public:
     }
 private:
     juce::Image img_;
+};
+
+class MarkedActionButton : public juce::TextButton {
+public:
+    MarkedActionButton(const juce::String& prefix, const juce::String& letter, juce::Colour letterColour)
+        : prefix_(prefix), letter_(letter), letterColour_(letterColour) {
+        setButtonText(prefix_ + " [" + letter_ + "] (0)");
+    }
+
+    void setCount(int c) {
+        if (count_ != c) {
+            count_ = c;
+            setButtonText(prefix_ + " [" + letter_ + "] (" + juce::String(count_) + ")");
+            repaint();
+        }
+    }
+
+    int getCount() const { return count_; }
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+        getLookAndFeel().drawButtonBackground(g, *this,
+            findColour(juce::TextButton::buttonColourId),
+            shouldDrawButtonAsHighlighted,
+            shouldDrawButtonAsDown);
+
+        const auto& tk = tema();
+        bool enabled = isEnabled();
+
+        // Tipografia idêntica e unificada nos 3 botões
+        juce::Font font(juce::FontOptions(tk.tamanhoFonteCorpo - 0.5f, juce::Font::bold));
+        g.setFont(font);
+
+        juce::String strPrefix = prefix_ + " ";
+        juce::String strCount = " (" + juce::String(count_) + ")";
+
+        float wPrefix = juce::GlyphArrangement::getStringWidth(font, strPrefix);
+        float circleSize = 17.0f;
+        float circleGap = 4.0f;
+        float wCount = juce::GlyphArrangement::getStringWidth(font, strCount);
+        float totalW = wPrefix + circleSize + circleGap + wCount;
+
+        auto r = getLocalBounds().toFloat();
+        float startX = (r.getWidth() - totalW) * 0.5f;
+        float y = r.getY();
+        float h = r.getHeight();
+
+        juce::Colour textCol = enabled ? findColour(juce::TextButton::textColourOffId)
+                                       : findColour(juce::TextButton::textColourOffId).withAlpha(0.4f);
+
+        // 1. Prefixo de texto
+        g.setColour(textCol);
+        g.drawText(strPrefix, (int)std::round(startX), (int)y, (int)std::ceil(wPrefix), (int)h, juce::Justification::centredLeft, false);
+
+        // 2. Círculo preto com letra colorida centralizada
+        float circleX = startX + wPrefix;
+        float circleY = y + (h - circleSize) * 0.5f;
+        juce::Rectangle<float> circleRect(circleX, circleY, circleSize, circleSize);
+
+        g.setColour(juce::Colours::black.withAlpha(enabled ? 0.95f : 0.45f));
+        g.fillEllipse(circleRect);
+
+        juce::Colour badgeCol = enabled ? letterColour_ : letterColour_.withAlpha(0.4f);
+        g.setColour(badgeCol);
+        juce::Font letterFont(juce::FontOptions(11.0f, juce::Font::bold));
+        g.setFont(letterFont);
+        g.drawText(letter_, circleRect, juce::Justification::centred, false);
+
+        // 3. Contador numérico
+        g.setFont(font);
+        g.setColour(textCol);
+        g.drawText(strCount, (int)std::round(circleX + circleSize + circleGap), (int)y, (int)std::ceil(wCount), (int)h, juce::Justification::centredLeft, false);
+    }
+
+private:
+    juce::String prefix_;
+    juce::String letter_;
+    juce::Colour letterColour_;
+    int count_ = 0;
 };
 
 void desenharIconeNuvem(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour cor) {
@@ -872,48 +952,67 @@ private:
 };
 
 void BackupWorkspaceComponent::carregarColecoesBackupCatalogo() {
-    catalogBackupItems_.clear();
-    catalogBackupTotal_ = CatalogBackupItem{};
-    catalogBackupTotal_.name = "CATALOG TOTAL";
+    // item 3: abrir um banco SQLite por coleção vinculada + COUNT (I/O de
+    // disco real) não pode rodar na message thread — vai pro pool e só
+    // aplica o resultado quando pronto. geracaoCatalogoBackup_ descarta
+    // resposta atrasada de uma recarga já superada por uma mais nova.
+    const int geracao = ++geracaoCatalogoBackup_;
+    ProjetoAberto* projeto = &projeto_;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-    auto colecoes = projeto_.listarColecoesLinkadas();
-    for (const auto& c : colecoes) {
-        CatalogBackupItem item;
-        item.name = c.nome;
-        item.path = c.caminhoProjeto;
+    poolCatalogoBackup_.addJob([safeThis, projeto, geracao]() {
+        matriz::diag::LogOperacao logOp("carregarColecoesBackupCatalogo");
+        std::vector<CatalogBackupItem> itens;
+        CatalogBackupItem total;
+        total.name = "CATALOG TOTAL";
 
-        if (!c.valido) {
-            item.status = "OFFLINE";
-        } else {
-            item.sizeBytes = c.totalBytes;
-            item.totalAssets = c.totalAssets;
-            item.status = "READY";
+        auto colecoes = projeto->listarColecoesLinkadas();
+        for (const auto& c : colecoes) {
+            CatalogBackupItem item;
+            item.name = c.nome;
+            item.path = c.caminhoProjeto;
 
-            juce::File colDir(c.caminhoProjeto);
-            juce::File dbFile = matriz::model::Project::resolverPastaProjeto(colDir).getChildFile("registro.sqlite");
-            if (dbFile.existsAsFile()) {
-                try {
-                    matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
-                    auto stmtRev = colDb.prepare(
-                        "SELECT COUNT(id) FROM item "
-                        "WHERE (ano IS NULL OR ano = 0) "
-                        "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-                        "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
-                    if (stmtRev.step()) {
-                        item.needsAttention = static_cast<uint64_t>(stmtRev.columnInt(0));
-                        if (item.needsAttention > 0 && item.status == "READY") {
-                            item.status = "WARNING";
+            if (!c.valido) {
+                item.status = "OFFLINE";
+            } else {
+                item.sizeBytes = c.totalBytes;
+                item.totalAssets = c.totalAssets;
+                item.status = "READY";
+
+                juce::File colDir(c.caminhoProjeto);
+                juce::File dbFile = matriz::model::Project::resolverPastaProjeto(colDir).getChildFile("registro.sqlite");
+                if (dbFile.existsAsFile()) {
+                    try {
+                        matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
+                        auto stmtRev = colDb.prepare(
+                            "SELECT COUNT(id) FROM item "
+                            "WHERE (ano IS NULL OR ano = 0) "
+                            "   OR (source_media IS NULL OR TRIM(source_media) = '') "
+                            "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
+                        if (stmtRev.step()) {
+                            item.needsAttention = static_cast<uint64_t>(stmtRev.columnInt(0));
+                            if (item.needsAttention > 0 && item.status == "READY") {
+                                item.status = "WARNING";
+                            }
                         }
-                    }
-                } catch (...) {}
+                    } catch (...) {}
+                }
             }
+
+            total.sizeBytes += item.sizeBytes;
+            total.totalAssets += item.totalAssets;
+            total.needsAttention += item.needsAttention;
+            itens.push_back(item);
         }
 
-        catalogBackupTotal_.sizeBytes += item.sizeBytes;
-        catalogBackupTotal_.totalAssets += item.totalAssets;
-        catalogBackupTotal_.needsAttention += item.needsAttention;
-        catalogBackupItems_.push_back(item);
-    }
+        juce::MessageManager::callAsync([safeThis, geracao, itens = std::move(itens), total]() mutable {
+            if (!safeThis) return;
+            if (geracao != safeThis->geracaoCatalogoBackup_) return; // superado por uma recarga mais nova
+            safeThis->catalogBackupItems_ = std::move(itens);
+            safeThis->catalogBackupTotal_ = total;
+            safeThis->repaint();
+        });
+    });
 }
 
 void BackupWorkspaceComponent::carregarOpcoesContent() {
@@ -928,6 +1027,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
         "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
+        "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
         "Graphics", "Logo", "3D",
@@ -984,10 +1084,18 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
 juce::String BackupWorkspaceComponent::rotuloOpcaoSelecionados() const {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (selectedItemIds_.empty()) {
-        return isPt ? juce::String::fromUTF8("Selecionar Arquivos...") : "Select Files...";
+        return isPt ? juce::String::fromUTF8("Arquivos Selecionados") : "Selected Files";
     }
-    return (isPt ? juce::String::fromUTF8("Selecionar Arquivos (") : "Select Files (")
+    return (isPt ? juce::String::fromUTF8("Arquivos Selecionados (") : "Selected Files (")
            + juce::String(static_cast<int>(selectedItemIds_.size())) + ")";
+}
+
+void BackupWorkspaceComponent::atualizarSelecaoDoGridSeNecessario() {
+    if (whatOption_ != WhatOption::SelectedAssets || !obterSelecaoAtualDoGrid) return;
+    selectedItemIds_ = obterSelecaoAtualDoGrid();
+    if (comboSource_) comboSource_->changeItemText(3, rotuloOpcaoSelecionados());
+    if (btnEditarSelecao_) btnEditarSelecao_->setVisible(true);
+    atualizarResumo();
 }
 
 void BackupWorkspaceComponent::abrirJanelaSelecionarArquivos() {
@@ -1061,8 +1169,15 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
             whatOption_ = WhatOption::SelectedAssets;
             if (comboColecoes_) comboColecoes_->setVisible(false);
             if (btnEditarSelecao_) btnEditarSelecao_->setVisible(true);
+            // Popula automaticamente com a seleção atual do grid de metadados —
+            // não abre mais o diálogo (esse é o papel exclusivo do botão
+            // "SELECT FILES..." logo abaixo, ver item 4).
+            if (obterSelecaoAtualDoGrid) {
+                selectedItemIds_ = obterSelecaoAtualDoGrid();
+                comboSource_->changeItemText(3, rotuloOpcaoSelecionados());
+            }
             resized();
-            abrirJanelaSelecionarArquivos();
+            atualizarResumo();
             return;
         }
         whatOption_ = static_cast<WhatOption>(id - 1);
@@ -1415,16 +1530,14 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnSyncDestino_->onClick = [this] { iniciarSyncComOutroDestino(); };
     addAndMakeVisible(*btnSyncDestino_);
 
-    btnPublishHtml_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.btn_publicar_html"));
+    btnPublishHtml_ = std::make_unique<MarkedActionButton>("PUBLISH TO HTML", "H", juce::Colour(0xff39ff14));
     aplicarEstiloBotao(*btnPublishHtml_, false);
-    btnPublishHtml_->setColour(juce::TextButton::textColourOffId, tk.acento);
     btnPublishHtml_->setTooltip("Publish static HTML website preview / catalog");
     btnPublishHtml_->onClick = [this] { publicarHtml(); };
     addChildComponent(*btnPublishHtml_);
 
-    btnExportZip_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.exportar_zip").replace("{n}", "0"));
+    btnExportZip_ = std::make_unique<MarkedActionButton>("EXPORT ZIP", "K", juce::Colour(0xff0077ff));
     aplicarEstiloBotao(*btnExportZip_, false);
-    btnExportZip_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff0077ff));
     btnExportZip_->setTooltip(isPt ? juce::String::fromUTF8("Exportar itens marcados com K como arquivo ZIP")
                                    : "Export assets marked with K as ZIP package");
     btnExportZip_->onClick = [this] {
@@ -1441,9 +1554,8 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnLimparZip_);
 
-    btnSendToPrint_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.enviar_print").replace("{n}", "0"));
+    btnSendToPrint_ = std::make_unique<MarkedActionButton>("SEND TO PRINT", "P", juce::Colour(0xffff6b00));
     aplicarEstiloBotao(*btnSendToPrint_, false);
-    btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
     btnSendToPrint_->setTooltip(isPt ? juce::String::fromUTF8("Enviar fotos marcadas com P para impressão")
                                      : "Send photos marked with P to print");
     btnSendToPrint_->onClick = [this] {
@@ -1459,6 +1571,25 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         atualizarBotoesListas();
     };
     addChildComponent(*btnLimparPrint_);
+
+    btnExportWatermark_ = std::make_unique<MarkedActionButton>("EXPORT WATERMARKED", "W", juce::Colour(0xffffcc00));
+    aplicarEstiloBotao(*btnExportWatermark_, false);
+    btnExportWatermark_->setTooltip(isPt ? juce::String::fromUTF8("Exportar fotos marcadas com W com marca d'água")
+                                         : "Export photos marked with W with watermark");
+    btnExportWatermark_->onClick = [this] {
+        BatchWatermarkDialog::exibirModal(&projeto_);
+    };
+    addChildComponent(*btnExportWatermark_);
+
+    btnLimparWatermark_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("×"));
+    aplicarEstiloBotao(*btnLimparWatermark_, false);
+    btnLimparWatermark_->setTooltip(isPt ? juce::String::fromUTF8("Limpar seleção de fotos para marca d'água")
+                                         : "Clear watermark selection");
+    btnLimparWatermark_->onClick = [this] {
+        projeto_.limparMarcacoes(ProjetoAberto::TipoMarcacao::Watermark);
+        atualizarBotoesListas();
+    };
+    addChildComponent(*btnLimparWatermark_);
 
     btnCancelarExecucao_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
     aplicarEstiloBotao(*btnCancelarExecucao_, false);
@@ -1511,6 +1642,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
 BackupWorkspaceComponent::~BackupWorkspaceComponent() {
     EventBus::obterInstancia().removerListener(this);
+    poolCatalogoBackup_.removeAllJobs(true, 2000);
 }
 
 void BackupWorkspaceComponent::lookAndFeelChanged() {
@@ -1700,9 +1832,7 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         aplicarEstiloBotao(*btnStartBackup_, true);
     }
     if (btnPublishHtml_) {
-        btnPublishHtml_->setButtonText(matriz::i18n::t("backup.btn_publicar_html"));
         aplicarEstiloBotao(*btnPublishHtml_, false);
-        btnPublishHtml_->setColour(juce::TextButton::textColourOffId, tk.acento);
     }
     if (btnCancelarExecucao_) {
         btnCancelarExecucao_->setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
@@ -1724,17 +1854,21 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
     }
     if (btnExportZip_) {
         aplicarEstiloBotao(*btnExportZip_, false);
-        btnExportZip_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff0077ff));
     }
     if (btnLimparZip_) {
         aplicarEstiloBotao(*btnLimparZip_, false);
     }
     if (btnSendToPrint_) {
         aplicarEstiloBotao(*btnSendToPrint_, false);
-        btnSendToPrint_->setColour(juce::TextButton::textColourOffId, juce::Colour(0xffff6b00));
     }
     if (btnLimparPrint_) {
         aplicarEstiloBotao(*btnLimparPrint_, false);
+    }
+    if (btnExportWatermark_) {
+        aplicarEstiloBotao(*btnExportWatermark_, false);
+    }
+    if (btnLimparWatermark_) {
+        aplicarEstiloBotao(*btnLimparWatermark_, false);
     }
     if (btnBrowseVault_) {
         btnBrowseVault_->setButtonText(matriz::i18n::t("backup.escolher_pasta"));
@@ -1830,10 +1964,15 @@ void BackupWorkspaceComponent::publicarHtml() {
     PublishHtmlDialog::exibirModal(projeto_);
 }
 
-void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado&) {
-    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<BackupWorkspaceComponent>(this)] {
+void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado& e) {
+    bool tituloMudou = (e.tipoAlteracao == "titulo");
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<BackupWorkspaceComponent>(this), tituloMudou] {
         if (safe != nullptr) {
             safe->atualizarBotoesListas();
+            // O nome final no backup vem da máscara "{codigo}-{seq:03}-{titulo}" —
+            // um título novo muda o nome planejado, então a prévia/plano precisa
+            // ser recalculada (não só os contadores de botões).
+            if (tituloMudou) safe->atualizarResumo();
         }
     });
 }
@@ -1841,9 +1980,14 @@ void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado&) {
 void BackupWorkspaceComponent::atualizarBotoesListas() {
     const size_t countZip = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip);
     const size_t countPrint = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print);
+    const size_t countHtml = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Html);
 
     if (btnExportZip_) {
-        btnExportZip_->setButtonText(matriz::i18n::t("backup.exportar_zip").replace("{n}", juce::String((int)countZip)));
+        if (auto* mb = dynamic_cast<MarkedActionButton*>(btnExportZip_.get())) {
+            mb->setCount((int)countZip);
+        } else {
+            btnExportZip_->setButtonText("EXPORT ZIP (K) (" + juce::String((int)countZip) + ")");
+        }
         btnExportZip_->setEnabled(countZip > 0);
     }
     if (btnLimparZip_) {
@@ -1851,12 +1995,34 @@ void BackupWorkspaceComponent::atualizarBotoesListas() {
         btnLimparZip_->setTooltip(matriz::i18n::t("backup.limpar_zip_dica"));
     }
     if (btnSendToPrint_) {
-        btnSendToPrint_->setButtonText(matriz::i18n::t("backup.enviar_print").replace("{n}", juce::String((int)countPrint)));
+        if (auto* mb = dynamic_cast<MarkedActionButton*>(btnSendToPrint_.get())) {
+            mb->setCount((int)countPrint);
+        } else {
+            btnSendToPrint_->setButtonText("SEND TO PRINT (P) (" + juce::String((int)countPrint) + ")");
+        }
         btnSendToPrint_->setEnabled(countPrint > 0);
     }
     if (btnLimparPrint_) {
         btnLimparPrint_->setEnabled(countPrint > 0);
         btnLimparPrint_->setTooltip(matriz::i18n::t("backup.limpar_print_dica"));
+    }
+    auto countWatermark = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size();
+    if (btnExportWatermark_) {
+        if (auto* mb = dynamic_cast<MarkedActionButton*>(btnExportWatermark_.get())) {
+            mb->setCount((int)countWatermark);
+        } else {
+            btnExportWatermark_->setButtonText("EXPORT WATERMARKED (W) (" + juce::String((int)countWatermark) + ")");
+        }
+        btnExportWatermark_->setEnabled(countWatermark > 0);
+    }
+    if (btnLimparWatermark_) {
+        btnLimparWatermark_->setEnabled(countWatermark > 0);
+    }
+    if (btnPublishHtml_) {
+        if (auto* mb = dynamic_cast<MarkedActionButton*>(btnPublishHtml_.get())) {
+            mb->setCount((int)countHtml);
+        }
+        btnPublishHtml_->setEnabled(countHtml > 0);
     }
 }
 
@@ -2148,7 +2314,11 @@ std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriter
     } else if (whatOption_ == WhatOption::SelectedAssets) {
         return selectedItemIds_;
     } else if (whatOption_ == WhatOption::NeedsBackup) {
-        return projeto_.itensDaColecaoEmbutida("vulneraveis");
+        auto stmt = db.prepare(
+            "SELECT i.id FROM item i "
+            "WHERE NOT EXISTS (SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id)");
+        while (stmt.step()) out.insert(stmt.columnText(0));
+        return out;
     } else if (whatOption_ == WhatOption::Collection) {
         if (selectedContentIdx_ >= 0 && selectedContentIdx_ < static_cast<int>(opcoesContent_.size())) {
             const auto& opt = opcoesContent_[static_cast<size_t>(selectedContentIdx_)];
@@ -2239,14 +2409,33 @@ void BackupWorkspaceComponent::atualizarResumo() {
         resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : projeto_.projeto().raiz());
     juce::File destinoMedia = destinoRaiz.getChildFile("Media");
 
-    plano_ = matriz::consolidacao::planejarConsolidacao(
-        projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
-        autoResolver, forcarRebackup);
+    // planejarConsolidacao faz SQL cru contra colunas de metadado (dc_*,
+    // collection_type) — um banco aberto antes de uma migração aditiva
+    // rodar (ou qualquer outro erro de SQL) não pode derrubar o app inteiro
+    // só por abrir a aba BACKUP; melhor mostrar o motivo no resumo.
+    try {
+        plano_ = matriz::consolidacao::planejarConsolidacao(
+            projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
+            autoResolver, forcarRebackup);
+    } catch (const std::exception& e) {
+        plano_ = {};
+        labelResumo_->setText(
+            (isPt ? juce::String::fromUTF8("Não foi possível calcular a prévia do backup: ")
+                  : juce::String("Could not calculate the backup preview: ")) + juce::String(e.what()),
+            juce::dontSendNotification);
+        listPrevia_->definirPlano(plano_);
+        listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
+        btnStartBackup_->setEnabled(false);
+        return;
+    }
 
     std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
     juce::int64 sz = 0; // space to copy
     juce::int64 totalSz = 0; // total backup size
     for (auto& item : plano_.itens) {
+        if (whatOption_ == WhatOption::NeedsBackup && item.jaConsolidado) {
+            continue;
+        }
         if (itemIds.count(item.itemId)) {
             filtrados.push_back(item);
             if (!item.jaConsolidado) sz += item.tamanhoBytes;
@@ -2538,6 +2727,9 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                       gerarCatalogo, embutirMeta]() {
         if (!safeThis) return;
 
+        auto wmIds = projeto.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark);
+        std::set<std::string> wmIdsSet(wmIds.begin(), wmIds.end());
+
         auto resultado = matriz::consolidacao::executarConsolidacao(
             projeto.projeto().registro(),
             projeto.projeto().pasta(),
@@ -2551,7 +2743,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
                     "backup", feito, "Copying " + juce::String(feito) + " of " + juce::String(total) + " assets...");
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
                 return !cancelamento->pedido() && safeThis != nullptr;
-            }
+            },
+            wmIdsSet
         );
 
         if (!safeThis) return;
@@ -3370,7 +3563,6 @@ void BackupWorkspaceComponent::carregarDestinoAtivoInicial() {
         }
     }
 
-    dispararScanDestino(false);
     atualizarResumo();
 }
 
@@ -3581,6 +3773,8 @@ void BackupWorkspaceComponent::resized() {
         if (btnLimparZip_) btnLimparZip_->setVisible(false);
         if (btnSendToPrint_) btnSendToPrint_->setVisible(false);
         if (btnLimparPrint_) btnLimparPrint_->setVisible(false);
+        if (btnExportWatermark_) btnExportWatermark_->setVisible(false);
+        if (btnLimparWatermark_) btnLimparWatermark_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
         if (btnOpenCatalog_) {
@@ -3600,7 +3794,7 @@ void BackupWorkspaceComponent::resized() {
         }
         botoes.removeFromRight(tk.espacoPainel);
         if (btnPublishHtml_) {
-            btnPublishHtml_->setBounds(botoes.removeFromRight(160));
+            btnPublishHtml_->setBounds(botoes.removeFromRight(175));
             btnPublishHtml_->setVisible(true);
             btnPublishHtml_->setEnabled(temItens);
         }
@@ -3610,7 +3804,7 @@ void BackupWorkspaceComponent::resized() {
             btnLimparZip_->setVisible(true);
         }
         if (btnExportZip_) {
-            btnExportZip_->setBounds(botoes.removeFromRight(145));
+            btnExportZip_->setBounds(botoes.removeFromRight(170));
             btnExportZip_->setVisible(true);
         }
         botoes.removeFromRight(tk.espacoPainel);
@@ -3619,8 +3813,17 @@ void BackupWorkspaceComponent::resized() {
             btnLimparPrint_->setVisible(true);
         }
         if (btnSendToPrint_) {
-            btnSendToPrint_->setBounds(botoes.removeFromRight(155));
+            btnSendToPrint_->setBounds(botoes.removeFromRight(185));
             btnSendToPrint_->setVisible(true);
+        }
+        botoes.removeFromRight(tk.espacoPainel);
+        if (btnLimparWatermark_) {
+            btnLimparWatermark_->setBounds(botoes.removeFromRight(26));
+            btnLimparWatermark_->setVisible(true);
+        }
+        if (btnExportWatermark_) {
+            btnExportWatermark_->setBounds(botoes.removeFromRight(220));
+            btnExportWatermark_->setVisible(true);
         }
     }
 
@@ -3711,7 +3914,6 @@ void BackupWorkspaceComponent::recarregar() {
     carregarDestinoAtivoInicial();
     atualizarResumo();
     atualizarBotoesListas();
-    dispararScanDestino(false);
     repaint();
 }
 
