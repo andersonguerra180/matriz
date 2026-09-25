@@ -1,4 +1,5 @@
 #include "ExportZipDialog.h"
+#include "BatchWatermarkDialog.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Resolucao.h"
@@ -148,6 +149,7 @@ public:
             std::string titulo;
             std::string tipoMidia;
             std::vector<std::pair<std::string, bool>> arquivos; // arquivoId, ehMaster
+            juce::String pastaTreemap;
         };
 
         std::vector<ItemExportar> itensParaExportar;
@@ -165,6 +167,26 @@ public:
                     ie.codigoAcervo = stmt.columnText(0);
                     ie.titulo = stmt.columnText(1);
                     ie.tipoMidia = stmt.columnText(2);
+                }
+            } catch (...) {}
+
+            try {
+                auto stmtPasta = db.prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? LIMIT 1");
+                stmtPasta.bind(1, matriz::db::Value::of(itemId));
+                if (stmtPasta.step() && !stmtPasta.columnIsNull(0)) {
+                    std::string pastaId = stmtPasta.columnText(0);
+                    juce::StringArray segmentos;
+                    std::set<std::string> visitados;
+                    while (!pastaId.empty() && !visitados.count(pastaId)) {
+                        visitados.insert(pastaId);
+                        auto stmtAnc = db.prepare("SELECT nome, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+                        stmtAnc.bind(1, matriz::db::Value::of(pastaId));
+                        if (!stmtAnc.step()) break;
+                        segmentos.insert(0, stmtAnc.columnText(0));
+                        pastaId = stmtAnc.columnIsNull(1) ? std::string() : stmtAnc.columnText(1);
+                    }
+                    if (!segmentos.isEmpty())
+                        ie.pastaTreemap = segmentos.joinIntoString("/");
                 }
             } catch (...) {}
 
@@ -203,6 +225,18 @@ public:
         std::set<std::string> nomesUsadosLower;
         juce::int64 tamanhoTotalBytes = 0;
 
+        std::vector<juce::File> arquivosTempCriados;
+        struct ScopeGuard {
+            std::function<void()> fn;
+            ~ScopeGuard() { if (fn) fn(); }
+        } guardLimpezaTemp{ [&] {
+            for (auto& f : arquivosTempCriados) {
+                if (f.exists()) f.deleteFile();
+            }
+        }};
+
+        auto cfgWatermark = projeto_.obterConfiguracaoWatermark();
+
         for (const auto& ie : itensParaExportar) {
             if (threadShouldExit()) { limparTemp(arquivoPart); return; }
 
@@ -216,6 +250,20 @@ public:
                 }
 
                 juce::File arq = *resolvido;
+
+                // Aplica marca d'água se o item estiver marcado com 'W'
+                bool aplicouWm = false;
+                if (ehMaster && projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, ie.itemId) && cfgWatermark.valida()) {
+                    juce::String ext = arq.getFileExtension().toLowerCase();
+                    if (ext != ".png" && ext != ".jpg" && ext != ".jpeg") ext = ".jpg";
+                    juce::File tempWm = juce::File::createTempFile("bkr_wm_zip").withFileExtension(ext);
+                    if (BatchWatermarkDialog::aplicarMarcaDaguaEmArquivo(arq, tempWm, cfgWatermark)) {
+                        arq = tempWm;
+                        arquivosTempCriados.push_back(tempWm);
+                        aplicouWm = true;
+                    }
+                }
+
                 juce::int64 sz = arq.getSize();
 
                 // Verificação de limite de 3.5 GB por arquivo
@@ -237,7 +285,12 @@ public:
                     return;
                 }
 
-                juce::String nomeSanitizado = ExportZipDialog::sanitizarNomeArquivoZip(arq.getFileName());
+                juce::String nomeParaZip = aplicouWm
+                    ? (resolvido->getFileNameWithoutExtension() + "_w" + arq.getFileExtension())
+                    : arq.getFileName();
+                if (ie.pastaTreemap.isNotEmpty())
+                    nomeParaZip = ie.pastaTreemap + "/" + nomeParaZip;
+                juce::String nomeSanitizado = ExportZipDialog::sanitizarNomeArquivoZip(nomeParaZip);
                 juce::String nomeFinalNoZip = ExportZipDialog::resolverColisaoNome(nomeSanitizado, nomesUsadosLower);
 
                 // Checksum SHA-256

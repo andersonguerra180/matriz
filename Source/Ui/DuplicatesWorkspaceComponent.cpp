@@ -8,8 +8,39 @@
 #include "../Vault/Resolucao.h"
 #include "ModalMitigacao.h"
 #include "ProgressoGlobal.h"
+#include "DuplicateResolutionDialog.h"
 
 namespace matriz::ui {
+
+namespace {
+    // Closed: top margin (10) + subcard height (130) + bottom margin (12).
+    constexpr int kAlturaFechado = 152;
+    constexpr int kAlturaAberto = 490;
+
+    // Miniatura pro dialog de resolução (item 1/2) — mesma busca que CardComponent
+    // usa pro preview inline: miniatura pré-gerada do projeto, senão a da coleção linkada.
+    juce::Image carregarMiniaturaDoItem(ProjetoAberto& proj, const std::string& itemId, const std::string& collectionCaminho) {
+        if (auto caminho = proj.caminhoMiniaturaPrincipal(itemId)) {
+            juce::File f(caminho->toStdString());
+            if (f.existsAsFile()) return juce::ImageFileFormat::loadFrom(f);
+        } else if (!collectionCaminho.empty()) {
+            juce::File colDir(collectionCaminho);
+            juce::File indFile = colDir.getChildFile("indice.sqlite");
+            if (indFile.existsAsFile()) {
+                try {
+                    matriz::db::Database indDb(indFile.getFullPathName().toStdString());
+                    auto stmt = indDb.prepare("SELECT caminho_arquivo FROM miniatura WHERE item_id = ? AND eh_principal = 1 LIMIT 1");
+                    stmt.bind(1, matriz::db::Value::of(itemId));
+                    if (stmt.step()) {
+                        juce::File thumbF = colDir.getChildFile(stmt.columnText(0));
+                        if (thumbF.existsAsFile()) return juce::ImageFileFormat::loadFrom(thumbF);
+                    }
+                } catch (...) {}
+            }
+        }
+        return {};
+    }
+}
 
 // A unified side-by-side preview component for a single file (image, document, audio or video)
 class SingleFilePreviewComponent : public juce::Component, private juce::Timer {
@@ -286,7 +317,7 @@ public:
         int y = 10;
         
         for (auto* card : cards_) {
-            int cardHeight = card->isExpanded() ? 490 : 190;
+            int cardHeight = card->isExpanded() ? kAlturaAberto : kAlturaFechado;
             card->setBounds(10, y, getWidth() - 20, cardHeight);
             y += cardHeight + 10;
         }
@@ -302,6 +333,7 @@ public:
         }
         
         recalculateHeight();
+        notifySelectionChanged();
     }
 
     void updateButtonsI18n() {
@@ -310,10 +342,24 @@ public:
         }
     }
 
+    std::vector<int> indicesSelecionados() const {
+        std::vector<int> resultado;
+        for (auto* card : cards_) {
+            if (card->isSelected()) resultado.push_back(static_cast<int>(card->groupIndex()));
+        }
+        return resultado;
+    }
+
+    void notifySelectionChanged() {
+        if (onSelectionChanged) onSelectionChanged();
+    }
+
+    std::function<void()> onSelectionChanged;
+
     void recalculateHeight() {
         int totalHeight = 20;
         for (auto* card : cards_) {
-            totalHeight += (card->isExpanded() ? 490 : 190) + 10;
+            totalHeight += (card->isExpanded() ? kAlturaAberto : kAlturaFechado) + 10;
         }
         setSize(getWidth(), totalHeight);
         resized();
@@ -340,6 +386,10 @@ private:
                 owner_.resolverDuplicata(static_cast<int>(index_), false);
             };
             addAndMakeVisible(*btnDismiss_);
+
+            chkSelecionar_ = std::make_unique<juce::ToggleButton>();
+            chkSelecionar_->onClick = [this] { parent_.notifySelectionChanged(); };
+            addAndMakeVisible(*chkSelecionar_);
 
             // Load thumbnails from cache/database
             auto& proj = owner_.projeto_;
@@ -402,9 +452,9 @@ private:
                 int dupX = 14 + subW + 14;
 
                 std::string targetItemId;
-                if (e.x >= origX && e.x < origX + subW && e.y >= 10 && e.y <= 180) {
+                if (e.x >= origX && e.x < origX + subW && e.y >= 10 && e.y <= 140) {
                     targetItemId = grupo_.original.itemId;
-                } else if (e.x >= dupX && e.x < dupX + subW && e.y >= 10 && e.y <= 180) {
+                } else if (e.x >= dupX && e.x < dupX + subW && e.y >= 10 && e.y <= 140) {
                     targetItemId = grupo_.duplicata.itemId;
                 }
 
@@ -470,7 +520,7 @@ private:
             int rightPanelW = btnW + 20;
             int subCardsAreaW = w - rightPanelW - 20;
             int subW = std::max(120, (subCardsAreaW - 14) / 2);
-            int subH = 168;
+            int subH = 130;
 
             auto drawSubCard = [&](juce::Graphics& g, int x, int y, int subWidth, int subHeight,
                                    const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
@@ -587,16 +637,17 @@ private:
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
-                g.drawHorizontalLine(180, 10.0f, static_cast<float>(getWidth() - 10));
+                g.drawHorizontalLine(140, 10.0f, static_cast<float>(getWidth() - 10));
             }
         }
 
         void resized() override {
             int w = getWidth();
             int btnW = 160;
+            chkSelecionar_->setBounds(w - btnW - 14, 2, btnW, 20);
             btnValidate_->setBounds(w - btnW - 14, 25, btnW, 32);
             btnDismiss_->setBounds(w - btnW - 14, 65, btnW, 32);
-            
+
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
                 if (previewOriginal_) previewOriginal_->setBounds(15, 195, previewW, 280);
@@ -605,7 +656,9 @@ private:
         }
         
         bool isExpanded() const { return isExpanded_; }
-        
+        bool isSelected() const { return chkSelecionar_->getToggleState(); }
+        size_t groupIndex() const { return index_; }
+
         void toggleExpanded() {
             isExpanded_ = !isExpanded_;
             
@@ -639,7 +692,8 @@ private:
         
         std::unique_ptr<juce::TextButton> btnValidate_;
         std::unique_ptr<juce::TextButton> btnDismiss_;
-        
+        std::unique_ptr<juce::ToggleButton> chkSelecionar_;
+
         std::unique_ptr<SingleFilePreviewComponent> previewOriginal_;
         std::unique_ptr<SingleFilePreviewComponent> previewDuplicata_;
         juce::Image thumbOriginal_;
@@ -721,6 +775,28 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     cbSizeUnit_->setTooltip("File size unit");
     addAndMakeVisible(*cbSizeUnit_);
 
+    // item: filtro por ano — De/Até, mesmo padrão de campo numérico do
+    // size filter. Vazio de qualquer lado = sem limite naquela ponta.
+    lblAno_ = std::make_unique<juce::Label>("lblAno", "Year");
+    lblAno_->setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(*lblAno_);
+
+    txtAnoDe_ = std::make_unique<juce::TextEditor>("txtAnoDe");
+    txtAnoDe_->setInputRestrictions(4, "0123456789");
+    txtAnoDe_->setTextToShowWhenEmpty("From", juce::Colours::grey);
+    txtAnoDe_->setTooltip("Only include items from this year onward (blank = no lower limit)");
+    addAndMakeVisible(*txtAnoDe_);
+
+    lblAnoAte_ = std::make_unique<juce::Label>("lblAnoAte", juce::CharPointer_UTF8("\xe2\x80\x93")); // "–"
+    lblAnoAte_->setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(*lblAnoAte_);
+
+    txtAnoAte_ = std::make_unique<juce::TextEditor>("txtAnoAte");
+    txtAnoAte_->setInputRestrictions(4, "0123456789");
+    txtAnoAte_->setTextToShowWhenEmpty("To", juce::Colours::grey);
+    txtAnoAte_->setTooltip("Only include items up to this year (blank = no upper limit)");
+    addAndMakeVisible(*txtAnoAte_);
+
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblStatus_);
@@ -739,12 +815,30 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnDismissAll_->setTooltip("Dismiss all duplicate alerts, keeping both files");
     addChildComponent(*btnDismissAll_);
 
+    btnValidateSelected_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate_selected"));
+    btnValidateSelected_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e));
+    btnValidateSelected_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    btnValidateSelected_->onClick = [this] { resolverSelecionados(true); };
+    btnValidateSelected_->setEnabled(false);
+    addChildComponent(*btnValidateSelected_);
+
+    btnDismissSelected_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_dismiss_selected"));
+    btnDismissSelected_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnDismissSelected_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnDismissSelected_->onClick = [this] { resolverSelecionados(false); };
+    btnDismissSelected_->setEnabled(false);
+    addChildComponent(*btnDismissSelected_);
+
     viewport_ = std::make_unique<juce::Viewport>();
-    viewport_->setScrollBarThickness(10);
+    // Item 6 (lista nova de hoje): 10px cortava o knob redondo do
+    // MatrizLookAndFeel (pensado pra a espessura default de 16px) — sem
+    // espaço suficiente, ele ficava fatiado nas bordas.
+    viewport_->setScrollBarThickness(16);
     viewport_->setScrollBarsShown(true, false);
     addAndMakeVisible(*viewport_);
 
     listaComponent_ = std::make_unique<ListaResultadosComponent>(*this);
+    listaComponent_->onSelectionChanged = [this] { atualizarBotoesSelecionados(); };
     viewport_->setViewedComponent(listaComponent_.get(), false);
 }
 
@@ -829,6 +923,23 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbSizeUnit_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
+    if (lblAno_) {
+        lblAno_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblAno_->setColour(juce::Label::textColourId, tk.textoPrimario);
+    }
+    if (lblAnoAte_) {
+        lblAnoAte_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (txtAnoDe_) {
+        txtAnoDe_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        txtAnoDe_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        txtAnoDe_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
+    if (txtAnoAte_) {
+        txtAnoAte_->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+        txtAnoAte_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+        txtAnoAte_->setColour(juce::TextEditor::outlineColourId, tk.borda);
+    }
     if (btnScan_) {
         btnScan_->setColour(juce::TextButton::buttonColourId, tk.acento);
         btnScan_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
@@ -846,6 +957,14 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         btnDismissAll_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnDismissAll_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         btnDismissAll_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss_all"));
+    }
+    if (btnValidateSelected_) {
+        btnValidateSelected_->setButtonText(matriz::i18n::t("duplicatas.btn_validate_selected"));
+    }
+    if (btnDismissSelected_) {
+        btnDismissSelected_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnDismissSelected_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnDismissSelected_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss_selected"));
     }
     if (listaComponent_) {
         listaComponent_->updateButtonsI18n();
@@ -886,6 +1005,9 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     else if (unitId == 3) activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue * 1024.0 * 1024.0);
     else if (unitId == 4) activeFilters_.sizeLimitBytes = static_cast<juce::int64>(userValue * 1024.0 * 1024.0 * 1024.0);
 
+    activeFilters_.anoDe = txtAnoDe_->getText().trim().getIntValue();
+    activeFilters_.anoAte = txtAnoAte_->getText().trim().getIntValue();
+
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
     gruposDetectados_.clear();
@@ -924,13 +1046,14 @@ void DuplicatesWorkspaceComponent::run() {
         std::string collectionNome;
         std::string collectionCaminho;
         juce::int64 tamanhoBytes = 0;
+        int ano = 0;
     };
     std::vector<ItemInfo> items;
 
     auto carregarItensDeDb = [&](matriz::db::Database& database, const juce::File& pastaProjeto, const std::string& colNome, const std::string& colCaminho) {
         try {
             auto stmt = database.prepare(
-                "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem "
+                "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem, i.ano "
                 "FROM item i "
                 "JOIN arquivo a ON a.item_id = i.id "
                 "WHERE a.eh_master = 1 "
@@ -950,6 +1073,8 @@ void DuplicatesWorkspaceComponent::run() {
                 info.tamanhoBytes = stmt.columnInt(5);
                 info.collectionNome = colNome;
                 info.collectionCaminho = colCaminho;
+                // item.ano é TEXT (garantirColuna em Project.cpp), não INTEGER.
+                info.ano = juce::String(stmt.columnText(7)).trim().getIntValue();
 
                 std::string absOrig = stmt.columnText(6);
                 if (!absOrig.empty()) {
@@ -1021,6 +1146,16 @@ void DuplicatesWorkspaceComponent::run() {
                         case 4: match = (info.tamanhoBytes == activeFilters_.sizeLimitBytes); break;
                     }
                     if (!match) continue;
+                }
+
+                // Filter 4: Year range — 0 em qualquer ponta = sem limite
+                // naquela ponta. Item sem ano preenchido nunca entra numa
+                // faixa restrita (mesma regra já usada em MosaicoComponent
+                // pro filtro de ano do grid — "faixa é sobre o que se sabe").
+                if (activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0) {
+                    if (info.ano <= 0) continue;
+                    if (activeFilters_.anoDe > 0 && info.ano < activeFilters_.anoDe) continue;
+                    if (activeFilters_.anoAte > 0 && info.ano > activeFilters_.anoAte) continue;
                 }
 
                 items.push_back(info);
@@ -1330,7 +1465,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         juce::MessageManager::callAsync([this, grupoIdx, isPt]() {
             if (grupoIdx >= 0 && grupoIdx < static_cast<int>(gruposDetectados_.size())) {
                 gruposDetectados_.erase(gruposDetectados_.begin() + grupoIdx);
-                
+
                 if (gruposDetectados_.empty()) {
                     estado_ = State::Clean;
                     lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
@@ -1350,57 +1485,247 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     if (gruposDetectados_.empty()) return;
-    
+
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
-    juce::String titulo = isPt ? (ehDuplicataReal ? juce::String::fromUTF8("Validar Todas as Duplicatas") : juce::String::fromUTF8("Ignorar Todas as Duplicatas"))
-                               : (ehDuplicataReal ? "Validate All Duplicates" : "Dismiss All Duplicates");
-    juce::String msg = isPt ? (ehDuplicataReal
-        ? (juce::String::fromUTF8("Tem certeza de que deseja validar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos como duplicatas? O estado deles será atualizado para 'duplicata'."))
-        : (juce::String::fromUTF8("Tem certeza de que deseja ignorar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos? Eles não serão mais sinalizados como duplicatas.")))
-        : (ehDuplicataReal
-        ? ("Are you sure you want to validate all " + juce::String(gruposDetectados_.size()) + " duplicate groups as duplicates? This will update their state to 'duplicata'.")
-        : ("Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again."));
-        
-    bool confirm = juce::AlertWindow::showOkCancelBox(
-        juce::AlertWindow::QuestionIcon,
-        titulo,
-        msg,
-        isPt ? juce::String::fromUTF8("Sim") : "Yes",
-        isPt ? juce::String::fromUTF8("Não") : "No",
-        this
-    );
-    
-    if (!confirm) return;
-    
-    auto& db = projeto_.projeto().registro();
-    
-    try {
-        db.run("BEGIN TRANSACTION", {});
-        for (const auto& group : gruposDetectados_) {
-            if (ehDuplicataReal) {
-                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user in batch. [USER_VERIFIED_DUPLICATE]";
-                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()),
-                        matriz::db::Value::of(group.duplicata.itemId)});
-            } else {
+
+    if (!ehDuplicataReal) {
+        // Dismiss All: inalterado — não sinaliza nada como duplicata, então
+        // não afeta o Make Backup de forma nenhuma.
+        juce::String titulo = isPt ? juce::String::fromUTF8("Ignorar Todas as Duplicatas") : juce::String("Dismiss All Duplicates");
+        juce::String msg = isPt
+            ? (juce::String::fromUTF8("Tem certeza de que deseja ignorar todos os ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos? Eles não serão mais sinalizados como duplicatas."))
+            : ("Are you sure you want to dismiss all " + juce::String(gruposDetectados_.size()) + " duplicate groups? They will not be flagged as duplicates again.");
+
+        bool confirm = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon, titulo, msg,
+            isPt ? juce::String::fromUTF8("Sim") : "Yes",
+            isPt ? juce::String::fromUTF8("Não") : "No", this);
+        if (!confirm) return;
+
+        auto& db = projeto_.projeto().registro();
+        try {
+            db.run("BEGIN TRANSACTION", {});
+            for (const auto& group : gruposDetectados_) {
                 juce::String nota = "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]";
                 db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
                        {matriz::db::Value::of(nota.toStdString()),
                         matriz::db::Value::of(group.duplicata.itemId)});
+            }
+            db.run("COMMIT", {});
+        } catch (...) {
+            try { db.run("ROLLBACK", {}); } catch (...) {}
+        }
+
+        gruposDetectados_.clear();
+        estado_ = State::Clean;
+        lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+        viewport_->setVisible(false);
+        resized();
+        repaint();
+        return;
+    }
+
+    // Validate All em lote (item): uma escolha só, aplicada a TODOS os
+    // grupos detectados de uma vez — não é mais um confirm/cancel binário.
+    // Não apaga nada (nem catálogo, nem disco/fonte): só decide qual lado
+    // de cada par sai da PRÓXIMA leva de Make Backup (via estado =
+    // 'duplicata', que planejarConsolidacao agora respeita).
+    juce::String titulo = isPt ? juce::String::fromUTF8("Validar Todas as Duplicatas") : juce::String("Validate All Duplicates");
+    juce::String msg = isPt
+        ? (juce::String::fromUTF8("Aplicar a mesma escolha aos ") + juce::String(gruposDetectados_.size()) +
+           juce::String::fromUTF8(" grupos de duplicatas encontrados. Nada é apagado do disco nem do catálogo — "
+                                   "o lado descartado só sai da próxima leva de Make Backup."))
+        : ("Apply the same choice to all " + juce::String(gruposDetectados_.size()) +
+           " detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
+           "won't be included in the next Make Backup run.");
+
+    auto* aw = new juce::AlertWindow(titulo, msg, juce::AlertWindow::QuestionIcon);
+    aw->addButton(matriz::i18n::t("duplicatas.action_keep1"), 1);
+    aw->addButton(matriz::i18n::t("duplicatas.action_keep2"), 2);
+    aw->addButton(matriz::i18n::t("duplicatas.action_keep_both"), 3);
+    aw->addButton(isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"), 0);
+
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+    aw->enterModalState(true, juce::ModalCallbackFunction::create([safeThis](int resultado) {
+        if (!safeThis || resultado == 0) return;
+        safeThis->aplicarEscolhaGlobal(resultado);
+    }), true);
+}
+
+void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
+    if (gruposDetectados_.empty()) return;
+
+    auto& db = projeto_.projeto().registro();
+    try {
+        db.run("BEGIN TRANSACTION", {});
+        for (const auto& group : gruposDetectados_) {
+            if (escolha == 1) { // Keep File 1 (original) — exclui o lado "duplicata" do próximo backup
+                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) +
+                                     " by user in batch — excluded from future Make Backup runs. [USER_VERIFIED_DUPLICATE]";
+                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
+            } else if (escolha == 2) { // Keep File 2 (duplicata) — exclui o "original" do próximo backup
+                juce::String nota = "Duplicate pair kept as this side; matching item " + juce::String(group.duplicata.codigoAcervo) +
+                                     " excluded from future Make Backup runs. [USER_VERIFIED_DUPLICATE]";
+                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.original.itemId)});
+            } else { // Keep Both — só documenta o par, os dois continuam entrando no backup normalmente
+                juce::String nota = "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]";
+                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
             }
         }
         db.run("COMMIT", {});
     } catch (...) {
         try { db.run("ROLLBACK", {}); } catch (...) {}
     }
-    
+
     gruposDetectados_.clear();
     estado_ = State::Clean;
     lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
     viewport_->setVisible(false);
-    
     resized();
     repaint();
+}
+
+void DuplicatesWorkspaceComponent::atualizarBotoesSelecionados() {
+    if (!listaComponent_) return;
+    bool temSelecao = !listaComponent_->indicesSelecionados().empty();
+    if (btnValidateSelected_) btnValidateSelected_->setEnabled(temSelecao);
+    if (btnDismissSelected_) btnDismissSelected_->setEnabled(temSelecao);
+}
+
+void DuplicatesWorkspaceComponent::atualizarListaEStatusAposResolucao() {
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+    if (gruposDetectados_.empty()) {
+        estado_ = State::Clean;
+        lblStatus_->setText(isPt ? juce::String::fromUTF8("Todas as duplicatas foram resolvidas! Seu acervo está limpo.")
+                                 : "All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+        viewport_->setVisible(false);
+    } else {
+        lblStatus_->setText(isPt ? (juce::String::fromUTF8("Encontrados ") + juce::String(gruposDetectados_.size()) + juce::String::fromUTF8(" grupos de duplicatas."))
+                                 : ("Found " + juce::String(gruposDetectados_.size()) + " duplicate groups."), juce::dontSendNotification);
+        listaComponent_->updateList(gruposDetectados_);
+    }
+    atualizarBotoesSelecionados();
+    resized();
+    repaint();
+}
+
+void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
+    if (!listaComponent_) return;
+    auto indices = listaComponent_->indicesSelecionados();
+    if (indices.empty()) return;
+    std::sort(indices.begin(), indices.end());
+
+    bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    if (!ehDuplicataReal) {
+        // Dismiss selected: same as "not a duplicate" for each selected pair, no dialog needed.
+        juce::String msg = isPt
+            ? (juce::String::fromUTF8("Tem certeza de que deseja ignorar os ") + juce::String(static_cast<int>(indices.size())) + juce::String::fromUTF8(" grupos selecionados? Eles não serão mais sinalizados como duplicatas."))
+            : ("Are you sure you want to dismiss the " + juce::String(static_cast<int>(indices.size())) + " selected groups? They will not be flagged as duplicates again.");
+        bool confirm = juce::AlertWindow::showOkCancelBox(
+            juce::AlertWindow::QuestionIcon,
+            isPt ? juce::String::fromUTF8("Ignorar Selecionadas") : "Dismiss Selected",
+            msg,
+            isPt ? juce::String::fromUTF8("Sim") : "Yes",
+            isPt ? juce::String::fromUTF8("Não") : "No",
+            this);
+        if (!confirm) return;
+
+        auto& db = projeto_.projeto().registro();
+        try {
+            db.run("BEGIN TRANSACTION", {});
+            for (int idx : indices) {
+                if (idx < 0 || idx >= static_cast<int>(gruposDetectados_.size())) continue;
+                const auto& group = gruposDetectados_[static_cast<size_t>(idx)];
+                juce::String nota = "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]";
+                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(nota.toStdString()),
+                        matriz::db::Value::of(group.duplicata.itemId)});
+            }
+            db.run("COMMIT", {});
+        } catch (...) {
+            try { db.run("ROLLBACK", {}); } catch (...) {}
+        }
+
+        for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+            gruposDetectados_.erase(gruposDetectados_.begin() + *it);
+        }
+        atualizarListaEStatusAposResolucao();
+        return;
+    }
+
+    // Validate selected: shared dialog, one action (keep 1 / keep 2 / keep both) per selected pair.
+    std::vector<DuplicateResolutionDialog::Entry> entries;
+    entries.reserve(indices.size());
+    for (int idx : indices) {
+        const auto& group = gruposDetectados_[static_cast<size_t>(idx)];
+        DuplicateResolutionDialog::Entry e;
+        e.primaryLabel = juce::String(group.original.titulo) + "  <->  " + juce::String(group.duplicata.titulo);
+        e.secondaryLabel = (isPt ? juce::String::fromUTF8("Arquivo 1: ") : "File 1: ") + juce::String(group.original.caminhoRelativo)
+                          + "\n" + (isPt ? juce::String::fromUTF8("Arquivo 2: ") : "File 2: ") + juce::String(group.duplicata.caminhoRelativo);
+        e.action = 2; // default: keep both (validate as duplicate, delete nothing)
+        e.imagemA = carregarMiniaturaDoItem(projeto_, group.original.itemId, group.original.collectionCaminho);
+        e.imagemB = carregarMiniaturaDoItem(projeto_, group.duplicata.itemId, group.duplicata.collectionCaminho);
+        entries.push_back(e);
+    }
+
+    std::array<juce::String, 3> actionLabels{
+        matriz::i18n::t("duplicatas.action_keep1"),
+        matriz::i18n::t("duplicatas.action_keep2"),
+        matriz::i18n::t("duplicatas.action_keep_both")
+    };
+
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+    DuplicateResolutionDialog::show(
+        matriz::i18n::t("duplicatas.selected_dialog_titulo"),
+        matriz::i18n::t("duplicatas.selected_dialog_intro"),
+        entries, actionLabels,
+        [safeThis, indices](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) {
+            if (!safeThis || !confirmado) return;
+
+            auto& db = safeThis->projeto_.projeto().registro();
+            try {
+                db.run("BEGIN TRANSACTION", {});
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    int idx = indices[i];
+                    if (idx < 0 || idx >= static_cast<int>(safeThis->gruposDetectados_.size())) continue;
+                    const auto& group = safeThis->gruposDetectados_[static_cast<size_t>(idx)];
+                    int action = resultado[i].action;
+
+                    if (action == 0) { // Keep File 1 -> delete duplicate
+                        db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+                        db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+                        db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+                    } else if (action == 1) { // Keep File 2 -> delete original
+                        db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
+                        db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
+                        db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.original.itemId)});
+                        juce::String nota = "Kept as unique item after batch duplicate resolution. Original was deleted.";
+                        db.run("UPDATE item SET estado = 'novo', notas_livres = ? WHERE id = ?",
+                               {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
+                    } else { // Keep Both -> mark as validated duplicate
+                        juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user in batch. [USER_VERIFIED_DUPLICATE]";
+                        db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
+                               {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
+                    }
+                }
+                db.run("COMMIT", {});
+            } catch (...) {
+                try { db.run("ROLLBACK", {}); } catch (...) {}
+            }
+
+            juce::MessageManager::callAsync([safeThis, indices]() {
+                if (!safeThis) return;
+                for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+                    if (*it >= 0 && *it < static_cast<int>(safeThis->gruposDetectados_.size()))
+                        safeThis->gruposDetectados_.erase(safeThis->gruposDetectados_.begin() + *it);
+                }
+                safeThis->atualizarListaEStatusAposResolucao();
+            });
+        });
 }
 
 void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
@@ -1451,7 +1776,16 @@ void DuplicatesWorkspaceComponent::resized() {
         areaFilter.removeFromLeft(8);
         cbSizeUnit_->setBounds(areaFilter.removeFromLeft(70));
     }
-    
+
+    areaFilter.removeFromLeft(16);
+    lblAno_->setBounds(areaFilter.removeFromLeft(isPt ? 40 : 35));
+    areaFilter.removeFromLeft(4);
+    txtAnoDe_->setBounds(areaFilter.removeFromLeft(50));
+    areaFilter.removeFromLeft(4);
+    lblAnoAte_->setBounds(areaFilter.removeFromLeft(12));
+    areaFilter.removeFromLeft(4);
+    txtAnoAte_->setBounds(areaFilter.removeFromLeft(50));
+
     area.removeFromTop(10); // Spacing below filter bar
 
     if (estado_ == State::Results) {
@@ -1459,13 +1793,20 @@ void DuplicatesWorkspaceComponent::resized() {
         btnScan_->setButtonText(isPt ? "NOVA VARREDURA" : "RE-SCAN");
         btnValidateAll_->setVisible(true);
         btnDismissAll_->setVisible(true);
-        
+        btnValidateSelected_->setVisible(true);
+        btnDismissSelected_->setVisible(true);
+
         auto areaControle = area.removeFromTop(40);
         int btnW = isPt ? 160 : 180;
+        int btnSelW = isPt ? 150 : 170;
         int scanW = isPt ? 140 : 120;
         btnValidateAll_->setBounds(areaControle.removeFromRight(btnW));
+        areaControle.removeFromRight(6);
+        btnValidateSelected_->setBounds(areaControle.removeFromRight(btnSelW));
         areaControle.removeFromRight(10);
         btnDismissAll_->setBounds(areaControle.removeFromRight(btnW));
+        areaControle.removeFromRight(6);
+        btnDismissSelected_->setBounds(areaControle.removeFromRight(btnSelW));
         areaControle.removeFromRight(10);
         btnScan_->setBounds(areaControle.removeFromRight(scanW));
         areaControle.removeFromRight(16);
@@ -1481,6 +1822,8 @@ void DuplicatesWorkspaceComponent::resized() {
         btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
         btnValidateAll_->setVisible(false);
         btnDismissAll_->setVisible(false);
+        btnValidateSelected_->setVisible(false);
+        btnDismissSelected_->setVisible(false);
         lblStatus_->setJustificationType(juce::Justification::centred);
         lblStatus_->setBounds(area.removeFromTop(40));
         viewport_->setVisible(false);
