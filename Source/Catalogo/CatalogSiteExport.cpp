@@ -1,5 +1,6 @@
 #include "CatalogSiteExport.h"
 
+#include "../Ui/BatchWatermarkDialog.h"
 #include "../Ingest/Miniaturas.h"
 #include "../Ingest/ProcessoExterno.h"
 #include "../Vault/Resolucao.h"
@@ -1822,6 +1823,20 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
             juce::File thumbTarget = dirThumbs.getChildFile(thumbFilename);
 
             if (gerarThumbnailWeb(masterFile, colDir, item, thumbTarget, params.thumbnailMaxPx)) {
+                if (item.marcadoWatermark || projeto.contemMarcacao(ui::ProjetoAberto::TipoMarcacao::Watermark, item.id)) {
+                    auto cfgWm = projeto.obterConfiguracaoWatermark();
+                    if (cfgWm.valida()) {
+                        juce::Image thumbImg = juce::ImageFileFormat::loadFrom(thumbTarget);
+                        if (thumbImg.isValid() && ui::BatchWatermarkDialog::aplicarMarcaDaguaEmImagem(thumbImg, cfgWm)) {
+                            juce::FileOutputStream fos(thumbTarget);
+                            if (fos.openedOk()) {
+                                juce::JPEGImageFormat jpgFmt;
+                                jpgFmt.setQuality(0.90f);
+                                jpgFmt.writeImageToStream(thumbImg, fos);
+                            }
+                        }
+                    }
+                }
                 thumbRel = "../../media/thumbs/" + thumbFilename;
                 resultado.thumbnailsGenerated++;
                 if (coverThumbRel.isEmpty()) {

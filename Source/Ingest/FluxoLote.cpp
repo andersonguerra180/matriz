@@ -37,8 +37,7 @@ void aplicarFichaEmLote(matriz::db::Database& registro, const std::vector<std::s
                     "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
                     "VALUES (?, ?, ?, ?, ?, ?, 'humano', ?) "
                     "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) "
-                    "DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em "
-                    "WHERE item_campo.fonte != 'leitura_tecnica'",
+                    "DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(nivel), Value::of(nivelIndice),
                      Value::of(campoId), Value::of(valor), Value::of(agora)});
 
