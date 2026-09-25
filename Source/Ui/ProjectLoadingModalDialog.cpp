@@ -237,7 +237,7 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
             // Step 3: Warm up index / media catalog
             if (safeDialog) safeDialog->setStatus(matriz::i18n::t("loading.step_indices"), 0.85);
             try {
-                projeto->registro().prepare("SELECT COUNT(*) FROM items").step();
+                projeto->registro().prepare("SELECT COUNT(*) FROM item").step();
             } catch (...) {}
         } else {
             if (matriz::catalogo::ehPastaDeCatalogo(pasta)) {
