@@ -9,6 +9,7 @@
 #include "SendToPrintDialog.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 
 namespace matriz::ui {
@@ -34,11 +35,16 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
             bool marcadoH = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, e.itemId);
             bool marcadoK = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, e.itemId);
             bool marcadoP = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, e.itemId);
+            // item 7: watermark (W) dispara o mesmo tipo de evento "marcacao"
+            // que H/K/P, então precisa do mesmo tratamento aqui — sem isso
+            // ficava sem sync ao vivo entre a janela de Preview e a grade.
+            bool marcadoW = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, e.itemId);
             for (auto& item : safeThis->itensTodos_) {
                 if (item.id == e.itemId) {
                     item.marcadoPublicacao = marcadoH;
                     item.marcadoZip = marcadoK;
                     item.marcadoPrint = marcadoP;
+                    item.marcadoWatermark = marcadoW;
                     break;
                 }
             }
@@ -47,13 +53,27 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
                     item.marcadoPublicacao = marcadoH;
                     item.marcadoZip = marcadoK;
                     item.marcadoPrint = marcadoP;
+                    item.marcadoWatermark = marcadoW;
                     break;
                 }
             }
             safeThis->repaint();
             return;
         }
-        safeThis->recarregar();
+        // EDIT METADATA != REMOVE FROM THIS LIST (correção METADATA): um
+        // evento de UM item (tags, título, etc.) só precisa atualizar ESSE
+        // item em memória — chamar recarregar() aqui refazia o snapshot
+        // inteiro do catálogo por cima de qualquer edição de campo (cada
+        // ProjetoAberto::definirTags/salvarMetadado dispara este evento),
+        // disputando com o filtro "Selected"/"Hide Unselected" corrente e
+        // arriscando derrubar o item da lista no meio do caminho. Só um
+        // evento sem itemId (mudança ampla, não de um item específico)
+        // ainda pede o recarregar completo.
+        if (e.itemId.empty()) {
+            safeThis->recarregar();
+        } else {
+            safeThis->atualizarItemEmMemoria(e.itemId);
+        }
     });
 }
 
@@ -146,6 +166,15 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
     it->metadadosEditados = true;
+    // D3/item 7: marcado_revisado (atalho E) e watermark (W) não tinham
+    // sync ao vivo entre a janela de Preview e a grade — H/K/P já eram
+    // tratados à parte no branco "marcacao"/"publicacao" acima em
+    // aoItemAlterado, mas E e W caíam só neste caminho genérico, que nunca
+    // relia essas duas flags do banco.
+    if (auto resumo = projeto_.obterItemResumo(itemId)) {
+        it->marcadoRevisado = resumo->marcadoRevisado;
+        it->marcadoWatermark = resumo->marcadoWatermark;
+    }
 
     aplicarFiltrosEOrdenacao();
 }
@@ -184,6 +213,41 @@ std::optional<std::pair<int, int>> parsearFaixaAno(const juce::String& texto) {
     int anoAte = ate.getIntValue();
     if (anoDe > anoAte) std::swap(anoDe, anoAte);
     return std::make_pair(anoDe, anoAte);
+}
+
+// Fallback em memória por termo (item 6): usado quando o item não está no
+// conjunto vindo do FTS5 (buscaResultado_) — checa campos básicos já
+// carregados no ItemResumo. Com múltiplos chips, cada termo passa por aqui
+// separadamente e o item só sobrevive se bater em TODOS (E lógico).
+bool itemBateComTermoEmMemoria(const ItemResumo& item, const juce::String& termo) {
+    juce::String q = termo.toLowerCase().trim();
+    if (q.isEmpty()) return true;
+    if (juce::String(item.titulo).toLowerCase().contains(q) ||
+        juce::String(item.codigoAcervo).toLowerCase().contains(q) ||
+        juce::String(item.nomeOriginalArquivo).toLowerCase().contains(q) ||
+        juce::String(item.pastaNome).toLowerCase().contains(q) ||
+        juce::String(item.isrc).toLowerCase().contains(q)) {
+        return true;
+    }
+    for (const auto& tg : item.tags) {
+        if (juce::String(tg).toLowerCase().contains(q.trimCharactersAtStart("#"))) return true;
+    }
+    return false;
+}
+
+// Interseção (E lógico) dos conjuntos de ids vindos de cada termo — um item
+// só passa se aparecer em TODOS os conjuntos.
+std::set<std::string> intersectarConjuntos(const std::vector<std::set<std::string>>& conjuntos) {
+    if (conjuntos.empty()) return {};
+    std::set<std::string> resultado = conjuntos.front();
+    for (size_t i = 1; i < conjuntos.size() && !resultado.empty(); ++i) {
+        std::set<std::string> intersecao;
+        std::set_intersection(resultado.begin(), resultado.end(),
+                               conjuntos[i].begin(), conjuntos[i].end(),
+                               std::inserter(intersecao, intersecao.begin()));
+        resultado = std::move(intersecao);
+    }
+    return resultado;
 }
 } // namespace
 
@@ -261,28 +325,106 @@ void MosaicoComponent::limparFiltros() {
     filtrosCollectionType_.clear();
     filtroDisponibilidade_ = FiltroDisponibilidade::All;
     filtroFaixaAno_.reset();
-    buscaTexto_.clear();
+    buscaTermos_.clear();
     buscaResultado_.reset();
     aplicarFiltrosEOrdenacao();
 }
 
 void MosaicoComponent::definirBusca(const juce::String& texto) {
-    buscaTexto_ = texto;
-    // Consulta o banco a cada chamada (código/título/campo de ficha/
-    // assunto — ver ProjetoAberto::buscarItens) em vez de um substring
-    // check em memória: é o único jeito de a busca alcançar valor de ficha
-    // e assunto, que não vivem em ItemResumo. "" limpa (nullopt = sem
-    // filtro de busca, nunca "nenhum resultado").
+    // Compat: chamada por quem só conhece um termo único (backup file
+    // selector, coleção salva/inteligente, selftest) — substitui TODOS os
+    // chips ativos por, no máximo, um.
+    buscaTermos_.clear();
+    juce::String t = texto.trim();
+    if (t.isNotEmpty()) buscaTermos_.add(t);
+    recomputarBuscaResultado();
+}
+
+void MosaicoComponent::adicionarTermoBusca(const juce::String& texto) {
+    juce::String t = texto.trim();
+    if (t.isEmpty() || buscaTermos_.contains(t)) return;
+    buscaTermos_.add(t);
+    recomputarBuscaResultado();
+}
+
+void MosaicoComponent::removerTermoBusca(int indice) {
+    if (indice < 0 || indice >= buscaTermos_.size()) return;
+    buscaTermos_.remove(indice);
+    recomputarBuscaResultado();
+}
+
+void MosaicoComponent::recomputarBuscaResultado() {
+    // Consulta o banco (código/título/campo de ficha/assunto — ver
+    // ProjetoAberto::buscarItens) em vez de um substring check em memória:
+    // é o único jeito de a busca alcançar valor de ficha e assunto, que não
+    // vivem em ItemResumo. Sem termos = nullopt = sem filtro de busca,
+    // nunca "nenhum resultado".
+    //
+    // item 6: cada termo (chip) tem seu próprio conjunto de ids; o
+    // resultado final é a INTERSEÇÃO de todos — E lógico entre chips.
     //
     // "1978-1985" é reconhecido como faixa de ano (item 4.3) e resolvido
     // por itensPorFaixaAno em vez de LIKE textual — um LIKE por "1978-1985"
     // não acharia nada, já que o valor gravado em cada item é só "1981".
-    if (auto faixa = parsearFaixaAno(texto)) {
-        buscaResultado_ = projeto_.itensPorFaixaAno(faixa->first, faixa->second);
-    } else {
-        buscaResultado_ = texto.trim().isEmpty() ? std::nullopt : std::optional(projeto_.buscarItens(texto));
+    const int geracao = ++geracaoBusca_; // invalida qualquer busca em voo
+
+    if (buscaTermos_.isEmpty()) {
+        buscaResultado_ = std::nullopt;
+        aplicarFiltrosEOrdenacao();
+        return;
     }
-    aplicarFiltrosEOrdenacao();
+
+    auto resultadosParciais = std::make_shared<std::vector<std::set<std::string>>>();
+    std::vector<juce::String> termosPendentes;
+    for (auto& t : buscaTermos_) {
+        if (auto faixa = parsearFaixaAno(t))
+            resultadosParciais->push_back(projeto_.itensPorFaixaAno(faixa->first, faixa->second));
+        else
+            termosPendentes.push_back(t);
+    }
+
+    if (termosPendentes.empty()) {
+        // Só faixas de ano — nada assíncrono, intersecta na hora.
+        buscaResultado_ = intersectarConjuntos(*resultadosParciais);
+        aplicarFiltrosEOrdenacao();
+        return;
+    }
+
+    // Fix de performance (item 8): buscarItens() faz FTS5 + LIKE em várias
+    // tabelas — rodar na message thread travava a janela a cada tecla. Vai
+    // pro pool de miniaturas (já existe, leve o bastante pra não competir
+    // com o snapshot) e a UI só aplica quando TODOS os termos pendentes
+    // responderam, com a mesma geração usada em recarregar() pra descartar
+    // resposta atrasada de uma busca já superada por uma mais nova.
+    auto restantes = std::make_shared<int>(static_cast<int>(termosPendentes.size()));
+    juce::Component::SafePointer<MosaicoComponent> safeThis(this);
+    ProjetoAberto* projeto = &projeto_;
+
+    for (auto& termo : termosPendentes) {
+        poolMiniaturas_.addJob([safeThis, projeto, geracao, termo, resultadosParciais, restantes]() {
+            matriz::diag::LogOperacao logOp("buscaTermo:" + termo.toStdString());
+            std::set<std::string> resultado;
+            try {
+                resultado = projeto->buscarItens(termo);
+            } catch (const std::exception&) {
+                // projeto fechado no meio: entrega vazio, só pra não travar
+                // os outros termos esperando pra sempre.
+            }
+
+            juce::MessageManager::callAsync([safeThis, geracao, resultado = std::move(resultado), resultadosParciais, restantes]() mutable {
+                if (!safeThis) return;
+                auto* self = safeThis.getComponent();
+                if (geracao != self->geracaoBusca_) return; // busca superada por uma mais nova
+                // callAsync sempre serializado na message thread — sem
+                // corrida entre os pushes de termos diferentes.
+                resultadosParciais->push_back(std::move(resultado));
+                if (--(*restantes) == 0) {
+                    self->buscaResultado_ = intersectarConjuntos(*resultadosParciais);
+                    self->aplicarFiltrosEOrdenacao();
+                }
+            });
+        });
+    }
 }
 
 void MosaicoComponent::definirOrdenacao(Ordenacao ordenacao) {
@@ -436,7 +578,8 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     itensFiltrados_.clear();
 
     for (auto& item : itensTodos_) {
-        if (ocultarEditados_ && item.metadadosEditados) continue;
+        if (!item.pastaAtiva) continue;
+        if (ocultarEditados_ && item.marcadoRevisado) continue;
         if (ocultarNaoSelecionados_ && !selecionados_.count(item.id)) continue;
 
         // Eixos combinados com E: pasta da árvore, busca de texto, cada
@@ -444,25 +587,15 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         // seleção é OU (Acréscimos §10.2 — "clicáveis e combináveis").
         if (filtroItens_ && !filtroItens_->count(item.id)) continue;
         if (buscaResultado_ && !buscaResultado_->count(item.id)) {
-            bool inMemoryMatch = false;
-            if (buscaTexto_.isNotEmpty()) {
-                juce::String q = buscaTexto_.toLowerCase().trim();
-                if (juce::String(item.titulo).toLowerCase().contains(q) ||
-                    juce::String(item.codigoAcervo).toLowerCase().contains(q) ||
-                    juce::String(item.nomeOriginalArquivo).toLowerCase().contains(q) ||
-                    juce::String(item.pastaNome).toLowerCase().contains(q) ||
-                    juce::String(item.isrc).toLowerCase().contains(q)) {
-                    inMemoryMatch = true;
-                } else {
-                    for (const auto& tg : item.tags) {
-                        if (juce::String(tg).toLowerCase().contains(q.trimCharactersAtStart("#"))) {
-                            inMemoryMatch = true;
-                            break;
-                        }
-                    }
-                }
+            // Fallback em memória (item 6): item não veio no conjunto do
+            // FTS5 — ainda pode sobreviver se bater em TODOS os termos
+            // ativos via campos básicos já carregados (E lógico entre chips,
+            // mesmo critério do conjunto vindo do banco).
+            bool todosOsTermosBatem = true;
+            for (const auto& termo : buscaTermos_) {
+                if (!itemBateComTermoEmMemoria(item, termo)) { todosOsTermosBatem = false; break; }
             }
-            if (!inMemoryMatch) continue;
+            if (!todosOsTermosBatem) continue;
         }
         if (!filtrosEstado_.empty() && !filtrosEstado_.count(juce::String(item.estado))) continue;
         if (!filtrosTipoMidia_.empty() && !filtrosTipoMidia_.count(juce::String(item.tipoMidia))) continue;
@@ -750,6 +883,12 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
+    // Item 9: se este clique virar arrasto e não houver destino de drop
+    // nesta tela, o laço recomeça do que já estava selecionado ANTES deste
+    // clique (não do que o clique-simples acabou de selecionar) — mesma
+    // semântica de começar o laço no vazio.
+    selecaoAntesDoClique_ = selecionados_;
+
     int indice = indiceNaPosicao(e.getPosition());
 
     // Botão direito: age sobre a seleção inteira quando o clique cai DENTRO
@@ -869,9 +1008,22 @@ void MosaicoComponent::mouseDrag(const juce::MouseEvent& e) {
         clicouNaTituloDeItemSelecionado_ = false;
     }
 
-    if (e.getDistanceFromDragStart() < 8 || selecionados_.empty()) return;
+    if (e.getDistanceFromDragStart() < 8) return;
 
     pendingDeselect_ = false;
+
+    if (!permiteArrastarParaFora_) {
+        // Sem alvo de drop nesta tela (item 9): clicar numa miniatura e
+        // arrastar cria seleção em laço a partir do ponto do clique, em vez
+        // de tentar um arrasto de arquivo sem destino nenhum.
+        lacoAtivo_ = true;
+        lacoInicio_ = e.getMouseDownPosition();
+        selecaoAntesDoLaco_ = selecaoAntesDoClique_;
+        atualizarSelecaoDoLaco(e);
+        return;
+    }
+
+    if (selecionados_.empty()) return;
 
     auto* container = juce::DragAndDropContainer::findParentDragContainerFor(this);
     if (!container || container->isDragAndDropActive()) return;
@@ -907,7 +1059,10 @@ void MosaicoComponent::atualizarSelecaoDoLaco(const juce::MouseEvent& e) {
     if (!selecionados_.empty() && selecionadoId_.empty()) selecionadoId_ = *selecionados_.begin();
     repaint();
     if (aoMudarSelecao) aoMudarSelecao();
-    if (aoSelecionar && !selecionadoId_.empty()) aoSelecionar(selecionadoId_);
+    // aoSelecionar dispara a reconstrução pesada da ficha de metadados
+    // (leitura de EXIF/imagem) — chamar isso a cada frame de mouseDrag
+    // travava a navegação. A ficha só precisa atualizar quando o laço
+    // termina (mouseUp), não a cada pixel arrastado.
 }
 
 void MosaicoComponent::mouseUp(const juce::MouseEvent&) {
@@ -915,6 +1070,7 @@ void MosaicoComponent::mouseUp(const juce::MouseEvent&) {
         lacoAtivo_ = false;
         selecaoAntesDoLaco_.clear();
         repaint();
+        if (aoSelecionar && !selecionadoId_.empty()) aoSelecionar(selecionadoId_);
         return;
     }
     if (pendingDeselect_) {
@@ -1032,6 +1188,51 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         }
     }
 
+    if ((tecla.getKeyCode() == 'W' || c == 'w' || c == 'W') && semModificadores) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoWatermark = novoEstado;
+                }
+            }
+            for (auto& item : itensFiltrados_) {
+                if (alvosSet.count(item.id)) {
+                    item.marcadoWatermark = novoEstado;
+                }
+            }
+            repaint();
+            return true;
+        }
+    }
+
+    if ((tecla.getKeyCode() == 'E' || c == 'e' || c == 'E') && semModificadores) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            bool todosMarcados = std::all_of(alvos.begin(), alvos.end(), [this](const std::string& id) {
+                auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
+                                        [&id](const ItemResumo& i) { return i.id == id; });
+                return it != itensTodos_.end() && it->marcadoRevisado;
+            });
+            bool novoEstado = !todosMarcados;
+            projeto_.alternarMarcadoRevisado(alvos);
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_) {
+                if (alvosSet.count(item.id)) item.marcadoRevisado = novoEstado;
+            }
+            for (auto& item : itensFiltrados_) {
+                if (alvosSet.count(item.id)) item.marcadoRevisado = novoEstado;
+            }
+            repaint();
+            return true;
+        }
+    }
+
     if ((tecla.getKeyCode() == 'C' || c == 'c' || c == 'C') &&
         !tecla.getModifiers().isCommandDown() && !tecla.getModifiers().isCtrlDown()) {
         limparMetadadosSelecao();
@@ -1043,9 +1244,7 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
 
 namespace {
 void renomearItemNoProjeto(ProjetoAberto& projetoAberto, const std::string& itemId, const juce::String& novoTitulo) {
-    auto& db = projetoAberto.projeto().registro();
-    db.run("UPDATE item SET titulo = ? WHERE id = ?",
-           {matriz::db::Value::of(novoTitulo.toStdString()), matriz::db::Value::of(itemId)});
+    projetoAberto.renomearItens({itemId}, novoTitulo.toStdString());
 }
 } // namespace
 
@@ -1564,6 +1763,15 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawText("H", hBadge, juce::Justification::centred);
                     linha.removeFromRight(3);
                 }
+                if (item.marcadoWatermark) {
+                    auto wBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
+                    g.setColour(juce::Colour(0xffffcc00));
+                    g.fillRoundedRectangle(wBadge.toFloat(), 3.0f);
+                    g.setColour(juce::Colours::black);
+                    g.setFont(font9Bold);
+                    g.drawText("W", wBadge, juce::Justification::centred);
+                    linha.removeFromRight(3);
+                }
 
                 auto areaTexto = linha.reduced(4, 0);
                 int metadeAltura = areaTexto.getHeight() / 2;
@@ -1689,31 +1897,23 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText("H", stampH, juce::Justification::centred);
                 stampRight -= 19;
             }
+            if (item.marcadoWatermark) {
+                juce::Rectangle<int> stampW(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(juce::Colour(0xffffcc00));
+                g.fillRoundedRectangle(stampW.toFloat(), 3.0f);
+                g.setColour(juce::Colours::black);
+                g.setFont(font9Bold);
+                g.drawText("W", stampW, juce::Justification::centred);
+                stampRight -= 19;
+            }
 
-            // Card border: anéis concêntricos (H verde por fora, K azul grosso no meio, P laranja por dentro)
-            bool temMarcacao = item.marcadoPublicacao || item.marcadoZip || item.marcadoPrint;
             float offsetRing = 0.0f;
 
-            if (item.marcadoPublicacao) {
-                g.setColour(juce::Colour(0xff39ff14));
-                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
-                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 3.5f);
-                offsetRing += 3.5f;
-            }
-            if (item.marcadoZip) {
-                g.setColour(juce::Colour(0xff0077ff));
-                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
-                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 4.5f);
-                offsetRing += 4.5f;
-            }
-            if (item.marcadoPrint) {
-                g.setColour(juce::Colour(0xffff6b00));
-                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing)).toFloat(),
-                                       juce::jmax(1.0f, tk.raioMedio - offsetRing), 3.0f);
-                offsetRing += 3.0f;
-            }
-
-            if (destacarEditados_ && item.metadadosEditados) {
+            // marcadoRevisado é o atalho manual "E" (Tag as Edited) — mostra
+            // o zebrado amarelo sempre que marcado, sem depender do toggle
+            // "destacar editados" (que é sobre metadadosEditados, automático).
+            bool mostrarZebraRevisado = (destacarEditados_ && item.metadadosEditados) || item.marcadoRevisado;
+            if (mostrarZebraRevisado) {
                 // Zebrado de editado
                 const juce::Colour kZebraYellow{0xffFFEE00}; // vivid yellow
                 const juce::Colour kZebraStripe{0xdd000000}; // near-black stripe
@@ -1754,9 +1954,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(tk.acento);
                 auto selBounds = bounds.reduced(static_cast<int>(offsetRing));
                 float selR = juce::jmax(1.0f, tk.raioMedio - offsetRing);
-                float selThick = temMarcacao ? 2.5f : 3.5f;
-                g.drawRoundedRectangle(selBounds.toFloat(), selR, selThick);
-            } else if (!temMarcacao && (!destacarEditados_ || !item.metadadosEditados)) {
+                g.drawRoundedRectangle(selBounds.toFloat(), selR, 3.5f);
+            } else if (!mostrarZebraRevisado) {
                 g.setColour(corCat.withAlpha(0.65f));
                 g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.8f);
             }
@@ -1879,6 +2078,7 @@ void MosaicoComponent::confirmarEdicaoInline() {
 
     projeto_.renomearItens({item.id}, novoTitulo.toStdString());
     recarregar();
+    if (aoRenomearItem) aoRenomearItem();
 }
 
 void MosaicoComponent::cancelarEdicaoInline() {

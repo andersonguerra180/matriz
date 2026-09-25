@@ -124,8 +124,18 @@ public:
     // Busca (Acréscimos §10.1): código/título, campo de ficha e assunto —
     // consulta o banco via ProjetoAberto::buscarItens a cada chamada (OCR/
     // transcrição não existem ainda, gap declarado). "" limpa a busca.
+    // Compat: usada por buscas de termo único fora do catálogo (backup file
+    // selector, coleções salvas/inteligentes, selftest) — substitui TODOS
+    // os chips ativos por, no máximo, um único termo.
     void definirBusca(const juce::String& texto);
-    const juce::String& buscaAtual() const { return buscaTexto_; }
+    // item 6: múltiplos chips de busca combinados com E — um arquivo só
+    // aparece se bater com TODOS os termos ativos.
+    void adicionarTermoBusca(const juce::String& texto);
+    void removerTermoBusca(int indice);
+    const juce::StringArray& termosBuscaAtuais() const { return buscaTermos_; }
+    // Join dos termos ativos — compat com o "algum filtro ativo?" do painel
+    // de filtros e com o campo único de coleções salvas/inteligentes.
+    juce::String buscaAtual() const { return buscaTermos_.joinIntoString(" "); }
 
     void definirOrdenacao(Ordenacao ordenacao);
 
@@ -133,6 +143,7 @@ public:
     // §8.1 — "clicar numa pasta filtra a grade"). nullopt = sem filtro de
     // pasta (todos os itens, sujeitos aos outros filtros normalmente).
     void definirFiltroItens(std::optional<std::set<std::string>> itemIds);
+    const std::optional<std::set<std::string>>& filtroItensAtual() const { return filtroItens_; }
 
     void selecionarItem(const std::string& itemId);
     const std::string& itemSelecionado() const { return selecionadoId_; }
@@ -183,6 +194,13 @@ public:
 
     void definirSubpastas(std::vector<SubpastaInfo> subpastas);
     std::function<void(const SubpastaInfo&)> aoNavegarParaSubpasta;
+
+    // Item 9 (fix de UI): telas sem Vault/pasta pra soltar arquivo (a grade
+    // do METADATA, por exemplo) chamam isto com false — clicar numa
+    // miniatura e arrastar passa a criar seleção em laço em vez de tentar
+    // iniciar um arrasto de arquivo sem destino, que impedia o laço de
+    // funcionar quando o clique começava em cima de uma célula.
+    void definirPermiteArrastarParaFora(bool permite) { permiteArrastarParaFora_ = permite; }
 
     enum class ModoVisao { Grade, Lista };
     void definirModoVisao(ModoVisao modo);
@@ -247,6 +265,10 @@ public:
     // fora da seleção? então a seleção passa a ser só esse item".
     std::function<void(std::vector<std::string> itemIds)> aoPedirMenuContexto;
 
+    // true enquanto o snapshot em background disparado por recarregar()
+    // ainda não voltou. Mesmo uso que ArvoreComponent::recargaPendente().
+    bool snapshotPendente() const { return snapshotPendente_; }
+
     static constexpr int kAlturaCabecalhoGrupo = 26;
     static constexpr int kEspacoEntreGrupos = 6;
 
@@ -280,6 +302,11 @@ private:
                                    .withDesiredThreadPriority(juce::Thread::Priority::low)};
     int geracaoSnapshot_ = 0;
     bool snapshotPendente_ = false;
+    // Fix de performance (item 8): buscarItens() varre FTS5 + LIKE em várias
+    // tabelas — na thread principal, cada tecla digitada travava a janela.
+    // Mesmo padrão de geração do snapshot acima, pra uma busca mais nova não
+    // ser sobrescrita pela resposta atrasada de uma busca já superada.
+    int geracaoBusca_ = 0;
 
     std::vector<ItemResumo> itensTodos_;
     std::vector<ItemResumo> itensFiltrados_; // agrupado — itens do mesmo grupo sempre contíguos
@@ -290,8 +317,9 @@ private:
     std::optional<std::pair<int, int>> filtroFaixaAno_;                                          // ver definirFiltroFaixaAno
     juce::String filtroDataDe_, filtroDataAte_;
     ModoAgrupamento modoAgrupamento_ = ModoAgrupamento::Automatico;
-    juce::String buscaTexto_;
-    std::optional<std::set<std::string>> buscaResultado_; // resultado de projeto_.buscarItens(buscaTexto_), recalculado a cada definirBusca
+    juce::StringArray buscaTermos_;
+    std::optional<std::set<std::string>> buscaResultado_; // interseção (E lógico) do resultado de cada termo em buscaTermos_
+    void recomputarBuscaResultado();
     Ordenacao ordenacao_ = Ordenacao::Codigo;
     std::optional<std::set<std::string>> filtroItens_; // seleção da árvore, ver definirFiltroItens
 
@@ -316,6 +344,13 @@ private:
 
     bool pendingDeselect_ = false;
     std::string pendingDeselectId_;
+
+    // Item 9: nesta tela (ver definirPermiteArrastarParaFora) não há Vault/
+    // pasta pra soltar arquivo arrastado — clicar numa miniatura e arrastar
+    // vira seleção em laço a partir do próprio ponto do clique, em vez de
+    // tentar iniciar um drag sem destino nenhum, que bloqueava o laço.
+    bool permiteArrastarParaFora_ = true;
+    std::set<std::string> selecaoAntesDoClique_;
 
     std::vector<SubpastaInfo> subpastas_;
 
