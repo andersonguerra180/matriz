@@ -13,10 +13,9 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "ProjetoAberto.h"
 
 namespace matriz::ui {
-
-class ProjetoAberto;
 
 class IntakeWorkspaceComponent : public juce::Component,
                                  public juce::TableListBoxModel,
@@ -26,6 +25,7 @@ public:
     ~IntakeWorkspaceComponent() override;
 
     void recarregar();
+    bool snapshotPendente() const { return snapshotPendente_; }
     std::set<std::string> itensSelecionados() const;
 
     enum class RescanOrigem {
@@ -152,6 +152,7 @@ private:
     void selecionarTodos(bool selecionar);
     void selecionarPorCategoria(const juce::String& categoria);
     void mostrarMenuColecaoParaItem(int itemIndex, juce::Rectangle<int> screenBounds);
+    void aplicarItensQuarentena(std::vector<ItemResumo> quarentena);
 
     ProjetoAberto& projeto_;
     // Fase 2b (freeze de edição em lote): aplicarXAosSelecionados grava
@@ -160,6 +161,12 @@ private:
     // essas chamadas são raras (ação explícita do operador), nunca
     // concorrentes entre si.
     juce::ThreadPool poolMetadadoLote_{1};
+    // Fase 3b (CPU/lote): snapshot em background e throttle de recarregar()
+    // idêntico ao padrão de geração do MosaicoComponent.
+    bool snapshotPendente_ = false;
+    bool recarregarAoTerminarSnapshot_ = false;
+    int geracaoSnapshot_ = 0;
+    juce::ThreadPool poolSnapshot_{1};
     std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_

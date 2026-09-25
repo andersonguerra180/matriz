@@ -110,7 +110,8 @@ public:
     static std::vector<ItemResumo> listarItensDeProjeto(matriz::db::Database& registro,
                                                         matriz::db::Database& indice,
                                                         const juce::File& pastaProjeto,
-                                                        const std::map<std::string, std::string>& inMemoryRelinks = {});
+                                                        const std::map<std::string, std::string>& inMemoryRelinks = {},
+                                                        const std::set<std::string>& itensOffline = {});
     std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
 
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
@@ -659,11 +660,20 @@ public:
     void descartarAlteracoesEmMemoria();
     std::optional<juce::File> resolverArquivoComMemoria(const std::string& arquivoId) const;
 
+    void definirItensOffline(const std::set<std::string>& offlineIds) {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        itensOfflineCache_ = offlineIds;
+    }
+    std::set<std::string> obterItensOffline() const {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        return itensOfflineCache_;
+    }
+
 private:
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
 
-    // Protege os 4 sets de marcação e inMemoryRelinkedPaths_ abaixo: lidos
+    // Protege os 4 sets de marcação, itensOfflineCache_ e inMemoryRelinkedPaths_ abaixo: lidos
     // por listarItens()/listarItensDaColecao()/listarItensEmQuarentena() nas
     // threads de background MatrizSnapshot/MatrizContagens (ver
     // MosaicoComponent::recarregar(), FiltrosComponent) enquanto a message
@@ -677,6 +687,7 @@ private:
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
     std::set<std::string> marcadosWatermark_;
+    std::set<std::string> itensOfflineCache_;
 
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;

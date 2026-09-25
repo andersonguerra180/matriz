@@ -154,14 +154,13 @@ juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
 std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database& registro,
                                                             matriz::db::Database& indice,
                                                             const juce::File& pastaProjeto,
-                                                            const std::map<std::string, std::string>& inMemoryRelinks) {
+                                                            const std::map<std::string, std::string>& inMemoryRelinks,
+                                                            const std::set<std::string>& itensOffline) {
+    juce::ignoreUnused(pastaProjeto, inMemoryRelinks);
     std::vector<ItemResumo> out;
 
-    // Uma consulta só (EXISTS/subquery correlacionados em vez de N+1 —
-    // importante com milhares de itens no mosaico, ver B.2). As duas últimas
-    // colunas só existem de fato pra tipo_midia="release" (nível raiz,
-    // campos artista_principal/titulo de release.yaml) — usadas pra
-    // agrupar o mosaico por artista/lançamento no modo Catalog.
+    // Uma consulta com JOIN em vez de N+1 (arquivo e vault resolvidos num único join
+    // para a master, características técnicas e miniatura/tags preparadas uma vez).
     auto stmt = registro.prepare(
         "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
         "EXISTS(SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id), "
@@ -169,17 +168,17 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         " AND c.campo_id = 'artista_principal'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
         " AND c.campo_id = 'titulo'), "
-        "(SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "a.caminho_relativo, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
         " AND c.campo_id = 'origem'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
         " AND c.campo_id = 'ano'), "
-        "(SELECT a.caminho_absoluto_origem FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "a.caminho_absoluto_origem, "
         "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
-        "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "a.tamanho_bytes, "
         "i.content_type, i.collection_type, i.criado_em, "
-        "(SELECT a.id FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
-        "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
+        "a.id, "
+        "COALESCE(v.localizacao, ''), "
         "i.isrc, "
         "0, "
         "COALESCE(i.metadados_editados, 0) != 0, "
@@ -190,8 +189,23 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "  SELECT ap1.id, ap1.pasta_pai_id, ap1.ativo, c.prof + 1 FROM acervo_pasta ap1 "
         "  JOIN cadeia c ON ap1.id = c.pasta_pai_id WHERE c.prof < 64"
         ") SELECT MIN(ativo) FROM cadeia), 1), "
-        "COALESCE(i.marcado_revisado, 0) != 0 "
-        "FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
+        "COALESCE(i.marcado_revisado, 0) != 0, "
+        "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) ELSE NULL END, "
+        "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END "
+        "FROM item i "
+        "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
+        "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
+        ") "
+        "LEFT JOIN vault v ON v.id = a.vault_id "
+        "WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
+
+    auto yrStmt = registro.prepare(
+        "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'ano', 'data_criacao') AND valor IS NOT NULL AND valor != '' LIMIT 1");
+    auto minStmt = indice.prepare(
+        "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
+    auto tagStmt = registro.prepare(
+        "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('tags', 'genero', 'estilo', 'palavras_chave') AND valor IS NOT NULL AND valor != ''");
+
     while (stmt.step()) {
         ItemResumo r;
         r.id = stmt.columnText(0);
@@ -232,49 +246,28 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         r.pastaAtiva = stmt.columnInt(23) != 0;
         r.marcadoRevisado = stmt.columnInt(24) != 0;
 
-        bool fileExists = false;
-        if (!masterArqId.empty()) {
-            auto it = inMemoryRelinks.find(masterArqId);
-            if (it != inMemoryRelinks.end() && !it->second.empty()) {
-                fileExists = juce::File(it->second).existsAsFile();
-            } else {
-                auto res = matriz::vault::resolverCaminho(pastaProjeto, vaultLoc, camRel, camAbs);
-                fileExists = res.has_value() && res->existsAsFile();
-            }
-        }
-        r.offline = !fileExists;
+        // Status offline via cache (verificado em background, sem I/O síncrono de disco por item)
+        r.offline = (itensOffline.count(r.id) > 0);
 
-        // Extract technical characteristics (duration, etc.)
-        try {
-            auto techStmt = registro.prepare(
-                "SELECT caracteristicas_tecnicas_json FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC, id LIMIT 1");
-            techStmt.bind(1, matriz::db::Value::of(r.id));
-            if (techStmt.step() && !techStmt.columnIsNull(0)) {
-                auto jsonStr = techStmt.columnText(0);
-                auto varObj = juce::JSON::parse(jsonStr);
-                if (varObj.isObject()) {
-                    if (varObj.hasProperty("duracaoSegundos")) {
-                        r.duracaoSegundos = static_cast<double>(varObj["duracaoSegundos"]);
-                    }
-                    if (!r.ano.has_value() && varObj.hasProperty("exifDataOriginal")) {
-                        juce::String exifDt = varObj["exifDataOriginal"].toString();
-                        for (int i = 0; i + 3 < exifDt.length(); ++i) {
-                            if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
-                                std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
-                                int yVal = exifDt.substring(i, i + 4).getIntValue();
-                                if (yVal > 1800 && yVal <= juce::Time::getCurrentTime().getYear() + 1) { r.ano = yVal; break; }
-                            }
-                        }
-                    }
+        // Características técnicas via json_extract em SQL (sem juce::JSON::parse em C++)
+        if (!stmt.columnIsNull(25)) {
+            r.duracaoSegundos = stmt.columnReal(25);
+        }
+        if (!r.ano.has_value() && !stmt.columnIsNull(26)) {
+            juce::String exifDt = stmt.columnText(26);
+            for (int i = 0; i + 3 < exifDt.length(); ++i) {
+                if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
+                    std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
+                    int yVal = exifDt.substring(i, i + 4).getIntValue();
+                    if (yVal > 1800 && yVal <= juce::Time::getCurrentTime().getYear() + 1) { r.ano = yVal; break; }
                 }
             }
-        } catch (...) {}
+        }
 
-        // Fallback: extract creation year ONLY from dc_created, ano, data_criacao or EXIF original date
+        // Fallback: extração de ano de criação de item_campo (statement preparado uma vez)
         if (!r.ano.has_value()) {
             try {
-                auto yrStmt = registro.prepare(
-                    "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'ano', 'data_criacao') AND valor IS NOT NULL AND valor != '' LIMIT 1");
+                yrStmt.reset();
                 yrStmt.bind(1, matriz::db::Value::of(r.id));
                 if (yrStmt.step()) {
                     juce::String val = yrStmt.columnText(0);
@@ -287,33 +280,20 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                     }
                 }
             } catch (...) {}
-
-            if (!r.ano.has_value() && !stmt.columnIsNull(12)) {
-                try {
-                    juce::File fileObj(stmt.columnText(12));
-                    if (fileObj.existsAsFile()) {
-                        int yVal = fileObj.getCreationTime().getYear();
-                        if (yVal <= 1970 || yVal > 2025) yVal = fileObj.getLastModificationTime().getYear();
-                        if (yVal > 1800 && yVal <= 2025) r.ano = yVal;
-                    }
-                } catch (...) {}
-            }
         }
 
-        // Check thumbnail from indice database
+        // Check thumbnail from indice database (statement preparado uma vez)
         try {
-            auto minStmt = indice.prepare(
-                "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
+            minStmt.reset();
             minStmt.bind(1, matriz::db::Value::of(r.id));
             if (minStmt.step() && !minStmt.columnIsNull(0)) {
                 r.miniaturaCaminhoRelativo = minStmt.columnText(0);
             }
         } catch (...) {}
 
-        // Extract tags / genres from item_campo
+        // Extract tags / genres from item_campo (statement preparado uma vez)
         try {
-            auto tagStmt = registro.prepare(
-                "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('tags', 'genero', 'estilo', 'palavras_chave') AND valor IS NOT NULL AND valor != ''");
+            tagStmt.reset();
             tagStmt.bind(1, matriz::db::Value::of(r.id));
             while (tagStmt.step()) {
                 juce::String tagVal = tagStmt.columnText(0);
@@ -354,7 +334,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     // "MatrizSnapshot") enquanto a message thread pode estar escrevendo
     // nesses mesmos sets/map ao mesmo tempo (H/K/P/W, relink).
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -362,8 +342,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia);
+    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia, offlineCopia);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
@@ -382,13 +363,18 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
     try {
         matriz::db::Database regDb(regFile.getFullPathName().toStdString());
         std::vector<ItemResumo> items;
+        std::set<std::string> offlineCopia;
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            offlineCopia = itensOfflineCache_;
+        }
         if (indFile.existsAsFile()) {
             matriz::db::Database indDb(indFile.getFullPathName().toStdString());
-            items = listarItensDeProjeto(regDb, indDb, resolvedDir);
+            items = listarItensDeProjeto(regDb, indDb, resolvedDir, {}, offlineCopia);
         } else {
             // Temporary in-memory dummy db if indice.sqlite is missing
             matriz::db::Database dummyInd(":memory:");
-            items = listarItensDeProjeto(regDb, dummyInd, resolvedDir);
+            items = listarItensDeProjeto(regDb, dummyInd, resolvedDir, {}, offlineCopia);
         }
         {
             std::lock_guard<std::mutex> lock(marcacoesMutex_);
@@ -413,7 +399,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -421,6 +407,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        offlineCopia = itensOfflineCache_;
     }
 
     // Retry loop in case SQLite is momentarily busy during ingest transactions
@@ -492,17 +479,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.caminhoRelativoArquivo = camRel;
                 r.caminhoAbsolutoOrigem = camAbs;
 
-                bool fileExists = false;
-                if (!masterArqId.empty()) {
-                    auto it = relinkCopia.find(masterArqId);
-                    if (it != relinkCopia.end() && !it->second.empty()) {
-                        fileExists = juce::File(it->second).existsAsFile();
-                    } else {
-                        auto res = matriz::vault::resolverCaminho(projeto_->pasta(), vaultLoc, camRel, camAbs);
-                        fileExists = res.has_value() && res->existsAsFile();
-                    }
-                }
-                r.offline = !fileExists;
+                // Status offline via cache (verificado em background, sem I/O síncrono de disco por item)
+                r.offline = (offlineCopia.count(r.id) > 0);
 
                 if (!r.titulo.empty()) {
                     r.nomeOriginalArquivo = r.titulo;

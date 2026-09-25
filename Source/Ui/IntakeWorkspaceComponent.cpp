@@ -1674,7 +1674,9 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     recarregar();
 }
 
-IntakeWorkspaceComponent::~IntakeWorkspaceComponent() = default;
+IntakeWorkspaceComponent::~IntakeWorkspaceComponent() {
+    poolSnapshot_.removeAllJobs(true, 2000);
+}
 
 void IntakeWorkspaceComponent::atualizarVisibilidadeEmptyState() {
     bool vazio = todosItens_.empty();
@@ -1711,13 +1713,16 @@ void IntakeWorkspaceComponent::registrarItensRescan(const std::vector<std::pair<
 }
 
 void IntakeWorkspaceComponent::carregarItens() {
+    recarregar();
+}
+
+void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> quarentena) {
     // Preserve selection of existing items
     std::set<std::string> selecionadosAnteriores;
     for (const auto& it : todosItens_) {
         if (it.selecionado) selecionadosAnteriores.insert(it.id);
     }
 
-    auto quarentena = projeto_.listarItensEmQuarentena();
     std::vector<ItemIntake> novosItens;
     novosItens.reserve(quarentena.size());
 
@@ -1892,7 +1897,39 @@ void IntakeWorkspaceComponent::atualizarContagens() {
 }
 
 void IntakeWorkspaceComponent::recarregar() {
-    carregarItens();
+    MATRIZ_TRACE("IntakeWorkspaceComponent::recarregar");
+    if (snapshotPendente_) {
+        recarregarAoTerminarSnapshot_ = true;
+        return;
+    }
+    recarregarAoTerminarSnapshot_ = false;
+    snapshotPendente_ = true;
+
+    const int geracao = ++geracaoSnapshot_;
+    juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
+    ProjetoAberto* proj = &projeto_;
+
+    poolSnapshot_.addJob([safeThis, proj, geracao]() {
+        std::vector<ItemResumo> quarentena;
+        try {
+            quarentena = proj->listarItensEmQuarentena();
+        } catch (const std::exception&) {
+            return;
+        }
+
+        juce::MessageManager::callAsync([safeThis, geracao, quarentena = std::move(quarentena)]() mutable {
+            if (!safeThis) return;
+            auto* self = safeThis.getComponent();
+            if (geracao != self->geracaoSnapshot_) return;
+            MATRIZ_TRACE("IntakeWorkspaceComponent::aplicarSnapshot");
+            self->snapshotPendente_ = false;
+            self->aplicarItensQuarentena(std::move(quarentena));
+            if (self->recarregarAoTerminarSnapshot_) {
+                self->recarregarAoTerminarSnapshot_ = false;
+                self->recarregar();
+            }
+        });
+    });
 }
 
 std::set<std::string> IntakeWorkspaceComponent::itensSelecionados() const {

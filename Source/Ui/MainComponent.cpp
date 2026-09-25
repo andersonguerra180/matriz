@@ -2360,9 +2360,13 @@ void MainComponent::verificarPresencaInicialAssets() {
                 proj->projeto().registro(), pastaProj, proj->inMemoryRelinkedPaths());
         } catch (...) {}
 
+        std::set<std::string> missingSet(report.missingItemIds.begin(), report.missingItemIds.end());
+        proj->definirItensOffline(missingSet);
+
         juce::MessageManager::callAsync([safeThis, report]() {
             if (!safeThis) return;
             auto* self = safeThis.getComponent();
+            if (self->mosaico_) self->mosaico_->repaint();
             if (report.totalAssets > 0 && report.onlineAssets == 0 && report.offlineAssets > 0) {
                 self->mostrarDialogoRelinkInicial(report);
             }
@@ -3782,7 +3786,7 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
                 intakeWorkspace_->repaint();
             }
         },
-        nullptr});
+        [this] { return intakeWorkspace_ == nullptr || !intakeWorkspace_->snapshotPendente(); }});
 
     passos->push_back({
         isPt ? juce::String::fromUTF8("Registrando no histórico do projeto...")
