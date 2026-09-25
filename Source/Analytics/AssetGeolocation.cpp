@@ -1,4 +1,5 @@
 #include "AssetGeolocation.h"
+#include "../Model/Project.h"
 #include <cmath>
 #include <ctime>
 
@@ -207,6 +208,81 @@ void AssetGeolocationRepository::salvarEmLote(matriz::db::Database& db, const st
         g.assetId = id;
         salvar(db, g);
     }
+}
+
+// ─────────────────────────────────────────────────────────────
+// GeoFavoritosRepository implementation
+// ─────────────────────────────────────────────────────────────
+
+static void criarTabelaGeoFavoritos(matriz::db::Database& db) {
+    db.run(
+        "CREATE TABLE IF NOT EXISTS geo_favoritos ("
+        "  id               TEXT PRIMARY KEY, "
+        "  nome             TEXT NOT NULL, "
+        "  latitude         REAL, "
+        "  longitude        REAL, "
+        "  formatted_address TEXT, "
+        "  city             TEXT, "
+        "  state_province   TEXT, "
+        "  country          TEXT, "
+        "  criado_em        TEXT NOT NULL"
+        ")", {});
+}
+
+void GeoFavoritosRepository::salvar(matriz::db::Database& db, const GeoFavorito& fav) {
+    criarTabelaGeoFavoritos(db);
+    std::string id = fav.id.empty() ? matriz::model::novoUuid() : fav.id;
+    std::string agora = agoraIso();
+
+    db.run(
+        "INSERT INTO geo_favoritos (id, nome, latitude, longitude, formatted_address, city, state_province, country, criado_em) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "  nome = excluded.nome, "
+        "  latitude = excluded.latitude, "
+        "  longitude = excluded.longitude, "
+        "  formatted_address = excluded.formatted_address, "
+        "  city = excluded.city, "
+        "  state_province = excluded.state_province, "
+        "  country = excluded.country",
+        {
+            matriz::db::Value::of(id),
+            matriz::db::Value::of(fav.nome),
+            fav.latitude  ? matriz::db::Value::of(*fav.latitude)  : matriz::db::Value::null(),
+            fav.longitude ? matriz::db::Value::of(*fav.longitude) : matriz::db::Value::null(),
+            fav.formattedAddress ? matriz::db::Value::of(*fav.formattedAddress) : matriz::db::Value::null(),
+            fav.city          ? matriz::db::Value::of(*fav.city)          : matriz::db::Value::null(),
+            fav.stateProvince ? matriz::db::Value::of(*fav.stateProvince) : matriz::db::Value::null(),
+            fav.country       ? matriz::db::Value::of(*fav.country)       : matriz::db::Value::null(),
+            matriz::db::Value::of(fav.criadoEm.empty() ? agora : fav.criadoEm)
+        });
+}
+
+void GeoFavoritosRepository::remover(matriz::db::Database& db, const std::string& id) {
+    criarTabelaGeoFavoritos(db);
+    db.run("DELETE FROM geo_favoritos WHERE id = ?", {matriz::db::Value::of(id)});
+}
+
+std::vector<GeoFavorito> GeoFavoritosRepository::listar(matriz::db::Database& db) {
+    criarTabelaGeoFavoritos(db);
+    std::vector<GeoFavorito> result;
+    auto stmt = db.prepare(
+        "SELECT id, nome, latitude, longitude, formatted_address, city, state_province, country, criado_em "
+        "FROM geo_favoritos ORDER BY nome ASC");
+    while (stmt.step()) {
+        GeoFavorito f;
+        f.id        = stmt.columnText(0);
+        f.nome      = stmt.columnText(1);
+        if (!stmt.columnIsNull(2)) f.latitude         = stmt.columnReal(2);
+        if (!stmt.columnIsNull(3)) f.longitude        = stmt.columnReal(3);
+        if (!stmt.columnIsNull(4)) f.formattedAddress = stmt.columnText(4);
+        if (!stmt.columnIsNull(5)) f.city             = stmt.columnText(5);
+        if (!stmt.columnIsNull(6)) f.stateProvince    = stmt.columnText(6);
+        if (!stmt.columnIsNull(7)) f.country          = stmt.columnText(7);
+        f.criadoEm  = stmt.columnText(8);
+        result.push_back(std::move(f));
+    }
+    return result;
 }
 
 } // namespace matriz::analytics

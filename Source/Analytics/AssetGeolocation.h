@@ -119,4 +119,27 @@ public:
     static void salvarEmLote(matriz::db::Database& db, const std::vector<std::string>& assetIds, const AssetGeolocation& geoTemplate);
 };
 
+// ─────────────────────────────────────────────────────────────
+// GeoLocation Favorites — saved places reusable across assets
+// ─────────────────────────────────────────────────────────────
+struct GeoFavorito {
+    std::string id;
+    std::string nome;                             // user-assigned name (e.g. "Studio São Paulo")
+    std::optional<double> latitude;
+    std::optional<double> longitude;
+    std::optional<std::string> formattedAddress;
+    std::optional<std::string> city;
+    std::optional<std::string> stateProvince;
+    std::optional<std::string> country;
+    std::string criadoEm;
+};
+
+class GeoFavoritosRepository {
+public:
+    // Creates the table if it doesn't exist, then inserts/replaces the favorite.
+    static void salvar(matriz::db::Database& db, const GeoFavorito& fav);
+    static void remover(matriz::db::Database& db, const std::string& id);
+    static std::vector<GeoFavorito> listar(matriz::db::Database& db);
+};
+
 } // namespace matriz::analytics
