@@ -10,6 +10,7 @@
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/MosaicoStressTest.h"
 #include "Ui/Tokens.h"
+#include "Ui/MatrizLookAndFeel.h"
 #include "Ui/TrialNagDialog.h"
 #include "Ui/UiSelfTest.h"
 
@@ -196,7 +197,7 @@ public:
 
         matriz::i18n::carregar(matriz::app::lerLocale());
 
-        lookAndFeel_ = std::make_unique<juce::LookAndFeel_V4>();
+        lookAndFeel_ = std::make_unique<matriz::ui::MatrizLookAndFeel>();
         matriz::ui::configurarLookAndFeel(*lookAndFeel_);
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel_.get());
 
@@ -272,7 +273,7 @@ public:
     void systemRequestedQuit() override { quit(); }
 
 private:
-    std::unique_ptr<juce::LookAndFeel_V4> lookAndFeel_;
+    std::unique_ptr<matriz::ui::MatrizLookAndFeel> lookAndFeel_;
     std::unique_ptr<matriz::diag::MessageLoopMonitor> monitorLoop_;
     std::unique_ptr<SplashWindow> splash_;
     std::unique_ptr<matriz::ui::MainWindow> janela_;
