@@ -10,6 +10,12 @@
 
 namespace matriz::ui {
 
+// Cor e rótulo de cada bloco do Visual Editor — expostos pra quem precisar
+// dar a MESMA identidade visual em outra tela (INTAKE Batch Assignment,
+// item 2 da correção "BACKUP e INTAKE") sem duplicar a paleta.
+juce::Colour corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n);
+juce::String rotuloDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n);
+
 class HierarquiaEditorComponent : public juce::Component {
 public:
     explicit HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual);

@@ -75,6 +75,12 @@ public:
         int h = juce::jlimit(720, displayArea.getHeight(), static_cast<int>(displayArea.getHeight() * 0.88f));
 
         setResizeLimits(980, 620, displayArea.getWidth(), displayArea.getHeight());
+        // Item 3 (lista nova de hoje): sem isto, nada nesta janela tem o
+        // foco de teclado de verdade — nem o ContentComponent (que
+        // setWantsKeyboardFocus(true) sozinho não é suficiente pra roubar
+        // foco de ninguém), nem por consequência esta DocumentWindow. Os
+        // atalhos E/H/K/P simplesmente não chegavam a lugar nenhum.
+        setWantsKeyboardFocus(true);
 
         contentComp_ = new ContentComponent(projeto_, itemId,
             [this](int dir) { navegarItem(dir); },
@@ -87,6 +93,7 @@ public:
         centreWithSize(w, h);
         setVisible(true);
         toFront(true);
+        if (contentComp_) contentComp_->grabKeyboardFocus();
     }
 
     ~FloatingPreviewWindow() override = default;
@@ -142,6 +149,15 @@ public:
         }
         if (key == juce::KeyPress::escapeKey) {
             closeButtonPressed();
+            return true;
+        }
+        // Item 3 (nova lista): os atalhos de marcação (E/H/K/P/W) só
+        // existiam dentro do ContentComponent, mas nada chama
+        // grabKeyboardFocus() nele — então quase sempre é a DocumentWindow
+        // que recebe a tecla de verdade, e essa aqui não tratava nada além
+        // de navegação/Esc. Delega pro mesmo tratamento do conteúdo, que
+        // marca o item aberto no preview e repinta o selo.
+        if (contentComp_ && contentComp_->tratarAtalhoDeMarcacao(key)) {
             return true;
         }
         return juce::DocumentWindow::keyPressed(key);
@@ -223,6 +239,43 @@ private:
 
         const std::string& itemIdAtual() const { return itemId_; }
 
+        // Item 3 (nova lista): os atalhos E/H/K/P/W só existiam aqui dentro,
+        // mas nada chama grabKeyboardFocus() neste componente — então a tecla
+        // quase sempre chega primeiro (e só) na DocumentWindow por fora, que
+        // não tinha esse tratamento. Extraído pra método público pra poder
+        // ser chamado tanto daqui (se o foco algum dia estiver aqui) quanto
+        // de fora, por FloatingPreviewWindow::keyPressed.
+        bool tratarAtalhoDeMarcacao(const juce::KeyPress& key) {
+            bool semModificadores = !key.getModifiers().isCommandDown() &&
+                                    !key.getModifiers().isCtrlDown() &&
+                                    !key.getModifiers().isAltDown();
+            if (!semModificadores || itemId_.empty()) return false;
+
+            auto c = juce::CharacterFunctions::toUpperCase(key.getTextCharacter());
+            ProjetoAberto::TipoMarcacao tipo;
+            bool temTipo = true;
+            switch (c) {
+                case 'H': tipo = ProjetoAberto::TipoMarcacao::Html;      break;
+                case 'K': tipo = ProjetoAberto::TipoMarcacao::Zip;       break;
+                case 'P': tipo = ProjetoAberto::TipoMarcacao::Print;     break;
+                case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
+                default: temTipo = false; break;
+            }
+            if (temTipo) {
+                projeto_.alternarMarcacao(tipo, {itemId_});
+                if (fichaPanel_) fichaPanel_->mostrarItem(itemId_);
+                repaint();
+                return true;
+            }
+            if (c == 'E') {
+                projeto_.alternarMarcadoRevisado({itemId_});
+                if (fichaPanel_) fichaPanel_->mostrarItem(itemId_);
+                repaint();
+                return true;
+            }
+            return false;
+        }
+
         void carregarAsset(const std::string& newItemId) {
             itemId_ = newItemId;
 
@@ -256,6 +309,10 @@ private:
                     preview_->aoFechar = aoFechar_;
                     preview_->aoNavegar = [this](int dir) { if (aoNavegar_) aoNavegar_(dir); };
                     preview_->mostrarItem(itemId_);
+                    // Item 2 (nova lista): esta janela já tem suas próprias
+                    // setas na barra superior — as do PreviewComponent
+                    // duplicariam a navegação.
+                    preview_->definirBotoesNavegacaoVisiveis(false);
                     addAndMakeVisible(*preview_);
                 }
             } else {
@@ -263,6 +320,7 @@ private:
                 preview_->aoFechar = aoFechar_;
                 preview_->aoNavegar = [this](int dir) { if (aoNavegar_) aoNavegar_(dir); };
                 preview_->mostrarItem(itemId_);
+                preview_->definirBotoesNavegacaoVisiveis(false);
                 addAndMakeVisible(*preview_);
             }
 
@@ -284,6 +342,45 @@ private:
             g.fillAll(tema().fundo);
             g.setColour(tema().borda);
             g.drawHorizontalLine(kAlturaTopBar - 1, 0.0f, static_cast<float>(getWidth()));
+        }
+
+        // item 2 (nova lista): a borda/selos de marcador (E.10) eram
+        // desenhados em paint(), mas preview_/escuta_ são filhos que
+        // ocupam exatamente previewArea_ e pintam POR CIMA logo em
+        // seguida — cobrindo tudo, então nada aparecia. paintOverChildren
+        // roda depois dos filhos, exatamente pra esse tipo de overlay.
+        void paintOverChildren(juce::Graphics& g) override {
+            // Item E.10: mesmo feedback visual do atalho no grid (letra pro
+            // H/K/P/W, borda amarela pro E) — só que sobre a área de preview
+            // inteira, já que aqui só existe UM item.
+            if (previewArea_.isEmpty() || itemId_.empty()) return;
+
+            auto item = projeto_.obterItemResumo(itemId_);
+            bool revisado = item && item->marcadoRevisado;
+            if (revisado) {
+                const juce::Colour kZebraYellow{0xffFFEE00};
+                g.setColour(kZebraYellow);
+                g.drawRect(previewArea_, 3);
+            }
+
+            int stampRight = previewArea_.getRight() - 4;
+            auto desenharSelo = [&](const juce::String& letra, juce::Colour fundo, juce::Colour texto) {
+                juce::Rectangle<int> selo(stampRight - 20, previewArea_.getY() + 4, 20, 20);
+                g.setColour(fundo);
+                g.fillRoundedRectangle(selo.toFloat(), 4.0f);
+                g.setColour(texto);
+                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.drawText(letra, selo, juce::Justification::centred);
+                stampRight -= 24;
+            };
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, itemId_))
+                desenharSelo("P", juce::Colour(0xffff6b00), juce::Colours::white);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, itemId_))
+                desenharSelo("K", juce::Colour(0xff0077ff), juce::Colours::white);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, itemId_))
+                desenharSelo("H", juce::Colour(0xff39ff14), juce::Colours::black);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemId_))
+                desenharSelo("W", juce::Colour(0xffffcc00), juce::Colours::black);
         }
 
         void resized() override {
@@ -324,6 +421,7 @@ private:
 
             if (preview_) preview_->setBounds(area);
             if (escuta_) escuta_->setBounds(area);
+            previewArea_ = area;
         }
 
         bool keyPressed(const juce::KeyPress& key) override {
@@ -336,7 +434,12 @@ private:
             if (key == juce::KeyPress::escapeKey) {
                 if (aoFechar_) { aoFechar_(); return true; }
             }
-            return false;
+
+            // Item E.10: os atalhos de marcação valem também no preview, e
+            // agem sobre o item que está aberto nele — mesmas teclas, mesmo
+            // efeito de toggle que MosaicoComponent::keyPressed já faz na
+            // grade, só que sempre sobre um único item (o deste preview).
+            return tratarAtalhoDeMarcacao(key);
         }
 
     private:
@@ -345,6 +448,7 @@ private:
         static constexpr int kLarguraFichaMax = 950;
         int larguraFicha_ = 620; // 620px default enables 2 metadata columns
         bool fichaColapsada_ = false;
+        juce::Rectangle<int> previewArea_;
 
         ProjetoAberto& projeto_;
         std::string itemId_;

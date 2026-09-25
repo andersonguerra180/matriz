@@ -18,6 +18,7 @@ enum Comando {
     kAlternarPublicacao,
     kAlternarZip,
     kAlternarPrint,
+    kAlternarWatermark,
     kRemoverDoBackup,
     kRemoverDaLista,
     kMostrarNaOrigem,
@@ -26,6 +27,8 @@ enum Comando {
     kDefinirCapa,
     kRemoverCapa,
     kLimparMetadados,
+    kRecarregarArquivo,
+    kSubstituirArquivo,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -60,6 +63,15 @@ void confirmar(const juce::String& titulo, const juce::String& mensagem, const j
         retirarPeerDaTela(*janela); // §3
         if (resultado == 1) aoConfirmar();
     }));
+}
+
+void avisarErroArquivo(const juce::String& mensagem) {
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                      .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                      .withTitle(matriz::i18n::t("acoes.erro_arquivo_titulo"))
+                                      .withMessage(mensagem)
+                                      .withButton(matriz::i18n::t("comum.ok")),
+                                  static_cast<juce::ModalComponentManager::Callback*>(nullptr));
 }
 
 // Nome final que o arquivo terá no backup, pro título dado.
@@ -188,6 +200,40 @@ void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds
                           });
 }
 
+void recarregarArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos) {
+    if (itemId.empty()) return;
+    auto info = projeto.arquivoPrincipal(itemId);
+    if (!info) {
+        avisarErroArquivo(matriz::i18n::t("acoes.erro_sem_master"));
+        return;
+    }
+    juce::File atual(info->caminhoAbsoluto);
+    juce::String erro;
+    if (!projeto.recarregarOuSubstituirArquivo(itemId, atual, erro)) {
+        avisarErroArquivo(erro);
+        return;
+    }
+    if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+}
+
+void substituirArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos) {
+    if (itemId.empty()) return;
+    auto seletor = std::make_shared<juce::FileChooser>(matriz::i18n::t("acoes.substituir_arquivo"), juce::File());
+    ProjetoAberto* p = &projeto;
+    std::string id = itemId;
+    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                          [seletor, p, id, ganchos](const juce::FileChooser& fc) {
+                              juce::File novo = fc.getResult();
+                              if (novo == juce::File()) return;
+                              juce::String erro;
+                              if (!p->recarregarOuSubstituirArquivo(id, novo, erro)) {
+                                  avisarErroArquivo(erro);
+                                  return;
+                              }
+                              if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                          });
+}
+
 void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
     auto tipos = listarTiposMidiaDisponiveis(projeto);
@@ -283,6 +329,10 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
 
     menu.addItem(kRenomear, matriz::i18n::t("acoes.renomear"));
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
+    // Item D.9/10 — só fazem sentido pra um arquivo por vez (mesma regra de
+    // "Mostrar na origem"/"Ver duplicatas" logo abaixo).
+    menu.addItem(kRecarregarArquivo, matriz::i18n::t("acoes.recarregar_arquivo"), umSo);
+    menu.addItem(kSubstituirArquivo, matriz::i18n::t("acoes.substituir_arquivo"), umSo);
 
     bool todosHtml = true;
     for (const auto& id : itemIds) {
@@ -305,14 +355,12 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     juce::String labelPrint = (todosPrint ? matriz::i18n::t("acoes.remover_print") : matriz::i18n::t("acoes.adicionar_print")) + " (P)";
     menu.addItem(kAlternarPrint, labelPrint);
 
-    juce::PopupMenu submenuPastas;
-    auto pastas = pastasDoBackup(projeto);
-    int id = kPrimeiraPasta;
-    for (auto& [pastaId, caminho] : pastas) submenuPastas.addItem(id++, caminho);
-    // Sem nenhuma pasta criada ainda, o submenu ficaria vazio e sem
-    // explicação — uma linha desabilitada diz o que fazer antes.
-    if (pastas.empty()) submenuPastas.addItem(-1, matriz::i18n::t("acoes.sem_pastas"), false);
-    menu.addSubMenu(matriz::i18n::t("acoes.enviar_para_pasta"), submenuPastas);
+    bool todosWatermark = true;
+    for (const auto& id : itemIds) {
+        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id)) { todosWatermark = false; break; }
+    }
+    juce::String labelWatermark = (todosWatermark ? matriz::i18n::t("acoes.remover_watermark") : matriz::i18n::t("acoes.adicionar_watermark")) + " (W)";
+    menu.addItem(kAlternarWatermark, labelWatermark);
 
     menu.addSeparator();
     menu.addItem(kDefinirCapa, matriz::i18n::t("acoes.definir_capa"));
@@ -339,21 +387,6 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
 void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> itemIds, Ganchos ganchos) {
     if (resultado <= 0 || itemIds.empty()) return;
 
-    if (resultado >= kPrimeiraPasta) {
-        auto pastas = pastasDoBackup(projeto);
-        size_t indice = static_cast<size_t>(resultado - kPrimeiraPasta);
-        if (indice >= pastas.size()) return;
-        if (itemIds.size() > 1) {
-            ProgressoGlobal::obterInstancia().iniciarTarefa("batch_move", "Moving to Folder", (int)itemIds.size(), nullptr, "Moving " + juce::String((int)itemIds.size()) + " assets...");
-        }
-        projeto.adicionarItensAPasta(itemIds, pastas[indice].first);
-        if (itemIds.size() > 1) {
-            ProgressoGlobal::obterInstancia().concluirTarefa("batch_move", juce::String((int)itemIds.size()) + " assets moved");
-        }
-        if (ganchos.aoMudarDados) ganchos.aoMudarDados();
-        return;
-    }
-
     int quantidade = static_cast<int>(itemIds.size());
 
     switch (resultado) {
@@ -373,6 +406,14 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             limparMetadados(projeto, itemIds, ganchos);
             break;
 
+        case kRecarregarArquivo:
+            recarregarArquivo(projeto, itemIds.front(), ganchos);
+            break;
+
+        case kSubstituirArquivo:
+            substituirArquivo(projeto, itemIds.front(), ganchos);
+            break;
+
         case kAlternarPublicacao:
             projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Html, itemIds);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
@@ -385,6 +426,11 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kAlternarPrint:
             projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, itemIds);
+            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+            break;
+
+        case kAlternarWatermark:
+            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemIds);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
 

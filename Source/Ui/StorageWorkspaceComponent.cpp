@@ -12,6 +12,26 @@ namespace matriz::ui {
 
 namespace {
 
+// Borda "zebrada" amarelo-preto (faixa de risco) pro card de disco
+// selecionado — substitui o preenchimento de fundo diferenciado, que
+// competia visualmente com o resto do card (item 4 da correção de UI).
+void desenharBordaZebra(juce::Graphics& g, const juce::Rectangle<float>& bounds, float corner, float espessura) {
+    juce::Path contorno;
+    contorno.addRoundedRectangle(bounds, corner);
+
+    juce::PathStrokeType traco(espessura);
+    juce::Path contornoPreenchido;
+    traco.createStrokedPath(contornoPreenchido, contorno);
+    g.setColour(juce::Colours::black);
+    g.fillPath(contornoPreenchido);
+
+    const float tracejado[] = {9.0f, 9.0f};
+    juce::Path faixasAmarelas;
+    traco.createDashedStroke(faixasAmarelas, contorno, tracejado, 2);
+    g.setColour(juce::Colours::yellow);
+    g.fillPath(faixasAmarelas);
+}
+
 juce::String formatBytes(juce::int64 bytes) {
     if (bytes <= 0) return "0 B";
     if (bytes < 1024) return juce::String(bytes) + " B";
@@ -400,10 +420,9 @@ public:
 
             juce::Rectangle<int> cardBounds = getCardBounds(i);
 
-            // Card Background
-            if (isSelected) {
-                g.setColour(tk.painelAlt);
-            } else if (isHovered) {
+            // Card Background — seleção não muda mais o fundo (item 4):
+            // quem marca o card selecionado agora é só a borda zebrada.
+            if (isHovered) {
                 g.setColour(tk.painel.interpolatedWith(tk.painelAlt, 0.45f));
             } else {
                 g.setColour(tk.painel);
@@ -412,8 +431,7 @@ public:
 
             // Card Border
             if (isSelected) {
-                g.setColour(tk.acento);
-                g.drawRoundedRectangle(cardBounds.toFloat(), 6.3f, 1.5f);
+                desenharBordaZebra(g, cardBounds.toFloat(), 6.3f, 4.0f);
             } else {
                 g.setColour(isHovered ? tk.borda.brighter(0.25f) : tk.borda);
                 g.drawRoundedRectangle(cardBounds.toFloat(), 6.3f, 1.0f);
@@ -1462,7 +1480,11 @@ void StorageWorkspaceComponent::lookAndFeelChanged() {
 
 void StorageWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    g.fillAll(tk.fundo);
+    bool isLight = (tk.fundo.getBrightness() > 0.5f);
+    juce::Colour warmBase = isLight ? tk.fundo.darker(0.15f) : juce::Colour(0xff3a332a);
+    juce::Colour baseBg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    juce::Colour bg = baseBg.interpolatedWith(warmBase, 0.35f).brighter(0.50f);
+    g.fillAll(bg);
 
     if (!sourceBounds_.isEmpty()) {
         auto sb = sourceBounds_.toFloat().expanded(4.0f, 4.0f);

@@ -4,9 +4,9 @@
 
 namespace matriz::ui {
 
-namespace {
-
-juce::String rotuloDoNivel(matriz::consolidacao::NivelHierarquia n) {
+// Rótulo e cor de cada bloco — públicos (ver header) pra INTAKE Batch
+// Assignment usar exatamente a mesma identidade visual/textual.
+juce::String rotuloDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n) {
     using N = matriz::consolidacao::NivelHierarquia;
     switch (n) {
         case N::EstruturaOriginal: return "ORIGINAL FOLDERS";
@@ -14,14 +14,18 @@ juce::String rotuloDoNivel(matriz::consolidacao::NivelHierarquia n) {
         case N::Ano:         return "YEAR";
         case N::TipoMidia:   return "MEDIA TYPE";
         case N::TipoArquivo: return "FILE TYPE";
-        case N::Origem:      return "ORIGIN";
-        case N::Artista:     return "ARTIST";
+        // Renomeado de ORIGIN (item 1 da correção "BACKUP e INTAKE") — só o
+        // rótulo mudou, continua lendo o mesmo campo "origem" de sempre.
+        case N::Origem:      return "SOURCE MEDIUM";
+        case N::Artista:     return "CREATOR";
+        case N::ContentType: return "CONTENT";
+        case N::Subject:     return "SUBJECT";
         case N::PastaManual: return "MANUAL FOLDERS";
     }
     return "?";
 }
 
-juce::Colour corDoNivel(matriz::consolidacao::NivelHierarquia n) {
+juce::Colour corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n) {
     using N = matriz::consolidacao::NivelHierarquia;
     switch (n) {
         case N::EstruturaOriginal: return juce::Colour(0xff808080);
@@ -31,10 +35,14 @@ juce::Colour corDoNivel(matriz::consolidacao::NivelHierarquia n) {
         case N::TipoArquivo: return juce::Colour(0xff9060c0);
         case N::Origem:      return juce::Colour(0xff30a8a0);
         case N::Artista:     return juce::Colour(0xffc04070);
+        case N::ContentType: return juce::Colour(0xff2b9348);
+        case N::Subject:     return juce::Colour(0xffd9a441);
         case N::PastaManual: return juce::Colour(0xffc0a030);
     }
     return juce::Colours::grey;
 }
+
+namespace {
 
 juce::String exemploDoNivel(matriz::consolidacao::NivelHierarquia n) {
     using N = matriz::consolidacao::NivelHierarquia;
@@ -44,8 +52,10 @@ juce::String exemploDoNivel(matriz::consolidacao::NivelHierarquia n) {
         case N::Ano:         return "1985";
         case N::TipoMidia:   return "Reel tape";
         case N::TipoArquivo: return "wav";
-        case N::Origem:      return "Analog";
-        case N::Artista:     return "Artist Name";
+        case N::Origem:      return "Vinyl";
+        case N::Artista:     return "Creator Name";
+        case N::ContentType: return "Photo";
+        case N::Subject:     return "Family Vacation";
         case N::PastaManual: return "Category/Subcategory";
     }
     return "?";
@@ -55,16 +65,22 @@ juce::String exemploDoNivel(matriz::consolidacao::NivelHierarquia n) {
 
 HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual) {
     using N = matriz::consolidacao::NivelHierarquia;
-    std::vector<N> todos = {N::Projeto, N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::PastaManual};
+    // MANUAL FOLDERS saiu da paleta de blocos disponíveis, substituído por
+    // SUBJECT (4ª correção de UI) — mas o case dele em rotuloDoNivel/
+    // corDoNivel/exemploDoNivel e na resolução (Consolidacao.cpp) continua
+    // de pé: projeto antigo com "pasta_manual" já ATIVO (vindo de
+    // hierarquiaAtual, não desta lista) continua funcionando exatamente
+    // como antes, só não aparece mais pra quem for adicionar um bloco novo.
+    std::vector<N> todos = {N::Projeto, N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject};
 
     std::set<N> ativos(hierarquiaAtual.begin(), hierarquiaAtual.end());
 
     for (auto n : hierarquiaAtual) {
-        blocos_.push_back({n, rotuloDoNivel(n), corDoNivel(n), true, {}});
+        blocos_.push_back({n, rotuloDoNivelHierarquia(n), corDoNivelHierarquia(n), true, {}});
     }
     for (auto n : todos) {
         if (!ativos.count(n))
-            blocos_.push_back({n, rotuloDoNivel(n), corDoNivel(n), false, {}});
+            blocos_.push_back({n, rotuloDoNivelHierarquia(n), corDoNivelHierarquia(n), false, {}});
     }
 
     labelTitulo_ = std::make_unique<juce::Label>();

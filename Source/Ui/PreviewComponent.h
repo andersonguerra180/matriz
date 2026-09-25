@@ -28,6 +28,11 @@ public:
     void mostrarItem(const std::string& itemId);
     const std::string& itemAtual() const { return itemId_; }
 
+    // Some embedders (FloatingPreviewWindow) already draw their own prev/next
+    // arrows in an outer top bar — this turns off this component's own pair
+    // so the two navigation rows don't stack.
+    void definirBotoesNavegacaoVisiveis(bool visivel);
+
     // -1 = anterior, +1 = próximo (§3.4 — "setas pra navegar sem voltar à grade").
     std::function<void(int direcao)> aoNavegar;
     std::function<void()> aoFechar; // Esc ou botão fechar — volta pra grade
@@ -44,6 +49,7 @@ private:
     ProjetoAberto& projeto_;
     std::string itemId_;
     matriz::ingest::CategoriaMidia categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
+    bool mostrarBotoesNavegacao_ = true;
 
     std::unique_ptr<juce::TextButton> btnAnterior_;
     std::unique_ptr<juce::TextButton> btnProximo_;

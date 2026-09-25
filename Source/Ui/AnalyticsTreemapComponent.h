@@ -50,6 +50,7 @@ public:
     void mouseMove(const juce::MouseEvent& e) override;
     void mouseExit(const juce::MouseEvent& e) override;
     void mouseDown(const juce::MouseEvent& e) override;
+    bool keyPressed(const juce::KeyPress& key) override;
 
 private:
     std::unique_ptr<AnalyticsTreemapNode> rootNode_;

@@ -3020,6 +3020,10 @@ int rodarUiSelfTest() {
             uint8_t cb = imgSat.pixel(0, 0)[2];
             checar(cr == cg && cg == cb, "ETAPA 1: Saturacao zero converteu para monocromatico (R == G == B)");
 
+            ImagemBuffer imgTemp(10, 10, 128, 128, 128);
+            aplicarAjustes(imgTemp, 0.0f, 0.0f, 1.0f, 0, 255, 1.0f, 0.5f); // Quente
+            checar(imgTemp.pixel(0, 0)[0] > 128 && imgTemp.pixel(0, 0)[2] < 128, "ETAPA 1: Temperatura quente aumentou canal R e diminuiu canal B");
+
             // 6. Nitidez leve (unsharp mask)
             ImagemBuffer imgNitidez(6, 6, 100, 100, 100);
             imgNitidez.definirPixel(3, 3, 200, 200, 200); // Ponto brilhante central
@@ -3219,11 +3223,14 @@ int rodarUiSelfTest() {
             const auto& papeis = SendToPrintDialog::papeisPadrao();
             const DefinicaoPapel* p10x15 = nullptr;
             const DefinicaoPapel* pPolaroid = nullptr;
+            const DefinicaoPapel* pA4 = nullptr;
             for (const auto& p : papeis) {
                 if (p.id == "10x15") p10x15 = &p;
                 if (p.id == "polaroid") pPolaroid = &p;
+                if (p.id == "a4") pA4 = &p;
             }
-            checar(p10x15 != nullptr && pPolaroid != nullptr, "ETAPA 3: Formatos 10x15 e Polaroid disponiveis");
+            checar(p10x15 != nullptr && pPolaroid == nullptr && pA4 != nullptr,
+                   "ETAPA 3: Formatos 10x15 e A4 disponiveis e Polaroid ausente");
 
             // 1. Processamento de foto para 10x15 paisagem a 300 DPI (Preencher / Crop)
             matriz::imagem::ImagemBuffer fotoOrig(200, 100, 255, 0, 0, 255); // vermelha 2:1
@@ -3251,33 +3258,31 @@ int rodarUiSelfTest() {
                        "ETAPA 3: Margem superior em Encaixar e branca pura");
             }
 
-            // 3. Processamento para Polaroid a 300 DPI
-            if (pPolaroid) {
-                auto resPolaroid = SendToPrintDialog::processarFotoParaPapel(
-                    fotoOrig, *pPolaroid, false,
+            // 3. Processamento para A4 a 300 DPI
+            if (pA4) {
+                auto resA4 = SendToPrintDialog::processarFotoParaPapel(
+                    fotoOrig, *pA4, false,
                     matriz::imagem::ModoEnquadramento::Preencher,
                     0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 300.0);
 
-                checar(resPolaroid.largura == 1039 && resPolaroid.altura == 1264,
-                       "ETAPA 3: Polaroid gerou dimensoes fisicas 1039x1264 px a 300 DPI");
-
-                // Borda inferior larga classica da Polaroid (y = 1200 deve ser branca)
-                const uint8_t* chin = resPolaroid.pixel(resPolaroid.largura / 2, 1200);
-                checar(chin[0] == 255 && chin[1] == 255 && chin[2] == 255,
-                       "ETAPA 3: Borda inferior Polaroid e branca solida");
+                checar(resA4.largura == 2480 && resA4.altura == 3508,
+                       "ETAPA 3: A4 retrato gerou dimensoes fisicas 2480x3508 px a 300 DPI");
             }
 
-            // 4. Resolucao de Colisao de Nomes
-            auto arq1 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
-            checar(arq1.getFileName() == "Viagem_print_10x15.jpg", "ETAPA 3: Nome inicial gerado sem colisao");
+            // 4. Resolucao de Colisao de Nomes com nova convencao _(print_10x15cm) / _(print_A4)
+            auto arq1 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_(print_10x15cm)", "jpg");
+            checar(arq1.getFileName() == "Viagem_(print_10x15cm).jpg", "ETAPA 3: Nome inicial gerado com sufixo _(print_10x15cm)");
             arq1.replaceWithText("conteudo 1");
 
-            auto arq2 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
-            checar(arq2.getFileName() == "Viagem_print_10x15_2.jpg", "ETAPA 3: Primeira colisao resolvida com _2");
+            auto arq2 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_(print_10x15cm)", "jpg");
+            checar(arq2.getFileName() == "Viagem_(print_10x15cm)_2.jpg", "ETAPA 3: Primeira colisao resolvida com _2");
             arq2.replaceWithText("conteudo 2");
 
-            auto arq3 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_print_10x15", "jpg");
-            checar(arq3.getFileName() == "Viagem_print_10x15_3.jpg", "ETAPA 3: Segunda colisao resolvida com _3");
+            auto arq3 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Viagem", "_(print_10x15cm)", "jpg");
+            checar(arq3.getFileName() == "Viagem_(print_10x15cm)_3.jpg", "ETAPA 3: Segunda colisao resolvida com _3");
+
+            auto arqA4 = SendToPrintDialog::resolverColisaoArquivo(pastaEtapa3, "Documento", "_(print_A4)", "jpg");
+            checar(arqA4.getFileName() == "Documento_(print_A4).jpg", "ETAPA 3: Nome gerado com sufixo _(print_A4)");
 
             // 5. Gravacao final e verificacao de bytes de 300 DPI
             juce::File exportJpg = pastaEtapa3.getChildFile("foto_exportada.jpg");

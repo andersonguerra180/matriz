@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include "MainComponent.h"
+#include "TarefaGlobalModalDialog.h"
 
 namespace matriz::ui {
 
@@ -42,6 +43,7 @@ private:
     void conectarConteudo();
 
     std::unique_ptr<MainComponent> conteudo_;
+    std::unique_ptr<TarefaGlobalModalWatcher> monitorProgresso_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };

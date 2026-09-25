@@ -27,6 +27,7 @@ enum ComandoMenu {
     kCmdAbrirProjeto,
     kCmdAbrirCatalogo,
     kCmdFecharProjeto,
+    kCmdVoltarAoCatalogo,
     kCmdSalvarProjeto,
     kCmdSalvarProjetoComo,
     kCmdInfoProjeto,
@@ -74,6 +75,8 @@ MainWindow::MainWindow(const juce::String& nome)
     conectarConteudo();
     setContentNonOwned(conteudo_.get(), true);
 
+    monitorProgresso_ = std::make_unique<TarefaGlobalModalWatcher>();
+
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(this);
 #else
@@ -95,6 +98,7 @@ MainWindow::~MainWindow() {
 #else
     setMenuBar(nullptr);
 #endif
+    monitorProgresso_.reset();
     conteudo_.reset();
 }
 
@@ -191,6 +195,11 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdSalvarProjeto, saveText, temProjeto);
         menu.addItem(kCmdSalvarProjetoComo, saveAsText, temProjeto);
         menu.addItem(kCmdFecharProjeto, closeText, temProjeto && podeTrocarProjeto);
+        // Voltar ao catálogo pai: era a segunda função do botão CLOSE PROJECT
+        // das abas, que foi removido — agora mora aqui, junto de Close.
+        menu.addItem(kCmdVoltarAoCatalogo,
+                     isPt ? juce::String::fromUTF8("Voltar ao Catálogo") : "Return to Catalog",
+                     conteudo_->temCatalogoPai() && podeTrocarProjeto);
         menu.addSeparator();
         menu.addItem(kCmdIngerirArquivos, isPt ? juce::String::fromUTF8("Adicionar Arquivos...") : "Add Files...", conteudo_->temProjetoAberto() && !isCatalog);
         menu.addSeparator();
@@ -207,8 +216,6 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdRescanBackupSources, isPt ? juce::String::fromUTF8("Rescanear Fontes de Backup...") : "Rescan Backup Sources...", temColecao);
         menu.addSeparator();
         menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
-        menu.addSeparator();
-        menu.addItem(kCmdBatchWatermark, isPt ? juce::String::fromUTF8("Marca d'Água em Lote...") : "Image Batch Watermark...");
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuPreferencias) {
@@ -244,6 +251,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdSalvarProjeto: conteudo_->salvarProjeto(); break;
         case kCmdSalvarProjetoComo: pedirSalvarProjetoComo(); break;
         case kCmdFecharProjeto: conteudo_->fecharProjeto(); break;
+        case kCmdVoltarAoCatalogo: conteudo_->retornarAoCatalogo(); break;
         case kCmdInfoProjeto: pedirConfiguracoesProjeto(); break;
         case kCmdSair: juce::JUCEApplication::getInstance()->systemRequestedQuit(); break;
         case kCmdUndo: conteudo_->executarUndo(); break;
@@ -704,24 +712,8 @@ void MainWindow::mostrarAboutDialogo() {
 }
 
 void MainWindow::mostrarBatchWatermarkDialogo() {
-    auto lambdaObterFotos = [this]() -> std::vector<juce::File> {
-        std::vector<juce::File> lista;
-        if (conteudo_ && conteudo_->temProjetoAberto()) {
-            auto itens = conteudo_->projetoAberto()->listarItens();
-            for (const auto& it : itens) {
-                juce::String ext = juce::String(it.extensaoArquivo).toLowerCase().replace(".", "");
-                if (ext == "jpg" || ext == "jpeg" || ext == "png" || ext == "webp" || ext == "tiff" || ext == "tif" || ext == "bmp" ||
-                    it.tipoMidia == "imagem" || it.tipoMidia == "image" || it.tipoMidia == "foto") {
-                    juce::File f(it.caminhoAbsolutoOrigem);
-                    if (f.existsAsFile()) {
-                        lista.push_back(f);
-                    }
-                }
-            }
-        }
-        return lista;
-    };
-    BatchWatermarkDialog::exibirModal(lambdaObterFotos);
+    ProjetoAberto* proj = (conteudo_ && conteudo_->temProjetoAberto()) ? conteudo_->projetoAberto() : nullptr;
+    BatchWatermarkDialog::exibirModal(proj);
 }
 
 } // namespace matriz::ui

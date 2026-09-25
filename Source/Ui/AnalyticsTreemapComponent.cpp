@@ -8,6 +8,7 @@
 namespace matriz::ui {
 
 AnalyticsTreemapComponent::AnalyticsTreemapComponent() {
+    setWantsKeyboardFocus(true);
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     btnRoot_.setTooltip(isPt ? juce::String::fromUTF8("Ir para a raiz") : "Go to global root");
     btnUp_.setTooltip(isPt ? juce::String::fromUTF8("Subir um nível") : "Go up one level");
@@ -667,6 +668,8 @@ void AnalyticsTreemapComponent::mouseExit(const juce::MouseEvent&) {
 }
 
 void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
+    grabKeyboardFocus();
+
     // Check breadcrumb clicks first
     auto ptInt = e.getPosition();
     for (const auto& seg : breadcrumbs_) {
@@ -682,6 +685,17 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
 
     AnalyticsTreemapNode* clicked = encontrarNoEm(noAtual_, e.position);
     if (!clicked) return;
+
+    // Clique no fundo (fora de qualquer bloco filho): "clicked" cai de volta
+    // no próprio nó atual, que é diretório. Não é um pedido de zoom — é
+    // clique vazio, e o gesto natural aí é desmarcar a seleção.
+    if (clicked == noAtual_) {
+        if (noSelecionado_) {
+            noSelecionado_ = nullptr;
+            repaint();
+        }
+        return;
+    }
 
     if (clicked->isDirectory) {
         // Container node clicked: Semantic Zoom into container!
@@ -745,6 +759,17 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
             });
         }
     }
+}
+
+bool AnalyticsTreemapComponent::keyPressed(const juce::KeyPress& key) {
+    if (key == juce::KeyPress::escapeKey) {
+        if (noSelecionado_) {
+            noSelecionado_ = nullptr;
+            repaint();
+        }
+        return true;
+    }
+    return false;
 }
 
 void AnalyticsTreemapComponent::resized() {

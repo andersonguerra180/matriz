@@ -420,16 +420,25 @@ void PreviewComponent::paint(juce::Graphics& g) {
     g.drawText("Press M to add marker", hint, juce::Justification::centredRight);
 }
 
+void PreviewComponent::definirBotoesNavegacaoVisiveis(bool visivel) {
+    mostrarBotoesNavegacao_ = visivel;
+    if (btnAnterior_) btnAnterior_->setVisible(visivel);
+    if (btnProximo_) btnProximo_->setVisible(visivel);
+    resized();
+}
+
 void PreviewComponent::resized() {
     auto area = getLocalBounds();
     auto topo = area.removeFromTop(48).reduced(tema().espacoMedio, 6);
-    if (btnAnterior_) {
-        btnAnterior_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
-        topo.removeFromLeft(4);
-    }
-    if (btnProximo_) {
-        btnProximo_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
-        topo.removeFromLeft(10);
+    if (mostrarBotoesNavegacao_) {
+        if (btnAnterior_) {
+            btnAnterior_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
+            topo.removeFromLeft(4);
+        }
+        if (btnProximo_) {
+            btnProximo_->setBounds(topo.removeFromLeft(38).reduced(0, 2));
+            topo.removeFromLeft(10);
+        }
     }
     cabecalhoTitulo_->setBounds(topo);
 

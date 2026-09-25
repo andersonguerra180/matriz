@@ -53,6 +53,13 @@ void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, 
 void removerDoBackup(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 // Item 9 — escolhe uma imagem e a torna a miniatura do(s) item(ns).
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
+// Item D.9 — relê o arquivo do item a partir do caminho atual (master
+// preservado, entra como derivada — ver ProjetoAberto::recarregarOuSubstituirArquivo).
+// Só faz sentido pra um item por vez.
+void recarregarArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos);
+// Item D.10 — como recarregarArquivo, mas com um arquivo escolhido pelo
+// operador em vez do caminho atual.
+void substituirArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos);
 // Abre o menu de pastas da BACKUP ancorado no componente dado.
 void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos,
                       juce::Component* ancora);
