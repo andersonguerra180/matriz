@@ -422,12 +422,54 @@ void migrarConsolidacaoRegistro(matriz::db::Database& registro) {
     }
 }
 
+// Achado investigando um projeto que ficava preso em "Loading Project..."
+// depois de um lote de ingest grande interrompido: trg_item_busca_update
+// disparava em QUALQUER UPDATE de `item` (não só titulo/codigo_acervo, os
+// únicos campos que o corpo do gatilho usa), e cada disparo faz um DELETE
+// por valor na busca_fts (FTS5 — sem índice pra isso, é uma varredura do
+// índice inteiro). A própria aplicarSchemas() roda um UPDATE em massa pra
+// sincronizar item_campo -> colunas de `item` em TODO item que abre o
+// projeto — com milhares de itens recém-ingeridos (ano/isrc/content_type/
+// source_media/collection_type ainda NULL), isso virava milhares de
+// varreduras completas da FTS, uma abertura de projeto genuinamente lenta
+// (não travada, só muito lenta) sendo confundida com "storage travado".
+//
+// `registro.sql` já tem a definição corrigida (AFTER UPDATE OF titulo,
+// codigo_acervo), mas CREATE TRIGGER IF NOT EXISTS não recria um gatilho
+// que já existe — projetos criados antes desta correção continuam com a
+// definição antiga presa no banco pra sempre, a menos que alguém troque
+// explicitamente. É isso que esta migração faz.
+void migrarEscopoGatilhoBusca(matriz::db::Database& registro) {
+    try {
+        matriz::db::Statement checkStmt = registro.prepare(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='trg_item_busca_update'");
+        if (checkStmt.step()) {
+            std::string sql = checkStmt.columnText(0);
+            if (sql.find("UPDATE OF") == std::string::npos) {
+                registro.exec("DROP TRIGGER trg_item_busca_update");
+                registro.exec(
+                    "CREATE TRIGGER trg_item_busca_update AFTER UPDATE OF titulo, codigo_acervo ON item "
+                    "FOR EACH ROW BEGIN "
+                    "DELETE FROM busca_fts WHERE item_id = old.id "
+                    "AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo); "
+                    "INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL; "
+                    "INSERT INTO busca_fts(item_id, conteudo) VALUES (new.id, new.titulo); "
+                    "END");
+            }
+        }
+    } catch (...) {}
+}
+
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     migrarItemParaCodigoOpcional(registro);
     migrarAiScanParaIndice(registro, indice);
     migrarConsolidacaoRegistro(registro);
     registro.execScript(readBinarySql(BinaryData::registro_sql, BinaryData::registro_sqlSize));
     indice.execScript(readBinarySql(BinaryData::indice_sql, BinaryData::indice_sqlSize));
+    // Precisa rodar DEPOIS do execScript acima (que só cria o gatilho se
+    // ele ainda não existir) e ANTES das migrações de item_campo -> item
+    // logo abaixo, que são justamente o UPDATE em massa que ficava lento.
+    migrarEscopoGatilhoBusca(registro);
 
     // Colunas acrescentadas depois da primeira versão do schema.
     garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");
@@ -454,11 +496,18 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "colecao_inteligente", "ano_ate", "INTEGER");
     garantirColuna(registro, "projeto", "hierarquia_backup", "TEXT");
     garantirColuna(registro, "projeto", "destino_backup_ativo_path", "TEXT NOT NULL DEFAULT ''");
+    // Fase 3 (Folder Color): histórico de até 10 cores usadas, JSON, por
+    // projeto — compartilhado entre todas as pastas do Treemap/árvore.
+    garantirColuna(registro, "projeto", "historico_cores_pasta", "TEXT");
     garantirColuna(registro, "arquivo", "tamanho_bytes", "INTEGER");
 
     garantirColuna(registro, "acervo_pasta", "posicao_x", "INTEGER NOT NULL DEFAULT 0");
     garantirColuna(registro, "acervo_pasta", "posicao_y", "INTEGER NOT NULL DEFAULT 0");
     garantirColuna(registro, "acervo_pasta", "ativo", "INTEGER NOT NULL DEFAULT 1");
+    // FOLDER COLOR (item 12, Treemap/backup): overlay visual por pasta, ARGB
+    // hex (ex.: "ffcc3333") — NULL/vazio = sem cor customizada, mantém a
+    // aparência padrão do bloco.
+    garantirColuna(registro, "acervo_pasta", "cor_customizada", "TEXT");
 
     // Reconstrução leva única
     garantirColuna(registro, "marcador", "tipo_id", "TEXT REFERENCES tipo_marcador(id)");
@@ -516,6 +565,29 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "item", "collection_type", "TEXT");
     garantirColuna(registro, "item", "isrc", "TEXT");
     garantirColuna(registro, "item", "em_quarentena", "INTEGER NOT NULL DEFAULT 0");
+
+    // Dublin Core (ficha, seção DUBLIN CORE METADATA) — essas colunas nunca
+    // tinham sido criadas: ProjetoAberto::salvarMetadado/lerMetadado já
+    // referenciam "dc_*" direto na tabela item desde que a seção existe, mas
+    // sem a coluna o UPDATE lançava DatabaseError, caía no catch(...) e a
+    // edição era descartada em silêncio — nunca persistia. Faltando na
+    // migração, não no código que já esperava a coluna existir.
+    garantirColuna(registro, "item", "dc_title", "TEXT");
+    garantirColuna(registro, "item", "dc_creator", "TEXT");
+    garantirColuna(registro, "item", "dc_subject", "TEXT");
+    garantirColuna(registro, "item", "dc_description", "TEXT");
+    garantirColuna(registro, "item", "dc_publisher", "TEXT");
+    garantirColuna(registro, "item", "dc_contributor", "TEXT");
+    garantirColuna(registro, "item", "dc_created", "TEXT");
+    garantirColuna(registro, "item", "dc_issued", "TEXT");
+    garantirColuna(registro, "item", "dc_type", "TEXT");
+    garantirColuna(registro, "item", "dc_format", "TEXT");
+    garantirColuna(registro, "item", "dc_identifier", "TEXT");
+    garantirColuna(registro, "item", "dc_source", "TEXT");
+    garantirColuna(registro, "item", "dc_language", "TEXT");
+    garantirColuna(registro, "item", "dc_relation", "TEXT");
+    garantirColuna(registro, "item", "dc_coverage", "TEXT");
+    garantirColuna(registro, "item", "dc_rights", "TEXT");
 
     // Asset Geolocation Table Migration
     registro.execScript(
@@ -632,6 +704,11 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
 
     // Migração de metadados_editados
     garantirColuna(registro, "item", "metadados_editados", "INTEGER NOT NULL DEFAULT 0");
+
+    // Marcação manual "E" (Tag as Edited) — independente de metadados_editados,
+    // que é automática; esta é só um helper visual que o operador liga/desliga
+    // ele mesmo, começando sempre desmarcada.
+    garantirColuna(registro, "item", "marcado_revisado", "INTEGER NOT NULL DEFAULT 0");
 
     // Garantir triggers de busca em projetos existentes
     try {

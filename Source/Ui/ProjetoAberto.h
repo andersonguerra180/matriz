@@ -72,7 +72,27 @@ struct ItemResumo {
     bool marcadoPublicacao = false;
     bool marcadoZip = false;
     bool marcadoPrint = false;
+    bool marcadoWatermark = false;
     bool metadadosEditados = false;
+    bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
+    bool pastaAtiva = true;
+};
+
+struct ConfiguracaoWatermark {
+    juce::String caminhoLogo;
+    float opacidade = 0.8f;
+    float escala = 0.22f;
+    float margem = 24.0f;
+    int posicaoIdH = 1;
+    float customPosX_H = 0.85f;
+    float customPosY_H = 0.85f;
+    int posicaoIdV = 1;
+    float customPosX_V = 0.85f;
+    float customPosY_V = 0.85f;
+
+    bool valida() const {
+        return caminhoLogo.isNotEmpty() && juce::File(caminhoLogo).existsAsFile();
+    }
 };
 
 class ProjetoAbertoError : public std::runtime_error {
@@ -191,6 +211,12 @@ public:
     std::optional<std::string> lerMetadado(const std::string& itemId, const std::string& coluna) const;
     // Writes a direct column on the item table
     void salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor);
+    // Backfill silencioso do EVENT DATE (item.ano) quando ele ainda está
+    // vazio. Deliberadamente NÃO passa por salvarMetadado: não marca
+    // metadados_editados, não entra no Undo e não dispara evento — isto é
+    // normalização de dado que faltou na ingestão, não edição do usuário.
+    // Retorna true se gravou. Mesma regra do ingest: só escreve se vazio.
+    bool preencherAnoPadraoSeVazio(const std::string& itemId, const std::string& ano);
 
     // --- Clear / Reset Metadata to Original Intake State ---
     void redefinirMetadadosItens(const std::vector<std::string>& itemIds);
@@ -211,6 +237,24 @@ public:
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
 
     void gerarMiniaturasFaltantes();
+
+    // Item D.9/10 ("Reload File" / "Replace File" no menu de contexto da
+    // METADATA): relê `novoCaminho` (o próprio caminho atual do master, pra
+    // "reload"; um arquivo escolhido pelo operador, pra "replace") e grava
+    // como uma DERIVADA nova do master do item — nunca sobrescreve o master
+    // em si (trava por trigger em schema/registro.sql, P1: identidade do
+    // master é preservada por integridade arquivística). Uma derivada
+    // anterior do mesmo item, se houver, é substituída (mesma regra de
+    // "uma por item" que definirCapa já usa). arquivoPrincipal() passa a
+    // preferir essa derivada enquanto ela existir. Devolve false e preenche
+    // `erro` se o item não tiver master ou o arquivo novo não puder ser lido.
+    bool recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho, juce::String& erro);
+
+    // Item C.8 ("Show Recently Ingested"): guarda em memória (não persiste
+    // entre reaberturas do projeto) os item_ids do último lote importado
+    // pelo IngestWizardComponent, pro botão da aba METADATA filtrar por eles.
+    void definirUltimosItensIngeridos(std::vector<std::string> itemIds);
+    const std::vector<std::string>& ultimosItensIngeridos() const;
 
     struct ArquivoInfo {
         std::string id;
@@ -286,6 +330,7 @@ public:
         int posicaoX = 0;
         int posicaoY = 0;
         bool ativo = true;
+        juce::String corCustomizadaHex; // FOLDER COLOR (item 12) — "" = sem cor
         std::vector<NoArvore> filhos;
         std::set<std::string> itemIds;
         std::set<std::string> itemIdsDiretos;
@@ -303,8 +348,32 @@ public:
     void atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y);
     void alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo);
 
+    // FOLDER COLOR (item 12) — overlay visual translúcido no Treemap/árvore
+    // BACKUP, persistido por pasta. "" limpa a cor (volta ao padrão).
+    void definirCorPastaAcervo(const std::string& pastaId, const juce::String& corArgbHex);
+    juce::String lerCorPastaAcervo(const std::string& pastaId) const;
+
+    // Histórico de cores do Folder Color (Fase 3): por PROJETO, não por
+    // pasta — compartilhado entre todas as pastas do Treemap/árvore
+    // BACKUP. Mais recente primeiro, no máximo 10 hex. Persistido numa
+    // única coluna JSON na tabela `projeto` (linha única do banco).
+    std::vector<juce::String> historicoCoresPasta() const;
+    void definirHistoricoCoresPasta(const std::vector<juce::String>& coresHex);
+
     void adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId);
     std::string agruparItensEmNovaPasta(const std::vector<std::string>& itemIds);
+
+    // S4/13 — ao contrário de adicionarItensAPasta (que MOVE: tira o item de
+    // toda pasta antiga antes de pôr na nova), esta só ACRESCENTA uma
+    // associação item->pasta, preservando as demais. Usada ao restaurar um
+    // preset de pastas, onde um item pode legitimamente pertencer a várias
+    // pastas (N:N) ao mesmo tempo.
+    void adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId);
+
+    // Reencontra um item pelo código de acervo (usado ao importar um preset
+    // de pastas de OUTRO projeto, onde o item_id original não existe aqui).
+    // nullopt se não achar nenhum item com esse código.
+    std::optional<std::string> localizarItemPorCodigo(const std::string& codigoAcervo) const;
 
     // Replica uma subárvore inteira da EXPLORER dentro da BACKUP.
     //
@@ -344,6 +413,11 @@ public:
     // Renomeia (item.titulo) — é o que alimenta o token {titulo} da máscara
     // de nomenclatura, ou seja, o nome que o arquivo terá no backup.
     void renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo);
+
+    // Atalho "E" (Tag as Edited): marcação manual, independente de
+    // metadados_editados (que é automática). Começa sempre desmarcada.
+    void alternarMarcadoRevisado(const std::vector<std::string>& itemIds);
+    void limparTodosMarcadosRevisado();
 
     // Caminho absoluto de origem do arquivo principal — pra "Mostrar na
     // origem" e "Copiar caminho". nullopt se o item não tem arquivo com
@@ -522,7 +596,8 @@ public:
     enum class TipoMarcacao {
         Html,
         Zip,
-        Print
+        Print,
+        Watermark
     };
 
     // Operações sobre conjuntos de marcação de sessão
@@ -547,6 +622,11 @@ public:
     void definirPublicacaoItens(const std::vector<std::string>& itemIds, bool marcado) { definirMarcacao(TipoMarcacao::Html, itemIds, marcado); }
     bool itemMarcadoPublicacao(const std::string& itemId) const { return contemMarcacao(TipoMarcacao::Html, itemId); }
 
+    // Marca d'água: persistência das configurações do projeto
+    ConfiguracaoWatermark obterConfiguracaoWatermark() const;
+    void salvarConfiguracaoWatermark(const ConfiguracaoWatermark& cfg);
+    static ConfiguracaoWatermark carregarConfiguracaoWatermarkDePasta(const juce::File& pastaProjeto);
+
     // In-memory relinking and two-stage persistence
     bool isDirty() const { return dirty_; }
     void setDirty(bool d) { dirty_ = d; }
@@ -564,12 +644,15 @@ private:
     std::set<std::string> marcadosHtml_;
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
+    std::set<std::string> marcadosWatermark_;
 
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
     bool dirty_ = false;
+
+    std::vector<std::string> ultimosItensIngeridos_;
 
     static constexpr int kMaxUndo = 25;
     std::vector<UndoEntry> pilhaUndo_;

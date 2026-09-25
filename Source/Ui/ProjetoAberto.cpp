@@ -2,8 +2,12 @@
 
 #include "../Ingest/Miniaturas.h"
 #include "../Ingest/ProcessoExterno.h"
+#include "../Ingest/IngestArquivo.h"
+#include "../Ingest/CacheArquivo.h"
 #include "../Vault/Reconciliacao.h"
 #include "../Vault/Resolucao.h"
+#include "../Consolidacao/Consolidacao.h"
+#include "../Model/ProjectLog.h"
 
 #include "../I18n/Strings.h"
 
@@ -31,6 +35,7 @@ struct NoBuilder {
     int posicaoX = 0;
     int posicaoY = 0;
     bool ativo = true;
+    juce::String corCustomizadaHex;
     std::vector<std::unique_ptr<NoBuilder>> filhos;
     std::map<juce::String, NoBuilder*> indiceFilhosPorNome; // dono é `filhos`; só busca
     std::set<std::string> itemIdsDiretos;
@@ -68,6 +73,7 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     n.posicaoX = b.posicaoX;
     n.posicaoY = b.posicaoY;
     n.ativo = b.ativo;
+    n.corCustomizadaHex = b.corCustomizadaHex;
     n.itemIds = b.itemIdsDiretos;
     n.itemIdsDiretos = b.itemIdsDiretos;
 
@@ -176,7 +182,15 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "(SELECT COALESCE(v.localizacao, '') FROM arquivo a LEFT JOIN vault v ON v.id = a.vault_id WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "i.isrc, "
         "0, "
-        "COALESCE(i.metadados_editados, 0) != 0 "
+        "COALESCE(i.metadados_editados, 0) != 0, "
+        "COALESCE((WITH RECURSIVE cadeia(pasta_id, pasta_pai_id, ativo, prof) AS ("
+        "  SELECT ap0.id, ap0.pasta_pai_id, ap0.ativo, 0 FROM acervo_pasta ap0 "
+        "  WHERE ap0.id = (SELECT aip0.pasta_id FROM acervo_item_pasta aip0 WHERE aip0.item_id = i.id LIMIT 1) "
+        "  UNION ALL "
+        "  SELECT ap1.id, ap1.pasta_pai_id, ap1.ativo, c.prof + 1 FROM acervo_pasta ap1 "
+        "  JOIN cadeia c ON ap1.id = c.pasta_pai_id WHERE c.prof < 64"
+        ") SELECT MIN(ativo) FROM cadeia), 1), "
+        "COALESCE(i.marcado_revisado, 0) != 0 "
         "FROM item i WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
     while (stmt.step()) {
         ItemResumo r;
@@ -215,6 +229,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         if (!stmt.columnIsNull(20)) r.isrc = stmt.columnText(20);
         if (!stmt.columnIsNull(21)) r.marcadoPublicacao = stmt.columnInt(21) != 0;
         if (!stmt.columnIsNull(22)) r.metadadosEditados = stmt.columnInt(22) != 0;
+        r.pastaAtiva = stmt.columnInt(23) != 0;
+        r.marcadoRevisado = stmt.columnInt(24) != 0;
 
         bool fileExists = false;
         if (!masterArqId.empty()) {
@@ -246,7 +262,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                             if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
                                 std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
                                 int yVal = exifDt.substring(i, i + 4).getIntValue();
-                                if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                                if (yVal > 1800 && yVal <= juce::Time::getCurrentTime().getYear() + 1) { r.ano = yVal; break; }
                             }
                         }
                     }
@@ -337,6 +353,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
         item.marcadoZip = marcadosZip_.count(item.id) > 0;
         item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
+        item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
     }
     return items;
 }
@@ -362,6 +379,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
             item.marcadoPublicacao = marcadosHtml_.count(item.id) > 0;
             item.marcadoZip = marcadosZip_.count(item.id) > 0;
             item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
+            item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
         }
         return items;
     } catch (...) {
@@ -430,6 +448,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.marcadoPublicacao = marcadosHtml_.count(r.id) > 0;
                 r.marcadoZip = marcadosZip_.count(r.id) > 0;
                 r.marcadoPrint = marcadosPrint_.count(r.id) > 0;
+                r.marcadoWatermark = marcadosWatermark_.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -485,7 +504,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                                 if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
                                     std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
                                     int yVal = exifDt.substring(i, i + 4).getIntValue();
-                                    if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
+                                    if (yVal > 1800 && yVal <= juce::Time::getCurrentTime().getYear() + 1) { r.ano = yVal; break; }
                                 }
                             }
                         }
@@ -531,6 +550,12 @@ void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& itemIds) {
     for (const auto& id : itemIds) {
         EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
     }
+
+    // Item "RECENTLY INGESTED": o gatilho é a promoção INTAKE -> GRID (este
+    // método), não o ingest bruto em si — um conjunto só vira "recém
+    // ingerido" quando o operador aprova e manda pra grade; o próximo lote
+    // aprovado substitui este (ver definirUltimosItensIngeridos).
+    definirUltimosItensIngeridos(itemIds);
 }
 
 std::vector<ProjetoAberto::ItemDetalhe> ProjetoAberto::obterDetalhesItens(const std::set<std::string>& itemIds) const {
@@ -614,56 +639,85 @@ int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const ju
     if (!projeto_ || !imagem.existsAsFile()) return 0;
 
     int aplicadas = 0;
-    for (auto& itemId : itemIds) {
-        // Uma capa por item: trocar substitui a anterior em vez de empilhar
-        // capas que ninguém mais consegue distinguir.
-        removerCapa({itemId});
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds) {
+            // Uma capa por item: trocar substitui a anterior em vez de
+            // empilhar capas que ninguém mais consegue distinguir. Não chama
+            // removerCapa() aqui — abriria uma segunda transação dentro
+            // desta (SQLite não suporta BEGIN aninhado); mesma lógica dela,
+            // sem BEGIN/COMMIT próprio (item 6, fix de performance).
+            {
+                auto stmt = db.prepare("SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'");
+                stmt.bind(1, matriz::db::Value::of(itemId));
+                std::vector<std::string> capasAntigas;
+                while (stmt.step()) capasAntigas.push_back(stmt.columnText(0));
+                for (auto& arquivoIdAntigo : capasAntigas)
+                    projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?",
+                                            {matriz::db::Value::of(arquivoIdAntigo)});
+                db.run("DELETE FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'",
+                       {matriz::db::Value::of(itemId)});
+            }
 
-        std::string arquivoId = matriz::model::novoUuid();
-        juce::File destino = projeto_->pasta().getChildFile("arquivos").getChildFile(arquivoId).getChildFile(
-            imagem.getFileName());
-        destino.getParentDirectory().createDirectory();
-        if (!imagem.copyFileTo(destino)) continue; // falha num item não derruba os outros
+            std::string arquivoId = matriz::model::novoUuid();
+            juce::File destino = projeto_->pasta().getChildFile("arquivos").getChildFile(arquivoId).getChildFile(
+                imagem.getFileName());
+            destino.getParentDirectory().createDirectory();
+            if (!imagem.copyFileTo(destino)) continue; // falha num item não derruba os outros
 
-        std::string agora = matriz::model::agoraIso8601();
-        projeto_->registro().run(
-            "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, "
-            "criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'capa_frente', 0, ?, ?, ?)",
-            {matriz::db::Value::of(arquivoId), matriz::db::Value::of(itemId),
-             matriz::db::Value::of(destino.getRelativePathFrom(projeto_->pasta()).toStdString()),
-             matriz::db::Value::of(imagem.getFullPathName().toStdString()),
-             matriz::db::Value::of(static_cast<long long>(destino.getSize())),
-             matriz::db::Value::of(agora),
-             matriz::db::Value::of(agora)});
+            std::string agora = matriz::model::agoraIso8601();
+            db.run(
+                "INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, "
+                "criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'capa_frente', 0, ?, ?, ?)",
+                {matriz::db::Value::of(arquivoId), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(destino.getRelativePathFrom(projeto_->pasta()).toStdString()),
+                 matriz::db::Value::of(imagem.getFullPathName().toStdString()),
+                 matriz::db::Value::of(static_cast<long long>(destino.getSize())),
+                 matriz::db::Value::of(agora),
+                 matriz::db::Value::of(agora)});
 
-        // Grava a miniatura por cima: caminhoMiniaturaPrincipal() resolve por
-        // gerado_em DESC, então a linha nova passa a valer sem precisar
-        // apagar a gerada — e apagar a capa depois faz a antiga voltar sozinha.
-        matriz::ingest::gerarEGravarMiniaturaPrincipal(projeto_->indice(), projeto_->pasta(), itemId, arquivoId,
-                                                        destino, matriz::ingest::CategoriaMidia::Imagem,
-                                                        std::nullopt);
-        ++aplicadas;
+            // Grava a miniatura por cima: caminhoMiniaturaPrincipal() resolve por
+            // gerado_em DESC, então a linha nova passa a valer sem precisar
+            // apagar a gerada — e apagar a capa depois faz a antiga voltar sozinha.
+            matriz::ingest::gerarEGravarMiniaturaPrincipal(projeto_->indice(), projeto_->pasta(), itemId, arquivoId,
+                                                            destino, matriz::ingest::CategoriaMidia::Imagem,
+                                                            std::nullopt);
+            ++aplicadas;
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
     }
     return aplicadas;
 }
 
 void ProjetoAberto::removerCapa(const std::vector<std::string>& itemIds) {
     if (!projeto_) return;
-    for (auto& itemId : itemIds) {
-        // Primeiro as miniaturas geradas A PARTIR da capa (no índice, que é
-        // outro banco — não há CASCADE entre os dois).
-        auto stmt = projeto_->registro().prepare(
-            "SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'");
-        stmt.bind(1, matriz::db::Value::of(itemId));
-        std::vector<std::string> capas;
-        while (stmt.step()) capas.push_back(stmt.columnText(0));
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds) {
+            // Primeiro as miniaturas geradas A PARTIR da capa (no índice, que é
+            // outro banco — não há CASCADE entre os dois).
+            auto stmt = db.prepare(
+                "SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'");
+            stmt.bind(1, matriz::db::Value::of(itemId));
+            std::vector<std::string> capas;
+            while (stmt.step()) capas.push_back(stmt.columnText(0));
 
-        for (auto& arquivoId : capas)
-            projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?",
-                                    {matriz::db::Value::of(arquivoId)});
+            for (auto& arquivoId : capas)
+                projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?",
+                                        {matriz::db::Value::of(arquivoId)});
 
-        projeto_->registro().run("DELETE FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'",
-                                  {matriz::db::Value::of(itemId)});
+            db.run("DELETE FROM arquivo WHERE item_id = ? AND papel = 'capa_frente'",
+                   {matriz::db::Value::of(itemId)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
     }
 }
 
@@ -697,7 +751,16 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
         "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo",
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
-        "dc_language", "dc_relation", "dc_coverage", "dc_rights"
+        "dc_language", "dc_relation", "dc_coverage", "dc_rights",
+        // "As 3 datas do sistema" — DATE CREATED é um campo nativo do BKR
+        // (nunca Dublin Core): já existia como "data_criacao" em item_campo
+        // (preenchido no ingest, ver IngestArquivo.cpp), só faltava estar
+        // liberado aqui pra virar campo editável de verdade na ficha.
+        "data_criacao",
+        // DATE ISSUED (item 11): quando o asset foi ingerido no BKR Matriz —
+        // já existe como item.criado_em (setado uma vez, na criação da
+        // linha), só somente-leitura aqui, nunca gravado via salvarMetadado.
+        "criado_em"
     };
     if (kColunasPermitidas.find(coluna) == kColunasPermitidas.end()) return std::nullopt;
 
@@ -812,7 +875,33 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
              matriz::db::Value::of(agora)});
     } catch (...) {}
 
-    EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
+    // A coluna "ano" (EVENT DATE na ficha) alimenta os filtros de data da aba
+    // METADATA; ela ganha um tipo próprio de evento para que a lista possa
+    // se reavaliar na hora, em vez de só na próxima vez que a aba recarrega.
+    EventBus::obterInstancia().dispararItemAlterado(itemId, coluna == "ano" ? "metadado_data" : "metadado");
+}
+
+bool ProjetoAberto::preencherAnoPadraoSeVazio(const std::string& itemId, const std::string& ano) {
+    if (!projeto_ || itemId.empty() || ano.size() != 4) return false;
+    for (char c : ano) if (c < '0' || c > '9') return false;
+
+    try {
+        // Mesmo UPDATE condicional que IngestArquivo usa: quem já tem ano
+        // (inclusive um digitado pelo usuário) nunca é sobrescrito. Nada de
+        // metadados_editados, atualizado_em, Undo ou EventBus aqui — abrir
+        // uma ficha não pode marcar o item como editado nem empilhar Undo.
+        auto& db = projeto_->registro();
+        auto antes = db.prepare("SELECT COUNT(*) FROM item WHERE id = ? AND (ano IS NULL OR ano = '')");
+        antes.bind(1, matriz::db::Value::of(itemId));
+        bool estavaVazio = antes.step() && antes.columnInt(0) > 0;
+        if (!estavaVazio) return false;
+
+        db.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
+               {matriz::db::Value::of(ano), matriz::db::Value::of(itemId)});
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& itemIds) {
@@ -887,36 +976,44 @@ void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std
             definirTags(itemId, oldTags);
         });
     }
-    projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ?",
-                              {matriz::db::Value::of(itemId)});
-    for (const auto& tag : tags) {
-        if (tag.empty()) continue;
-        projeto_->registro().run(
-            "INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
-            {matriz::db::Value::of(matriz::model::novoUuid()),
-             matriz::db::Value::of(itemId),
-             matriz::db::Value::of(tag)});
-    }
-    // Index tags in FTS (both with and without '#')
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
     try {
-        projeto_->registro().run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo LIKE '#%' OR conteudo IN (SELECT tag FROM item_tag WHERE item_id = ?))",
-                                  {matriz::db::Value::of(itemId), matriz::db::Value::of(itemId)});
+        db.run("DELETE FROM item_tag WHERE item_id = ?", {matriz::db::Value::of(itemId)});
         for (const auto& tag : tags) {
             if (tag.empty()) continue;
-            projeto_->registro().run(
-                "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-                {matriz::db::Value::of(itemId), matriz::db::Value::of(tag)});
-            projeto_->registro().run(
-                "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
-                {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
+            db.run(
+                "INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()),
+                 matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(tag)});
         }
-    } catch (...) {}
-    try {
-        projeto_->registro().run(
-            "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
-            {matriz::db::Value::of(matriz::model::agoraIso8601()),
-             matriz::db::Value::of(itemId)});
-    } catch (...) {}
+        // Index tags in FTS (both with and without '#') — erro aqui não
+        // derruba a transação inteira, só a indexação de busca fica velha.
+        try {
+            db.run("DELETE FROM busca_fts WHERE item_id = ? AND (conteudo LIKE '#%' OR conteudo IN (SELECT tag FROM item_tag WHERE item_id = ?))",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(itemId)});
+            for (const auto& tag : tags) {
+                if (tag.empty()) continue;
+                db.run(
+                    "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+                    {matriz::db::Value::of(itemId), matriz::db::Value::of(tag)});
+                db.run(
+                    "INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)",
+                    {matriz::db::Value::of(itemId), matriz::db::Value::of("#" + tag)});
+            }
+        } catch (...) {}
+        try {
+            db.run(
+                "UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                {matriz::db::Value::of(matriz::model::agoraIso8601()),
+                 matriz::db::Value::of(itemId)});
+        } catch (...) {}
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
     EventBus::obterInstancia().dispararItemAlterado(itemId, "tags");
 }
 
@@ -1026,6 +1123,86 @@ bool ProjetoAberto::removerPessoa(const std::string& nome) {
     }
 }
 
+void ProjetoAberto::definirUltimosItensIngeridos(std::vector<std::string> itemIds) {
+    ultimosItensIngeridos_ = std::move(itemIds);
+}
+
+const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
+    return ultimosItensIngeridos_;
+}
+
+bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho,
+                                                   juce::String& erro) {
+    if (!projeto_) { erro = "Nenhum projeto aberto."; return false; }
+    if (!novoCaminho.existsAsFile()) {
+        erro = "Arquivo nao encontrado: " + novoCaminho.getFullPathName();
+        return false;
+    }
+
+    auto& db = projeto_->registro();
+
+    std::string masterId, masterPapel;
+    {
+        auto stmt = db.prepare("SELECT id, papel FROM arquivo WHERE item_id = ? AND eh_master = 1 LIMIT 1");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (!stmt.step()) { erro = "Este item nao tem um arquivo master."; return false; }
+        masterId = stmt.columnText(0);
+        masterPapel = stmt.columnText(1);
+    }
+
+    try {
+        auto analise = matriz::ingest::analisarArquivo(novoCaminho);
+        auto categoria = matriz::ingest::categoriaPorExtensao(novoCaminho);
+
+        matriz::ingest::AnaliseCache cache;
+        if (!analise.ehPlaceholderNuvem)
+            cache = matriz::ingest::calcularCache(novoCaminho, categoria, projeto_->pasta(),
+                                                   analise.leitura.duracaoSegundos);
+
+        db.run("BEGIN TRANSACTION", {});
+        std::string novoArquivoId;
+        try {
+            // Uma derivada por item (mesma regra que definirCapa já usa pra
+            // capa): a anterior sai antes da nova entrar, senão cada
+            // reload/replace empilha uma derivada nova sem limite. O master
+            // (masterId) nunca é tocado aqui.
+            std::vector<std::string> derivadasAntigas;
+            auto stmtAntigas = db.prepare(
+                "SELECT id FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL");
+            stmtAntigas.bind(1, matriz::db::Value::of(itemId));
+            while (stmtAntigas.step()) derivadasAntigas.push_back(stmtAntigas.columnText(0));
+            for (auto& idAntigo : derivadasAntigas)
+                projeto_->indice().run("DELETE FROM miniatura WHERE arquivo_id = ?",
+                                        {matriz::db::Value::of(idAntigo)});
+            db.run("DELETE FROM arquivo WHERE item_id = ? AND derivada_de_arquivo_id IS NOT NULL",
+                   {matriz::db::Value::of(itemId)});
+
+            auto resultado = matriz::ingest::gravarArquivoAnalisado(db, itemId, analise, masterPapel,
+                                                                      /*ehMaster=*/false, masterId);
+            novoArquivoId = resultado.arquivoId;
+            matriz::ingest::gravarCache(db, novoArquivoId, cache);
+
+            db.run("COMMIT", {});
+        } catch (...) {
+            db.run("ROLLBACK", {});
+            throw;
+        }
+
+        if (!novoArquivoId.empty()) {
+            // Fora da transação (miniatura mora no índice, banco separado) —
+            // mesmo padrão de gerarEGravarMiniaturaPrincipal no ingest normal.
+            matriz::ingest::gerarEGravarMiniaturaPrincipal(projeto_->indice(), projeto_->pasta(), itemId,
+                                                             novoArquivoId, novoCaminho, categoria,
+                                                             analise.leitura.duracaoSegundos);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        erro = juce::String(e.what());
+        return false;
+    }
+}
+
 std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
     auto stmt = projeto_->indice().prepare(
@@ -1112,7 +1289,13 @@ std::optional<ProjetoAberto::ArquivoInfo> ProjetoAberto::arquivoPrincipal(const 
     auto stmt = projeto_->registro().prepare(
         std::string("SELECT a.id, a.papel, a.eh_master, a.caracteristicas_tecnicas_json, ") +
         matriz::vault::colunasDeResolucao() + " FROM arquivo a " + matriz::vault::joinDeResolucao() +
-        " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
+        // Item D.9/10 (Reload File/Replace File): uma derivada de "reload/
+        // replace" (derivada_de_arquivo_id preenchido) vale mais que o
+        // master enquanto existir — é o conteúdo atual do item; o master
+        // propriamente dito nunca é tocado (fica preservado no histórico).
+        " WHERE a.item_id = ? "
+        "ORDER BY (CASE WHEN a.derivada_de_arquivo_id IS NOT NULL THEN 1 ELSE 0 END) DESC, "
+        "a.eh_master DESC, a.id LIMIT 1");
     stmt.bind(1, matriz::db::Value::of(itemId));
     if (!stmt.step()) return std::nullopt;
 
@@ -1312,7 +1495,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = projeto_->registro().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo FROM acervo_pasta WHERE projeto_id = ? ORDER BY ordem, criado_em");
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada FROM acervo_pasta WHERE projeto_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
         Registro r;
@@ -1327,6 +1510,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
         no->posicaoX = stmt.columnInt(3);
         no->posicaoY = stmt.columnInt(4);
         no->ativo = (stmt.columnInt(5) != 0);
+        if (!stmt.columnIsNull(6)) no->corCustomizadaHex = juce::String(stmt.columnText(6));
         ptrPorId[r.id] = no.get();
         porId[r.id] = std::move(no);
     }
@@ -1429,38 +1613,140 @@ void ProjetoAberto::alternarAtivoPastaAcervo(const std::string& pastaId, bool at
          matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(pastaId)});
 }
 
+void ProjetoAberto::definirCorPastaAcervo(const std::string& pastaId, const juce::String& corArgbHex) {
+    if (!projeto_) return;
+    projeto_->registro().run(
+        "UPDATE acervo_pasta SET cor_customizada = ?, atualizado_em = ? WHERE id = ?",
+        {corArgbHex.isEmpty() ? matriz::db::Value::null() : matriz::db::Value::of(corArgbHex.toStdString()),
+         matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(pastaId)});
+}
+
+juce::String ProjetoAberto::lerCorPastaAcervo(const std::string& pastaId) const {
+    if (!projeto_) return {};
+    try {
+        auto stmt = projeto_->registro().prepare("SELECT cor_customizada FROM acervo_pasta WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(pastaId));
+        if (stmt.step() && !stmt.columnIsNull(0)) return juce::String(stmt.columnText(0));
+    } catch (...) {}
+    return {};
+}
+
+std::vector<juce::String> ProjetoAberto::historicoCoresPasta() const {
+    std::vector<juce::String> resultado;
+    if (!projeto_) return resultado;
+    try {
+        auto stmt = projeto_->registro().prepare("SELECT historico_cores_pasta FROM projeto LIMIT 1");
+        if (stmt.step() && !stmt.columnIsNull(0)) {
+            juce::var arr = juce::JSON::parse(juce::String(stmt.columnText(0)));
+            if (auto* a = arr.getArray()) {
+                for (auto& v : *a) {
+                    juce::String hex = v.toString();
+                    if (hex.isNotEmpty()) resultado.push_back(hex);
+                }
+            }
+        }
+    } catch (...) {}
+    return resultado;
+}
+
+void ProjetoAberto::definirHistoricoCoresPasta(const std::vector<juce::String>& coresHex) {
+    if (!projeto_) return;
+    juce::Array<juce::var> arr;
+    for (const auto& hex : coresHex) arr.add(hex);
+    juce::String json = juce::JSON::toString(juce::var(arr), true);
+    try {
+        projeto_->registro().run("UPDATE projeto SET historico_cores_pasta = ?",
+                                  {matriz::db::Value::of(json.toStdString())});
+    } catch (...) {}
+}
+
 void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId) {
     if (!projeto_) return;
     if (!desfazendo_) {
-        registrarUndo("Add Items to Folder", [this, itemIds, pastaId]() {
-            for (const auto& id : itemIds) removerItemDaPasta(id, pastaId);
+        std::map<std::string, std::vector<std::string>> antigasPastas;
+        for (const auto& id : itemIds) {
+            auto stmtOld = projeto_->registro().prepare(
+                "SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ?");
+            stmtOld.bind(1, matriz::db::Value::of(id));
+            std::vector<std::string> pastas;
+            while (stmtOld.step()) pastas.push_back(stmtOld.columnText(0));
+            antigasPastas[id] = std::move(pastas);
+        }
+        registrarUndo("Move Items to Folder", [this, antigasPastas]() {
+            std::string agora = matriz::model::agoraIso8601();
+            for (const auto& [id, pastas] : antigasPastas) {
+                projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                                         {matriz::db::Value::of(id)});
+                for (const auto& oldPasta : pastas) {
+                    projeto_->registro().run(
+                        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                         matriz::db::Value::of(oldPasta), matriz::db::Value::of(agora)});
+                }
+            }
         });
     }
     std::string agora = matriz::model::agoraIso8601();
-    for (auto& itemId : itemIds) {
-        projeto_->registro().run(
-            "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-             matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds) {
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                   {matriz::db::Value::of(itemId)});
+            db.run(
+                "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
     }
+}
+
+void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
+    if (!projeto_ || itemId.empty() || pastaId.empty()) return;
+    projeto_->registro().run(
+        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+         matriz::db::Value::of(pastaId), matriz::db::Value::of(matriz::model::agoraIso8601())});
+}
+
+std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::string& codigoAcervo) const {
+    if (!projeto_ || codigoAcervo.empty()) return std::nullopt;
+    auto stmt = projeto_->registro().prepare(
+        "SELECT id FROM item WHERE projeto_id = ? AND codigo_acervo = ? LIMIT 1");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    stmt.bind(2, matriz::db::Value::of(codigoAcervo));
+    if (stmt.step()) return stmt.columnText(0);
+    return std::nullopt;
 }
 
 std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& itemIds) {
     if (!projeto_) return {};
     
     std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt);
-    
+
     std::string agora = matriz::model::agoraIso8601();
-    for (const auto& itemId : itemIds) {
-        projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                                 {matriz::db::Value::of(itemId)});
-                                 
-        projeto_->registro().run(
-            "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-             matriz::db::Value::of(newFolderId), matriz::db::Value::of(agora)});
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& itemId : itemIds) {
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                   {matriz::db::Value::of(itemId)});
+
+            db.run(
+                "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(newFolderId), matriz::db::Value::of(agora)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
     }
-    
+
     return newFolderId;
 }
 
@@ -1479,28 +1765,55 @@ void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds
             restaurarItensParaBackup(anteriores);
         });
     }
-    for (auto& itemId : itemIds)
-        projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                                  {matriz::db::Value::of(itemId)});
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds)
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                   {matriz::db::Value::of(itemId)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
 }
 
 void ProjetoAberto::restaurarItensParaBackup(const std::vector<std::pair<std::string, std::string>>& itensPastas) {
     if (!projeto_) return;
     std::string agora = matriz::model::agoraIso8601();
-    for (const auto& [itemId, pastaId] : itensPastas) {
-        if (!pastaId.empty()) {
-            projeto_->registro().run(
-                "INSERT OR REPLACE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-                 matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& [itemId, pastaId] : itensPastas) {
+            if (!pastaId.empty()) {
+                db.run(
+                    "INSERT OR REPLACE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                     matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+            }
         }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
     }
 }
 
 void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemIds) {
     if (!projeto_) return;
-    for (auto& itemId : itemIds)
-        projeto_->registro().run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+    // Uma transação só pro lote inteiro (era um DELETE autocommit por item —
+    // cada um pagando seu próprio overhead de WAL + cascade de FK sozinho,
+    // igual o removerItensDoBackup já fazia certo logo acima).
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds)
+            db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
 }
 
 void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo) {
@@ -1519,10 +1832,101 @@ void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const
         });
     }
     std::string agora = matriz::model::agoraIso8601();
-    for (auto& itemId : itemIds)
-        projeto_->registro().run("UPDATE item SET titulo = ?, atualizado_em = ? WHERE id = ?",
-                                  {matriz::db::Value::of(novoTitulo), matriz::db::Value::of(agora),
-                                   matriz::db::Value::of(itemId)});
+    juce::String tituloNovoTrim = juce::String(novoTitulo).trim();
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (auto& itemId : itemIds) {
+            auto stmtAntigo = db.prepare("SELECT titulo, notas_livres FROM item WHERE id = ?");
+            stmtAntigo.bind(1, matriz::db::Value::of(itemId));
+            std::string tituloAntigo;
+            std::string notasAtuais;
+            if (stmtAntigo.step()) {
+                tituloAntigo = stmtAntigo.columnText(0);
+                if (!stmtAntigo.columnIsNull(1)) notasAtuais = stmtAntigo.columnText(1);
+            }
+
+            db.run("UPDATE item SET titulo = ?, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(novoTitulo), matriz::db::Value::of(agora),
+                    matriz::db::Value::of(itemId)});
+
+            bool tituloRealmenteMudou = tituloNovoTrim != juce::String(tituloAntigo).trim();
+
+            if (!desfazendo_ && tituloRealmenteMudou && !tituloAntigo.empty()) {
+                std::string linhaNota = "Previous Name: " + tituloAntigo;
+                std::string notasNovas = notasAtuais.empty() ? linhaNota : (notasAtuais + "\n" + linhaNota);
+                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
+                       {matriz::db::Value::of(notasNovas), matriz::db::Value::of(itemId)});
+            }
+
+            // Sincroniza o nome físico já consolidado em backup(s) ativo(s) — não
+            // durante o desfazer (a nota também não é criada nesse caso; ver S3b).
+            //
+            // Sem "!tituloAntigo.empty()" aqui de propósito: esse guard faz
+            // sentido pra nota "Previous Name" (não vale a pena anotar "nome
+            // anterior: vazio"), mas não pro backup — o item pode ter sido
+            // ingerido sem título, já ter sido consolidado com {titulo} vazio na
+            // máscara, e o primeiro título digitado na ficha é tão "rename" pro
+            // arquivo já em backup quanto qualquer edição seguinte. Reusar a
+            // mesma condição das duas vezes fazia esse primeiro rename nunca
+            // propagar (item 3 da correção de UI).
+            if (!desfazendo_ && tituloRealmenteMudou) {
+                try {
+                    matriz::consolidacao::sincronizarNomeDeBackupAposRenomear(
+                        db, projeto_->pasta(), itemId, tituloAntigo, novoTitulo);
+                } catch (const std::exception& e) {
+                    matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Backup Rename Sync Failed", {
+                        "Item: " + juce::String(itemId),
+                        "Reason: " + juce::String(e.what())});
+                } catch (...) {
+                    matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Backup Rename Sync Failed", {
+                        "Item: " + juce::String(itemId),
+                        juce::String("Reason: unknown exception")});
+                }
+            }
+
+            EventBus::obterInstancia().dispararItemAlterado(itemId, "titulo");
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty()) return;
+    bool todosMarcados = true;
+    for (const auto& id : itemIds) {
+        auto stmt = projeto_->registro().prepare("SELECT marcado_revisado FROM item WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(id));
+        if (!stmt.step() || stmt.columnIsNull(0) || stmt.columnInt(0) == 0) {
+            todosMarcados = false;
+            break;
+        }
+    }
+    int novoValor = todosMarcados ? 0 : 1;
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds) {
+            db.run("UPDATE item SET marcado_revisado = ? WHERE id = ?",
+                   {matriz::db::Value::of(novoValor), matriz::db::Value::of(id)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+    for (const auto& id : itemIds) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "marcado_revisado");
+    }
+}
+
+void ProjetoAberto::limparTodosMarcadosRevisado() {
+    if (!projeto_) return;
+    projeto_->registro().run("UPDATE item SET marcado_revisado = 0 WHERE marcado_revisado != 0", {});
+    EventBus::obterInstancia().dispararItemAlterado("", "marcado_revisado");
 }
 
 std::optional<juce::String> ProjetoAberto::caminhoDeOrigem(const std::string& itemId) const {
@@ -1868,9 +2272,21 @@ void ProjetoAberto::resetarEImportarEstruturaOrigem() {
                 }
             }
 
-            // Assign item to its leaf folder
+            // Assign item to its leaf folder — inline, não via
+            // adicionarItensAPasta(): aquela função abre sua PRÓPRIA
+            // transação (e registra undo por item), e já estamos dentro de
+            // uma transação aqui — daí o "cannot start a transaction within
+            // a transaction". Uma reconstrução em massa como esta também
+            // não devia gerar centenas de entradas de undo individuais; é
+            // uma ação atômica só.
             if (!currentParentId.empty()) {
-                adicionarItensAPasta({p.itemId}, currentParentId);
+                std::string agoraItem = matriz::model::agoraIso8601();
+                projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
+                                          {matriz::db::Value::of(p.itemId)});
+                projeto_->registro().run(
+                    "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(p.itemId),
+                     matriz::db::Value::of(currentParentId), matriz::db::Value::of(agoraItem)});
             }
         }
 
@@ -3212,6 +3628,7 @@ std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao tipo) {
         case TipoMarcacao::Html: return marcadosHtml_;
         case TipoMarcacao::Zip: return marcadosZip_;
         case TipoMarcacao::Print: return marcadosPrint_;
+        case TipoMarcacao::Watermark: return marcadosWatermark_;
     }
     return marcadosHtml_;
 }
@@ -3221,6 +3638,7 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
         case TipoMarcacao::Html: return marcadosHtml_;
         case TipoMarcacao::Zip: return marcadosZip_;
         case TipoMarcacao::Print: return marcadosPrint_;
+        case TipoMarcacao::Watermark: return marcadosWatermark_;
     }
     return marcadosHtml_;
 }
@@ -3285,6 +3703,7 @@ void ProjetoAberto::limparTodasMarcacoes() {
     limparMarcacoes(TipoMarcacao::Html);
     limparMarcacoes(TipoMarcacao::Zip);
     limparMarcacoes(TipoMarcacao::Print);
+    limparMarcacoes(TipoMarcacao::Watermark);
 }
 
 std::vector<std::string> ProjetoAberto::idsMarcados(TipoMarcacao tipo) const {
@@ -3294,13 +3713,62 @@ std::vector<std::string> ProjetoAberto::idsMarcados(TipoMarcacao tipo) const {
 
 void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId) {
     if (oldItemId.empty() || newItemId.empty() || oldItemId == newItemId) return;
-    for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print }) {
+    for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
         auto& s = obterConjuntoMarcacao(tipo);
         if (s.erase(oldItemId) > 0) {
             s.insert(newItemId);
         }
     }
     EventBus::obterInstancia().dispararItemAlterado(newItemId, "marcacao");
+}
+
+void ProjetoAberto::salvarConfiguracaoWatermark(const ConfiguracaoWatermark& cfg) {
+    if (!projeto_) return;
+    juce::File f = projeto_->pasta().getChildFile("watermark.json");
+    auto obj = std::make_unique<juce::DynamicObject>();
+    obj->setProperty("caminhoLogo", cfg.caminhoLogo);
+    obj->setProperty("opacidade", static_cast<double>(cfg.opacidade));
+    obj->setProperty("escala", static_cast<double>(cfg.escala));
+    obj->setProperty("margem", static_cast<double>(cfg.margem));
+    obj->setProperty("posicaoIdH", cfg.posicaoIdH);
+    obj->setProperty("customPosX_H", static_cast<double>(cfg.customPosX_H));
+    obj->setProperty("customPosY_H", static_cast<double>(cfg.customPosY_H));
+    obj->setProperty("posicaoIdV", cfg.posicaoIdV);
+    obj->setProperty("customPosX_V", static_cast<double>(cfg.customPosX_V));
+    obj->setProperty("customPosY_V", static_cast<double>(cfg.customPosY_V));
+
+    juce::var v(obj.release());
+    f.replaceWithText(juce::JSON::toString(v, true));
+}
+
+ConfiguracaoWatermark ProjetoAberto::obterConfiguracaoWatermark() const {
+    if (!projeto_) return ConfiguracaoWatermark();
+    return carregarConfiguracaoWatermarkDePasta(projeto_->pasta());
+}
+
+ConfiguracaoWatermark ProjetoAberto::carregarConfiguracaoWatermarkDePasta(const juce::File& pastaProjeto) {
+    ConfiguracaoWatermark cfg;
+    juce::File f = pastaProjeto.getChildFile("watermark.json");
+    if (!f.existsAsFile()) return cfg;
+
+    auto parsed = juce::JSON::parse(f);
+    if (!parsed.isObject()) return cfg;
+
+    auto* obj = parsed.getDynamicObject();
+    if (!obj) return cfg;
+
+    cfg.caminhoLogo = obj->getProperty("caminhoLogo").toString();
+    if (obj->hasProperty("opacidade")) cfg.opacidade = static_cast<float>(static_cast<double>(obj->getProperty("opacidade")));
+    if (obj->hasProperty("escala")) cfg.escala = static_cast<float>(static_cast<double>(obj->getProperty("escala")));
+    if (obj->hasProperty("margem")) cfg.margem = static_cast<float>(static_cast<double>(obj->getProperty("margem")));
+    if (obj->hasProperty("posicaoIdH")) cfg.posicaoIdH = static_cast<int>(obj->getProperty("posicaoIdH"));
+    if (obj->hasProperty("customPosX_H")) cfg.customPosX_H = static_cast<float>(static_cast<double>(obj->getProperty("customPosX_H")));
+    if (obj->hasProperty("customPosY_H")) cfg.customPosY_H = static_cast<float>(static_cast<double>(obj->getProperty("customPosY_H")));
+    if (obj->hasProperty("posicaoIdV")) cfg.posicaoIdV = static_cast<int>(obj->getProperty("posicaoIdV"));
+    if (obj->hasProperty("customPosX_V")) cfg.customPosX_V = static_cast<float>(static_cast<double>(obj->getProperty("customPosX_V")));
+    if (obj->hasProperty("customPosY_V")) cfg.customPosY_V = static_cast<float>(static_cast<double>(obj->getProperty("customPosY_V")));
+
+    return cfg;
 }
 
 } // namespace matriz::ui
