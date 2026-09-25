@@ -20,12 +20,25 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
+// ASan/TSan instalam seus próprios handlers de SIGSEGV/SIGBUS/SIGABRT pra
+// produzir os relatórios deles — instalar o crashHandler abaixo por cima
+// desses builds tomaria o sinal antes do sanitizer conseguir reportar.
+#if defined(__has_feature)
+  #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+    #define MATRIZ_SANITIZER_BUILD 1
+  #endif
+#endif
+#ifndef MATRIZ_SANITIZER_BUILD
+  #define MATRIZ_SANITIZER_BUILD 0
+#endif
+
 namespace {
 
+#if !MATRIZ_SANITIZER_BUILD
 static char g_altstack[SIGSTKSZ];
 
 void crashHandler(int sig, siginfo_t* info, void* ctx) {
-    const char msg[] = "\n=== STACK OVERFLOW (signal ";
+    const char msg[] = "\n=== CRASH (signal ";
     write(STDERR_FILENO, msg, sizeof(msg) - 1);
     char buf[512];
     int n = snprintf(buf, sizeof(buf), "%d, code=%d, fault_addr=%p",
@@ -48,36 +61,31 @@ void crashHandler(int sig, siginfo_t* info, void* ctx) {
         write(STDERR_FILENO, buf, static_cast<size_t>(n));
     }
 
-    const char hdr[] = ") ===\nScanning stack for return addresses:\n";
+    const char hdr[] = ") ===\nBacktrace:\n";
     write(STDERR_FILENO, hdr, sizeof(hdr) - 1);
 
-    if (ctx) {
-        uintptr_t fault = info ? (uintptr_t)info->si_addr : 0;
-        uintptr_t scanStart = (fault + 0x1000) & ~(uintptr_t)0x7;
-        uintptr_t scanEnd = scanStart + 0x40000;
-
-        int found = 0;
-        for (uintptr_t addr = scanStart; addr < scanEnd && found < 120; addr += sizeof(void*)) {
-            void* val = *reinterpret_cast<void**>(addr);
-            Dl_info dlinfo;
-            if (!dladdr(val, &dlinfo) || !dlinfo.dli_sname)
-                continue;
-            const char* lib = "???";
-            if (dlinfo.dli_fname) {
-                const char* slash = strrchr(dlinfo.dli_fname, '/');
-                lib = slash ? slash + 1 : dlinfo.dli_fname;
-            }
-            n = snprintf(buf, sizeof(buf), "  [%3d] %p  %s  %s\n",
-                         found, val, lib, dlinfo.dli_sname);
-            write(STDERR_FILENO, buf, static_cast<size_t>(n));
-            ++found;
-        }
-    }
+    // backtrace()/backtrace_symbols_fd() não alocam memória (ao contrário de
+    // backtrace_symbols()) — seguras dentro de um signal handler. A
+    // varredura manual anterior (palavra por palavra a partir de
+    // fault_addr, chamando dladdr em endereço nunca validado) podia reler
+    // página não mapeada e travar o processo por 1-2s antes de sair — era
+    // exatamente o "spinning wheel" do bug do TarefaGlobalModalDialog: este
+    // handler reagindo a um crash de OUTRA causa (null pointer), não stack
+    // overflow.
+    void* frames[128];
+    int frameCount = backtrace(frames, 128);
+    backtrace_symbols_fd(frames, frameCount, STDERR_FILENO);
 
     const char end[] = "=== END ===\n";
     write(STDERR_FILENO, end, sizeof(end) - 1);
-    _exit(128 + sig);
+
+    // SA_RESETHAND (ver instalação abaixo) já devolveu a disposição deste
+    // sinal para o default antes de entrarmos aqui — re-levantar agora deixa
+    // o macOS (ReportCrash) gerar o .ips normalmente, em vez do _exit()
+    // silencioso de antes, que não deixava rastro nenhum pro Console.app.
+    raise(sig);
 }
+#endif // !MATRIZ_SANITIZER_BUILD
 
 class SplashComponent : public juce::Component {
 public:
@@ -180,6 +188,7 @@ public:
         matriz::app::inicializarPreferencias();
         matriz::diag::inicializarWatchdog();
 
+#if !MATRIZ_SANITIZER_BUILD
         stack_t ss;
         ss.ss_sp = g_altstack;
         ss.ss_size = SIGSTKSZ;
@@ -193,6 +202,7 @@ public:
         sigaction(SIGSEGV, &sa, nullptr);
         sigaction(SIGBUS, &sa, nullptr);
         sigaction(SIGABRT, &sa, nullptr);
+#endif
         matriz::diag::instalarGuardaDeExcecao();
 
         matriz::i18n::carregar(matriz::app::lerLocale());
