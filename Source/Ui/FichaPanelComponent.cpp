@@ -1,11 +1,14 @@
 #include "FichaPanelComponent.h"
 
+#include "AutoCompleteTextEditor.h"
 #include "MetadadosOriginaisComponent.h"
 #include "OriginalSourceMedium.h"
 #include "TagChipsEditor.h"
 #include "PeoplePickerComponent.h"
+#include "NotesEstruturadasComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 
+#include "../Ficha/AutocompleteHistorico.h"
 #include "../Ficha/FichaI18n.h"
 #include "../Ficha/OrigemPadrao.h"
 #include "../I18n/Strings.h"
@@ -17,9 +20,11 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 #include "ProgressoGlobal.h"
+#include <AssetsBinaryData.h>
 #include <exiv2/exiv2.hpp>
 
 #include <algorithm>
+#include <iterator>
 #include <regex>
 #include <set>
 
@@ -32,7 +37,36 @@ using matriz::ficha::VisivelSeOperador;
 
 namespace {
 
+// Altura mínima do editor de NOTES no card ASSET & USER METADATA — usada no
+// modo de item único e no modo de seleção múltipla (lote), pra manter as
+// duas telas com o mesmo tamanho mínimo de caixa (item 1 da 3ª correção de UI).
+constexpr int kAlturaMinimaNotas = 110;
+
 std::string autorAtual() { return juce::SystemStats::getFullUserName().toStdString(); }
+
+// Feedback visual simples ao salvar (Correção realtime, Bug 1, item 3): pisca
+// a borda do campo em destaque por um instante. Não afeta o texto nem o
+// foco — só uma pista visual de que o valor foi gravado.
+void piscarBordaSalvo(juce::TextEditor* ed) {
+    if (!ed) return;
+    // Sem o botão APPLY, este flash é a única confirmação de que o Enter (ou
+    // o blur) gravou. Só a borda era discreto demais — o fundo também pisca,
+    // e por mais tempo, para o retorno ser inequívoco.
+    juce::Colour bordaOriginal = ed->findColour(juce::TextEditor::outlineColourId);
+    juce::Colour fundoOriginal = ed->findColour(juce::TextEditor::backgroundColourId);
+    juce::Colour destaque = matriz::ui::tema().acento;
+    ed->setColour(juce::TextEditor::outlineColourId, destaque);
+    ed->setColour(juce::TextEditor::backgroundColourId, destaque.withAlpha(0.22f));
+    ed->repaint();
+    juce::Component::SafePointer<juce::TextEditor> safe(ed);
+    juce::Timer::callAfterDelay(450, [safe, bordaOriginal, fundoOriginal]() {
+        if (safe) {
+            safe->setColour(juce::TextEditor::outlineColourId, bordaOriginal);
+            safe->setColour(juce::TextEditor::backgroundColourId, fundoOriginal);
+            safe->repaint();
+        }
+    });
+}
 
 // Default de "origem" (Digital/Analógico, §4.2) é tratado por ProjetoAberto.
 
@@ -299,6 +333,11 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Live Performance", "Show / Ao Vivo"},
         {"NLE Project", juce::String::fromUTF8("Projeto de Edição (NLE)")},
         {"Social Media Video", juce::String::fromUTF8("Vídeos para Redes Sociais")},
+        {"WhatsApp Video", juce::String::fromUTF8("Vídeo do WhatsApp")},
+        {"TV Video", juce::String::fromUTF8("Vídeo de TV")},
+        {"YouTube Video", juce::String::fromUTF8("Vídeo do YouTube")},
+        {"360 Video", juce::String::fromUTF8("Vídeo 360°")},
+        {"Making Of", juce::String::fromUTF8("Making Of")},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -309,6 +348,11 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        // Item "CONTENT — imagens também podem ser documentos": uma imagem
+        // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
+        // classificação semântica de CONTENT, não altera o tipo técnico
+        // nativo do arquivo (que continua "imagem" em toda a detecção).
+        {"Document", "Documento"},
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
@@ -343,10 +387,11 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
                 "Artist Catalog", "Artist Backup"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
-                "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video"};
+                "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
+                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D"};
+                "Graphics", "Logo", "3D", "Document"};
     } else if (cat == MediaCategory::Docs) {
         keys = {"Documentation", "Book", "Contract", "Manual", "Report", "Reference",
                 "Technical Documentation", "Spreadsheet"};
@@ -374,7 +419,22 @@ inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory ca
 
 class FichaConteudo : public juce::Component {
 public:
-    explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
+    explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {
+        // Ícone GEO LOCATION — o PNG vem com fundo branco chapado; aqui ele
+        // vira transparente para o ícone assentar sobre o fundo do card.
+        iconeGeo_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::geo_png, AssetsBinaryData::geo_pngSize);
+        if (iconeGeo_.isValid()) {
+            iconeGeo_ = iconeGeo_.convertedToFormat(juce::Image::ARGB);
+            juce::Image::BitmapData bmp(iconeGeo_, juce::Image::BitmapData::readWrite);
+            for (int y = 0; y < bmp.height; ++y) {
+                for (int x = 0; x < bmp.width; ++x) {
+                    auto cor = bmp.getPixelColour(x, y);
+                    if (cor.getRed() >= 240 && cor.getGreen() >= 240 && cor.getBlue() >= 240)
+                        bmp.setPixelColour(x, y, juce::Colours::transparentBlack);
+                }
+            }
+        }
+    }
 
     void paint(juce::Graphics& g) override {
         if (itemId_.empty()) return;
@@ -389,6 +449,8 @@ public:
         drawCard(quadroDublinCore_);
         drawCard(quadroUserAsset_);
         drawCard(quadroGeoLocation_);
+        if (iconeGeo_.isValid() && !iconeGeoBounds_.isEmpty())
+            g.drawImage(iconeGeo_, iconeGeoBounds_.toFloat(), juce::RectanglePlacement::centred);
     }
 
     void lookAndFeelChanged() override {
@@ -501,7 +563,27 @@ public:
         repaint();
     }
 
+    // Correção realtime (Bug 1): commita qualquer texto digitado e ainda não
+    // salvo antes que os editores sejam destruídos — chamado no início de
+    // limpar() (todo ponto que reconstrói a ficha passa por aqui: trocar de
+    // item, entrar/sair de lote, mudar tema/idioma) e também exposto via
+    // FichaPanelComponent::salvarPendencias() pros pontos de saída que não
+    // reconstroem a tela (fechar projeto, fechar o app, trocar de aba).
+    void comitarPendencias() {
+        for (auto& linha : camposUnificados_) {
+            if (!linha || !linha->onCommit) continue;
+            if (linha->ehNotes) {
+                if (auto* notes = dynamic_cast<NotesEstruturadasComponent*>(linha->editor.get())) {
+                    if (juce::String(notes->getTexto()) != linha->valorSeed) linha->onCommit();
+                }
+            } else if (auto* ed = dynamic_cast<juce::TextEditor*>(linha->editor.get())) {
+                if (ed->getText() != linha->valorSeed) linha->onCommit();
+            }
+        }
+    }
+
     void limpar() {
+        comitarPendencias();
         camposUnificados_.clear();
 
         linhas_.clear();
@@ -533,7 +615,7 @@ public:
         secHeaderDublinCore_.reset();
         btnAjudaDublinCore_.reset();
         btnCollapseDublinCore_.reset();
-        colapsadoDublinCore_ = false;
+        colapsadoDublinCore_ = true;
         secHeaderUserAsset_.reset();
         btnAjudaUserAsset_.reset();
         btnCollapseUserAsset_.reset();
@@ -580,109 +662,21 @@ public:
                 labelReviewFaltando_ = std::make_unique<juce::Label>();
                 labelReviewFaltando_->setText("Needs review: " + faltando.joinIntoString(", "),
                                               juce::dontSendNotification);
-                labelReviewFaltando_->setColour(juce::Label::textColourId, juce::Colours::orange);
+                // Ajuste de layout METADATA: "Needs review" em texto preto.
+                labelReviewFaltando_->setColour(juce::Label::textColourId, juce::Colours::black);
                 labelReviewFaltando_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
                 addAndMakeVisible(*labelReviewFaltando_);
             }
         }
 
-        botaoAplicar_ = std::make_unique<juce::TextButton>("Apply");
-        botaoAplicar_->onClick = [this] {
-            if (itemId_.empty()) {
-                DBG("APPLY ERROR: itemId_ is empty — nothing to save");
-                return;
-            }
-
-            int saved = 0;
-            int verified = 0;
-            int errors = 0;
-            juce::StringArray errorDetails;
-
-            projeto_.iniciarGrupoUndo("Apply metadata");
-
-            for (auto& cu : camposUnificados_) {
-                if (!cu || cu->ehAutoFixed) continue;
-
-                // Tags: save via TagChipsEditor directly
-                if (cu->ehTags) {
-                    if (auto* chips = dynamic_cast<TagChipsEditor*>(cu->editor.get())) {
-                        try {
-                            projeto_.definirTags(itemId_, chips->getTags());
-                            ++saved;
-                        } catch (const std::exception& e) {
-                            ++errors;
-                            errorDetails.add("Tags: " + juce::String(e.what()));
-                        }
-                    }
-                    continue;
-                }
-
-                if (cu->colunaDb.empty()) continue;
-
-                // Read current value from the UI widget
-                std::string val;
-                if (auto* ed = dynamic_cast<juce::TextEditor*>(cu->editor.get())) {
-                    val = ed->getText().toStdString();
-                } else if (auto* combo = dynamic_cast<juce::ComboBox*>(cu->editor.get())) {
-                    val = combo->getText().toStdString();
-                } else {
-                    continue;
-                }
-
-                // Write to database
-                try {
-                    projeto_.salvarMetadado(itemId_, cu->colunaDb, val);
-                    ++saved;
-                } catch (const std::exception& e) {
-                    ++errors;
-                    errorDetails.add(juce::String(cu->colunaDb) + ": " + juce::String(e.what()));
-                    continue;
-                }
-
-                // Verify: read back from database
-                auto readBack = projeto_.lerMetadado(itemId_, cu->colunaDb);
-                if (readBack.has_value() && readBack.value() == val) {
-                    ++verified;
-                } else {
-                    ++errors;
-                    errorDetails.add(juce::String(cu->colunaDb) + ": write succeeded but verify failed");
-                }
-            }
-
-            projeto_.finalizarGrupoUndo();
-
-            DBG("APPLY: item=" + juce::String(itemId_)
-                + " saved=" + juce::String(saved)
-                + " verified=" + juce::String(verified)
-                + " errors=" + juce::String(errors));
-            for (auto& e : errorDetails) DBG("  ERROR: " + e);
-
-            salvarGeolocalizacao(itemId_);
-
-            if (aoAplicarSucesso) aoAplicarSucesso(itemId_);
-
-            if (aoMudar) aoMudar();
-
-            // Visual feedback
-            labelAplicado_ = std::make_unique<juce::Label>();
-            if (errors > 0) {
-                labelAplicado_->setText("SAVE FAILED: " + errorDetails.joinIntoString("; "), juce::dontSendNotification);
-                labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::red);
-            } else {
-                labelAplicado_->setText(juce::String(saved) + " fields saved.", juce::dontSendNotification);
-                labelAplicado_->setColour(juce::Label::textColourId, juce::Colours::green.darker(0.2f));
-            }
-            labelAplicado_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
-            addAndMakeVisible(*labelAplicado_);
-            relayoutEExibir();
-            juce::Component::SafePointer<FichaConteudo> safeThis(this);
-            juce::Timer::callAfterDelay(3000, [safeThis] {
-                if (!safeThis) return;
-                safeThis->labelAplicado_.reset();
-                safeThis->relayoutEExibir();
-            });
-        };
-        addAndMakeVisible(*botaoAplicar_);
+        // Real-time (correção METADATA, item 5): SEM botão APPLY — cada
+        // campo unificado já commita sozinho (onFocusLost/onReturnKey/
+        // onChange de cada um, ver addEditableText/addEditableDropdown/
+        // addEditableOriginalSourceMedium/addEditableTags/addEditableToggle
+        // acima, e os 5 campos de GEO LOCATION em
+        // construirSecaoGeolocalizacao). botaoAplicar_/labelAplicado_ nunca
+        // são construídos — ficam null pra sempre; os "if (botaoAplicar_)"
+        // de layout mais abaixo continuam de pé mas não desenham nada.
         relayoutEExibir();
     }
 
@@ -725,7 +719,22 @@ public:
         }
     }
 
-    void relayout(int largura) {
+    // alturaDisponivel > 0: depois do layout normal (extraNotas = 0), se
+    // sobrar espaço até a altura visível do viewport, refaz o layout uma
+    // segunda vez esticando NOTES por esse tanto — item 1 da 3ª correção de
+    // UI ("aumentar até o conjunto de cards ocupar a coluna inteira").
+    // Duas passadas em vez de uma conta analítica: o layout em cascata tem
+    // gente demais dependendo de y (GEO LOCATION, DUBLIN CORE, botões,
+    // PRESERVATION) pra vale a pena recalcular tudo à mão.
+    void relayout(int largura, int alturaDisponivel = 0) {
+        relayoutInterno(largura, 0);
+        if (alturaDisponivel > 0) {
+            int deficit = alturaDisponivel - getHeight();
+            if (deficit > 0) relayoutInterno(largura, deficit);
+        }
+    }
+
+    void relayoutInterno(int largura, int extraNotas) {
         if (itemId_.empty()) {
             quadroDublinCore_ = {};
             quadroUserAsset_ = {};
@@ -778,11 +787,66 @@ public:
             int x0 = x + padCardX;
             int x1 = x + padCardX + colW + gap;
 
-            auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1) {
+            // PATH e AI GENERATED seguem a mesma coluna que CONTENT (item da
+            // 5ª correção de UI: "PATH entre CONTENT e AI GENERATED" —
+            // precisam ficar juntos, não cada um correndo pra coluna mais
+            // curta na hora que aparece). Substituiu o antigo agrupamento
+            // com ORIGINAL SOURCE MEDIUM (colOsm), que deixava PATH grudado
+            // em DEVICE do outro lado e um vão vazio embaixo de AI GENERATED.
+            int colContentGroup = 0;
+            auto layoutCamposDoBloco = [&](BlocoFicha bloco, int& y0, int& y1, LinhaUnificada*& notasFora) {
+                LinhaUnificada* cuPeople = nullptr;
+                LinhaUnificada* cuTags = nullptr;
+
                 for (auto& cu : camposUnificados_) {
                     if (!cu || cu->bloco != bloco) continue;
 
+                    if (bloco == BlocoFicha::UserAsset) {
+                        if (cu->ehNotes)  { notasFora = cu.get(); continue; }
+                        if (cu->ehPeople) { cuPeople = cu.get(); continue; }
+                        if (cu->ehTags)   { cuTags = cu.get();   continue; }
+                        // item: SUBJECT sempre à esquerda, CREATOR sempre à
+                        // direita, os dois sempre na mesma linha — o
+                        // empacotamento "coluna mais curta primeiro" abaixo
+                        // não garante isso sozinho. SUBJECT é pulado aqui
+                        // (tratado junto quando o loop chega no CREATOR,
+                        // que já vem logo depois dele na ordem de inserção).
+                        if (cu->campoId == "subject") continue;
+                        if (cu->campoId == "creator") {
+                            LinhaUnificada* cuSubject = nullptr;
+                            for (auto& outro : camposUnificados_) {
+                                if (outro && outro->bloco == bloco && outro->campoId == "subject") {
+                                    cuSubject = outro.get();
+                                    break;
+                                }
+                            }
+                            int yLinha = std::max(y0, y1);
+                            y0 = yLinha;
+                            y1 = yLinha;
+                            int rotuloW = colW - 85;
+                            int alturaLinha = 18 + tk.espacoPequeno;
+                            if (cuSubject) {
+                                cuSubject->rotulo->setBounds(x0, yLinha, rotuloW, 16);
+                                cuSubject->badge->setBounds(x0 + colW - 80, yLinha, 80, 16);
+                                cuSubject->editor->setBounds(x0, yLinha + 18, colW, 24);
+                            }
+                            cu->rotulo->setBounds(x1, yLinha, rotuloW, 16);
+                            cu->badge->setBounds(x1 + colW - 80, yLinha, 80, 16);
+                            cu->editor->setBounds(x1, yLinha + 18, colW, 24);
+                            y0 += alturaLinha + 24;
+                            y1 += alturaLinha + 24;
+                            continue;
+                        }
+                    }
+
                     bool useCol1 = (y1 < y0);
+                    if (bloco == BlocoFicha::UserAsset && (cu->campoId == "path" || cu->campoId == "ai_generated")) {
+                        useCol1 = (colContentGroup == 1);
+                    }
+                    if (bloco == BlocoFicha::UserAsset && cu->campoId == "collection") {
+                        colContentGroup = useCol1 ? 1 : 0;
+                    }
+
                     int currX = useCol1 ? x1 : x0;
                     int& currY = useCol1 ? y1 : y0;
 
@@ -819,43 +883,36 @@ public:
                         currY += 24 + tk.espacoPequeno;
                     }
                 }
+
+                if (bloco == BlocoFicha::UserAsset && (cuPeople || cuTags)) {
+                    // PEOPLE/TAGS seguem juntas, sempre na coluna direita —
+                    // já não precisam mais disputar lado com NOTES.
+                    int px = x1;
+                    int& py = y1;
+
+                    if (cuPeople) {
+                        cuPeople->rotulo->setBounds(px, py, colW - 85, 16);
+                        cuPeople->badge->setBounds(px + colW - 80, py, 80, 16);
+                        py += 18;
+                        cuPeople->editor->setBounds(px, py, colW, 26);
+                        py += 26 + tk.espacoPequeno;
+                    }
+
+                    if (cuTags) {
+                        cuTags->rotulo->setBounds(px, py, colW - 85, 16);
+                        cuTags->badge->setBounds(px + colW - 80, py, 80, 16);
+                        py += 18;
+                        int chipH = 26;
+                        if (auto* chips = dynamic_cast<TagChipsEditor*>(cuTags->editor.get())) {
+                            chipH = chips->getPreferredHeight();
+                        }
+                        cuTags->editor->setBounds(px, py, colW, chipH);
+                        py += chipH + tk.espacoPequeno;
+                    }
+                }
             };
 
-            // --- Bloco A: DUBLIN CORE METADATA ---
-            int cardATop = y;
-            if (secHeaderDublinCore_) {
-                int btnW = 20;
-                int btnH = 18;
-                int rightX = x + padCardX + innerW;
-                if (btnCollapseDublinCore_) {
-                    rightX -= btnW;
-                    btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
-                    rightX -= 4;
-                }
-                if (btnAjudaDublinCore_) {
-                    rightX -= btnW;
-                    btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
-                    rightX -= 8;
-                }
-                secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
-                y += padCardY + 24;
-            } else {
-                y += padCardY;
-            }
-            if (!colapsadoDublinCore_) {
-                int y0 = y;
-                int y1 = y;
-                layoutCamposDoBloco(BlocoFicha::DublinCore, y0, y1);
-                int cardABottom = std::max(y0, y1) + padCardY;
-                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
-                y = cardABottom + tk.espacoMedio;
-            } else {
-                int cardABottom = y;
-                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
-                y = cardABottom + tk.espacoPequeno;
-            }
-
-            // --- Bloco B: ASSET & USER METADATA (PEOPLE right above TAGS) ---
+            // --- 1. ASSET & USER METADATA (PEOPLE right above TAGS) ---
             int cardBTop = y;
             if (secHeaderUserAsset_) {
                 int btnW = 20;
@@ -879,8 +936,24 @@ public:
             if (!colapsadoUserAsset_) {
                 int y0 = y;
                 int y1 = y;
-                layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1);
-                int cardBBottom = std::max(y0, y1) + padCardY;
+                LinhaUnificada* notasFora = nullptr;
+                layoutCamposDoBloco(BlocoFicha::UserAsset, y0, y1, notasFora);
+                int yPosColunas = std::max(y0, y1);
+                int cardBBottom = yPosColunas + padCardY;
+
+                // NOTES: última linha do card, ocupando as DUAS colunas
+                // (item 1 da 3ª correção de UI) — estica com extraNotas até
+                // o conjunto de cards preencher a coluna inteira da ficha.
+                if (notasFora) {
+                    int nx = x + padCardX;
+                    notasFora->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
+                    notasFora->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
+                    int ny = yPosColunas + 18;
+                    int alturaNotas = kAlturaMinimaNotas + extraNotas;
+                    notasFora->editor->setBounds(nx, ny, innerW, alturaNotas);
+                    cardBBottom = ny + alturaNotas + padCardY;
+                }
+
                 quadroUserAsset_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
                 y = cardBBottom + tk.espacoMedio;
             } else {
@@ -889,7 +962,7 @@ public:
                 y = cardBBottom + tk.espacoPequeno;
             }
 
-            // --- Bloco C: GEOLOCATION (Last in metadata queue) ---
+            // --- 2. GEOLOCATION ---
             if (geolocalizacao_.titulo) {
                 int cardCTop = y;
                 int btnW = 20;
@@ -910,7 +983,15 @@ public:
                     geolocalizacao_.statusBadge->setBounds(rightX, y + padCardY, 145, 20);
                     rightX -= 8;
                 }
-                geolocalizacao_.titulo->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                int tituloX = x + padCardX;
+                if (iconeGeo_.isValid()) {
+                    const int iconeW = 16;
+                    iconeGeoBounds_ = juce::Rectangle<int>(tituloX, y + padCardY, iconeW, 20);
+                    tituloX += iconeW + 4;
+                } else {
+                    iconeGeoBounds_ = {};
+                }
+                geolocalizacao_.titulo->setBounds(tituloX, y + padCardY, std::max(20, rightX - tituloX), 20);
                 y += padCardY + 24;
 
                 if (!colapsadoGeoLocation_) {
@@ -934,6 +1015,15 @@ public:
                     layoutGeoField(geolocalizacao_.labelState, geolocalizacao_.editorState);
                     layoutGeoField(geolocalizacao_.labelCountry, geolocalizacao_.editorCountry);
 
+                    // Favorite buttons row (side by side below all fields)
+                    int favY = std::max(y0, y1) + tk.espacoPequeno;
+                    int halfW = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnSalvarFavorito)
+                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, favY, halfW, 22);
+                    if (geolocalizacao_.btnCarregarFavorito)
+                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, favY, halfW, 22);
+                    y0 = y1 = favY + 22 + tk.espacoPequeno;
+
                     int cardCBottom = std::max(y0, y1) + padCardY;
                     quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
                     y = cardCBottom + tk.espacoMedio;
@@ -944,6 +1034,41 @@ public:
                 }
             } else {
                 quadroGeoLocation_ = {};
+            }
+
+            // --- 3. DUBLIN CORE METADATA ---
+            int cardATop = y;
+            if (secHeaderDublinCore_) {
+                int btnW = 20;
+                int btnH = 18;
+                int rightX = x + padCardX + innerW;
+                if (btnCollapseDublinCore_) {
+                    rightX -= btnW;
+                    btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 4;
+                }
+                if (btnAjudaDublinCore_) {
+                    rightX -= btnW;
+                    btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 8;
+                }
+                secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                y += padCardY + 24;
+            } else {
+                y += padCardY;
+            }
+            if (!colapsadoDublinCore_) {
+                int y0 = y;
+                int y1 = y;
+                LinhaUnificada* notasForaDc = nullptr; // Dublin Core não tem NOTES
+                layoutCamposDoBloco(BlocoFicha::DublinCore, y0, y1, notasForaDc);
+                int cardABottom = std::max(y0, y1) + padCardY;
+                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoMedio;
+            } else {
+                int cardABottom = y;
+                quadroDublinCore_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoPequeno;
             }
 
             int maxY = y;
@@ -999,8 +1124,9 @@ public:
                         y += 24 + tk.espacoPequeno;
                     }
                 } else if (cu->ehNotes) {
-                    cu->editor->setBounds(x + padCardX, y, innerW, 64);
-                    y += 64 + tk.espacoPequeno;
+                    int alturaNotas1Col = kAlturaMinimaNotas + extraNotas;
+                    cu->editor->setBounds(x + padCardX, y, innerW, alturaNotas1Col);
+                    y += alturaNotas1Col + tk.espacoPequeno;
                 } else {
                     cu->editor->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoPequeno;
@@ -1008,39 +1134,7 @@ public:
             }
         };
 
-        // Bloco A
-        int cardATop1 = y;
-        if (secHeaderDublinCore_) {
-            int btnW = 20;
-            int btnH = 18;
-            int rightX = x + padCardX + innerW;
-            if (btnCollapseDublinCore_) {
-                rightX -= btnW;
-                btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
-                rightX -= 4;
-            }
-            if (btnAjudaDublinCore_) {
-                rightX -= btnW;
-                btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
-                rightX -= 8;
-            }
-            secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
-            y += padCardY + 24;
-        } else {
-            y += padCardY;
-        }
-        if (!colapsadoDublinCore_) {
-            layoutCamposDoBloco1Col(BlocoFicha::DublinCore);
-            int cardABottom1 = y + padCardY;
-            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
-            y = cardABottom1 + tk.espacoMedio;
-        } else {
-            int cardABottom1 = y;
-            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
-            y = cardABottom1 + tk.espacoPequeno;
-        }
-
-        // Bloco B
+        // --- 1. ASSET & USER METADATA ---
         int cardBTop1 = y;
         if (secHeaderUserAsset_) {
             int btnW = 20;
@@ -1072,7 +1166,7 @@ public:
             y = cardBBottom1 + tk.espacoPequeno;
         }
 
-        // Bloco C: GEOLOCATION
+        // --- 2. GEOLOCATION ---
         if (geolocalizacao_.titulo) {
             int cardCTop1 = y;
             int btnW = 20;
@@ -1131,6 +1225,17 @@ public:
                     geolocalizacao_.editorCountry->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoMedio;
                 }
+
+                // Favorite buttons row
+                {
+                    int halfW = (innerW - tk.espacoPequeno) / 2;
+                    if (geolocalizacao_.btnSalvarFavorito)
+                        geolocalizacao_.btnSalvarFavorito->setBounds(x + padCardX, y, halfW, 22);
+                    if (geolocalizacao_.btnCarregarFavorito)
+                        geolocalizacao_.btnCarregarFavorito->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                    y += 22 + tk.espacoPequeno;
+                }
+
                 int cardCBottom1 = y + padCardY;
                 quadroGeoLocation_ = juce::Rectangle<int>(x, cardCTop1, larguraUtil, cardCBottom1 - cardCTop1);
                 y = cardCBottom1 + tk.espacoMedio;
@@ -1141,6 +1246,38 @@ public:
             }
         } else {
             quadroGeoLocation_ = {};
+        }
+
+        // --- 3. DUBLIN CORE METADATA ---
+        int cardATop1 = y;
+        if (secHeaderDublinCore_) {
+            int btnW = 20;
+            int btnH = 18;
+            int rightX = x + padCardX + innerW;
+            if (btnCollapseDublinCore_) {
+                rightX -= btnW;
+                btnCollapseDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 4;
+            }
+            if (btnAjudaDublinCore_) {
+                rightX -= btnW;
+                btnAjudaDublinCore_->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 8;
+            }
+            secHeaderDublinCore_->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+            y += padCardY + 24;
+        } else {
+            y += padCardY;
+        }
+        if (!colapsadoDublinCore_) {
+            layoutCamposDoBloco1Col(BlocoFicha::DublinCore);
+            int cardABottom1 = y + padCardY;
+            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoMedio;
+        } else {
+            int cardABottom1 = y;
+            quadroDublinCore_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoPequeno;
         }
 
         if (labelReviewFaltando_) {
@@ -1255,6 +1392,36 @@ public:
 
         auto geoOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), itemId);
 
+        // Real-time (correção METADATA, item 9): sem isto, GEO LOCATION só
+        // persistia quando o botão APPLY existia e era clicado — nenhum dos
+        // 5 campos tinha commit próprio. Sai do foco (ou Enter) em
+        // qualquer um deles já salva os 5 juntos (salvarGeolocalizacao lê
+        // o texto atual de todos) e atualiza o item em memória.
+        auto commitGeo = [this, itemId] {
+            salvarGeolocalizacao(itemId);
+            // item: autocomplete pros campos de GEO LOCATION, mesmo padrão
+            // de CREATOR/SUBJECT/PUBLISHER — alimenta o histórico a cada
+            // commit pra próximas digitações sugerirem valores já usados.
+            auto& db = projeto_.projeto().registro();
+            if (geolocalizacao_.editorAddress) {
+                auto t = geolocalizacao_.editorAddress->getText().trim();
+                if (t.isNotEmpty()) matriz::ficha::AutocompleteRepository::registrar(db, "geo_address", t.toStdString());
+            }
+            if (geolocalizacao_.editorCity) {
+                auto t = geolocalizacao_.editorCity->getText().trim();
+                if (t.isNotEmpty()) matriz::ficha::AutocompleteRepository::registrar(db, "geo_city", t.toStdString());
+            }
+            if (geolocalizacao_.editorState) {
+                auto t = geolocalizacao_.editorState->getText().trim();
+                if (t.isNotEmpty()) matriz::ficha::AutocompleteRepository::registrar(db, "geo_state", t.toStdString());
+            }
+            if (geolocalizacao_.editorCountry) {
+                auto t = geolocalizacao_.editorCountry->getText().trim();
+                if (t.isNotEmpty()) matriz::ficha::AutocompleteRepository::registrar(db, "geo_country", t.toStdString());
+            }
+            if (aoAplicarSucesso) aoAplicarSucesso(itemId);
+        };
+
         geolocalizacao_.titulo = std::make_unique<juce::Label>();
         geolocalizacao_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
         geolocalizacao_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
@@ -1270,7 +1437,9 @@ public:
             geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::lightgreen);
         } else {
             geolocalizacao_.statusBadge->setText(isPt ? juce::String::fromUTF8("[ GEOLOCALIZAÇÃO DEFINIDA PELO USUÁRIO ]") : juce::String("[ USER-DEFINED GEOLOCATION ]"), juce::dontSendNotification);
-            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::cyan);
+            // Ajuste de layout METADATA: geolocalização definida pelo
+            // usuário em texto preto.
+            geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::black);
         }
         geolocalizacao_.statusBadge->setFont(juce::Font(juce::FontOptions(9.0f)));
         geolocalizacao_.statusBadge->setJustificationType(juce::Justification::centredRight);
@@ -1295,6 +1464,8 @@ public:
         } else {
             geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", juce::Colour(0xff888888));
         }
+        geolocalizacao_.editorCoords->onFocusLost = commitGeo;
+        geolocalizacao_.editorCoords->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorCoords);
 
         // Address
@@ -1304,13 +1475,23 @@ public:
         geolocalizacao_.labelAddress->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelAddress);
 
-        geolocalizacao_.editorAddress = std::make_unique<juce::TextEditor>();
+        {
+            ProjetoAberto* projPtr = &projeto_;
+            geolocalizacao_.editorAddress = std::make_unique<AutoCompleteTextEditor>([projPtr] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), "geo_address"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            });
+        }
         geolocalizacao_.editorAddress->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorAddress->setText(geoOpt && geoOpt->formattedAddress ? *geoOpt->formattedAddress : "");
         geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", juce::Colour(0xff888888));
+        geolocalizacao_.editorAddress->onFocusLost = commitGeo;
+        geolocalizacao_.editorAddress->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorAddress);
 
         // City
@@ -1320,13 +1501,23 @@ public:
         geolocalizacao_.labelCity->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelCity);
 
-        geolocalizacao_.editorCity = std::make_unique<juce::TextEditor>();
+        {
+            ProjetoAberto* projPtr = &projeto_;
+            geolocalizacao_.editorCity = std::make_unique<AutoCompleteTextEditor>([projPtr] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), "geo_city"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            });
+        }
         geolocalizacao_.editorCity->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         geolocalizacao_.editorCity->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         geolocalizacao_.editorCity->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCity->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCity->setText(geoOpt && geoOpt->city ? *geoOpt->city : "");
         geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", juce::Colour(0xff888888));
+        geolocalizacao_.editorCity->onFocusLost = commitGeo;
+        geolocalizacao_.editorCity->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorCity);
 
         // State
@@ -1336,13 +1527,23 @@ public:
         geolocalizacao_.labelState->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelState);
 
-        geolocalizacao_.editorState = std::make_unique<juce::TextEditor>();
+        {
+            ProjetoAberto* projPtr = &projeto_;
+            geolocalizacao_.editorState = std::make_unique<AutoCompleteTextEditor>([projPtr] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), "geo_state"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            });
+        }
         geolocalizacao_.editorState->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         geolocalizacao_.editorState->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         geolocalizacao_.editorState->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorState->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorState->setText(geoOpt && geoOpt->stateProvince ? *geoOpt->stateProvince : "");
         geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", juce::Colour(0xff888888));
+        geolocalizacao_.editorState->onFocusLost = commitGeo;
+        geolocalizacao_.editorState->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorState);
 
         // Country
@@ -1352,13 +1553,23 @@ public:
         geolocalizacao_.labelCountry->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*geolocalizacao_.labelCountry);
 
-        geolocalizacao_.editorCountry = std::make_unique<juce::TextEditor>();
+        {
+            ProjetoAberto* projPtr = &projeto_;
+            geolocalizacao_.editorCountry = std::make_unique<AutoCompleteTextEditor>([projPtr] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), "geo_country"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            });
+        }
         geolocalizacao_.editorCountry->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCountry->setText(geoOpt && geoOpt->country ? *geoOpt->country : "");
         geolocalizacao_.editorCountry->setTextToShowWhenEmpty(isPt ? "Ex: Brasil" : "e.g. Brazil", juce::Colour(0xff888888));
+        geolocalizacao_.editorCountry->onFocusLost = commitGeo;
+        geolocalizacao_.editorCountry->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorCountry);
 
         btnAjudaGeoLocation_ = std::make_unique<juce::TextButton>("?");
@@ -1382,7 +1593,7 @@ public:
         btnCollapseGeoLocation_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
         btnCollapseGeoLocation_->onClick = [this, isPt] {
             colapsadoGeoLocation_ = !colapsadoGeoLocation_;
-            btnCollapseGeoLocation_->setButtonText(colapsadoGeoLocation_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseGeoLocation_->setButtonText(colapsadoGeoLocation_ ? juce::String::fromUTF8("\xe2\x96\xb6") : juce::String::fromUTF8("\xe2\x96\xbc"));
             btnCollapseGeoLocation_->setTooltip(colapsadoGeoLocation_ ? (isPt ? "Expandir" : "Expand") : (isPt ? "Recolher" : "Collapse"));
             bool vis = !colapsadoGeoLocation_;
             if (geolocalizacao_.labelCoords) geolocalizacao_.labelCoords->setVisible(vis);
@@ -1395,11 +1606,113 @@ public:
             if (geolocalizacao_.editorState) geolocalizacao_.editorState->setVisible(vis);
             if (geolocalizacao_.labelCountry) geolocalizacao_.labelCountry->setVisible(vis);
             if (geolocalizacao_.editorCountry) geolocalizacao_.editorCountry->setVisible(vis);
+            if (geolocalizacao_.btnSalvarFavorito) geolocalizacao_.btnSalvarFavorito->setVisible(vis);
+            if (geolocalizacao_.btnCarregarFavorito) geolocalizacao_.btnCarregarFavorito->setVisible(vis);
             if (aoRelayoutNecessario) aoRelayoutNecessario();
             repaint();
         };
         addAndMakeVisible(*btnCollapseGeoLocation_);
+
+        // ★ Add to Favorites
+        geolocalizacao_.btnSalvarFavorito = std::make_unique<juce::TextButton>(juce::String::fromUTF8(isPt ? "\xe2\x98\x85 Favorito" : "\xe2\x98\x85 Add to Favorites"));
+        geolocalizacao_.btnSalvarFavorito->setTooltip(isPt ? "Salvar este lugar na lista de favoritos do projeto" : "Save this place to the project favorites list");
+        geolocalizacao_.btnSalvarFavorito->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnSalvarFavorito->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnSalvarFavorito->onClick = [this, isPt] {
+            // Build a label from filled fields
+            juce::String sugestao;
+            if (geolocalizacao_.editorCity && geolocalizacao_.editorCity->getText().isNotEmpty())
+                sugestao = geolocalizacao_.editorCity->getText();
+            else if (geolocalizacao_.editorAddress && geolocalizacao_.editorAddress->getText().isNotEmpty())
+                sugestao = geolocalizacao_.editorAddress->getText().substring(0, 40);
+
+            juce::AlertWindow dlg(isPt ? "Salvar Lugar Favorito" : "Save Favorite Place",
+                                  isPt ? "Nome para este lugar:" : "Name for this place:",
+                                  juce::MessageBoxIconType::NoIcon);
+            dlg.addTextEditor("nome", sugestao.isEmpty() ? "" : sugestao, "");
+            dlg.addButton(isPt ? "Salvar" : "Save", 1);
+            dlg.addButton(isPt ? "Cancelar" : "Cancel", 0);
+
+            if (dlg.runModalLoop() == 1) {
+                juce::String nome = dlg.getTextEditorContents("nome").trim();
+                if (nome.isEmpty()) return;
+
+                matriz::analytics::GeoFavorito fav;
+                fav.nome = nome.toStdString();
+                if (geolocalizacao_.editorCoords && geolocalizacao_.editorCoords->getText().isNotEmpty()) {
+                    std::string txt = geolocalizacao_.editorCoords->getText().toStdString();
+                    auto comma = txt.find(',');
+                    if (comma != std::string::npos) {
+                        try {
+                            fav.latitude  = std::stod(txt.substr(0, comma));
+                            fav.longitude = std::stod(txt.substr(comma + 1));
+                        } catch (...) {}
+                    }
+                }
+                if (geolocalizacao_.editorAddress && geolocalizacao_.editorAddress->getText().isNotEmpty())
+                    fav.formattedAddress = geolocalizacao_.editorAddress->getText().toStdString();
+                if (geolocalizacao_.editorCity && geolocalizacao_.editorCity->getText().isNotEmpty())
+                    fav.city = geolocalizacao_.editorCity->getText().toStdString();
+                if (geolocalizacao_.editorState && geolocalizacao_.editorState->getText().isNotEmpty())
+                    fav.stateProvince = geolocalizacao_.editorState->getText().toStdString();
+                if (geolocalizacao_.editorCountry && geolocalizacao_.editorCountry->getText().isNotEmpty())
+                    fav.country = geolocalizacao_.editorCountry->getText().toStdString();
+
+                matriz::analytics::GeoFavoritosRepository::salvar(projeto_.projeto().registro(), fav);
+            }
+        };
+        addAndMakeVisible(*geolocalizacao_.btnSalvarFavorito);
+
+        // ▾ Load Favorite
+        geolocalizacao_.btnCarregarFavorito = std::make_unique<juce::TextButton>(juce::String::fromUTF8(isPt ? "\xe2\x96\xbe Favoritos" : "\xe2\x96\xbe Favorites"));
+        geolocalizacao_.btnCarregarFavorito->setTooltip(isPt ? "Carregar um lugar salvo nos favoritos" : "Load a saved place from favorites");
+        geolocalizacao_.btnCarregarFavorito->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        geolocalizacao_.btnCarregarFavorito->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        geolocalizacao_.btnCarregarFavorito->onClick = [this, isPt, commitGeo] {
+            auto favs = matriz::analytics::GeoFavoritosRepository::listar(projeto_.projeto().registro());
+            if (favs.empty()) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::MessageBoxIconType::InfoIcon,
+                    isPt ? "Favoritos" : "Favorites",
+                    juce::String::fromUTF8(isPt ? "Nenhum lugar favorito salvo ainda.\nUse o bot\xc3\xa3o \xe2\x98\x85 para salvar um lugar." :
+                           "No favorite places saved yet.\nUse the \xe2\x98\x85 button to save a place."));
+                return;
+            }
+
+            juce::PopupMenu menu;
+            for (int i = 0; i < static_cast<int>(favs.size()); ++i) {
+                juce::String label = juce::String(favs[static_cast<size_t>(i)].nome);
+                if (favs[static_cast<size_t>(i)].city)
+                    label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
+                menu.addItem(i + 1, label);
+            }
+
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(geolocalizacao_.btnCarregarFavorito.get()),
+                [this, favs, commitGeo](int result) {
+                    if (result < 1 || result > static_cast<int>(favs.size())) return;
+                    const auto& fav = favs[static_cast<size_t>(result - 1)];
+
+                    if (geolocalizacao_.editorCoords && fav.latitude && fav.longitude) {
+                        std::ostringstream ss;
+                        ss << std::fixed << std::setprecision(6) << *fav.latitude << ", " << *fav.longitude;
+                        geolocalizacao_.editorCoords->setText(ss.str());
+                    }
+                    if (geolocalizacao_.editorAddress && fav.formattedAddress)
+                        geolocalizacao_.editorAddress->setText(juce::String(*fav.formattedAddress));
+                    if (geolocalizacao_.editorCity && fav.city)
+                        geolocalizacao_.editorCity->setText(juce::String(*fav.city));
+                    if (geolocalizacao_.editorState && fav.stateProvince)
+                        geolocalizacao_.editorState->setText(juce::String(*fav.stateProvince));
+                    if (geolocalizacao_.editorCountry && fav.country)
+                        geolocalizacao_.editorCountry->setText(juce::String(*fav.country));
+                    // Real-time (item 9): escolher o favorito já aplica —
+                    // sem isso ficava esperando um Apply que não existe mais.
+                    commitGeo();
+                });
+        };
+        addAndMakeVisible(*geolocalizacao_.btnCarregarFavorito);
     }
+
 
     void salvarGeolocalizacao(const std::string& itemId) {
         if (!geolocalizacao_.editorCoords) return;
@@ -1512,12 +1825,16 @@ private:
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Component> editor;
         std::function<void()> onCommit;
+        // Valor com que o editor foi semeado (ou o último valor salvo) —
+        // permite ao flush (comitarPendencias) saber se há texto digitado
+        // e nunca commitado, sem precisar de um onTextChange por campo.
+        juce::String valorSeed;
     };
     std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
     std::unique_ptr<juce::Label> secHeaderDublinCore_;
     std::unique_ptr<juce::TextButton> btnAjudaDublinCore_;
     std::unique_ptr<juce::TextButton> btnCollapseDublinCore_;
-    bool colapsadoDublinCore_ = false;
+    bool colapsadoDublinCore_ = true;
 
     std::unique_ptr<juce::Label> secHeaderUserAsset_;
     std::unique_ptr<juce::TextButton> btnAjudaUserAsset_;
@@ -1612,9 +1929,26 @@ private:
                         alturaVal = img.getHeight();
                     }
                 }
+
+                // Decodificar imagem/Exiv2 na thread de UI trava a navegação
+                // (trocar de foto vira um spinner) — cacheia o resultado no
+                // JSON do arquivo pra nunca mais precisar reabrir o arquivo
+                // só pra ler largura/altura.
+                if (larguraVal > 0 && alturaVal > 0) {
+                    juce::var dadosCache = dados.isObject() ? dados : juce::var(new juce::DynamicObject());
+                    dadosCache.getDynamicObject()->setProperty("larguraPx", larguraVal);
+                    dadosCache.getDynamicObject()->setProperty("alturaPx", alturaVal);
+                    std::string novoJson = juce::JSON::toString(dadosCache, true).toStdString();
+                    try {
+                        projeto_.projeto().registro().run(
+                            "UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE id = ?",
+                            {matriz::db::Value::of(novoJson), matriz::db::Value::of(arquivo->id)});
+                        dados = dadosCache;
+                    } catch (...) {}
+                }
             }
         }
-        
+
         int exifOrient = 1;
         if (dados.isObject() && dados.hasProperty("bruto")) {
             juce::var bruto = dados["bruto"];
@@ -1677,6 +2011,10 @@ private:
         projeto_.obterItemInfo(itemId, tituloStd, dummyTipo, dummyCod);
 
         juce::String valName = tituloStd;
+        juce::String valNomeArquivo = valName;
+        if (valNomeArquivo.isEmpty() && arquivo) {
+            valNomeArquivo = juce::File(arquivo->caminhoAbsoluto).getFileName();
+        }
         juce::String valPath = projeto_.lerMetadado(itemId, "caminho_catalogo").value_or(arquivo ? arquivo->caminhoAbsoluto.toStdString() : "");
         juce::String valYear = projeto_.lerMetadado(itemId, "ano").value_or("");
         juce::String valSourceMedia = projeto_.lerMetadado(itemId, "source_media").value_or("");
@@ -1727,6 +2065,30 @@ private:
         juce::String valDcIssued = projeto_.lerMetadado(itemId, "dc_issued").value_or("");
         if (valDcIssued.isEmpty()) {
             valDcIssued = juce::Time::getCurrentTime().formatted("%Y-%m-%d");
+        }
+
+        // "As 3 datas do sistema": só EVENT DATE (item.ano) aparece na ficha
+        // ASSET & USER METADATA — é o único campo usado para indexação/
+        // busca temporal (DATE CREATED/DATE ISSUED foram removidas desta
+        // ficha por não deverem estar aqui; o Dublin Core acima fica
+        // intocado).
+        juce::String valEventDate = projeto_.lerMetadado(itemId, "ano").value_or("");
+        // EVENT DATE nunca deve nascer vazio: se o item foi ingerido antes do
+        // fallback de data de criação existir (ou se nada pôde ser lido lá),
+        // herda o ano de DATE CREATED, que logo acima já foi resolvido em
+        // cascata (dc_created → EXIF → data de criação em disco).
+        //
+        // O valor entra como TEXTO EDITÁVEL de verdade no campo (addEditableText
+        // faz setText), não placeholder — dá pra apagar e sobrescrever. E é
+        // gravado de forma silenciosa (ver preencherAnoPadraoSeVazio) pra o
+        // mesmo ano valer na grade, nos filtros e na próxima sessão, sem
+        // marcar o item como editado e sem entrar no Undo.
+        if (valEventDate.isEmpty() && valDcCreated.length() >= 4) {
+            juce::String anoDerivado = valDcCreated.substring(0, 4);
+            if (anoDerivado.containsOnly("0123456789")) {
+                valEventDate = anoDerivado;
+                projeto_.preencherAnoPadraoSeVazio(itemId, anoDerivado.toStdString());
+            }
         }
 
         juce::String valDcType = projeto_.lerMetadado(itemId, "dc_type").value_or("");
@@ -1904,7 +2266,7 @@ private:
             camposUnificados_.push_back(std::move(linha));
         };
 
-        auto addEditableText = [this, &tk, itemId, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::string& dbColuna) {
+        auto addEditableText = [this, &tk, itemId, isPt](const std::string& campoId, const juce::String& rotulo, const juce::String& valor, const std::string& dbColuna, bool comAutocomplete = false) {
             auto linha = std::make_unique<LinhaUnificada>();
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
@@ -1923,28 +2285,151 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto ed = std::make_unique<juce::TextEditor>();
+            std::unique_ptr<juce::TextEditor> ed;
+            if (comAutocomplete) {
+                ProjetoAberto* projPtr = &projeto_;
+                std::string campoAuto = dbColuna;
+                ed = std::make_unique<AutoCompleteTextEditor>([projPtr, campoAuto] {
+                    std::vector<juce::String> valores;
+                    for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), campoAuto))
+                        valores.push_back(juce::String(v));
+                    return valores;
+                });
+            } else {
+                ed = std::make_unique<juce::TextEditor>();
+            }
             ed->setText(valor, false);
             ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
             ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
             ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
             ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
             auto* edPtr = ed.get();
-            linha->onCommit = [this, itemId, dbColuna, edPtr] {
+            linha->valorSeed = valor;
+            auto* linhaRaw = linha.get();
+            linha->onCommit = [this, itemId, dbColuna, edPtr, linhaRaw] {
                 if (edPtr) {
                     std::string txt = edPtr->getText().toStdString();
-                    projeto_.salvarMetadado(itemId, dbColuna, txt);
-                    if (dbColuna == "dc_title") {
-                        projeto_.salvarMetadado(itemId, "titulo", txt);
-                    } else if (dbColuna == "titulo") {
-                        projeto_.salvarMetadado(itemId, "dc_title", txt);
+                    bool ok = true;
+                    try {
+                        if (dbColuna == "dc_title") {
+                            projeto_.salvarMetadado(itemId, "dc_title", txt);
+                            projeto_.renomearItens({itemId}, txt);
+                        } else if (dbColuna == "titulo") {
+                            projeto_.renomearItens({itemId}, txt);
+                            projeto_.salvarMetadado(itemId, "dc_title", txt);
+                        } else {
+                            projeto_.salvarMetadado(itemId, dbColuna, txt);
+                        }
+                    } catch (const std::exception& e) {
+                        ok = false;
+                        juce::Logger::writeToLog("[ficha] FALHA ao salvar campo='" + juce::String(dbColuna) +
+                                                  "' item=" + juce::String(itemId) + " em " +
+                                                  juce::Time::getCurrentTime().toISO8601(true) +
+                                                  " erro=" + juce::String(e.what()));
                     }
-                    if ((dbColuna == "titulo" || dbColuna == "dc_title") && cabecalho_) {
-                        std::string tStd, tpMid, codAc;
-                        if (projeto_.obterItemInfo(itemId, tStd, tpMid, codAc)) {
-                            cabecalho_->setText(juce::String(codAc) + " - " + juce::String(txt), juce::dontSendNotification);
+                    if (ok) {
+                        juce::Logger::writeToLog("[ficha] salvo campo='" + juce::String(dbColuna) +
+                                                  "' item=" + juce::String(itemId) + " em " +
+                                                  juce::Time::getCurrentTime().toISO8601(true));
+                        linhaRaw->valorSeed = edPtr->getText();
+                        piscarBordaSalvo(edPtr);
+                        // Fase 4: SUBJECT/CREATOR/PUBLISHER/CONTRIBUTOR
+                        // alimentam o autocomplete do projeto — "creator"/
+                        // "subject" (bloco UserAsset) usam a mesma coluna
+                        // dc_creator/dc_subject, então caem no mesmo histórico.
+                        if (dbColuna == "dc_subject" || dbColuna == "dc_creator" ||
+                            dbColuna == "dc_publisher" || dbColuna == "dc_contributor") {
+                            matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), dbColuna, txt);
                         }
                     }
+                    if (dbColuna == "titulo" || dbColuna == "dc_title") {
+                        for (auto& other : camposUnificados_) {
+                            if (!other) continue;
+                            if (dbColuna == "titulo" && other->campoId == "dc_title") {
+                                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get()))
+                                    edOth->setText(juce::String::fromUTF8(txt.c_str()), false);
+                            } else if (dbColuna == "dc_title" && other->campoId == "filename") {
+                                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get()))
+                                    edOth->setText(juce::String::fromUTF8(txt.c_str()), false);
+                            }
+                        }
+                        if (cabecalho_) {
+                            std::string tStd, tpMid, codAc;
+                            if (projeto_.obterItemInfo(itemId, tStd, tpMid, codAc)) {
+                                cabecalho_->setText(juce::String(codAc) + " - " + juce::String::fromUTF8(txt.c_str()), juce::dontSendNotification);
+                            }
+                        }
+                    }
+                    // "As 3 datas do sistema": DATE CREATED (data_criacao)
+                    // não é mais sincronizada com o dc_created do Dublin
+                    // Core — são campos independentes a partir de agora
+                    // (item 10). Este bloco só sincroniza múltiplos widgets
+                    // do PRÓPRIO dc_created (Dublin Core), se algum dia
+                    // houver mais de um na tela.
+                    if (dbColuna == "dc_created") {
+                        for (auto& other : camposUnificados_) {
+                            if (!other) continue;
+                            if (other->campoId == "dc_created") {
+                                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get())) {
+                                    if (edOth != edPtr)
+                                        edOth->setText(juce::String::fromUTF8(txt.c_str()), false);
+                                }
+                            }
+                        }
+                    }
+                    // CREATOR (ASSET & USER) e CREATOR do Dublin Core (item 3):
+                    // mesmo campo dc_creator por baixo, dois lugares na tela —
+                    // preencher um copia pro outro na hora, sem precisar salvar
+                    // e reabrir a ficha.
+                    if (dbColuna == "dc_creator") {
+                        for (auto& other : camposUnificados_) {
+                            if (!other) continue;
+                            if (other->campoId == "dc_creator" || other->campoId == "creator") {
+                                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get())) {
+                                    if (edOth != edPtr)
+                                        edOth->setText(juce::String::fromUTF8(txt.c_str()), false);
+                                }
+                            }
+                        }
+                    }
+                    // SUBJECT (ASSET & USER) e ASSUNTO/SUBJECT do Dublin Core:
+                    // mesmo esquema do CREATOR acima — mesmo campo dc_subject
+                    // por baixo, sincronizado ao vivo entre os dois lugares.
+                    if (dbColuna == "dc_subject") {
+                        for (auto& other : camposUnificados_) {
+                            if (!other) continue;
+                            if (other->campoId == "dc_subject" || other->campoId == "subject") {
+                                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get())) {
+                                    if (edOth != edPtr)
+                                        edOth->setText(juce::String::fromUTF8(txt.c_str()), false);
+                                }
+                            }
+                        }
+                    }
+                    // Migrado do antigo botão APPLY (removido — correção
+                    // METADATA item 5): título novo também renomeia o
+                    // caminho de catálogo, não só o registro no banco.
+                    if (dbColuna == "titulo" || dbColuna == "filename") {
+                        juce::String novoTitulo = juce::String::fromUTF8(txt.c_str()).trim();
+                        if (novoTitulo.isNotEmpty()) {
+                            auto pathOpt = projeto_.lerMetadado(itemId, "caminho_catalogo");
+                            if (pathOpt && !pathOpt->empty()) {
+                                juce::File fPath(juce::String::fromUTF8(pathOpt->c_str()));
+                                if (fPath.getParentDirectory().exists() ||
+                                    juce::String::fromUTF8(pathOpt->c_str()).containsChar('/') ||
+                                    juce::String::fromUTF8(pathOpt->c_str()).containsChar('\\')) {
+                                    juce::File novoPath = fPath.getParentDirectory().getChildFile(novoTitulo);
+                                    try {
+                                        projeto_.salvarMetadado(itemId, "caminho_catalogo", novoPath.getFullPathName().toStdString());
+                                    } catch (...) {}
+                                }
+                            }
+                        }
+                    }
+                    // Real-time (item 4/6): mantém o card do item em
+                    // memória (título, etc.) sincronizado sem recarregar a
+                    // lista inteira — aoMudar aqui só atualiza contadores.
+                    if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                     if (aoMudar) aoMudar();
                 }
             };
@@ -2004,6 +2489,7 @@ private:
                         txt = traduzirContent(txt, false);
                     }
                     projeto_.salvarMetadado(itemId, dbColuna, txt.toStdString());
+                    if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                     if (aoMudar) aoMudar();
                 }
             };
@@ -2098,11 +2584,11 @@ private:
 
         // --- DUBLIN CORE METADATA SECTION (At top of all cards, above NAME) ---
         addEditableText("dc_title", isPt ? juce::String::fromUTF8("TÍTULO") : juce::String("TITLE"), valDcTitle, "dc_title");
-        addEditableText("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator");
-        addEditableText("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject");
+        addEditableText("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
+        addEditableText("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
         addEditableText("dc_description", isPt ? juce::String::fromUTF8("DESCRIÇÃO") : juce::String("DESCRIPTION"), valDcDescription, "dc_description");
-        addEditableText("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), valDcPublisher, "dc_publisher");
-        addEditableText("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), valDcContributor, "dc_contributor");
+        addEditableText("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), valDcPublisher, "dc_publisher", true);
+        addEditableText("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), valDcContributor, "dc_contributor", true);
         addEditableText("dc_created", isPt ? juce::String::fromUTF8("DATA DE CRIAÇÃO (AAAA-MM-DD)") : juce::String("DATE CREATED (YYYY-MM-DD)"), valDcCreated, "dc_created");
         addEditableText("dc_issued", isPt ? juce::String::fromUTF8("DATA DE PUBLICAÇÃO (AAAA-MM-DD)") : juce::String("DATE ISSUED (YYYY-MM-DD)"), valDcIssued, "dc_issued");
         addEditableText("dc_type", isPt ? juce::String::fromUTF8("TIPO") : juce::String("TYPE"), valDcType, "dc_type");
@@ -2145,23 +2631,32 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto ed = std::make_unique<juce::TextEditor>();
-            ed->setMultiLine(true, true);
-            ed->setReturnKeyStartsNewLine(true);
-            ed->setText(valor, false);
-            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
-            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
-            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
-
+            // NOTES estruturado (item "NOTES — estrutura de metadados e
+            // notas"): continua sendo um único texto em notas_livres por
+            // baixo (ver Source/Model/NotasEstruturadas.h), mas a interface
+            // organiza em seções colapsáveis — OTHER METADATA (automática,
+            // somente leitura) e as seções que o usuário cria via +ADD NOTE.
+            auto ed = std::make_unique<NotesEstruturadasComponent>(isPt);
+            ed->setTexto(valor.toStdString());
             auto* edPtr = ed.get();
-            linha->onCommit = [this, itemId, edPtr] {
+            linha->valorSeed = valor;
+            auto* linhaRaw = linha.get();
+            linha->onCommit = [this, itemId, edPtr, linhaRaw] {
                 if (edPtr) {
-                    projeto_.salvarMetadado(itemId, "notas_livres", edPtr->getText().toStdString());
+                    try {
+                        projeto_.salvarMetadado(itemId, "notas_livres", edPtr->getTexto());
+                        linhaRaw->valorSeed = juce::String(edPtr->getTexto());
+                    } catch (const std::exception& e) {
+                        juce::Logger::writeToLog("[ficha] FALHA ao salvar campo='notas_livres' item=" +
+                                                  juce::String(itemId) + " em " +
+                                                  juce::Time::getCurrentTime().toISO8601(true) +
+                                                  " erro=" + juce::String(e.what()));
+                    }
+                    if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                     if (aoMudar) aoMudar();
                 }
             };
-            ed->onFocusLost = linha->onCommit;
+            ed->onCommit = linha->onCommit;
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
 
@@ -2175,13 +2670,13 @@ private:
             linha->ehPeople = true;
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText(isPt ? "PESSOAS" : "PEOPLE", juce::dontSendNotification);
+            linha->rotulo->setText(isPt ? "PESSOAS / TAGS" : "PEOPLE / TAGS", juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText(isPt ? "[PESSOAS]" : "[PEOPLE]", juce::dontSendNotification);
+            linha->badge->setText(isPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -2269,9 +2764,20 @@ private:
             addAndMakeVisible(*linha->badge);
 
             auto osm = std::make_unique<OriginalSourceMediumEditorComponent>();
+            // Fase 4 (autocomplete por projeto): DEVICE é o único subcampo
+            // do OSM com histórico — os demais são dropdowns fechados.
+            osm->provedorHistoricoDevice = [this] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projeto_.projeto().registro(), "recording_device"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            };
             osm->setValueString(rawValue);
             osm->onChange = [this, itemId, rawOsm = osm.get()] {
                 projeto_.salvarMetadado(itemId, "source_media", rawOsm->getValueString());
+                matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), "recording_device",
+                                                                   rawOsm->getValue().recordingDevice);
+                if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                 if (aoMudar) aoMudar();
                 if (aoRelayoutNecessario) aoRelayoutNecessario();
             };
@@ -2286,7 +2792,16 @@ private:
 
         // Construct fields per category exactly as specified
         if (cat == MediaCategory::Audio) {
-            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
+            // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
+            // do EVENTO retratado pelo asset — único campo usado pra
+            // indexação/busca temporal, ver item 9). Correção seguinte:
+            // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
+            // nesta ficha — removidas daqui; EVENT DATE é o único campo de
+            // data do card ASSET & USER METADATA.
+            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
+            addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
@@ -2300,12 +2815,22 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Audio, isPt),
                                 "collection_type");
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Video) {
-            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
+            // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
+            // do EVENTO retratado pelo asset — único campo usado pra
+            // indexação/busca temporal, ver item 9). Correção seguinte:
+            // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
+            // nesta ficha — removidas daqui; EVENT DATE é o único campo de
+            // data do card ASSET & USER METADATA.
+            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
+            addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
@@ -2318,12 +2843,22 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Video, isPt),
                                 "collection_type");
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else if (cat == MediaCategory::Image) {
-            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
+            // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
+            // do EVENTO retratado pelo asset — único campo usado pra
+            // indexação/busca temporal, ver item 9). Correção seguinte:
+            // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
+            // nesta ficha — removidas daqui; EVENT DATE é o único campo de
+            // data do card ASSET & USER METADATA.
+            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
+            addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
@@ -2333,12 +2868,22 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Image, isPt),
                                 "collection_type");
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
         } else { // Docs
-            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
+            addEditableText("filename", isPt ? juce::String::fromUTF8("NOME DO ARQUIVO") : juce::String("FILE NAME"), valNomeArquivo, "titulo");
+            // "As 3 datas do sistema": FILE DATE virou EVENT DATE (data/ano
+            // do EVENTO retratado pelo asset — único campo usado pra
+            // indexação/busca temporal, ver item 9). Correção seguinte:
+            // DATE CREATED e DATE ISSUED não deveriam ter sido expostas
+            // nesta ficha — removidas daqui; EVENT DATE é o único campo de
+            // data do card ASSET & USER METADATA.
+            addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
+            addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
+            addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("pages", isPt ? juce::String::fromUTF8("PÁGINAS") : juce::String("PAGES"), pagesStr);
@@ -2346,10 +2891,21 @@ private:
             addEditableDropdown("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), traduzirContent(valCollection, isPt),
                                 opcoesContentPorCategoria(MediaCategory::Docs, isPt),
                                 "collection_type");
+            addEditableText("path", isPt ? "CAMINHO" : "PATH", valPath, "caminho_catalogo");
             addEditableToggle("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", isAi, "ai_generated");
             addEditableNotes(valNotes);
             addEditablePeople();
             addEditableTags(tagsList);
+        }
+
+        if (colapsadoDublinCore_) {
+            for (auto& cu : camposUnificados_) {
+                if (cu && cu->bloco == BlocoFicha::DublinCore) {
+                    if (cu->rotulo) cu->rotulo->setVisible(false);
+                    if (cu->badge) cu->badge->setVisible(false);
+                    if (cu->editor) cu->editor->setVisible(false);
+                }
+            }
         }
     }
 
@@ -2904,7 +3460,11 @@ private:
         std::unique_ptr<juce::TextEditor>  editorState;
         std::unique_ptr<juce::Label>       labelCountry;
         std::unique_ptr<juce::TextEditor>  editorCountry;
+        std::unique_ptr<juce::TextButton>  btnSalvarFavorito;   // ★ Add to Favorites
+        std::unique_ptr<juce::TextButton>  btnCarregarFavorito; // ▾ Load Favorite
     } geolocalizacao_;
+    juce::Image iconeGeo_;
+    juce::Rectangle<int> iconeGeoBounds_;
 
     juce::Rectangle<int> quadroDublinCore_;
     juce::Rectangle<int> quadroUserAsset_;
@@ -2920,11 +3480,48 @@ class FichaLoteConteudo : public juce::Component {
 public:
     explicit FichaLoteConteudo(ProjetoAberto& projeto) : projeto_(projeto) {}
 
+    void paint(juce::Graphics& g) override {
+        if (itemIds_.empty()) return;
+        const auto& tk = matriz::ui::tema();
+        auto drawCard = [&](const juce::Rectangle<int>& r) {
+            if (r.isEmpty()) return;
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(r.toFloat(), 6.0f);
+            g.setColour(tk.borda);
+            g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 6.0f, 1.0f);
+        };
+        drawCard(quadroUserAssetLote_);
+        drawCard(quadroGeoLocationLote_);
+        drawCard(quadroDublinCoreLote_);
+    }
+
     void lookAndFeelChanged() override {
         const auto& tk = matriz::ui::tema();
         if (cabecalho_) {
             cabecalho_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
             cabecalho_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        if (secHeaderDublinCoreLote_) {
+            secHeaderDublinCoreLote_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            secHeaderDublinCoreLote_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        if (secHeaderUserAssetLote_) {
+            secHeaderUserAssetLote_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            secHeaderUserAssetLote_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        }
+        for (auto* btn : {btnAjudaDublinCoreLote_.get(), btnAjudaUserAssetLote_.get()}) {
+            if (btn) {
+                btn->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+                btn->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+            }
+        }
+        for (auto* btn : {btnCollapseDublinCoreLote_.get(), btnCollapseUserAssetLote_.get()}) {
+            if (btn) {
+                btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+                btn->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+            }
         }
         for (auto* l : linhas_) {
             if (l->rotulo) l->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -3032,7 +3629,17 @@ public:
         relayoutEExibir();
     }
 
-    void relayout(int largura) {
+    // Mesma ideia de duas passadas do modo de item único — ver comentário
+    // lá em cima de FichaConteudo::relayout.
+    void relayout(int largura, int alturaDisponivel = 0) {
+        relayoutInterno(largura, 0);
+        if (alturaDisponivel > 0) {
+            int deficit = alturaDisponivel - getHeight();
+            if (deficit > 0) relayoutInterno(largura, deficit);
+        }
+    }
+
+    void relayoutInterno(int largura, int extraNotas) {
         const auto& tk = matriz::ui::tema();
         int y = tk.espacoPainel;
         int x = tk.espacoPainel;
@@ -3050,140 +3657,354 @@ public:
             b->setBounds(x, y, larguraUtil, 26);
             y += 26 + tk.espacoPequeno;
         }
+
+        // Telas sem cartões de campo (tipo misto / escolher tipo): sem
+        // cabeçalhos de card pra desenhar.
+        if (linhas_.isEmpty() && !geoLote_.titulo) {
+            quadroDublinCoreLote_ = {};
+            quadroUserAssetLote_ = {};
+            quadroGeoLocationLote_ = {};
+            if (previa_) { previa_->setBounds(x, y, larguraUtil, 36); y += 36 + tk.espacoPequeno; }
+            if (botaoAplicar_) {
+                botaoAplicar_->setBounds(x, y, 120, 28);
+                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, y, 120, 28);
+                y += 28 + tk.espacoMedio;
+            }
+            if (resultado_) { resultado_->setBounds(x, y, larguraUtil, 20); y += 20 + tk.espacoMedio; }
+            setSize(largura, y + tk.espacoPainel);
+            return;
+        }
+
+        // Mesma diagramação em 3 cartões do modo de item único (item 1):
+        // cartões com fundo/borda (ver paint()), na mesma ordem visual
+        // (ASSET & USER, GEO LOCATION, DUBLIN CORE), separando os campos
+        // "dc_*" (Dublin Core) do restante (User Asset).
+        const int padCardX = 12;
+        const int padCardY = 10;
         bool ehDuasColunas = (larguraUtil >= 500);
 
-        if (ehDuasColunas) {
-            int gap = 16;
-            int colW = (larguraUtil - gap) / 2;
-            int x0 = x;
-            int x1 = x + colW + gap;
-            int y0 = y;
-            int y1 = y;
+        std::vector<LinhaLote*> linhasDublinCore, linhasUserAsset;
+        for (auto* linha : linhas_) {
+            if (!linha) continue;
+            if (ehCampoDublinCoreLote(*linha)) linhasDublinCore.push_back(linha);
+            else linhasUserAsset.push_back(linha);
+        }
 
-            for (auto* linha : linhas_) {
-                if (!linha) continue;
+        auto layoutLinhaEmColuna = [&tk, extraNotas](LinhaLote* linha, int currX, int& currY, int colW, int badgeW) {
+            int rotuloW = colW - badgeW - 5;
+            linha->rotulo->setBounds(currX, currY, rotuloW, 16);
+            linha->badge->setBounds(currX + colW - badgeW, currY, badgeW, 16);
+            currY += 18;
 
-                bool useCol1 = (y1 < y0);
-                int currX = useCol1 ? x1 : x0;
-                int& currY = useCol1 ? y1 : y0;
-
-                int rotuloW = colW - 85;
-                linha->rotulo->setBounds(currX, currY, rotuloW, 16);
-                linha->badge->setBounds(currX + colW - 80, currY, 80, 16);
-                currY += 18;
-
-                if (linha->ehOriginalSourceMedium) {
-                    if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
-                        int prefH = osm->getPreferredHeight();
-                        linha->editor->setBounds(currX, currY, colW, prefH);
-                        currY += prefH + tk.espacoPequeno;
-                    } else {
-                        linha->editor->setBounds(currX, currY, colW, 24);
-                        currY += 24 + tk.espacoPequeno;
-                    }
-                } else if (linha->ehPeople) {
-                    linha->editor->setBounds(currX, currY, colW, 26);
-                    currY += 26 + tk.espacoPequeno;
-                } else if (linha->ehNotes) {
-                    linha->editor->setBounds(currX, currY, colW, 64);
-                    currY += 64 + tk.espacoPequeno;
+            if (linha->ehOriginalSourceMedium) {
+                if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
+                    int prefH = osm->getPreferredHeight();
+                    linha->editor->setBounds(currX, currY, colW, prefH);
+                    currY += prefH + tk.espacoPequeno;
                 } else {
                     linha->editor->setBounds(currX, currY, colW, 24);
                     currY += 24 + tk.espacoPequeno;
                 }
+            } else if (linha->ehPeople) {
+                linha->editor->setBounds(currX, currY, colW, 26);
+                currY += 26 + tk.espacoPequeno;
+            } else if (linha->ehTags) {
+                int chipH = 26;
+                if (auto* chips = dynamic_cast<TagChipsEditor*>(linha->editor.get())) chipH = chips->getPreferredHeight();
+                linha->editor->setBounds(currX, currY, colW, chipH);
+                currY += chipH + tk.espacoPequeno;
+            } else if (linha->ehNotes) {
+                int alturaNotas = kAlturaMinimaNotas + extraNotas;
+                linha->editor->setBounds(currX, currY, colW, alturaNotas);
+                currY += alturaNotas + tk.espacoPequeno;
+            } else {
+                linha->editor->setBounds(currX, currY, colW, 24);
+                currY += 24 + tk.espacoPequeno;
+            }
+        };
+
+        if (ehDuasColunas) {
+            int innerW = larguraUtil - 2 * padCardX;
+            int gap = 16;
+            int colW = (innerW - gap) / 2;
+            int x0 = x + padCardX;
+            int x1 = x + padCardX + colW + gap;
+
+            auto layoutHeaderCard = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
+                                         std::unique_ptr<juce::TextButton>& btnCollapse) {
+                int btnW = 20, btnH = 18;
+                int rightX = x + padCardX + innerW;
+                if (btnCollapse) {
+                    rightX -= btnW;
+                    btnCollapse->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 4;
+                }
+                if (btnAjuda) {
+                    rightX -= btnW;
+                    btnAjuda->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                    rightX -= 8;
+                }
+                if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+                y += padCardY + 24;
+            };
+
+            // --- 1. ASSET & USER METADATA ---
+            int cardBTop = y;
+            layoutHeaderCard(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_);
+            if (!colapsadoUserAssetLote_) {
+                int y0 = y, y1 = y;
+                // Mesma regra do modo de item único: NOTES sai da disputa de
+                // coluna, vai por baixo das duas ocupando a largura inteira
+                // do card (item 1 da 3ª correção de UI); PEOPLE+TAGS seguem
+                // juntas, sempre na coluna direita.
+                LinhaLote* linhaNotes = nullptr;
+                LinhaLote* linhaPeople = nullptr;
+                LinhaLote* linhaTags = nullptr;
+                for (auto* linha : linhasUserAsset) {
+                    if (!linha) continue;
+                    if (linha->ehNotes)  { linhaNotes = linha;  continue; }
+                    if (linha->ehPeople) { linhaPeople = linha; continue; }
+                    if (linha->ehTags)   { linhaTags = linha;   continue; }
+                    bool useCol1 = (y1 < y0);
+                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
+                }
+
+                if (linhaPeople || linhaTags) {
+                    int px = x1;
+                    int& py = y1;
+                    if (linhaPeople) layoutLinhaEmColuna(linhaPeople, px, py, colW, 80);
+                    if (linhaTags) layoutLinhaEmColuna(linhaTags, px, py, colW, 80);
+                }
+
+                int yPosColunas = std::max(y0, y1);
+                int cardBBottom = yPosColunas + padCardY;
+
+                if (linhaNotes) {
+                    int nx = x + padCardX;
+                    linhaNotes->rotulo->setBounds(nx, yPosColunas, innerW - 85, 16);
+                    linhaNotes->badge->setBounds(nx + innerW - 80, yPosColunas, 80, 16);
+                    int ny = yPosColunas + 18;
+                    int alturaNotas = kAlturaMinimaNotas + extraNotas;
+                    linhaNotes->editor->setBounds(nx, ny, innerW, alturaNotas);
+                    cardBBottom = ny + alturaNotas + padCardY;
+                }
+
+                quadroUserAssetLote_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
+                y = cardBBottom + tk.espacoMedio;
+            } else {
+                int cardBBottom = y;
+                quadroUserAssetLote_ = juce::Rectangle<int>(x, cardBTop, larguraUtil, cardBBottom - cardBTop);
+                y = cardBBottom + tk.espacoPequeno;
             }
 
+            // --- 2. GEOLOCATION ---
             if (geoLote_.titulo) {
-                bool useCol1 = (y1 < y0);
-                int currX = useCol1 ? x1 : x0;
-                int& currY = useCol1 ? y1 : y0;
+                int cardCTop = y;
 
-                currY += tk.espacoPequeno;
-                int rotuloW = colW - 85;
-                geoLote_.titulo->setBounds(currX, currY, rotuloW, 16);
-                if (geoLote_.badge) geoLote_.badge->setBounds(currX + colW - 80, currY, 80, 16);
-                currY += 18;
+                // Cabeçalho do card em largura inteira (título à esquerda,
+                // badge encostado à direita), idêntico ao da ficha de item
+                // único. Antes o título entrava na disputa de colunas com os
+                // campos e empurrava todos eles uma coluna para o lado — era
+                // isso que deixava COORDS/CITY/COUNTRY à direita no lote e à
+                // esquerda na seleção única.
+                int rightXg = x + padCardX + innerW;
+                if (geoLote_.badge) {
+                    rightXg -= 145;
+                    geoLote_.badge->setBounds(rightXg, y + padCardY, 145, 20);
+                    rightXg -= 8;
+                }
+                geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
+                                           std::max(20, rightXg - (x + padCardX)), 20);
+                y += padCardY + 24;
+
+                int y0 = y, y1 = y;
 
                 auto layoutGeoSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
                     if (lbl && ed) {
-                        lbl->setBounds(currX, currY, colW, 16);
-                        currY += 18;
-                        ed->setBounds(currX, currY, colW, 24);
-                        currY += 24 + tk.espacoPequeno;
+                        bool uc1 = (y1 < y0);
+                        int cx = uc1 ? x1 : x0;
+                        int& cy = uc1 ? y1 : y0;
+                        lbl->setBounds(cx, cy, colW, 16);
+                        cy += 18;
+                        ed->setBounds(cx, cy, colW, 24);
+                        cy += 24 + tk.espacoPequeno;
                     }
                 };
-
                 layoutGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords);
                 layoutGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress);
                 layoutGeoSubfield(geoLote_.labelCity, geoLote_.editorCity);
                 layoutGeoSubfield(geoLote_.labelState, geoLote_.editorState);
                 layoutGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry);
+
+                if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
+                    // Botões lado a lado, abaixo das duas colunas (mesmo
+                    // arranjo do single-item — ver favY/halfW em ~944-950).
+                    int favY = std::max(y0, y1) + tk.espacoPequeno;
+                    int halfW = (innerW - tk.espacoPequeno) / 2;
+                    if (geoLote_.botaoSalvarFavoritos)
+                        geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, favY, halfW, 22);
+                    if (geoLote_.botaoFavoritos)
+                        geoLote_.botaoFavoritos->setBounds(x + padCardX + halfW + tk.espacoPequeno, favY, halfW, 22);
+                    y0 = y1 = favY + 22 + tk.espacoPequeno;
+                }
+
+                int cardCBottom = std::max(y0, y1) + padCardY;
+                quadroGeoLocationLote_ = juce::Rectangle<int>(x, cardCTop, larguraUtil, cardCBottom - cardCTop);
+                y = cardCBottom + tk.espacoMedio;
+            } else {
+                quadroGeoLocationLote_ = {};
             }
 
-            int maxY = std::max(y0, y1);
-
-            if (previa_) {
-                previa_->setBounds(x, maxY, larguraUtil, 36);
-                maxY += 36 + tk.espacoPequeno;
+            // --- 3. DUBLIN CORE METADATA ---
+            int cardATop = y;
+            layoutHeaderCard(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_);
+            if (!colapsadoDublinCoreLote_) {
+                int y0 = y, y1 = y;
+                for (auto* linha : linhasDublinCore) {
+                    bool useCol1 = (y1 < y0);
+                    layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
+                }
+                int cardABottom = std::max(y0, y1) + padCardY;
+                quadroDublinCoreLote_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoMedio;
+            } else {
+                int cardABottom = y;
+                quadroDublinCoreLote_ = juce::Rectangle<int>(x, cardATop, larguraUtil, cardABottom - cardATop);
+                y = cardABottom + tk.espacoPequeno;
             }
+
+            if (previa_) { previa_->setBounds(x, y, larguraUtil, 36); y += 36 + tk.espacoPequeno; }
             if (botaoAplicar_) {
-                botaoAplicar_->setBounds(x, maxY, 120, 28);
-                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, maxY, 120, 28);
-                maxY += 28 + tk.espacoMedio;
+                botaoAplicar_->setBounds(x, y, 120, 28);
+                if (botaoDesfazer_) botaoDesfazer_->setBounds(x + 128, y, 120, 28);
+                y += 28 + tk.espacoMedio;
             }
-            if (resultado_) {
-                resultado_->setBounds(x, maxY, larguraUtil, 20);
-                maxY += 20 + tk.espacoMedio;
-            }
+            if (resultado_) { resultado_->setBounds(x, y, larguraUtil, 20); y += 20 + tk.espacoMedio; }
 
-            setSize(largura, maxY + tk.espacoPainel);
+            setSize(largura, y + tk.espacoPainel);
             return;
         }
 
-        for (auto* linha : linhas_) {
-            int rotuloW = larguraUtil - 95;
-            linha->rotulo->setBounds(x, y, rotuloW, 16);
-            linha->badge->setBounds(x + larguraUtil - 90, y, 90, 16);
+        // --- Single column layout, same 3 cards stacked ---
+        int innerW = larguraUtil - 2 * padCardX;
+
+        auto layoutHeaderCard1Col = [&](std::unique_ptr<juce::Label>& header, std::unique_ptr<juce::TextButton>& btnAjuda,
+                                         std::unique_ptr<juce::TextButton>& btnCollapse) {
+            int btnW = 20, btnH = 18;
+            int rightX = x + padCardX + innerW;
+            if (btnCollapse) {
+                rightX -= btnW;
+                btnCollapse->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 4;
+            }
+            if (btnAjuda) {
+                rightX -= btnW;
+                btnAjuda->setBounds(rightX, y + padCardY + 1, btnW, btnH);
+                rightX -= 8;
+            }
+            if (header) header->setBounds(x + padCardX, y + padCardY, std::max(20, rightX - (x + padCardX)), 20);
+            y += padCardY + 24;
+        };
+
+        auto layoutLinha1Col = [&tk, x, padCardX, innerW, extraNotas](LinhaLote* linha, int& y) {
+            int rotuloW = innerW - 100;
+            linha->rotulo->setBounds(x + padCardX, y, rotuloW, 16);
+            linha->badge->setBounds(x + padCardX + innerW - 95, y, 95, 16);
             y += 18;
 
             if (linha->ehOriginalSourceMedium) {
                 if (auto* osm = dynamic_cast<OriginalSourceMediumEditorComponent*>(linha->editor.get())) {
                     int prefH = osm->getPreferredHeight();
-                    linha->editor->setBounds(x, y, larguraUtil, prefH);
+                    linha->editor->setBounds(x + padCardX, y, innerW, prefH);
                     y += prefH + tk.espacoPequeno;
                 } else {
-                    linha->editor->setBounds(x, y, larguraUtil, 24);
+                    linha->editor->setBounds(x + padCardX, y, innerW, 24);
                     y += 24 + tk.espacoPequeno;
                 }
             } else if (linha->ehPeople) {
-                linha->editor->setBounds(x, y, larguraUtil, 26);
+                linha->editor->setBounds(x + padCardX, y, innerW, 26);
                 y += 26 + tk.espacoPequeno;
+            } else if (linha->ehTags) {
+                int chipH = 26;
+                if (auto* chips = dynamic_cast<TagChipsEditor*>(linha->editor.get())) chipH = chips->getPreferredHeight();
+                linha->editor->setBounds(x + padCardX, y, innerW, chipH);
+                y += chipH + tk.espacoPequeno;
             } else if (linha->ehNotes) {
-                linha->editor->setBounds(x, y, larguraUtil, 64);
-                y += 64 + tk.espacoPequeno;
+                int alturaNotas1Col = kAlturaMinimaNotas + extraNotas;
+                linha->editor->setBounds(x + padCardX, y, innerW, alturaNotas1Col);
+                y += alturaNotas1Col + tk.espacoPequeno;
             } else {
-                linha->editor->setBounds(x, y, larguraUtil, 24);
+                linha->editor->setBounds(x + padCardX, y, innerW, 24);
                 y += 24 + tk.espacoPequeno;
             }
+        };
+
+        // --- 1. ASSET & USER METADATA ---
+        int cardBTop1 = y;
+        layoutHeaderCard1Col(secHeaderUserAssetLote_, btnAjudaUserAssetLote_, btnCollapseUserAssetLote_);
+        if (!colapsadoUserAssetLote_) {
+            for (auto* linha : linhasUserAsset) layoutLinha1Col(linha, y);
+            int cardBBottom1 = y + padCardY;
+            quadroUserAssetLote_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
+            y = cardBBottom1 + tk.espacoMedio;
+        } else {
+            int cardBBottom1 = y;
+            quadroUserAssetLote_ = juce::Rectangle<int>(x, cardBTop1, larguraUtil, cardBBottom1 - cardBTop1);
+            y = cardBBottom1 + tk.espacoPequeno;
         }
+
+        // --- 2. GEOLOCATION ---
         if (geoLote_.titulo) {
-            y += tk.espacoPequeno;
-            int rotuloW = larguraUtil - 95;
-            geoLote_.titulo->setBounds(x, y, rotuloW, 16);
-            if (geoLote_.badge) geoLote_.badge->setBounds(x + larguraUtil - 90, y, 90, 16);
-            y += 18;
+            int cardCTop1 = y;
+            int rightXg = x + padCardX + innerW;
+            if (geoLote_.badge) {
+                rightXg -= 135;
+                geoLote_.badge->setBounds(rightXg, y + padCardY, 135, 20);
+                rightXg -= 8;
+            }
+            geoLote_.titulo->setBounds(x + padCardX, y + padCardY,
+                                       std::max(20, rightXg - (x + padCardX)), 20);
+            y += padCardY + 24;
 
-            auto layoutGeoSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-                if (lbl) { lbl->setBounds(x, y, larguraUtil, 16); y += 18; }
-                if (ed) { ed->setBounds(x, y, larguraUtil, 24); y += 24 + tk.espacoPequeno; }
+            auto layoutGeoSubfield1 = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+                if (lbl) { lbl->setBounds(x + padCardX, y, innerW, 16); y += 18; }
+                if (ed) { ed->setBounds(x + padCardX, y, innerW, 24); y += 24 + tk.espacoPequeno; }
             };
+            layoutGeoSubfield1(geoLote_.labelCoords, geoLote_.editorCoords);
+            layoutGeoSubfield1(geoLote_.labelAddress, geoLote_.editorAddress);
+            layoutGeoSubfield1(geoLote_.labelCity, geoLote_.editorCity);
+            layoutGeoSubfield1(geoLote_.labelState, geoLote_.editorState);
+            layoutGeoSubfield1(geoLote_.labelCountry, geoLote_.editorCountry);
+            if (geoLote_.botaoSalvarFavoritos || geoLote_.botaoFavoritos) {
+                int halfW = (innerW - tk.espacoPequeno) / 2;
+                if (geoLote_.botaoSalvarFavoritos)
+                    geoLote_.botaoSalvarFavoritos->setBounds(x + padCardX, y, halfW, 22);
+                if (geoLote_.botaoFavoritos)
+                    geoLote_.botaoFavoritos->setBounds(x + padCardX + halfW + tk.espacoPequeno, y, halfW, 22);
+                y += 22 + tk.espacoPequeno;
+            }
 
-            layoutGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords);
-            layoutGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress);
-            layoutGeoSubfield(geoLote_.labelCity, geoLote_.editorCity);
-            layoutGeoSubfield(geoLote_.labelState, geoLote_.editorState);
-            layoutGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry);
+            int cardCBottom1 = y + padCardY;
+            quadroGeoLocationLote_ = juce::Rectangle<int>(x, cardCTop1, larguraUtil, cardCBottom1 - cardCTop1);
+            y = cardCBottom1 + tk.espacoMedio;
+        } else {
+            quadroGeoLocationLote_ = {};
         }
+
+        // --- 3. DUBLIN CORE METADATA ---
+        int cardATop1 = y;
+        layoutHeaderCard1Col(secHeaderDublinCoreLote_, btnAjudaDublinCoreLote_, btnCollapseDublinCoreLote_);
+        if (!colapsadoDublinCoreLote_) {
+            for (auto* linha : linhasDublinCore) layoutLinha1Col(linha, y);
+            int cardABottom1 = y + padCardY;
+            quadroDublinCoreLote_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoMedio;
+        } else {
+            int cardABottom1 = y;
+            quadroDublinCoreLote_ = juce::Rectangle<int>(x, cardATop1, larguraUtil, cardABottom1 - cardATop1);
+            y = cardABottom1 + tk.espacoPequeno;
+        }
+
         if (previa_) {
             previa_->setBounds(x, y, larguraUtil, 36);
             y += 36 + tk.espacoPequeno;
@@ -3202,6 +4023,27 @@ public:
 
     std::function<void()> aoRelayoutNecessario;
     std::function<void()> aoAplicarEmLote;
+    // Real-time (correção METADATA): disparado por item, a cada campo
+    // aplicado — mesma função que o single-item usa (aoAplicarSucesso) pra
+    // manter o card do item em memória atualizado sem recarregar a lista
+    // inteira nem mexer no filtro/seleção corrente.
+    std::function<void(const std::string& itemId)> aoAplicarSucessoItem;
+
+    // Correção realtime (Bug 1), modo lote: mesmo papel do
+    // FichaConteudo::comitarPendencias() — commita texto digitado e ainda
+    // não aplicado antes que os editores sejam destruídos.
+    void comitarPendencias() {
+        for (auto* linha : linhas_) {
+            if (!linha) continue;
+            if (linha->ehNotes) {
+                if (auto* notes = dynamic_cast<NotesEstruturadasComponent*>(linha->editor.get())) {
+                    if (notes->onCommit) notes->onCommit();
+                }
+            } else if (auto* ed = dynamic_cast<juce::TextEditor*>(linha->editor.get())) {
+                if (ed->getText() != linha->valorSeed) aplicarCampoAgora(linha);
+            }
+        }
+    }
 
     juce::Component* editorDoCampoParaTeste(const std::string& campoId) {
         for (auto* linha : linhas_) {
@@ -3244,6 +4086,9 @@ private:
         bool ehDropdown = false;
         bool ehOriginalSourceMedium = false;
         std::vector<std::string> opcoes;
+        // Último valor semeado/aplicado — usado pelo flush (comitarPendencias)
+        // pra saber se há texto digitado e ainda não aplicado nesta linha.
+        juce::String valorSeed;
     };
 
     struct SnapshotItem {
@@ -3271,10 +4116,13 @@ private:
         std::unique_ptr<juce::TextEditor> editorState;
         std::unique_ptr<juce::Label> labelCountry;
         std::unique_ptr<juce::TextEditor> editorCountry;
+        std::unique_ptr<juce::TextButton> botaoFavoritos;
+        std::unique_ptr<juce::TextButton> botaoSalvarFavoritos;   // ★ Add to Favorites (Fase 2)
         bool tocado = false;
     };
 
     void limpar() {
+        comitarPendencias();
         cabecalho_.reset();
         mensagem_.reset();
         botoesTipo_.clear();
@@ -3285,6 +4133,17 @@ private:
         botaoDesfazer_.reset();
         resultado_.reset();
         undoSnapshot_.clear();
+        quadroDublinCoreLote_ = {};
+        quadroUserAssetLote_ = {};
+        quadroGeoLocationLote_ = {};
+        secHeaderDublinCoreLote_.reset();
+        btnAjudaDublinCoreLote_.reset();
+        btnCollapseDublinCoreLote_.reset();
+        colapsadoDublinCoreLote_ = true;
+        secHeaderUserAssetLote_.reset();
+        btnAjudaUserAssetLote_.reset();
+        btnCollapseUserAssetLote_.reset();
+        colapsadoUserAssetLote_ = false;
         setSize(getWidth(), 0);
     }
 
@@ -3328,8 +4187,95 @@ private:
 
     void construirCamposUnificadosLote(MediaCategory cat) {
         const auto& tk = matriz::ui::tema();
+        bool isPtHeaders = (matriz::i18n::localeAtivo() == "pt_BR");
 
-        auto addEditableTextLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, bool ehNotes = false) {
+        // Cabeçalhos dos cartões DUBLIN CORE e ASSET & USER METADATA — mesmo
+        // texto, ajuda e recolher/expandir do modo de item único (item 1).
+        secHeaderUserAssetLote_ = std::make_unique<juce::Label>();
+        secHeaderUserAssetLote_->setText(isPtHeaders ? juce::String::fromUTF8("METADADOS DO ATIVO E DO USUÁRIO") : juce::String("ASSET & USER METADATA"), juce::dontSendNotification);
+        secHeaderUserAssetLote_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        secHeaderUserAssetLote_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        addAndMakeVisible(*secHeaderUserAssetLote_);
+
+        btnAjudaUserAssetLote_ = std::make_unique<juce::TextButton>("?");
+        btnAjudaUserAssetLote_->setTooltip(
+            isPtHeaders ? juce::String::fromUTF8("METADADOS DO ATIVO E DO USUÁRIO\n"
+                                         "Atributos descritivos e técnicos específicos do item no acervo.\n"
+                                         "Inclui mídia de origem (suporte original), classificação de conteúdo, pessoas envolvidas, anotações de curadoria e tags personalizadas.")
+                 : juce::String("ASSET & USER METADATA\n"
+                                "Specific descriptive and technical attributes for this collection item.\n"
+                                "Includes original source medium, content classification, associated persons, curatorial notes, and custom tags."));
+        btnAjudaUserAssetLote_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaUserAssetLote_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaUserAssetLote_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        addAndMakeVisible(*btnAjudaUserAssetLote_);
+
+        btnCollapseUserAssetLote_ = std::make_unique<juce::TextButton>();
+        btnCollapseUserAssetLote_->setButtonText(colapsadoUserAssetLote_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+        btnCollapseUserAssetLote_->setTooltip(colapsadoUserAssetLote_ ? (isPtHeaders ? "Expandir" : "Expand") : (isPtHeaders ? "Recolher" : "Collapse"));
+        btnCollapseUserAssetLote_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnCollapseUserAssetLote_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnCollapseUserAssetLote_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        btnCollapseUserAssetLote_->onClick = [this, isPtHeaders] {
+            colapsadoUserAssetLote_ = !colapsadoUserAssetLote_;
+            btnCollapseUserAssetLote_->setButtonText(colapsadoUserAssetLote_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseUserAssetLote_->setTooltip(colapsadoUserAssetLote_ ? (isPtHeaders ? "Expandir" : "Expand") : (isPtHeaders ? "Recolher" : "Collapse"));
+            bool vis = !colapsadoUserAssetLote_;
+            for (auto* l : linhas_) {
+                if (l && !ehCampoDublinCoreLote(*l)) {
+                    if (l->rotulo) l->rotulo->setVisible(vis);
+                    if (l->badge) l->badge->setVisible(vis);
+                    if (l->editor) l->editor->setVisible(vis);
+                }
+            }
+            if (aoRelayoutNecessario) aoRelayoutNecessario();
+            repaint();
+        };
+        addAndMakeVisible(*btnCollapseUserAssetLote_);
+
+        secHeaderDublinCoreLote_ = std::make_unique<juce::Label>();
+        secHeaderDublinCoreLote_->setText(isPtHeaders ? "METADADOS DUBLIN CORE" : "DUBLIN CORE METADATA", juce::dontSendNotification);
+        secHeaderDublinCoreLote_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        secHeaderDublinCoreLote_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        addAndMakeVisible(*secHeaderDublinCoreLote_);
+
+        btnAjudaDublinCoreLote_ = std::make_unique<juce::TextButton>("?");
+        btnAjudaDublinCoreLote_->setTooltip(
+            isPtHeaders ? juce::String::fromUTF8("DUBLIN CORE (ISO 15836)\n"
+                                         "Padrão internacional aberto de metadados arquivísticos (15 elementos essenciais).\n"
+                                         "Ideal para catalogação de patrimônio e acervos, bibliotecas digitais, intercâmbio entre instituições e integração direta com outros sistemas DAM.")
+                 : juce::String("DUBLIN CORE (ISO 15836)\n"
+                                "International open archival metadata standard (15 core elements).\n"
+                                "Ideal for heritage cataloging, digital libraries, institutional exchange, and direct interoperability with other DAM systems."));
+        btnAjudaDublinCoreLote_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnAjudaDublinCoreLote_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        btnAjudaDublinCoreLote_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        addAndMakeVisible(*btnAjudaDublinCoreLote_);
+
+        btnCollapseDublinCoreLote_ = std::make_unique<juce::TextButton>();
+        btnCollapseDublinCoreLote_->setButtonText(colapsadoDublinCoreLote_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+        btnCollapseDublinCoreLote_->setTooltip(colapsadoDublinCoreLote_ ? (isPtHeaders ? "Expandir" : "Expand") : (isPtHeaders ? "Recolher" : "Collapse"));
+        btnCollapseDublinCoreLote_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        btnCollapseDublinCoreLote_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnCollapseDublinCoreLote_->setColour(juce::TextButton::textColourOnId, tk.textoPrimario);
+        btnCollapseDublinCoreLote_->onClick = [this, isPtHeaders] {
+            colapsadoDublinCoreLote_ = !colapsadoDublinCoreLote_;
+            btnCollapseDublinCoreLote_->setButtonText(colapsadoDublinCoreLote_ ? juce::String::fromUTF8("▶") : juce::String::fromUTF8("▼"));
+            btnCollapseDublinCoreLote_->setTooltip(colapsadoDublinCoreLote_ ? (isPtHeaders ? "Expandir" : "Expand") : (isPtHeaders ? "Recolher" : "Collapse"));
+            bool vis = !colapsadoDublinCoreLote_;
+            for (auto* l : linhas_) {
+                if (l && ehCampoDublinCoreLote(*l)) {
+                    if (l->rotulo) l->rotulo->setVisible(vis);
+                    if (l->badge) l->badge->setVisible(vis);
+                    if (l->editor) l->editor->setVisible(vis);
+                }
+            }
+            if (aoRelayoutNecessario) aoRelayoutNecessario();
+            repaint();
+        };
+        addAndMakeVisible(*btnCollapseDublinCoreLote_);
+
+        auto addEditableTextLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, bool ehNotes = false, bool comAutocomplete = false) {
             auto* linha = linhas_.add(new LinhaLote());
             linha->campoId = campoId;
             linha->colunaDb = dbColuna;
@@ -3348,7 +4294,19 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto ed = std::make_unique<juce::TextEditor>();
+            std::unique_ptr<juce::TextEditor> ed;
+            if (comAutocomplete) {
+                ProjetoAberto* projPtr = &projeto_;
+                std::string campoAuto = dbColuna;
+                ed = std::make_unique<AutoCompleteTextEditor>([projPtr, campoAuto] {
+                    std::vector<juce::String> valores;
+                    for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projPtr->projeto().registro(), campoAuto))
+                        valores.push_back(juce::String(v));
+                    return valores;
+                });
+            } else {
+                ed = std::make_unique<juce::TextEditor>();
+            }
             ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
             ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
             ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
@@ -3373,11 +4331,14 @@ private:
                     ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
                 }
             }
+            linha->valorSeed = ed->getText();
 
-            ed->onTextChange = [this, linha] {
-                linha->tocado = true;
-                atualizarPrevia();
-            };
+            // Real-time (item 6/7 da correção METADATA): commit ao sair do
+            // campo (ou Enter, exceto em NOTES — Enter ali é quebra de
+            // linha), não mais "marca tocado e espera o botão Apply".
+            auto commitTexto = [this, linha] { aplicarCampoAgora(linha); };
+            ed->onFocusLost = commitTexto;
+            if (!ehNotes) ed->onReturnKey = commitTexto;
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
         };
@@ -3428,10 +4389,7 @@ private:
                 cb->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
             }
 
-            cb->onChange = [this, linha] {
-                linha->tocado = true;
-                atualizarPrevia();
-            };
+            cb->onChange = [this, linha] { aplicarCampoAgora(linha); };
             addAndMakeVisible(*cb);
             linha->editor = std::move(cb);
         };
@@ -3440,15 +4398,16 @@ private:
             auto* linha = linhas_.add(new LinhaLote());
             linha->campoId = "people";
             linha->ehPeople = true;
+            bool loteIsPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
             linha->rotulo = std::make_unique<juce::Label>();
-            linha->rotulo->setText("PEOPLE", juce::dontSendNotification);
+            linha->rotulo->setText(loteIsPt ? "PESSOAS / TAGS" : "PEOPLE / TAGS", juce::dontSendNotification);
             linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*linha->rotulo);
 
             linha->badge = std::make_unique<juce::Label>();
-            linha->badge->setText("[PEOPLE]", juce::dontSendNotification);
+            linha->badge->setText(loteIsPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
             linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
@@ -3456,20 +4415,18 @@ private:
 
             auto picker = std::make_unique<PeoplePickerComponent>(projeto_);
             picker->onPersonAddedToTags = [this](const juce::String& nomePessoa) {
-                for (const auto& id : itemIds_) {
-                    projeto_.adicionarTag(id, nomePessoa.toStdString());
-                }
+                // TAGS em lote agora é o mesmo TagChipsEditor da ficha
+                // individual (item "TAGS — ficha em lote") — adicionar o
+                // chip já dispara o aoMudar dele, que aplica a tag a todos
+                // os itens selecionados; não duplicar a escrita aqui.
                 for (auto* l : linhas_) {
                     if (l && l->ehTags) {
-                        if (auto* ed = dynamic_cast<juce::TextEditor*>(l->editor.get())) {
-                            juce::String cur = ed->getText().trim();
-                            if (cur.isNotEmpty()) cur += " ";
-                            ed->setText(cur + "#" + nomePessoa);
-                            break;
+                        if (auto* chips = dynamic_cast<TagChipsEditor*>(l->editor.get())) {
+                            chips->addTag(nomePessoa);
                         }
+                        break;
                     }
                 }
-                if (aoAplicarEmLote) aoAplicarEmLote();
             };
             addAndMakeVisible(*picker);
             linha->editor = std::move(picker);
@@ -3493,19 +4450,127 @@ private:
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
 
-            auto ed = std::make_unique<juce::TextEditor>();
-            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
-            ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
-            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
-            ed->setTextToShowWhenEmpty("Add tags to all selected items (e.g. #studio #master)...", tk.textoTerciario);
+            // Item "TAGS — ficha de metadata em lote": mesmo componente e
+            // comportamento (chips) da ficha individual (addEditableTags),
+            // não um campo de texto livre à parte. Mostra apenas as tags
+            // COMUNS a todos os itens selecionados (interseção, não união):
+            // um chip aqui significa "todos os selecionados têm esta tag".
+            // Adicionar/remover um chip aplica em tempo real a todos os
+            // selecionados — como TagChipsEditor só avisa "mudou" (sem
+            // dizer o quê), o commit compara contra o snapshot anterior pra
+            // saber o que adicionar/remover em cada item. Quem já tem a tag
+            // adicionada é ignorado (adicionarTag é idempotente).
+            std::set<std::string> comuns;
+            bool primeiroItem = true;
+            for (const auto& id : itemIds_) {
+                auto doItem = projeto_.lerTags(id);
+                std::set<std::string> setItem(doItem.begin(), doItem.end());
+                if (primeiroItem) {
+                    comuns = std::move(setItem);
+                    primeiroItem = false;
+                } else {
+                    std::set<std::string> interseccao;
+                    std::set_intersection(comuns.begin(), comuns.end(),
+                                          setItem.begin(), setItem.end(),
+                                          std::inserter(interseccao, interseccao.end()));
+                    comuns = std::move(interseccao);
+                }
+                if (comuns.empty()) break;
+            }
+            std::vector<std::string> tagsIniciais(comuns.begin(), comuns.end());
 
-            ed->onTextChange = [this, linha] {
-                linha->tocado = true;
-                atualizarPrevia();
+            auto chips = std::make_unique<TagChipsEditor>();
+            chips->setTags(tagsIniciais);
+            auto anterior = std::make_shared<std::vector<std::string>>(tagsIniciais);
+            chips->aoMudar = [this, anterior, raw = chips.get()] {
+                std::vector<std::string> novos = raw->getTags();
+                std::set<std::string> setAntigo(anterior->begin(), anterior->end());
+                std::set<std::string> setNovo(novos.begin(), novos.end());
+                std::vector<std::string> adicionadas, removidas;
+                for (const auto& t : setNovo) if (!setAntigo.count(t)) adicionadas.push_back(t);
+                for (const auto& t : setAntigo) if (!setNovo.count(t)) removidas.push_back(t);
+                *anterior = novos;
+                if (adicionadas.empty() && removidas.empty()) return;
+
+                projeto_.iniciarGrupoUndo("Batch edit: tags");
+                for (const auto& id : itemIds_) {
+                    for (const auto& t : adicionadas) projeto_.adicionarTag(id, t);
+                    for (const auto& t : removidas) projeto_.removerTag(id, t);
+                    if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+                }
+                projeto_.finalizarGrupoUndo();
+                if (aoAplicarEmLote) aoAplicarEmLote();
             };
-            addAndMakeVisible(*ed);
-            linha->editor = std::move(ed);
+            chips->aoRedimensionar = [this] { relayoutEExibir(); };
+            addAndMakeVisible(*chips);
+            linha->editor = std::move(chips);
+        };
+
+        // Item "Ficha ASSET & USER METADATA em seleção múltipla": NOTES em
+        // lote passa a usar o mesmo NotesEstruturadasComponent (com +ADD
+        // NOTE) da ficha individual, em vez de uma caixa de texto livre.
+        // Começa vazio (não existe uma única "OTHER METADATA" comum a
+        // vários arquivos diferentes) — cada seção criada/editada aqui é
+        // aplicada por título a TODOS os itens selecionados: se o item já
+        // tem uma seção com aquele título, o conteúdo é atualizado; senão, a
+        // seção é adicionada, preservando o resto das notas de cada item
+        // (incluindo a própria OTHER METADATA de cada um).
+        auto addNotesLote = [this, &tk]() {
+            bool notesIsPt = (matriz::i18n::localeAtivo() == "pt_BR");
+            auto* linha = linhas_.add(new LinhaLote());
+            linha->campoId = "notes";
+            linha->ehNotes = true;
+            linha->colunaDb = "notas_livres";
+
+            linha->rotulo = std::make_unique<juce::Label>();
+            linha->rotulo->setText(notesIsPt ? "NOTAS" : "NOTES", juce::dontSendNotification);
+            linha->rotulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            linha->rotulo->setColour(juce::Label::textColourId, tk.textoPrimario);
+            addAndMakeVisible(*linha->rotulo);
+
+            linha->badge = std::make_unique<juce::Label>();
+            linha->badge->setText(notesIsPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
+            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
+            linha->badge->setJustificationType(juce::Justification::centredRight);
+            addAndMakeVisible(*linha->badge);
+
+            auto notes = std::make_unique<NotesEstruturadasComponent>(notesIsPt);
+            notes->setTexto("");
+            auto ultimaComposicao = std::make_shared<std::vector<matriz::model::SecaoNota>>();
+            notes->onCommit = [this, ultimaComposicao, raw = notes.get()] {
+                auto atual = matriz::model::parseNotasEstruturadas(raw->getTexto());
+                std::vector<matriz::model::SecaoNota> mudou;
+                for (const auto& s : atual) {
+                    bool igual = false;
+                    for (const auto& prev : *ultimaComposicao) {
+                        if (prev.titulo == s.titulo && prev.conteudo == s.conteudo) { igual = true; break; }
+                    }
+                    if (!igual) mudou.push_back(s);
+                }
+                *ultimaComposicao = atual;
+                if (mudou.empty()) return;
+
+                projeto_.iniciarGrupoUndo("Batch edit: notes");
+                for (const auto& id : itemIds_) {
+                    try {
+                        auto secoesItem = matriz::model::parseNotasEstruturadas(projeto_.lerMetadado(id, "notas_livres").value_or(""));
+                        for (const auto& nova : mudou) {
+                            bool achou = false;
+                            for (auto& existente : secoesItem) {
+                                if (existente.titulo == nova.titulo) { existente.conteudo = nova.conteudo; achou = true; break; }
+                            }
+                            if (!achou) secoesItem.push_back(nova);
+                        }
+                        projeto_.salvarMetadado(id, "notas_livres", matriz::model::serializarNotasEstruturadas(secoesItem));
+                        if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+                    } catch (...) {}
+                }
+                projeto_.finalizarGrupoUndo();
+                if (aoAplicarEmLote) aoAplicarEmLote();
+            };
+            addAndMakeVisible(*notes);
+            linha->editor = std::move(notes);
         };
 
         bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
@@ -3530,9 +4595,17 @@ private:
             addAndMakeVisible(*linha->badge);
 
             auto osm = std::make_unique<OriginalSourceMediumEditorComponent>();
-            osm->onChange = [this, linha] {
-                linha->tocado = true;
-                atualizarPrevia();
+            osm->provedorHistoricoDevice = [this] {
+                std::vector<juce::String> valores;
+                for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projeto_.projeto().registro(), "recording_device"))
+                    valores.push_back(juce::String(v));
+                return valores;
+            };
+            auto* rawOsm = osm.get();
+            osm->onChange = [this, linha, rawOsm] {
+                matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), "recording_device",
+                                                                   rawOsm->getValue().recordingDevice);
+                aplicarCampoAgora(linha);
                 relayoutEExibir();
             };
             addAndMakeVisible(*osm);
@@ -3542,7 +4615,8 @@ private:
         auto addGeolocationLote = [this, &tk, isPt]() {
             geoLote_.titulo = std::make_unique<juce::Label>();
             geoLote_.titulo->setText(isPt ? juce::String::fromUTF8("GEOLOCALIZAÇÃO") : juce::String("GEO LOCATION"), juce::dontSendNotification);
-            geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            // Mesma fonte do título do card na ficha de item único.
+            geoLote_.titulo->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
             geoLote_.titulo->setColour(juce::Label::textColourId, tk.textoPrimario);
             addAndMakeVisible(*geoLote_.titulo);
 
@@ -3557,7 +4631,8 @@ private:
                                                const juce::String& textRotulo, const juce::String& placeholder) {
                 lbl = std::make_unique<juce::Label>();
                 lbl->setText(textRotulo, juce::dontSendNotification);
-                lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                // Bold, como os rótulos de geo da ficha de item único.
+                lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
                 lbl->setColour(juce::Label::textColourId, tk.textoSecundario);
                 addAndMakeVisible(*lbl);
 
@@ -3567,10 +4642,9 @@ private:
                 ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
                 ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
                 ed->setTextToShowWhenEmpty(placeholder, tk.textoTerciario);
-                ed->onTextChange = [this] {
-                    geoLote_.tocado = true;
-                    atualizarPrevia();
-                };
+                auto commitGeo = [this] { aplicarGeoAgora(); };
+                ed->onFocusLost = commitGeo;
+                ed->onReturnKey = commitGeo;
                 addAndMakeVisible(*ed);
             };
 
@@ -3579,14 +4653,109 @@ private:
             makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, isPt ? juce::String::fromUTF8("Cidade") : juce::String("City"), "e.g. Porto Seguro");
             makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, isPt ? juce::String::fromUTF8("Estado / Província") : juce::String("State / Province"), "e.g. Bahia");
             makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, isPt ? juce::String::fromUTF8("País") : juce::String("Country"), isPt ? juce::String::fromUTF8("Ex: Brasil") : juce::String("e.g. Brazil"));
+
+            // ★ Add to Favorites (Fase 2): mesmo fluxo de diálogo do
+            // single-item (btnSalvarFavorito), salvando os campos
+            // preenchidos no card de geo lote como novo favorito do
+            // projeto — via o mesmo GeoFavoritosRepository::salvar.
+            geoLote_.botaoSalvarFavoritos = std::make_unique<juce::TextButton>(juce::String::fromUTF8(isPt ? "\xe2\x98\x85 Favorito" : "\xe2\x98\x85 Add to Favorites"));
+            geoLote_.botaoSalvarFavoritos->setTooltip(isPt ? "Salvar este lugar na lista de favoritos do projeto" : "Save this place to the project favorites list");
+            geoLote_.botaoSalvarFavoritos->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoSalvarFavoritos->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoSalvarFavoritos->onClick = [this, isPt] {
+                juce::String sugestao;
+                if (geoLote_.editorCity && geoLote_.editorCity->getText().isNotEmpty())
+                    sugestao = geoLote_.editorCity->getText();
+                else if (geoLote_.editorAddress && geoLote_.editorAddress->getText().isNotEmpty())
+                    sugestao = geoLote_.editorAddress->getText().substring(0, 40);
+
+                juce::AlertWindow dlg(isPt ? "Salvar Lugar Favorito" : "Save Favorite Place",
+                                      isPt ? "Nome para este lugar:" : "Name for this place:",
+                                      juce::MessageBoxIconType::NoIcon);
+                dlg.addTextEditor("nome", sugestao.isEmpty() ? "" : sugestao, "");
+                dlg.addButton(isPt ? "Salvar" : "Save", 1);
+                dlg.addButton(isPt ? "Cancelar" : "Cancel", 0);
+
+                if (dlg.runModalLoop() == 1) {
+                    juce::String nome = dlg.getTextEditorContents("nome").trim();
+                    if (nome.isEmpty()) return;
+
+                    matriz::analytics::GeoFavorito fav;
+                    fav.nome = nome.toStdString();
+                    if (geoLote_.editorCoords && geoLote_.editorCoords->getText().isNotEmpty()) {
+                        std::string txt = geoLote_.editorCoords->getText().toStdString();
+                        auto comma = txt.find(',');
+                        if (comma != std::string::npos) {
+                            try {
+                                fav.latitude  = std::stod(txt.substr(0, comma));
+                                fav.longitude = std::stod(txt.substr(comma + 1));
+                            } catch (...) {}
+                        }
+                    }
+                    if (geoLote_.editorAddress && geoLote_.editorAddress->getText().isNotEmpty())
+                        fav.formattedAddress = geoLote_.editorAddress->getText().toStdString();
+                    if (geoLote_.editorCity && geoLote_.editorCity->getText().isNotEmpty())
+                        fav.city = geoLote_.editorCity->getText().toStdString();
+                    if (geoLote_.editorState && geoLote_.editorState->getText().isNotEmpty())
+                        fav.stateProvince = geoLote_.editorState->getText().toStdString();
+                    if (geoLote_.editorCountry && geoLote_.editorCountry->getText().isNotEmpty())
+                        fav.country = geoLote_.editorCountry->getText().toStdString();
+
+                    matriz::analytics::GeoFavoritosRepository::salvar(projeto_.projeto().registro(), fav);
+                }
+            };
+            addAndMakeVisible(*geoLote_.botaoSalvarFavoritos);
+
+            // Favoritos (item 1 da correção METADATA): mesmo
+            // GeoFavoritosRepository que a ficha de item único usa — sem
+            // lista paralela. Escolher um favorito preenche os campos E já
+            // aplica em tempo real a todos os itens selecionados.
+            geoLote_.botaoFavoritos = std::make_unique<juce::TextButton>(juce::String::fromUTF8(isPt ? "\xe2\x96\xbe Favoritos" : "\xe2\x96\xbe Favorites"));
+            geoLote_.botaoFavoritos->setTooltip(isPt ? "Carregar um lugar salvo nos favoritos e aplicar a todos os selecionados"
+                                                      : "Load a saved place from favorites and apply to all selected");
+            geoLote_.botaoFavoritos->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            geoLote_.botaoFavoritos->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            geoLote_.botaoFavoritos->onClick = [this, isPt] {
+                auto favs = matriz::analytics::GeoFavoritosRepository::listar(projeto_.projeto().registro());
+                if (favs.empty()) {
+                    juce::AlertWindow::showMessageBoxAsync(
+                        juce::MessageBoxIconType::InfoIcon,
+                        isPt ? "Favoritos" : "Favorites",
+                        juce::String::fromUTF8(isPt ? "Nenhum lugar favorito salvo ainda." : "No favorite places saved yet."));
+                    return;
+                }
+                juce::PopupMenu menu;
+                for (int i = 0; i < static_cast<int>(favs.size()); ++i) {
+                    juce::String label = juce::String(favs[static_cast<size_t>(i)].nome);
+                    if (favs[static_cast<size_t>(i)].city)
+                        label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
+                    menu.addItem(i + 1, label);
+                }
+                menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(geoLote_.botaoFavoritos.get()),
+                    [this, favs](int result) {
+                        if (result < 1 || result > static_cast<int>(favs.size())) return;
+                        const auto& fav = favs[static_cast<size_t>(result - 1)];
+                        if (geoLote_.editorCoords && fav.latitude && fav.longitude) {
+                            std::ostringstream ss;
+                            ss << std::fixed << std::setprecision(6) << *fav.latitude << ", " << *fav.longitude;
+                            geoLote_.editorCoords->setText(ss.str());
+                        }
+                        if (geoLote_.editorAddress && fav.formattedAddress) geoLote_.editorAddress->setText(juce::String(*fav.formattedAddress));
+                        if (geoLote_.editorCity && fav.city) geoLote_.editorCity->setText(juce::String(*fav.city));
+                        if (geoLote_.editorState && fav.stateProvince) geoLote_.editorState->setText(juce::String(*fav.stateProvince));
+                        if (geoLote_.editorCountry && fav.country) geoLote_.editorCountry->setText(juce::String(*fav.country));
+                        aplicarGeoAgora();
+                    });
+            };
+            addAndMakeVisible(*geoLote_.botaoFavoritos);
         };
 
         auto addDublinCoreLote = [&addEditableTextLote, &addDropdownLote, isPt]() {
-            addEditableTextLote("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator");
-            addEditableTextLote("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject");
+            addEditableTextLote("dc_creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+            addEditableTextLote("dc_subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
             addEditableTextLote("dc_description", isPt ? juce::String::fromUTF8("DESCRIÇÃO") : juce::String("DESCRIPTION"), "dc_description");
-            addEditableTextLote("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), "dc_publisher");
-            addEditableTextLote("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), "dc_contributor");
+            addEditableTextLote("dc_publisher", isPt ? juce::String::fromUTF8("PUBLICADOR") : juce::String("PUBLISHER"), "dc_publisher", false, true);
+            addEditableTextLote("dc_contributor", isPt ? juce::String::fromUTF8("COLABORADOR") : juce::String("CONTRIBUTOR"), "dc_contributor", false, true);
             addEditableTextLote("dc_issued", isPt ? juce::String::fromUTF8("DATA DE PUBLICAÇÃO (AAAA-MM-DD)") : juce::String("DATE ISSUED (YYYY-MM-DD)"), "dc_issued");
             addEditableTextLote("dc_type", isPt ? juce::String::fromUTF8("TIPO") : juce::String("TYPE"), "dc_type");
             addEditableTextLote("dc_source", isPt ? juce::String::fromUTF8("ORIGEM") : juce::String("SOURCE"), "dc_source");
@@ -3605,14 +4774,25 @@ private:
         switch (cat) {
             case MediaCategory::Audio: {
                 addDublinCoreLote();
-                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
+                // Item "Ficha ASSET & USER METADATA em seleção múltipla":
+                // CREATOR/SUBJECT também aparecem aqui (bloco UserAsset),
+                // não só no card DUBLIN CORE — mesmo campo dc_creator/
+                // dc_subject por baixo (campoId sem prefixo "dc_" já cai no
+                // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
+                // DATE trocaram de posição entre si (ajuste de layout da
+                // ficha de seleção múltipla).
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
+                // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
+                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Audio, isPt));
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
                 addEditableTextLote("isrc", "ISRC", "isrc");
-                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
+                addNotesLote();
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3620,13 +4800,24 @@ private:
             }
             case MediaCategory::Video: {
                 addDublinCoreLote();
-                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
+                // Item "Ficha ASSET & USER METADATA em seleção múltipla":
+                // CREATOR/SUBJECT também aparecem aqui (bloco UserAsset),
+                // não só no card DUBLIN CORE — mesmo campo dc_creator/
+                // dc_subject por baixo (campoId sem prefixo "dc_" já cai no
+                // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
+                // DATE trocaram de posição entre si (ajuste de layout da
+                // ficha de seleção múltipla).
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
+                // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
+                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Video, isPt));
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
+                addNotesLote();
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3634,13 +4825,24 @@ private:
             }
             case MediaCategory::Image: {
                 addDublinCoreLote();
-                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
+                // Item "Ficha ASSET & USER METADATA em seleção múltipla":
+                // CREATOR/SUBJECT também aparecem aqui (bloco UserAsset),
+                // não só no card DUBLIN CORE — mesmo campo dc_creator/
+                // dc_subject por baixo (campoId sem prefixo "dc_" já cai no
+                // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
+                // DATE trocaram de posição entre si (ajuste de layout da
+                // ficha de seleção múltipla).
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
+                // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
+                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Image, isPt));
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
+                addNotesLote();
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3648,13 +4850,24 @@ private:
             }
             case MediaCategory::Docs: {
                 addDublinCoreLote();
-                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
+                // Item "Ficha ASSET & USER METADATA em seleção múltipla":
+                // CREATOR/SUBJECT também aparecem aqui (bloco UserAsset),
+                // não só no card DUBLIN CORE — mesmo campo dc_creator/
+                // dc_subject por baixo (campoId sem prefixo "dc_" já cai no
+                // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
+                // DATE trocaram de posição entre si (ajuste de layout da
+                // ficha de seleção múltipla).
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
+                // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
+                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Docs, isPt));
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
+                addNotesLote();
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3663,13 +4876,24 @@ private:
             case MediaCategory::Mixed:
             default: {
                 addDublinCoreLote();
-                addEditableTextLote("year", isPt ? "ANO" : "YEAR", "ano");
+                // Item "Ficha ASSET & USER METADATA em seleção múltipla":
+                // CREATOR/SUBJECT também aparecem aqui (bloco UserAsset),
+                // não só no card DUBLIN CORE — mesmo campo dc_creator/
+                // dc_subject por baixo (campoId sem prefixo "dc_" já cai no
+                // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
+                // DATE trocaram de posição entre si (ajuste de layout da
+                // ficha de seleção múltipla).
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
+                // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
+                addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Mixed, isPt));
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("notes", isPt ? "NOTAS" : "NOTES", "notas_livres", true);
+                addNotesLote();
                 addPeopleLote();
                 addTagsLote();
                 addGeolocationLote();
@@ -3677,26 +4901,17 @@ private:
             }
         }
 
-        previa_ = std::make_unique<juce::Label>();
-        previa_->setColour(juce::Label::textColourId, tk.textoSecundario);
-        previa_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-        addAndMakeVisible(*previa_);
-
-        botaoAplicar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.lote_aplicar"));
-        botaoAplicar_->onClick = [this] { aplicar(); };
-        addAndMakeVisible(*botaoAplicar_);
-
-        botaoDesfazer_ = std::make_unique<juce::TextButton>(matriz::i18n::t("ficha.lote_desfazer"));
-        botaoDesfazer_->onClick = [this] { desfazer(); };
-        addAndMakeVisible(*botaoDesfazer_);
-        botaoDesfazer_->setVisible(false);
-
+        // Real-time (correção METADATA, item 5): SEM botão APPLY — cada
+        // campo já aplica sozinho no commit (ver aplicarCampoAgora/
+        // aplicarGeoAgora, chamadas pelos onChange/onFocusLost de cada
+        // campo acima). previa_/botaoAplicar_/botaoDesfazer_ nunca são
+        // construídos — ficam null pra sempre, os "if (botaoAplicar_)" de
+        // layout mais abaixo continuam de pé mas não desenham nada.
+        // resultado_ vira o feedback do ÚLTIMO campo aplicado.
         resultado_ = std::make_unique<juce::Label>();
         resultado_->setColour(juce::Label::textColourId, tk.textoSecundario);
         resultado_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         addAndMakeVisible(*resultado_);
-
-        atualizarPrevia();
     }
 
     juce::String lerValorLinha(const LinhaLote& linha) const {
@@ -3717,177 +4932,186 @@ private:
         return {};
     }
 
-    void atualizarPrevia() {
-        juce::StringArray partes;
-        for (auto* linha : linhas_) {
-            if (linha->tocado) {
-                juce::String val = lerValorLinha(*linha);
-                if (val.isNotEmpty()) {
-                    partes.add(linha->rotulo->getText() + "=" + val);
-                }
-            }
-        }
-        if (geoLote_.tocado) {
-            partes.add("GEO LOCATION=[BATCH OVERRIDE]");
-        }
+    // Real-time (correção METADATA, itens 5-9): cada campo aplica sozinho,
+    // assim que muda — sem botão APPLY, sem etapa de confirmação, sem
+    // "tocado" esperando um clique. aplicarCampoAgora() é a MESMA lógica
+    // por tipo de campo que existia dentro do antigo aplicar(), só que
+    // chamada uma linha por vez, na hora do commit daquele campo.
+    void aplicarCampoAgora(LinhaLote* linha) {
+        if (!linha || itemIds_.empty()) return;
+        juce::String val = lerValorLinha(*linha);
 
-        if (partes.isEmpty()) {
-            previa_->setText(matriz::i18n::t("ficha.lote_nenhum_campo_tocado"), juce::dontSendNotification);
-            if (botaoAplicar_) botaoAplicar_->setEnabled(false);
-        } else {
-            previa_->setText(matriz::i18n::t("ficha.lote_previa")
-                                  .replace("{n}", juce::String((int)itemIds_.size()))
-                                  .replace("{campos}", partes.joinIntoString(", ")),
-                              juce::dontSendNotification);
-            if (botaoAplicar_) botaoAplicar_->setEnabled(true);
-        }
-    }
+        // Bug 5 (correção METADATA): quando os itens selecionados têm
+        // valores diferentes pra este campo, o editor fica com texto real
+        // vazio (só mostra um placeholder cinza "valores múltiplos") —
+        // Enter ou perda de foco SEM o usuário ter digitado nada não pode
+        // gravar esse vazio em cima do valor de todo mundo (ex.: apagava
+        // o SUBJECT de todos os itens selecionados). Mesmo critério que
+        // comitarPendencias() já usa pra decidir se há algo pendente.
+        if (!linha->ehTags && !linha->ehNotes && val == linha->valorSeed) return;
 
-    void aplicar() {
-        bool algumTocado = false;
-        for (auto* l : linhas_) if (l->tocado) { algumTocado = true; break; }
-        if (geoLote_.tocado) algumTocado = true;
-        if (!algumTocado || itemIds_.empty()) return;
-
-        ProgressoGlobal::obterInstancia().iniciarTarefa("batch_edit", "Applying Batch Edits", (int)itemIds_.size(), nullptr, "Updating " + juce::String((int)itemIds_.size()) + " assets...");
-
-        projeto_.iniciarGrupoUndo("Batch apply");
-
-        undoSnapshot_.clear();
-        for (const auto& id : itemIds_) {
-            SnapshotItem snap;
-            snap.ano = projeto_.lerMetadado(id, "ano").value_or("");
-            snap.source_media = projeto_.lerMetadado(id, "source_media").value_or("");
-            snap.collection_type = projeto_.lerMetadado(id, "collection_type").value_or("");
-            snap.isrc = projeto_.lerMetadado(id, "isrc").value_or("");
-            snap.notas_livres = projeto_.lerMetadado(id, "notas_livres").value_or("");
-            snap.maquina = projeto_.valorCampo(id, "raiz", 0, "maquina").value_or("");
-            snap.tags = projeto_.lerTags(id);
-            snap.geo = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(projeto_.projeto().registro(), id);
-            for (auto* linha : linhas_) {
-                if (linha && !linha->colunaDb.empty()) {
-                    snap.campos[linha->colunaDb] = projeto_.lerMetadado(id, linha->colunaDb).value_or("");
-                }
-            }
-            undoSnapshot_[id] = snap;
-        }
-
-        int sucessos = 0;
-        int falhas = 0;
-
+        projeto_.iniciarGrupoUndo("Batch edit: " + linha->campoId);
+        int sucessos = 0, falhas = 0;
         for (const auto& id : itemIds_) {
             try {
-                for (auto* linha : linhas_) {
-                    if (!linha->tocado) continue;
-                    juce::String val = lerValorLinha(*linha);
-
-                    if (linha->ehTags) {
-                        juce::StringArray tagsNovas;
-                        tagsNovas.addTokens(val, " ,;", "\"");
-                        for (int t = 0; t < tagsNovas.size(); ++t) {
-                            juce::String tg = tagsNovas[t].trimCharactersAtStart("#").trim();
-                            if (tg.isNotEmpty()) {
-                                projeto_.adicionarTag(id, tg.toStdString());
-                            }
-                        }
-                    } else if (linha->ehNotes) {
-                        std::string txt = val.toStdString();
-                        if (!txt.empty()) {
-                            std::string existing = projeto_.lerMetadado(id, "notas_livres").value_or("");
-                            std::string combined = existing.empty() ? txt : (existing + "\n" + txt);
-                            projeto_.salvarMetadado(id, "notas_livres", combined);
-                            std::string agora = matriz::model::agoraIso8601();
-                            projeto_.projeto().registro().run(
-                                "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                                "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
-                                "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
-                                {matriz::db::Value::of(matriz::model::novoUuid()),
-                                 matriz::db::Value::of(id),
-                                 matriz::db::Value::of(txt),
-                                 matriz::db::Value::of(agora)});
-                        }
-                    } else if (linha->colunaDb == "collection_type") {
-                        juce::String canon = traduzirContent(val, false);
-                        projeto_.salvarMetadado(id, "collection_type", canon.toStdString());
-                    } else if (linha->colunaDb == "ai_generated") {
-                        if (val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES")) {
-                            projeto_.salvarMetadado(id, "ai_generated", "AI Generated / Gerado por IA");
-                            projeto_.adicionarTag(id, "IA");
-                            projeto_.adicionarTag(id, "AI");
-                            projeto_.adicionarTag(id, "CONTEUDO IA");
-                            projeto_.adicionarTag(id, "AI CONTENT");
-                        } else {
-                            projeto_.salvarMetadado(id, "ai_generated", "");
-                            projeto_.removerTag(id, "IA");
-                            projeto_.removerTag(id, "AI");
-                            projeto_.removerTag(id, "CONTEUDO IA");
-                            projeto_.removerTag(id, "AI CONTENT");
-                        }
+                if (linha->ehTags) {
+                    juce::StringArray tagsNovas;
+                    tagsNovas.addTokens(val, " ,;", "\"");
+                    for (int t = 0; t < tagsNovas.size(); ++t) {
+                        juce::String tg = tagsNovas[t].trimCharactersAtStart("#").trim();
+                        if (tg.isNotEmpty()) projeto_.adicionarTag(id, tg.toStdString());
+                    }
+                } else if (linha->ehNotes) {
+                    std::string txt = val.toStdString();
+                    if (!txt.empty()) {
+                        std::string existing = projeto_.lerMetadado(id, "notas_livres").value_or("");
+                        std::string combined = existing.empty() ? txt : (existing + "\n" + txt);
+                        projeto_.salvarMetadado(id, "notas_livres", combined);
+                        std::string agora = matriz::model::agoraIso8601();
+                        projeto_.projeto().registro().run(
+                            "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                            "VALUES (?, ?, 'raiz', 0, 'maquina', ?, 'humano', ?) "
+                            "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, atualizado_em = excluded.atualizado_em",
+                            {matriz::db::Value::of(matriz::model::novoUuid()),
+                             matriz::db::Value::of(id),
+                             matriz::db::Value::of(txt),
+                             matriz::db::Value::of(agora)});
+                    }
+                } else if (linha->colunaDb == "collection_type") {
+                    juce::String canon = traduzirContent(val, false);
+                    projeto_.salvarMetadado(id, "collection_type", canon.toStdString());
+                } else if (linha->colunaDb == "ai_generated") {
+                    if (val.containsIgnoreCase("SIM") || val.containsIgnoreCase("YES")) {
+                        projeto_.salvarMetadado(id, "ai_generated", "AI Generated / Gerado por IA");
+                        projeto_.adicionarTag(id, "IA");
+                        projeto_.adicionarTag(id, "AI");
+                        projeto_.adicionarTag(id, "CONTEUDO IA");
+                        projeto_.adicionarTag(id, "AI CONTENT");
                     } else {
-                        projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
+                        projeto_.salvarMetadado(id, "ai_generated", "");
+                        projeto_.removerTag(id, "IA");
+                        projeto_.removerTag(id, "AI");
+                        projeto_.removerTag(id, "CONTEUDO IA");
+                        projeto_.removerTag(id, "AI CONTENT");
                     }
-                }
-
-                if (geoLote_.tocado) {
-                    matriz::analytics::AssetGeolocation geoTemplate;
-                    std::string coordsText = geoLote_.editorCoords ? geoLote_.editorCoords->getText().trim().toStdString() : "";
-                    if (!coordsText.empty()) {
-                        auto commaPos = coordsText.find(',');
-                        if (commaPos != std::string::npos) {
-                            try {
-                                double lat = std::stod(coordsText.substr(0, commaPos));
-                                double lng = std::stod(coordsText.substr(commaPos + 1));
-                                if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
-                                    geoTemplate.latitude = lat;
-                                    geoTemplate.longitude = lng;
-                                    geoTemplate.source = matriz::analytics::GeoSource::UserCoordinates;
-                                }
-                            } catch (...) {}
-                        }
-                    }
-                    std::string addr = geoLote_.editorAddress ? geoLote_.editorAddress->getText().trim().toStdString() : "";
-                    if (!addr.empty()) {
-                        geoTemplate.formattedAddress = addr;
-                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserAddress;
-                    }
-                    std::string city = geoLote_.editorCity ? geoLote_.editorCity->getText().trim().toStdString() : "";
-                    if (!city.empty()) {
-                        geoTemplate.city = city;
-                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCity;
-                    }
-                    std::string state = geoLote_.editorState ? geoLote_.editorState->getText().trim().toStdString() : "";
-                    if (!state.empty()) {
-                        geoTemplate.stateProvince = state;
-                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserState;
-                    }
-                    std::string country = geoLote_.editorCountry ? geoLote_.editorCountry->getText().trim().toStdString() : "";
-                    if (!country.empty()) {
-                        geoTemplate.country = country;
-                        if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCountry;
-                    }
-
-                    if (geoTemplate.hasAnyLocationData()) {
-                        geoTemplate.assetId = id;
-                        matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geoTemplate);
-                    }
+                } else if (!linha->colunaDb.empty()) {
+                    projeto_.salvarMetadado(id, linha->colunaDb, val.toStdString());
                 }
                 ++sucessos;
-            } catch (const std::exception&) {
+                if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+            } catch (const std::exception& e) {
                 ++falhas;
+                juce::Logger::writeToLog("[ficha-lote] FALHA ao salvar campo='" + juce::String(linha->campoId) +
+                                          "' item=" + juce::String(id) + " em " +
+                                          juce::Time::getCurrentTime().toISO8601(true) +
+                                          " erro=" + juce::String(e.what()));
             }
-            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_edit", sucessos + falhas, juce::String(sucessos + falhas) + " of " + juce::String((int)itemIds_.size()) + " updated");
+        }
+        projeto_.finalizarGrupoUndo();
+        juce::Logger::writeToLog("[ficha-lote] campo='" + juce::String(linha->campoId) + "' aplicado em " +
+                                  juce::String(sucessos) + " item(ns), " + juce::String(falhas) +
+                                  " falha(s), em " + juce::Time::getCurrentTime().toISO8601(true));
+        linha->valorSeed = val;
+
+        // Fase 4: mesmos 4 campos do modo single alimentam o autocomplete
+        // do projeto (uma vez por aplicação, não por item — é o mesmo
+        // valor pros itens selecionados).
+        if (sucessos > 0 && (linha->colunaDb == "dc_subject" || linha->colunaDb == "dc_creator" ||
+                              linha->colunaDb == "dc_publisher" || linha->colunaDb == "dc_contributor")) {
+            matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), linha->colunaDb, val.toStdString());
         }
 
-        projeto_.finalizarGrupoUndo();
+        // CREATOR (ASSET & USER) e CREATOR do Dublin Core, idem SUBJECT:
+        // mesmo dc_creator/dc_subject por baixo, dois lugares na tela — como
+        // no modo item único, preencher um copia pro outro na hora.
+        if (linha->colunaDb == "dc_creator" || linha->colunaDb == "dc_subject") {
+            for (auto* other : linhas_) {
+                if (!other || other == linha || other->colunaDb != linha->colunaDb) continue;
+                if (auto* edOth = dynamic_cast<juce::TextEditor*>(other->editor.get())) {
+                    edOth->setText(val, false);
+                    other->valorSeed = val;
+                }
+            }
+        }
 
         juce::String texto = matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(sucessos));
         if (falhas > 0) texto += matriz::i18n::t("ficha.lote_resultado_falhas").replace("{falhas}", juce::String(falhas));
-        resultado_->setText(texto, juce::dontSendNotification);
-        if (botaoDesfazer_) botaoDesfazer_->setVisible(sucessos > 0);
-        relayoutEExibir();
+        if (resultado_) resultado_->setText(texto, juce::dontSendNotification);
 
-        ProgressoGlobal::obterInstancia().concluirTarefa("batch_edit", texto);
+        if (sucessos > 0) piscarBordaSalvo(dynamic_cast<juce::TextEditor*>(linha->editor.get()));
+        if (aoAplicarEmLote) aoAplicarEmLote();
+    }
 
+    void aplicarGeoAgora() {
+        if (itemIds_.empty()) return;
+        matriz::analytics::AssetGeolocation geoTemplate;
+        std::string coordsText = geoLote_.editorCoords ? geoLote_.editorCoords->getText().trim().toStdString() : "";
+        if (!coordsText.empty()) {
+            auto commaPos = coordsText.find(',');
+            if (commaPos != std::string::npos) {
+                try {
+                    double lat = std::stod(coordsText.substr(0, commaPos));
+                    double lng = std::stod(coordsText.substr(commaPos + 1));
+                    if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
+                        geoTemplate.latitude = lat;
+                        geoTemplate.longitude = lng;
+                        geoTemplate.source = matriz::analytics::GeoSource::UserCoordinates;
+                    }
+                } catch (...) {}
+            }
+        }
+        std::string addr = geoLote_.editorAddress ? geoLote_.editorAddress->getText().trim().toStdString() : "";
+        if (!addr.empty()) {
+            geoTemplate.formattedAddress = addr;
+            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserAddress;
+        }
+        std::string city = geoLote_.editorCity ? geoLote_.editorCity->getText().trim().toStdString() : "";
+        if (!city.empty()) {
+            geoTemplate.city = city;
+            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCity;
+        }
+        std::string state = geoLote_.editorState ? geoLote_.editorState->getText().trim().toStdString() : "";
+        if (!state.empty()) {
+            geoTemplate.stateProvince = state;
+            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserState;
+        }
+        std::string country = geoLote_.editorCountry ? geoLote_.editorCountry->getText().trim().toStdString() : "";
+        if (!country.empty()) {
+            geoTemplate.country = country;
+            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCountry;
+        }
+        if (!geoTemplate.hasAnyLocationData()) return;
+
+        // Item "Progress bar para operações de metadata" (exemplo
+        // obrigatório: GEO LOCATION em lote) — mesma ProgressoGlobal já
+        // usada por desfazer() nesta classe, progresso real por item
+        // concluído, não uma animação solta.
+        bool ehLote = itemIds_.size() > 1;
+        const juce::String kIdTarefa = "batch_geo_location";
+        if (ehLote) {
+            ProgressoGlobal::obterInstancia().iniciarTarefa(
+                kIdTarefa, "Applying GEO Location", (int) itemIds_.size(), nullptr, "Starting...");
+        }
+
+        projeto_.iniciarGrupoUndo("Batch edit: geo location");
+        int concluidos = 0;
+        for (const auto& id : itemIds_) {
+            geoTemplate.assetId = id;
+            try {
+                matriz::analytics::AssetGeolocationRepository::salvar(projeto_.projeto().registro(), geoTemplate);
+                if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+            } catch (...) {}
+            ++concluidos;
+            if (ehLote) {
+                ProgressoGlobal::obterInstancia().atualizarProgresso(
+                    kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
+            }
+        }
+        projeto_.finalizarGrupoUndo();
+        if (ehLote) {
+            ProgressoGlobal::obterInstancia().concluirTarefa(
+                kIdTarefa, juce::String(concluidos) + " item(s) updated");
+        }
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
@@ -3955,6 +5179,28 @@ private:
     std::unique_ptr<juce::TextButton> botaoDesfazer_;
     std::unique_ptr<juce::Label> resultado_;
     std::map<std::string, SnapshotItem> undoSnapshot_;
+
+    // Item 1 — mesma diagramação em 3 cartões com bordas do modo de item
+    // único (FichaConteudo): DUBLIN CORE / ASSET & USER METADATA / GEO
+    // LOCATION, com os mesmos cabeçalhos, botões de ajuda/recolher e a
+    // mesma ordem visual (User Asset, GeoLocation, Dublin Core).
+    std::unique_ptr<juce::Label> secHeaderDublinCoreLote_;
+    std::unique_ptr<juce::TextButton> btnAjudaDublinCoreLote_;
+    std::unique_ptr<juce::TextButton> btnCollapseDublinCoreLote_;
+    bool colapsadoDublinCoreLote_ = true;
+
+    std::unique_ptr<juce::Label> secHeaderUserAssetLote_;
+    std::unique_ptr<juce::TextButton> btnAjudaUserAssetLote_;
+    std::unique_ptr<juce::TextButton> btnCollapseUserAssetLote_;
+    bool colapsadoUserAssetLote_ = false;
+
+    juce::Rectangle<int> quadroDublinCoreLote_;
+    juce::Rectangle<int> quadroUserAssetLote_;
+    juce::Rectangle<int> quadroGeoLocationLote_;
+
+    static bool ehCampoDublinCoreLote(const LinhaLote& linha) {
+        return linha.campoId.rfind("dc_", 0) == 0;
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -3967,13 +5213,26 @@ FichaPanelComponent::FichaPanelComponent(ProjetoAberto& projeto) : projeto_(proj
     viewport_->setViewedComponent(conteudo_.get(), false);
     addAndMakeVisible(*viewport_);
 
-    conteudo_->aoRelayoutNecessario = [this] { conteudo_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness()); };
+    conteudo_->aoRelayoutNecessario = [this] {
+        conteudo_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness(), viewport_->getHeight());
+    };
     conteudo_->aoMudarClassificacao = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
     conteudo_->aoMudar = [this] { if (aoMudar) aoMudar(); };
     conteudo_->aoAplicarSucesso = [this](const std::string& itemId) { if (aoAplicarSucesso) aoAplicarSucesso(itemId); };
 }
 
-FichaPanelComponent::~FichaPanelComponent() = default;
+FichaPanelComponent::~FichaPanelComponent() {
+    // Cobre fechar projeto e fechar o app: nesses dois casos o destrutor
+    // roda com projeto_/mosaico_/arvoreAcervo_ ainda vivos (ordem de
+    // destruição em MainComponent), então o flush ainda alcança o banco e
+    // a árvore antes de tudo ser desmontado.
+    salvarPendencias();
+}
+
+void FichaPanelComponent::salvarPendencias() {
+    if (conteudo_) conteudo_->comitarPendencias();
+    if (conteudoLote_) conteudoLote_->comitarPendencias();
+}
 
 juce::Component* FichaPanelComponent::editorDoCampoParaTeste(const std::string& nivel, int nivelIndice,
                                                                const std::string& campoId) {
@@ -4008,6 +5267,11 @@ void FichaPanelComponent::setEditavel(bool editavel) {
 }
 
 void FichaPanelComponent::mostrarItem(const std::string& itemId) {
+    // Trocar de item é o ponto de perda mais comum (Bug 1): sem isto, texto
+    // digitado no card de lote (se estava em modo lote) é descartado quando
+    // conteudoLote_ é escondido, e construirParaItem() só flusha o próprio
+    // conteudo_, não o outro.
+    salvarPendencias();
     itemIdAtual_ = itemId;
     modoLote_ = false;
     viewport_->setViewedComponent(conteudo_.get(), false);
@@ -4022,14 +5286,18 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
         return;
     }
 
+    salvarPendencias();
     itemIdAtual_.clear();
     modoLote_ = true;
     if (!conteudoLote_) {
         conteudoLote_ = std::make_unique<FichaLoteConteudo>(projeto_);
         conteudoLote_->aoRelayoutNecessario = [this] {
-            conteudoLote_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness());
+            conteudoLote_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness(), viewport_->getHeight());
         };
         conteudoLote_->aoAplicarEmLote = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
+        conteudoLote_->aoAplicarSucessoItem = [this](const std::string& itemId) {
+            if (aoAplicarSucesso) aoAplicarSucesso(itemId);
+        };
     }
     viewport_->setViewedComponent(conteudoLote_.get(), false);
     conteudoLote_->mostrarSelecao(itemIds);
@@ -4053,8 +5321,9 @@ void FichaPanelComponent::resized() {
     auto area = getLocalBounds();
     viewport_->setBounds(area);
     int largura = viewport_->getWidth() - viewport_->getScrollBarThickness();
-    if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura);
-    else conteudo_->relayout(largura);
+    int altura = viewport_->getHeight();
+    if (modoLote_ && conteudoLote_) conteudoLote_->relayout(largura, altura);
+    else conteudo_->relayout(largura, altura);
 }
 
 void FichaPanelComponent::lookAndFeelChanged() {

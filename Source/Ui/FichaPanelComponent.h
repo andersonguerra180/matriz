@@ -34,6 +34,12 @@ public:
     void setEditavel(bool editavel);
     bool isEditavel() const { return editavel_; }
 
+    // Correção realtime (Bug 1 — perda de edições): commita agora qualquer
+    // texto digitado e ainda não salvo (campo com foco que nunca perdeu
+    // foco/Enter). Chamar em todo ponto de saída que não reconstrói a ficha
+    // sozinho: fechar projeto, fechar o app, trocar de aba.
+    void salvarPendencias();
+
     // Disparado depois de aplicar ficha em lote ou reclassificar a seleção
     // (tipo de mídia muda contagens/agrupamento em todo lugar — grade,
     // árvore, chips de filtro). MainComponent usa isto pra recarregar tudo.
