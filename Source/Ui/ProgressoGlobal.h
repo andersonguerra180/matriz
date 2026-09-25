@@ -19,6 +19,10 @@ struct EstadoProgresso {
     std::function<void()> aoCancelar;
     juce::String mensagemConclusao;
     juce::Time horarioConclusao;
+    // item ("progress bar ostensivo"): true = esta tarefa já mostra seu
+    // próprio modal dedicado (ex.: ingest → IngestProgressModalDialog) — o
+    // TarefaGlobalModalWatcher não abre um modal genérico por cima dele.
+    bool temModalProprio = false;
 };
 
 class ProgressoGlobalListener {
@@ -38,7 +42,8 @@ public:
                        const juce::String& titulo,
                        int totalItens = 0,
                        std::function<void()> aoCancelar = nullptr,
-                       const juce::String& detalheInicial = "");
+                       const juce::String& detalheInicial = "",
+                       bool temModalProprio = false);
 
     void atualizarProgresso(const juce::String& id,
                             int itensConcluidos,

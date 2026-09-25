@@ -25,7 +25,8 @@ void ProgressoGlobal::iniciarTarefa(const juce::String& id,
                                     const juce::String& titulo,
                                     int totalItens,
                                     std::function<void()> aoCancelar,
-                                    const juce::String& detalheInicial) {
+                                    const juce::String& detalheInicial,
+                                    bool temModalProprio) {
     EstadoProgresso estado;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -39,6 +40,7 @@ void ProgressoGlobal::iniciarTarefa(const juce::String& id,
         estadoAtual_.cancelavel = (aoCancelar != nullptr);
         estadoAtual_.aoCancelar = std::move(aoCancelar);
         estadoAtual_.mensagemConclusao = "";
+        estadoAtual_.temModalProprio = temModalProprio;
         estado = estadoAtual_;
     }
     notificarListeners(estado);
