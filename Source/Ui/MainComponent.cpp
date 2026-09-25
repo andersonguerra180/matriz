@@ -1704,10 +1704,14 @@ void MainComponent::mostrarGrid() {
                 treeWorkspace_->selecionarERenomearPasta(folderId);
             }
         };
-        catalogWorkspace_->aoItemAlterado = [this](const std::string& /*itemId*/) {
-            if (backupWorkspace_) backupWorkspace_->recarregar();
-            if (intakeWorkspace_) intakeWorkspace_->recarregar();
-            if (mosaico_) mosaico_->recarregar();
+        catalogWorkspace_->aoItemAlterado = [this](const std::string& itemId) {
+            if (!itemId.empty()) {
+                if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
+            } else {
+                if (backupWorkspace_) backupWorkspace_->recarregar();
+                if (intakeWorkspace_) intakeWorkspace_->recarregar();
+                if (mosaico_) mosaico_->recarregar();
+            }
         };
         addAndMakeVisible(*catalogWorkspace_);
     } else {
