@@ -61,6 +61,11 @@ class MainComponent : public juce::Component,
                        public juce::DragAndDropContainer,
                        private juce::Timer {
 public:
+    // Item 4 (nova lista): sub-abas da aba combinada "Structure" (ex-STORAGE
+    // + ex-TREEMAP). FolderMap = ArvoreBackupComponent, SpaceMap =
+    // EstatisticasComponent — ver mostrarStructure().
+    enum class SubTabEstrutura { FolderMap, SpaceMap };
+
     MainComponent();
     ~MainComponent() override;
 
@@ -106,9 +111,17 @@ public:
     void mostrarTree();
     void mostrarBackup();
     void mostrarStorage();
+    // Implementação comum das duas acima (item 4, nova lista): mostra a aba
+    // "Structure", com a barra de sub-abas FOLDER MAP/SPACE MAP por cima do
+    // workspace escolhido.
+    void mostrarStructure(SubTabEstrutura subTab);
 
     void abrirColecaoDoCatalogo(const juce::File& pastaColecao);
     void retornarAoCatalogo();
+    // Coleção aberta a partir de um catálogo: o menu File usa isto para
+    // habilitar "Return to Catalog" — a navegação que antes só existia no
+    // botão CLOSE PROJECT das abas.
+    bool temCatalogoPai() const { return catalogoPai_.exists(); }
 
     // Overlay de diálogo interno (§3) — substitui os modais nativos, que
     // criavam peer próprio e crashavam sendo repintados durante a destruição.
@@ -147,14 +160,24 @@ public:
     // lote não acabou: liberar o menu aí deixaria fechar o projeto no meio
     // do fechamento — e fazia o resumo de fim de lote ser lido antes de
     // existir.
-    bool ingestEmAndamento() const { return pendentes_->load() > 0 || loteEmCurso_; }
+    // trabalhosOrfaosLote_ conta threads soltas por executarComPrazoOuSkip()
+    // que o job já desistiu de esperar (timeout/skip) mas que ainda podem
+    // estar rodando de verdade em segundo plano — algumas tocam em *indice
+    // (ponteiro cru pro banco de miniaturas de ProjetoAberto). Sem contar
+    // isto aqui, ingestEmAndamento() ficaria falso e liberaria fechar o
+    // projeto com uma dessas threads ainda podendo desreferenciar um
+    // ponteiro que acabou de morrer.
+    bool ingestEmAndamento() const {
+        return pendentes_->load() > 0 || loteEmCurso_ || finalizandoLote_ || escaneandoEmAndamento_.load()
+            || trabalhosOrfaosLote_->load() > 0;
+    }
 
     // Item 10 — cancelar operação longa. Pede o cancelamento; os jobs ainda
     // enfileirados desistem antes de tocar em arquivo, e o que já foi
     // processado continua válido. Público porque é uma ação de UI de
     // verdade (o botão na barra de progresso) — e é por onde o self-test
     // headless exercita o cancelamento.
-    void cancelarLoteIngest();
+    void cancelarLoteIngest(bool manterArquivosCarregados = true);
 
     void renomearItemSelecionado();
     void renomearEmLoteSelecionados();
@@ -187,10 +210,14 @@ private:
 
 private:
     std::vector<juce::File> expandirArquivos(const juce::Array<juce::File>& arquivosOuPastas) const;
-    void expandirArquivosAsync(const juce::Array<juce::File>& arquivosOuPastas, std::function<void(std::vector<juce::File>)> aoConcluir);
+    void expandirArquivosAsync(const juce::Array<juce::File>& arquivosOuPastas, std::function<void(std::vector<juce::File>, int)> aoConcluir);
     void processarLoteEmBackground(std::vector<juce::File> arquivos,
                                     const std::string& sourceMedia = {},
                                     const std::string& collection = {});
+    // Checagem de duplicata exata na entrada do INTAKE (nome + data do arquivo + tamanho + formato
+    // contra os itens já cadastrados no projeto). Único ponto de entrada de arquivos soltos/pastas
+    // (ingerirArquivos), antes de processarLoteEmBackground criar os itens.
+    void resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos);
     void atualizarLabelProgresso();
     void garantirLabelProgressoIngest();
     // Resumo discreto de fim de lote (item 9, §5 — "HD reconectado... X
@@ -208,6 +235,28 @@ private:
     // Chamado da THREAD DE TRABALHO ao fim de cada arquivo. Não toca no
     // Component — só no contador compartilhado.
     static void registrarUnidadeConcluida(const std::shared_ptr<std::atomic<int>>& pendentes);
+
+    // --- Finalização do lote em etapas ---
+    // O bloco que fecha o lote (árvore, grade, intake, log, vault) rodava
+    // inteiro e SÍNCRONO na message thread, com o modal já fechado: a barra
+    // dizia 100% e a janela congelava em silêncio por vários segundos.
+    // Agora ele é uma lista de etapas; cada uma reporta seu rótulo na barra,
+    // roda numa volta própria do loop de mensagens (pra o texto chegar a ser
+    // pintado) e só então a próxima começa. O modal fecha depois da última.
+    struct PassoFinalizacao {
+        juce::String rotulo;
+        std::function<void()> acao;
+        // Opcional: quando a ação dispara trabalho assíncrono, isto diz
+        // quando ele realmente acabou. nullptr = pronto ao retornar.
+        std::function<bool()> concluido;
+    };
+    void executarPassosFinalizacao(std::shared_ptr<std::vector<PassoFinalizacao>> passos,
+                                    size_t indice,
+                                    std::shared_ptr<std::function<void()>> aoTerminar);
+    void aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFinalizacao>> passos,
+                                   size_t indice,
+                                   std::shared_ptr<std::function<void()>> aoTerminar,
+                                   double inicioEsperaMs);
 
     void mostrarResumoCancelado(int processados, int total);
     void alternarFicha();
@@ -256,6 +305,8 @@ private:
 
     enum class TelaAtiva { Inicial, Home, Catalog, Ingest, Backup, Preservation };
     TelaAtiva telaAtiva_ = TelaAtiva::Inicial;
+
+    SubTabEstrutura subTabEstruturaAtual_ = SubTabEstrutura::FolderMap;
 
     std::unique_ptr<ProjetoAberto> projetoAberto_;
     juce::File catalogoPai_;
@@ -370,18 +421,35 @@ private:
     // sozinho não dá noção de quanto falta.
     juce::String textoProgressoIngest_;
     matriz::app::CancelamentoPtr cancelamentoLote_;
+    matriz::app::CancelamentoPtr cancelamentoScan_;
+    // Item novo (hoje): "SKIP THIS FILE" no diálogo de progresso incrementa
+    // este token — todo job de arquivo que já estiver esperando I/O nesse
+    // instante desiste assim que perceber o token mudar, em vez de esperar
+    // o prazo inteiro. Um job que ainda nem começou não é afetado (ele lê o
+    // token só quando começa a esperar).
+    std::shared_ptr<std::atomic<int>> skipTokenLote_ = std::make_shared<std::atomic<int>>(0);
+    void pularArquivoAtualDoLote();
+    // Ver comentário em ingestEmAndamento().
+    std::shared_ptr<std::atomic<int>> trabalhosOrfaosLote_ = std::make_shared<std::atomic<int>>(0);
     // shared_ptr e não membro atômico simples: os jobs do ThreadPool
     // decrementam isto sem tocar no MainComponent. Ler um Component (mesmo
     // via SafePointer) de fora da message thread é corrida — o contador
     // compartilhado evita a questão inteira.
     std::shared_ptr<std::atomic<int>> pendentes_ = std::make_shared<std::atomic<int>>(0);
     std::atomic<int> ingestsTotalLote_{0};
+    std::atomic<bool> escaneandoEmAndamento_{false};
 
     // Estado do lote em curso, pro timer conseguir fechá-lo sem que cada
     // arquivo poste um callback.
     std::shared_ptr<EstadoLote> estadoLoteAtual_;
     juce::Component::SafePointer<IngestProgressModalDialog> ingestModalDialog_;
     bool loteEmCurso_ = false;
+    // true da primeira etapa de finalização até o modal fechar. Guarda contra
+    // reentrada e mantém ingestEmAndamento() verdadeiro até o fim de verdade.
+    bool finalizandoLote_ = false;
+    // Início da etapa de finalização em curso — a instrumentação mede ação +
+    // espera pelo trabalho em background como um tempo só.
+    std::chrono::system_clock::time_point inicioPassoFinalizacao_{};
     int ticksDoTimer_ = 0;
     juce::int64 tamanhoTotalEmCache_ = 0;
     bool calculandoTamanhoTotal_ = false;
@@ -401,8 +469,11 @@ private:
     std::unique_ptr<IntakeWorkspaceComponent> intakeWorkspace_; // INTAKE (Quarentena)
     std::unique_ptr<CatalogWorkspaceComponent> catalogWorkspace_; // GRID
     std::unique_ptr<DuplicatesWorkspaceComponent> duplicatesWorkspace_; // DUPLICATES
-    std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // ANALYTICS (Statistics + Preservation)
-    std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // TREE (n8n Node Graph Editor)
+    std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STRUCTURE > SPACE MAP (ex-ANALYTICS/Storage)
+    std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
+    // Item 4 (nova lista): sub-abas FOLDER MAP/SPACE MAP da aba "Structure".
+    std::unique_ptr<juce::TextButton> btnEstruturaFolderMap_;
+    std::unique_ptr<juce::TextButton> btnEstruturaSpaceMap_;
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     std::unique_ptr<StorageWorkspaceComponent> storageWorkspace_; // STORAGE
     std::unique_ptr<PreservationWorkspaceComponent> preservationWorkspace_;
