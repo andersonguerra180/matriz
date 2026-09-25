@@ -600,7 +600,17 @@ CREATE TRIGGER IF NOT EXISTS trg_item_busca_delete AFTER DELETE ON item FOR EACH
     DELETE FROM busca_fts WHERE item_id = old.id;
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_item_busca_update AFTER UPDATE ON item FOR EACH ROW BEGIN
+-- "OF titulo, codigo_acervo" (não um AFTER UPDATE genérico): o corpo só usa
+-- essas duas colunas, mas um UPDATE genérico dispara pra QUALQUER coluna de
+-- `item` que mude — inclusive updates em massa que não têm nada a ver com
+-- busca (ex.: a migração de item_campo pra colunas em aplicarSchemas, que
+-- roda em todo item que abre o projeto). Cada disparo faz um DELETE por
+-- valor na busca_fts (FTS5 sem índice pra isso — é uma varredura do
+-- índice inteiro), então um UPDATE em lote de milhares de itens virava
+-- milhares de varreduras completas da FTS. Era a causa real do projeto
+-- ficando preso em "Loading Project..." depois de um lote de ingest
+-- grande — não era storage lento, era este gatilho disparando à toa.
+CREATE TRIGGER IF NOT EXISTS trg_item_busca_update AFTER UPDATE OF titulo, codigo_acervo ON item FOR EACH ROW BEGIN
     DELETE FROM busca_fts WHERE item_id = old.id
       AND (conteudo = IFNULL(old.codigo_acervo, '') OR conteudo = old.titulo);
     INSERT INTO busca_fts(item_id, conteudo) SELECT new.id, new.codigo_acervo WHERE new.codigo_acervo IS NOT NULL;

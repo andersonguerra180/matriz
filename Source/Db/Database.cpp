@@ -91,6 +91,14 @@ Database::Database(const std::string& path) {
         throw DatabaseError("failed to open database at \"" + path + "\": " + msg);
     }
     sqlite3_busy_timeout(db_, 5000);
+
+    // Fix de performance (lag/spinning wheel, item 5): WAL deixa leitores não
+    // bloquearem atrás de um writer (e vice-versa) — o modo padrão DELETE
+    // serializa tudo. synchronous=NORMAL é seguro com WAL (só FULL protege
+    // contra corrupção em power loss no modo antigo; WAL já tem essa
+    // garantia com NORMAL) e evita um fsync a cada COMMIT.
+    execScript("PRAGMA journal_mode=WAL;");
+    execScript("PRAGMA synchronous=NORMAL;");
 }
 
 Database::~Database() {
