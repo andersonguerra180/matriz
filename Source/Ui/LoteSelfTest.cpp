@@ -521,6 +521,71 @@ int rodarLoteSelfTest() {
     }
     raizG.deleteRecursively();
 
+    // ------------------------------- EVENT DATE só com o ano (Intake, lote)
+    // Ano igual ao do DATE CREATED original -> DATE CREATED intacto; ano
+    // diferente (ou sem data original) -> atualiza. EVENT DATE sempre grava.
+    std::cout << "\n-- INTAKE Event Date: year-only keeps an original Date Created of the same year --\n";
+    juce::File raizD = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_eventdate_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizD.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "EventDate";
+        params.prefixoNomenclatura = "EVD";
+        auto projeto = matriz::model::Project::criar(raizD.getChildFile("projeto"), params);
+        auto& regD = projeto->registro();
+        const std::string a = inserirItem(regD, projeto->projetoId(), "EVD-A", true, ".jpg");
+        const std::string b = inserirItem(regD, projeto->projetoId(), "EVD-B", true, ".jpg");
+        const std::string c = inserirItem(regD, projeto->projetoId(), "EVD-C", true, ".jpg");
+        auto gravarCreated = [&](const std::string& id, const std::string& v) {
+            regD.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                     "VALUES (?, ?, 'raiz', 0, 'dc_created', ?, 'leitura_tecnica', ?)",
+                     {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id), matriz::db::Value::of(v),
+                      matriz::db::Value::of(matriz::model::agoraIso8601())});
+        };
+        gravarCreated(a, "2015-04-17 10:30:24");
+        gravarCreated(b, "2014-12-22");
+
+        MainComponent janela;
+        janela.setBounds(0, 0, 1400, 900);
+        janela.abrirProjeto(std::move(projeto));
+        bombear(200);
+        auto* pa = janela.projetoAberto();
+        auto created = [&](const std::string& id) { return pa->valorCampo(id, "raiz", 0, "dc_created").value_or(""); };
+        auto ano = [&](const std::string& id) { return pa->lerMetadado(id, "ano").value_or(""); };
+
+        janela.mostrarIntake();
+        auto* iw = janela.intakeWorkspace_.get();
+        iw->recarregar();
+        esperarAte([&] { return !iw->snapshotPendente() && iw->todosItens_.size() >= 3; });
+        iw->selecionarTodos(true);
+        auto esperarLote = [&] {
+            esperarAte([&] { return iw->poolMetadadoLote_.getNumJobs() == 0; }, 10000);
+            bombear(300);
+        };
+        iw->aplicarEventDateAosSelecionados("2015");
+        esperarLote();
+        checar(created(a) == "2015-04-17 10:30:24", "A: same year -> original Date Created kept (" + juce::String(created(a)) + ")");
+        checar(created(b) == "2015", "B: different year -> Date Created updated (" + juce::String(created(b)) + ")");
+        checar(created(c) == "2015", "C: no original Date Created -> set (" + juce::String(created(c)) + ")");
+        checar(ano(a) == "2015" && ano(b) == "2015" && ano(c) == "2015", "Event Date written on all three");
+        juce::String telaA;
+        for (const auto& it : iw->todosItens_) if (it.id == a) telaA = it.dataCriacao;
+        checar(telaA == "2015-04-17 10:30:24", "the Intake list still shows A's original Date Created (" + telaA + ")");
+
+        pa->desfazer();
+        bombear(200);
+        checar(created(b) == "2014-12-22" && created(a) == "2015-04-17 10:30:24" && ano(a).empty(),
+               "one undo reverts the whole Event Date batch");
+
+        iw->aplicarEventDateAosSelecionados("2015-05-01");  // data completa: sempre atualiza
+        esperarLote();
+        checar(created(a) == "2015-05-01", "a full date (not year-only) updates Date Created (" + juce::String(created(a)) + ")");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("event date selftest: ") + e.what());
+    }
+    raizD.deleteRecursively();
+
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
