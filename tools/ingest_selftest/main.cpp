@@ -1168,9 +1168,22 @@ void testarConsolidacao(const juce::File& dirTemp) {
             "atualizado_em) VALUES (?, ?, NULL, 'Conflito', 0, '{tipo}', ?, ?)", // mesma máscara pros dois -> mesmo nome final
             {matriz::db::Value::of(pastaConflito), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
              matriz::db::Value::of(agora)});
+        // Dois itens NOVOS (nenhum no destino ainda): um item que já tem cópia
+        // no destino mantém o caminho registrado e não entra em colisão — o
+        // destino só cresce (modelo SOURCE/MAIN/CLONE, etapa 4).
+        std::string item4 = matriz::model::novoUuid();
+        projeto->registro().run(
+            "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+            "VALUES (?, ?, 'CNS-004', 'Mais um', 'fita_rolo', ?, ?)",
+            {matriz::db::Value::of(item4), matriz::db::Value::of(projetoId), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+        juce::File masterOrigem4 = dirTemp.getChildFile("consolidacao_master4.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "sine=frequency=260:duration=1", masterOrigem4.getFullPathName()});
+        matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, item4, masterOrigem4, "preservation_master", true);
         projeto->registro().run(
             "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item1),
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item4),
              matriz::db::Value::of(pastaConflito), matriz::db::Value::of(agora)});
         projeto->registro().run(
             "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
@@ -2342,6 +2355,109 @@ void testarResolucaoPeloMain(const juce::File& dirTemp) {
     dirSource.deleteRecursively();
 }
 
+
+// Etapa 4: ADICIONAR AO MAIN — o que já está no MAIN nunca é renomeado nem
+// movido (mesmo com metadado/pasta do MAPA alterados), cópia sumida volta no
+// MESMO caminho, e só o que é novo é copiado.
+void testarAdicionarAoMain(const juce::File& dirTemp) {
+    std::cout << "\n== ADD TO MAIN: the MAIN only grows, nothing already in it moves ==\n";
+    using namespace matriz::consolidacao;
+    juce::File raiz = dirTemp.getChildFile("add_main_" + juce::Uuid().toDashedString());
+    juce::File fonte = dirTemp.getChildFile("add_main_src_" + juce::Uuid().toDashedString());
+    fonte.createDirectory();
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "AddMain";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "ADD";
+        auto projeto = matriz::model::Project::criar(raiz, params);
+        auto& reg = projeto->registro();
+        const std::string agora = matriz::model::agoraIso8601();
+        const std::string pid = projeto->projetoId();
+        auto novaPasta = [&](const char* nome) {
+            std::string id = matriz::model::novoUuid();
+            reg.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+                    "VALUES (?, ?, NULL, ?, 0, ?, ?)",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(pid), matriz::db::Value::of(std::string(nome)),
+                     matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            return id;
+        };
+        const std::string pastaA = novaPasta("Sessao A"), pastaB = novaPasta("Sessao B");
+        std::map<std::string, std::string> arquivoDoItem;
+        auto novoItem = [&](const std::string& codigo, const std::string& ano, int freq) {
+            std::string id = matriz::model::novoUuid();
+            reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, ?, 'fita_rolo', ?, ?)",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(pid), matriz::db::Value::of(codigo),
+                     matriz::db::Value::of(codigo), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'raiz', 0, 'ano', ?, 'humano', ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                     matriz::db::Value::of(ano), matriz::db::Value::of(agora)});
+            juce::File f = fonte.getChildFile(codigo + ".wav");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=" + std::to_string(freq) + ":duration=1", f.getFullPathName()});
+            auto ing = matriz::ingest::ingerirArquivo(reg, projeto->pasta(), id, f, "preservation_master", true);
+            arquivoDoItem[id] = ing.arquivoId;
+            reg.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+                     matriz::db::Value::of(pastaA), matriz::db::Value::of(agora)});
+            return id;
+        };
+        const std::string i1 = novoItem("ADD-001", "1978", 300), i2 = novoItem("ADD-002", "1978", 400);
+        juce::File media = raiz.getChildFile("Media");
+        media.createDirectory();
+        const HierarquiaBackup h = {NivelHierarquia::PastaManual, NivelHierarquia::Ano};
+        auto caminhoDe = [](const PlanoConsolidacao& p, const std::string& itemId) -> const ItemPlanejado* {
+            for (auto& i : p.itens) if (i.itemId == itemId) return &i;
+            return nullptr;
+        };
+
+        auto plano1 = planejarConsolidacao(reg, projeto->pasta(), media, h);
+        auto r1 = executarConsolidacao(reg, projeto->pasta(), media, plano1);
+        check(r1.consolidados == 2 && r1.falhas.empty(), "first backup copied both files to the MAIN");
+        const juce::String caminho1 = caminhoDe(plano1, i1) ? caminhoDe(plano1, i1)->caminhoRelativoDestino : juce::String();
+        const juce::String caminho2 = caminhoDe(plano1, i2) ? caminhoDe(plano1, i2)->caminhoRelativoDestino : juce::String();
+        check(caminho1.contains("1978") && caminho1.contains("Sessao A"), "first backup path follows the chosen hierarchy");
+
+        // Depois do backup: ano do item 1 muda e ele vai pra outra pasta do MAPA.
+        reg.run("UPDATE item_campo SET valor = '1990' WHERE item_id = ? AND campo_id = 'ano'", {matriz::db::Value::of(i1)});
+        reg.run("UPDATE acervo_item_pasta SET pasta_id = ? WHERE item_id = ?",
+                {matriz::db::Value::of(pastaB), matriz::db::Value::of(i1)});
+        // Cópia do item 2 some do MAIN; entra um item 3 novo.
+        media.getChildFile(caminho2).deleteFile();
+        const std::string i3 = novoItem("ADD-003", "1990", 500);
+
+        auto plano2 = planejarConsolidacao(reg, projeto->pasta(), media, h);
+        auto* p1 = caminhoDe(plano2, i1);
+        auto* p2 = caminhoDe(plano2, i2);
+        auto* p3 = caminhoDe(plano2, i3);
+        check(p1 && p1->caminhoRelativoDestino == caminho1 && p1->jaConsolidado,
+              "a file already in the MAIN keeps its path after metadata/folder changes (" +
+                  (p1 ? p1->caminhoRelativoDestino.toStdString() : std::string("-")) + ")");
+        check(p2 && p2->caminhoRelativoDestino == caminho2 && !p2->jaConsolidado,
+              "a MAIN copy missing on disk is planned back to the SAME path");
+        check(p3 && !p3->jaConsolidado && p3->caminhoRelativoDestino.contains("1990"),
+              "a new file gets a path by the same rule (" + (p3 ? p3->caminhoRelativoDestino.toStdString() : std::string("-")) + ")");
+        auto r2 = executarConsolidacao(reg, projeto->pasta(), media, plano2);
+        check(r2.consolidados == 2 && r2.pulados == 1 && r2.falhas.empty(),
+              "ADD TO MAIN copies only the new/missing files (" + std::to_string(r2.consolidados) + " copied, " +
+                  std::to_string(r2.pulados) + " skipped)");
+        check(media.getChildFile(caminho1).existsAsFile() && media.getChildFile(caminho2).existsAsFile(),
+              "files already in the MAIN stay where they were");
+        int copias = 0;
+        for (const auto& e : juce::RangedDirectoryIterator(media, true, "*.wav", juce::File::findFiles)) {
+            (void) e;
+            ++copias;
+        }
+        check(copias == 3, "no duplicate copy in the MAIN (" + std::to_string(copias) + " files)");
+    } catch (const std::exception& e) {
+        check(false, std::string("ADD TO MAIN: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    fonte.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2377,6 +2493,7 @@ int main() {
     testarColecoesInteligentes(tmpDir);
     testarPublicacao(tmpDir);
     testarResolucaoPeloMain(tmpDir);
+    testarAdicionarAoMain(tmpDir);
 
     tmpDir.deleteRecursively();
 

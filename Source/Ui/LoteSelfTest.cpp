@@ -13,6 +13,7 @@
 #include "OriginalSourceMedium.h"
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
+#include "../Sync/SyncEngine.h"
 #include "../Analytics/AssetGeolocation.h"
 
 namespace matriz::ui {
@@ -679,6 +680,8 @@ int rodarLoteSelfTest() {
                "the SOURCE row shows its files and how many still depend on it (" +
                    juce::String(src ? src->dependentes : -1) + ")");
 
+        checar(pa->arquivosQueDependemDoSource() == 2, "end-of-backup check counts the files still on the SOURCE only (" +
+                                                           juce::String(pa->arquivosQueDependemDoSource()) + ")");
         // Os dois arquivos entram no MAIN (registro legado): SOURCE liberado.
         for (const auto& arqId : doCartao)
             db.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
@@ -687,6 +690,7 @@ int rodarLoteSelfTest() {
         versoes = pa->listarVersoes();
         src = achar(versoes, Papel::Source);
         checar(src && src->dependentes == 0, "all its files in the MAIN -> SOURCE safe to disconnect");
+        checar(pa->arquivosQueDependemDoSource() == 0, "end-of-backup check: no file depends on the SOURCE any more");
         auto* mainRow = achar(versoes, Papel::Main);
         checar(mainRow && mainRow->totalItens == 2, "legacy consolidation records count for the MAIN (" +
                                                         juce::String(mainRow ? mainRow->totalItens : -1) + ")");
@@ -715,6 +719,48 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("versions selftest: ") + e.what());
     }
     raizV.deleteRecursively();
+
+    // ------------------------------------ Etapa 4: sincronizar clones só adições
+    std::cout << "\n-- Sync clones after ADD TO MAIN: additions only, nothing removed --\n";
+    juce::File raizS = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_syncadd_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizS.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "SyncAdd";
+        params.prefixoNomenclatura = "SYN";
+        juce::File raizMain = raizS.getChildFile("MAIN"), raizClone = raizS.getChildFile("CLONE");
+        auto projeto = matriz::model::Project::criar(raizMain, params);
+        raizMain.getChildFile("Media").createDirectory();
+        raizMain.getChildFile("Media").getChildFile("novo.txt").replaceWithText("novo no MAIN");
+        raizClone.getChildFile("Media").createDirectory();
+        raizClone.getChildFile("Media").getChildFile("so_no_clone.txt").replaceWithText("existe so no clone");
+        matriz::model::DestinationInfo info;
+        info.formato = 1;
+        info.destinationId = "clone-sync";
+        info.projetoId = projeto->projetoId();
+        info.papel = "CLONE";
+        info.rotulo = "CLONE";
+        info.revisao = 1;
+        info.gravarEmArquivo(raizClone.getChildFile("destination.json"));
+        projeto->registro().run(
+            "INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida) "
+            "VALUES ('clone-sync', ?, 'CLONE', 1, ?, 'clone-sync', 'CLONE', 1)",
+            {matriz::db::Value::of(raizClone.getFullPathName().toStdString()), matriz::db::Value::of(matriz::model::agoraIso8601())});
+
+        auto status = matriz::sync::SyncEngine::executarEspelhamentoAutomatico(*projeto, {}, /*aplicarRemocoes*/ false);
+        bool aplicado = false;
+        for (const auto& st : status)
+            if (st.destinationId == "clone-sync" && st.estado == matriz::sync::SyncEngine::StatusEspelhamento::Estado::Aplicado)
+                aplicado = true;
+        checar(aplicado, "the clone sync ran");
+        checar(raizClone.getChildFile("Media").getChildFile("novo.txt").existsAsFile(), "the new MAIN file reached the clone");
+        checar(raizClone.getChildFile("Media").getChildFile("so_no_clone.txt").existsAsFile(),
+               "a file that exists only in the clone was NOT removed (removals need confirmation, stage 7)");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("clone sync selftest: ") + e.what());
+    }
+    raizS.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
