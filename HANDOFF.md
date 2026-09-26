@@ -74,8 +74,24 @@ S01…), organização por ano/evento só no EXPORT.
   embute metadados/marcadores/marca d'água em toda cópia (etapa 5/6);
   `embutirMetadadosNoBackup` reescreve a Media inteira (etapa 5);
   espelhamento automático move pra `_lixeira` do clone sem confirmar
-  (etapa 7); Duplicates apaga só do banco e perde proveniência (etapa 9);
-  `sincronizarNomeDeBackupAposRenomear` renomeia no backup (etapa 5).
+  (etapa 7); `sincronizarNomeDeBackupAposRenomear` renomeia no backup
+  (etapa 5).
+- **Duplicates "sanitizar"** (feito antes da etapa 5, a pedido do usuário;
+  substitui a etapa 9 original) — validar um par e escolher um lado:
+  o outro vira estado `'duplicata'` (não entra no ADICIONAR AO MAIN), NADA
+  é apagado (banco, disco, SOURCE), o arquivo continua só no SOURCE. O que
+  o descartado tinha de diferente é somado no mantido (campo vazio
+  preenchido; divergentes, nome, localização e notas do descartado por
+  append nas notas; união de tags/assuntos; observações copiadas). Evento
+  PREMIS VALIDATION + entrada "Duplicates Resolved" no log.md. Notas nunca
+  mais são sobrescritas (Keep Both/Dismiss também fazem append). Keep Both
+  não tira ninguém do backup. Rotina: `ProjetoAberto::sanitizarDuplicata`.
+  Em aberto (usuário não respondeu): descartado que JÁ tem cópia no MAIN
+  — hoje fica intocada e isso vai pro log.
+- Self-test ASan: o binário atual é
+  `build-asan/matriz_artefacts/Debug/BKR Matriz.app` — o
+  `build-asan/matriz_artefacts/BKR Matriz.app` (sem Debug/) é de agosto,
+  não tem `--selftest-lote` e fica parado no loop se rodado.
 
 ### Sessão 2026-09-26 (EVENT DATE x DATE CREATED)
 
