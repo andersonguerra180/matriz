@@ -34,6 +34,13 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (EVENT DATE x DATE CREATED)
+
+- `05ce298` — batch EVENT DATE do Intake: só o ano e igual ao ano do
+  DATE CREATED original -> dc_created mantido; senão atualiza (como antes).
+  `salvarMetadadoEmLote(..., pular)` pula pares (item, coluna) na mesma
+  transação/Undo. Teste no --selftest-lote. Ainda não está na `main`.
+
 ### Sessão 2026-09-26 (Geo Location do Intake)
 
 - `c5404f9` — popup GEO LOCATION do Intake: "★ Add to Favorites" (mesmo
