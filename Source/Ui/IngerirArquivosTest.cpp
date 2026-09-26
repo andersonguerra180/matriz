@@ -924,6 +924,8 @@ int rodarTestIngerirArquivos() {
             MainComponent janela;
             janela.setBounds(0, 0, 1280, 800);
             janela.abrirProjeto(std::move(projeto));
+            // Blocos anteriores podem deixar modais (ex.: cancelamento): conta só os deste.
+            const int modaisAntes = juce::ModalComponentManager::getInstance()->getNumModalComponents();
             auto finalizacoes = std::make_shared<int>(0);
             janela.aoConcluirLoteIngestParaTeste = [finalizacoes](int, const juce::StringArray&) { ++*finalizacoes; };
 
@@ -947,7 +949,8 @@ int rodarTestIngerirArquivos() {
             checar(stmt.columnInt(0) == 320,
                    "all 320 items got an archive code (" + juce::String(stmt.columnInt(0)) + ")");
             int modais = juce::ModalComponentManager::getInstance()->getNumModalComponents();
-            checar(modais == 0, "no ingest modal left open (" + juce::String(modais) + " modal(s))");
+            checar(modais <= modaisAntes, "no ingest modal left open by these batches (" + juce::String(modais) +
+                                              " modal(s), " + juce::String(modaisAntes) + " before)");
         } catch (const std::exception& e) {
             checar(false, juce::String("overlapping batches: ") + e.what());
         }
