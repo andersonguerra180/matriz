@@ -110,8 +110,9 @@ tools/ingest_selftest/  self-test headless do motor de ingestão/backup, sobre m
 | `MosaicoComponent` | grade virtualizada; agrupa por tipo de mídia, artista/lançamento ou **ano** |
 | `ArvoreComponent` | árvore EXPLORER (origem em disco, intocada) / BACKUP (estrutura virtual) |
 | `ArvoreBackupComponent` | TREE workspace n8n-style: grafo de nós, zoom/pan/minimap, edição inline, conexão por arrasto |
-| `CatalogWorkspaceComponent` | sidebar com contagens + grid + ficha; RECENTLY INGESTED com timer de refresh |
-| `FichaPanelComponent` | ficha genérica sobre `FichaDefinition`; Apply funcional (single/batch), undo, "Needs review" |
+| `CatalogWorkspaceComponent` | aba METADATA: sidebar com contagens cruzadas (MEDIA TYPE × DATE × CONTENT TYPE × SUBJECT) + grid + ficha; "Show Recently Ingested" = última leva promovida INTAKE → GRID (persistida em `item.lote_grid_id`) |
+| `FichaPanelComponent` | ficha genérica sobre `FichaDefinition`; edição em tempo real (sem botão Apply), modo lote de N itens numa transação, undo via Cmd+Z, "Needs review" |
+| `IntakeWorkspaceComponent` | aba INTAKE (quarentena): grid/lista, batch assignment (Source Medium, Creator, Content, Subject, Event Date, Geo) gravado em background numa transação |
 | `FiltrosComponent` | chips de tipo/estado/extensão/**origem**, faixa de ano, coleções inteligentes |
 | `NavegadorArquivos*` | navegador estilo Finder embutido (colunas/lista/ícones, ADD TO BACKUP) |
 | `IngestWizardComponent` | diálogo pré-ingest: pasta destino, flatten, auto-classificação |
@@ -141,13 +142,48 @@ cmake -S . -B build -DCMAKE_OSX_ARCHITECTURES=x86_64   # ou arm64, conforme a m�
 cmake --build build -j 8
 ./build/matriz_selftest_artefacts/matriz_selftest
 ./build/matriz_ingest_selftest_artefacts/matriz_ingest_selftest
+"build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-lote
 "build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-uitest
 "build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-modal-loop
+"build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-ingerir-arquivos
 "build/matriz_artefacts/BKR Matriz.app/Contents/MacOS/BKR Matriz" --selftest-mosaico-10k
 open "build/matriz_artefacts/BKR Matriz.app"
 ```
 
-Quatro suítes, todas verdes:
+Release universal (x86_64 + arm64):
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"
+cmake --build build-release --target matriz -j 8
+open "build-release/matriz_artefacts/Release/BKR Matriz.app"
+```
+
+Builds com sanitizer (obrigatórias antes de mexer em código assíncrono, marcações/
+relink de `ProjetoAberto` ou transações — ver `AGENTS.md`):
+
+```bash
+cmake -B build-asan -DMATRIZ_ASAN=ON && cmake --build build-asan --target matriz -j 8
+cmake -B build-tsan -DMATRIZ_TSAN=ON && cmake --build build-tsan --target matriz -j 8
+```
+
+**Estado real das suítes (2026-09-26)** — nem todas estão verdes; as falhas
+listadas são pré-existentes e documentadas, não regressões:
+
+- `--selftest-lote` — **verde** (ASan, TSan e Release): batch assignment de 12 itens no
+  Catalog e no Intake (banco, tela sem reabrir, desfazer), tecla E, contagens da sidebar,
+  Show Recently Ingested (inclusive após fechar/reabrir), filtro SUBJECT, miniatura do
+  Intake gerada depois do card.
+- `matriz_ingest_selftest` — 1 falha pré-existente (rótulo "No origin" virou
+  "No source medium").
+- `--selftest-ingerir-arquivos` — 7–9 falhas pré-existentes (lista em "Baseline dos
+  self-tests" no HANDOFF); o freeze da message thread no lote de
+  5.000 foi corrigido (pior latência 75 ms).
+- `--selftest-uitest` — 41 falhas pré-existentes (lista em
+  `docs/uitest_fails_2026-09-26.txt`, a maioria cascata do "flow 1" e checks do antigo
+  botão Apply); termina todos os checks mas trava no teardown final — matar após a última
+  linha "ETAPA 3".
+
+Descrição das suítes:
 
 - **`matriz_selftest`** — carrega e valida as 19 definições de ficha (descobertas do
   diretório, não de lista fixa), confirma que todo grupo de toda ficha tem tradução em
@@ -258,6 +294,29 @@ A solução do §3 tem duas partes:
 `--selftest-modal-loop` sob AddressSanitizer é a prova: 500 ciclos de abrir/confirmar/
 cancelar/descartar, bombeando mensagens com o painel aberto E depois de fechado, mais o
 caso de abrir um overlay por cima de outro e o de destruir a janela com diálogo vivo.
+
+## Estabilização crash/freeze (setembro de 2026)
+
+Branch `fix/crash-freeze`, integrada na `main`. Histórico detalhado, decisões que não
+devem ser revertidas e pendências em [`HANDOFF.md`](HANDOFF.md); regras permanentes em
+[`AGENTS.md`](AGENTS.md). Em resumo:
+
+- **Heap corruption** — callbacks assíncronos com `this` cru viraram `SafePointer`;
+  `runDispatchLoopUntil` reentrante removido do `ProgressoGlobal`; mutex nas marcações/
+  relink lidas em background; jobs de Vault que sobreviviam ao fechamento do projeto
+  (use-after-free em `sqlite3_prepare_v2`); thread órfã de miniatura escrevendo no índice
+  após timeout; `SendToPrintDialog` morto à força pelo JUCE.
+- **Transações** — conexão SQLite única com trava por conexão: um `BEGIN..COMMIT` de uma
+  thread não absorve mais escritas de outra; batch de N itens = uma transação.
+- **Freezes** — modal "Loading Catalog" removido (só barra inferior); modal de ingest
+  órfão ("560 of 586"); `busca_fts` indexada por rowid; listagem do catálogo sem N+1;
+  contagens e filtros sem `listarItens()` na message thread.
+- **Funcional** — Select All do Catalog deixava a ficha em 1 item (lote gravava só nele);
+  tecla E instantânea com selo na janela flutuante; STRUCTURE abre no Folder Map; Backup
+  com checkbox por destino e prévia por destino (`consolidacao_registro.destino_path`);
+  filtro SUBJECT; Show Recently Ingested persistido.
+- **Diagnóstico** — builds `MATRIZ_ASAN`/`MATRIZ_TSAN`; selftests desligam App Nap
+  (o macOS rebaixava o processo headless e ele parecia travado).
 
 ## Como se usa (fluxo real)
 
@@ -384,8 +443,9 @@ parecerem prontas:
 
 ## Verificação por plataforma
 
-**Build e testes verificados em:** macOS (Intel, macOS 13), x86_64. As três suítes passam
-com zero falhas. Os 51 PNGs do harness são todos gerados e validados por invariante
+**Build e testes verificados em:** macOS (Intel, macOS 13), x86_64; o binário Release é
+universal (x86_64 + arm64), mas só foi executado em Intel. Estado das suítes: ver
+"Estado real das suítes" acima. Os 51 PNGs do harness são todos gerados e validados por invariante
 automática (nenhum componente com tamanho zero ou fora dos limites do pai); uma parte
 deles — tela inicial nos dois idiomas, janela principal, diálogo de novo projeto, várias
 fichas, navegador em colunas e em lista — foi também inspecionada a olho, que é como o

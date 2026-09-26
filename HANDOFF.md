@@ -6,9 +6,31 @@ não devem ser revertidas.
 
 ## Branch atual e último commit
 
-- Branch: `fix/crash-freeze` (criada a partir de `feature/send-to-print`
-  no commit `d3b74d8`)
-- Último commit: ver `git log -1 --oneline`
+- Branch de trabalho: `fix/crash-freeze` (criada a partir de
+  `feature/send-to-print` no commit `d3b74d8`).
+- **Integrada na `main` em 2026-09-26 por fast-forward** (a `main` estava em
+  `c43ce67`, ancestral direto — sem merge commit). Inclui também os commits
+  `WIP(...)` herdados da `feature/send-to-print`. Novas correções: continuar na
+  `fix/crash-freeze` (ou branch nova a partir da `main`) e integrar do mesmo jeito.
+- Último commit: ver `git log -1 --oneline`.
+
+## Baseline dos self-tests (não confundir com regressão)
+
+- `--selftest-lote`: verde (ASan/TSan/Release).
+- `--selftest-ingerir-arquivos`: pré-existentes — audio/image com `tipo_midia=NULL`;
+  "ingerir de novo soma mais um item (3)"; "pasta expande recursivamente (4)";
+  "re-arrastar ignorou os do Intake" (15 esperado, 18–22 obtido, não-determinístico);
+  "catalog mode shows the inconsistency panel"; "5.000 itens na grade durante o
+  processamento" (0); sob sanitizer o lote de 5.000 bate no teto de 600 s do teste
+  (≈3.800 códigos) e "processed stays valid after cancelling" falha junto. O freeze
+  >1 s do lote foi corrigido.
+- `matriz_ingest_selftest`: "an origin level with no value becomes No origin"
+  (rótulo virou "No source medium" em `e9fdbc4`).
+- `--selftest-uitest`: 41 FAIL em `docs/uitest_fails_2026-09-26.txt`; trava no
+  teardown final (matar depois da última linha "ETAPA 3").
+- Rodar sempre gravando em arquivo (`script -q <arq> <bin> --selftest-...`), nunca
+  pipe direto pra grep; nesta máquina (i7 dual-core) cada suíte leva 10–25 min sob
+  sanitizer. lldb anexa com Developer Mode ligado; senão, `sample`.
 
 ## O que foi corrigido nesta sessão
 
