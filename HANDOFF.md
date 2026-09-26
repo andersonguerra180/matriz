@@ -34,6 +34,33 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Modelo SOURCE / MAIN / CLONE / EXPORT (em andamento, uma etapa por vez)
+
+Especificação e respostas do usuário na conversa de 2026-09-26. Decisões:
+MAIN identificado por destination_id (papel ORIGINAL), nunca por caminho;
+marca d'água só em EXPORT; ao fim de "Adicionar ao MAIN" perguntar
+"Sincronizar clones agora?" (adições diretas, remoções sempre pendentes com
+confirmação); duplicatas descartadas vão pra `_lixeira` do MAIN (reversível,
+"Esvaziar lixeira", fora do catálogo e dos clones) sem perder proveniência;
+SOURCE por volume com registro de cada ingestão (volume reaparecendo com
+conteúdo diferente = SOURCE novo); remover o checkbox por destino (fbe2685)
+na etapa 4; MAIN organizado por SOURCE (pasta raiz fixa por SOURCE, código
+S01…), organização por ano/evento só no EXPORT.
+
+- **Etapa 1 (auditoria)** — feita.
+- **Etapa 2 (resolvedor)** — `05ba14a`: `resolverArquivo(...,
+  Preferencia)` MAIN → CLONE → SOURCE → origem → legado;
+  `ResolvedorEmLote`; `consolidacao_registro.destino_id`; consumidores de
+  leitura no MAIN, de ORIGEM mantidos (nome original, mtime, tamanho,
+  painel de inconsistências). Teste `1303a06`. `e2ec2b0`: SUBSTITUIR do
+  Intake não move mais o original do SOURCE.
+- Pendências conhecidas para as próximas etapas: `executarConsolidacao`
+  embute metadados/marcadores/marca d'água em toda cópia (etapa 5/6);
+  `embutirMetadadosNoBackup` reescreve a Media inteira (etapa 5);
+  espelhamento automático move pra `_lixeira` do clone sem confirmar
+  (etapa 7); Duplicates apaga só do banco e perde proveniência (etapa 9);
+  `sincronizarNomeDeBackupAposRenomear` renomeia no backup (etapa 5).
+
 ### Sessão 2026-09-26 (EVENT DATE x DATE CREATED)
 
 - `05ce298` — batch EVENT DATE do Intake: só o ano e igual ao ano do
