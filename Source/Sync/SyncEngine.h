@@ -96,8 +96,11 @@ public:
 
     // ignorarIds: destinos (backup_destino.id) desmarcados pelo operador
     // para este envio — não recebem o espelhamento.
+    // aplicarRemocoes=false: só adições/atualizações — o que falta no MAIN NÃO
+    // vai pra _lixeira do clone (remoção só com confirmação explícita).
     static std::vector<StatusEspelhamento> executarEspelhamentoAutomatico(matriz::model::Project& projeto,
-                                                                         const std::set<std::string>& ignorarIds = {});
+                                                                         const std::set<std::string>& ignorarIds = {},
+                                                                         bool aplicarRemocoes = true);
 
     // Verifica se há marcador de sync incompleto no destino
     static bool temMarcadorSyncIncompleto(const juce::File& destinoRaiz);

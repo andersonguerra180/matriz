@@ -1,4 +1,6 @@
 #include "SyncEngine.h"
+
+#include <algorithm>
 #include "../Ingest/Checksum.h"
 #include "../Model/ProjectLog.h"
 
@@ -663,7 +665,8 @@ ResultadoSync SyncEngine::aplicarSync(const juce::File& referenciaRaiz,
 }
 
 std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAutomatico(matriz::model::Project& projeto,
-                                                                                    const std::set<std::string>& ignorarIds) {
+                                                                                    const std::set<std::string>& ignorarIds,
+                                                                                    bool aplicarRemocoes) {
     std::vector<StatusEspelhamento> resultados;
     auto& db = projeto.registro();
     std::string activeDestId = projeto.destinationId();
@@ -728,6 +731,12 @@ std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAuto
             if (cloneInfo->revisao == r.ultimaRevisao) {
                 // Alvo não mudou por conta própria: aplicar espelhamento
                 PlanoSync plano = escanearEComparar(refRaiz, cloneRaiz, false);
+                if (!aplicarRemocoes) {
+                    plano.itens.erase(std::remove_if(plano.itens.begin(), plano.itens.end(),
+                                                     [](const ItemSync& it) { return it.classe == ClasseSync::Removido; }),
+                                      plano.itens.end());
+                    plano.totalRemovidos = 0;
+                }
                 if (!plano.podeAplicar()) {
                     st.estado = StatusEspelhamento::Estado::Falha;
                     st.mensagem = plano.errosValidacao.empty() ? "Validation failed" : juce::String(plano.errosValidacao.front());

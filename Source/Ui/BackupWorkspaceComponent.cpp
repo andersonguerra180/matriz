@@ -1828,7 +1828,7 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelProgressoStatus_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (btnStartBackup_) {
-        btnStartBackup_->setButtonText(matriz::i18n::t("backup.btn_fazer_backup"));
+        btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
         aplicarEstiloBotao(*btnStartBackup_, true);
     }
     if (btnPublishHtml_) {
@@ -2369,9 +2369,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
             summary += isPt ? juce::String::fromUTF8("  -  (Nenhuma coleção vinculada a este catálogo)") : "  -  (No collections linked to this catalog)";
             btnStartBackup_->setEnabled(false);
         } else {
-            btnStartBackup_->setEnabled(algumDestinoMarcado());
+            btnStartBackup_->setEnabled(true);
         }
-        resumoPronto_ = !resolvedDestFolder_.getFullPathName().isEmpty() && !colecoes.empty();
 
         labelResumo_->setText(summary, juce::dontSendNotification);
         listPrevia_->definirColecoesCatalogo(colecoes, resolvedDestFolder_);
@@ -2492,8 +2491,25 @@ void BackupWorkspaceComponent::atualizarResumo() {
     listPrevia_->definirPlano(plano_);
     listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
 
-    resumoPronto_ = pronto;
-    btnStartBackup_->setEnabled(pronto && algumDestinoMarcado());
+    // Backup só vai pro MAIN: com outra versão destacada o botão fica
+    // desabilitado e o resumo diz por quê.
+    if (!destacadoEhMain()) {
+        summary += isPt ? juce::String::fromUTF8("  -  Backups vão só para o MAIN (a pasta do projeto). Selecione a linha MAIN; "
+                                                 "outros destinos serão CLONE ou EXPORT.")
+                        : "  -  Backups only go to the MAIN (the project folder). Select the MAIN row; "
+                          "other destinations are CLONE or EXPORT.";
+        labelResumo_->setText(summary, juce::dontSendNotification);
+    }
+    // FAZER BACKUP antes do primeiro backup; depois, ADICIONAR AO MAIN.
+    mainSelado_ = false;
+    try {
+        auto st = projeto_.projeto().registro().prepare(
+            "SELECT 1 FROM consolidacao_registro WHERE COALESCE(destino_id, '') = '' OR destino_id = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(destinoIdDoMain()));
+        mainSelado_ = st.step();
+    } catch (...) {}
+    btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
+    btnStartBackup_->setEnabled(pronto && destacadoEhMain());
 }
 
 void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
@@ -2554,48 +2570,9 @@ juce::File BackupWorkspaceComponent::detectarPastaGoogleDrive() {
 void BackupWorkspaceComponent::iniciarBackup() {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
-    // Checkboxes da lista de destinos (só desta sessão): o destino destacado
-    // desmarcado cede o lugar ao primeiro marcado.
-    if (!algumDestinoMarcado()) return;
-    if (selectedDestinoIdx_ >= 0 && !destinoMarcado(static_cast<size_t>(selectedDestinoIdx_))) {
-        for (size_t i = 0; i < destinosBackup_.size(); ++i) {
-            if (!destinoMarcado(i)) continue;
-            selectedDestinoIdx_ = static_cast<int>(i);
-            if (listVaults_) listVaults_->selectRow(selectedDestinoIdx_);
-            resolvedDestFolder_ = matriz::model::normalizarParaRaizDestino(juce::File(destinosBackup_[i].caminho));
-            customDestFolder_ = resolvedDestFolder_;
-            atualizarResumo();
-            break;
-        }
-        if (!resumoPronto_) return;
-    }
-
-    // MAIN desmarcado: o espelhamento parte do MAIN e é espelho de verdade
-    // (o que falta no MAIN vai pra _lixeira do clone) — apagaria justamente
-    // o que está sendo enviado. Nesse caso NÃO espelha; consolida direto em
-    // cada outro destino marcado, cada um com o próprio plano.
-    bool mainMarcado = true;
-    for (size_t i = 0; i < destinosBackup_.size(); ++i)
-        if (destinosBackup_[i].papel == "ORIGINAL" && !destinoMarcado(i)) mainMarcado = false;
-    struct AlvoExtra { juce::File raiz; juce::String rotulo; matriz::consolidacao::PlanoConsolidacao plano; };
-    std::vector<AlvoExtra> alvosExtras;
-    if (!mainMarcado && !isCatalogMode) {
-        const juce::File destinoPrincipal = resolvedDestFolder_;
-        for (size_t i = 0; i < destinosBackup_.size(); ++i) {
-            if (!destinoMarcado(i) || static_cast<int>(i) == selectedDestinoIdx_) continue;
-            juce::File raizExtra = matriz::model::normalizarParaRaizDestino(juce::File(destinosBackup_[i].caminho));
-            if (!raizExtra.isDirectory()) continue;  // offline
-            // Mesmo cálculo da prévia (critério, hierarquia, prefixo) pra este destino.
-            resolvedDestFolder_ = raizExtra;
-            atualizarResumo();
-            if (resumoPronto_) alvosExtras.push_back({raizExtra, destinosBackup_[i].rotulo, plano_});
-        }
-        resolvedDestFolder_ = destinoPrincipal;
-        customDestFolder_ = destinoPrincipal;
-        atualizarResumo();
-        if (!resumoPronto_) return;
-    }
-    std::set<std::string> destinosIgnorados = destinosDesmarcados_;
+    // Backup só vai pro MAIN (a pasta do projeto) — outros destinos são CLONE
+    // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
+    if (!isCatalogMode && !destacadoEhMain()) return;
 
     estado_ = Estado::Running;
     executando_ = true;
@@ -2769,7 +2746,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
     juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto,
-                                      gerarCatalogo, embutirMeta, alvosExtras, mainMarcado, destinosIgnorados]() {
+                                      gerarCatalogo, embutirMeta]() {
         if (!safeThis) return;
 
         auto wmIds = projeto.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark);
@@ -2793,31 +2770,6 @@ void BackupWorkspaceComponent::iniciarBackup() {
         );
 
         if (!safeThis) return;
-
-        // Demais destinos marcados (só quando o MAIN foi desmarcado).
-        for (const auto& alvo : alvosExtras) {
-            if (resultado.cancelado || cancelamento->pedido()) break;
-            safeThis->labelProgressoStatus_->setText("Copying to " + alvo.rotulo + "...", juce::dontSendNotification);
-            juce::File mediaExtra = alvo.raiz.getChildFile("Media");
-            mediaExtra.createDirectory();
-            auto resExtra = matriz::consolidacao::executarConsolidacao(
-                projeto.projeto().registro(), projeto.projeto().pasta(), mediaExtra, alvo.plano,
-                [safeThis, cancelamento](int, int) {
-                    if (!safeThis) return false;
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                    return !cancelamento->pedido() && safeThis != nullptr;
-                },
-                wmIdsSet);
-            if (!safeThis) return;
-            if (embutirMeta && !resExtra.cancelado)
-                matriz::consolidacao::embutirMetadadosNoBackup(projeto.projeto().registro(), mediaExtra);
-            resultado.consolidados += resExtra.consolidados;
-            resultado.pulados += resExtra.pulados;
-            resultado.cancelado = resultado.cancelado || resExtra.cancelado;
-            for (const auto& f : resExtra.falhas) resultado.falhas.push_back(f);
-            safeThis->registrarDestinoBackup(alvo.raiz, alvo.rotulo, resExtra.consolidados, resExtra.pulados,
-                                             static_cast<int>(resExtra.falhas.size()), resExtra.cancelado);
-        }
 
         safeThis->copiadoCount_ = resultado.consolidados;
         safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
@@ -2885,16 +2837,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
             safeThis->projeto_.projeto().confirmarRevisao();
         }
 
-        // Auto-mirroring to online clones
-        if (!resultado.cancelado && mainMarcado) {
-            safeThis->labelProgressoStatus_->setText("Mirroring to connected clones...", juce::dontSendNotification);
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-            if (safeThis) {
-                auto espelhoRes = matriz::sync::SyncEngine::executarEspelhamentoAutomatico(safeThis->projeto_.projeto(),
-                                                                                          destinosIgnorados);
-                (void)espelhoRes;
-            }
-        }
+        // Clones: nada automático e silencioso (modelo SOURCE/MAIN/CLONE) —
+        // no fim, se houver clone conectado, pergunta (perguntarSincronizarClones).
 
         safeThis->executando_ = false;
         safeThis->estado_ = Estado::Done;
@@ -2929,6 +2873,13 @@ void BackupWorkspaceComponent::iniciarBackup() {
                  << safeThis->verificadoCount_ << " verified";
         if (houveFalha) finalMsg << "   |   " << safeThis->falhasCount_ << " failed";
         finalMsg << "\n" << destinoRaiz.getFullPathName();
+        // SOURCE: liberado quando todo arquivo já tem cópia verificada no MAIN.
+        if (!resultado.cancelado) {
+            const int dependem = safeThis->projeto_.arquivosQueDependemDoSource();
+            finalMsg << "\n" << (dependem == 0 ? matriz::i18n::t("backup.aviso_source_liberado")
+                                                : matriz::i18n::t("backup.aviso_source_dependem")
+                                                      .replace("{n}", juce::String(dependem)));
+        }
         if (houveFalha) {
             finalMsg << "\n";
             int mostradas = 0;
@@ -2947,7 +2898,56 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (safeThis->btnCancelarExecucao_) safeThis->btnCancelarExecucao_->setVisible(false);
         safeThis->btnDone_->setVisible(true);
         safeThis->resized();
+        if (!resultado.cancelado) safeThis->perguntarSincronizarClones();
     });
+}
+
+std::string BackupWorkspaceComponent::destinoIdDoMain() {
+    try {
+        auto st = projeto_.projeto().registro().prepare(
+            "SELECT COALESCE(destination_id, id) FROM backup_destino WHERE ativo = 1 AND papel = 'ORIGINAL' LIMIT 1");
+        if (st.step()) return st.columnText(0);
+    } catch (...) {}
+    return projeto_.projeto().destinationId();
+}
+
+void BackupWorkspaceComponent::perguntarSincronizarClones() {
+    // Decisão do modelo SOURCE/MAIN/CLONE: nada automático e silencioso. Se
+    // houver CLONE conectado, pergunta; só adições/atualizações entram —
+    // remoções nunca acontecem aqui (ficam pra "Sincronizar clone", com
+    // confirmação).
+    int conectados = 0;
+    for (const auto& d : destinosBackup_)
+        if (d.papel != "ORIGINAL" && d.online) ++conectados;
+    if (conectados == 0) return;
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::QuestionIcon, matriz::i18n::t("backup.sync_clones_titulo"),
+        matriz::i18n::t("backup.sync_clones_msg").replace("{n}", juce::String(conectados)),
+        matriz::i18n::t("backup.sync_clones_sim"), matriz::i18n::t("backup.sync_clones_nao"), nullptr,
+        juce::ModalCallbackFunction::create([safeThis](int resultado) {
+            if (resultado != 1 || safeThis == nullptr) return;
+            safeThis->labelProgressoStatus_->setText(matriz::i18n::t("backup.sync_clones_andamento"),
+                                                     juce::dontSendNotification);
+            auto* projeto = &safeThis->projeto_.projeto();
+            safeThis->poolSyncClones_.addJob([safeThis, projeto] {
+                auto status = matriz::sync::SyncEngine::executarEspelhamentoAutomatico(*projeto, {},
+                                                                                       /*aplicarRemocoes*/ false);
+                int ok = 0, falhas = 0;
+                for (const auto& st : status) {
+                    if (st.estado == matriz::sync::SyncEngine::StatusEspelhamento::Estado::Aplicado) ++ok;
+                    else if (st.estado != matriz::sync::SyncEngine::StatusEspelhamento::Estado::PendenteOffline) ++falhas;
+                }
+                juce::MessageManager::callAsync([safeThis, ok, falhas] {
+                    if (safeThis == nullptr) return;
+                    safeThis->labelProgressoStatus_->setText(
+                        matriz::i18n::t("backup.sync_clones_fim").replace("{ok}", juce::String(ok))
+                            .replace("{falhas}", juce::String(falhas)),
+                        juce::dontSendNotification);
+                });
+            });
+        }));
 }
 
 void BackupWorkspaceComponent::carregarDestinosBackup() {
@@ -3463,24 +3463,6 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
     int curX = 8;
     bool isOriginal = (dest.papel == "ORIGINAL");
 
-    // Checkbox "enviar para este destino" (só desta sessão).
-    {
-        juce::Rectangle<float> caixa(static_cast<float>(curX), (height - 14) / 2.0f, 14.0f, 14.0f);
-        bool marcado = destinoMarcado(static_cast<size_t>(rowNumber));
-        g.setColour(marcado ? tk.acento : tk.painel);
-        g.fillRoundedRectangle(caixa, 3.0f);
-        g.setColour(marcado ? tk.acento : tk.borda);
-        g.drawRoundedRectangle(caixa.reduced(0.5f), 3.0f, 1.2f);
-        if (marcado) {
-            juce::Path tick;
-            tick.startNewSubPath(caixa.getX() + 3.0f, caixa.getCentreY());
-            tick.lineTo(caixa.getX() + 6.0f, caixa.getBottom() - 3.5f);
-            tick.lineTo(caixa.getRight() - 3.0f, caixa.getY() + 3.5f);
-            g.setColour(juce::Colours::white);
-            g.strokePath(tick, juce::PathStrokeType(1.8f));
-        }
-        curX += 22;
-    }
 
     // Selo de papel: MAIN (fonte da verdade) ou CLONE.
     int tagW = 64;
@@ -3531,16 +3513,6 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
 }
 
 void BackupWorkspaceComponent::listBoxItemClicked(int rowNumber, const juce::MouseEvent& e) {
-    // Clique no checkbox: só (des)marca o destino para este envio — não
-    // muda o destino destacado nem desvincula nada.
-    if (rowNumber >= 0 && rowNumber < static_cast<int>(destinosBackup_.size()) && !e.mods.isPopupMenu() &&
-        e.getPosition().x < 30) {
-        const auto& id = destinosBackup_[static_cast<size_t>(rowNumber)].id;
-        if (!destinosDesmarcados_.erase(id)) destinosDesmarcados_.insert(id);
-        if (listVaults_) listVaults_->repaintRow(rowNumber);
-        if (btnStartBackup_) btnStartBackup_->setEnabled(resumoPronto_ && algumDestinoMarcado());
-        return;
-    }
     if (rowNumber >= 0 && rowNumber < static_cast<int>(destinosBackup_.size())) {
         selectedDestinoIdx_ = rowNumber;
         if (listVaults_) listVaults_->selectRow(rowNumber);

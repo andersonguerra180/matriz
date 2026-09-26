@@ -3238,6 +3238,24 @@ void ProjetoAberto::definirMain(const std::string& backupDestinoId) {
     } catch (...) {}
 }
 
+int ProjetoAberto::arquivosQueDependemDoSource() {
+    if (!projeto_) return 0;
+    auto& db = projeto_->registro();
+    try {
+        std::string mainId = projeto_->destinationId();
+        auto sm = db.prepare("SELECT COALESCE(destination_id, id) FROM backup_destino WHERE ativo = 1 AND papel = 'ORIGINAL' LIMIT 1");
+        if (sm.step()) mainId = sm.columnText(0);
+        auto st = db.prepare(
+            "SELECT COUNT(*) FROM arquivo a JOIN item i ON i.id = a.item_id "
+            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND a.eh_master = 1 AND NOT EXISTS ("
+            "  SELECT 1 FROM consolidacao_registro c WHERE c.arquivo_id = a.id "
+            "  AND (COALESCE(c.destino_id, '') = '' OR c.destino_id = ?))");
+        st.bind(1, matriz::db::Value::of(mainId));
+        if (st.step()) return static_cast<int>(st.columnInt(0));
+    } catch (...) {}
+    return 0;
+}
+
 std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
     std::vector<VersaoResumo> out;
     if (!projeto_) return out;

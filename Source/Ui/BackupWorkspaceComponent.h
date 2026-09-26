@@ -104,17 +104,16 @@ private:
     };
     std::vector<DestinoBackupItem> destinosBackup_;
     int selectedDestinoIdx_ = -1;
-    // Destinos desmarcados (checkbox da linha) PARA ESTE ENVIO — só da
-    // sessão, nunca persistido; não desvincula o destino. Vazio = todos.
-    std::set<std::string> destinosDesmarcados_;
-    bool destinoMarcado(size_t idx) const {
-        return idx < destinosBackup_.size() && destinosDesmarcados_.count(destinosBackup_[idx].id) == 0;
+    // Modelo SOURCE/MAIN/CLONE (etapa 4): backup só vai pro MAIN (a pasta do
+    // projeto). Outros destinos só como CLONE ou EXPORT.
+    bool destacadoEhMain() const {
+        return selectedDestinoIdx_ >= 0 && selectedDestinoIdx_ < static_cast<int>(destinosBackup_.size()) &&
+               destinosBackup_[static_cast<size_t>(selectedDestinoIdx_)].papel == "ORIGINAL";
     }
-    bool algumDestinoMarcado() const {
-        for (size_t i = 0; i < destinosBackup_.size(); ++i) if (destinoMarcado(i)) return true;
-        return destinosBackup_.empty();  // sem lista (pasta avulsa): nada a desmarcar
-    }
-    bool resumoPronto_ = false;  // último "pronto" calculado por atualizarResumo()
+    bool mainSelado_ = false;  // o MAIN já recebeu o primeiro backup (FAZER BACKUP -> ADICIONAR AO MAIN)
+    void perguntarSincronizarClones();
+    std::string destinoIdDoMain();
+    juce::ThreadPool poolSyncClones_{1};
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 

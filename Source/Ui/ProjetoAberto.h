@@ -159,6 +159,9 @@ public:
     };
     // Lê tudo (banco + existência das pastas): chamar FORA da message thread.
     std::vector<VersaoResumo> listarVersoes();
+    // Masters de itens do catálogo (fora do Intake) SEM cópia registrada no
+    // MAIN — ainda dependem do SOURCE. 0 = SOURCE pode ser desconectado.
+    int arquivosQueDependemDoSource();
 
     std::vector<ItemResumo> listarItens() const;
     int contarItens() const { return static_cast<int>(listarItens().size()); }
