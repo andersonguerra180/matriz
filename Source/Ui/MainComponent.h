@@ -169,7 +169,7 @@ public:
     // ponteiro que acabou de morrer.
     bool ingestEmAndamento() const {
         return pendentes_->load() > 0 || loteEmCurso_ || finalizandoLote_ || escaneandoEmAndamento_.load()
-            || trabalhosOrfaosLote_->load() > 0;
+            || trabalhosOrfaosLote_->load() > 0 || resolvendoDuplicatas_ > 0;
     }
 
     // Item 10 — cancelar operação longa. Pede o cancelamento; os jobs ainda
@@ -452,6 +452,11 @@ private:
     // true da primeira etapa de finalização até o modal fechar. Guarda contra
     // reentrada e mantém ingestEmAndamento() verdadeiro até o fim de verdade.
     bool finalizandoLote_ = false;
+    // Checagens de duplicata (job antes do lote) ainda em voo — só na
+    // message thread. Sem isto ingestEmAndamento() ficava falso nessa fase:
+    // fechar o projeto era permitido e cancelar era ignorado.
+    int resolvendoDuplicatas_ = 0;
+    bool descartarLotesEmResolucao_ = false;
     // Início da etapa de finalização em curso — a instrumentação mede ação +
     // espera pelo trabalho em background como um tempo só.
     std::chrono::system_clock::time_point inicioPassoFinalizacao_{};

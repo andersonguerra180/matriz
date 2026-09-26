@@ -2662,6 +2662,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
     // ponteiro): coincidencias sobrevive até o callback assíncrono do
     // dialog, bem depois desta função já ter retornado.
     juce::Component::SafePointer<MainComponent> safeThis(this);
+    if (resolvendoDuplicatas_++ == 0) descartarLotesEmResolucao_ = false;
     ingestPool_.addJob([safeThis, arquivos, existentes = std::move(existentes), pastaProjeto]() mutable {
         matriz::diag::LogOperacao logOp("resolverDuplicatas:" + std::to_string(arquivos.size()) + " arquivos");
         // Índice por título+extensão+tamanho: troca o scan linear de
@@ -2701,6 +2702,8 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
 
         juce::MessageManager::callAsync([safeThis, arquivos, coincidencias, pastaProjeto]() mutable {
             if (!safeThis) return;
+            --safeThis->resolvendoDuplicatas_;
+            if (safeThis->descartarLotesEmResolucao_) return;  // cancelado antes de virar lote
 
             if (coincidencias.empty()) {
                 safeThis->processarLoteEmBackground(std::move(arquivos), "", "");
@@ -4009,6 +4012,7 @@ void MainComponent::aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFi
 
 void MainComponent::cancelarLoteIngest(bool manterArquivosCarregados) {
     if (cancelamentoScan_) cancelamentoScan_->pedir();
+    if (resolvendoDuplicatas_ > 0) descartarLotesEmResolucao_ = true;
     if (!cancelamentoLote_ || !ingestEmAndamento()) return;
     if (estadoLoteAtual_) {
         const juce::ScopedLock sl(estadoLoteAtual_->lock);
