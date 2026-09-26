@@ -421,140 +421,6 @@ private:
     std::function<void(const std::string&)> onApply_;
 };
 
-class GeoLocationPopupContent : public juce::Component {
-public:
-    GeoLocationPopupContent(matriz::db::Database& registro, bool isBatch,
-                             std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply)
-        : registro_(registro), onApply_(std::move(onApply)) {
-        const auto& tk = tema();
-
-        lblTitle_ = std::make_unique<juce::Label>("", isBatch ? i18n::t("intake.popup_geo_batch") : i18n::t("intake.popup_geo"));
-        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
-        lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
-        addAndMakeVisible(*lblTitle_);
-
-        // Favoritos (item 3 da correção "BACKUP e INTAKE"): mesmo
-        // GeoFavoritosRepository que a ficha usa — sem lista paralela.
-        btnFavoritos_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x96\xbe Favorites"));
-        btnFavoritos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-        btnFavoritos_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
-        btnFavoritos_->onClick = [this] { mostrarMenuFavoritos(); };
-        addAndMakeVisible(*btnFavoritos_);
-
-        auto makeField = [this, &tk](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed,
-                                     const juce::String& labelText, const juce::String& placeholder) {
-            lbl = std::make_unique<juce::Label>("", labelText);
-            lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-            lbl->setColour(juce::Label::textColourId, tk.textoSecundario);
-            addAndMakeVisible(*lbl);
-
-            ed = std::make_unique<juce::TextEditor>();
-            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
-            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
-            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
-            ed->setTextToShowWhenEmpty(placeholder, juce::Colours::grey);
-            addAndMakeVisible(*ed);
-        };
-
-        makeField(lblCoords_, edCoords_, "GPS Coordinates (Lat, Lng)", "e.g. -16.4435, -39.0643");
-        makeField(lblAddress_, edAddress_, "Formatted Address", "e.g. Av. Paulista, 1000");
-        makeField(lblCity_, edCity_, "City", "e.g. Porto Seguro");
-        makeField(lblState_, edState_, "State / Province", "e.g. Bahia");
-        makeField(lblCountry_, edCountry_, "Country", "e.g. Brazil");
-
-        btnApply_ = std::make_unique<PillButton>(isBatch ? i18n::t("intake.btn_aplicar_selecionados") : i18n::t("intake.btn_aplicar"));
-        btnApply_->corTextoCustom = juce::Colour(0xff2a9d8f);
-        btnApply_->corBordaCustom = juce::Colour(0xff2a9d8f);
-        btnApply_->tamanhoFonte = 13.0f;
-        btnApply_->onClick = [this] {
-            if (onApply_) {
-                onApply_(edCoords_->getText().toStdString(),
-                         edAddress_->getText().toStdString(),
-                         edCity_->getText().toStdString(),
-                         edState_->getText().toStdString(),
-                         edCountry_->getText().toStdString());
-            }
-            if (auto* callout = findParentComponentOfClass<juce::CallOutBox>()) {
-                callout->dismiss();
-            }
-        };
-        addAndMakeVisible(*btnApply_);
-
-        setSize(380, 400);
-    }
-
-    void resized() override {
-        auto area = getLocalBounds().reduced(14, 12);
-        auto topRow = area.removeFromTop(24);
-        lblTitle_->setBounds(topRow.removeFromLeft(topRow.getWidth() - 110));
-        btnFavoritos_->setBounds(topRow);
-        area.removeFromTop(6);
-
-        auto layoutSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
-            if (lbl) { lbl->setBounds(area.removeFromTop(16)); area.removeFromTop(2); }
-            if (ed) { ed->setBounds(area.removeFromTop(26)); area.removeFromTop(6); }
-        };
-
-        layoutSubfield(lblCoords_, edCoords_);
-        layoutSubfield(lblAddress_, edAddress_);
-        layoutSubfield(lblCity_, edCity_);
-        layoutSubfield(lblState_, edState_);
-        layoutSubfield(lblCountry_, edCountry_);
-
-        area.removeFromTop(4);
-        btnApply_->setBounds(area.removeFromBottom(28).removeFromRight(150));
-    }
-
-private:
-    void mostrarMenuFavoritos() {
-        auto favs = matriz::analytics::GeoFavoritosRepository::listar(registro_);
-        if (favs.empty()) {
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::MessageBoxIconType::InfoIcon, "Favorites",
-                "No favorite places saved yet. Save one from the ficha's GEO LOCATION section first.");
-            return;
-        }
-        juce::PopupMenu menu;
-        for (int i = 0; i < static_cast<int>(favs.size()); ++i) {
-            juce::String label = juce::String(favs[static_cast<size_t>(i)].nome);
-            if (favs[static_cast<size_t>(i)].city)
-                label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
-            menu.addItem(i + 1, label);
-        }
-        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFavoritos_.get()),
-            [this, favs](int result) {
-                if (result < 1 || result > static_cast<int>(favs.size())) return;
-                const auto& fav = favs[static_cast<size_t>(result - 1)];
-                if (edCoords_ && fav.latitude && fav.longitude) {
-                    std::ostringstream ss;
-                    ss << std::fixed << std::setprecision(6) << *fav.latitude << ", " << *fav.longitude;
-                    edCoords_->setText(ss.str());
-                }
-                if (edAddress_ && fav.formattedAddress) edAddress_->setText(juce::String(*fav.formattedAddress));
-                if (edCity_ && fav.city) edCity_->setText(juce::String(*fav.city));
-                if (edState_ && fav.stateProvince) edState_->setText(juce::String(*fav.stateProvince));
-                if (edCountry_ && fav.country) edCountry_->setText(juce::String(*fav.country));
-            });
-    }
-
-    matriz::db::Database& registro_;
-    std::unique_ptr<juce::Label> lblTitle_;
-    std::unique_ptr<juce::TextButton> btnFavoritos_;
-    std::unique_ptr<juce::Label> lblCoords_;
-    std::unique_ptr<juce::TextEditor> edCoords_;
-    std::unique_ptr<juce::Label> lblAddress_;
-    std::unique_ptr<juce::TextEditor> edAddress_;
-    std::unique_ptr<juce::Label> lblCity_;
-    std::unique_ptr<juce::TextEditor> edCity_;
-    std::unique_ptr<juce::Label> lblState_;
-    std::unique_ptr<juce::TextEditor> edState_;
-    std::unique_ptr<juce::Label> lblCountry_;
-    std::unique_ptr<juce::TextEditor> edCountry_;
-    std::unique_ptr<PillButton> btnApply_;
-    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply_;
-};
-
 // Campo de texto com autocomplete (item 4 da correção "BACKUP e INTAKE"):
 // mostra os valores já usados nessa mesma coluna em qualquer lugar do
 // projeto (CREATOR/SUBJECT), filtra por prefixo conforme digita, sempre em
@@ -595,6 +461,15 @@ public:
 
     juce::String getText() const { return editor_->getText().trim(); }
     void setText(const juce::String& t) { editor_->setText(t, false); }
+    // Opcional: chamado quando o operador escolhe uma sugestão da lista.
+    std::function<void(const juce::String&)> aoEscolher;
+    // Altura com a lista de sugestões aberta/fechada — pra quem quiser que
+    // a lista flutue por cima do que vem embaixo em vez de reservar espaço.
+    void abrirSugestoes() { mostrarTodasSugestoes(); }
+    int alturaDesejada() const {
+        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
+        return 26 + ((lista_ && lista_->isVisible() && rows > 0) ? 2 + rows * 22 : 0);
+    }
 
     void resized() override {
         auto area = getLocalBounds();
@@ -617,8 +492,10 @@ private:
 
     void listBoxItemClicked(int row, const juce::MouseEvent&) override {
         if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
-        editor_->setText(sugestoes_[static_cast<size_t>(row)], false);
+        juce::String escolhido = sugestoes_[static_cast<size_t>(row)];
+        editor_->setText(escolhido, false);
         lista_->setVisible(false);
+        if (aoEscolher) aoEscolher(escolhido);
     }
 
     void mostrarTodasSugestoes() {
@@ -651,6 +528,283 @@ private:
     std::vector<juce::String> sugestoes_;
     std::unique_ptr<FocusAwareTextEditor> editor_;
     std::unique_ptr<juce::ListBox> lista_;
+};
+
+class GeoLocationPopupContent : public juce::Component {
+public:
+    GeoLocationPopupContent(matriz::db::Database& registro, bool isBatch,
+                             std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply)
+        : registro_(registro), onApply_(std::move(onApply)) {
+        const auto& tk = tema();
+
+        lblTitle_ = std::make_unique<juce::Label>("", isBatch ? i18n::t("intake.popup_geo_batch") : i18n::t("intake.popup_geo"));
+        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        addAndMakeVisible(*lblTitle_);
+
+        // Favoritos (item 3 da correção "BACKUP e INTAKE"): mesmo
+        // GeoFavoritosRepository que a ficha usa — sem lista paralela.
+        btnFavoritos_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x96\xbe Favorites"));
+        btnFavoritos_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnFavoritos_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnFavoritos_->onClick = [this] { mostrarMenuFavoritos(); };
+        addAndMakeVisible(*btnFavoritos_);
+
+        auto makeField = [this, &tk](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed,
+                                     const juce::String& labelText, const juce::String& placeholder) {
+            lbl = std::make_unique<juce::Label>("", labelText);
+            lbl->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            lbl->setColour(juce::Label::textColourId, tk.textoSecundario);
+            addAndMakeVisible(*lbl);
+
+            ed = std::make_unique<juce::TextEditor>();
+            ed->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            ed->setColour(juce::TextEditor::textColourId, juce::Colours::black);
+            ed->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
+            ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
+            ed->setTextToShowWhenEmpty(placeholder, juce::Colours::grey);
+            addAndMakeVisible(*ed);
+        };
+
+        // Autocomplete com as localizações já gravadas no projeto: escolher
+        // uma preenche os 5 campos de uma vez.
+        carregarLocalizacoesUsadas();
+        std::vector<juce::String> rotulos;
+        for (const auto& loc : localizacoesUsadas_) rotulos.push_back(loc.rotulo);
+        lblUsadas_ = std::make_unique<juce::Label>("", "Used locations in this project");
+        lblUsadas_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        lblUsadas_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(*lblUsadas_);
+        campoUsadas_ = std::make_unique<AutocompleteAssistedField>(
+            std::move(rotulos), localizacoesUsadas_.empty() ? "No locations used yet" : "Type a city, state, country...");
+        campoUsadas_->aoEscolher = [this](const juce::String& rotulo) { preencherComLocalizacaoUsada(rotulo); };
+        addAndMakeVisible(*campoUsadas_);
+
+        makeField(lblCoords_, edCoords_, "GPS Coordinates (Lat, Lng)", "e.g. -16.4435, -39.0643");
+        makeField(lblAddress_, edAddress_, "Formatted Address", "e.g. Av. Paulista, 1000");
+        makeField(lblCity_, edCity_, "City", "e.g. Porto Seguro");
+        makeField(lblState_, edState_, "State / Province", "e.g. Bahia");
+        makeField(lblCountry_, edCountry_, "Country", "e.g. Brazil");
+
+        btnApply_ = std::make_unique<PillButton>(isBatch ? i18n::t("intake.btn_aplicar_selecionados") : i18n::t("intake.btn_aplicar"));
+        btnApply_->corTextoCustom = juce::Colour(0xff2a9d8f);
+        btnApply_->corBordaCustom = juce::Colour(0xff2a9d8f);
+        btnApply_->tamanhoFonte = 13.0f;
+        btnApply_->onClick = [this] {
+            if (onApply_) {
+                onApply_(edCoords_->getText().toStdString(),
+                         edAddress_->getText().toStdString(),
+                         edCity_->getText().toStdString(),
+                         edState_->getText().toStdString(),
+                         edCountry_->getText().toStdString());
+            }
+            if (auto* callout = findParentComponentOfClass<juce::CallOutBox>()) {
+                callout->dismiss();
+            }
+        };
+        addAndMakeVisible(*btnApply_);
+
+        btnSalvarFavorito_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x98\x85 Add to Favorites"));
+        btnSalvarFavorito_->setTooltip("Save this place to the project favorites list");
+        btnSalvarFavorito_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnSalvarFavorito_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+        btnSalvarFavorito_->onClick = [this] { salvarComoFavorito(); };
+        addAndMakeVisible(*btnSalvarFavorito_);
+
+        setSize(380, 450);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().reduced(14, 12);
+        auto topRow = area.removeFromTop(24);
+        lblTitle_->setBounds(topRow.removeFromLeft(topRow.getWidth() - 110));
+        btnFavoritos_->setBounds(topRow);
+        area.removeFromTop(6);
+
+        // O campo ocupa uma linha; aberta, a lista de sugestões flutua por
+        // cima dos campos de baixo (o campo chama este resized ao abrir/fechar).
+        lblUsadas_->setBounds(area.removeFromTop(16));
+        area.removeFromTop(2);
+        auto linhaUsadas = area.removeFromTop(26);
+        campoUsadas_->setBounds(linhaUsadas.withHeight(campoUsadas_->alturaDesejada()));
+        campoUsadas_->toFront(false);
+        area.removeFromTop(6);
+
+        auto layoutSubfield = [&](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed) {
+            if (lbl) { lbl->setBounds(area.removeFromTop(16)); area.removeFromTop(2); }
+            if (ed) { ed->setBounds(area.removeFromTop(26)); area.removeFromTop(6); }
+        };
+
+        layoutSubfield(lblCoords_, edCoords_);
+        layoutSubfield(lblAddress_, edAddress_);
+        layoutSubfield(lblCity_, edCity_);
+        layoutSubfield(lblState_, edState_);
+        layoutSubfield(lblCountry_, edCountry_);
+
+        area.removeFromTop(4);
+        auto rodape = area.removeFromBottom(28);
+        btnApply_->setBounds(rodape.removeFromRight(150));
+        rodape.removeFromRight(8);
+        btnSalvarFavorito_->setBounds(rodape.removeFromLeft(150));
+    }
+
+    // Só pra --selftest-lote.
+    std::vector<juce::String> rotulosUsadosParaTeste() const {
+        std::vector<juce::String> out;
+        for (const auto& l : localizacoesUsadas_) out.push_back(l.rotulo);
+        return out;
+    }
+    void abrirSugestoesParaTeste() { campoUsadas_->abrirSugestoes(); }
+    void escolherUsadaParaTeste(const juce::String& rotulo) { if (campoUsadas_->aoEscolher) campoUsadas_->aoEscolher(rotulo); }
+    juce::String campoParaTeste(int i) const {
+        const juce::TextEditor* eds[] = {edCoords_.get(), edAddress_.get(), edCity_.get(), edState_.get(), edCountry_.get()};
+        return eds[i]->getText();
+    }
+    void salvarFavoritoParaTeste() { salvarComoFavorito(); }
+
+private:
+    struct LocalizacaoUsada {
+        juce::String rotulo;  // "Cidade, Estado, País — endereço" (o que o autocomplete mostra)
+        juce::String coords, endereco, cidade, estado, pais;
+    };
+
+    void carregarLocalizacoesUsadas() {
+        // Combinações distintas já gravadas, as mais usadas primeiro.
+        try {
+            auto st = registro_.prepare(
+                "SELECT latitude, longitude, COALESCE(formatted_address,''), COALESCE(city,''), "
+                "COALESCE(state_province,''), COALESCE(country,''), COUNT(*) AS n FROM asset_geolocation "
+                "GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY n DESC LIMIT 200");
+            std::set<juce::String> vistos;
+            while (st.step()) {
+                LocalizacaoUsada loc;
+                if (!st.columnIsNull(0) && !st.columnIsNull(1)) {
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(6) << st.columnReal(0) << ", " << st.columnReal(1);
+                    loc.coords = ss.str();
+                }
+                loc.endereco = juce::String::fromUTF8(st.columnText(2).c_str());
+                loc.cidade = juce::String::fromUTF8(st.columnText(3).c_str());
+                loc.estado = juce::String::fromUTF8(st.columnText(4).c_str());
+                loc.pais = juce::String::fromUTF8(st.columnText(5).c_str());
+                juce::StringArray partes;
+                for (auto* p : {&loc.cidade, &loc.estado, &loc.pais}) if (p->isNotEmpty()) partes.add(*p);
+                loc.rotulo = partes.joinIntoString(", ");
+                if (loc.endereco.isNotEmpty())
+                    loc.rotulo = loc.rotulo.isEmpty() ? loc.endereco : loc.rotulo + juce::String::fromUTF8(" \xe2\x80\x94 ") + loc.endereco;
+                if (loc.rotulo.isEmpty()) loc.rotulo = loc.coords;
+                if (loc.rotulo.isEmpty() || !vistos.insert(loc.rotulo).second) continue;
+                localizacoesUsadas_.push_back(std::move(loc));
+            }
+        } catch (...) {}
+    }
+
+    void preencherComLocalizacaoUsada(const juce::String& rotulo) {
+        for (const auto& loc : localizacoesUsadas_) {
+            if (loc.rotulo != rotulo) continue;
+            edCoords_->setText(loc.coords);
+            edAddress_->setText(loc.endereco);
+            edCity_->setText(loc.cidade);
+            edState_->setText(loc.estado);
+            edCountry_->setText(loc.pais);
+            return;
+        }
+    }
+
+    void salvarComoFavorito() {
+        // Copia os campos ANTES do diálogo: o CallOutBox pode se fechar
+        // quando o diálogo pega o foco, e o callback não pode tocar em this.
+        matriz::analytics::GeoFavorito fav;
+        std::string coords = edCoords_->getText().toStdString();
+        auto virgula = coords.find(',');
+        if (virgula != std::string::npos) {
+            try {
+                fav.latitude = std::stod(coords.substr(0, virgula));
+                fav.longitude = std::stod(coords.substr(virgula + 1));
+            } catch (...) {}
+        }
+        auto opcional = [](const juce::TextEditor& ed) -> std::optional<std::string> {
+            auto t = ed.getText().trim();
+            return t.isEmpty() ? std::nullopt : std::optional<std::string>(t.toStdString());
+        };
+        fav.formattedAddress = opcional(*edAddress_);
+        fav.city = opcional(*edCity_);
+        fav.stateProvince = opcional(*edState_);
+        fav.country = opcional(*edCountry_);
+        if (!fav.latitude && !fav.formattedAddress && !fav.city && !fav.stateProvince && !fav.country) {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "Favorites",
+                                                    "Fill in at least one location field before saving a favorite.");
+            return;
+        }
+
+        juce::String sugestao = fav.city ? juce::String(*fav.city)
+                              : (fav.formattedAddress ? juce::String(*fav.formattedAddress).substring(0, 40) : juce::String());
+        auto* dlg = new juce::AlertWindow("Save Favorite Place", "Name for this place:", juce::MessageBoxIconType::NoIcon);
+        dlg->addTextEditor("nome", sugestao, "");
+        dlg->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+        dlg->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+        matriz::db::Database* registro = &registro_;
+        dlg->enterModalState(true, juce::ModalCallbackFunction::create([dlg, fav, registro](int resultado) mutable {
+            if (resultado == 1) {
+                juce::String nome = dlg->getTextEditorContents("nome").trim();
+                if (nome.isNotEmpty()) {
+                    fav.nome = nome.toStdString();
+                    try { matriz::analytics::GeoFavoritosRepository::salvar(*registro, fav); } catch (...) {}
+                }
+            }
+        }), true);  // deleteWhenDismissed
+    }
+
+    void mostrarMenuFavoritos() {
+        auto favs = matriz::analytics::GeoFavoritosRepository::listar(registro_);
+        if (favs.empty()) {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::MessageBoxIconType::InfoIcon, "Favorites",
+                juce::String::fromUTF8("No favorite places saved yet. Fill in a location and use \xe2\x98\x85 Add to Favorites."));
+            return;
+        }
+        juce::PopupMenu menu;
+        for (int i = 0; i < static_cast<int>(favs.size()); ++i) {
+            juce::String label = juce::String(favs[static_cast<size_t>(i)].nome);
+            if (favs[static_cast<size_t>(i)].city)
+                label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
+            menu.addItem(i + 1, label);
+        }
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFavoritos_.get()),
+            [this, favs](int result) {
+                if (result < 1 || result > static_cast<int>(favs.size())) return;
+                const auto& fav = favs[static_cast<size_t>(result - 1)];
+                if (edCoords_ && fav.latitude && fav.longitude) {
+                    std::ostringstream ss;
+                    ss << std::fixed << std::setprecision(6) << *fav.latitude << ", " << *fav.longitude;
+                    edCoords_->setText(ss.str());
+                }
+                if (edAddress_ && fav.formattedAddress) edAddress_->setText(juce::String(*fav.formattedAddress));
+                if (edCity_ && fav.city) edCity_->setText(juce::String(*fav.city));
+                if (edState_ && fav.stateProvince) edState_->setText(juce::String(*fav.stateProvince));
+                if (edCountry_ && fav.country) edCountry_->setText(juce::String(*fav.country));
+            });
+    }
+
+    matriz::db::Database& registro_;
+    std::unique_ptr<juce::Label> lblTitle_;
+    std::unique_ptr<juce::TextButton> btnFavoritos_;
+    std::unique_ptr<juce::Label> lblCoords_;
+    std::unique_ptr<juce::TextEditor> edCoords_;
+    std::unique_ptr<juce::Label> lblAddress_;
+    std::unique_ptr<juce::TextEditor> edAddress_;
+    std::unique_ptr<juce::Label> lblCity_;
+    std::unique_ptr<juce::TextEditor> edCity_;
+    std::unique_ptr<juce::Label> lblState_;
+    std::unique_ptr<juce::TextEditor> edState_;
+    std::unique_ptr<juce::Label> lblCountry_;
+    std::unique_ptr<juce::TextEditor> edCountry_;
+    std::unique_ptr<PillButton> btnApply_;
+    std::unique_ptr<juce::TextButton> btnSalvarFavorito_;
+    std::unique_ptr<juce::Label> lblUsadas_;
+    std::unique_ptr<AutocompleteAssistedField> campoUsadas_;
+    std::vector<LocalizacaoUsada> localizacoesUsadas_;
+    std::function<void(const std::string&, const std::string&, const std::string&, const std::string&, const std::string&)> onApply_;
 };
 
 class AutocompleteLotePopupContent : public juce::Component {
@@ -3153,6 +3307,57 @@ void IntakeWorkspaceComponent::pintarGridParaTeste() {
 
 bool IntakeWorkspaceComponent::miniaturaEmCacheParaTeste(const std::string& itemId) const {
     return gridComponent_ && gridComponent_->temMiniaturaEmCache(itemId);
+}
+
+// Só pra --selftest-lote: popup GEO LOCATION do Intake — autocomplete das
+// localizações usadas e ★ Add to Favorites. Devolve o número de falhas.
+int IntakeWorkspaceComponent::autotestePopupGeoParaTeste(matriz::db::Database& registro,
+                                                        const std::function<void(bool, const juce::String&)>& checar) {
+    int falhas = 0;
+    auto ok = [&](bool c, const juce::String& d) { checar(c, d); if (!c) ++falhas; };
+    GeoLocationPopupContent popup(registro, true, [](const std::string&, const std::string&, const std::string&,
+                                                    const std::string&, const std::string&) {});
+    auto rotulos = popup.rotulosUsadosParaTeste();
+    const juce::String esperado = juce::String::fromUTF8("Porto Seguro, Bahia, Brazil");
+    bool temPorto = std::find(rotulos.begin(), rotulos.end(), esperado) != rotulos.end();
+    ok(temPorto && !rotulos.empty() && rotulos.front() == esperado,
+       "used locations list the project's places, most used first (" + juce::String((int) rotulos.size()) + ")");
+    if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+        juce::PNGImageFormat png;
+        if (auto out = std::unique_ptr<juce::FileOutputStream>(dir.getChildFile("intake_geo_popup.png").createOutputStream())) {
+            out->setPosition(0); out->truncate();
+            png.writeImageToStream(popup.createComponentSnapshot(popup.getLocalBounds()), *out);
+        }
+        popup.abrirSugestoesParaTeste();
+        if (auto out = std::unique_ptr<juce::FileOutputStream>(dir.getChildFile("intake_geo_popup_sugestoes.png").createOutputStream())) {
+            out->setPosition(0); out->truncate();
+            png.writeImageToStream(popup.createComponentSnapshot(popup.getLocalBounds()), *out);
+        }
+    }
+    popup.escolherUsadaParaTeste(esperado);
+    ok(popup.campoParaTeste(2) == "Porto Seguro" && popup.campoParaTeste(3) == "Bahia" &&
+           popup.campoParaTeste(4) == "Brazil" && popup.campoParaTeste(0).startsWith("-16.44"),
+       "picking a used location fills coordinates, city, state and country");
+
+    auto antes = matriz::analytics::GeoFavoritosRepository::listar(registro).size();
+    popup.salvarFavoritoParaTeste();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+    auto* dlg = dynamic_cast<juce::AlertWindow*>(juce::ModalComponentManager::getInstance()->getModalComponent(0));
+    ok(dlg != nullptr, "Add to Favorites asks for a name");
+    if (dlg) {
+        if (auto* ed = dlg->getTextEditor("nome")) {
+            ok(ed->getText() == "Porto Seguro", "the suggested name is the city");
+            ed->setText("Studio Porto");
+        }
+        dlg->exitModalState(1);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    }
+    auto favs = matriz::analytics::GeoFavoritosRepository::listar(registro);
+    bool salvo = false;
+    for (const auto& f : favs)
+        if (f.nome == "Studio Porto" && f.city && *f.city == "Porto Seguro" && f.latitude) salvo = true;
+    ok(favs.size() == antes + 1 && salvo, "the favorite is saved with its fields (Studio Porto)");
+    return falhas;
 }
 
 } // namespace matriz::ui

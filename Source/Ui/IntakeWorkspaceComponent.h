@@ -111,6 +111,8 @@ private:
 
     class ThumbnailsGridComponent;
     void pintarGridParaTeste();
+    static int autotestePopupGeoParaTeste(matriz::db::Database& registro,
+                                          const std::function<void(bool, const juce::String&)>& checar);
     bool miniaturaEmCacheParaTeste(const std::string& itemId) const;
     class IntakeDragDropEmptyState;
     friend class IntakeDragDropEmptyState;
