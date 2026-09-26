@@ -299,6 +299,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool autoResolverConflitos,
                                         bool forcarRebackup) {
     PlanoConsolidacao plano;
+    // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
+    const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
     HierarquiaBackup hierarquia = hierarquiaPedida.empty() ? hierarquiaDoProjeto(registro) : hierarquiaPedida;
     auto rotuloTipo = rotuloTipoMidia ? rotuloTipoMidia
                                        : RotuloTipoMidia([](const std::string& t) { return juce::String(t); });
@@ -366,7 +368,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
         std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
 
-        auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+        // Origem, não MAIN: o nome planejado parte do nome ORIGINAL, não do
+        // nome (com máscara) que a cópia ganhou no backup.
+        auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                        matriz::vault::Preferencia::Origem);
         juce::File arquivoNoProjeto = resolvido ? *resolvido : pastaProjeto.getChildFile(caminhoRelativoOrigem);
         ip.nomeOriginal = arquivoNoProjeto.getFileName();
 
@@ -559,11 +564,14 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             // destino_path) — um backup no MAIN não conta como feito no clone.
             auto stmtJa = registro.prepare(
                 "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? "
-                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL) LIMIT 1");
+                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
+                "     OR (? != '' AND COALESCE(destino_id, '') = ?)) LIMIT 1");
             stmtJa.bind(1, Value::of(ip.itemId));
             stmtJa.bind(2, Value::of(ip.pastaId));
             stmtJa.bind(3, Value::of(ip.arquivoId));
             stmtJa.bind(4, Value::of(chaveDestino(destino)));
+            stmtJa.bind(5, Value::of(destinoId));
+            stmtJa.bind(6, Value::of(destinoId));
             if (stmtJa.step()) {
                 juce::File arqDestino = destino.getChildFile(caminhoRelDestino);
                 if (arqDestino.existsAsFile()) {
@@ -605,6 +613,8 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
+    // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
+    const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensMarcadosWatermark;
 #endif
@@ -633,6 +643,13 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             juce::File origem = *resolvido;
 
             juce::File destinoArquivo = destino.getChildFile(ip.caminhoRelativoDestino);
+            // A leitura resolve MAIN primeiro: numa reconsolidação forçada no
+            // próprio MAIN a "origem" é o arquivo de destino — copiar por cima
+            // de si mesmo truncaria o arquivo. Já está lá: conta como pulado.
+            if (origem == destinoArquivo) {
+                ++resultado.pulados;
+                continue;
+            }
             destinoArquivo.getParentDirectory().createDirectory();
 
             // Se o caminho mudou mas o arquivo antigo já existia no destino com o mesmo tamanho,
@@ -732,6 +749,16 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                         {Value::of(matriz::model::novoUuid()), Value::of(ip.itemId), Value::of(ip.pastaId), Value::of(ip.arquivoId),
                          Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
                 }
+            }
+            // Identidade do destino pelo destination_id (o caminho muda quando
+            // o disco monta com outro nome) — é o que o resolvedor usa.
+            if (!destinoId.empty()) {
+                try {
+                    registro.run("UPDATE consolidacao_registro SET destino_id = ? WHERE item_id = ? AND pasta_id = ? "
+                                 "AND arquivo_id = ? AND COALESCE(destino_path, '') = ?",
+                                 {Value::of(destinoId), Value::of(ip.itemId), Value::of(ip.pastaId),
+                                  Value::of(ip.arquivoId), Value::of(destPathStr)});
+                } catch (...) {}
             }
 
             // -------------------------------------------------------------------
@@ -880,7 +907,8 @@ void sincronizarNomeDeBackupAposRenomear(matriz::db::Database& registro, const j
         auto cadeia = cadeiaAncestral(registro, lr.pastaId);
         juce::String mascara = mascaraEfetiva(registro, cadeia);
 
-        auto resolvido = matriz::vault::resolverArquivo(registro, lr.arquivoId, pastaProjeto);
+        auto resolvido = matriz::vault::resolverArquivo(registro, lr.arquivoId, pastaProjeto,
+                                                        matriz::vault::Preferencia::Origem);
         juce::File arquivoNoProjeto = resolvido ? *resolvido
                                                  : pastaProjeto.getChildFile(juce::String(lr.caminhoRelativo));
 

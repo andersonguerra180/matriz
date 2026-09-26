@@ -637,6 +637,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
 
     // Colunas acrescentadas depois da primeira versão do schema.
     garantirColuna(registro, "consolidacao_registro", "destino_path", "TEXT NOT NULL DEFAULT ''");
+    // destination_id do destino (identidade estável; o caminho muda quando o
+    // disco monta com outro nome). Vazio = registro legado — o resolvedor o
+    // tenta no MAIN e depois nos CLONEs.
+    garantirColuna(registro, "consolidacao_registro", "destino_id", "TEXT NOT NULL DEFAULT ''");
     registro.exec(
         "CREATE TABLE IF NOT EXISTS backup_destino ("
         "id            TEXT PRIMARY KEY, "

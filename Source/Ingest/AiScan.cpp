@@ -358,7 +358,7 @@ AiScanRelatorio executarAiScan(matriz::db::Database& indice,
         try {
             auto stmt = registro.prepare(
                 std::string("SELECT ") + matriz::vault::colunasDeResolucao() +
-                " FROM arquivo a " + matriz::vault::joinDeResolucao() +
+                ", a.id FROM arquivo a " + matriz::vault::joinDeResolucao() +
                 " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
             stmt.bind(1, Value::of(itemId));
             if (!stmt.step()) {
@@ -368,8 +368,8 @@ AiScanRelatorio executarAiScan(matriz::db::Database& indice,
                 continue;
             }
 
-            auto resolvido = matriz::vault::resolverCaminho(
-                pastaProjeto, stmt.columnText(0), stmt.columnText(1), stmt.columnText(2));
+            // MAIN/CLONE primeiro (lê bytes pra análise).
+            auto resolvido = matriz::vault::resolverArquivo(registro, stmt.columnText(3), pastaProjeto);
             if (!resolvido || !resolvido->existsAsFile()) {
                 rel.falhas.push_back({itemId, stmt.columnText(1), "File not found on disk.", 0});
                 ++feito;

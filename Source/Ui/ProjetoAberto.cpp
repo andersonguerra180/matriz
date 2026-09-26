@@ -162,13 +162,18 @@ juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
 }
 
 namespace {
-bool arquivoMasterExiste(const juce::File& pastaProjeto, const std::map<std::string, std::string>& relinks,
+// Status offline: MAIN/CLONE primeiro (etapa 2 do modelo SOURCE/MAIN/CLONE) —
+// com o backup presente o item NÃO está offline, mesmo com o SOURCE guardado.
+// `resolvedor` é criado sob demanda pelo chamador (carrega o
+// consolidacao_registro inteiro uma vez).
+bool arquivoMasterExiste(const matriz::vault::ResolvedorEmLote& resolvedor,
+                         const std::map<std::string, std::string>& relinks,
                          const std::string& masterArqId, const std::string& vaultLoc,
                          const std::string& camRel, const std::string& camAbs) {
     if (masterArqId.empty()) return false;
     auto it = relinks.find(masterArqId);
     if (it != relinks.end() && !it->second.empty()) return juce::File(it->second).existsAsFile();
-    auto res = matriz::vault::resolverCaminho(pastaProjeto, vaultLoc, camRel, camAbs);
+    auto res = resolvedor.resolver(masterArqId, vaultLoc, camRel, camAbs);
     return res.has_value() && res->existsAsFile();
 }
 } // namespace
@@ -179,6 +184,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                                                             const std::map<std::string, std::string>& inMemoryRelinks,
                                                             const std::set<std::string>* itensOffline) {
     std::vector<ItemResumo> out;
+    std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
     // Uma consulta com JOIN em vez de N+1 (arquivo e vault resolvidos num único join
     // para a master, características técnicas e miniatura/tags preparadas uma vez).
@@ -276,7 +282,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         // stat por item; só os que estão no cache são re-verificados em disco
         // (relink pode tê-los trazido de volta). Sem cache: verifica todos.
         if (itensOffline == nullptr || itensOffline->count(r.id) > 0)
-            r.offline = !arquivoMasterExiste(pastaProjeto, inMemoryRelinks, masterArqId, vaultLoc, camRel, camAbs);
+        {
+            if (!resolvedor) resolvedor = std::make_unique<matriz::vault::ResolvedorEmLote>(registro, pastaProjeto);
+            r.offline = !arquivoMasterExiste(*resolvedor, inMemoryRelinks, masterArqId, vaultLoc, camRel, camAbs);
+        }
 
         // Características técnicas via json_extract em SQL (sem juce::JSON::parse em C++)
         if (!stmt.columnIsNull(25)) {
@@ -431,6 +440,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
 std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     std::vector<ItemResumo> out;
     if (!projeto_) return out;
+    std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
     // Mesma cópia sob lock de listarItens() -- este método também roda em
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
@@ -518,7 +528,11 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
 
                 // Mesmo critério de listarItensDeProjeto: re-verifica só os do cache.
                 if (offlineCopia.count(r.id) > 0)
-                    r.offline = !arquivoMasterExiste(projeto_->pasta(), relinkCopia, masterArqId, vaultLoc, camRel, camAbs);
+                {
+                    if (!resolvedor)
+                        resolvedor = std::make_unique<matriz::vault::ResolvedorEmLote>(projeto_->registro(), projeto_->pasta());
+                    r.offline = !arquivoMasterExiste(*resolvedor, relinkCopia, masterArqId, vaultLoc, camRel, camAbs);
+                }
 
                 if (!r.titulo.empty()) {
                     r.nomeOriginalArquivo = r.titulo;
@@ -1452,8 +1466,9 @@ std::optional<ProjetoAberto::ArquivoInfo> ProjetoAberto::arquivoPrincipal(const 
     // Caminho ESPERADO, não resolvido: com o Vault offline (I3) a ficha
     // continua abrindo e o painel precisa poder dizer onde o arquivo mora.
     // Quem vai realmente ler os bytes checa existsAsFile().
-    info.caminhoAbsoluto = matriz::vault::caminhoEsperado(projeto_->pasta(), stmt.columnText(4),
-                                                           stmt.columnText(5), stmt.columnText(6))
+    // Etapa 2: MAIN/CLONE primeiro — preview, player, miniatura e forma de
+    // onda abrem a cópia do backup quando o SOURCE está guardado.
+    info.caminhoAbsoluto = matriz::vault::caminhoEsperadoArquivo(projeto_->registro(), info.id, projeto_->pasta())
                                .getFullPathName();
     return info;
 }

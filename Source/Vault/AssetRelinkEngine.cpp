@@ -41,6 +41,8 @@ AssetPresenceReport AssetRelinkEngine::verificarPresencaAssets(matriz::db::Datab
             "LEFT JOIN vault v ON v.id = a.vault_id "
             "WHERE a.eh_master = 1");
 
+        // MAIN/CLONE primeiro: com o backup presente o asset está online.
+        ResolvedorEmLote resolvedor(db, pastaProjeto);
         while (stmt.step()) {
             std::string arquivoId = stmt.columnText(0);
             std::string itemId = stmt.columnText(1);
@@ -57,7 +59,7 @@ AssetPresenceReport AssetRelinkEngine::verificarPresencaAssets(matriz::db::Datab
                 juce::File overrideFile(it->second);
                 exists = overrideFile.existsAsFile();
             } else {
-                auto resOpt = resolverCaminho(pastaProjeto, locVault, camRel, camAbs);
+                auto resOpt = resolvedor.resolver(arquivoId, locVault, camRel, camAbs);
                 exists = resOpt.has_value() && resOpt->existsAsFile();
             }
 
