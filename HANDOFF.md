@@ -120,6 +120,11 @@ pro que cobre.
 
 ### Pendências da sessão 2026-09-25/26
 
+- Build Release universal (x86_64+arm64) OK em 2026-09-26:
+  `build-release/matriz_artefacts/Release/BKR Matriz.app` (o cache de
+  `build-release/` estava com CMAKE_BUILD_TYPE vazio = sem otimização;
+  reconfigurado com `-DCMAKE_BUILD_TYPE=Release`). Não assinado/notarizado.
+
 - **Item 1 (uitest sob ASan)**: sem erros de ASan; App Nap resolvido.
   AINDA TRAVA no teardown final (`UiSelfTest.cpp:3305`, fim do `try`):
   main thread presa em `~MosaicoComponent` → `~ThreadPool` →
