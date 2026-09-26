@@ -5019,8 +5019,9 @@ private:
                                           " erro=" + juce::String(e.what()));
             }
         }
-        if (emTransacao) {
-            try { dbLote.exec("COMMIT"); } catch (...) { try { dbLote.exec("ROLLBACK"); } catch (...) {} }
+        if (emTransacao && !commitOuReverter(dbLote, itemIds_)) {
+            sucessos = 0;
+            falhas = static_cast<int>(itemIds_.size());
         }
         projeto_.finalizarGrupoUndo();
         juce::Logger::writeToLog("[ficha-lote] campo='" + juce::String(linha->campoId) + "' aplicado em " +
@@ -5128,9 +5129,7 @@ private:
                     kIdTarefa, concluidos, juce::String(concluidos) + " / " + juce::String((int) itemIds_.size()));
             }
         }
-        if (emTransacaoGeo) {
-            try { dbGeoLote.exec("COMMIT"); } catch (...) { try { dbGeoLote.exec("ROLLBACK"); } catch (...) {} }
-        }
+        if (emTransacaoGeo) commitOuReverter(dbGeoLote, itemIds_);
         projeto_.finalizarGrupoUndo();
         if (ehLote) {
             ProgressoGlobal::obterInstancia().concluirTarefa(
@@ -5187,7 +5186,14 @@ private:
             ProgressoGlobal::obterInstancia().atualizarProgresso("batch_undo", restaurados, juce::String(restaurados) + " restored");
         }
         if (emTransacaoUndo) {
-            try { dbUndo.exec("COMMIT"); } catch (...) { try { dbUndo.exec("ROLLBACK"); } catch (...) {} }
+            std::vector<std::string> idsUndo;
+            for (const auto& [id, snap] : undoSnapshot_) idsUndo.push_back(id);
+            if (!commitOuReverter(dbUndo, idsUndo)) {
+                // Nada foi desfeito: mantém o snapshot e o botão pra tentar de novo.
+                ProgressoGlobal::obterInstancia().concluirTarefa("batch_undo", "Undo failed (rolled back)");
+                if (aoAplicarEmLote) aoAplicarEmLote();
+                return;
+            }
         }
         resultado_->setText(matriz::i18n::t("ficha.lote_resultado_desfeito").replace("{n}", juce::String(restaurados)),
                              juce::dontSendNotification);
@@ -5199,6 +5205,22 @@ private:
 
     void relayoutEExibir() {
         if (aoRelayoutNecessario) aoRelayoutNecessario();
+    }
+
+    // COMMIT do lote; se falhar, ROLLBACK e relê os itens afetados — a grade
+    // já tinha sido atualizada item a item (aoAplicarSucessoItem) com valores
+    // que o ROLLBACK acabou de desfazer.
+    bool commitOuReverter(matriz::db::Database& db, const std::vector<std::string>& ids) {
+        try {
+            db.exec("COMMIT");
+            return true;
+        } catch (...) {
+            try { db.exec("ROLLBACK"); } catch (...) {}
+        }
+        juce::Logger::writeToLog("[ficha-lote] COMMIT falhou, ROLLBACK de " + juce::String((int) ids.size()) + " item(ns)");
+        if (aoAplicarSucessoItem)
+            for (const auto& id : ids) aoAplicarSucessoItem(id);
+        return false;
     }
 
     ProjetoAberto& projeto_;

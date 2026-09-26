@@ -2,6 +2,7 @@
 
 #include <sqlite3.h>
 
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -22,6 +23,16 @@
 // código de acervo, criar o Vault se não existir) continua sendo uma corrida
 // entre threads. Quem faz isso precisa de exclusão mútua própria — ver o
 // mutex de escrita em MainComponent::processarLoteEmBackground.
+//
+// TRANSAÇÕES: a conexão é uma só, então um BEGIN..COMMIT aberto numa thread
+// engoliria as escritas de qualquer outra thread (e um ROLLBACK as
+// desfaria; um BEGIN delas falharia com "cannot start a transaction within
+// a transaction"). Por isso toda chamada (exec/run/step) passa pela trava da
+// conexão, e enquanto a conexão está em transação (sqlite3_get_autocommit
+// == 0) a thread que a abriu RETÉM a trava até o COMMIT/ROLLBACK — as
+// outras threads esperam. Rede de segurança: ninguém espera mais que
+// kEsperaMaximaTrava; estourou, loga em stderr e segue sem a trava (o
+// comportamento antigo) em vez de travar o app pra sempre.
 
 namespace matriz::db {
 
@@ -75,8 +86,10 @@ public:
     std::vector<unsigned char> columnBlob(int index) const;
 
 private:
+    friend class Database;
     sqlite3* db_ = nullptr;
     sqlite3_stmt* stmt_ = nullptr;
+    class Database* dono_ = nullptr;  // trava da conexão (nullptr: sem trava)
 };
 
 class Database {
@@ -111,10 +124,29 @@ public:
 
     sqlite3* handle() const { return db_; }
 
+    // RAII da trava da conexão (ver TRANSAÇÕES acima). Reentrante.
+    class Trava {
+    public:
+        explicit Trava(Database& db);
+        ~Trava();
+        Trava(const Trava&) = delete;
+        Trava& operator=(const Trava&) = delete;
+    private:
+        Database& db_;
+        bool travou_ = false;
+    };
+
 private:
+    friend class Statement;
+    // Chamado com a trava tomada, depois de cada statement: se a conexão
+    // entrou em transação, retém uma trava extra; se saiu, solta.
+    void sincronizarTravaDeTransacao();
+
     sqlite3* db_ = nullptr;
     bool sujo_ = false;
     bool rastrearSujo_ = true;
+    std::recursive_timed_mutex conexaoMutex_;
+    bool travaDeTransacao_ = false;  // só lido/escrito com conexaoMutex_ tomado
 };
 
 } // namespace matriz::db

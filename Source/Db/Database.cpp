@@ -1,5 +1,7 @@
 #include "Database.h"
 
+#include <chrono>
+#include <cstdio>
 #include <utility>
 
 namespace matriz::db {
@@ -17,7 +19,7 @@ Statement::~Statement() {
     if (stmt_) sqlite3_finalize(stmt_);
 }
 
-Statement::Statement(Statement&& other) noexcept : db_(other.db_), stmt_(other.stmt_) {
+Statement::Statement(Statement&& other) noexcept : db_(other.db_), stmt_(other.stmt_), dono_(other.dono_) {
     other.stmt_ = nullptr;
 }
 
@@ -26,6 +28,7 @@ Statement& Statement::operator=(Statement&& other) noexcept {
         if (stmt_) sqlite3_finalize(stmt_);
         db_ = other.db_;
         stmt_ = other.stmt_;
+        dono_ = other.dono_;
         other.stmt_ = nullptr;
     }
     return *this;
@@ -48,7 +51,14 @@ void Statement::bind(int oneBasedIndex, const Value& value) {
 }
 
 bool Statement::step() {
-    int rc = sqlite3_step(stmt_);
+    int rc;
+    if (dono_) {
+        Database::Trava trava(*dono_);
+        rc = sqlite3_step(stmt_);
+        dono_->sincronizarTravaDeTransacao();
+    } else {
+        rc = sqlite3_step(stmt_);
+    }
     if (rc == SQLITE_ROW) return true;
     if (rc == SQLITE_DONE) return false;
     throw DatabaseError(std::string("failed to execute statement: ") + sqlite3_errmsg(db_));
@@ -101,13 +111,41 @@ Database::Database(const std::string& path) {
     execScript("PRAGMA synchronous=NORMAL;");
 }
 
+namespace {
+constexpr auto kEsperaMaximaTrava = std::chrono::seconds(60);
+}
+
+Database::Trava::Trava(Database& db) : db_(db) {
+    travou_ = db_.conexaoMutex_.try_lock_for(kEsperaMaximaTrava);
+    if (!travou_)
+        std::fprintf(stderr, "[db] trava da conexao nao obtida em 60 s (transacao de outra thread aberta?) "
+                             "- seguindo sem ela\n");
+}
+
+Database::Trava::~Trava() {
+    if (travou_) db_.conexaoMutex_.unlock();
+}
+
+void Database::sincronizarTravaDeTransacao() {
+    const bool emTransacao = db_ != nullptr && sqlite3_get_autocommit(db_) == 0;
+    if (emTransacao && !travaDeTransacao_) {
+        conexaoMutex_.lock();  // reentrante: já temos a trava, não bloqueia
+        travaDeTransacao_ = true;
+    } else if (!emTransacao && travaDeTransacao_) {
+        travaDeTransacao_ = false;
+        conexaoMutex_.unlock();
+    }
+}
+
 Database::~Database() {
     if (db_) sqlite3_close(db_);
 }
 
 void Database::execScript(const std::string& sqlScript) {
+    Trava trava(*this);
     char* errMsg = nullptr;
     int rc = sqlite3_exec(db_, sqlScript.c_str(), nullptr, nullptr, &errMsg);
+    sincronizarTravaDeTransacao();
     if (rc != SQLITE_OK) {
         std::string msg = errMsg ? errMsg : "unknown error";
         sqlite3_free(errMsg);
@@ -118,9 +156,14 @@ void Database::execScript(const std::string& sqlScript) {
 
 void Database::exec(const std::string& sql) { execScript(sql); }
 
-Statement Database::prepare(const std::string& sql) { return Statement(db_, sql); }
+Statement Database::prepare(const std::string& sql) {
+    Statement stmt(db_, sql);
+    stmt.dono_ = this;
+    return stmt;
+}
 
 void Database::run(const std::string& sql, const std::vector<Value>& params) {
+    Trava trava(*this);
     Statement stmt = prepare(sql);
     for (size_t i = 0; i < params.size(); ++i)
         stmt.bind(static_cast<int>(i) + 1, params[i]);
@@ -135,6 +178,7 @@ void Database::copiarSeguroPara(const std::string& destinoPath) {
         if (pDest) sqlite3_close(pDest);
         throw DatabaseError("failed to open destination database for backup: " + err);
     }
+    Trava trava(*this);
     sqlite3_backup* pBackup = sqlite3_backup_init(pDest, "main", db_, "main");
     if (!pBackup) {
         std::string err = sqlite3_errmsg(pDest);
