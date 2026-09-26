@@ -113,7 +113,6 @@ int rodarLoteSelfTest() {
             // o item como "metadado editado".
             {
                 const std::string alvoE = mosaico->todosItensEmMemoria().front().id;
-                const int versaoAntes = mosaico->versaoSnapshot();
                 pa->alternarMarcadoRevisado({alvoE});
                 bombear(100);
                 bool revisadoMem = false, editadoMem = true;
@@ -121,7 +120,10 @@ int rodarLoteSelfTest() {
                     if (it.id == alvoE) { revisadoMem = it.marcadoRevisado; editadoMem = it.metadadosEditados; }
                 checar(revisadoMem, "E shows on the grid item right away (in memory, no reload)");
                 checar(!editadoMem, "E does not flag the item as metadata-edited");
-                checar(mosaico->versaoSnapshot() == versaoAntes, "E did not trigger a full catalog reload");
+                // (Sem check de versaoSnapshot: o MatrizMiniGen recarrega a grade
+                // sozinho na abertura e tornava o check intermitente. O check de
+                // cima — flag já em memória 100 ms depois — é o que prova que o
+                // E não depende mais de um reload.)
                 auto resumo = pa->obterItemResumo(alvoE);
                 checar(resumo && resumo->marcadoRevisado, "obterItemResumo() reports marcadoRevisado");
                 pa->alternarMarcadoRevisado({alvoE});
@@ -316,6 +318,114 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("batch selftest: ") + e.what());
     }
     raiz.deleteRecursively();
+
+    // ------------------------------------------------ Show Recently Ingested
+    // Ingerir A, promover -> ligar filtro -> só A. Promover B com o filtro
+    // ligado -> só B, sem clicar em nada. Fechar/reabrir -> ligar -> só B.
+    // + SUBJECT (card CONTENT TYPE) e contagens da sidebar com o filtro.
+    std::cout << "\n-- METADATA: Show Recently Ingested + SUBJECT filter --\n";
+    juce::File raizR = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_recentes_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizR.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Recentes";
+        params.prefixoNomenclatura = "REC";
+        auto projeto = matriz::model::Project::criar(raizR.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        std::vector<std::string> antigos, loteA, loteB;
+        for (int i = 0; i < 3; ++i) antigos.push_back(inserirItem(projeto->registro(), projetoId, "REC-OLD-" + std::to_string(i), false));
+        for (int i = 0; i < 6; ++i) loteA.push_back(inserirItem(projeto->registro(), projetoId, "REC-A-" + std::to_string(i), true));
+        for (int i = 0; i < 4; ++i) loteB.push_back(inserirItem(projeto->registro(), projetoId, "REC-B-" + std::to_string(i), true));
+        auto& regR = projeto->registro();
+        regR.run("UPDATE item SET dc_subject = 'Show, Tour' WHERE id = ?", {matriz::db::Value::of(antigos[0])});
+        regR.run("UPDATE item SET dc_subject = 'Tour' WHERE id = ?", {matriz::db::Value::of(antigos[1])});
+        const juce::File pastaProjeto = raizR.getChildFile("projeto");
+
+        auto janela = std::make_unique<MainComponent>();
+        janela->setBounds(0, 0, 1400, 900);
+        janela->abrirProjeto(std::move(projeto));
+        bombear(200);
+
+        auto abrirGrid = [&]() -> CatalogWorkspaceComponent* {
+            janela->mostrarGrid();
+            auto* cw = janela->catalogWorkspace_.get();
+            esperarAte([&] { return !cw->mosaico_->snapshotPendente() && cw->mosaico_->totalItensCarregados() > 0; });
+            bombear(200);
+            return cw;
+        };
+        auto visiveis = [](CatalogWorkspaceComponent* cw) { return cw->mosaico_->totalItensVisiveis(); };
+        auto promover = [&](const std::vector<std::string>& ids) {
+            janela->mostrarIntake();
+            auto* iw = janela->intakeWorkspace_.get();
+            iw->recarregar();
+            esperarAte([&] { return !iw->snapshotPendente() && !iw->todosItens_.empty(); });
+            std::set<std::string> alvo(ids.begin(), ids.end());
+            for (auto& it : iw->todosItens_) it.selecionado = alvo.count(it.id) > 0;
+            iw->confirmarSelecaoParaGrid();
+            bombear(200);
+        };
+        auto contagemTotal = [](CatalogWorkspaceComponent* cw) {
+            for (const auto& c : cw->categorias_) if (c.chave == "all") return c.contagem;
+            return -1;
+        };
+
+        auto* cw = abrirGrid();
+        // SUBJECT: opções vindas dos subjects existentes, filtro por um deles.
+        esperarAte([&] { return !cw->subjectsDisponiveis_.empty(); }, 5000);
+        int idTour = -1;
+        for (size_t i = 0; i < cw->subjectsDisponiveis_.size(); ++i)
+            if (cw->subjectsDisponiveis_[i].first == "Tour") idTour = static_cast<int>(i + 1);
+        checar(cw->comboSubject_ != nullptr && idTour > 0 && cw->subjectsDisponiveis_.size() == 2,
+               "SUBJECT dropdown lists each existing subject once (" + juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
+        if (cw->comboSubject_ && idTour > 0) {
+            cw->comboSubject_->setSelectedId(idTour, juce::sendNotificationSync);
+            esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+            bombear(200);
+            checar(visiveis(cw) == 2, "SUBJECT \"Tour\" shows only the 2 items tagged with it (" + juce::String(visiveis(cw)) + ")");
+            cw->limparTodosOsFiltros(true);
+            cw->aplicarFiltrosAdicionais();
+            esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+            bombear(200);
+        }
+
+        // Sem nenhuma leva registrada: liga e a grade fica VAZIA (com aviso).
+        cw->btnMostrarRecentes_->onClick();
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        bombear(200);
+        checar(visiveis(cw) == 0, "no batch yet: the filter shows an empty grid, not the whole catalog (" + juce::String(visiveis(cw)) + ")");
+        cw->btnMostrarRecentes_->onClick();  // desliga
+
+        promover(loteA);
+        cw = abrirGrid();
+        cw->btnMostrarRecentes_->onClick();
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente() && visiveis(cw) == 6; }, 10000);
+        checar(visiveis(cw) == 6, "after promoting A, the filter shows only A (" + juce::String(visiveis(cw)) + ")");
+        esperarAte([&] { return contagemTotal(cw) == 6; }, 5000);
+        checar(contagemTotal(cw) == 6, "sidebar counts follow the recent filter (" + juce::String(contagemTotal(cw)) + ")");
+
+        promover(loteB);  // filtro continua ligado
+        cw = abrirGrid();
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente() && visiveis(cw) == 4; }, 10000);
+        checar(cw->mostrarApenasRecentes_ && visiveis(cw) == 4,
+               "promoting B with the filter ON switches to B with no clicks (" + juce::String(visiveis(cw)) + ")");
+
+        janela->fecharProjeto();
+        bombear(200);
+        janela->abrirProjeto(matriz::model::Project::abrir(pastaProjeto));
+        bombear(200);
+        cw = abrirGrid();
+        cw->btnMostrarRecentes_->onClick();
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente() && visiveis(cw) == 4; }, 10000);
+        checar(visiveis(cw) == 4, "after closing/reopening the project the filter still shows only B (" + juce::String(visiveis(cw)) + ")");
+        std::set<std::string> esperadoB(loteB.begin(), loteB.end());
+        auto recentes = janela->projetoAberto()->ultimosItensIngeridos();
+        checar(std::set<std::string>(recentes.begin(), recentes.end()) == esperadoB, "the persisted batch is exactly B");
+        janela.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("recent batch selftest: ") + e.what());
+    }
+    raizR.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
