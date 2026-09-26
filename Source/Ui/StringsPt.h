@@ -1228,7 +1228,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"intake.btn_enviar_todos", "Enviar todos para o GRID"},
         {"intake.btn_rejeitar_selecionados", "Rejeitar selecionados"},
         {"intake.definir", "Definir..."},
-        {"intake.popup_osm_batch", "MÍDIA DE ORIGEM (LOTE)"},
+        {"intake.popup_osm_batch", "MÍDIA DE ORIGEM"},
         {"intake.popup_osm", "MÍDIA DE ORIGEM"},
         {"intake.popup_geo_batch", "LOCALIZAÇÃO GEOGRÁFICA (SOBREPOSIÇÃO EM LOTE)"},
         {"intake.popup_geo", "LOCALIZAÇÃO GEOGRÁFICA"},

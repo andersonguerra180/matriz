@@ -1216,7 +1216,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"intake.btn_enviar_todos", "Send all to GRID"},
         {"intake.btn_rejeitar_selecionados", "Reject selected"},
         {"intake.definir", "Set..."},
-        {"intake.popup_osm_batch", "ORIGINAL SOURCE MEDIUM (BATCH)"},
+        {"intake.popup_osm_batch", "ORIGINAL SOURCE MEDIUM"},
         {"intake.popup_osm", "ORIGINAL SOURCE MEDIUM"},
         {"intake.popup_geo_batch", "GEO LOCATION (BATCH OVERRIDE)"},
         {"intake.popup_geo", "GEO LOCATION"},
