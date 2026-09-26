@@ -12,6 +12,7 @@
 #include "MosaicoComponent.h"
 #include "OriginalSourceMedium.h"
 #include "ProjetoAberto.h"
+#include "BackupVersionsComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 
 namespace matriz::ui {
@@ -585,6 +586,135 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("event date selftest: ") + e.what());
     }
     raizD.deleteRecursively();
+
+    // ------------------------------------------------ Etapa 3: papéis/versões
+    std::cout << "\n-- Backup versions: MAIN / CLONE / SOURCE roles + old-project migration --\n";
+    juce::File raizV = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_versions_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizV.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Versions";
+        params.prefixoNomenclatura = "VER";
+        juce::File raizMain = raizV.getChildFile("MAIN");
+        juce::File raizClone1 = raizV.getChildFile("CLONE1"), raizClone2 = raizV.getChildFile("CLONE2");
+        raizClone1.createDirectory();
+        juce::File discoSource = raizV.getChildFile("CARD");
+        discoSource.createDirectory();
+        auto projeto = matriz::model::Project::criar(raizMain, params);
+        auto& reg = projeto->registro();
+        const std::string agora = matriz::model::agoraIso8601();
+        auto inserirDestino = [&](const std::string& id, const juce::File& raiz, const std::string& papel, long long rev) {
+            reg.run("INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, "
+                    "ultima_revisao_conhecida, ultimo_visto_em) VALUES (?, ?, ?, 1, ?, ?, ?, ?, '2026-09-20T10:00:00Z')",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(raiz.getFullPathName().toStdString()),
+                     matriz::db::Value::of(raiz.getFileName().toStdString()), matriz::db::Value::of(agora),
+                     matriz::db::Value::of(id), matriz::db::Value::of(papel), matriz::db::Value::of(rev)});
+        };
+        inserirDestino("clone-1", raizClone1, "CLONE", 1);   // em dia (revisão 1)
+        inserirDestino("clone-2", raizClone2, "CLONE", 0);   // desatualizado, offline
+        // SOURCE: um volume com 2 arquivos, nenhum no MAIN ainda.
+        reg.run("INSERT INTO vault (id, projeto_id, nome, tipo, localizacao, status, criado_em) "
+                "VALUES ('vault-card', ?, 'CARD', 'local', ?, 'online', ?)",
+                {matriz::db::Value::of(projeto->projetoId()), matriz::db::Value::of(discoSource.getFullPathName().toStdString()),
+                 matriz::db::Value::of(agora)});
+        std::vector<std::string> doCartao;
+        for (int i = 0; i < 2; ++i) {
+            auto itemId = inserirItem(reg, projeto->projetoId(), "VER-" + std::to_string(i), false, ".jpg");
+            reg.run("UPDATE arquivo SET vault_id = 'vault-card' WHERE item_id = ?", {matriz::db::Value::of(itemId)});
+            auto st = reg.prepare("SELECT id FROM arquivo WHERE item_id = ?");
+            st.bind(1, matriz::db::Value::of(itemId));
+            st.step();
+            doCartao.push_back(st.columnText(0));
+        }
+
+        MainComponent janela;
+        janela.setBounds(0, 0, 1400, 900);
+        janela.abrirProjeto(std::move(projeto));
+        bombear(300);
+        auto* pa = janela.projetoAberto();
+        auto& db = pa->projeto().registro();
+        auto papelDe = [&](const std::string& id) {
+            auto st = db.prepare("SELECT papel FROM backup_destino WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        const std::string idMain = pa->projeto().destinationId();
+
+        auto sit = pa->normalizarPapelMain();
+        checar(sit.tipo == ProjetoAberto::SituacaoMain::Tipo::Ok && papelDe(idMain) == "ORIGINAL",
+               "a project with exactly one MAIN is left as is");
+
+        // Projeto antigo sem MAIN: pergunta; a escolha deixa exatamente um MAIN.
+        db.run("UPDATE backup_destino SET papel = 'CLONE'", {});
+        sit = pa->normalizarPapelMain();
+        checar(sit.tipo == ProjetoAberto::SituacaoMain::Tipo::Perguntar && sit.opcoes.size() == 3,
+               "no MAIN registered -> ask once, listing the " + juce::String((int) sit.opcoes.size()) + " versions");
+        pa->definirMain(idMain);
+        checar(papelDe(idMain) == "ORIGINAL" && papelDe("clone-1") == "CLONE" && papelDe("clone-2") == "CLONE",
+               "choosing the MAIN makes it ORIGINAL and the others CLONE");
+
+        // Dois ORIGINAL (bancos antigos): a raiz aberta fica MAIN, o outro vira CLONE.
+        db.run("UPDATE backup_destino SET papel = 'ORIGINAL' WHERE id = 'clone-1'", {});
+        sit = pa->normalizarPapelMain();
+        checar(sit.tipo == ProjetoAberto::SituacaoMain::Tipo::Ok && papelDe(idMain) == "ORIGINAL" && papelDe("clone-1") == "CLONE",
+               "two ORIGINAL rows -> the opened root stays MAIN, the other becomes CLONE (labels only)");
+        checar(raizClone1.isDirectory() && raizMain.getChildFile("destination.json").existsAsFile(),
+               "nothing on disk was moved or deleted by the migration");
+
+        using Papel = ProjetoAberto::VersaoResumo::Papel;
+        auto versoes = pa->listarVersoes();
+        auto achar = [&](const std::vector<ProjetoAberto::VersaoResumo>& vs, Papel p, const std::string& id = {}) {
+            for (const auto& v : vs) if (v.papel == p && (id.empty() || v.id == id)) return &v;
+            return static_cast<const ProjetoAberto::VersaoResumo*>(nullptr);
+        };
+        checar(!versoes.empty() && versoes.front().papel == Papel::Main, "the MAIN is always the first row");
+        auto* c1 = achar(versoes, Papel::Clone, "clone-1");
+        auto* c2 = achar(versoes, Papel::Clone, "clone-2");
+        checar(c1 && !c1->desatualizado && c1->online, "CLONE with the current revision -> up to date");
+        checar(c2 && c2->desatualizado && !c2->online && c2->ultimaData.startsWith("2026-09-20"),
+               "CLONE behind the project revision -> out of date since its last sync");
+        auto* src = achar(versoes, Papel::Source);
+        checar(src && src->online && src->totalItens == 2 && src->dependentes == 2,
+               "the SOURCE row shows its files and how many still depend on it (" +
+                   juce::String(src ? src->dependentes : -1) + ")");
+
+        // Os dois arquivos entram no MAIN (registro legado): SOURCE liberado.
+        for (const auto& arqId : doCartao)
+            db.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
+                   "SELECT ?, item_id, '', id, 'x.jpg', 'abc', ? FROM arquivo WHERE id = ?",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(agora), matriz::db::Value::of(arqId)});
+        versoes = pa->listarVersoes();
+        src = achar(versoes, Papel::Source);
+        checar(src && src->dependentes == 0, "all its files in the MAIN -> SOURCE safe to disconnect");
+        auto* mainRow = achar(versoes, Papel::Main);
+        checar(mainRow && mainRow->totalItens == 2, "legacy consolidation records count for the MAIN (" +
+                                                        juce::String(mainRow ? mainRow->totalItens : -1) + ")");
+        discoSource.deleteRecursively();
+        versoes = pa->listarVersoes();
+        src = achar(versoes, Papel::Source);
+        checar(src && !src->online, "SOURCE disconnected -> stored");
+
+        // Visual da lista (pra conferir a olho): test-output/backup_versions.png
+        {
+            BackupVersionsComponent lista(*pa);
+            lista.setSize(1100, 420);
+            esperarAte([&] { return lista.getNumRows() > 0; }, 5000);
+            bombear(100);
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                juce::PNGImageFormat png;
+                auto arq = dir.getChildFile("backup_versions.png");
+                arq.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                    png.writeImageToStream(lista.createComponentSnapshot(lista.getLocalBounds()), *out);
+            }
+            checar(lista.getNumRows() == 4, "the Versions list shows MAIN, 2 CLONEs and the SOURCE (" +
+                                                juce::String(lista.getNumRows()) + " rows)");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("versions selftest: ") + e.what());
+    }
+    raizV.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
