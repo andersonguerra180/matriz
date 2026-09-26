@@ -1,0 +1,41 @@
+  FAIL within parent bounds: janela_principal_archive/13/18/0
+  FAIL within parent bounds: janela_principal_catalog/14/18/0
+  FAIL the "maquina" text field (fita_rolo) was found in the rendered record
+  FAIL typed value survives switching items without ever losing focus (saved: "<vazio>")
+  FAIL the "maquina" field editor comes back when the item is reopened
+  FAIL flow 1: a dropped file shows up in the grid with no dialog (2.1)
+  FAIL flow 2 (partial - see note): a folder dropped in Catalog mode ingests its contents; NOT VERIFIED and knowingly absent: automatic assembly into a single release (7.3, item 6+)
+  FAIL the flow 1 PDF was found for the preview test
+  FAIL the PDF item (flow 1) found again for the tree test
+  FAIL an item moved into a folder shows up in it
+  FAIL a filed item leaves "no folder yet" (5.5 is computed by absence, not a state of its own)
+  FAIL filtering by folder narrows the grid to that folder's items only (0 visible)
+  FAIL limpar o filtro devolve a grade inteira (26)
+  FAIL deleting the folder does not delete the item - it just goes back to "no folder yet"
+  FAIL limparFiltros() clears chips AND search at once
+  FAIL filters cleared before reapplying the saved collection
+  FAIL grade volta ao normal depois de limpar tudo de novo
+  FAIL re-importing the same file still creates an item (visible in the grid), but marked - never invisible
+  FAIL o item reimportado entra com estado='duplicata'
+  FAIL localizacao_conhecida records the source path of the re-imported file
+  FAIL the quiet end-of-batch summary shows the already-known count (text: "1 new")
+  FAIL the type picker shows up in the single-item record (same path as batch mode)
+  FAIL clicking a type classifies the single item (it only worked in batches of 2+ before)
+  FAIL the untyped PDF from flow 1 is available for this test
+  FAIL "maquina" is a plain text editor (not a table/combo)
+  FAIL the "Apply" button exists in batch mode
+  FAIL the "Apply" button becomes enabled after touching a field
+  FAIL applying in batch writes the TOUCHED field to both items
+  FAIL the "Undo" button appears after a successful apply
+  FAIL there is an item with a real file to read original metadata from
+  FAIL original metadata was read from the file (0 campo(s))
+  FAIL both markers (range and instant) land on the ruler
+  FAIL the range marker is on the ruler
+  FAIL the range ends at 3.0s before editing
+  FAIL dragging the right edge extends the range on screen
+  FAIL the edited tempo_fim is persisted in the database
+  FAIL editing a marker leaves a provenance trail
+  FAIL the key the start screen uses resolves to English and no locale changes it ("Open an existing project..." / "Abrir um projeto que já existe…")
+  FAIL Validation fails for wrong extension
+  FAIL Batch intake did NOT overwrite native embedded metadata (source_media preserved)
+  FAIL ETAPA 2: Pelo menos 8 formatos padrao cadastrados

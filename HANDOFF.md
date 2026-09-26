@@ -16,6 +16,13 @@ não devem ser revertidas.
 
 Mais recente primeiro:
 
+- `738dcf6` — fase de checagem de duplicatas (job antes do lote) agora
+  conta em `ingestEmAndamento()`; cancelar nessa fase descarta o lote.
+  Antes: fechar projeto permitido, cancelar ignorado, lote de 5.000 do
+  selftest "terminava" com 0 voltas.
+- `d969099` — **Item 6a**: `fichaPanel_->aoMudar` → contagens com
+  debounce de 500 ms.
+- `c5fad24` — teste de lotes sobrepostos conta só modais do próprio bloco.
 - `81fceb5` — SendToPrintDialog: job de carregamento esperava
   MessageManagerLock enquanto o destrutor (message thread) esperava o pool
   → JUCE matava a thread à força. Agora `MessageManagerLock(ThreadPoolJob*)`.
@@ -125,7 +132,32 @@ pro que cobre.
   não medida — muitas são cascata de "flow 1: a dropped file shows up in
   the grid" (ingest em 30 s). Comparar com build-tsan (binário antigo)
   antes de concluir se alguma é regressão.
-- Itens 4 (TSan) e 6 ver abaixo.
+- **Lista das 41 FAIL do uitest**: `docs/uitest_fails_2026-09-26.txt`.
+  Idênticas em ASan e TSan. "flow 1" e "maquina" falham também no
+  binário Debug de 25/09 20:29 (antes dos commits de ingest/DB) →
+  pré-existentes; a maioria das outras é cascata do `pdfId` do flow 1.
+  O uitest NÃO instancia `CatalogWorkspaceComponent` (item 5/6a não são
+  cobertos por ele).
+- **Item 4 (TSan)**: `--selftest-ingerir-arquivos` e `--selftest-uitest`
+  sob TSan: **0 data races** (ingest 5.000 + cancelamento + lotes
+  sobrepostos; batch assignment/atalhos, marcações, reload de mosaico no
+  uitest). O fluxo MANUAL pedido (catálogo ~300, batch assignment,
+  H/K/P/W/E rápidas, trocar filtro durante reload, ingest) continua não
+  exercitado — sem automação de GUI nativa aqui. Rodar à mão com
+  `build-tsan/` e anotar races.
+- **Selftest ingest (TSan, 2026-09-26)**: 9 FAIL — baseline 1–7 da
+  memória; #8 (freeze >1 s) CORRIGIDO (pior latência 75 ms, 54k voltas);
+  5.000 bate no teto de 600 s do próprio teste sob TSan (3.769 códigos),
+  e daí falha "processed stays valid after cancelling".
+- **Item 6b (auditoria)**: só inventário até agora — 33
+  `mosaico->recarregar()`, 27 `atualizarContagens()`, 33
+  `listarItens*()`. Revisados: `CatalogWorkspace:520/532/538` (limpar
+  TODAS as marcações H/K/P/W/E → reload justificado, manter). Resto não
+  auditado.
+- **Item 6c** (progresso real em catalog_assets/catalog_view/hub_open,
+  callback por etapa em Project::abrir, setStatus via callAsync): não feito.
+- `expandirArquivosAsync` ainda faz `SELECT DISTINCT caminho_absoluto_origem`
+  NA message thread (pasta grande = freeze curto). Não mexido.
 
 Plano original em 3 fases (diagnóstico de crash/freeze/lentidão):
 
