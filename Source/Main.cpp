@@ -204,6 +204,8 @@ public:
         sigaction(SIGABRT, &sa, nullptr);
 #endif
         matriz::diag::instalarGuardaDeExcecao();
+        if (commandLine.contains("--selftest-"))
+            matriz::diag::desativarAppNapParaSelfTest();
 
         matriz::i18n::carregar(matriz::app::lerLocale());
 

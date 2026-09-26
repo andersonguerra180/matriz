@@ -21,4 +21,9 @@ void instalarGuardaDeExcecao();
 // to the crash log via raw fd I/O (safe from signal/terminate context).
 void breadcrumb(const char* msg);
 
+// Self-tests headless: sem janela em primeiro plano o macOS põe o processo
+// em App Nap (prioridade darwin-bg, timers/sleeps adiados por minutos) e o
+// teste parece travado. Só pros modos --selftest-*; o app normal não chama.
+void desativarAppNapParaSelfTest();
+
 } // namespace matriz::diag

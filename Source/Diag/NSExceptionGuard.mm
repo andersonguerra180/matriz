@@ -194,9 +194,19 @@ void matriz::diag::breadcrumb(const char* msg) {
     crashFlush();
 }
 
+void matriz::diag::desativarAppNapParaSelfTest() {
+    static id<NSObject> atividade = nil;
+    if (atividade != nil) return;
+    atividade = [[NSProcessInfo processInfo]
+        beginActivityWithOptions:(NSActivityUserInitiated | NSActivityLatencyCritical)
+                          reason:@"BKR Matriz self-test"];
+    [atividade retain];
+}
+
 #else
 
 void matriz::diag::instalarGuardaDeExcecao() {}
 void matriz::diag::breadcrumb(const char*) {}
+void matriz::diag::desativarAppNapParaSelfTest() {}
 
 #endif
