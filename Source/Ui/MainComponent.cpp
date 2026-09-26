@@ -3850,7 +3850,9 @@ void MainComponent::executarPassosFinalizacao(std::shared_ptr<std::vector<PassoF
 
     if (indice >= passos->size()) {
         // AGORA sim: nada pesado sobrou rodando atrás da barra.
-        if (ingestModalDialog_) {
+        // Se outro lote começou enquanto este finalizava (loteEmCurso_ ou pendentes_ > 0),
+        // NÃO destrói o modal pois o novo lote está ativo nele.
+        if (ingestModalDialog_ && (!loteEmCurso_ && pendentes_->load() <= 0)) {
             ingestModalDialog_->closeDialog();
             ingestModalDialog_ = nullptr;
         }
@@ -3904,6 +3906,10 @@ void MainComponent::aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFi
     const double esperaMs = juce::Time::getMillisecondCounterHiRes() - inicioEsperaMs;
 
     if (pronto && !pronto() && esperaMs < 60000.0) {
+        if (static_cast<int>(esperaMs) % 2000 < 60) {
+            juce::Logger::writeToLog("[ingest-finalize] etapa '" + (*passos)[indice].rotulo + "' aguardando background... ("
+                                     + juce::String(esperaMs / 1000.0, 1) + " s)");
+        }
         juce::Component::SafePointer<MainComponent> safeThis(this);
         juce::Timer::callAfterDelay(50, [safeThis, passos, indice, aoTerminar, inicioEsperaMs] {
             if (safeThis == nullptr) return;
