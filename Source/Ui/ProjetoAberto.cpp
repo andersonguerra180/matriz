@@ -2050,6 +2050,16 @@ void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& item
     }
 }
 
+bool ProjetoAberto::itemMarcadoRevisado(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return false;
+    try {
+        auto stmt = projeto_->registro().prepare("SELECT COALESCE(marcado_revisado, 0) != 0 FROM item WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (stmt.step()) return stmt.columnInt(0) != 0;
+    } catch (...) {}
+    return false;
+}
+
 void ProjetoAberto::limparTodosMarcadosRevisado() {
     if (!projeto_) return;
     projeto_->registro().run("UPDATE item SET marcado_revisado = 0 WHERE marcado_revisado != 0", {});
@@ -2998,6 +3008,14 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
     } catch (...) {}
 
     r.tags = lerTags(itemId);
+
+    // Sem isto marcadoRevisado vinha sempre false — e quem copiava o resumo
+    // (MosaicoComponent::atualizarItemEmMemoria) apagava a borda do E.
+    r.marcadoRevisado = itemMarcadoRevisado(itemId);
+    r.marcadoPublicacao = contemMarcacao(TipoMarcacao::Html, itemId);
+    r.marcadoZip = contemMarcacao(TipoMarcacao::Zip, itemId);
+    r.marcadoPrint = contemMarcacao(TipoMarcacao::Print, itemId);
+    r.marcadoWatermark = contemMarcacao(TipoMarcacao::Watermark, itemId);
 
     return r;
 }

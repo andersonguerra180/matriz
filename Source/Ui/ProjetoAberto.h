@@ -434,6 +434,8 @@ public:
     // metadados_editados (que é automática). Começa sempre desmarcada.
     void alternarMarcadoRevisado(const std::vector<std::string>& itemIds);
     void limparTodosMarcadosRevisado();
+    // Flag E (marcado_revisado) de um item: uma query, sem disco.
+    bool itemMarcadoRevisado(const std::string& itemId) const;
 
     // Caminho absoluto de origem do arquivo principal — pra "Mostrar na
     // origem" e "Copiar caminho". nullopt se o item não tem arquivo com

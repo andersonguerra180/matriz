@@ -6,6 +6,7 @@
 #include <string>
 #include <optional>
 
+#include "EventBus.h"
 #include "ProjetoAberto.h"
 #include "FichaPanelComponent.h"
 #include "PreviewComponent.h"
@@ -164,7 +165,7 @@ public:
     }
 
 private:
-    class ContentComponent : public juce::Component {
+    class ContentComponent : public juce::Component, private EventBusListener {
     public:
         ContentComponent(ProjetoAberto& projeto,
                          const std::string& itemId,
@@ -176,6 +177,8 @@ private:
               aoFechar_(std::move(aoFechar))
         {
             setWantsKeyboardFocus(true);
+            // Marcas feitas no grid (E/H/K/P/W) também aparecem aqui.
+            EventBus::obterInstancia().registrarListener(this);
 
             // Large, visible navigation arrow buttons
             btnAnterior_ = std::make_unique<juce::TextButton>(juce::CharPointer_UTF8("\xe2\x97\x80"));
@@ -234,6 +237,7 @@ private:
         }
 
         ~ContentComponent() override {
+            EventBus::obterInstancia().removerListener(this);
             if (escuta_) escuta_->descarregar();
         }
 
@@ -355,8 +359,9 @@ private:
             // inteira, já que aqui só existe UM item.
             if (previewArea_.isEmpty() || itemId_.empty()) return;
 
-            auto item = projeto_.obterItemResumo(itemId_);
-            bool revisado = item && item->marcadoRevisado;
+            // Uma query só (não obterItemResumo, que dá stat no arquivo) — isto
+            // roda a cada repaint.
+            bool revisado = projeto_.itemMarcadoRevisado(itemId_);
             if (revisado) {
                 const juce::Colour kZebraYellow{0xffFFEE00};
                 g.setColour(kZebraYellow);
@@ -381,6 +386,17 @@ private:
                 desenharSelo("H", juce::Colour(0xff39ff14), juce::Colours::black);
             if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemId_))
                 desenharSelo("W", juce::Colour(0xffffcc00), juce::Colours::black);
+            // E: fundo preto e letra amarela zebra, pra não confundir com o W amarelo.
+            if (revisado)
+                desenharSelo("E", juce::Colours::black, juce::Colour(0xffFFEE00));
+        }
+
+        void aoItemAlterado(const EventoItemAlterado& e) override {
+            if (e.tipoAlteracao != "marcado_revisado" && e.tipoAlteracao != "marcacao" &&
+                e.tipoAlteracao != "publicacao") return;
+            if (!e.itemId.empty() && e.itemId != itemId_) return;
+            juce::Component::SafePointer<ContentComponent> safeThis(this);
+            juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->repaint(); });
         }
 
         void resized() override {

@@ -304,6 +304,8 @@ private:
                                    .withDesiredThreadPriority(juce::Thread::Priority::low)};
     int geracaoSnapshot_ = 0;
     int versaoSnapshot_ = 0;
+    bool refiltroAgendado_ = false;
+    void agendarRefiltroCoalescido();
     bool snapshotPendente_ = false;
     // Fix de performance (item 8): buscarItens() varre FTS5 + LIKE em várias
     // tabelas — na thread principal, cada tecla digitada travava a janela.

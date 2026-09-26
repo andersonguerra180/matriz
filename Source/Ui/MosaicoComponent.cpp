@@ -60,6 +60,24 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
             safeThis->repaint();
             return;
         }
+        // Tecla E: só a flag muda — nada de atualizarItemEmMemoria (que dá
+        // stat no arquivo, marca metadadosEditados e refiltra por item).
+        if (e.tipoAlteracao == "marcado_revisado") {
+            auto* self = safeThis.getComponent();
+            // itemId vazio = limparTodosMarcadosRevisado(): todos desligados.
+            const bool valor = e.itemId.empty() ? false : self->projeto_.itemMarcadoRevisado(e.itemId);
+            auto aplicar = [&](std::vector<ItemResumo>& lista) {
+                for (auto& item : lista) {
+                    if (e.itemId.empty()) item.marcadoRevisado = false;
+                    else if (item.id == e.itemId) { item.marcadoRevisado = valor; break; }
+                }
+            };
+            aplicar(self->itensTodos_);
+            aplicar(self->itensFiltrados_);
+            self->repaint();
+            if (self->ocultarEditados_) self->agendarRefiltroCoalescido();
+            return;
+        }
         // EDIT METADATA != REMOVE FROM THIS LIST (correção METADATA): um
         // evento de UM item (tags, título, etc.) só precisa atualizar ESSE
         // item em memória — chamar recarregar() aqui refazia o snapshot
@@ -74,6 +92,18 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
         } else {
             safeThis->atualizarItemEmMemoria(e.itemId);
         }
+    });
+}
+
+void MosaicoComponent::agendarRefiltroCoalescido() {
+    // Uma rajada de E (N eventos, um por item) vira um refiltro só.
+    if (refiltroAgendado_) return;
+    refiltroAgendado_ = true;
+    juce::Component::SafePointer<MosaicoComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis] {
+        if (safeThis == nullptr) return;
+        safeThis->refiltroAgendado_ = false;
+        safeThis->aplicarFiltrosEOrdenacao();
     });
 }
 
