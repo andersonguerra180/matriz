@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -104,6 +105,9 @@ public:
     // UMA vez, na abertura, e devolve o valor guardado.
     Modo modo() const { return modo_; }
 
+    // Mutex unificado de transações e escritas no banco de registro
+    std::recursive_mutex& writeMutex() { return writeMutex_; }
+
 private:
     Project(juce::File pastaProjeto, std::unique_ptr<matriz::db::Database> registro,
             std::unique_ptr<matriz::db::Database> indice, std::string projetoId,
@@ -115,6 +119,7 @@ private:
     std::string projetoId_;
     Modo modo_ = Modo::Preservacao;
     DestinationInfo destinationInfo_;
+    std::recursive_mutex writeMutex_;
 };
 
 // Timestamp ISO-8601 UTC ("YYYY-MM-DDTHH:MM:SSZ"), a convenção de todo

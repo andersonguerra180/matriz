@@ -4961,6 +4961,7 @@ private:
         // revisão própria; isto já elimina o custo de N transações
         // separadas, que era o grosso do problema.
         auto& dbLote = projeto_.projeto().registro();
+        std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacao = false;
         try { dbLote.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
         for (const auto& id : itemIds_) {
@@ -5112,6 +5113,7 @@ private:
         // Fase 2b: uma transação só pros N itens em vez de uma por INSERT
         // (AssetGeolocationRepository::salvar chamado por item).
         auto& dbGeoLote = projeto_.projeto().registro();
+        std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacaoGeo = false;
         try { dbGeoLote.exec("BEGIN IMMEDIATE"); emTransacaoGeo = true; } catch (...) {}
         for (const auto& id : itemIds_) {
@@ -5144,6 +5146,7 @@ private:
         // item já dispara até 6 salvarMetadado + escritas cruas + geo, sem
         // isto viravam dezenas de transações implícitas separadas).
         auto& dbUndo = projeto_.projeto().registro();
+        std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacaoUndo = false;
         try { dbUndo.exec("BEGIN IMMEDIATE"); emTransacaoUndo = true; } catch (...) {}
         for (const auto& [id, snap] : undoSnapshot_) {

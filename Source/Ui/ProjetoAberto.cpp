@@ -919,6 +919,7 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
     auto& db = projeto_->registro();
     std::string agora = matriz::model::agoraIso8601();
 
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
     try {
         db.exec("BEGIN IMMEDIATE");
         for (const auto& itemId : itemIds) {

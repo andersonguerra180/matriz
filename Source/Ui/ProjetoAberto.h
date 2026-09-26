@@ -669,6 +669,8 @@ public:
         return itensOfflineCache_;
     }
 
+    std::recursive_mutex& writeMutex() { return projeto_->writeMutex(); }
+
 private:
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;

@@ -3348,9 +3348,10 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     // as miniaturas irem preenchendo visivelmente atrás, como pedido em
     // §2.1/§2.2, sem esperar o lote inteiro terminar.
     auto contadorParaAtualizar = std::make_shared<std::atomic<int>>(0);
-    // Um mutex por LOTE, compartilhado por todos os jobs dele: serializa só a
-    // escrita no registro, deixando a análise (o caro) genuinamente paralela.
-    auto escritaRegistro = std::make_shared<std::mutex>();
+    // Mutex unificado do projeto compartilhado por todos os jobs: serializa a
+    // escrita no registro com quaisquer transações do catalog/ficha, deixando a
+    // análise (o caro) genuinamente paralela.
+    std::recursive_mutex* escritaRegistro = &projetoAberto_->writeMutex();
     constexpr int kAtualizarACada = 20;
 
     for (size_t i = 0; i < arquivos.size(); ++i) {
@@ -3392,7 +3393,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     estadoLote->naoProcessados.push_back(itemId);
                 }
                 try {
-                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    const std::lock_guard<std::recursive_mutex> lock(*escritaRegistro);
                     registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                 } catch (...) {}
                 return;
@@ -3458,7 +3459,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
 
                 std::string arquivoIdGravado;
                 {
-                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    const std::lock_guard<std::recursive_mutex> lock(*escritaRegistro);
 
                     PapelInfo papelInfo = papelPorCategoria(categoria);
                     auto resultado = matriz::ingest::gravarArquivoAnalisado(*registro, itemId, analise,
@@ -3541,7 +3542,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 // Failed item does NOT get a code and is removed from the catalog.
                 // We retry a few times in case of database locks.
                 try {
-                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    const std::lock_guard<std::recursive_mutex> lock(*escritaRegistro);
                     int retries = 5;
                     while (retries-- > 0) {
                         try {
@@ -3556,7 +3557,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
             } catch (...) {
                 erro = arquivo.getFileName() + ": Unexpected fatal error during ingest";
                 try {
-                    const std::lock_guard<std::mutex> lock(*escritaRegistro);
+                    const std::lock_guard<std::recursive_mutex> lock(*escritaRegistro);
                     registro->run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
                 } catch (...) {}
             }
