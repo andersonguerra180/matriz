@@ -698,7 +698,10 @@ void MainComponent::atualizarIdioma() {
         else if (tabAtual == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tabAtual == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
         else if (tabAtual == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
-        else if (tabAtual == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
+        else if (tabAtual == BarraNavegacaoComponent::Tab::Analytics) {
+            // Refresh de tema: fica na sub-aba em que o operador estava.
+            mostrarStructure(subTabEstruturaAtual_);
+        }
         else if (tabAtual == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tabAtual == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
         else if (tabAtual == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
@@ -1523,7 +1526,14 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         else if (tab == BarraNavegacaoComponent::Tab::Intake) mostrarIntake();
         else if (tab == BarraNavegacaoComponent::Tab::Grid) mostrarGrid();
         else if (tab == BarraNavegacaoComponent::Tab::Duplicates) mostrarDuplicates();
-        else if (tab == BarraNavegacaoComponent::Tab::Analytics) mostrarAnalytics();
+        else if (tab == BarraNavegacaoComponent::Tab::Analytics) {
+            // STRUCTURE abre sempre no FOLDER MAP; no modo catálogo esta aba
+            // é "Storage" e continua no SPACE MAP.
+            if (projetoAberto_ && projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo)
+                mostrarAnalytics();
+            else
+                mostrarStructure(SubTabEstrutura::FolderMap);
+        }
         else if (tab == BarraNavegacaoComponent::Tab::Tree) mostrarTree();
         else if (tab == BarraNavegacaoComponent::Tab::Backup) mostrarBackup();
         else if (tab == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
