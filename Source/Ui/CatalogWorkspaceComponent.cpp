@@ -194,6 +194,21 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // clicar numa miniatura e arrastar deve criar seleção em laço, não
     // tentar um arrasto de arquivo sem destino nenhum.
     mosaico_->definirPermiteArrastarParaFora(false);
+    // Contagens/filtros pedidos com o snapshot ainda em voo esperam por ele
+    // (em vez de uma listarItens() própria) e são refeitos quando chega.
+    mosaico_->aoMudarConteudoVisivel = [this] {
+        if (!mosaico_ || mosaico_->snapshotPendente()) return;
+        if (filtrosAguardandoSnapshot_) {
+            filtrosAguardandoSnapshot_ = false;
+            reaplicandoFiltrosAposSnapshot_ = true;
+            aplicarFiltrosAdicionais();
+            reaplicandoFiltrosAposSnapshot_ = false;
+        }
+        if (contagensAguardandoSnapshot_) {
+            contagensAguardandoSnapshot_ = false;
+            atualizarContagens();
+        }
+    };
     mosaico_->aoSelecionar = [this](const std::string& itemId) { selecionarItem(itemId); };
     mosaico_->aoAbrirPreview = [this](const std::string& itemId) { abrirWorkbench(itemId); };
     mosaico_->aoAbrirRelinkOffline = [this](const std::string& itemId) { abrirRelinkOffline(itemId); };
@@ -873,9 +888,14 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         ? categorias_[static_cast<size_t>(categoriaSelecionada_)].chave : std::string();
     if (libChave == "folders") return;
 
-    auto itens = (mosaico_ && !mosaico_->todosItensEmMemoria().empty())
-                 ? mosaico_->todosItensEmMemoria()
-                 : projeto_.listarItens();
+    // Mosaico vazio (abertura, snapshot não chegou): não lista na message
+    // thread — carrega e reaplica os filtros quando o snapshot chegar.
+    if (mosaico_->todosItensEmMemoria().empty() && !reaplicandoFiltrosAposSnapshot_) {
+        filtrosAguardandoSnapshot_ = true;
+        mosaico_->recarregar();
+        return;
+    }
+    const auto& itens = mosaico_->todosItensEmMemoria();
     std::set<std::string> filteredIds;
     bool anyFilter = false;
 
@@ -1014,9 +1034,17 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // Fase 3c: reutilizar itens já em memória no Mosaico — evita segunda query
     // completa para o mesmo evento. Cópia feita aqui na message thread; se o
     // Mosaico ainda estiver vazio (snapshot não chegou) cai no listarItens().
+    // Snapshot em voo: conta com o que há (se houver) e reconta quando
+    // chegar; vazio + em voo não conta nada agora (evita 2ª listarItens()).
     std::vector<ItemResumo> itensCopia;
-    if (mosaico_ && mosaico_->totalItensCarregados() > 0)
-        itensCopia = mosaico_->todosItensEmMemoria();
+    if (mosaico_ && !mosaico_->modoQuarentenaAtual()) {
+        if (mosaico_->snapshotPendente()) {
+            contagensAguardandoSnapshot_ = true;
+            if (mosaico_->totalItensCarregados() == 0) return;
+        }
+        if (mosaico_->totalItensCarregados() > 0)
+            itensCopia = mosaico_->todosItensEmMemoria();
+    }
 
     poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo,
                            itensCopia = std::move(itensCopia)]() mutable {

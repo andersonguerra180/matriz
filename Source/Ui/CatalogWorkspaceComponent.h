@@ -253,6 +253,9 @@ private:
     EscutaEventos escutaEventos_{*this};
     void atualizarFiltrosDeData();
     bool refreshDataPendente_ = false;
+    bool contagensAguardandoSnapshot_ = false;
+    bool filtrosAguardandoSnapshot_ = false;
+    bool reaplicandoFiltrosAposSnapshot_ = false;
 
     std::vector<std::pair<int, int>> anosDisponiveis_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesAnos_;
