@@ -693,6 +693,10 @@ private:
     std::set<std::string> marcadosPrint_;
     std::set<std::string> marcadosWatermark_;
     std::set<std::string> itensOfflineCache_;
+    // Só existe pra ser observado por weak_ptr em callbacks assíncronos
+    // (ex.: Undo do salvarMetadadoEmLote registrado via callAsync): expira
+    // quando este ProjetoAberto é destruído.
+    std::shared_ptr<bool> vivo_ = std::make_shared<bool>(true);
 
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;

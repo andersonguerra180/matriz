@@ -942,11 +942,23 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
                                         lerMetadado(itemId, campoValor.first).value_or("")});
             }
         }
-        registrarUndo("Edit " + camposEValores.front().first + " (lote)", [this, anteriores]() {
+        auto desfazerLote = [this, anteriores]() {
             for (const auto& v : *anteriores) {
                 salvarMetadado(v.itemId, v.coluna, v.valor);
             }
-        });
+        };
+        std::string descricao = "Edit " + camposEValores.front().first + " (lote)";
+        // Chamado de background pelo Intake: a pilha de Undo e aoMudarUndo
+        // são da message thread — registra lá. vivo_ expira se o projeto
+        // fechar antes do callAsync rodar.
+        if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+            registrarUndo(descricao, std::move(desfazerLote));
+        } else {
+            std::weak_ptr<bool> vivo = vivo_;
+            juce::MessageManager::callAsync([this, vivo, descricao, desfazerLote]() mutable {
+                if (vivo.lock()) registrarUndo(descricao, std::move(desfazerLote));
+            });
+        }
     }
 
     auto& db = projeto_->registro();
