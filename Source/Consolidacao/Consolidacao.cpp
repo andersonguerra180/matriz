@@ -555,28 +555,31 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         ip.caminhoRelativoDestino = caminhoRelDestino;
 
-        // Incremental: já existe um registro pra esta combinação com o
-        // MESMO checksum do arquivo hoje e o arquivo existe no destino?
-        if (forcarRebackup) {
-            ip.jaConsolidado = false;
-        } else {
-            // Só registros DESTE destino (ou legados, gravados antes de haver
-            // destino_path) — um backup no MAIN não conta como feito no clone.
+        // O destino só cresce (modelo SOURCE/MAIN/CLONE, etapa 4): um arquivo que
+        // já tem cópia registrada NESTE destino fica onde está — mesmo que a
+        // máscara, a hierarquia ou a pasta do MAPA produzissem outro caminho hoje.
+        // Busca pelo arquivo (não pela pasta): mover o item de pasta no MAPA não
+        // pode gerar uma segunda cópia. Registros deste destino por id/caminho,
+        // ou legados (sem destino gravado).
+        {
             auto stmtJa = registro.prepare(
-                "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? "
+                "SELECT caminho_relativo_destino FROM consolidacao_registro WHERE arquivo_id = ? "
                 "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
-                "     OR (? != '' AND COALESCE(destino_id, '') = ?)) LIMIT 1");
-            stmtJa.bind(1, Value::of(ip.itemId));
-            stmtJa.bind(2, Value::of(ip.pastaId));
-            stmtJa.bind(3, Value::of(ip.arquivoId));
-            stmtJa.bind(4, Value::of(chaveDestino(destino)));
-            stmtJa.bind(5, Value::of(destinoId));
-            stmtJa.bind(6, Value::of(destinoId));
-            if (stmtJa.step()) {
-                juce::File arqDestino = destino.getChildFile(caminhoRelDestino);
-                if (arqDestino.existsAsFile()) {
-                    ip.jaConsolidado = true;
-                }
+                "     OR (? != '' AND COALESCE(destino_id, '') = ?)) "
+                "ORDER BY (pasta_id = ?) DESC, (item_id = ?) DESC LIMIT 1");
+            stmtJa.bind(1, Value::of(ip.arquivoId));
+            stmtJa.bind(2, Value::of(chaveDestino(destino)));
+            stmtJa.bind(3, Value::of(destinoId));
+            stmtJa.bind(4, Value::of(destinoId));
+            stmtJa.bind(5, Value::of(ip.pastaId));
+            stmtJa.bind(6, Value::of(ip.itemId));
+            if (stmtJa.step() && !stmtJa.columnIsNull(0) && !stmtJa.columnText(0).empty()) {
+                caminhoRelDestino = juce::String::fromUTF8(stmtJa.columnText(0).c_str());
+                ip.caminhoRelativoDestino = caminhoRelDestino;
+                // Sumiu do disco: recopia NO MESMO caminho. Forçado: idem.
+                ip.jaConsolidado = !forcarRebackup && destino.getChildFile(caminhoRelDestino).existsAsFile();
+            } else {
+                ip.jaConsolidado = false;
             }
         }
 
