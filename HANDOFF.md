@@ -24,6 +24,11 @@ não devem ser revertidas.
   O estado LIGADO do botão não é persistido — ao reabrir o projeto, ligar
   de novo mostra a mesma leva.
 - `9b51f6f` — testes no --selftest-lote.
+- `c585694` — **crash** ao fechar/trocar projeto: jobs de `poolVaults_`
+  com `ProjetoAberto*` cru sobreviviam ao `removeAllJobs(true, 2000)` e
+  usavam o banco já fechado (SIGSEGV em sqlite3_prepare_v2 no Release).
+  Agora `esperarJobsDeVaults()` espera de verdade. Candidato forte a uma
+  das fontes da heap corruption original (.ips).
 
 ### Sessão 2026-09-26 (lista de 7 correções)
 
