@@ -305,7 +305,12 @@ juce::Image desenharMiniaturaFormaDeOnda(const FormaDeOnda& onda, int largura, i
 void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
                                      const std::string& itemId, const std::string& arquivoId,
                                      const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
-                                     std::optional<double> duracaoSegundosConhecida) {
+                                     std::optional<double> duracaoSegundosConhecida,
+                                     const std::function<void(const std::function<void()>&)>& escreverNoIndice) {
+    auto escrever = [&](const std::function<void()>& escrita) {
+        if (escreverNoIndice) escreverNoIndice(escrita);
+        else escrita();
+    };
     try {
         juce::File pastaMiniaturas = pastaProjeto.getChildFile(".miniaturas");
         pastaMiniaturas.createDirectory();
@@ -336,7 +341,7 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
             altura = img.getHeight();
 
             std::string agora = matriz::model::agoraIso8601();
-            indice.run(
+            escrever([&] { indice.run(
                 "INSERT INTO forma_onda (id, item_id, arquivo_id, duracao_segundos, buckets_por_segundo, peaks, gerado_em) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(arquivo_id) DO UPDATE SET peaks = excluded.peaks, "
@@ -345,19 +350,19 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
                 {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
                  matriz::db::Value::of(arquivoId), matriz::db::Value::of(onda.duracaoSegundos),
                  matriz::db::Value::of(onda.bucketsPorSegundo), matriz::db::Value::ofBlob(onda.paraBlob()),
-                 matriz::db::Value::of(agora)});
+                 matriz::db::Value::of(agora)}); });
         } else {
             return;
         }
 
         if (!destino.existsAsFile()) return;
         juce::String relativo = destino.getRelativePathFrom(pastaProjeto);
-        indice.run(
+        escrever([&] { indice.run(
             "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
             "VALUES (?, ?, ?, 'miniatura', ?, ?, ?, ?)",
             {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
              matriz::db::Value::of(arquivoId), matriz::db::Value::of(relativo.toStdString()),
-             matriz::db::Value::of(largura), matriz::db::Value::of(altura), matriz::db::Value::of(matriz::model::agoraIso8601())});
+             matriz::db::Value::of(largura), matriz::db::Value::of(altura), matriz::db::Value::of(matriz::model::agoraIso8601())}); });
     } catch (const std::exception&) {
     }
 }

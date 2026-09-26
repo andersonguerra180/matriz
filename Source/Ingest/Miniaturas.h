@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -79,6 +80,10 @@ FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File&
 void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
                                      const std::string& itemId, const std::string& arquivoId,
                                      const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
-                                     std::optional<double> duracaoSegundosConhecida);
+                                     std::optional<double> duracaoSegundosConhecida,
+                                     // Se dado, cada escrita em `indice` passa por ele (o
+                                     // chamador pode recusar — ex.: desistiu da thread por
+                                     // timeout e `indice` não é mais garantido vivo).
+                                     const std::function<void(const std::function<void()>&)>& escreverNoIndice = {});
 
 } // namespace matriz::ingest

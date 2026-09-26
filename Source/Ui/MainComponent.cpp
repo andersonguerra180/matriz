@@ -448,11 +448,30 @@ PapelInfo papelPorCategoria(matriz::ingest::CategoriaMidia categoria) {
 // criar mais uma.
 constexpr int kMaxThreadsOrfaos = 64;
 
+// Ponteiros crus do projeto (ex.: *indice) só podem ser tocados pela thread
+// solta enquanto quem a espera não desistiu: a escrita roda sob `m` e só
+// com `revogada == false`; a desistência seta `revogada` sob o mesmo `m`
+// (esperando uma escrita em curso terminar). Depois disso a thread órfã
+// nunca mais toca no banco — e o projeto pode fechar sem ela.
+struct PermissaoEscrita {
+    std::mutex m;
+    bool revogada = false;
+    void executar(const std::function<void()>& escrita) {
+        std::lock_guard<std::mutex> lock(m);
+        if (!revogada) escrita();
+    }
+    void revogar() {
+        std::lock_guard<std::mutex> lock(m);
+        revogada = true;
+    }
+};
+
 template <typename Trabalho>
 auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
                              const std::shared_ptr<std::atomic<int>>& skipToken,
                              const juce::String& nomeArquivoParaErro,
-                             const std::shared_ptr<std::atomic<int>>& orfaos = nullptr) -> decltype(trabalho()) {
+                             const std::shared_ptr<std::atomic<int>>& orfaos = nullptr,
+                             const std::shared_ptr<PermissaoEscrita>& permissao = nullptr) -> decltype(trabalho()) {
     using Resultado = decltype(trabalho());
     if (orfaos && orfaos->load() >= kMaxThreadsOrfaos) {
         throw std::runtime_error("Too many stuck background reads (" + std::to_string(kMaxThreadsOrfaos) +
@@ -476,9 +495,12 @@ auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
     while (std::chrono::steady_clock::now() < prazoLimite) {
         if (futuro.wait_for(std::chrono::milliseconds(300)) == std::future_status::ready)
             return futuro.get();
-        if (skipToken && skipToken->load() != tokenNoInicio)
+        if (skipToken && skipToken->load() != tokenNoInicio) {
+            if (permissao) permissao->revogar();
             throw std::runtime_error("Skipped by user: " + nomeArquivoParaErro.toStdString());
+        }
     }
+    if (permissao) permissao->revogar();
     throw std::runtime_error("I/O timeout after " + std::to_string(prazoSegundos) +
                               "s reading " + nomeArquivoParaErro.toStdString() +
                               " (slow or unresponsive storage)");
@@ -3528,13 +3550,17 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     // um lote continuava travando mesmo depois do timeout
                     // da FASE 1 (o "ainda assim travou no final" relatado):
                     // a análise já tinha retornado, mas a miniatura, não.
+                    auto permissao = std::make_shared<PermissaoEscrita>();
                     executarComPrazoOuSkip([indice, pastaProjeto, itemId, arquivoIdGravado, arquivo,
-                                             categoria, duracao = analise.leitura.duracaoSegundos]() {
+                                             categoria, duracao = analise.leitura.duracaoSegundos, permissao]() {
                         matriz::ingest::gerarEGravarMiniaturaPrincipal(*indice, pastaProjeto, itemId,
                                                                         arquivoIdGravado, arquivo, categoria,
-                                                                        duracao);
+                                                                        duracao,
+                                                                        [permissao](const std::function<void()>& escrita) {
+                                                                            permissao->executar(escrita);
+                                                                        });
                         return 0;
-                    }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos);
+                    }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos, permissao);
                 }
 
                 auto fim = std::chrono::system_clock::now();
