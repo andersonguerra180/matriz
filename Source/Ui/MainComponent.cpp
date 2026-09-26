@@ -3074,13 +3074,18 @@ void MainComponent::expandirArquivosAsync(
     auto cancelamento = cancelamentoScan_;
 
     juce::Component::SafePointer<MainComponent> safeThis(this);
-    ingestModalDialog_ = IngestProgressModalDialog::showScanModal([safeThis] {
+    // Não sobrescreve ingestModalDialog_ se um lote anterior ainda o usa
+    // (em curso ou finalizando): o modal dele ficava órfão, aberto e parado
+    // pra sempre ("560 of 586"). O de scan só vira o modal de ingest no fim
+    // do scan, se não houver outro — senão fecha e o lote entra no ativo.
+    auto* dialogoScan = IngestProgressModalDialog::showScanModal([safeThis] {
         if (safeThis && safeThis->cancelamentoScan_) {
             safeThis->cancelamentoScan_->pedir();
         }
     });
+    if (ingestModalDialog_ == nullptr) ingestModalDialog_ = dialogoScan;
 
-    juce::Component::SafePointer<IngestProgressModalDialog> safeDialog(ingestModalDialog_.getComponent());
+    juce::Component::SafePointer<IngestProgressModalDialog> safeDialog(dialogoScan);
 
     std::unordered_set<std::string> caminhosExistentes;
     try {
@@ -3175,7 +3180,13 @@ void MainComponent::expandirArquivosAsync(
             }
 
             if (safeDialog) {
-                safeDialog->startIngestMode(static_cast<int>(novosArquivos.size()), skippedCount);
+                auto* ativo = safeThis->ingestModalDialog_.getComponent();
+                if (ativo != nullptr && ativo != safeDialog.getComponent()) {
+                    safeDialog->closeDialog();
+                } else {
+                    safeThis->ingestModalDialog_ = safeDialog.getComponent();
+                    safeDialog->startIngestMode(static_cast<int>(novosArquivos.size()), skippedCount);
+                }
             }
 
             if (aoConcluir) {
@@ -3322,8 +3333,18 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     cancelamentoLote_->rearmar();
     auto cancelamento = cancelamentoLote_;
 
-    auto estadoLote = std::make_shared<EstadoLote>();
-    estadoLote->todosItemIds = itemIds;
+    // Lote novo com outro ainda em processamento (pendentes_ é um só): os
+    // dois terminam juntos e são finalizados juntos — mesmo EstadoLote. Um
+    // estado novo aqui descartava o do lote anterior sem nunca finalizá-lo.
+    std::shared_ptr<EstadoLote> estadoLote;
+    if (loteEmCurso_ && estadoLoteAtual_) {
+        estadoLote = estadoLoteAtual_;
+        const juce::ScopedLock sl(estadoLote->lock);
+        estadoLote->todosItemIds.insert(estadoLote->todosItemIds.end(), itemIds.begin(), itemIds.end());
+    } else {
+        estadoLote = std::make_shared<EstadoLote>();
+        estadoLote->todosItemIds = itemIds;
+    }
     estadoLoteAtual_ = estadoLote;
     loteEmCurso_ = true;
 
@@ -3862,6 +3883,12 @@ void MainComponent::executarPassosFinalizacao(std::shared_ptr<std::vector<PassoF
         if (ingestModalDialog_ && (!loteEmCurso_ && pendentes_->load() <= 0)) {
             ingestModalDialog_->closeDialog();
             ingestModalDialog_ = nullptr;
+        } else if (ingestModalDialog_ && ingestModalDialog_->isFinalizing()) {
+            // O lote seguinte entrou neste modal durante a finalização: volta
+            // a mostrar o progresso dele (senão fica parado na última etapa).
+            const int total = ingestsTotalLote_.load();
+            ingestModalDialog_->startIngestMode(total, 0);
+            ingestModalDialog_->updateProgress(juce::jmax(0, total - pendentes_->load()));
         }
         finalizandoLote_ = false;
         if (aoTerminar && *aoTerminar) (*aoTerminar)();

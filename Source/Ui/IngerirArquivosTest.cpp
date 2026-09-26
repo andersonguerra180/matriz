@@ -893,6 +893,67 @@ int rodarTestIngerirArquivos() {
     }
     loteRoot.deleteRecursively();
 
+    // Item 2 (freeze no fim do ingest): lote B entra DURANTE a finalização do
+    // lote A — como PASTA, pra passar pelo modal de scan, que antes
+    // sobrescrevia ingestModalDialog_ e deixava o modal de A órfão e aberto
+    // pra sempre ("560 of 586"). Os dois lotes têm que ser finalizados e
+    // nenhum modal pode sobrar.
+    {
+        std::cout << "\n== Batch B arriving while batch A is finalizing ==\n";
+        juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_lote_sobreposto_" + juce::Uuid().toDashedString());
+        try {
+            raiz.createDirectory();
+            juce::Array<juce::File> loteA;
+            for (int i = 0; i < 20; ++i) {
+                juce::File f = raiz.getChildFile("a").getChildFile("a_" + juce::String(i) + ".wav");
+                f.getParentDirectory().createDirectory();
+                escreverWavMinimo(f, 400, 200000 + i);
+                loteA.add(f);
+            }
+            juce::File pastaB = raiz.getChildFile("b");
+            pastaB.createDirectory();
+            for (int i = 0; i < 300; ++i)
+                escreverWavMinimo(pastaB.getChildFile("b_" + juce::String(i) + ".wav"), 400, 300000 + i);
+
+            matriz::model::NovoProjetoParams params;
+            params.nome = "Lotes sobrepostos";
+            params.prefixoNomenclatura = "SOB";
+            auto projeto = matriz::model::Project::criar(raiz.getChildFile("projeto"), params);
+
+            MainComponent janela;
+            janela.setBounds(0, 0, 1280, 800);
+            janela.abrirProjeto(std::move(projeto));
+            auto finalizacoes = std::make_shared<int>(0);
+            janela.aoConcluirLoteIngestParaTeste = [finalizacoes](int, const juce::StringArray&) { ++*finalizacoes; };
+
+            janela.ingerirArquivos(loteA);
+            auto t0 = juce::Time::getMillisecondCounter();
+            while (*finalizacoes < 1 && juce::Time::getMillisecondCounter() - t0 < 120000)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
+            checar(*finalizacoes >= 1, "batch A reached finalization");
+
+            janela.ingerirArquivos({pastaB});  // A ainda finalizando
+            t0 = juce::Time::getMillisecondCounter();
+            while (janela.ingestEmAndamento() && juce::Time::getMillisecondCounter() - t0 < 300000)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(500);
+
+            checar(!janela.ingestEmAndamento(), "both batches ended (nothing left hanging)");
+            checar(*finalizacoes >= 2, "batch B was finalized too (" + juce::String(*finalizacoes) + " finalizations)");
+            auto stmt = janela.projetoAberto()->projeto().registro().prepare(
+                "SELECT COUNT(*) FROM item WHERE codigo_acervo IS NOT NULL");
+            stmt.step();
+            checar(stmt.columnInt(0) == 320,
+                   "all 320 items got an archive code (" + juce::String(stmt.columnInt(0)) + ")");
+            int modais = juce::ModalComponentManager::getInstance()->getNumModalComponents();
+            checar(modais == 0, "no ingest modal left open (" + juce::String(modais) + " modal(s))");
+        } catch (const std::exception& e) {
+            checar(false, juce::String("overlapping batches: ") + e.what());
+        }
+        raiz.deleteRecursively();
+    }
+
     tmpRoot.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";

@@ -45,8 +45,10 @@ public:
     // drag-and-drop antes do primeiro terminar de copiar) — ao contrário de
     // startIngestMode(), NÃO reseta completedFiles_/progressFraction_; só
     // corrige o total mostrado ("X of TOTAL") pra bater com o que o modal
-    // vai de fato processar.
-    void ajustarTotalArquivos(int novoTotal) { totalFiles_ = juce::jmax(totalFiles_, novoTotal); }
+    // vai de fato processar. Atribui (não jmax): o chamador passa
+    // ingestsTotalLote_, a fonte única — jmax deixava um total de lote
+    // anterior (ex.: 586) num modal reaproveitado por um lote de 560.
+    void ajustarTotalArquivos(int novoTotal) { totalFiles_ = juce::jmax(1, novoTotal); }
 
     // Sets cancelling state
     void setCancelling(bool mantendoArquivos = false);
