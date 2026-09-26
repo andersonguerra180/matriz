@@ -23,6 +23,10 @@ struct EstadoProgresso {
     // próprio modal dedicado (ex.: ingest → IngestProgressModalDialog) — o
     // TarefaGlobalModalWatcher não abre um modal genérico por cima dele.
     bool temModalProprio = false;
+    // true = só a barra de progresso inferior, NUNCA o modal genérico do
+    // TarefaGlobalModalWatcher (carregamentos rotineiros: catalog_assets,
+    // catalog_view, hub_open). Ingest, backup e lotes continuam com modal.
+    bool somenteBarra = false;
 };
 
 class ProgressoGlobalListener {
@@ -43,7 +47,8 @@ public:
                        int totalItens = 0,
                        std::function<void()> aoCancelar = nullptr,
                        const juce::String& detalheInicial = "",
-                       bool temModalProprio = false);
+                       bool temModalProprio = false,
+                       bool somenteBarra = false);
 
     void atualizarProgresso(const juce::String& id,
                             int itensConcluidos,

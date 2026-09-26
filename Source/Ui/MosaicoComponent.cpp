@@ -107,7 +107,8 @@ void MosaicoComponent::recarregar() {
     ProjetoAberto* projeto = &projeto_;
     bool isQuarentena = modoQuarentena_;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...");
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...",
+                                                   /*temModalProprio*/ false, /*somenteBarra*/ true);
 
     poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
         std::vector<ItemResumo> itens;

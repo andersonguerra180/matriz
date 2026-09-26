@@ -128,6 +128,7 @@ void TarefaGlobalModalWatcher::aoProgressoAtualizado(const EstadoProgresso& esta
     }
 
     if (estado.temModalProprio) return; // já tem modal dedicado — não duplica
+    if (estado.somenteBarra) return;     // carregamento rotineiro: só a barra inferior
 
     if (idMostrando_.isNotEmpty() && idMostrando_ == estado.id) {
         atualizarModal(estado);
@@ -150,7 +151,7 @@ void TarefaGlobalModalWatcher::timerCallback() {
     if (idPendente_.isEmpty()) return;
 
     auto estadoAtual = ProgressoGlobal::obterInstancia().obterEstado();
-    if (estadoAtual.ativo && estadoAtual.id == idPendente_ && !estadoAtual.temModalProprio) {
+    if (estadoAtual.ativo && estadoAtual.id == idPendente_ && !estadoAtual.temModalProprio && !estadoAtual.somenteBarra) {
         abrirModal(estadoAtual);
     }
     idPendente_.clear();

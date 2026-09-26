@@ -1604,7 +1604,8 @@ void MainComponent::mostrarCatalogHub() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("hub_open", "Opening Collections", 100, nullptr, "Loading collections hub...");
+    ProgressoGlobal::obterInstancia().iniciarTarefa("hub_open", "Opening Collections", 100, nullptr, "Loading collections hub...",
+                                                   /*temModalProprio*/ false, /*somenteBarra*/ true);
 
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Catalog);
@@ -1712,7 +1713,8 @@ void MainComponent::mostrarGrid() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_view", "Opening Catalog", 100, nullptr, "Loading catalog view...");
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_view", "Opening Catalog", 100, nullptr, "Loading catalog view...",
+                                                   /*temModalProprio*/ false, /*somenteBarra*/ true);
 
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Grid);
