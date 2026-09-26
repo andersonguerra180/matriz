@@ -275,8 +275,15 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // aoAplicarSucesso (abaixo), que só atualiza O ITEM EDITADO em memória
     // e repinta; aoMudar sobra só pra refletir contagem nas abas da
     // sidebar, sem tocar no filtro nem no conjunto de itens carregados.
+    // Debounce (~500 ms): cada tecla/campo editado disparava uma contagem
+    // completa; uma rajada de edições agora vira uma contagem só no fim.
     fichaPanel_->aoMudar = [this] {
-        atualizarContagens();
+        const int geracao = ++geracaoContagensAgendadas_;
+        juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
+        juce::Timer::callAfterDelay(500, [safeThis, geracao] {
+            if (safeThis != nullptr && geracao == safeThis->geracaoContagensAgendadas_)
+                safeThis->atualizarContagens();
+        });
     };
     fichaPanel_->aoAplicarEmLote = [this] {
         atualizarContagens();
