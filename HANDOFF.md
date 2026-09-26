@@ -60,6 +60,16 @@ S01…), organização por ano/evento só no EXPORT.
   status; carga em background. SOURCE = tabela `vault` (volume). O registro
   de cada ingestão por SOURCE e "volume reaparecendo com outro conteúdo =
   SOURCE novo" ficam para a etapa 4 (entrada de fonte nova).
+- **Etapa 4** — MAIN = sempre a pasta do projeto; backup só com a linha
+  MAIN destacada; FAZER BACKUP → ADICIONAR AO MAIN; arquivo já copiado
+  mantém o caminho registrado (nada no MAIN é renomeado/movido; cópia sumida
+  volta no mesmo caminho); aviso de SOURCE liberado/dependentes; checkbox
+  por destino removido; ao fim, "Sincronizar clones agora?" só com adições.
+  Decisões do usuário (2026-09-26): estrutura/nomes livres no 1º backup e
+  travados depois; pasta raiz por SOURCE só no modo "preservar estrutura
+  original"; sufixo `_S01` (auto ou custom, único, caracteres seguros,
+  editável até o 1º backup daquele SOURCE) só quando a máscara mantém os
+  nomes originais. → etapa 5 (junto das travas).
 - Pendências conhecidas para as próximas etapas: `executarConsolidacao`
   embute metadados/marcadores/marca d'água em toda cópia (etapa 5/6);
   `embutirMetadadosNoBackup` reescreve a Media inteira (etapa 5);
