@@ -32,7 +32,7 @@ bool esperarAte(Cond cond, int timeoutMs = 30000) {
 }
 
 std::string inserirItem(matriz::db::Database& reg, const std::string& projetoId, const std::string& codigo,
-                        bool quarentena) {
+                        bool quarentena, const std::string& extensao = ".wav") {
     std::string id = matriz::model::novoUuid();
     std::string agora = matriz::model::agoraIso8601();
     reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
@@ -44,7 +44,7 @@ std::string inserirItem(matriz::db::Database& reg, const std::string& projetoId,
     reg.run("INSERT INTO arquivo (id, item_id, caminho_relativo, papel, eh_master, tamanho_bytes, criado_em, "
             "atualizado_em) VALUES (?, ?, ?, 'preservation_master', 1, 1024, ?, ?)",
             {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
-             matriz::db::Value::of("originais/" + codigo + ".wav"), matriz::db::Value::of(agora),
+             matriz::db::Value::of("originais/" + codigo + extensao), matriz::db::Value::of(agora),
              matriz::db::Value::of(agora)});
     return id;
 }
@@ -426,6 +426,67 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("recent batch selftest: ") + e.what());
     }
     raizR.deleteRecursively();
+
+    // ------------------------------------------ Miniatura no grid do Intake
+    // O card entra na grade ANTES da miniatura existir (ingest insere o item
+    // e só depois gera a miniatura). O grid não pode guardar "sem miniatura"
+    // pra sempre: depois do próximo snapshot, a miniatura tem que aparecer.
+    std::cout << "\n-- INTAKE grid: thumbnail generated after the card appeared --\n";
+    juce::File raizM = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_intake_thumb_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizM.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Thumb";
+        params.prefixoNomenclatura = "THB";
+        auto projeto = matriz::model::Project::criar(raizM.getChildFile("projeto"), params);
+        std::string itemId = inserirItem(projeto->registro(), projeto->projetoId(), "THB-1", true, ".jpg");
+        auto st = projeto->registro().prepare("SELECT id FROM arquivo WHERE item_id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        st.step();
+        const std::string arquivoId = st.columnText(0);
+        const juce::File pastaProj = projeto->pasta();
+
+        MainComponent janela;
+        janela.setBounds(0, 0, 1400, 900);
+        janela.abrirProjeto(std::move(projeto));
+        bombear(200);
+        janela.mostrarIntake();
+        auto* iw = janela.intakeWorkspace_.get();
+        iw->recarregar();
+        esperarAte([&] { return !iw->snapshotPendente() && !iw->todosItens_.empty(); });
+        iw->pintarGridParaTeste();  // pede a miniatura: ainda não existe
+        bombear(500);
+        checar(!iw->miniaturaEmCacheParaTeste(itemId), "before the thumbnail exists the card shows the placeholder");
+
+        // A miniatura "chega" (como o ingest faz alguns segundos depois).
+        juce::File mini = pastaProj.getChildFile(".miniaturas").getChildFile(arquivoId + ".jpg");
+        mini.getParentDirectory().createDirectory();
+        {
+            juce::Image img(juce::Image::RGB, 64, 48, true);
+            juce::Graphics(img).fillAll(juce::Colours::orange);
+            juce::JPEGImageFormat jpeg;
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(mini.createOutputStream()))
+                jpeg.writeImageToStream(img, *out);
+        }
+        janela.projetoAberto()->projeto().indice().run(
+            "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
+            "VALUES (?, ?, ?, 'miniatura', ?, 64, 48, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+             matriz::db::Value::of(arquivoId), matriz::db::Value::of(".miniaturas/" + arquivoId + ".jpg"),
+             matriz::db::Value::of(matriz::model::agoraIso8601())});
+
+        iw->recarregar();  // o ingest recarrega o Intake periodicamente e no fim
+        esperarAte([&] { return !iw->snapshotPendente(); });
+        bool apareceu = esperarAte([&] {
+            iw->pintarGridParaTeste();
+            return iw->miniaturaEmCacheParaTeste(itemId);
+        }, 5000);
+        checar(apareceu, "after the next Intake reload the generated thumbnail shows on the card");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("intake thumbnail selftest: ") + e.what());
+    }
+    raizM.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

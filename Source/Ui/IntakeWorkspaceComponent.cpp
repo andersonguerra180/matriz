@@ -1181,7 +1181,7 @@ private:
     std::unordered_map<std::string, juce::Image> cache_;
     std::unordered_map<std::string, bool> loading_;
     std::unordered_map<std::string, bool> noThumbnail_;
-    juce::CriticalSection lock_;
+    mutable juce::CriticalSection lock_;
     int hoverIndex_ = -1;
     int colunas_ = 1;
     int cardW_ = 200;
@@ -3143,4 +3143,17 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     repaint();
 }
 
+// Só pra --selftest-lote: força o paint do grid (que é quem pede as
+// miniaturas) e consulta o cache de miniaturas carregadas.
+void IntakeWorkspaceComponent::pintarGridParaTeste() {
+    if (!gridComponent_) return;
+    if (gridComponent_->getWidth() <= 0) gridComponent_->setSize(1200, 800);
+    gridComponent_->createComponentSnapshot(gridComponent_->getLocalBounds());
+}
+
+bool IntakeWorkspaceComponent::miniaturaEmCacheParaTeste(const std::string& itemId) const {
+    return gridComponent_ && gridComponent_->temMiniaturaEmCache(itemId);
+}
+
 } // namespace matriz::ui
+

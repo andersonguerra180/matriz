@@ -110,6 +110,8 @@ private:
     };
 
     class ThumbnailsGridComponent;
+    void pintarGridParaTeste();
+    bool miniaturaEmCacheParaTeste(const std::string& itemId) const;
     class IntakeDragDropEmptyState;
     friend class IntakeDragDropEmptyState;
 
