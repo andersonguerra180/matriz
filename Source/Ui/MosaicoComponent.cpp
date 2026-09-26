@@ -205,6 +205,8 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->contentType = ct.has_value() && !ct->empty() ? ct : std::nullopt;
     auto col = projeto_.lerMetadado(itemId, "collection_type");
     it->collectionType = col.has_value() && !col->empty() ? col : std::nullopt;
+    auto subj = projeto_.lerMetadado(itemId, "dc_subject");
+    it->subject = subj.has_value() && !subj->empty() ? subj : std::nullopt;
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
     it->metadadosEditados = true;

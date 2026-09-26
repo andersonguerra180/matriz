@@ -66,11 +66,13 @@ private:
         int ausentes = 0;
         std::vector<std::pair<int, int>> anos;
         std::vector<std::pair<std::string, int>> collections;
+        std::vector<std::pair<std::string, int>> subjects;
     };
 
     void construirSidebar();
     void construirFiltroAnos();
     void construirFiltroCollection();
+    void construirFiltroSubject();
     void aplicarFiltroAno();
     void aplicarFiltrosAdicionais();
     // Só repinta o destaque dos botões de ano/combo de collection a partir de
@@ -275,6 +277,11 @@ private:
     std::vector<std::pair<std::string, int>> collectionDisponiveis_;
     std::unique_ptr<juce::ComboBox> comboContentType_;
     std::optional<std::string> collectionSelecionado_;
+    // SUBJECT (card CONTENT TYPE): filtra por UM subject; item passa se o
+    // dc_subject dele contém esse subject (lista separada por , ou ;).
+    std::unique_ptr<juce::ComboBox> comboSubject_;
+    std::vector<std::pair<std::string, int>> subjectsDisponiveis_;
+    std::optional<std::string> subjectSelecionado_;
 
     juce::ThreadPool poolMiniaturas_{juce::ThreadPoolOptions{}.withThreadName("MatrizMiniGen")
                                      .withNumberOfThreads(1)

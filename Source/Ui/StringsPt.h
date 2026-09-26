@@ -208,6 +208,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"estado_vazio.rodape", "Seus arquivos originais não são movidos nem apagados — o Matriz faz uma cópia dentro do projeto."},
         {"estado_vazio.subtitulo", "ou clique aqui pra escolher no computador"},
         {"estado_vazio.titulo", "Arraste sua pasta ou seu HD pra cá"},
+        {"catwork.subject_todos", "Todos os Assuntos"},
+        {"catwork.sem_leva_recente", "Nenhuma leva recente do Intake"},
         {"ficha.alerta_rotulo", "Atenção"},
         {"ficha.alternar", "Detalhes"},
         {"ficha.arquivo_ausente", "ausente"},

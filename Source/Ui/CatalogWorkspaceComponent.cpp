@@ -1,4 +1,6 @@
 #include "CatalogWorkspaceComponent.h"
+
+#include <algorithm>
 #include "AcoesItem.h"
 #include "FichaPanelComponent.h"
 #include "MosaicoComponent.h"
@@ -184,6 +186,20 @@ private:
 } // namespace
 
 namespace matriz::ui {
+
+namespace {
+// dc_subject pode guardar vários subjects ("Show, Backstage; Tour").
+std::vector<std::string> dividirSubjects(const std::string& valor) {
+    std::vector<std::string> out;
+    juce::StringArray partes;
+    partes.addTokens(juce::String::fromUTF8(valor.c_str()), ",;", "\"");
+    for (auto& p : partes) {
+        auto t = p.trim();
+        if (t.isNotEmpty()) out.push_back(t.toStdString());
+    }
+    return out;
+}
+} // namespace
 
 CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     : projeto_(projeto)
@@ -621,11 +637,12 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
     }
-    if (comboContentType_) {
-        comboContentType_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-        comboContentType_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
-        comboContentType_->setColour(juce::ComboBox::outlineColourId, tk.borda);
-        comboContentType_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    for (auto* combo : {comboContentType_.get(), comboSubject_.get()}) {
+        if (!combo) continue;
+        combo->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        combo->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        combo->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        combo->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (toggleMultiplosAnos_) {
         toggleMultiplosAnos_->setButtonText(matriz::i18n::t("catwork.multiplos_anos"));
@@ -774,6 +791,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
 
     construirFiltroAnos();
     construirFiltroCollection();
+    construirFiltroSubject();
     atualizarContagens();
     selecionarCategoria(0);
 }
@@ -891,6 +909,13 @@ void CatalogWorkspaceComponent::atualizarDestaqueBotoesAnoCollection() {
         }
         comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
     }
+    if (comboSubject_) {
+        int idSel = static_cast<int>(subjectsDisponiveis_.size()) + 1;
+        if (subjectSelecionado_.has_value())
+            for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i)
+                if (subjectsDisponiveis_[i].first == *subjectSelecionado_) { idSel = static_cast<int>(i + 1); break; }
+        comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
+    }
 }
 
 void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
@@ -979,6 +1004,13 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
         }
 
+        if (subjectSelecionado_.has_value()) {
+            anyFilter = true;
+            if (!item.subject.has_value()) continue;
+            auto subs = dividirSubjects(*item.subject);
+            if (std::find(subs.begin(), subs.end(), *subjectSelecionado_) == subs.end()) continue;
+        }
+
         filteredIds.insert(item.id);
     }
 
@@ -1037,6 +1069,41 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
     comboContentType_->setSelectedId(idSel, juce::dontSendNotification);
 }
 
+void CatalogWorkspaceComponent::construirFiltroSubject() {
+    // SUBJECT: mesmo desenho do combo de CONTENT TYPE, no mesmo card. As
+    // opções vêm do job de contagens (subjects existentes no projeto).
+    if (!comboSubject_) {
+        comboSubject_ = std::make_unique<juce::ComboBox>();
+        comboSubject_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboSubject_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboSubject_->setColour(juce::ComboBox::outlineColourId, tema().borda);
+        comboSubject_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        comboSubject_->setTooltip("Filter by one of the subjects used in this project");
+        addAndMakeVisible(*comboSubject_);
+        comboSubject_->onChange = [this] {
+            int sel = comboSubject_->getSelectedId();
+            int idTodos = static_cast<int>(subjectsDisponiveis_.size()) + 1;
+            if (sel <= 0 || sel >= idTodos) subjectSelecionado_ = std::nullopt;
+            else subjectSelecionado_ = subjectsDisponiveis_[static_cast<size_t>(sel - 1)].first;
+            aplicarFiltrosAdicionais();
+        };
+    }
+
+    comboSubject_->clear(juce::dontSendNotification);
+    int idTodos = static_cast<int>(subjectsDisponiveis_.size()) + 1;
+    comboSubject_->addItem(matriz::i18n::t("catwork.subject_todos"), idTodos);
+    for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i) {
+        const auto& [valor, contagem] = subjectsDisponiveis_[i];
+        comboSubject_->addItem(juce::String::fromUTF8(valor.c_str()) + " (" + juce::String(contagem) + ")",
+                               static_cast<int>(i + 1));
+    }
+    int idSel = idTodos;
+    if (subjectSelecionado_.has_value())
+        for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i)
+            if (subjectsDisponiveis_[i].first == *subjectSelecionado_) { idSel = static_cast<int>(i + 1); break; }
+    comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
+}
+
 void CatalogWorkspaceComponent::atualizarContagens() {
     poolContagens_.removeAllJobs(true, 100);
 
@@ -1072,6 +1139,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
             int semCollection = 0;
+            std::map<std::string, int> contagemPorSubject;
 
             for (const auto& item : itens) {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
@@ -1118,6 +1186,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     contagemPorCollection[*item.collectionType]++;
                 else
                     semCollection++;
+
+                if (item.subject.has_value()) {
+                    std::set<std::string> distintos;  // "A, A" conta uma vez só
+                    for (auto& sub : dividirSubjects(*item.subject)) distintos.insert(sub);
+                    for (const auto& sub : distintos) contagemPorSubject[sub]++;
+                }
             }
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
@@ -1128,6 +1202,9 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 res.collections.push_back(pair);
             if (semCollection > 0)
                 res.collections.push_back({"Unknown", semCollection});
+
+            for (const auto& pair : contagemPorSubject)
+                res.subjects.push_back(pair);
 
             auto colecoes = proj->listarColecoesEmbutidas();
             for (const auto& c : colecoes) {
@@ -1190,6 +1267,12 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         reconstruiuAnoOuCollection = true;
     }
 
+    if (subjectsDisponiveis_ != res.subjects) {
+        subjectsDisponiveis_ = res.subjects;
+        construirFiltroSubject();
+        reconstruiuAnoOuCollection = true;
+    }
+
     if (reconstruiuAnoOuCollection) {
         // Item C.7: construirFiltroAnos()/construirFiltroCollection() recriam
         // os botões do zero (sem destaque); sem isto, o filtro de ano/collection
@@ -1247,6 +1330,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
     collectionSelecionado_ = std::nullopt;
+    subjectSelecionado_ = std::nullopt;
 
     if (ocultarEditados_) {
         ocultarEditados_ = false;
@@ -1598,6 +1682,7 @@ void CatalogWorkspaceComponent::recarregar() {
     atualizarContagens();
     construirFiltroAnos();
     construirFiltroCollection();
+    construirFiltroSubject();
     atualizarBotoesSidebar();
 
     const auto& libChave = categorias_.empty()
@@ -1673,6 +1758,7 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
     collectionSelecionado_ = std::nullopt;
+    subjectSelecionado_ = std::nullopt;
     if (mosaico_) {
         mosaico_->definirFiltroItens(itemIds);
         mosaico_->definirSelecao(itemIds);
@@ -1892,6 +1978,10 @@ void CatalogWorkspaceComponent::resized() {
     sidebar.removeFromTop(kItemGap);
     if (comboContentType_) {
         comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        sidebar.removeFromTop(kItemGap);
+    }
+    if (comboSubject_) {
+        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
         sidebar.removeFromTop(kItemGap);
     }
     finalizarCard();

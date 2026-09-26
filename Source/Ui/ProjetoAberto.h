@@ -49,6 +49,7 @@ struct ItemResumo {
     std::optional<int> ano;
     std::optional<std::string> contentType;
     std::optional<std::string> collectionType;
+    std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)
 
     // Extensão (sem ponto, minúscula) do arquivo principal — usada pro
     // ícone de placeholder por categoria enquanto não há miniatura real
