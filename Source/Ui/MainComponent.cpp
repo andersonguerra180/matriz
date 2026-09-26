@@ -712,11 +712,25 @@ void MainComponent::atualizarIdioma() {
     repaint();
 }
 
+// Os jobs de poolVaults_ capturam ProjetoAberto* cru (reavaliarVaults,
+// tamanho total, presença de assets). removeAllJobs(true, 2000) desistia
+// depois de 2 s e o projeto era destruído com o job ainda rodando —
+// reavaliarVaults faz IPC síncrono com o DiskArbitration e passa disso sob
+// carga (crash em sqlite3_prepare_v2 no --selftest-lote Release). Espera de
+// verdade; as flags voltam a false porque jobs removidos antes de rodar
+// nunca as zerariam (e a reavaliação de Vaults não voltaria a rodar).
+void MainComponent::esperarJobsDeVaults() {
+    while (!poolVaults_.removeAllJobs(true, 2000))
+        juce::Logger::writeToLog("[vaults] aguardando job de Vaults terminar antes de trocar/fechar o projeto");
+    reconciliacaoEmAndamento_ = false;
+    calculandoTamanhoTotal_ = false;
+}
+
 MainComponent::~MainComponent() {
     stopTimer();
     if (cancelamentoLote_) cancelamentoLote_->pedir();
     ingestPool_.removeAllJobs(true, 5000);
-    poolVaults_.removeAllJobs(true, 2000);
+    esperarJobsDeVaults();
 }
 
 void MainComponent::reconstruirTelaInicial() {
@@ -1506,7 +1520,7 @@ void MainComponent::reconstruirLayoutCatalogo(const juce::File& pasta) {
 
 void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto) {
     stopTimer();
-    poolVaults_.removeAllJobs(true, 2000);
+    esperarJobsDeVaults();
     reconstruirTelaInicial();
 
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
@@ -2375,7 +2389,7 @@ void MainComponent::fecharProjeto() {
     }
 
     stopTimer();
-    poolVaults_.removeAllJobs(true, 2000);
+    esperarJobsDeVaults();
     catalogoPai_ = juce::File();
     telaAtiva_ = TelaAtiva::Inicial;
     reconstruirTelaInicial();

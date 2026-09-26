@@ -278,6 +278,7 @@ private:
     // ThreadPool.
     void timerCallback() override;
     void verificarVaultsConectados();
+    void esperarJobsDeVaults();
     void verificarPresencaInicialAssets();
     void mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report);
     void abrirDialogoRelinkOffline(const std::string& itemId);
