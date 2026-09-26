@@ -3978,6 +3978,14 @@ void MainComponent::aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFi
         return;
     }
 
+    if (pronto && !pronto()) {
+        // Teto estourado: segue sem o trabalho em background — deixa rastro
+        // no perf.log pra saber qual espera (snapshot/árvore/intake) morreu.
+        matriz::diag::WatchdogLogger::getInstance().log(
+            "[ingest-finalize] TETO de 60 s estourado na etapa '" + (*passos)[indice].rotulo
+            + "' (snapshotPendente/recargaPendente ainda true) - seguindo sem esperar");
+    }
+
     if (esperaMs >= 1.0)
         juce::Logger::writeToLog("[ingest-finalize] etapa '" + (*passos)[indice].rotulo + "' esperou "
                                  + juce::String(esperaMs, 1) + " ms pelo trabalho em background");
