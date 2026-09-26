@@ -3674,6 +3674,10 @@ void BackupWorkspaceComponent::dispararScanDestino(bool forcado) {
         return;
     }
 
+    // Plano (jaConsolidado por destino_path) do destino RECÉM destacado
+    // antes do scan — sem isto o scan/lista usavam o plano do anterior.
+    atualizarResumo();
+
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(resolvedDestFolder_);
     juce::File targetDir = destinoRaiz.getChildFile("Media");
     if (!targetDir.isDirectory() || plano_.itens.empty()) {

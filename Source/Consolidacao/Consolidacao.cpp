@@ -283,6 +283,14 @@ void gravarHierarquiaDoProjeto(matriz::db::Database& registro, const HierarquiaB
                   {Value::of(hierarquiaParaCsv(hierarquia)), Value::of(matriz::model::agoraIso8601())});
 }
 
+namespace {
+// Identifica o destino em consolidacao_registro.destino_path: caminho
+// absoluto normalizado da pasta de mídia passada a planejar/executar.
+std::string chaveDestino(const juce::File& destino) {
+    return destino.getFullPathName().trimCharactersAtEnd("/").toStdString();
+}
+} // namespace
+
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquiaPedida,
                                         const RotuloTipoMidia& rotuloTipoMidia,
@@ -547,11 +555,15 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         if (forcarRebackup) {
             ip.jaConsolidado = false;
         } else {
+            // Só registros DESTE destino (ou legados, gravados antes de haver
+            // destino_path) — um backup no MAIN não conta como feito no clone.
             auto stmtJa = registro.prepare(
-                "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? LIMIT 1");
+                "SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? "
+                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL) LIMIT 1");
             stmtJa.bind(1, Value::of(ip.itemId));
             stmtJa.bind(2, Value::of(ip.pastaId));
             stmtJa.bind(3, Value::of(ip.arquivoId));
+            stmtJa.bind(4, Value::of(chaveDestino(destino)));
             if (stmtJa.step()) {
                 juce::File arqDestino = destino.getChildFile(caminhoRelDestino);
                 if (arqDestino.existsAsFile()) {
@@ -685,7 +697,7 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
             matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
 
-            std::string destPathStr = "";
+            std::string destPathStr = chaveDestino(destino);
             try {
                 registro.run(
                     "INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
