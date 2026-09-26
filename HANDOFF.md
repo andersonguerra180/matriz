@@ -54,6 +54,12 @@ S01…), organização por ano/evento só no EXPORT.
   leitura no MAIN, de ORIGEM mantidos (nome original, mtime, tamanho,
   painel de inconsistências). Teste `1303a06`. `e2ec2b0`: SUBSTITUIR do
   Intake não move mais o original do SOURCE.
+- **Etapa 3 (papéis/versões)** — `ee3cbcd`: `normalizarPapelMain`/
+  `definirMain`/`listarVersoes` em ProjetoAberto; pergunta única ao abrir
+  quando não há MAIN claro; lista de Versões com selo MAIN/CLONE/SOURCE e
+  status; carga em background. SOURCE = tabela `vault` (volume). O registro
+  de cada ingestão por SOURCE e "volume reaparecendo com outro conteúdo =
+  SOURCE novo" ficam para a etapa 4 (entrada de fonte nova).
 - Pendências conhecidas para as próximas etapas: `executarConsolidacao`
   embute metadados/marcadores/marca d'água em toda cópia (etapa 5/6);
   `embutirMetadadosNoBackup` reescreve a Media inteira (etapa 5);
