@@ -12,6 +12,19 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (SUBJECT + Show Recently Ingested)
+
+- `c1fd7e6` — dropdown SUBJECT no card CONTENT TYPE (METADATA).
+  `ItemResumo::subject` = item.dc_subject (lido no snapshot); valores com
+  , ou ; viram subjects separados.
+- `bdb1722` — "Show Recently Ingested": leva persistida em
+  `item.lote_grid_id` (confirmarLoteGrid); `ultimosItensIngeridos()` lê a
+  leva mais recente do banco; filtro espera o snapshot conter a leva; leva
+  vazia = grade vazia + "No recent intake batch"; contagens restritas.
+  O estado LIGADO do botão não é persistido — ao reabrir o projeto, ligar
+  de novo mostra a mesma leva.
+- `9b51f6f` — testes no --selftest-lote.
+
 ### Sessão 2026-09-26 (lista de 7 correções)
 
 - `81dd172` 1 — popup Source Medium do Intake sem "(BATCH)".
