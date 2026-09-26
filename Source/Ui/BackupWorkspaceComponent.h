@@ -104,6 +104,17 @@ private:
     };
     std::vector<DestinoBackupItem> destinosBackup_;
     int selectedDestinoIdx_ = -1;
+    // Destinos desmarcados (checkbox da linha) PARA ESTE ENVIO — só da
+    // sessão, nunca persistido; não desvincula o destino. Vazio = todos.
+    std::set<std::string> destinosDesmarcados_;
+    bool destinoMarcado(size_t idx) const {
+        return idx < destinosBackup_.size() && destinosDesmarcados_.count(destinosBackup_[idx].id) == 0;
+    }
+    bool algumDestinoMarcado() const {
+        for (size_t i = 0; i < destinosBackup_.size(); ++i) if (destinoMarcado(i)) return true;
+        return destinosBackup_.empty();  // sem lista (pasta avulsa): nada a desmarcar
+    }
+    bool resumoPronto_ = false;  // último "pronto" calculado por atualizarResumo()
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 

@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <set>
 #include <vector>
 #include <optional>
 
@@ -93,7 +94,10 @@ public:
         juce::String mensagem;
     };
 
-    static std::vector<StatusEspelhamento> executarEspelhamentoAutomatico(matriz::model::Project& projeto);
+    // ignorarIds: destinos (backup_destino.id) desmarcados pelo operador
+    // para este envio — não recebem o espelhamento.
+    static std::vector<StatusEspelhamento> executarEspelhamentoAutomatico(matriz::model::Project& projeto,
+                                                                         const std::set<std::string>& ignorarIds = {});
 
     // Verifica se há marcador de sync incompleto no destino
     static bool temMarcadorSyncIncompleto(const juce::File& destinoRaiz);

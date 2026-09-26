@@ -662,7 +662,8 @@ ResultadoSync SyncEngine::aplicarSync(const juce::File& referenciaRaiz,
     return res;
 }
 
-std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAutomatico(matriz::model::Project& projeto) {
+std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAutomatico(matriz::model::Project& projeto,
+                                                                                    const std::set<std::string>& ignorarIds) {
     std::vector<StatusEspelhamento> resultados;
     auto& db = projeto.registro();
     std::string activeDestId = projeto.destinationId();
@@ -683,6 +684,7 @@ std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAuto
         while (stmt.step()) {
             std::string id = stmt.columnText(0);
             if (id == activeDestId) continue;
+            if (ignorarIds.count(id)) continue;
             DestRow r;
             r.id = id;
             r.path = stmt.columnText(1);
