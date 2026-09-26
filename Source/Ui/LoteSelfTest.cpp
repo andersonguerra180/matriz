@@ -14,6 +14,7 @@
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
 #include "../Sync/SyncEngine.h"
+#include "../Consolidacao/Consolidacao.h"
 #include "../Analytics/AssetGeolocation.h"
 
 namespace matriz::ui {
@@ -761,6 +762,69 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("clone sync selftest: ") + e.what());
     }
     raizS.deleteRecursively();
+
+    // ------------------------- Duplicates: sanitizar (o descartado não vai pro MAIN)
+    std::cout << "\n-- Duplicates: the discarded side stays in SOURCE, out of backup, nothing deleted --\n";
+    juce::File raizSan = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_dup_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizSan.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Dups";
+        params.prefixoNomenclatura = "DUP";
+        auto projeto = matriz::model::Project::criar(raizSan.getChildFile("MAIN"), params);
+        auto& reg = projeto->registro();
+        const std::string projetoId = projeto->projetoId();
+        using matriz::db::Value;
+        auto texto = [&](const std::string& sql, const std::string& id) {
+            auto st = reg.prepare(sql);
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string("<none>");
+        };
+        auto planejados = [&]() {
+            std::set<std::string> ids;
+            auto plano = matriz::consolidacao::planejarConsolidacao(reg, projeto->pasta(), raizSan.getChildFile("MAIN"),
+                                                                    {matriz::consolidacao::NivelHierarquia::Origem});
+            for (const auto& ip : plano.itens) ids.insert(ip.itemId);
+            return ids;
+        };
+
+        const std::string manter = inserirItem(reg, projetoId, "DUP-KEEP", false);
+        const std::string descartar = inserirItem(reg, projetoId, "DUP-DROP", false);
+        reg.run("UPDATE item SET dc_creator = 'Creator Keep', notas_livres = 'nota do mantido' WHERE id = ?", {Value::of(manter)});
+        reg.run("UPDATE item SET dc_creator = 'Creator Drop', source_media = 'Cassette', "
+                "notas_livres = 'nota do descartado' WHERE id = ?", {Value::of(descartar)});
+        reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'show'), (?, ?, 'ao vivo')",
+                {Value::of(matriz::model::novoUuid()), Value::of(manter), Value::of(matriz::model::novoUuid()),
+                 Value::of(descartar)});
+        auto antes = planejados();
+        checar(antes.count(manter) && antes.count(descartar), "before: both items are in the backup plan");
+
+        reg.run("BEGIN TRANSACTION", {});
+        auto r = ProjetoAberto::sanitizarDuplicata(reg, manter, descartar);
+        reg.run("COMMIT", {});
+
+        auto depois = planejados();
+        checar(depois.count(manter) && !depois.count(descartar), "after: only the kept item goes to the MAIN");
+        checar(texto("SELECT estado FROM item WHERE id = ?", descartar) == "duplicata", "the discarded item stays in the catalog as 'duplicata'");
+        checar(texto("SELECT COUNT(*) FROM arquivo WHERE item_id = ?", descartar) == "1", "its file record (SOURCE location) is kept");
+        checar(texto("SELECT source_media FROM item WHERE id = ?", manter) == "Cassette", "an empty field of the kept item is filled from the duplicate");
+        checar(texto("SELECT dc_creator FROM item WHERE id = ?", manter) == "Creator Keep", "a filled field of the kept item is not overwritten");
+        checar(texto("SELECT COUNT(*) FROM item_tag WHERE item_id = ?", manter) == "2", "tags are merged (union)");
+        const std::string notasK = texto("SELECT notas_livres FROM item WHERE id = ?", manter);
+        checar(juce::String(notasK).startsWith("nota do mantido") && juce::String(notasK).contains("Creator Drop")
+                   && juce::String(notasK).contains("nota do descartado") && juce::String(notasK).contains("DUP-DROP")
+                   && juce::String(notasK).contains("originais/DUP-DROP.wav"),
+               "kept notes: appended (not overwritten) with differing value, duplicate notes, name and location");
+        checar(juce::String(texto("SELECT notas_livres FROM item WHERE id = ?", descartar)).startsWith("nota do descartado"),
+               "discarded notes appended, not overwritten");
+        checar(texto("SELECT COUNT(*) FROM preservation_event WHERE item_id = ? AND event_type = 'VALIDATION'", descartar) == "1",
+               "a VALIDATION event is logged for the discarded item");
+        checar(r.linhasLog.size() >= 3, "log lines for log.md were produced");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("duplicates selftest: ") + e.what());
+    }
+    raizSan.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
