@@ -258,6 +258,7 @@ private:
     bool filtrosAguardandoSnapshot_ = false;
     bool reaplicandoFiltrosAposSnapshot_ = false;
     int geracaoContagensAgendadas_ = 0;
+    int versaoSnapshotContada_ = -1;  // MosaicoComponent::versaoSnapshot() da última contagem
 
     std::vector<std::pair<int, int>> anosDisponiveis_;
     std::vector<std::unique_ptr<juce::TextButton>> botoesAnos_;

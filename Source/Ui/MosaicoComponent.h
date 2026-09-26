@@ -268,6 +268,8 @@ public:
     // true enquanto o snapshot em background disparado por recarregar()
     // ainda não voltou. Mesmo uso que ArvoreComponent::recargaPendente().
     bool snapshotPendente() const { return snapshotPendente_; }
+    // Incrementa a cada snapshot COMPLETO aplicado (não em atualizarItemEmMemoria).
+    int versaoSnapshot() const { return versaoSnapshot_; }
 
     static constexpr int kAlturaCabecalhoGrupo = 26;
     static constexpr int kEspacoEntreGrupos = 6;
@@ -301,6 +303,7 @@ private:
                                    .withNumberOfThreads(1)
                                    .withDesiredThreadPriority(juce::Thread::Priority::low)};
     int geracaoSnapshot_ = 0;
+    int versaoSnapshot_ = 0;
     bool snapshotPendente_ = false;
     // Fix de performance (item 8): buscarItens() varre FTS5 + LIKE em várias
     // tabelas — na thread principal, cada tecla digitada travava a janela.

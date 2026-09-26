@@ -204,7 +204,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             aplicarFiltrosAdicionais();
             reaplicandoFiltrosAposSnapshot_ = false;
         }
-        if (contagensAguardandoSnapshot_) {
+        // Snapshot completo novo (ingest/rename/remoção/reload): reconta na
+        // hora em vez de esperar o timer de 60 s.
+        if (contagensAguardandoSnapshot_ || mosaico_->versaoSnapshot() != versaoSnapshotContada_) {
             contagensAguardandoSnapshot_ = false;
             atualizarContagens();
         }
@@ -861,6 +863,7 @@ void CatalogWorkspaceComponent::atualizarFiltrosDeData() {
 
 void CatalogWorkspaceComponent::aplicarFiltroAno() {
     aplicarFiltrosAdicionais();
+    atualizarContagens();  // MEDIA TYPE conta pelo(s) ano(s) ativo(s)
 }
 
 void CatalogWorkspaceComponent::atualizarDestaqueBotoesAnoCollection() {
@@ -1049,6 +1052,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // chegar; vazio + em voo não conta nada agora (evita 2ª listarItens()).
     std::vector<ItemResumo> itensCopia;
     if (mosaico_ && !mosaico_->modoQuarentenaAtual()) {
+        versaoSnapshotContada_ = mosaico_->versaoSnapshot();
         if (mosaico_->snapshotPendente()) {
             contagensAguardandoSnapshot_ = true;
             if (mosaico_->totalItensCarregados() == 0) return;
@@ -1289,6 +1293,8 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
 
     // Seleção herdada da árvore / SOURCE (definirFiltroItens) também cai.
     if (mosaico_) mosaico_->definirFiltroItens(std::nullopt);
+    // Contagens cruzadas (DATE por MEDIA TYPE e vice-versa) sem filtro agora.
+    atualizarContagens();
 }
 
 void CatalogWorkspaceComponent::limparChipsDeBusca() {
@@ -1671,6 +1677,7 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
         mosaico_->definirFiltroItens(itemIds);
         mosaico_->definirSelecao(itemIds);
     }
+    atualizarContagens();  // tipo/ano zerados acima
     repaint();
 }
 

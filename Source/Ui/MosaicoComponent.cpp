@@ -135,6 +135,7 @@ void MosaicoComponent::recarregar() {
             MATRIZ_TRACE("MosaicoComponent::aplicarSnapshot");
             self->snapshotPendente_ = false;
             self->itensTodos_ = std::move(itens);
+            ++self->versaoSnapshot_;
             self->aplicarFiltrosEOrdenacao();
             if (self->aoMudarConteudoVisivel) self->aoMudarConteudoVisivel();
             ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", juce::String(self->itensTodos_.size()) + " items loaded");
@@ -200,6 +201,7 @@ void MosaicoComponent::recarregarSincrono() {
     ++geracaoSnapshot_;  // invalida qualquer snapshot em voo
     snapshotPendente_ = false;
     itensTodos_ = modoQuarentena_ ? projeto_.listarItensEmQuarentena() : projeto_.listarItens();
+    ++versaoSnapshot_;
     aplicarFiltrosEOrdenacao();
 }
 
