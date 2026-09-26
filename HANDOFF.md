@@ -12,6 +12,29 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (lista de 7 correções)
+
+- `81dd172` 1 — popup Source Medium do Intake sem "(BATCH)".
+- `30dbeac` 2 — contagens da sidebar do Catalog: recontar em
+  limparTodosOsFiltros/aplicarFiltroAno/definirSelecaoItens e quando
+  `MosaicoComponent::versaoSnapshot()` muda.
+- `fbe2685` 3 — Backup: checkbox por destino (sessão). ATENÇÃO: o
+  espelhamento MAIN→clones é espelho real (faltou no MAIN → `_lixeira` do
+  clone); com MAIN desmarcado NÃO espelha e consolida direto em cada
+  destino marcado. Não há teste automático — testar à mão.
+- `699a571` 4 — aba STRUCTURE abre no FOLDER MAP (catálogo: Storage/SpaceMap).
+- `c3b4e48` 5 — tecla E: `obterItemResumo` não preenchia marcadoRevisado;
+  branch próprio no Mosaico; selo E na float window + EventBus.
+- `d24ec6f` 6 — `somenteBarra` em ProgressoGlobal: catalog_assets/
+  catalog_view/hub_open só na barra inferior.
+- `ad21f82` 7 — `consolidacao_registro.destino_path` era gravado SEMPRE
+  vazio; agora grava a pasta Media do destino e o jaConsolidado filtra por
+  ela (fallback: registros legados vazios contam pra qualquer destino).
+  Clique num destino recalcula o plano antes do scan.
+- `c67c6b3` testes (--selftest-lote: E e contagens; ingest selftest: por destino).
+- matriz_ingest_selftest: FAIL pré-existente "an origin level with no value
+  becomes \"No origin\"" (rótulo virou "No source medium" em e9fdbc4).
+
 ### Sessão 2026-09-26 (regressão "Source Medium em lote só muda 1 item")
 
 - `63575c9` — **Causa**: botão "Select All" do Catalog só disparava
