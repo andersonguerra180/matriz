@@ -2615,24 +2615,6 @@ juce::Image carregarMiniaturaParaDialog(const juce::File& f, int maxDim = 480) {
                          juce::Graphics::mediumResamplingQuality);
 }
 
-// Move um arquivo para Project/_lixeira/ (pasta() já é a pasta Project/), nunca apaga.
-// Cuida de colisão de nome.
-bool moverParaLixeiraDoProjeto(const juce::File& pastaProjeto, const juce::File& arquivo) {
-    if (!arquivo.existsAsFile()) return true;
-    juce::File lixeira = pastaProjeto.getChildFile("_lixeira");
-    if (!lixeira.exists()) lixeira.createDirectory();
-
-    juce::String base = arquivo.getFileNameWithoutExtension();
-    juce::String ext = arquivo.getFileExtension();
-    juce::File destino = lixeira.getChildFile(arquivo.getFileName());
-    int seq = 2;
-    while (destino.exists() && destino.getFullPathName() != arquivo.getFullPathName()) {
-        destino = lixeira.getChildFile(base + "_" + juce::String(seq++) + ext);
-    }
-    if (destino.getFullPathName() == arquivo.getFullPathName()) return true; // origem == destino, nada a fazer
-    return arquivo.moveFileTo(destino);
-}
-
 // Copia o arquivo pra uma pasta temporária com sufixo numérico no nome, pra ingest como
 // instância nova sem tocar no arquivo original do usuário.
 juce::File criarInstanciaComSufixo(const juce::File& original) {
@@ -2775,10 +2757,11 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                         int action = resultado[k].action;
                         if (action == 0) { // SKIP
                             pular[idx] = true;
-                        } else if (action == 1) { // SUBSTITUIR: manda o arquivo antigo pra _lixeira, ingere o novo normalmente
+                        } else if (action == 1) { // SUBSTITUIR: marca o item antigo como substituído, ingere o novo normalmente
                             const auto& ex = coincidencias[k].existente;
-                            auto antigoOpt = matriz::vault::resolverCaminho(pastaProjeto, ex.localizacaoVault, ex.caminhoRelativo, ex.caminhoAbsolutoOrigem);
-                            if (antigoOpt) moverParaLixeiraDoProjeto(pastaProjeto, *antigoOpt);
+                            // O arquivo físico antigo NÃO é movido: no ingest in-place
+                            // ele é o original no SOURCE (mover entre volumes = copiar
+                            // e apagar da origem), e no MAIN só a aba Duplicates remove.
                             try {
                                 auto& registro = safeThis->projetoAberto_->projeto().registro();
                                 juce::String nota = "Replaced by newer file ingested via INTAKE. [SUBSTITUIDO_PELO_INTAKE]";
