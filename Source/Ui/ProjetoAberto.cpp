@@ -122,15 +122,25 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
             }
 
             if (!pendentes.empty()) {
-                db.run("BEGIN TRANSACTION", {});
+                // stat() de cada arquivo ANTES da transação: com ela aberta,
+                // esta conexão segura o lock de escrita do arquivo e a
+                // conexão principal toma SQLITE_BUSY durante todo o I/O.
+                std::vector<std::pair<std::string, juce::int64>> tamanhos;
+                tamanhos.reserve(pendentes.size());
                 for (const auto& item : pendentes) {
                     auto f = matriz::vault::resolverCaminho(pastaProjeto, item.localizacaoVault, item.relativo,
                                                              item.origem);
-                    juce::int64 sz = f ? f->getSize() : 0;
-                    db.run("UPDATE arquivo SET tamanho_bytes = ? WHERE id = ?",
-                           {matriz::db::Value::of(static_cast<long long>(sz)), matriz::db::Value::of(item.id)});
+                    tamanhos.emplace_back(item.id, f ? f->getSize() : 0);
                 }
-                db.run("COMMIT TRANSACTION", {});
+                db.run("BEGIN TRANSACTION", {});
+                try {
+                    for (const auto& [id, sz] : tamanhos)
+                        db.run("UPDATE arquivo SET tamanho_bytes = ? WHERE id = ?",
+                               {matriz::db::Value::of(static_cast<long long>(sz)), matriz::db::Value::of(id)});
+                    db.run("COMMIT TRANSACTION", {});
+                } catch (...) {
+                    try { db.run("ROLLBACK", {}); } catch (...) {}
+                }
             }
         } catch (...) {
             // Ignore/log errors safely
