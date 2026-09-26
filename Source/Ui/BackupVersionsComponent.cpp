@@ -11,70 +11,125 @@ namespace {
 
 class VersionRowComponent : public juce::Component {
 public:
-    VersionRowComponent(std::function<void()> onRenomear, std::function<void()> onDesvincular)
+    // Callbacks recebem a linha ATUAL: o ListBox reaproveita o componente
+    // entre linhas ao rolar/recarregar.
+    VersionRowComponent(std::function<void(int)> onRenomear, std::function<void(int)> onDesvincular)
         : onRenomear_(std::move(onRenomear)), onDesvincular_(std::move(onDesvincular))
     {
         const auto& tk = tema();
-        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
         btnRenomear_.setButtonText(matriz::i18n::t("backup.renomear"));
         btnRenomear_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnRenomear_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
-        btnRenomear_.onClick = [this] { if (onRenomear_) onRenomear_(); };
+        btnRenomear_.onClick = [this] { if (onRenomear_) onRenomear_(linha_); };
         addAndMakeVisible(btnRenomear_);
 
         btnDesvincular_.setButtonText(matriz::i18n::t("backup.desvincular"));
         btnDesvincular_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnDesvincular_.setColour(juce::TextButton::textColourOffId, tk.perigo);
-        btnDesvincular_.onClick = [this] { if (onDesvincular_) onDesvincular_(); };
+        btnDesvincular_.onClick = [this] { if (onDesvincular_) onDesvincular_(linha_); };
         addAndMakeVisible(btnDesvincular_);
     }
 
-    void update(const BackupVersionRef& versao, bool isEven) {
+    void update(const ProjetoAberto::VersaoResumo& versao, bool isEven, int linha) {
         versao_ = versao;
+        linha_ = linha;
         isEven_ = isEven;
+        // SOURCE não se desvincula (é proveniência); o MAIN mostra o botão,
+        // mas o clique só avisa (ver desvincularVersao).
+        btnDesvincular_.setVisible(versao_.papel != ProjetoAberto::VersaoResumo::Papel::Source);
         repaint();
     }
 
     void paint(juce::Graphics& g) override {
+        using Papel = ProjetoAberto::VersaoResumo::Papel;
         const auto& tk = tema();
         g.fillAll(isEven_ ? tk.painel : tk.painelAlt);
 
         auto r = getLocalBounds().reduced(10, 0);
         int h = getHeight();
 
-        // 1. Badge com o Rótulo
-        int strW = juce::GlyphArrangement::getStringWidthInt(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)), versao_.rotulo);
-        int badgeW = std::min(180, std::max(120, strW + 24));
-        juce::Rectangle<int> badgeRect(r.getX(), (h - 24) / 2, badgeW, 24);
-        g.setColour(tk.acento.withAlpha(0.2f));
-        g.fillRoundedRectangle(badgeRect.toFloat(), 4.0f);
-        g.setColour(tk.acento);
-        g.drawRoundedRectangle(badgeRect.toFloat(), 4.0f, 1.0f);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        g.drawText(versao_.rotulo, badgeRect, juce::Justification::centred, true);
+        // 1. Selo de papel
+        juce::String papelTxt;
+        juce::Colour corPapel;
+        switch (versao_.papel) {
+            case Papel::Main:   papelTxt = matriz::i18n::t("backup.papel_main");   corPapel = juce::Colour(0xff2563eb); break;
+            case Papel::Clone:  papelTxt = matriz::i18n::t("backup.papel_clone");  corPapel = juce::Colour(0xff0d9488); break;
+            case Papel::Source: papelTxt = matriz::i18n::t("backup.papel_source"); corPapel = juce::Colour(0xff9a6b1f); break;
+        }
+        juce::Rectangle<int> selo(r.getX(), (h - 22) / 2, 74, 22);
+        g.setColour(corPapel);
+        g.fillRoundedRectangle(selo.toFloat(), 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText(papelTxt, selo, juce::Justification::centred, true);
 
-        // 2. Caminho do Destino
-        int pathX = badgeRect.getRight() + 16;
-        int statsW = 280;
+        // 2. Rótulo (linha de cima) e caminho (linha de baixo)
+        int textoX = selo.getRight() + 12;
+        int statusW = 300;
         int botoesW = 190;
-        int pathW = std::max(60, r.getRight() - botoesW - statsW - pathX);
-
+        int textoW = std::max(60, r.getRight() - botoesW - statusW - textoX);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
-        g.drawText(versao_.destinoPath, pathX, 0, pathW, h, juce::Justification::centredLeft, true);
-
-        // 3. Estatísticas: Itens e Último backup
-        int statsX = pathX + pathW + 10;
-        juce::String textoItens = matriz::i18n::t("backup.itens_contagem").replace("{n}", juce::String(versao_.totalItens));
-        juce::String textoUltimo = versao_.ultimoBackup.isEmpty()
-            ? ""
-            : matriz::i18n::t("backup.ultimo_backup_em").replace("{d}", versao_.ultimoBackup.substring(0, 10));
-
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        g.drawText(versao_.rotulo, textoX, 4, textoW, h / 2 - 2, juce::Justification::bottomLeft, true);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-        g.drawText(textoItens + (textoUltimo.isNotEmpty() ? "   |   " + textoUltimo : ""),
-                   statsX, 0, statsW, h, juce::Justification::centredLeft, true);
+        g.drawText(versao_.caminho, textoX, h / 2, textoW, h / 2 - 4, juce::Justification::topLeft, true);
+
+        // 3. Status (linha de cima) e números (linha de baixo)
+        int statusX = textoX + textoW + 10;
+        juce::String status;
+        juce::Colour corStatus = tk.textoSecundario;
+        juce::String numeros;
+        auto dataCurta = [](const juce::String& iso) {
+            // "YYYY-MM-DD..." -> "DD/MM"
+            return iso.length() >= 10 ? iso.substring(8, 10) + "/" + iso.substring(5, 7) : iso;
+        };
+        if (versao_.papel == Papel::Source) {
+            if (!versao_.online) {
+                status = matriz::i18n::t("backup.status_guardado");
+            } else if (versao_.dependentes == 0 && versao_.totalItens > 0) {
+                status = matriz::i18n::t("backup.status_liberado");
+                corStatus = tk.estadoQcOk;
+            } else {
+                status = matriz::i18n::t("backup.status_conectado");
+            }
+            numeros = matriz::i18n::t("backup.itens_fonte").replace("{n}", juce::String(versao_.totalItens));
+            if (versao_.dependentes > 0) {
+                numeros += "   |   " + matriz::i18n::t("backup.status_dependentes")
+                                           .replace("{n}", juce::String(versao_.dependentes));
+                corStatus = versao_.online ? tk.alerta : corStatus;
+            }
+        } else {
+            if (versao_.papel == Papel::Clone) {
+                if (versao_.desatualizado) {
+                    status = matriz::i18n::t("backup.status_desatualizado").replace("{d}", dataCurta(versao_.ultimaData));
+                    corStatus = tk.alerta;
+                } else {
+                    status = matriz::i18n::t("backup.status_em_dia");
+                    corStatus = tk.estadoQcOk;
+                }
+            } else {
+                status = versao_.online ? matriz::i18n::t("backup.status_online") : matriz::i18n::t("backup.status_offline");
+                corStatus = versao_.online ? tk.estadoQcOk : tk.perigo;
+            }
+            if (!versao_.online && versao_.papel == Papel::Clone) status += " (offline)";
+            // CLONE é espelho do MAIN: o que importa é quando sincronizou.
+            if (versao_.papel == Papel::Clone)
+                numeros = versao_.ultimaData.isNotEmpty()
+                              ? matriz::i18n::t("backup.ultima_sync_em").replace("{d}", dataCurta(versao_.ultimaData))
+                              : juce::String();
+            else
+                numeros = matriz::i18n::t("backup.itens_contagem").replace("{n}", juce::String(versao_.totalItens));
+            if (versao_.papel == Papel::Main && versao_.ultimaData.isNotEmpty())
+                numeros += "   |   " + matriz::i18n::t("backup.ultimo_backup_em").replace("{d}", versao_.ultimaData.substring(0, 10));
+        }
+        g.setColour(corStatus);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        g.drawText(status, statusX, 4, statusW, h / 2 - 2, juce::Justification::bottomLeft, true);
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.drawText(numeros, statusX, h / 2, statusW, h / 2 - 4, juce::Justification::topLeft, true);
     }
 
     void resized() override {
@@ -88,10 +143,11 @@ public:
     }
 
 private:
-    BackupVersionRef versao_;
+    ProjetoAberto::VersaoResumo versao_;
     bool isEven_ = false;
-    std::function<void()> onRenomear_;
-    std::function<void()> onDesvincular_;
+    int linha_ = -1;
+    std::function<void(int)> onRenomear_;
+    std::function<void(int)> onDesvincular_;
     juce::TextButton btnRenomear_;
     juce::TextButton btnDesvincular_;
 };
@@ -109,8 +165,8 @@ BackupVersionsComponent::BackupVersionsComponent(ProjetoAberto& projeto)
     lblTitulo_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblTitulo_);
 
-    lblDescricao_.setText(isPt ? juce::String::fromUTF8("Pastas e unidades de destino que já receberam backups desta coleção:")
-                               : "Destination drives and folders that have received backups of this collection:",
+    lblDescricao_.setText(isPt ? juce::String::fromUTF8("O MAIN (fonte da verdade), seus CLONEs e os SOURCEs de onde o material veio:")
+                               : "The MAIN (source of truth), its CLONEs and the SOURCEs the material came from:",
                           juce::dontSendNotification);
     lblDescricao_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
     lblDescricao_.setColour(juce::Label::textColourId, tk.textoSecundario);
@@ -145,7 +201,7 @@ void BackupVersionsComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.painel);
 
-    if (versoes_.empty()) {
+    if (linhas_.empty()) {
         g.setColour(tk.textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         g.drawText(matriz::i18n::t("backup.nenhuma_versao"),
@@ -184,67 +240,75 @@ void BackupVersionsComponent::lookAndFeelChanged() {
 }
 
 void BackupVersionsComponent::recarregar() {
-    carregarVersoes();
-    listBox_.updateContent();
-    listBox_.repaint();
-    repaint();
+    carregarVersoes();  // aplicarVersoes() atualiza a lista quando a carga volta
 }
 
 int BackupVersionsComponent::getNumRows() {
-    return static_cast<int>(versoes_.size());
+    return static_cast<int>(linhas_.size());
 }
 
 void BackupVersionsComponent::paintListBoxItem(int, juce::Graphics&, int, int, bool) {}
 
 juce::Component* BackupVersionsComponent::refreshComponentForRow(int rowNumber, bool, juce::Component* existingComponentToUpdate) {
-    if (rowNumber < 0 || rowNumber >= static_cast<int>(versoes_.size())) {
+    if (rowNumber < 0 || rowNumber >= static_cast<int>(linhas_.size())) {
         delete existingComponentToUpdate;
         return nullptr;
     }
 
     auto* rowComp = dynamic_cast<VersionRowComponent*>(existingComponentToUpdate);
-    const auto& versao = versoes_[static_cast<size_t>(rowNumber)];
+    const auto& versao = linhas_[static_cast<size_t>(rowNumber)];
 
     if (rowComp == nullptr) {
         rowComp = new VersionRowComponent(
-            [this, versao] { renomearVersao(versao); },
-            [this, versao] { desvincularVersao(versao); });
+            [this](int linha) {
+                if (linha >= 0 && linha < static_cast<int>(linhas_.size())) renomearVersao(linhas_[static_cast<size_t>(linha)]);
+            },
+            [this](int linha) {
+                if (linha >= 0 && linha < static_cast<int>(linhas_.size())) desvincularVersao(linhas_[static_cast<size_t>(linha)]);
+            });
     }
 
-    rowComp->update(versao, rowNumber % 2 == 0);
+    rowComp->update(versao, rowNumber % 2 == 0, rowNumber);
     return rowComp;
 }
 
 void BackupVersionsComponent::carregarVersoes() {
-    versoes_.clear();
-    projeto_.sincronizarBackupDestinoDeHistorico();
-
-    auto& db = projeto_.projeto().registro();
-    try {
-        auto stmt = db.prepare("SELECT id, destino_path, rotulo, ativo, criado_em FROM backup_destino WHERE ativo = 1 ORDER BY criado_em ASC");
-        while (stmt.step()) {
-            BackupVersionRef ref;
-            ref.id = stmt.columnText(0);
-            ref.destinoPath = juce::String::fromUTF8(stmt.columnText(1).c_str());
-            ref.rotulo = juce::String::fromUTF8(stmt.columnText(2).c_str());
-
-            auto stmtStats = db.prepare("SELECT COUNT(DISTINCT item_id), MAX(consolidado_em) FROM consolidacao_registro WHERE destino_path = ?");
-            stmtStats.bind(1, matriz::db::Value::of(stmt.columnText(1)));
-            if (stmtStats.step()) {
-                ref.totalItens = stmtStats.columnInt(0);
-                if (!stmtStats.columnIsNull(1)) {
-                    ref.ultimoBackup = juce::String::fromUTF8(stmtStats.columnText(1).c_str());
-                }
-            }
-            versoes_.push_back(std::move(ref));
-        }
-    } catch (...) {}
-
-    btnSincronizar_.setEnabled(versoes_.size() >= 2);
-    btnRecuperar_.setEnabled(!versoes_.empty());
+    // Banco + existência das pastas (discos que podem estar dormindo): fora
+    // da message thread. A geração descarta respostas de cargas antigas.
+    const int geracao = ++geracaoCarga_;
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    ProjetoAberto* projeto = &projeto_;
+    poolCarga_.addJob([safeThis, projeto, geracao] {
+        std::vector<ProjetoAberto::VersaoResumo> linhas;
+        try { linhas = projeto->listarVersoes(); } catch (...) {}
+        juce::MessageManager::callAsync([safeThis, geracao, linhas = std::move(linhas)]() mutable {
+            if (safeThis == nullptr || geracao != safeThis->geracaoCarga_) return;
+            safeThis->aplicarVersoes(std::move(linhas));
+        });
+    });
 }
 
-void BackupVersionsComponent::renomearVersao(const BackupVersionRef& versao) {
+void BackupVersionsComponent::aplicarVersoes(std::vector<ProjetoAberto::VersaoResumo> linhas) {
+    linhas_ = std::move(linhas);
+    versoes_.clear();
+    for (const auto& l : linhas_) {
+        if (l.papel == ProjetoAberto::VersaoResumo::Papel::Source) continue;
+        BackupVersionRef ref;
+        ref.id = l.id;
+        ref.rotulo = l.rotulo;
+        ref.destinoPath = l.caminho;
+        ref.totalItens = l.totalItens;
+        ref.ultimoBackup = l.ultimaData;
+        versoes_.push_back(std::move(ref));
+    }
+    btnSincronizar_.setEnabled(versoes_.size() >= 2);
+    btnRecuperar_.setEnabled(!versoes_.empty());
+    listBox_.updateContent();
+    listBox_.repaint();
+    repaint();
+}
+
+void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& versao) {
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
     auto alert = std::make_shared<juce::AlertWindow>(
@@ -261,8 +325,10 @@ void BackupVersionsComponent::renomearVersao(const BackupVersionRef& versao) {
         juce::String novoRotulo = alert->getTextEditorContents("rotulo").trim();
         if (novoRotulo.isEmpty() || novoRotulo == versao.rotulo) return;
 
+        // Só o rótulo (apelido do disco). Num SOURCE a pasta no MAIN nunca muda.
+        const bool ehSource = versao.papel == ProjetoAberto::VersaoResumo::Papel::Source;
         projeto_.projeto().registro().run(
-            "UPDATE backup_destino SET rotulo = ? WHERE id = ?",
+            ehSource ? "UPDATE vault SET nome = ? WHERE id = ?" : "UPDATE backup_destino SET rotulo = ? WHERE id = ?",
             {matriz::db::Value::of(novoRotulo.toStdString()), matriz::db::Value::of(versao.id)});
 
         matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
@@ -275,8 +341,14 @@ void BackupVersionsComponent::renomearVersao(const BackupVersionRef& versao) {
     }));
 }
 
-void BackupVersionsComponent::desvincularVersao(const BackupVersionRef& versao) {
+void BackupVersionsComponent::desvincularVersao(const ProjetoAberto::VersaoResumo& versao) {
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    if (versao.papel == ProjetoAberto::VersaoResumo::Papel::Source) return;
+    if (versao.papel == ProjetoAberto::VersaoResumo::Papel::Main) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("backup.desvincular"),
+                                               matriz::i18n::t("backup.main_desvincular_bloqueado"));
+        return;
+    }
 
     juce::AlertWindow::showOkCancelBox(
         juce::AlertWindow::WarningIcon,
@@ -295,7 +367,7 @@ void BackupVersionsComponent::desvincularVersao(const BackupVersionRef& versao) 
             matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
             juce::StringArray details;
             details.add("Label: " + versao.rotulo);
-            details.add("Path: " + versao.destinoPath);
+            details.add("Path: " + versao.caminho);
             pLog.appendEntry("Backup Version Unlinked", details);
 
             recarregar();

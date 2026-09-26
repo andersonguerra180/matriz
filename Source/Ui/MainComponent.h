@@ -279,6 +279,10 @@ private:
     void timerCallback() override;
     void verificarVaultsConectados();
     void esperarJobsDeVaults();
+    // Modelo SOURCE/MAIN/CLONE: garante um MAIN ao abrir (projetos antigos);
+    // se ambíguo, pergunta uma vez qual versão é o MAIN.
+    void verificarPapelMain();
+    void perguntarQualEOMain(const ProjetoAberto::SituacaoMain& situacao);
     void verificarPresencaInicialAssets();
     void mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report);
     void abrirDialogoRelinkOffline(const std::string& itemId);

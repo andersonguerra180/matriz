@@ -3181,6 +3181,152 @@ std::vector<ProjetoAberto::VaultResumo> ProjetoAberto::listarVaults() const {
     return out;
 }
 
+ProjetoAberto::SituacaoMain ProjetoAberto::normalizarPapelMain() {
+    SituacaoMain sit;
+    if (!projeto_) return sit;
+    auto& db = projeto_->registro();
+    struct Linha { std::string id, destinationId, papel; juce::String rotulo, caminho; };
+    std::vector<Linha> linhas;
+    try {
+        auto st = db.prepare("SELECT id, COALESCE(destination_id, id), COALESCE(papel, 'CLONE'), rotulo, destino_path "
+                             "FROM backup_destino WHERE ativo = 1 ORDER BY criado_em ASC");
+        while (st.step())
+            linhas.push_back({st.columnText(0), st.columnText(1), st.columnText(2),
+                              juce::String::fromUTF8(st.columnText(3).c_str()),
+                              juce::String::fromUTF8(st.columnText(4).c_str())});
+    } catch (...) { return sit; }
+    if (linhas.empty()) return sit;  // projeto sem backup: continua como hoje
+
+    std::vector<const Linha*> mains;
+    for (auto& l : linhas) if (l.papel == "ORIGINAL") mains.push_back(&l);
+    if (mains.size() == 1) { sit.tipo = SituacaoMain::Tipo::Ok; return sit; }
+
+    if (mains.size() > 1) {
+        const std::string raizId = projeto_->destinationId();
+        for (auto* m : mains) {
+            if (!raizId.empty() && m->destinationId == raizId) {
+                definirMain(m->id);
+                sit.tipo = SituacaoMain::Tipo::Ok;
+                return sit;
+            }
+        }
+    }
+    sit.tipo = SituacaoMain::Tipo::Perguntar;
+    for (auto& l : linhas) sit.opcoes.push_back({l.id, l.rotulo + juce::String::fromUTF8(" \xe2\x80\x94 ") + l.caminho});
+    return sit;
+}
+
+void ProjetoAberto::definirMain(const std::string& backupDestinoId) {
+    if (!projeto_ || backupDestinoId.empty()) return;
+    auto& db = projeto_->registro();
+    juce::String rotulo;
+    try {
+        db.run("BEGIN IMMEDIATE", {});
+        db.run("UPDATE backup_destino SET papel = CASE WHEN id = ? THEN 'ORIGINAL' ELSE 'CLONE' END WHERE ativo = 1",
+               {matriz::db::Value::of(backupDestinoId)});
+        auto st = db.prepare("SELECT rotulo FROM backup_destino WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(backupDestinoId));
+        if (st.step()) rotulo = juce::String::fromUTF8(st.columnText(0).c_str());
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return;
+    }
+    try {
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+            "MAIN assigned", {"Version: " + rotulo, "Other registered versions are CLONE (labels only, nothing copied)"});
+    } catch (...) {}
+}
+
+std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
+    std::vector<VersaoResumo> out;
+    if (!projeto_) return out;
+    sincronizarBackupDestinoDeHistorico();
+    auto& db = projeto_->registro();
+    const int64_t revisaoProjeto = projeto_->revisao();
+    std::string mainDestinationId;
+
+    // MAIN e CLONEs.
+    try {
+        auto st = db.prepare(
+            "SELECT id, COALESCE(destination_id, id), COALESCE(papel, 'CLONE'), rotulo, destino_path, "
+            "COALESCE(ultima_revisao_conhecida, 0), COALESCE(ultimo_visto_em, '') FROM backup_destino WHERE ativo = 1 "
+            "ORDER BY criado_em ASC");
+        auto raizes = matriz::vault::destinosDeBackup(db, projeto_->pasta());
+        while (st.step()) {
+            VersaoResumo v;
+            v.id = st.columnText(0);
+            const std::string destId = st.columnText(1);
+            v.papel = st.columnText(2) == "ORIGINAL" ? VersaoResumo::Papel::Main : VersaoResumo::Papel::Clone;
+            v.rotulo = juce::String::fromUTF8(st.columnText(3).c_str());
+            v.caminho = juce::String::fromUTF8(st.columnText(4).c_str());
+            // Raiz atual pelo destination_id (a pasta aberta pode ser este destino
+            // montado com outro nome).
+            juce::File raiz(v.caminho);
+            for (auto& d : raizes) if (d.destinationId == destId) raiz = d.raiz;
+            v.caminho = raiz.getFullPathName();
+            v.online = raiz.isDirectory();
+            if (v.papel == VersaoResumo::Papel::Main) {
+                mainDestinationId = destId;
+            } else {
+                v.desatualizado = st.columnInt(5) < revisaoProjeto;
+                v.ultimaData = juce::String::fromUTF8(st.columnText(6).c_str());
+            }
+            // Registros deste destino (por id ou caminho); os legados (sem destino)
+            // contam pro MAIN.
+            auto stats = db.prepare(
+                "SELECT COUNT(DISTINCT item_id), MAX(consolidado_em) FROM consolidacao_registro "
+                "WHERE (destino_id != '' AND destino_id = ?) OR destino_path = ? OR destino_path = ? "
+                "   OR (? = 1 AND COALESCE(destino_id, '') = '' AND COALESCE(destino_path, '') = '')");
+            stats.bind(1, matriz::db::Value::of(destId));
+            stats.bind(2, matriz::db::Value::of(st.columnText(4)));
+            stats.bind(3, matriz::db::Value::of(raiz.getChildFile("Media").getFullPathName().toStdString()));
+            stats.bind(4, matriz::db::Value::of(v.papel == VersaoResumo::Papel::Main ? 1 : 0));
+            if (stats.step()) {
+                v.totalItens = static_cast<int>(stats.columnInt(0));
+                if (v.papel == VersaoResumo::Papel::Main && !stats.columnIsNull(1))
+                    v.ultimaData = juce::String::fromUTF8(stats.columnText(1).c_str());
+            }
+            out.push_back(std::move(v));
+        }
+    } catch (...) {}
+
+    // SOURCEs: volumes (tabela vault) de onde vieram arquivos. Uma pasta de
+    // origem que é um destino de backup não é SOURCE.
+    try {
+        auto st = db.prepare(
+            "SELECT v.id, v.nome, v.localizacao, COUNT(a.id), MAX(a.criado_em), "
+            "SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM consolidacao_registro c WHERE c.arquivo_id = a.id "
+            "      AND (COALESCE(c.destino_id, '') = '' OR c.destino_id = ?)) THEN 1 ELSE 0 END) "
+            "FROM vault v JOIN arquivo a ON a.vault_id = v.id GROUP BY v.id ORDER BY MIN(a.criado_em)");
+        st.bind(1, matriz::db::Value::of(mainDestinationId));
+        while (st.step()) {
+            VersaoResumo v;
+            v.papel = VersaoResumo::Papel::Source;
+            v.id = st.columnText(0);
+            v.rotulo = juce::String::fromUTF8(st.columnText(1).c_str());
+            v.caminho = juce::String::fromUTF8(st.columnText(2).c_str());
+            bool ehDestino = false;
+            for (auto& d : out)
+                if (d.papel != VersaoResumo::Papel::Source &&
+                    (juce::File(v.caminho) == juce::File(d.caminho) || juce::File(v.caminho).isAChildOf(juce::File(d.caminho))))
+                    ehDestino = true;
+            if (ehDestino) continue;
+            v.online = juce::File(v.caminho).isDirectory();
+            v.totalItens = static_cast<int>(st.columnInt(3));
+            v.ultimaData = juce::String::fromUTF8(st.columnText(4).c_str());
+            v.dependentes = static_cast<int>(st.columnInt(5));
+            out.push_back(std::move(v));
+        }
+    } catch (...) {}
+
+    // MAIN sempre no topo; depois CLONEs; depois SOURCEs.
+    std::stable_sort(out.begin(), out.end(), [](const VersaoResumo& a, const VersaoResumo& b) {
+        return static_cast<int>(a.papel) < static_cast<int>(b.papel);
+    });
+    return out;
+}
+
 void ProjetoAberto::sincronizarBackupDestinoDeHistorico() {
     if (!projeto_) return;
     auto& db = projeto_->registro();

@@ -25,11 +25,17 @@ public:
 
 private:
     void carregarVersoes();
-    void renomearVersao(const BackupVersionRef& versao);
-    void desvincularVersao(const BackupVersionRef& versao);
+    void aplicarVersoes(std::vector<ProjetoAberto::VersaoResumo> linhas);
+    void renomearVersao(const ProjetoAberto::VersaoResumo& versao);
+    void desvincularVersao(const ProjetoAberto::VersaoResumo& versao);
 
     ProjetoAberto& projeto_;
+    // Linhas exibidas (MAIN no topo, CLONEs, SOURCEs) e, separado, só os
+    // destinos (MAIN/CLONE) — é o que os diálogos de sincronizar/recuperar usam.
+    std::vector<ProjetoAberto::VersaoResumo> linhas_;
     std::vector<BackupVersionRef> versoes_;
+    int geracaoCarga_ = 0;
+    juce::ThreadPool poolCarga_{1};
 
     juce::Label lblTitulo_;
     juce::Label lblDescricao_;

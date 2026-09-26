@@ -1569,6 +1569,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
 
     verificarVaultsConectados();
     verificarPresencaInicialAssets();
+    verificarPapelMain();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     startTimer(5000);
 }
@@ -2397,6 +2398,47 @@ void MainComponent::fecharProjeto() {
     resized();
     repaint();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
+}
+
+void MainComponent::verificarPapelMain() {
+    if (!projetoAberto_) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    // Banco em background (pool de Vaults: esperarJobsDeVaults() segura o
+    // projeto vivo até o job terminar).
+    poolVaults_.addJob([safeThis, proj]() {
+        ProjetoAberto::SituacaoMain sit;
+        try { sit = proj->normalizarPapelMain(); } catch (...) {}
+        if (sit.tipo != ProjetoAberto::SituacaoMain::Tipo::Perguntar) return;
+        juce::MessageManager::callAsync([safeThis, proj, sit]() {
+            if (!safeThis || safeThis->projetoAberto_.get() != proj) return;  // projeto trocou
+            safeThis->perguntarQualEOMain(sit);
+        });
+    });
+}
+
+void MainComponent::perguntarQualEOMain(const ProjetoAberto::SituacaoMain& situacao) {
+    if (situacao.opcoes.empty()) return;
+    auto* dlg = new juce::AlertWindow(matriz::i18n::t("backup.escolher_main_titulo"),
+                                      matriz::i18n::t("backup.escolher_main_msg"), juce::MessageBoxIconType::QuestionIcon);
+    juce::StringArray rotulos;
+    for (const auto& [id, rotulo] : situacao.opcoes) rotulos.add(rotulo);
+    dlg->addComboBox("main", rotulos);
+    dlg->addButton(matriz::i18n::t("backup.escolher_main_btn"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dlg->addButton(matriz::i18n::t("backup.escolher_main_depois"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    auto opcoes = situacao.opcoes;
+    dlg->enterModalState(true, juce::ModalCallbackFunction::create([dlg, safeThis, proj, opcoes](int resultado) {
+        if (resultado != 1 || !safeThis || safeThis->projetoAberto_.get() != proj) return;
+        auto* combo = dlg->getComboBoxComponent("main");
+        int idx = combo ? combo->getSelectedItemIndex() : -1;
+        if (idx < 0 || idx >= static_cast<int>(opcoes.size())) return;
+        std::string id = opcoes[static_cast<size_t>(idx)].first;
+        safeThis->poolVaults_.addJob([proj, id]() {
+            try { proj->definirMain(id); } catch (...) {}
+        });
+    }), true);
 }
 
 void MainComponent::verificarPresencaInicialAssets() {

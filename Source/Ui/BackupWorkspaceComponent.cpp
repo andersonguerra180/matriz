@@ -3482,8 +3482,8 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
         curX += 22;
     }
 
-    // Papel tag [MAIN ORIGINAL] or [DESTINATION]
-    int tagW = isOriginal ? 104 : (isPt ? 72 : 88);
+    // Selo de papel: MAIN (fonte da verdade) ou CLONE.
+    int tagW = 64;
     juce::Rectangle<int> papelArea(curX, (height - 20) / 2, tagW, 20);
     if (isOriginal) {
         g.setColour(juce::Colours::black);
@@ -3491,7 +3491,7 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
         g.setColour(juce::Colours::white);
         g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.2f);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText("MAIN ORIGINAL", papelArea, juce::Justification::centred, true);
+        g.drawText(matriz::i18n::t("backup.papel_main"), papelArea, juce::Justification::centred, true);
     } else {
         g.setColour(tk.painel.withAlpha(0.6f));
         g.fillRoundedRectangle(papelArea.toFloat(), 4.0f);
@@ -3499,7 +3499,7 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
         g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.0f);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(isPt ? "DESTINO" : "DESTINATION", papelArea, juce::Justification::centred, true);
+        g.drawText(matriz::i18n::t("backup.papel_clone"), papelArea, juce::Justification::centred, true);
     }
     curX += tagW + 10;
 

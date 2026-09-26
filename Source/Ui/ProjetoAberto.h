@@ -129,6 +129,37 @@ public:
     void definirDestinoBackupAtivo(const std::string& path) { if (projeto_) projeto_->definirDestinoBackupAtivo(path); }
     void sincronizarBackupDestinoDeHistorico();
 
+    // --- Modelo SOURCE / MAIN / CLONE (etapa 3: papéis e rótulos) ---------
+    // Papel de cada versão vem de backup_destino.papel (ORIGINAL = MAIN,
+    // CLONE) — identidade pelo destination_id, nunca pelo caminho. Só
+    // rótulos: nada é copiado, movido ou apagado.
+    struct SituacaoMain {
+        enum class Tipo { Ok, SemBackup, Perguntar } tipo = Tipo::SemBackup;
+        // Perguntar: versões registradas (backup_destino.id, "rótulo — caminho").
+        std::vector<std::pair<std::string, juce::String>> opcoes;
+    };
+    // Garante no máximo um MAIN. Vários ORIGINAL e um deles é a raiz aberta
+    // -> ele fica MAIN e os demais viram CLONE. Nenhum MAIN (com versões
+    // registradas) ou ambíguo -> Perguntar. Pode rodar em background.
+    SituacaoMain normalizarPapelMain();
+    // O escolhido vira MAIN (ORIGINAL), os demais ativos viram CLONE; log.
+    void definirMain(const std::string& backupDestinoId);
+
+    // Uma linha da lista de Versões (MAIN / CLONE / SOURCE). EXPORT não entra.
+    struct VersaoResumo {
+        enum class Papel { Main, Clone, Source } papel = Papel::Clone;
+        std::string id;              // backup_destino.id ou vault.id (SOURCE)
+        juce::String rotulo;
+        juce::String caminho;
+        bool online = false;
+        int totalItens = 0;          // MAIN/CLONE: itens com registro; SOURCE: arquivos vindos dele
+        int dependentes = 0;         // SOURCE: arquivos que ainda não estão no MAIN
+        bool desatualizado = false;  // CLONE
+        juce::String ultimaData;     // MAIN/CLONE: último backup/sync; SOURCE: última ingestão
+    };
+    // Lê tudo (banco + existência das pastas): chamar FORA da message thread.
+    std::vector<VersaoResumo> listarVersoes();
+
     std::vector<ItemResumo> listarItens() const;
     int contarItens() const { return static_cast<int>(listarItens().size()); }
     std::vector<ItemResumo> listarItensEmQuarentena() const;
