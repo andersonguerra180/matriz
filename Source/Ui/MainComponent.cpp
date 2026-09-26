@@ -2367,10 +2367,16 @@ void MainComponent::verificarPresencaInicialAssets() {
         std::set<std::string> missingSet(report.missingItemIds.begin(), report.missingItemIds.end());
         proj->definirItensOffline(missingSet);
 
-        juce::MessageManager::callAsync([safeThis, report]() {
+        const bool temOffline = !missingSet.empty();
+        juce::MessageManager::callAsync([safeThis, report, temOffline]() {
             if (!safeThis) return;
             auto* self = safeThis.getComponent();
-            if (self->mosaico_) self->mosaico_->repaint();
+            // O snapshot do mosaico pode ter sido lido antes do cache existir
+            // (todos online): recarrega pra aplicar o status offline.
+            if (self->mosaico_) {
+                if (temOffline) self->mosaico_->recarregar();
+                else self->mosaico_->repaint();
+            }
             if (report.totalAssets > 0 && report.onlineAssets == 0 && report.offlineAssets > 0) {
                 self->mostrarDialogoRelinkInicial(report);
             }

@@ -111,7 +111,10 @@ public:
                                                         matriz::db::Database& indice,
                                                         const juce::File& pastaProjeto,
                                                         const std::map<std::string, std::string>& inMemoryRelinks = {},
-                                                        const std::set<std::string>& itensOffline = {});
+                                                        // nullptr = verifica todo item em disco (coleção
+                                                        // que não é a aberta); senão só re-verifica os ids
+                                                        // do cache (podem ter voltado online via relink).
+                                                        const std::set<std::string>* itensOffline = nullptr);
     std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
 
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),

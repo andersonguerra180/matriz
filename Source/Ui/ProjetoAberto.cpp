@@ -151,12 +151,23 @@ juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
     return 0;
 }
 
+namespace {
+bool arquivoMasterExiste(const juce::File& pastaProjeto, const std::map<std::string, std::string>& relinks,
+                         const std::string& masterArqId, const std::string& vaultLoc,
+                         const std::string& camRel, const std::string& camAbs) {
+    if (masterArqId.empty()) return false;
+    auto it = relinks.find(masterArqId);
+    if (it != relinks.end() && !it->second.empty()) return juce::File(it->second).existsAsFile();
+    auto res = matriz::vault::resolverCaminho(pastaProjeto, vaultLoc, camRel, camAbs);
+    return res.has_value() && res->existsAsFile();
+}
+} // namespace
+
 std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database& registro,
                                                             matriz::db::Database& indice,
                                                             const juce::File& pastaProjeto,
                                                             const std::map<std::string, std::string>& inMemoryRelinks,
-                                                            const std::set<std::string>& itensOffline) {
-    juce::ignoreUnused(pastaProjeto, inMemoryRelinks);
+                                                            const std::set<std::string>* itensOffline) {
     std::vector<ItemResumo> out;
 
     // Uma consulta com JOIN em vez de N+1 (arquivo e vault resolvidos num único join
@@ -246,8 +257,11 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         r.pastaAtiva = stmt.columnInt(23) != 0;
         r.marcadoRevisado = stmt.columnInt(24) != 0;
 
-        // Status offline via cache (verificado em background, sem I/O síncrono de disco por item)
-        r.offline = (itensOffline.count(r.id) > 0);
+        // Status offline: o cache (preenchido em background na abertura) evita
+        // stat por item; só os que estão no cache são re-verificados em disco
+        // (relink pode tê-los trazido de volta). Sem cache: verifica todos.
+        if (itensOffline == nullptr || itensOffline->count(r.id) > 0)
+            r.offline = !arquivoMasterExiste(pastaProjeto, inMemoryRelinks, masterArqId, vaultLoc, camRel, camAbs);
 
         // Características técnicas via json_extract em SQL (sem juce::JSON::parse em C++)
         if (!stmt.columnIsNull(25)) {
@@ -280,6 +294,18 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                     }
                 }
             } catch (...) {}
+
+            // Último recurso (como antes de 759dbd2): data do arquivo de origem.
+            if (!r.ano.has_value() && !r.offline && !camAbs.empty()) {
+                try {
+                    juce::File fileObj(camAbs);
+                    if (fileObj.existsAsFile()) {
+                        int yVal = fileObj.getCreationTime().getYear();
+                        if (yVal <= 1970 || yVal > 2025) yVal = fileObj.getLastModificationTime().getYear();
+                        if (yVal > 1800 && yVal <= 2025) r.ano = yVal;
+                    }
+                } catch (...) {}
+            }
         }
 
         // Check thumbnail from indice database (statement preparado uma vez)
@@ -344,7 +370,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         watermarkCopia = marcadosWatermark_;
         offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia, offlineCopia);
+    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia, &offlineCopia);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
@@ -363,18 +389,14 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
     try {
         matriz::db::Database regDb(regFile.getFullPathName().toStdString());
         std::vector<ItemResumo> items;
-        std::set<std::string> offlineCopia;
-        {
-            std::lock_guard<std::mutex> lock(marcacoesMutex_);
-            offlineCopia = itensOfflineCache_;
-        }
+        // Outra coleção: o cache offline é do projeto aberto, não serve aqui.
         if (indFile.existsAsFile()) {
             matriz::db::Database indDb(indFile.getFullPathName().toStdString());
-            items = listarItensDeProjeto(regDb, indDb, resolvedDir, {}, offlineCopia);
+            items = listarItensDeProjeto(regDb, indDb, resolvedDir);
         } else {
             // Temporary in-memory dummy db if indice.sqlite is missing
             matriz::db::Database dummyInd(":memory:");
-            items = listarItensDeProjeto(regDb, dummyInd, resolvedDir, {}, offlineCopia);
+            items = listarItensDeProjeto(regDb, dummyInd, resolvedDir);
         }
         {
             std::lock_guard<std::mutex> lock(marcacoesMutex_);
@@ -479,8 +501,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.caminhoRelativoArquivo = camRel;
                 r.caminhoAbsolutoOrigem = camAbs;
 
-                // Status offline via cache (verificado em background, sem I/O síncrono de disco por item)
-                r.offline = (offlineCopia.count(r.id) > 0);
+                // Mesmo critério de listarItensDeProjeto: re-verifica só os do cache.
+                if (offlineCopia.count(r.id) > 0)
+                    r.offline = !arquivoMasterExiste(projeto_->pasta(), relinkCopia, masterArqId, vaultLoc, camRel, camAbs);
 
                 if (!r.titulo.empty()) {
                     r.nomeOriginalArquivo = r.titulo;
