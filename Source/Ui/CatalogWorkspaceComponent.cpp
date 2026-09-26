@@ -491,6 +491,10 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnSelecionarTodos_->onClick = [this] {
         if (!mosaico_) return;
         mosaico_->selecionarTodos();
+        // selecionarTodos() só dispara aoMudarSelecao; sem isto a ficha
+        // ficava no item clicado antes e um campo aplicado "em lote" gravava
+        // só nele. Mesmo caminho do Cmd+A (aoSelecionar -> ficha em lote).
+        selecionarItem({});
         // Item E.11: sem isto, o foco de teclado fica no botão "Select All"
         // depois do clique, e os atalhos E/P/K/H/W (que MosaicoComponent
         // trata em keyPressed) nunca chegam até a grade.
