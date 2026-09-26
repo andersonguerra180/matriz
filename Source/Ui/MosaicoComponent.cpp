@@ -76,6 +76,9 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
             aplicar(self->itensFiltrados_);
             self->repaint();
             if (self->ocultarEditados_) self->agendarRefiltroCoalescido();
+            // Snapshot em voo foi lido ANTES do E: ao chegar, traria a flag
+            // antiga por cima. Pede um recarregar logo depois dele.
+            if (self->snapshotPendente_) self->recarregarAoTerminarSnapshot_ = true;
             return;
         }
         // EDIT METADATA != REMOVE FROM THIS LIST (correção METADATA): um
