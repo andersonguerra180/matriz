@@ -12,7 +12,45 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
-Commits de defeito real (não-WIP) desta sessão, mais recente primeiro:
+### Sessão 2026-09-25/26 (Claude — estabilização, pedido em 7 itens)
+
+Mais recente primeiro:
+
+- `81fceb5` — SendToPrintDialog: job de carregamento esperava
+  MessageManagerLock enquanto o destrutor (message thread) esperava o pool
+  → JUCE matava a thread à força. Agora `MessageManagerLock(ThreadPoolJob*)`.
+- `af2be71` — selftests headless desligam App Nap (causa do "uitest para
+  em ~5 min de CPU": processo rebaixado a PRI 4/darwin-bg; NÃO era lock).
+- `5cfa222` — backfill de `tamanho_bytes` (ProjetoAberto ctor) fazia
+  `getSize()` de cada arquivo DENTRO da transação (SQLITE_BUSY na conexão
+  principal) e sem ROLLBACK.
+- `c1b40e3` — **Item 3**: trava de conexão no `Database`: toda chamada
+  passa por `Database::Trava`; em transação, a thread dona retém a trava
+  até COMMIT/ROLLBACK (outras threads esperam, não são absorvidas). Rede
+  de segurança: espera máx. 60 s → loga `[db] trava da conexao nao obtida`
+  em stderr e segue. Ficha: `commitOuReverter()` relê itens após ROLLBACK.
+- `8bc40a7` — **Item 2d**: teto de 60 s da finalização loga no perf.log.
+- `2f75e39` — **Item 2c**: thread órfã da miniatura só escreve no índice
+  sob `PermissaoEscrita` não revogada; timeout/skip revoga.
+- `2d89cc3` — **Item 2a/b**: causa do "560 of 586": `expandirArquivosAsync`
+  sobrescrevia `ingestModalDialog_` (modal anterior ficava órfão pra
+  sempre); `ajustarTotalArquivos` usava jmax; lote sobreposto descartava o
+  `EstadoLote` do anterior. Teste novo em IngerirArquivosTest (A=20, B=300
+  durante a finalização de A). (2a — timer zerando loteEmCurso_ — já
+  estava corrigido em 52df5cf.)
+- `cdf4d71` — **Passo 0b (7cf8da3) + Item 5**: contagens/filtros do Catalog
+  esperam o snapshot (sem `listarItens()` na message thread / sem 2ª
+  query) e são refeitos quando ele chega (`aoMudarConteudoVisivel`).
+- `dd95cf4` — **Passo 0b (759dbd2)**: regressão — offline vinha só do
+  cache (preenchido 1x, após o 1º snapshot, nunca após relink, aplicado a
+  outra coleção) e sumiu o fallback de ano pela data do arquivo.
+- `e413066`, `7cce32d` — **Passo 0a**: WIP do Antigravity revisado e
+  commitado (writeMutex único do Project; PainelInconsistencias espera o
+  job no destrutor).
+
+### Sessões anteriores
+
+Commits de defeito real (não-WIP), mais recente primeiro:
 
 - `e5d9f47` — `ProjetoAberto::replicarSubarvoreNoAcervo`: insere itens diretamente
   na transação ativa sem chamar `adicionarItensAPasta` (elimina erro "cannot start a
@@ -72,6 +110,22 @@ reautoria, pra não misturar com os fixes acima. Ver mensagem de cada um
 pro que cobre.
 
 ## O que está em andamento / o que falta
+
+### Pendências da sessão 2026-09-25/26
+
+- **Item 1 (uitest sob ASan)**: sem erros de ASan; App Nap resolvido.
+  AINDA TRAVA no teardown final (`UiSelfTest.cpp:3305`, fim do `try`):
+  main thread presa em `~MosaicoComponent` → `~ThreadPool` →
+  `waitForThreadToExit(500)` que nunca estoura, com TODAS as threads de
+  pool ociosas em `wait(500)` e nenhuma esperando DB/transação. Não
+  explicado (lldb não anexa: Developer Mode desligado). Rodar com teto de
+  tempo; os checks já saíram todos antes disso.
+- **uitest: 41 FAIL** idênticas em 2 rodadas (lista em
+  `$TMPDIR/uitest_asan_run3.txt` na máquina). Baseline pré-sessão ainda
+  não medida — muitas são cascata de "flow 1: a dropped file shows up in
+  the grid" (ingest em 30 s). Comparar com build-tsan (binário antigo)
+  antes de concluir se alguma é regressão.
+- Itens 4 (TSan) e 6 ver abaixo.
 
 Plano original em 3 fases (diagnóstico de crash/freeze/lentidão):
 
@@ -145,6 +199,12 @@ desenhar — tem 7 requisitos numerados específicos.
   consolidação síncrona). Removê-los sem mais nada mataria essa resposta;
   o fix "correto" (mover pra thread de fundo) é uma mudança maior, fora
   do escopo desta sessão.
+- **Trava de conexão do `Database` (c1b40e3)**: não chamar código que
+  espere outra thread que use o MESMO banco enquanto houver BEGIN aberto
+  (ex.: `removeAllJobs(true, ...)` de um pool que lê o registro) — vira
+  espera de até 60 s. Todo BEGIN precisa de COMMIT/ROLLBACK em todos os
+  caminhos (senão as outras threads esperam o teto). Ordem de lock:
+  `Project::writeMutex()` → trava da conexão, nunca o contrário.
 - **`crashHandler` (Main.cpp) fica desabilitado sob `MATRIZ_SANITIZER_BUILD`**
   (`__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)`)
   — não interferir com os handlers do próprio sanitizer.
