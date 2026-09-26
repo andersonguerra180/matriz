@@ -226,8 +226,12 @@ public:
     // Component nenhum, e o disparo do evento sempre volta pra message
     // thread via callAsync internamente (EventBus/ListenerList não é
     // thread-safe pra chamar direto de background).
+    // pular (opcional): pares (itemId, coluna) que NÃO são gravados — ex.:
+    // EVENT DATE só com o ano igual ao DATE CREATED original mantém o
+    // dc_created daquele item. Mesma transação e mesma entrada de Undo.
     void salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
-                               const std::vector<std::pair<std::string, std::string>>& camposEValores);
+                              const std::vector<std::pair<std::string, std::string>>& camposEValores,
+                              const std::set<std::pair<std::string, std::string>>& pular = {});
     // Backfill silencioso do EVENT DATE (item.ano) quando ele ainda está
     // vazio. Deliberadamente NÃO passa por salvarMetadado: não marca
     // metadados_editados, não entra no Undo e não dispara evento — isto é

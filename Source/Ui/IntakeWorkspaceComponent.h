@@ -99,6 +99,7 @@ private:
         juce::String nomeArquivo;
         juce::String extensao;
         juce::String dataCriacao;
+        bool dataCriacaoDoMetadado = false;  // false = dataCriacao é só a data do ingest (fallback)
         juce::int64 tamanhoBytes = 0;
         juce::String caminhoOrigem;
         juce::String categoria; // "Audio", "Video", "Image", "Document", "Project", "Other"

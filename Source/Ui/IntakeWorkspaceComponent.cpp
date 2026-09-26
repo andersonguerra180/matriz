@@ -1927,6 +1927,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         }
 
         it.dataCriacao = juce::String::fromUTF8(item.dataCriacao.c_str());
+        it.dataCriacaoDoMetadado = it.dataCriacao.isNotEmpty();
         if (it.dataCriacao.isEmpty()) {
             it.dataCriacao = juce::String::fromUTF8(item.criadoEm.c_str());
         }
@@ -2258,19 +2259,31 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
     // do modelo em memória (item.dataCriacao) e o refresh da tabela
     // continuam síncronos (baratos, só tocam o vetor local); só a gravação
     // no banco sai da message thread.
+    //
+    // Exceção: informado SÓ o ano e ele é igual ao ano do DATE CREATED
+    // original (metadado do arquivo, não a data do ingest), o DATE CREATED
+    // fica como estava (ex.: 2015-04-17 10:30:24 não vira "2015"). Decidido
+    // item a item.
+    const bool soAno = v.length() == 4 && v.containsOnly("0123456789");
     std::vector<std::string> ids;
+    std::set<std::pair<std::string, std::string>> manterDateCreated;
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (!item.selecionado) continue;
         ids.push_back(item.id);
+        if (soAno && item.dataCriacaoDoMetadado && item.dataCriacao.substring(0, 4) == v) {
+            manterDateCreated.insert({item.id, "dc_created"});
+            continue;
+        }
         item.dataCriacao = v;
+        item.dataCriacaoDoMetadado = true;
     }
     if (ids.empty()) return;
     ProjetoAberto* projeto = &projeto_;
     std::string vStd = v.toStdString();
-    poolMetadadoLote_.addJob([projeto, ids, vStd] {
-        projeto->salvarMetadadoEmLote(ids, {{"ano", vStd}, {"dc_created", vStd}});
+    poolMetadadoLote_.addJob([projeto, ids, vStd, manterDateCreated] {
+        projeto->salvarMetadadoEmLote(ids, {{"ano", vStd}, {"dc_created", vStd}}, manterDateCreated);
     });
     if (tabela_) {
         tabela_->updateContent();

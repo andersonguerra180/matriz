@@ -934,7 +934,8 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
 }
 
 void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
-                                          const std::vector<std::pair<std::string, std::string>>& camposEValores) {
+                                          const std::vector<std::pair<std::string, std::string>>& camposEValores,
+                                          const std::set<std::pair<std::string, std::string>>& pular) {
     if (!projeto_ || itemIds.empty() || camposEValores.empty()) return;
 
     // Uma entrada de Undo só pro lote inteiro (não uma por item x campo):
@@ -947,6 +948,7 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
         anteriores->reserve(itemIds.size() * camposEValores.size());
         for (const auto& itemId : itemIds) {
             for (const auto& campoValor : camposEValores) {
+                if (pular.count({itemId, campoValor.first})) continue;
                 anteriores->push_back({itemId, campoValor.first,
                                         lerMetadado(itemId, campoValor.first).value_or("")});
             }
@@ -980,6 +982,7 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
             for (const auto& campoValor : camposEValores) {
                 const std::string& coluna = campoValor.first;
                 const std::string& valor = campoValor.second;
+                if (pular.count({itemId, coluna})) continue;
                 try {
                     db.run(
                         "UPDATE item SET " + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
