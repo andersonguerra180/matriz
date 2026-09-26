@@ -12,6 +12,7 @@
 #include "MosaicoComponent.h"
 #include "OriginalSourceMedium.h"
 #include "ProjetoAberto.h"
+#include "../Analytics/AssetGeolocation.h"
 
 namespace matriz::ui {
 
@@ -114,11 +115,16 @@ int rodarLoteSelfTest() {
             {
                 const std::string alvoE = mosaico->todosItensEmMemoria().front().id;
                 pa->alternarMarcadoRevisado({alvoE});
-                bombear(100);
                 bool revisadoMem = false, editadoMem = true;
-                for (const auto& it : mosaico->todosItensEmMemoria())
-                    if (it.id == alvoE) { revisadoMem = it.marcadoRevisado; editadoMem = it.metadadosEditados; }
-                checar(revisadoMem, "E shows on the grid item right away (in memory, no reload)");
+                auto ler = [&] {
+                    for (const auto& it : mosaico->todosItensEmMemoria())
+                        if (it.id == alvoE) { revisadoMem = it.marcadoRevisado; editadoMem = it.metadadosEditados; }
+                    return revisadoMem;
+                };
+                // "Na hora" = bem antes dos ~10 s do bug; teto de 3 s cobre um
+                // snapshot concorrente (MatrizMiniGen) chegando no meio.
+                esperarAte(ler, 3000);
+                checar(revisadoMem, "E shows on the grid item right away (< 3 s, not the ~10 s full reload)");
                 checar(!editadoMem, "E does not flag the item as metadata-edited");
                 // (Sem check de versaoSnapshot: o MatrizMiniGen recarrega a grade
                 // sozinho na abertura e tornava o check intermitente. O check de
@@ -487,6 +493,33 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("intake thumbnail selftest: ") + e.what());
     }
     raizM.deleteRecursively();
+
+    // ------------------------------------------- GEO LOCATION popup (Intake)
+    std::cout << "\n-- INTAKE Geo Location: used-locations autocomplete + Add to Favorites --\n";
+    juce::File raizG = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_geo_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizG.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Geo";
+        params.prefixoNomenclatura = "GEO";
+        auto projeto = matriz::model::Project::criar(raizG.getChildFile("projeto"), params);
+        std::vector<std::string> ids;
+        for (int i = 0; i < 4; ++i) ids.push_back(inserirItem(projeto->registro(), projeto->projetoId(), "GEO-" + std::to_string(i), true));
+        matriz::analytics::AssetGeolocation porto;
+        porto.latitude = -16.4435; porto.longitude = -39.0643;
+        porto.city = "Porto Seguro"; porto.stateProvince = "Bahia"; porto.country = "Brazil";
+        porto.source = matriz::analytics::GeoSource::UserCoordinates;
+        matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto->registro(), {ids[0], ids[1], ids[2]}, porto);
+        matriz::analytics::AssetGeolocation salvador;
+        salvador.city = "Salvador"; salvador.country = "Brazil";
+        salvador.source = matriz::analytics::GeoSource::UserCity;
+        matriz::analytics::AssetGeolocationRepository::salvarEmLote(projeto->registro(), {ids[3]}, salvador);
+        IntakeWorkspaceComponent::autotestePopupGeoParaTeste(projeto->registro(), checar);
+    } catch (const std::exception& e) {
+        checar(false, juce::String("geo popup selftest: ") + e.what());
+    }
+    raizG.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
