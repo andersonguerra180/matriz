@@ -2232,6 +2232,116 @@ void testarPublicacao(const juce::File& dir) {
     destino.deleteRecursively();
 }
 
+
+// Etapa 2 do modelo SOURCE/MAIN/CLONE: backup com máscara aplicada, SOURCE
+// desconectado, projeto reaberto -> o arquivo tem que abrir a partir do MAIN.
+void testarResolucaoPeloMain(const juce::File& dirTemp) {
+    std::cout << "\n== Path resolution: MAIN first (SOURCE disconnected, masked backup) ==\n";
+    using namespace matriz::consolidacao;
+    juce::File dirSource = dirTemp.getChildFile("source_disk_" + juce::Uuid().toDashedString());
+    juce::File raiz = dirTemp.getChildFile("main_" + juce::Uuid().toDashedString());
+    juce::File arquivoSource = dirSource.getChildFile("DCIM").getChildFile("IMG_0001.wav");
+    arquivoSource.getParentDirectory().createDirectory();
+    gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                     "sine=frequency=440:duration=1", arquivoSource.getFullPathName()});
+
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Main First";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "MFT";
+        std::string arquivoId, relNoMain;
+        {
+            auto projeto = matriz::model::Project::criar(raiz, params);
+            check(raiz.getChildFile("destination.json").existsAsFile(), "the project root (future MAIN) has a destination.json");
+            std::string agora = matriz::model::agoraIso8601();
+            std::string itemId = matriz::model::novoUuid();
+            projeto->registro().run(
+                "INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'MFT-001', 'Take', 'fita_rolo', ?, ?)",
+                {matriz::db::Value::of(itemId), matriz::db::Value::of(projeto->projetoId()),
+                 matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+            auto ing = matriz::ingest::ingerirArquivo(projeto->registro(), projeto->pasta(), itemId, arquivoSource,
+                                                      "preservation_master", true);
+            arquivoId = ing.arquivoId;
+            std::string pasta = matriz::model::novoUuid();
+            projeto->registro().run(
+                "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+                "VALUES (?, ?, NULL, 'Sessao', 0, ?, ?)",
+                {matriz::db::Value::of(pasta), matriz::db::Value::of(projeto->projetoId()), matriz::db::Value::of(agora),
+                 matriz::db::Value::of(agora)});
+            projeto->registro().run(
+                "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                 matriz::db::Value::of(pasta), matriz::db::Value::of(agora)});
+
+            // Backup no MAIN (raiz do projeto) com prefixo customizado: o nome
+            // no MAIN deixa de bater com o original.
+            juce::File media = raiz.getChildFile("Media");
+            media.createDirectory();
+            auto plano = planejarConsolidacao(projeto->registro(), projeto->pasta(), media, {},
+                                              {}, ModoPrefixoArquivo::Custom, "ZZMASK", false, false);
+            auto res = executarConsolidacao(projeto->registro(), projeto->pasta(), media, plano);
+            check(res.consolidados == 1 && res.falhas.empty(), "masked backup to the MAIN copied the file");
+            if (!plano.itens.empty()) relNoMain = plano.itens.front().caminhoRelativoDestino.toStdString();
+            check(juce::String(relNoMain).contains("ZZMASK") && !juce::String(relNoMain).endsWith("IMG_0001.wav"),
+                  "the MAIN name differs from the original (mask applied: " + relNoMain + ")");
+            auto st = projeto->registro().prepare("SELECT destino_id FROM consolidacao_registro WHERE arquivo_id = ?");
+            st.bind(1, matriz::db::Value::of(arquivoId));
+            check(st.step() && st.columnText(0) == projeto->destinationId(),
+                  "the consolidation record carries the MAIN destination_id");
+        }
+
+        // SOURCE desconectado + projeto reaberto.
+        juce::File sourceGuardado = dirSource.getSiblingFile(dirSource.getFileName() + "_guardado");
+        check(dirSource.moveFileTo(sourceGuardado), "SOURCE disconnected (folder renamed away)");
+        {
+            auto projeto = matriz::model::Project::abrir(raiz);
+            auto f = matriz::vault::resolverArquivo(projeto->registro(), arquivoId, projeto->pasta());
+            juce::File esperado = raiz.getChildFile("Media").getChildFile(juce::String(relNoMain));
+            check(f && *f == esperado, "with the SOURCE gone the file resolves from the MAIN (" +
+                                           (f ? f->getFullPathName().toStdString() : std::string("nothing")) + ")");
+            matriz::vault::ResolvedorEmLote lote(projeto->registro(), projeto->pasta());
+            auto st = projeto->registro().prepare(std::string("SELECT ") + matriz::vault::colunasDeResolucao() +
+                                                  " FROM arquivo a " + matriz::vault::joinDeResolucao() + " WHERE a.id = ?");
+            st.bind(1, matriz::db::Value::of(arquivoId));
+            st.step();
+            auto g = lote.resolver(arquivoId, st.columnText(0), st.columnText(1), st.columnText(2));
+            check(g && *g == esperado, "the batch resolver (grid offline status) finds the MAIN copy too");
+            auto o = matriz::vault::resolverArquivo(projeto->registro(), arquivoId, projeto->pasta(),
+                                                    matriz::vault::Preferencia::Origem);
+            check(!o, "Origin mode does NOT fall back to the MAIN copy (SOURCE is offline)");
+        }
+
+        // O disco do MAIN monta com outro nome: identidade pelo destination_id.
+        juce::File raizRemontada = raiz.getSiblingFile(raiz.getFileName() + "_remontado");
+        check(raiz.moveFileTo(raizRemontada), "MAIN re-mounted under another name");
+        {
+            auto projeto = matriz::model::Project::abrir(raizRemontada);
+            auto f = matriz::vault::resolverArquivo(projeto->registro(), arquivoId, projeto->pasta());
+            check(f && f->isAChildOf(raizRemontada), "the MAIN is found by destination_id, not by its old path");
+        }
+
+        // SOURCE volta: leitura continua preferindo o MAIN; Origem acha o SOURCE.
+        check(sourceGuardado.moveFileTo(dirSource), "SOURCE reconnected");
+        {
+            auto projeto = matriz::model::Project::abrir(raizRemontada);
+            auto f = matriz::vault::resolverArquivo(projeto->registro(), arquivoId, projeto->pasta());
+            check(f && f->isAChildOf(raizRemontada), "with both online, reading prefers the MAIN");
+            auto o = matriz::vault::resolverArquivo(projeto->registro(), arquivoId, projeto->pasta(),
+                                                    matriz::vault::Preferencia::Origem);
+            check(o && *o == arquivoSource, "Origin mode resolves the SOURCE original");
+            check(juce::SHA256(arquivoSource).toHexString().isNotEmpty() && arquivoSource.existsAsFile(),
+                  "the SOURCE original is untouched");
+        }
+        raizRemontada.deleteRecursively();
+    } catch (const std::exception& e) {
+        check(false, std::string("MAIN-first resolution: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    dirSource.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2266,6 +2376,7 @@ int main() {
     testarReconciliacaoDeVault(tmpDir);
     testarColecoesInteligentes(tmpDir);
     testarPublicacao(tmpDir);
+    testarResolucaoPeloMain(tmpDir);
 
     tmpDir.deleteRecursively();
 
