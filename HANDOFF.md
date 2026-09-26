@@ -34,6 +34,15 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (Geo Location do Intake)
+
+- `c5404f9` — popup GEO LOCATION do Intake: "★ Add to Favorites" (mesmo
+  GeoFavoritosRepository da ficha) e autocomplete "Used locations in this
+  project" (asset_geolocation, mais usadas primeiro; preenche os 5 campos).
+- `50a8d5d` — corrida no E: snapshot em voo lido antes do E trazia a flag
+  antiga; agora pede recarregar após ele.
+- `be66bee` — testes. Estes 3 commits ainda NÃO estão na `main` do GitHub.
+
 ### Sessão 2026-09-26 (miniatura no Intake)
 
 - `107ba6a` — JPG recém-ingerido sem miniatura no grid do Intake: o cache
