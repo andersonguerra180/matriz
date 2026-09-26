@@ -109,6 +109,45 @@ int rodarLoteSelfTest() {
                 return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= kItensPorLado;
             });
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
+            // Item 5: tecla E aparece na hora (sem recarregar) e não marca
+            // o item como "metadado editado".
+            {
+                const std::string alvoE = mosaico->todosItensEmMemoria().front().id;
+                const int versaoAntes = mosaico->versaoSnapshot();
+                pa->alternarMarcadoRevisado({alvoE});
+                bombear(100);
+                bool revisadoMem = false, editadoMem = true;
+                for (const auto& it : mosaico->todosItensEmMemoria())
+                    if (it.id == alvoE) { revisadoMem = it.marcadoRevisado; editadoMem = it.metadadosEditados; }
+                checar(revisadoMem, "E shows on the grid item right away (in memory, no reload)");
+                checar(!editadoMem, "E does not flag the item as metadata-edited");
+                checar(mosaico->versaoSnapshot() == versaoAntes, "E did not trigger a full catalog reload");
+                auto resumo = pa->obterItemResumo(alvoE);
+                checar(resumo && resumo->marcadoRevisado, "obterItemResumo() reports marcadoRevisado");
+                pa->alternarMarcadoRevisado({alvoE});
+                bombear(100);
+            }
+
+            // Item 2: DATE conta pelo MEDIA TYPE ativo; limpar os filtros
+            // (HOME) tem que recontar na hora, sem esperar o timer de 60 s.
+            {
+                auto somaAnos = [&] {
+                    int soma = 0;
+                    for (const auto& [ano, n] : cw->anosDisponiveis_) soma += n;
+                    return soma;
+                };
+                cw->tipoMidiaSelecionado_ = std::string("video");  // os 12 são áudio
+                cw->aplicarFiltrosAdicionais();
+                cw->atualizarContagens();
+                esperarAte([&] { return somaAnos() == 0; }, 5000);
+                checar(somaAnos() == 0, "DATE counts follow the MEDIA TYPE filter (video -> " + juce::String(somaAnos()) + ")");
+                cw->limparTodosOsFiltros(true);
+                esperarAte([&] { return somaAnos() == kItensPorLado; }, 5000);
+                checar(somaAnos() == kItensPorLado,
+                       "clearing all filters recounts DATE right away (" + juce::String(somaAnos()) + ")");
+                esperarAte([&] { return !mosaico->snapshotPendente(); }, 10000);
+            }
+
             // Como o operador: clica num item (ficha de 1 item) e depois no
             // botão "Select All" da barra do Catalog.
             const std::string primeiro = mosaico->todosItensEmMemoria().front().id;

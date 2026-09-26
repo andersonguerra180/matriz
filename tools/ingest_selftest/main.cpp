@@ -855,6 +855,22 @@ void testarHierarquiaBackup(const juce::File& dirTemp) {
         check(resultado.consolidados == 2 && resultado.falhas.empty(), "backup with automatic hierarchy writes both items");
         check(destino.getChildFile("1978/fita_rolo/HIE-001-001-Com Ano.wav").existsAsFile(),
               "the automatic folder was created on disk and the file is inside it");
+
+        // A prévia é POR DESTINO: um backup feito em A não conta como feito
+        // em B, mesmo que B tenha um arquivo no mesmo caminho relativo.
+        {
+            auto planoA = planejarConsolidacao(projeto->registro(), pastaProjeto, destino);
+            int okA = 0;
+            for (const auto& ip : planoA.itens) okA += ip.jaConsolidado ? 1 : 0;
+            check(okA == 2, "destination A: both items show as already backed up (" + std::to_string(okA) + ")");
+            juce::File destinoB = destino.getParentDirectory().getChildFile("destino_B_" + juce::Uuid().toDashedString());
+            destino.copyDirectoryTo(destinoB);
+            auto planoB = planejarConsolidacao(projeto->registro(), pastaProjeto, destinoB);
+            int okB = 0;
+            for (const auto& ip : planoB.itens) okB += ip.jaConsolidado ? 1 : 0;
+            check(okB == 0, "destination B (never backed up there): items show as pending (" + std::to_string(okB) + " ok)");
+            destinoB.deleteRecursively();
+        }
     } catch (const std::exception& e) {
         check(false, std::string("backup hierarchy: ") + e.what());
     }
