@@ -404,6 +404,188 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     return items;
 }
 
+ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db::Database& registro,
+                                                                      const std::string& manterId,
+                                                                      const std::string& descartarId) {
+    using matriz::db::Value;
+    ResultadoSanitizacao r;
+    if (manterId.empty() || descartarId.empty() || manterId == descartarId) return r;
+    const std::string agora = matriz::model::agoraIso8601();
+
+    // Colunas de metadado do próprio `item` que entram na soma.
+    static const char* const kColunas[] = {
+        "tipo_midia", "ano", "content_type", "source_media", "collection_type", "isrc",
+        "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
+        "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
+        "dc_language", "dc_relation", "dc_coverage", "dc_rights"};
+    std::string cols = "codigo_acervo, titulo, COALESCE(notas_livres, '')";
+    for (auto* c : kColunas) cols += std::string(", COALESCE(") + c + ", '')";
+    auto lerItem = [&](const std::string& id, std::vector<std::string>& out) {
+        auto st = registro.prepare("SELECT " + cols + " FROM item WHERE id = ?");
+        st.bind(1, Value::of(id));
+        if (!st.step()) return false;
+        const int n = 3 + static_cast<int>(std::size(kColunas));
+        for (int i = 0; i < n; ++i) out.push_back(st.columnText(i));
+        return true;
+    };
+    std::vector<std::string> k, d;
+    if (!lerItem(manterId, k) || !lerItem(descartarId, d)) return r;
+    r.codigoMantido = k[0];
+    r.codigoDescartado = d[0];
+
+    // Onde o arquivo do descartado está (SOURCE) — fica gravado no mantido.
+    std::string arquivoDescartado, localDescartado;
+    {
+        auto st = registro.prepare(std::string("SELECT a.id, ") + matriz::vault::colunasDeResolucao() +
+                                   " FROM arquivo a " + matriz::vault::joinDeResolucao() +
+                                   " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
+        st.bind(1, Value::of(descartarId));
+        if (st.step()) {
+            arquivoDescartado = st.columnText(0);
+            const std::string loc = st.columnText(1), rel = st.columnText(2), abs = st.columnText(3);
+            localDescartado = !abs.empty() ? abs
+                            : (!loc.empty() ? juce::File(juce::String(loc)).getChildFile(juce::String(rel))
+                                                  .getFullPathName().toStdString()
+                                            : rel);
+        }
+    }
+    {
+        auto st = registro.prepare("SELECT 1 FROM consolidacao_registro WHERE item_id = ? LIMIT 1");
+        st.bind(1, Value::of(descartarId));
+        r.descartadoJaNoMain = st.step();
+    }
+
+    // 1. Colunas do item: vazio no mantido é preenchido; divergente vai pras notas.
+    juce::StringArray divergentes;
+    for (size_t i = 0; i < std::size(kColunas); ++i) {
+        const std::string& vk = k[3 + i];
+        const std::string& vd = d[3 + i];
+        if (vd.empty() || vd == vk) continue;
+        if (vk.empty()) {
+            registro.run(std::string("UPDATE item SET ") + kColunas[i] + " = ? WHERE id = ?",
+                         {Value::of(vd), Value::of(manterId)});
+            ++r.camposSomados;
+        } else {
+            divergentes.add(juce::String(kColunas[i]) + ": " + juce::String::fromUTF8(vd.c_str()));
+        }
+    }
+
+    // 2. Campos da ficha (item_campo): mesma regra, por (nivel, indice, campo).
+    {
+        auto st = registro.prepare(
+            "SELECT d.nivel, d.nivel_indice, d.campo_id, d.valor, d.fonte, k.id, COALESCE(k.valor, '') "
+            "FROM item_campo d LEFT JOIN item_campo k ON k.item_id = ? AND k.nivel = d.nivel "
+            " AND k.nivel_indice = d.nivel_indice AND k.campo_id = d.campo_id "
+            "WHERE d.item_id = ? AND COALESCE(d.valor, '') <> ''");
+        st.bind(1, Value::of(manterId));
+        st.bind(2, Value::of(descartarId));
+        struct Campo { std::string nivel; long long idx; std::string campo, valor, fonte, idK, valorK; };
+        std::vector<Campo> campos;
+        while (st.step())
+            campos.push_back({st.columnText(0), st.columnInt(1), st.columnText(2), st.columnText(3),
+                              st.columnText(4), st.columnText(5), st.columnText(6)});
+        for (const auto& c : campos) {
+            if (c.valor == c.valorK) continue;
+            if (c.idK.empty()) {
+                registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, "
+                             "atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                             {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(c.nivel),
+                              Value::of(c.idx), Value::of(c.campo), Value::of(c.valor), Value::of(c.fonte),
+                              Value::of(agora)});
+                ++r.camposSomados;
+            } else if (c.valorK.empty()) {
+                registro.run("UPDATE item_campo SET valor = ?, atualizado_em = ? WHERE id = ?",
+                             {Value::of(c.valor), Value::of(agora), Value::of(c.idK)});
+                ++r.camposSomados;
+            } else {
+                divergentes.add(juce::String(c.campo) + ": " + juce::String::fromUTF8(c.valor.c_str()));
+            }
+        }
+    }
+
+    // 3. Tags e assuntos: união.
+    {
+        std::vector<std::string> tags;
+        auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ? AND tag NOT IN "
+                                   "(SELECT tag FROM item_tag WHERE item_id = ?)");
+        st.bind(1, Value::of(descartarId));
+        st.bind(2, Value::of(manterId));
+        while (st.step()) tags.push_back(st.columnText(0));
+        for (const auto& t : tags) {
+            registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                         {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(t)});
+            ++r.camposSomados;
+        }
+    }
+    registro.run("INSERT OR IGNORE INTO item_assunto (item_id, assunto_id, autor, criado_em) "
+                 "SELECT ?, assunto_id, autor, criado_em FROM item_assunto WHERE item_id = ?",
+                 {Value::of(manterId), Value::of(descartarId)});
+
+    // 4. Observações: copiadas (o marcador é do outro item, não vem junto).
+    {
+        struct Obs { std::string texto, autor, criadoEm; bool temMin; long long min; };
+        std::vector<Obs> obs;
+        auto st = registro.prepare("SELECT texto, autor, criado_em, minutagem_ms FROM item_observacao o "
+                                   "WHERE item_id = ? AND NOT EXISTS (SELECT 1 FROM item_observacao k "
+                                   " WHERE k.item_id = ? AND k.texto = o.texto)");
+        st.bind(1, Value::of(descartarId));
+        st.bind(2, Value::of(manterId));
+        while (st.step())
+            obs.push_back({st.columnText(0), st.columnText(1), st.columnText(2), !st.columnIsNull(3), st.columnInt(3)});
+        for (const auto& o : obs)
+            registro.run("INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms) "
+                         "VALUES (?, ?, ?, ?, ?, ?)",
+                         {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(o.texto),
+                          Value::of(o.autor), Value::of(o.criadoEm), o.temMin ? Value::of(o.min) : Value::null()});
+    }
+
+    // 5. Notas — sempre append, nunca sobrescreve.
+    auto acrescentar = [](const std::string& atual, const juce::String& bloco) {
+        juce::String s = juce::String::fromUTF8(atual.c_str()).trimEnd();
+        return (s.isEmpty() ? bloco : s + "\n\n" + bloco).toStdString();
+    };
+    juce::String blocoMantido = "[DUPLICATE MERGED] " + juce::String(agora) + " — duplicate " +
+                                juce::String::fromUTF8(r.codigoDescartado.c_str()) + " (\"" +
+                                juce::String::fromUTF8(d[1].c_str()) + "\") discarded; its file stays in SOURCE at " +
+                                juce::String::fromUTF8(localDescartado.c_str()) + " and is not copied to backup.";
+    if (!divergentes.isEmpty())
+        blocoMantido << "\nDiffering values from the duplicate:\n" << divergentes.joinIntoString("\n");
+    if (!d[2].empty())
+        blocoMantido << "\nNotes from the duplicate:\n" << juce::String::fromUTF8(d[2].c_str());
+    registro.run("UPDATE item SET notas_livres = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                 {Value::of(acrescentar(k[2], blocoMantido)), Value::of(agora), Value::of(manterId)});
+
+    juce::String blocoDescartado = "Validated as duplicate of " + juce::String::fromUTF8(r.codigoMantido.c_str()) +
+                                   " — discarded side: file stays in SOURCE, excluded from backup; metadata merged "
+                                   "into the kept item. [USER_VERIFIED_DUPLICATE]";
+    registro.run("UPDATE item SET estado = 'duplicata', notas_livres = ?, atualizado_em = ? WHERE id = ?",
+                 {Value::of(acrescentar(d[2], blocoDescartado)), Value::of(agora), Value::of(descartarId)});
+
+    // 6. Log (PREMIS no banco; `linhasLog` pro log.md do projeto).
+    const std::string detalhe = "Duplicate resolved: kept " + r.codigoMantido + ", discarded " + r.codigoDescartado +
+                                " (file stays in SOURCE: " + localDescartado + ")";
+    try {
+    matriz::preservation::registrarEvento(registro, manterId, {}, matriz::preservation::EventType::Validation,
+                                          detalhe, matriz::preservation::Outcome::Success,
+                                          "Merged " + std::to_string(r.camposSomados) + " field(s)", "bkr-agent-sistema");
+    matriz::preservation::registrarEvento(registro, descartarId, arquivoDescartado,
+                                          matriz::preservation::EventType::Validation, detalhe,
+                                          matriz::preservation::Outcome::Success,
+                                          "Excluded from backup; nothing deleted", "bkr-agent-sistema");
+    } catch (...) {}  // evento é registro auxiliar: não derruba a resolução
+
+    r.linhasLog.add("Kept: " + juce::String::fromUTF8(r.codigoMantido.c_str()) + " (\"" +
+                    juce::String::fromUTF8(k[1].c_str()) + "\")");
+    r.linhasLog.add("Discarded: " + juce::String::fromUTF8(r.codigoDescartado.c_str()) + " (\"" +
+                    juce::String::fromUTF8(d[1].c_str()) + "\") — stays in SOURCE, excluded from backup");
+    r.linhasLog.add("Discarded file location: " + juce::String::fromUTF8(localDescartado.c_str()));
+    r.linhasLog.add("Fields merged into kept item: " + juce::String(r.camposSomados) +
+                    ", differing values appended to notes: " + juce::String(divergentes.size()));
+    if (r.descartadoJaNoMain)
+        r.linhasLog.add("The discarded item already had a copy in MAIN — left untouched (nothing is deleted).");
+    return r;
+}
+
 std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pastaColecao) const {
     juce::File resolvedDir = matriz::model::Project::resolverPastaProjeto(pastaColecao);
     juce::File regFile = resolvedDir.getChildFile("registro.sqlite");

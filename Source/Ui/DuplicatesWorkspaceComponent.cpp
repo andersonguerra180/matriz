@@ -9,6 +9,8 @@
 #include "ModalMitigacao.h"
 #include "ProgressoGlobal.h"
 #include "DuplicateResolutionDialog.h"
+#include "../Model/ProjectLog.h"
+#include "EventBus.h"
 
 namespace matriz::ui {
 
@@ -16,6 +18,32 @@ namespace {
     // Closed: top margin (10) + subcard height (130) + bottom margin (12).
     constexpr int kAlturaFechado = 152;
     constexpr int kAlturaAberto = 490;
+
+    // Notas nunca são sobrescritas pela resolução de duplicatas: acrescenta.
+    const char* const kSqlAcrescentarNota =
+        "UPDATE item SET notas_livres = CASE WHEN TRIM(COALESCE(notas_livres, '')) = '' THEN ? "
+        "ELSE notas_livres || char(10) || char(10) || ? END WHERE id = ?";
+    void acrescentarNota(matriz::db::Database& db, const std::string& itemId, const juce::String& nota) {
+        const auto v = matriz::db::Value::of(nota.toStdString());
+        db.run(kSqlAcrescentarNota, {v, v, matriz::db::Value::of(itemId)});
+    }
+
+    // Depois do COMMIT de uma ou mais sanitizações (message thread): log.md
+    // do projeto em background (disco fora da message thread) e aviso pra
+    // Catalog/Intake relerem os dois itens.
+    void publicarSanitizacoes(ProjetoAberto& proj,
+                              const std::vector<ProjetoAberto::ResultadoSanitizacao>& resultados,
+                              const std::vector<std::string>& idsAlterados) {
+        if (!resultados.empty()) {
+            juce::StringArray linhas;
+            for (const auto& r : resultados) linhas.addArray(r.linhasLog);
+            juce::File pasta = proj.projeto().pasta();
+            juce::Thread::launch([pasta, linhas]() {
+                matriz::model::ProjectLog(pasta).appendEntry("Duplicates Resolved", linhas, "User");
+            });
+        }
+        for (const auto& id : idsAlterados) EventBus::obterInstancia().dispararItemAlterado(id, "metadado");
+    }
 
     // Miniatura pro dialog de resolução (item 1/2) — mesma busca que CardComponent
     // usa pro preview inline: miniatura pré-gerada do projeto, senão a da coleção linkada.
@@ -1059,6 +1087,7 @@ void DuplicatesWorkspaceComponent::run() {
                 "WHERE a.eh_master = 1 "
                 "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_NOT_DUPLICATE]%') "
                 "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_DUPLICATE]%') "
+                "  AND (i.notas_livres IS NULL OR i.notas_livres NOT LIKE '%[USER_VERIFIED_DUPLICATE_KEEP_BOTH]%') "
                 "  AND i.estado != 'duplicata'");
 
             while (stmt.step()) {
@@ -1387,10 +1416,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         // Dismiss/Not duplicate: keep current state and write [USER_VERIFIED_NOT_DUPLICATE]
         auto& db = projeto_.projeto().registro();
         try {
-            juce::String nota = "Dismissed as duplicate by user. [USER_VERIFIED_NOT_DUPLICATE]";
-            db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
-                   {matriz::db::Value::of(nota.toStdString()),
-                    matriz::db::Value::of(group.duplicata.itemId)});
+            acrescentarNota(db, group.duplicata.itemId, "Dismissed as duplicate by user. [USER_VERIFIED_NOT_DUPLICATE]");
         } catch (...) {}
 
         // Remove resolved group from local list
@@ -1437,32 +1463,26 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         if (!safeThis) return;
 
         auto& db = safeThis->projeto_.projeto().registro();
+        std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
         try {
             db.run("BEGIN TRANSACTION", {});
             
-            if (buttonResult == 1) { // Keep Original (1) -> Delete Duplicate (2)
-                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
-                db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
-                db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
+            // Sanitizar: o lado não escolhido fica no SOURCE e no catálogo
+            // (estado 'duplicata'), só não entra no MAIN — nada é apagado.
+            if (buttonResult == 1) {
+                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
             }
-            else if (buttonResult == 2) { // Keep Duplicate (2) -> Delete Original (1)
-                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
-                db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
-                db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.original.itemId)});
-                
-                juce::String nota = "Kept as unique item after duplicate resolution. Original was deleted.";
-                db.run("UPDATE item SET estado = 'novo', notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()),
-                        matriz::db::Value::of(group.duplicata.itemId)});
+            else if (buttonResult == 2) {
+                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
             }
-            else if (buttonResult == 3) { // Keep Both (3) -> Set state to 'duplicata'
-                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user. [USER_VERIFIED_DUPLICATE]";
-                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()),
-                        matriz::db::Value::of(group.duplicata.itemId)});
+            else if (buttonResult == 3) { // Keep Both — os dois continuam entrando no backup
+                acrescentarNota(db, group.duplicata.itemId,
+                                "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
+                                " by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
             }
             
             db.run("COMMIT", {});
+            publicarSanitizacoes(safeThis->projeto_, resultados, {group.original.itemId, group.duplicata.itemId});
         } catch (...) {
             try { db.run("ROLLBACK", {}); } catch (...) {}
         }
@@ -1513,10 +1533,8 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         try {
             db.run("BEGIN TRANSACTION", {});
             for (const auto& group : gruposDetectados_) {
-                juce::String nota = "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]";
-                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()),
-                        matriz::db::Value::of(group.duplicata.itemId)});
+                acrescentarNota(db, group.duplicata.itemId,
+                                "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
             db.run("COMMIT", {});
         } catch (...) {
@@ -1563,26 +1581,25 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     if (gruposDetectados_.empty()) return;
 
     auto& db = projeto_.projeto().registro();
+    std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+    std::vector<std::string> ids;
     try {
         db.run("BEGIN TRANSACTION", {});
         for (const auto& group : gruposDetectados_) {
-            if (escolha == 1) { // Keep File 1 (original) — exclui o lado "duplicata" do próximo backup
-                juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) +
-                                     " by user in batch — excluded from future Make Backup runs. [USER_VERIFIED_DUPLICATE]";
-                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
-            } else if (escolha == 2) { // Keep File 2 (duplicata) — exclui o "original" do próximo backup
-                juce::String nota = "Duplicate pair kept as this side; matching item " + juce::String(group.duplicata.codigoAcervo) +
-                                     " excluded from future Make Backup runs. [USER_VERIFIED_DUPLICATE]";
-                db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.original.itemId)});
+            if (escolha == 1) { // Keep File 1 (original) — o lado "duplicata" fica só no SOURCE
+                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
+            } else if (escolha == 2) { // Keep File 2 (duplicata) — o "original" fica só no SOURCE
+                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
             } else { // Keep Both — só documenta o par, os dois continuam entrando no backup normalmente
-                juce::String nota = "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]";
-                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
+                acrescentarNota(db, group.duplicata.itemId,
+                                "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
+                                "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
             }
+            ids.push_back(group.original.itemId);
+            ids.push_back(group.duplicata.itemId);
         }
         db.run("COMMIT", {});
+        publicarSanitizacoes(projeto_, resultados, ids);
     } catch (...) {
         try { db.run("ROLLBACK", {}); } catch (...) {}
     }
@@ -1647,10 +1664,8 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             for (int idx : indices) {
                 if (idx < 0 || idx >= static_cast<int>(gruposDetectados_.size())) continue;
                 const auto& group = gruposDetectados_[static_cast<size_t>(idx)];
-                juce::String nota = "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]";
-                db.run("UPDATE item SET notas_livres = ? WHERE id = ?",
-                       {matriz::db::Value::of(nota.toStdString()),
-                        matriz::db::Value::of(group.duplicata.itemId)});
+                acrescentarNota(db, group.duplicata.itemId,
+                                "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
             db.run("COMMIT", {});
         } catch (...) {
@@ -1694,6 +1709,8 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             if (!safeThis || !confirmado) return;
 
             auto& db = safeThis->projeto_.projeto().registro();
+            std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+            std::vector<std::string> ids;
             try {
                 db.run("BEGIN TRANSACTION", {});
                 for (size_t i = 0; i < indices.size(); ++i) {
@@ -1702,24 +1719,20 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                     const auto& group = safeThis->gruposDetectados_[static_cast<size_t>(idx)];
                     int action = resultado[i].action;
 
-                    if (action == 0) { // Keep File 1 -> delete duplicate
-                        db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
-                        db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
-                        db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.duplicata.itemId)});
-                    } else if (action == 1) { // Keep File 2 -> delete original
-                        db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
-                        db.run("DELETE FROM arquivo WHERE item_id = ?", {matriz::db::Value::of(group.original.itemId)});
-                        db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(group.original.itemId)});
-                        juce::String nota = "Kept as unique item after batch duplicate resolution. Original was deleted.";
-                        db.run("UPDATE item SET estado = 'novo', notas_livres = ? WHERE id = ?",
-                               {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
-                    } else { // Keep Both -> mark as validated duplicate
-                        juce::String nota = "Validated as duplicate of " + juce::String(group.original.codigoAcervo) + " by user in batch. [USER_VERIFIED_DUPLICATE]";
-                        db.run("UPDATE item SET estado = 'duplicata', notas_livres = ? WHERE id = ?",
-                               {matriz::db::Value::of(nota.toStdString()), matriz::db::Value::of(group.duplicata.itemId)});
+                    if (action == 0) { // Keep File 1 — o outro fica só no SOURCE, fora do backup
+                        resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
+                    } else if (action == 1) { // Keep File 2
+                        resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
+                    } else { // Keep Both — os dois continuam entrando no backup
+                        acrescentarNota(db, group.duplicata.itemId,
+                                        "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
+                                        " by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
                     }
+                    ids.push_back(group.original.itemId);
+                    ids.push_back(group.duplicata.itemId);
                 }
                 db.run("COMMIT", {});
+                publicarSanitizacoes(safeThis->projeto_, resultados, ids);
             } catch (...) {
                 try { db.run("ROLLBACK", {}); } catch (...) {}
             }

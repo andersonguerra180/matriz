@@ -118,6 +118,24 @@ public:
                                                         const std::set<std::string>* itensOffline = nullptr);
     std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
 
+    // Duplicates — "sanitizar": o operador escolheu `manterId`; `descartarId`
+    // vira estado 'duplicata' (planejarConsolidacao não copia pro MAIN) e
+    // NADA mais some — nem do banco, nem do disco, nem do SOURCE. O que o
+    // descartado tinha de diferente é SOMADO no mantido (campo vazio é
+    // preenchido; valor divergente, tags, assuntos, observações, nome e
+    // localização do descartado vão pro mantido — notas sempre por append).
+    // Grava evento PREMIS VALIDATION nos dois. Só banco: quem chama segura a
+    // transação (lote de N pares = uma transação) e grava `linhasLog` no
+    // log.md fora da message thread.
+    struct ResultadoSanitizacao {
+        std::string codigoMantido, codigoDescartado;
+        int camposSomados = 0;
+        bool descartadoJaNoMain = false;
+        juce::StringArray linhasLog;
+    };
+    static ResultadoSanitizacao sanitizarDuplicata(matriz::db::Database& registro, const std::string& manterId,
+                                                   const std::string& descartarId);
+
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
     // que reconstrói a árvore de Component inteira do zero (é o jeito mais
     // simples de garantir que toda string em tela é retraduzida sem exigir
