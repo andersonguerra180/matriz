@@ -1295,7 +1295,11 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
             bool precisaCarregar = false;
 
             {
-                const juce::MessageManagerLock mml;
+                // Com o job: desiste da espera quando o pool pede pra parar
+                // (removeAllJobs no destrutor, que roda NA message thread).
+                // Sem isso job e destrutor se esperavam até o JUCE matar a
+                // thread à força ("!! killing thread by force !!").
+                const juce::MessageManagerLock mml(juce::ThreadPoolJob::getCurrentThreadPoolJob());
                 if (!mml.lockWasGained() || !safeThis) return;
                 if (i < static_cast<int>(safeThis->fila_.size())) {
                     if (!safeThis->fila_[i].carregado && safeThis->fila_[i].arquivo.existsAsFile()) {
