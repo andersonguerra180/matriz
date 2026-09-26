@@ -1583,6 +1583,12 @@ void MosaicoComponent::paint(juce::Graphics& g) {
         g.drawRect(getLocalBounds(), 2);
     }
 
+    if (itensFiltrados_.empty() && subpastas_.empty() && mensagemVazia_.has_value() && !arrastandoArquivo_) {
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteSubtitulo, juce::Font::bold)));
+        g.drawFittedText(*mensagemVazia_, getLocalBounds().reduced(24), juce::Justification::centred, 2);
+        return;
+    }
     if (itensFiltrados_.empty() && subpastas_.empty()) {
         // Estado vazio explicativo (Reorientação completa §3.2) — nunca
         // tela preta. Borda tracejada + duas linhas de instrução + nota

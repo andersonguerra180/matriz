@@ -270,6 +270,11 @@ public:
     bool snapshotPendente() const { return snapshotPendente_; }
     // Incrementa a cada snapshot COMPLETO aplicado (não em atualizarItemEmMemoria).
     int versaoSnapshot() const { return versaoSnapshot_; }
+    // Grade vazia por causa de um filtro (ex.: "Show Recently Ingested" sem
+    // leva registrada): mostra este aviso no lugar do "arraste aqui".
+    void definirMensagemVazia(std::optional<juce::String> msg) {
+        if (mensagemVazia_ != msg) { mensagemVazia_ = std::move(msg); repaint(); }
+    }
 
     static constexpr int kAlturaCabecalhoGrupo = 26;
     static constexpr int kEspacoEntreGrupos = 6;
@@ -305,6 +310,7 @@ private:
     int geracaoSnapshot_ = 0;
     int versaoSnapshot_ = 0;
     bool refiltroAgendado_ = false;
+    std::optional<juce::String> mensagemVazia_;
     void agendarRefiltroCoalescido();
     bool snapshotPendente_ = false;
     // Fix de performance (item 8): buscarItens() varre FTS5 + LIKE em várias

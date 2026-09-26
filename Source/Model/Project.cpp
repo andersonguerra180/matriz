@@ -874,6 +874,14 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // ele mesmo, começando sempre desmarcada.
     garantirColuna(registro, "item", "marcado_revisado", "INTEGER NOT NULL DEFAULT 0");
 
+    // "Show Recently Ingested": id da leva INTAKE -> GRID (confirmarLoteGrid)
+    // em que o item foi promovido. NULL = promovido antes desta coluna (não
+    // se infere leva por criado_em). Ids crescem com o tempo (ORDER BY).
+    garantirColuna(registro, "item", "lote_grid_id", "TEXT");
+    try {
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_item_lote_grid ON item(lote_grid_id)");
+    } catch (...) {}
+
     // Garantir triggers de busca em projetos existentes
     try {
         registro.exec(

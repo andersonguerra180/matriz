@@ -499,6 +499,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tema().acento : tema().painelAlt);
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tema().textoSobreAcento : tema().textoSecundario);
         aplicarFiltrosAdicionais();
+        atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a leva
     };
     addAndMakeVisible(*btnMostrarRecentes_);
 
@@ -956,7 +957,29 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         anyFilter = true;
         const auto& ids = projeto_.ultimosItensIngeridos();
         recentesIds.insert(ids.begin(), ids.end());
+        // Logo após uma promoção INTAKE -> GRID o snapshot ainda não tem a
+        // leva nova: montar o filtro agora a descartaria. Espera o snapshot
+        // (uma vez só; ao reaplicar segue com o que houver).
+        if (!reaplicandoFiltrosAposSnapshot_) {
+            bool faltaAlgum = mosaico_->snapshotPendente();
+            if (!faltaAlgum && !recentesIds.empty()) {
+                std::set<std::string> emMemoria;
+                for (const auto& item : itens) emMemoria.insert(item.id);
+                for (const auto& id : recentesIds)
+                    if (!emMemoria.count(id)) { faltaAlgum = true; break; }
+            }
+            if (faltaAlgum) {
+                filtrosAguardandoSnapshot_ = true;
+                mosaico_->recarregar();
+                return;
+            }
+        }
     }
+    // Leva vazia (nenhuma promoção registrada): grade vazia com aviso —
+    // nunca o catálogo inteiro em silêncio.
+    mosaico_->definirMensagemVazia(mostrarApenasRecentes_ && recentesIds.empty()
+                                       ? std::optional<juce::String>(matriz::i18n::t("catwork.sem_leva_recente"))
+                                       : std::nullopt);
 
     for (const auto& item : itens) {
         if (libChave == "selected") {
@@ -1128,11 +1151,23 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             itensCopia = mosaico_->todosItensEmMemoria();
     }
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo,
+    // "Show Recently Ingested" ligado: as contagens da sidebar são da leva.
+    std::optional<std::set<std::string>> soRecentes;
+    if (mostrarApenasRecentes_) {
+        const auto& ids = projeto_.ultimosItensIngeridos();
+        soRecentes = std::set<std::string>(ids.begin(), ids.end());
+    }
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, soRecentes,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
             auto itens = itensCopia.empty() ? proj->listarItens() : std::move(itensCopia);
+            if (soRecentes) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
+                            itens.end());
+            }
             res.total = static_cast<int>(itens.size());
 
             std::map<int, int> contagemPorAno;

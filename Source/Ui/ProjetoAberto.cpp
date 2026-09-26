@@ -583,27 +583,31 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
 void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& itemIds) {
     if (!projeto_ || itemIds.empty()) return;
     std::string agora = matriz::model::agoraIso8601();
+    // Id da leva: ms desde a época (zero-padded, ordena como texto) + uuid
+    // pra desempatar duas promoções no mesmo ms.
+    std::string loteGridId = juce::String(juce::Time::currentTimeMillis()).paddedLeft('0', 16).toStdString() +
+                             "-" + matriz::model::novoUuid();
     projeto_->registro().run("BEGIN TRANSACTION", {});
     try {
         for (const auto& id : itemIds) {
             projeto_->registro().run(
-                "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
-                {matriz::db::Value::of(agora), matriz::db::Value::of(id)});
+                "UPDATE item SET em_quarentena = 0, atualizado_em = ?, lote_grid_id = ? WHERE id = ?",
+                {matriz::db::Value::of(agora), matriz::db::Value::of(loteGridId), matriz::db::Value::of(id)});
         }
         projeto_->registro().run("COMMIT", {});
     } catch (...) {
         projeto_->registro().run("ROLLBACK", {});
         throw;
     }
-    for (const auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
-    }
-
     // Item "RECENTLY INGESTED": o gatilho é a promoção INTAKE -> GRID (este
     // método), não o ingest bruto em si — um conjunto só vira "recém
     // ingerido" quando o operador aprova e manda pra grade; o próximo lote
-    // aprovado substitui este (ver definirUltimosItensIngeridos).
-    definirUltimosItensIngeridos(itemIds);
+    // aprovado substitui este — relido do banco (lote_grid_id mais recente).
+    // Antes dos eventos: quem os recebe já enxerga a leva nova.
+    ultimosItensIngeridosValido_ = false;
+    for (const auto& id : itemIds) {
+        EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
+    }
 }
 
 std::vector<ProjetoAberto::ItemDetalhe> ProjetoAberto::obterDetalhesItens(const std::set<std::string>& itemIds) const {
@@ -1255,11 +1259,17 @@ bool ProjetoAberto::removerPessoa(const std::string& nome) {
     }
 }
 
-void ProjetoAberto::definirUltimosItensIngeridos(std::vector<std::string> itemIds) {
-    ultimosItensIngeridos_ = std::move(itemIds);
-}
-
 const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
+    if (ultimosItensIngeridosValido_ || !projeto_) return ultimosItensIngeridos_;
+    ultimosItensIngeridos_.clear();
+    try {
+        auto stmt = projeto_->registro().prepare(
+            "SELECT id FROM item WHERE lote_grid_id = "
+            "(SELECT MAX(lote_grid_id) FROM item WHERE lote_grid_id IS NOT NULL) "
+            "AND COALESCE(em_quarentena, 0) = 0");
+        while (stmt.step()) ultimosItensIngeridos_.push_back(stmt.columnText(0));
+        ultimosItensIngeridosValido_ = true;
+    } catch (...) {}
     return ultimosItensIngeridos_;
 }
 

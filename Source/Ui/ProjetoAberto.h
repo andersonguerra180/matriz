@@ -267,10 +267,10 @@ public:
     // `erro` se o item não tiver master ou o arquivo novo não puder ser lido.
     bool recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho, juce::String& erro);
 
-    // Item C.8 ("Show Recently Ingested"): guarda em memória (não persiste
-    // entre reaberturas do projeto) os item_ids do último lote importado
-    // pelo IngestWizardComponent, pro botão da aba METADATA filtrar por eles.
-    void definirUltimosItensIngeridos(std::vector<std::string> itemIds);
+    // "Show Recently Ingested": itens da ÚLTIMA leva promovida INTAKE -> GRID
+    // (confirmarLoteGrid), lidos do banco (item.lote_grid_id) — sobrevivem a
+    // fechar/reabrir. Vazio = nenhuma leva registrada. Cache em memória,
+    // invalidado a cada confirmarLoteGrid.
     const std::vector<std::string>& ultimosItensIngeridos() const;
 
     struct ArquivoInfo {
@@ -707,7 +707,8 @@ private:
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
     bool dirty_ = false;
 
-    std::vector<std::string> ultimosItensIngeridos_;
+    mutable std::vector<std::string> ultimosItensIngeridos_;
+    mutable bool ultimosItensIngeridosValido_ = false;
 
     static constexpr int kMaxUndo = 25;
     std::vector<UndoEntry> pilhaUndo_;
