@@ -12,6 +12,24 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (regressão "Source Medium em lote só muda 1 item")
+
+- `63575c9` — **Causa**: botão "Select All" do Catalog só disparava
+  `aoMudarSelecao`; a ficha continuava em modo individual no item clicado
+  antes → qualquer campo "em lote" gravava só nele. Agora chama
+  `selecionarItem({})` (ficha em lote), como o Cmd+A. Os suspeitos
+  f2f6461/4edeffa/8dd5709 foram testados e gravam N itens corretamente.
+- `ee52cd4` — `--selftest-lote`: 12 itens no Catalog (clique + Select All;
+  Creator/Subject/Event Date/Content/Source Medium/Geo; Cmd+Z) e no Intake
+  (mesmos campos; desfazer). Confere banco, tela sem reabrir e undo.
+  ASan e TSan: ALL TESTS PASSED, 0 races.
+- `e28d905` — Undo do `salvarMetadadoEmLote` era registrado na thread de
+  background do Intake (race em `pilhaUndo_` + `aoMudarUndo` fora da
+  message thread). Agora via callAsync + `vivo_` (weak_ptr).
+- Nota: no lote do Catalog o botão "Undo" próprio (`botaoDesfazer_`) nunca
+  aparece no modo tempo-real; o desfazer é o Cmd+Z global. O check do
+  uitest "the Undo button appears after a successful apply" está obsoleto.
+
 ### Sessão 2026-09-25/26 (Claude — estabilização, pedido em 7 itens)
 
 Mais recente primeiro:
