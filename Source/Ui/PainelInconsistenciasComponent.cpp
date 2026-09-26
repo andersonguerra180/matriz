@@ -10,6 +10,10 @@ namespace matriz::ui {
 
 PainelInconsistenciasComponent::PainelInconsistenciasComponent(ProjetoAberto& projeto) : projeto_(projeto) {}
 
+PainelInconsistenciasComponent::~PainelInconsistenciasComponent() {
+    pool_.removeAllJobs(true, 1000);
+}
+
 std::vector<matriz::ingest::Inconsistencia> PainelInconsistenciasComponent::coletar(ProjetoAberto& projeto) {
     // Só carrega definição de ficha dos tipos que de fato aparecem no
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesPorTipo;

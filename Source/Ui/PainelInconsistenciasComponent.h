@@ -19,6 +19,7 @@ namespace matriz::ui {
 class PainelInconsistenciasComponent : public juce::Component {
 public:
     explicit PainelInconsistenciasComponent(ProjetoAberto& projeto);
+    ~PainelInconsistenciasComponent() override;
 
     // Roda as checagens de novo (ficha + disco) e redesenha.
     //

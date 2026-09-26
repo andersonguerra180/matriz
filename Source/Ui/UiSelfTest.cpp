@@ -508,11 +508,13 @@ int rodarUiSelfTest() {
             verificarInvariantes(ficha, "ficha_" + tipo);
         }
 
-        PainelInconsistenciasComponent painel(*janelaCatalog.projetoAberto());
-        painel.setBounds(0, 0, 600, 400);
-        painel.recarregarSincrono();
-        salvarSnapshot(painel, "08_painel_inconsistencias");
-        verificarInvariantes(painel, "painel_inconsistencias");
+        {
+            PainelInconsistenciasComponent painel(*janelaCatalog.projetoAberto());
+            painel.setBounds(0, 0, 600, 400);
+            painel.recarregarSincrono();
+            salvarSnapshot(painel, "08_painel_inconsistencias");
+            verificarInvariantes(painel, "painel_inconsistencias");
+        }
 
         std::cout << "\n-- \"Preferences\" (note) --\n";
         std::cout << "  ..  on macOS the menu bar is native (juce::MenuBarModel::setMacMainMenu), not a "
