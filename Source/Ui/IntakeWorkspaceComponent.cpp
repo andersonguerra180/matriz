@@ -808,6 +808,20 @@ public:
         return -1;
     }
 
+    // "Sem miniatura" só vale até o próximo snapshot: o card entra na grade
+    // durante o ingest, ANTES de a miniatura ser gerada — sem esquecer isto,
+    // o JPG recém-ingerido ficava com o placeholder pra sempre. Mesmo
+    // critério de MosaicoComponent::recarregar (semMiniatura_.clear()).
+    void esquecerSemMiniatura() {
+        const juce::ScopedLock sl(lock_);
+        noThumbnail_.clear();
+    }
+
+    bool temMiniaturaEmCache(const std::string& itemId) const {
+        const juce::ScopedLock sl(lock_);
+        return cache_.count(itemId) > 0;
+    }
+
     void pedirMiniatura(const std::string& itemId) {
         {
             const juce::ScopedLock sl(lock_);
@@ -1923,6 +1937,7 @@ void IntakeWorkspaceComponent::recarregar() {
             if (geracao != self->geracaoSnapshot_) return;
             MATRIZ_TRACE("IntakeWorkspaceComponent::aplicarSnapshot");
             self->snapshotPendente_ = false;
+            if (self->gridComponent_) self->gridComponent_->esquecerSemMiniatura();
             self->aplicarItensQuarentena(std::move(quarentena));
             if (self->recarregarAoTerminarSnapshot_) {
                 self->recarregarAoTerminarSnapshot_ = false;
