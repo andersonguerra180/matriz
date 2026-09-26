@@ -12,6 +12,13 @@ não devem ser revertidas.
 
 ## O que foi corrigido nesta sessão
 
+### Sessão 2026-09-26 (miniatura no Intake)
+
+- `107ba6a` — JPG recém-ingerido sem miniatura no grid do Intake: o cache
+  negativo `noThumbnail_` nunca era limpo e o card chega antes da
+  miniatura (exposto pelo recarregar em background de 759dbd2). Agora é
+  esquecido a cada snapshot do Intake. Teste em `6ddd9ec`.
+
 ### Sessão 2026-09-26 (SUBJECT + Show Recently Ingested)
 
 - `c1fd7e6` — dropdown SUBJECT no card CONTENT TYPE (METADATA).
