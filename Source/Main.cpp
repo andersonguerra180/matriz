@@ -8,6 +8,7 @@
 #include "Ui/IngerirArquivosTest.h"
 #include "Ui/MainWindow.h"
 #include "Ui/ModalLoopSelfTest.h"
+#include "Ui/LoteSelfTest.h"
 #include "Ui/MosaicoStressTest.h"
 #include "Ui/Tokens.h"
 #include "Ui/MatrizLookAndFeel.h"
@@ -234,6 +235,11 @@ public:
         }
         if (commandLine.contains("--selftest-uitest")) {
             setApplicationReturnValue(matriz::ui::rodarUiSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-lote")) {
+            setApplicationReturnValue(matriz::ui::rodarLoteSelfTest());
             quit();
             return;
         }

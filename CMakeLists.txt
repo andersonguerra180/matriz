@@ -306,6 +306,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
+    Source/Ui/LoteSelfTest.cpp
     Source/Ui/ModalLoopSelfTest.cpp
     Source/Ui/OverlayComponent.cpp
     Source/Ui/AudioWorkspace.cpp

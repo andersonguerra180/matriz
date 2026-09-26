@@ -21,6 +21,7 @@ class IntakeWorkspaceComponent : public juce::Component,
                                  public juce::TableListBoxModel,
                                  public juce::FileDragAndDropTarget {
 public:
+    friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     explicit IntakeWorkspaceComponent(ProjetoAberto& projeto);
     ~IntakeWorkspaceComponent() override;
 

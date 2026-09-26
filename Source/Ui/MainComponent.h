@@ -61,6 +61,7 @@ class MainComponent : public juce::Component,
                        public juce::DragAndDropContainer,
                        private juce::Timer {
 public:
+    friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     // Item 4 (nova lista): sub-abas da aba combinada "Structure" (ex-STORAGE
     // + ex-TREEMAP). FolderMap = ArvoreBackupComponent, SpaceMap =
     // EstatisticasComponent — ver mostrarStructure().

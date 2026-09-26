@@ -22,6 +22,7 @@ class ArvoreBackupComponent;
 
 class CatalogWorkspaceComponent : public juce::Component, private juce::Timer {
 public:
+    friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     explicit CatalogWorkspaceComponent(ProjetoAberto& projeto);
     ~CatalogWorkspaceComponent() override;
 

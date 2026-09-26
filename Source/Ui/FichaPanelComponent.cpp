@@ -4046,6 +4046,7 @@ public:
     }
 
     juce::Component* editorDoCampoParaTeste(const std::string& campoId) {
+        if (campoId == "geo_city") return geoLote_.editorCity.get();
         for (auto* linha : linhas_) {
             if (linha->campoId == campoId) return linha->editor.get();
         }
