@@ -4,6 +4,7 @@
 // ==============================================================================
 
 #include "IntakeWorkspaceComponent.h"
+#include "../Ficha/AutocompleteHistorico.h"
 
 #include <AssetsBinaryData.h>
 #include "OriginalSourceMedium.h"
@@ -2381,6 +2382,15 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
 
 std::vector<juce::String> IntakeWorkspaceComponent::valoresExistentesParaColuna(const std::string& coluna) const {
     std::vector<juce::String> out;
+    // CREATOR/SUBJECT: a mesma lista da ficha do Metadata (histórico + valores
+    // gravados) — os dois lados sugerem o que o outro já usou.
+    if (coluna == "dc_creator" || coluna == "dc_subject") {
+        try {
+            for (const auto& v : matriz::ficha::AutocompleteRepository::listar(projeto_.projeto().registro(), coluna))
+                out.push_back(juce::String::fromUTF8(v.c_str()));
+        } catch (...) {}
+        return out;
+    }
     try {
         auto stmt = projeto_.projeto().registro().prepare(
             "SELECT DISTINCT " + coluna + " FROM item WHERE " + coluna + " IS NOT NULL AND TRIM(" + coluna + ") <> '' "

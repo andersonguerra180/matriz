@@ -1,4 +1,6 @@
 #include "AutocompleteHistorico.h"
+#include <JuceHeader.h>
+#include <map>
 
 #include "../Model/Project.h"
 
@@ -40,12 +42,35 @@ void AutocompleteRepository::registrar(matriz::db::Database& db, const std::stri
 
 std::vector<std::string> AutocompleteRepository::listar(matriz::db::Database& db, const std::string& campoId) {
     criarTabela(db);
+    // Uma lista só pro projeto inteiro: o histórico da ficha MAIS os valores
+    // já gravados nos itens / na geolocalização — o que foi aplicado em lote
+    // no INTAKE aparece na ficha do Metadata e vice-versa.
+    std::map<juce::String, std::string> porChave;  // sem distinção de caixa
+    auto somar = [&](const std::string& sql, bool comCampo) {
+        try {
+            auto st = db.prepare(sql);
+            if (comCampo) st.bind(1, matriz::db::Value::of(campoId));
+            while (st.step()) {
+                if (st.columnIsNull(0)) continue;
+                const std::string v = aparar(st.columnText(0));
+                if (!v.empty()) porChave.emplace(juce::String::fromUTF8(v.c_str()).toLowerCase(), v);
+            }
+        } catch (...) {}
+    };
+    somar("SELECT valor FROM autocomplete_historico WHERE campo_id = ?", true);
+    static const std::map<std::string, std::string> kFonteGravada = {
+        {"dc_creator", "SELECT DISTINCT dc_creator FROM item"},
+        {"dc_subject", "SELECT DISTINCT dc_subject FROM item"},
+        {"dc_publisher", "SELECT DISTINCT dc_publisher FROM item"},
+        {"dc_contributor", "SELECT DISTINCT dc_contributor FROM item"},
+        {"geo_address", "SELECT DISTINCT formatted_address FROM asset_geolocation"},
+        {"geo_city", "SELECT DISTINCT city FROM asset_geolocation"},
+        {"geo_state", "SELECT DISTINCT state_province FROM asset_geolocation"},
+        {"geo_country", "SELECT DISTINCT country FROM asset_geolocation"},
+    };
+    if (auto it = kFonteGravada.find(campoId); it != kFonteGravada.end()) somar(it->second, false);
     std::vector<std::string> resultado;
-    auto stmt = db.prepare("SELECT valor FROM autocomplete_historico WHERE campo_id = ? ORDER BY valor COLLATE NOCASE ASC");
-    stmt.bind(1, matriz::db::Value::of(campoId));
-    while (stmt.step()) {
-        if (!stmt.columnIsNull(0)) resultado.push_back(stmt.columnText(0));
-    }
+    for (auto& [chave, valor] : porChave) resultado.push_back(valor);  // map já ordena
     return resultado;
 }
 
