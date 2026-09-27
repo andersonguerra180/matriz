@@ -77,7 +77,6 @@ private:
 
     ProjetoAberto& projeto_;
     matriz::audio::MotorReproducao motor_;
-    juce::AudioDeviceManager dispositivos_;
     bool dispositivoAberto_ = false;
 
     std::string itemId_;

@@ -1,4 +1,5 @@
 #include "PreviewComponent.h"
+#include "../Audio/DispositivoAudioApp.h"
 #include "../Vault/DiskIdentity.h"
 #include "../Ingest/LeituraTecnica.h"
 
@@ -61,26 +62,18 @@ static juce::Image rotacionarConformeExif(const juce::Image& src, int orient) {
 // "play", nunca só por um PreviewComponent existir ou ser renderizado
 // (importante pro harness headless, que nunca deve precisar de um
 // dispositivo de áudio real só pra tirar um snapshot).
-juce::AudioDeviceManager& dispositivoDeAudioCompartilhado() {
-    static juce::AudioDeviceManager dm;
-    return dm;
-}
-
 juce::AudioSourcePlayer& playerDeAudioCompartilhado() {
     static juce::AudioSourcePlayer player;
     return player;
 }
 
+// Saída = a escolhida em Preferences > Audio Device (DispositivoAudioApp),
+// não a padrão do sistema.
 void garantirDispositivoAberto() {
     static bool aberto = false;
     if (aberto) return;
-    dispositivoDeAudioCompartilhado().initialiseWithDefaultDevices(0, 2); // sem entrada - só reprodução
-    {
-        auto setup = dispositivoDeAudioCompartilhado().getAudioDeviceSetup();
-        setup.bufferSize = 1024;
-        dispositivoDeAudioCompartilhado().setAudioDeviceSetup(setup, true);
-    }
-    dispositivoDeAudioCompartilhado().addAudioCallback(&playerDeAudioCompartilhado());
+    matriz::audio::garantirDispositivoAudioDoApp();
+    matriz::audio::dispositivoAudioDoApp().addAudioCallback(&playerDeAudioCompartilhado());
     aberto = true;
 }
 

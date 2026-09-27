@@ -1,5 +1,6 @@
 #include "TimelineComponent.h"
 
+#include "../Audio/DispositivoAudioApp.h"
 #include "../Audio/FormatoAudioQuickTime.h"
 #include "../I18n/Strings.h"
 #include "FormatoTempo.h"
@@ -14,13 +15,9 @@ namespace {
 
 std::string autorAtual() { return juce::SystemStats::getFullUserName().toStdString(); }
 
-// Mesmo dispositivo compartilhado do PreviewComponent: só abre de verdade
-// quando alguém aperta play, nunca só por existir (o harness headless tira
-// snapshot sem precisar de placa de som).
-juce::AudioDeviceManager& dispositivoCompartilhado() {
-    static juce::AudioDeviceManager dm;
-    return dm;
-}
+// Dispositivo de saída do app (o escolhido em Preferences > Audio Device):
+// só abre de verdade quando alguém aperta play, nunca só por existir (o
+// harness headless tira snapshot sem precisar de placa de som).
 juce::AudioSourcePlayer& playerCompartilhado() {
     static juce::AudioSourcePlayer p;
     return p;
@@ -28,13 +25,8 @@ juce::AudioSourcePlayer& playerCompartilhado() {
 void garantirDispositivo() {
     static bool aberto = false;
     if (aberto) return;
-    dispositivoCompartilhado().initialiseWithDefaultDevices(0, 2);
-    {
-        auto setup = dispositivoCompartilhado().getAudioDeviceSetup();
-        setup.bufferSize = 1024;
-        dispositivoCompartilhado().setAudioDeviceSetup(setup, true);
-    }
-    dispositivoCompartilhado().addAudioCallback(&playerCompartilhado());
+    matriz::audio::garantirDispositivoAudioDoApp();
+    matriz::audio::dispositivoAudioDoApp().addAudioCallback(&playerCompartilhado());
     aberto = true;
 }
 

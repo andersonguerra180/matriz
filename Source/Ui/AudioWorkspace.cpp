@@ -1,5 +1,7 @@
 #include "AudioWorkspace.h"
 
+#include "../Audio/DispositivoAudioApp.h"
+
 #include <cmath>
 
 #include "../Diag/NSExceptionGuard.h"
@@ -616,7 +618,7 @@ AudioWorkspace::AudioWorkspace(ProjetoAberto& projeto) : projeto_(projeto) {
 
 AudioWorkspace::~AudioWorkspace() {
     stopTimer();
-    if (dispositivoAberto_) dispositivos_.removeAudioCallback(&motor_);
+    if (dispositivoAberto_) matriz::audio::dispositivoAudioDoApp().removeAudioCallback(&motor_);
     motor_.descarregar();
 }
 
@@ -626,14 +628,11 @@ void AudioWorkspace::abrirDispositivoDeAudio() {
     // 0 entradas: a estação só REPRODUZ. Pedir entrada dispararia o aviso de
     // permissão de microfone do macOS por nada — e captura ao vivo está
     // explicitamente fora de escopo (§1).
-    juce::String erro = dispositivos_.initialiseWithDefaultDevices(0, 2);
-    if (erro.isNotEmpty()) return;  // sem placa: o resto da tela continua
-    {
-        auto setup = dispositivos_.getAudioDeviceSetup();
-        setup.bufferSize = 1024;
-        dispositivos_.setAudioDeviceSetup(setup, true);
-    }
-    dispositivos_.addAudioCallback(&motor_);
+    // Saída = a escolhida em Preferences > Audio Device (DispositivoAudioApp).
+    matriz::audio::garantirDispositivoAudioDoApp();
+    if (matriz::audio::dispositivoAudioDoApp().getCurrentAudioDevice() == nullptr)
+        return;  // sem placa: o resto da tela continua
+    matriz::audio::dispositivoAudioDoApp().addAudioCallback(&motor_);
     dispositivoAberto_ = true;
 }
 

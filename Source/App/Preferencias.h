@@ -34,6 +34,11 @@ void gravarUltimaContaGoogleDrive(const juce::String& conta);
 juce::String lerRelinkIgnorado(const juce::String& projetoId);
 void gravarRelinkIgnorado(const juce::String& projetoId, const juce::String& amostraAusente);
 
+// Dispositivo de áudio escolhido em Preferences > Audio Device (XML de
+// AudioDeviceManager::createStateXml). Vazio = saída padrão do sistema.
+juce::String lerEstadoDispositivoAudio();
+void gravarEstadoDispositivoAudio(const juce::String& xml);
+
 bool lerTooltipsHabilitados();
 void gravarTooltipsHabilitados(bool habilitado);
 

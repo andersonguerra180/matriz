@@ -67,6 +67,13 @@ void gravarUltimaContaGoogleDrive(const juce::String& conta) {
     arquivo().saveIfNeeded();
 }
 
+juce::String lerEstadoDispositivoAudio() { return arquivo().getValue("audio_dispositivo", {}); }
+
+void gravarEstadoDispositivoAudio(const juce::String& xml) {
+    arquivo().setValue("audio_dispositivo", xml);
+    arquivo().saveIfNeeded();
+}
+
 juce::String lerRelinkIgnorado(const juce::String& projetoId) {
     return arquivo().getValue("relink_ignorado_" + projetoId, {});
 }

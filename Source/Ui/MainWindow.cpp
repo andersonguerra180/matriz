@@ -3,6 +3,7 @@
 #include "../Catalogo/CatalogoProxies.h"
 
 #include "../App/Preferencias.h"
+#include "../Audio/DispositivoAudioApp.h"
 #include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
 #include "AboutDialog.h"
@@ -456,20 +457,20 @@ void MainWindow::pedirConsolidar() {
 }
 
 void MainWindow::mostrarAudioDeviceDialogo() {
-    auto deviceManager = std::make_shared<juce::AudioDeviceManager>();
-    deviceManager->initialiseWithDefaultDevices(0, 2);
-    {
-        auto setup = deviceManager->getAudioDeviceSetup();
-        setup.bufferSize = 1024;
-        deviceManager->setAudioDeviceSetup(setup, true);
-    }
+    // O MESMO dispositivo que o preview/timeline usam (antes era um
+    // gerenciador descartável: o test tone saía na interface escolhida, mas o
+    // som dos previews ia pra saída padrão do macOS). A escolha fica salva.
+    matriz::audio::garantirDispositivoAudioDoApp();
+    auto& deviceManager = matriz::audio::dispositivoAudioDoApp();
 
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     auto janela = std::make_shared<juce::DialogWindow>(isPt ? juce::String::fromUTF8("Dispositivo de Áudio") : "Audio Device", tema().painel, true);
 
-    struct PainelAudioDevice : public juce::Component {
+    struct PainelAudioDevice : public juce::Component, private juce::ChangeListener {
         PainelAudioDevice(juce::AudioDeviceManager& dm, std::shared_ptr<juce::DialogWindow> win)
-            : janela_(std::move(win)) {
+            : dm_(dm), janela_(std::move(win)) {
+            // Cada troca no seletor já vale pro app inteiro — e fica salva.
+            dm_.addChangeListener(this);
             selector_ = std::make_unique<juce::AudioDeviceSelectorComponent>(
                 dm, 0, 0, 0, 2, false, false, true, false);
             addAndMakeVisible(*selector_);
@@ -504,30 +505,37 @@ void MainWindow::mostrarAudioDeviceDialogo() {
             selector_->setBounds(area);
         }
 
+        ~PainelAudioDevice() override { dm_.removeChangeListener(this); }
+
         std::function<void()> aoAplicar;
 
     private:
+        void changeListenerCallback(juce::ChangeBroadcaster*) override {
+            matriz::audio::gravarEscolhaDispositivoAudio();
+        }
+
+        juce::AudioDeviceManager& dm_;
         std::unique_ptr<juce::AudioDeviceSelectorComponent> selector_;
         std::unique_ptr<juce::TextButton> btnApply_;
         std::unique_ptr<juce::TextButton> btnClose_;
         std::shared_ptr<juce::DialogWindow> janela_;
     };
 
-    auto painel = std::make_unique<PainelAudioDevice>(*deviceManager, janela);
+    auto painel = std::make_unique<PainelAudioDevice>(deviceManager, janela);
+    painel->aoAplicar = [] { matriz::audio::gravarEscolhaDispositivoAudio(); };
 
     struct Estado {
         std::shared_ptr<juce::DialogWindow> janela;
-        std::shared_ptr<juce::AudioDeviceManager> deviceManager;
     };
     auto estado = std::make_shared<Estado>();
     estado->janela = janela;
-    estado->deviceManager = deviceManager;
 
     janela->setContentOwned(painel.release(), true);
     janela->setResizable(true, false);
     janela->centreWithSize(500, 450);
     janela->setVisible(true);
     janela->enterModalState(true, juce::ModalCallbackFunction::create([estado](int) {
+        matriz::audio::gravarEscolhaDispositivoAudio();
         estado->janela->setVisible(false);
     }));
 }
