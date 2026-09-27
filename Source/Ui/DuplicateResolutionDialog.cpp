@@ -89,7 +89,12 @@ public:
 
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        g.drawText(entry_.primaryLabel, textX, 8, textW, 18, juce::Justification::left, true);
+        juce::String titulo = entry_.primaryLabel;
+        if (entry_.decisaoManual) {
+            g.setColour(tk.alerta);
+            titulo = matriz::i18n::t("duplicatas.decisao_manual") + "  " + titulo;
+        }
+        g.drawText(titulo, textX, 8, textW, 18, juce::Justification::left, true);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         // drawFittedText quebra linha (não só elide com "...") — os caminhos
@@ -184,6 +189,29 @@ DuplicateResolutionDialog::DuplicateResolutionDialog(juce::String intro, std::ve
 
     for (auto& e : entries_) e.rotuloBase = actionLabels_;
 
+    bool temCriterios = false;
+    for (auto& e : entries_) temCriterios = temCriterios || e.temCriterios;
+    if (temCriterios) {
+        lblCriterios_ = std::make_unique<juce::Label>("", matriz::i18n::t("duplicatas.criterios"));
+        lblCriterios_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+        lblCriterios_->setColour(juce::Label::textColourId, tema().textoTerciario);
+        addAndMakeVisible(*lblCriterios_);
+        btnMaisRecente_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_recente"));
+        btnMaisRecente_->onClick = [this] { aplicarCriterio(true); };
+        addAndMakeVisible(*btnMaisRecente_);
+        btnBackupPrimeiro_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_backup"));
+        btnBackupPrimeiro_->onClick = [this] { aplicarCriterio(false); };
+        addAndMakeVisible(*btnBackupPrimeiro_);
+        for (auto* b : {btnMaisRecente_.get(), btnBackupPrimeiro_.get()}) {
+            b->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+            b->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+        }
+        lblManuais_ = std::make_unique<juce::Label>();
+        lblManuais_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+        lblManuais_->setColour(juce::Label::textColourId, tema().alerta);
+        addAndMakeVisible(*lblManuais_);
+    }
+
     listaContainer_ = std::make_unique<juce::Component>();
     for (auto& entry : entries_) {
         auto* row = new RowComponent(entry, actionLabels_, [this](juce::Image img) { ampliarImagem(std::move(img)); });
@@ -214,6 +242,25 @@ DuplicateResolutionDialog::~DuplicateResolutionDialog() {
 void DuplicateResolutionDialog::aplicarATodos(int action) {
     for (auto& entry : entries_) entry.action = action;
     for (auto* row : linhas_) row->atualizarDestaque();
+    repaint();
+}
+
+void DuplicateResolutionDialog::aplicarCriterio(bool maisRecente) {
+    int manuais = 0;
+    for (auto& e : entries_) {
+        const int acao = maisRecente ? e.acaoMaisRecente : e.acaoBackupPrimeiro;
+        e.decisaoManual = acao < 0;
+        if (acao >= 0) e.action = acao;
+        else ++manuais;
+    }
+    for (auto* row : linhas_) {
+        row->atualizarDestaque();
+        row->repaint();
+    }
+    if (lblManuais_)
+        lblManuais_->setText(manuais > 0 ? matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String(manuais))
+                                         : juce::String(),
+                             juce::dontSendNotification);
     repaint();
 }
 
@@ -263,6 +310,16 @@ void DuplicateResolutionDialog::resized() {
     for (auto& btn : btnsApplyAll_) {
         btn->setBounds(applyAllRow.removeFromLeft(120));
         applyAllRow.removeFromLeft(8);
+    }
+    if (lblCriterios_) {
+        area.removeFromTop(6);
+        auto linha = area.removeFromTop(32);
+        lblCriterios_->setBounds(linha.removeFromLeft(120));
+        btnMaisRecente_->setBounds(linha.removeFromLeft(210));
+        linha.removeFromLeft(8);
+        btnBackupPrimeiro_->setBounds(linha.removeFromLeft(210));
+        linha.removeFromLeft(12);
+        lblManuais_->setBounds(linha);
     }
     area.removeFromTop(14);
 

@@ -13,6 +13,7 @@ class DuplicatesWorkspaceComponent : public juce::Component,
                                       public juce::Thread,
                                       private juce::Timer {
 public:
+    friend int rodarLoteSelfTest();  // --selftest-lote: critérios rápidos (etapa 9)
     explicit DuplicatesWorkspaceComponent(ProjetoAberto& projeto);
     ~DuplicatesWorkspaceComponent() override;
 

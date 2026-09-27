@@ -27,6 +27,14 @@ public:
         // Preenchido internamente a partir de actionLabels — RowComponent usa
         // isso pra remontar o texto do toggle (rótulo + ✓ quando marcado).
         std::array<juce::String, 3> rotuloBase;
+
+        // Etapa 9 — critérios rápidos (só a aba DUPLICATES preenche): ação que
+        // cada critério escolhe pra esta linha; -1 = não se aplica (nenhum lado
+        // tem backup) ou empate -> fica pra decisão manual e a linha é sinalizada.
+        bool temCriterios = false;
+        int acaoMaisRecente = -1;
+        int acaoBackupPrimeiro = -1;
+        bool decisaoManual = false;
     };
 
     DuplicateResolutionDialog(juce::String intro, std::vector<Entry> entries, std::array<juce::String, 3> actionLabels);
@@ -49,6 +57,7 @@ private:
     class AmpliadorComponent;
 
     void aplicarATodos(int action);
+    void aplicarCriterio(bool maisRecente);
     void confirmar();
     void cancelar();
     void ampliarImagem(juce::Image imagem);
@@ -60,6 +69,9 @@ private:
     std::unique_ptr<juce::Label> lblIntro_;
     std::unique_ptr<juce::Label> lblApplyAll_;
     std::array<std::unique_ptr<juce::TextButton>, 3> btnsApplyAll_;
+    std::unique_ptr<juce::Label> lblCriterios_;
+    std::unique_ptr<juce::TextButton> btnMaisRecente_, btnBackupPrimeiro_;
+    std::unique_ptr<juce::Label> lblManuais_;
     std::unique_ptr<juce::Viewport> viewport_;
     std::unique_ptr<juce::Component> listaContainer_;
     juce::OwnedArray<RowComponent> linhas_;

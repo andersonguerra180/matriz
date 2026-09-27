@@ -45,6 +45,35 @@ namespace {
         for (const auto& id : idsAlterados) EventBus::obterInstancia().dispararItemAlterado(id, "metadado");
     }
 
+    // Etapa 9 — critérios rápidos. 1 = manter o arquivo 1 (original), 2 =
+    // manter o 2 (duplicata), 0 = decisão manual (não se aplica ou empate).
+    struct CriteriosDoPar {
+        int maisRecente = 0;
+        int backupPrimeiro = 0;
+    };
+    CriteriosDoPar criteriosDoPar(matriz::db::Database& db, const std::string& id1, const std::string& id2) {
+        auto valor = [&](const char* sql, const std::string& id) {
+            try {
+                auto st = db.prepare(sql);
+                st.bind(1, matriz::db::Value::of(id));
+                if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+            } catch (...) {}
+            return std::string();
+        };
+        CriteriosDoPar c;
+        // Ingestão mais recente: quando o arquivo entrou no catálogo.
+        const char* sqlIngest = "SELECT MAX(criado_em) FROM arquivo WHERE item_id = ?";
+        const auto i1 = valor(sqlIngest, id1), i2 = valor(sqlIngest, id2);
+        if (!i1.empty() && !i2.empty() && i1 != i2) c.maisRecente = i1 > i2 ? 1 : 2;
+        // Entrou no backup primeiro: o primeiro registro em consolidacao_registro.
+        const char* sqlBackup = "SELECT MIN(consolidado_em) FROM consolidacao_registro WHERE item_id = ?";
+        const auto b1 = valor(sqlBackup, id1), b2 = valor(sqlBackup, id2);
+        if (!b1.empty() && b2.empty()) c.backupPrimeiro = 1;
+        else if (b1.empty() && !b2.empty()) c.backupPrimeiro = 2;
+        else if (!b1.empty() && b1 != b2) c.backupPrimeiro = b1 < b2 ? 1 : 2;
+        return c;
+    }
+
     // Miniatura pro dialog de resolução (item 1/2) — mesma busca que CardComponent
     // usa pro preview inline: miniatura pré-gerada do projeto, senão a da coleção linkada.
     juce::Image carregarMiniaturaDoItem(ProjetoAberto& proj, const std::string& itemId, const std::string& collectionCaminho) {
@@ -1450,6 +1479,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 1") : "KEEP FILE 1", 1);
     janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 2") : "KEEP FILE 2", 2);
     janela->addButton(isPt ? juce::String::fromUTF8("MANTER AMBOS") : "KEEP BOTH", 3);
+    janela->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 5);
+    janela->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 6);
     janela->addButton(isPt ? juce::String::fromUTF8("VOLTAR") : "RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
 
     // safeThis: enterModalState() não impede o componente de ser destruído
@@ -1461,6 +1492,18 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         retirarPeerDaTela(*janela);
         if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
         if (!safeThis) return;
+        if (buttonResult == 5 || buttonResult == 6) {  // critério rápido (etapa 9)
+            const auto c = criteriosDoPar(safeThis->projeto_.projeto().registro(), group.original.itemId,
+                                          group.duplicata.itemId);
+            const int lado = buttonResult == 5 ? c.maisRecente : c.backupPrimeiro;
+            if (lado == 0) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("duplicatas.criterios"),
+                                                       matriz::i18n::t("duplicatas.criterio_nao_aplica"), {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            buttonResult = lado;  // 1 = manter arquivo 1, 2 = manter arquivo 2
+        }
 
         auto& db = safeThis->projeto_.projeto().registro();
         std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
@@ -1568,6 +1611,8 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     aw->addButton(matriz::i18n::t("duplicatas.action_keep1"), 1);
     aw->addButton(matriz::i18n::t("duplicatas.action_keep2"), 2);
     aw->addButton(matriz::i18n::t("duplicatas.action_keep_both"), 3);
+    aw->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 4);
+    aw->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 5);
     aw->addButton(isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"), 0);
 
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
@@ -1583,12 +1628,23 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     auto& db = projeto_.projeto().registro();
     std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
     std::vector<std::string> ids;
+    std::vector<DuplicateGroup> paraDecisaoManual;  // critério não se aplica / empate (etapa 9)
     try {
         db.run("BEGIN TRANSACTION", {});
-        for (const auto& group : gruposDetectados_) {
-            if (escolha == 1) { // Keep File 1 (original) — o lado "duplicata" fica só no SOURCE
+        for (const auto& grupo : gruposDetectados_) {
+            const auto& group = grupo;
+            int escolhaDoGrupo = escolha;
+            if (escolha == 4 || escolha == 5) {
+                const auto c = criteriosDoPar(db, group.original.itemId, group.duplicata.itemId);
+                escolhaDoGrupo = escolha == 4 ? c.maisRecente : c.backupPrimeiro;
+                if (escolhaDoGrupo == 0) {
+                    paraDecisaoManual.push_back(group);
+                    continue;
+                }
+            }
+            if (escolhaDoGrupo == 1) { // Keep File 1 (original) — o lado "duplicata" fica só no SOURCE
                 resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
-            } else if (escolha == 2) { // Keep File 2 (duplicata) — o "original" fica só no SOURCE
+            } else if (escolhaDoGrupo == 2) { // Keep File 2 (duplicata) — o "original" fica só no SOURCE
                 resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
             } else { // Keep Both — só documenta o par, os dois continuam entrando no backup normalmente
                 acrescentarNota(db, group.duplicata.itemId,
@@ -1604,7 +1660,16 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
         try { db.run("ROLLBACK", {}); } catch (...) {}
     }
 
-    gruposDetectados_.clear();
+    gruposDetectados_ = std::move(paraDecisaoManual);
+    if (!gruposDetectados_.empty()) {
+        // Sinalizados no resultado: continuam na lista pra decisão manual.
+        lblStatus_->setText(matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String((int) gruposDetectados_.size())),
+                            juce::dontSendNotification);
+        listaComponent_->updateList(gruposDetectados_);
+        resized();
+        repaint();
+        return;
+    }
     estado_ = State::Clean;
     lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
     viewport_->setVisible(false);
@@ -1689,6 +1754,12 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
         e.secondaryLabel = (isPt ? juce::String::fromUTF8("Arquivo 1: ") : "File 1: ") + juce::String(group.original.caminhoRelativo)
                           + "\n" + (isPt ? juce::String::fromUTF8("Arquivo 2: ") : "File 2: ") + juce::String(group.duplicata.caminhoRelativo);
         e.action = 2; // default: keep both (validate as duplicate, delete nothing)
+        {
+            const auto c = criteriosDoPar(projeto_.projeto().registro(), group.original.itemId, group.duplicata.itemId);
+            e.temCriterios = true;
+            e.acaoMaisRecente = c.maisRecente == 0 ? -1 : c.maisRecente - 1;
+            e.acaoBackupPrimeiro = c.backupPrimeiro == 0 ? -1 : c.backupPrimeiro - 1;
+        }
         e.imagemA = carregarMiniaturaDoItem(projeto_, group.original.itemId, group.original.collectionCaminho);
         e.imagemB = carregarMiniaturaDoItem(projeto_, group.duplicata.itemId, group.duplicata.collectionCaminho);
         entries.push_back(e);
