@@ -663,6 +663,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "colecao_inteligente", "ano_de", "INTEGER");
     garantirColuna(registro, "colecao_inteligente", "ano_ate", "INTEGER");
     garantirColuna(registro, "projeto", "hierarquia_backup", "TEXT");
+    // Etapa 5 (MAIN): escolhas de estrutura/nomes do primeiro backup, JSON.
+    garantirColuna(registro, "projeto", "backup_config_main", "TEXT");
     garantirColuna(registro, "projeto", "destino_backup_ativo_path", "TEXT NOT NULL DEFAULT ''");
     // Fase 3 (Folder Color): histórico de até 10 cores usadas, JSON, por
     // projeto — compartilhado entre todas as pastas do Treemap/árvore.
@@ -707,6 +709,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "vault", "sistema_arquivos", "TEXT NOT NULL DEFAULT ''");
     garantirColuna(registro, "vault", "categoria_dispositivo", "TEXT NOT NULL DEFAULT 'desconhecido'");
     garantirColuna(registro, "vault", "categoria_manual", "INTEGER NOT NULL DEFAULT 0");
+    // Etapa 5: código do SOURCE (S01…/custom). Vazio = automático, ainda não fixado.
+    garantirColuna(registro, "vault", "codigo", "TEXT NOT NULL DEFAULT ''");
 
     try {
         registro.execScript(

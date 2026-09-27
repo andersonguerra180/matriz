@@ -53,6 +53,7 @@ public:
     void atualizarSelecaoDoGridSeNecessario();
 
 private:
+    friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp): travas da etapa 5
     class PreviaLista;
 
     // ListBoxModel methods for Vaults list
@@ -111,6 +112,13 @@ private:
                destinosBackup_[static_cast<size_t>(selectedDestinoIdx_)].papel == "ORIGINAL";
     }
     bool mainSelado_ = false;  // o MAIN já recebeu o primeiro backup (FAZER BACKUP -> ADICIONAR AO MAIN)
+    // Etapa 5: estrutura de pastas e nomes são escolhidos no primeiro backup
+    // e ficam travados depois (projeto.backup_config_main). Projeto antigo já
+    // com MAIN mas sem config gravada: trava a partir do próximo backup.
+    bool configTravada_ = false;
+    bool organizarPorSource_ = false;  // pasta raiz/sufixo por SOURCE (só MAIN criado a partir da etapa 5)
+    void atualizarTravasDoMain();
+    void gravarConfigDoMain();
     void perguntarSincronizarClones();
     std::string destinoIdDoMain();
     juce::ThreadPool poolSyncClones_{1};

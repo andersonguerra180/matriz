@@ -746,13 +746,13 @@ public:
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (!isCatalogMode) {
-                if (owner_.toggleEmbutirMetadados_) {
+                if (owner_.toggleEmbutirMetadados_ && owner_.toggleEmbutirMetadados_->isVisible()) {
                     owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
                 }
                 if (owner_.toggleAutoResolverConflitos_) {
                     owner_.toggleAutoResolverConflitos_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
                 }
-                if (owner_.toggleForcarRebackup_) {
+                if (owner_.toggleForcarRebackup_ && owner_.toggleForcarRebackup_->isVisible()) {
                     owner_.toggleForcarRebackup_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
                 }
             }
@@ -2388,6 +2388,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
 
     std::set<std::string> itemIds = obterItensSelecionadosPeloCriterio();
 
+    atualizarTravasDoMain();  // antes de ler os controles: com MAIN, valem as escolhas do 1º backup
+
     matriz::consolidacao::HierarquiaBackup h;
     if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState()) {
         h = { matriz::consolidacao::NivelHierarquia::EstruturaOriginal };
@@ -2416,7 +2418,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     try {
         plano_ = matriz::consolidacao::planejarConsolidacao(
             projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
-            autoResolver, forcarRebackup);
+            autoResolver, forcarRebackup, organizarPorSource_);
     } catch (const std::exception& e) {
         plano_ = {};
         labelResumo_->setText(
@@ -2500,16 +2502,88 @@ void BackupWorkspaceComponent::atualizarResumo() {
                           "other destinations are CLONE or EXPORT.";
         labelResumo_->setText(summary, juce::dontSendNotification);
     }
+    // FAZER BACKUP antes do primeiro backup; depois, ADICIONAR AO MAIN
+    // (mainSelado_ calculado em atualizarTravasDoMain).
+    btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
+    btnStartBackup_->setEnabled(pronto && destacadoEhMain());
+}
+
+void BackupWorkspaceComponent::atualizarTravasDoMain() {
     // FAZER BACKUP antes do primeiro backup; depois, ADICIONAR AO MAIN.
     mainSelado_ = false;
+    juce::var cfg;
     try {
         auto st = projeto_.projeto().registro().prepare(
             "SELECT 1 FROM consolidacao_registro WHERE COALESCE(destino_id, '') = '' OR destino_id = ? LIMIT 1");
         st.bind(1, matriz::db::Value::of(destinoIdDoMain()));
         mainSelado_ = st.step();
+        if (mainSelado_) {
+            auto sc = projeto_.projeto().registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            if (sc.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str()));
+        }
     } catch (...) {}
-    btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
-    btnStartBackup_->setEnabled(pronto && destacadoEhMain());
+    configTravada_ = mainSelado_ && cfg.isObject();
+    // MAIN antigo (sem config gravada ou gravada sem a flag) segue a regra que já tinha.
+    organizarPorSource_ = configTravada_ ? static_cast<bool>(cfg.getProperty("por_source", false)) : !mainSelado_;
+
+    if (configTravada_) {
+        const bool preservar = cfg.getProperty("preservar", false);
+        const bool mapa = cfg.getProperty("mapa", false);
+        const int org = cfg.getProperty("org", 1);
+        const int modo = cfg.getProperty("modo_prefixo", 1);
+        if (togglePreservarEstrutura_) togglePreservarEstrutura_->setToggleState(preservar, juce::dontSendNotification);
+        if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(mapa, juce::dontSendNotification);
+        if (comboOrg_) comboOrg_->setSelectedId(org, juce::dontSendNotification);
+        if (org == 5)
+            hierarquiaCustom_ = matriz::consolidacao::hierarquiaDeCsv(cfg.getProperty("hierarquia", "").toString().toStdString());
+        prefixoCustomizado_ = cfg.getProperty("prefixo", prefixoCustomizado_).toString();
+        if (editPrefixo_) editPrefixo_->setText(prefixoCustomizado_, juce::dontSendNotification);
+        if (comboModoPrefixo_) comboModoPrefixo_->setSelectedId(modo, juce::dontSendNotification);
+        modoPrefixo_ = modo == 2 ? matriz::consolidacao::ModoPrefixoArquivo::Auto
+                     : modo == 3 ? matriz::consolidacao::ModoPrefixoArquivo::Custom
+                                 : matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+        if (editPrefixo_) editPrefixo_->setVisible(modo == 3);
+    }
+
+    const bool livre = !configTravada_;
+    const bool usaOriginal = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
+    if (togglePreservarEstrutura_) togglePreservarEstrutura_->setEnabled(livre);
+    if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setEnabled(livre);
+    if (comboOrg_) comboOrg_->setEnabled(livre && !usaOriginal);
+    if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(livre && !usaOriginal);
+    if (comboModoPrefixo_) comboModoPrefixo_->setEnabled(livre);
+    if (editPrefixo_) editPrefixo_->setEnabled(livre);
+    const juce::String sufixo = configTravada_ ? "  -  " + matriz::i18n::t("backup.definido_primeiro_backup") : juce::String();
+    if (labelOrg_) labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao") + sufixo, juce::dontSendNotification);
+    if (labelPrefixo_) labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos") + sufixo, juce::dontSendNotification);
+
+    // Embed e "forçar backup completo" só existem antes do MAIN: depois o
+    // MAIN só recebe arquivos novos, byte a byte (conjunto novo = CLONE).
+    const bool mostrarOpcoesPrimeiroBackup = !mainSelado_;
+    for (auto* t : {toggleEmbutirMetadados_.get(), toggleForcarRebackup_.get()}) {
+        if (!t) continue;
+        if (!mostrarOpcoesPrimeiroBackup) t->setToggleState(false, juce::dontSendNotification);
+        if (t->isVisible() != mostrarOpcoesPrimeiroBackup) {
+            t->setVisible(mostrarOpcoesPrimeiroBackup);
+            if (configContainer_) configContainer_->resized();
+        }
+    }
+}
+
+void BackupWorkspaceComponent::gravarConfigDoMain() {
+    if (configTravada_) return;  // já definido no primeiro backup
+    juce::DynamicObject::Ptr o = new juce::DynamicObject();
+    o->setProperty("preservar", togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState());
+    o->setProperty("mapa", toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState());
+    o->setProperty("org", comboOrg_ ? comboOrg_->getSelectedId() : 1);
+    o->setProperty("hierarquia", juce::String(matriz::consolidacao::hierarquiaParaCsv(hierarquiaCustom_)));
+    o->setProperty("modo_prefixo", comboModoPrefixo_ ? comboModoPrefixo_->getSelectedId() : 1);
+    o->setProperty("prefixo", prefixoCustomizado_);
+    o->setProperty("por_source", organizarPorSource_);
+    try {
+        projeto_.projeto().registro().run("UPDATE projeto SET backup_config_main = ?",
+                                          {matriz::db::Value::of(juce::JSON::toString(juce::var(o.get()), true).toStdString())});
+    } catch (...) {}
 }
 
 void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
@@ -2588,7 +2662,9 @@ void BackupWorkspaceComponent::iniciarBackup() {
     auto plano = plano_;
     auto& projeto = projeto_;
     bool gerarCatalogo = toggleGerarCatalogo_->getToggleState();
-    bool embutirMeta = !isCatalogMode && toggleEmbutirMetadados_->getToggleState();
+    // Embed dentro da cópia só no primeiro backup (MAIN ainda não existe).
+    bool embutirMeta = !isCatalogMode && !mainSelado_ && toggleEmbutirMetadados_->getToggleState();
+    if (!isCatalogMode) gravarConfigDoMain();  // estas escolhas passam a valer pra todo arquivo novo
 
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
         resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : (isCatalogMode ? resolvedDestFolder_ : projeto.projeto().raiz()));
@@ -2749,9 +2825,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                       gerarCatalogo, embutirMeta]() {
         if (!safeThis) return;
 
-        auto wmIds = projeto.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark);
-        std::set<std::string> wmIdsSet(wmIds.begin(), wmIds.end());
-
+        // Marca d'água nunca vai pro MAIN (só EXPORT): nenhum id marcado com W
+        // é passado; embed só no primeiro backup (embutirMeta).
         auto resultado = matriz::consolidacao::executarConsolidacao(
             projeto.projeto().registro(),
             projeto.projeto().pasta(),
@@ -2766,7 +2841,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
                 return !cancelamento->pedido() && safeThis != nullptr;
             },
-            wmIdsSet
+            {}, embutirMeta
         );
 
         if (!safeThis) return;
@@ -2802,18 +2877,9 @@ void BackupWorkspaceComponent::iniciarBackup() {
             (void)resCatalogo;
         }
 
-        if (embutirMeta && !resultado.cancelado && safeThis) {
-            safeThis->labelProgressoStatus_->setText("Embedding metadata into backup files...", juce::dontSendNotification);
-            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Embedding metadata...");
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-            if (!safeThis) return;
-            // Só os metadados aqui. Marcadores NÃO: executarConsolidacao já
-            // chamou embutirMarcadoresNoBackup no fim, e rodar de novo anexa
-            // um segundo par de chunks cue/LIST/iXML no mesmo WAV.
-            int metadados = matriz::consolidacao::embutirMetadadosNoBackup(
-                projeto.projeto().registro(), destinoMedia);
-            (void)metadados;
-        }
+        // O embed agora acontece na própria cópia (executarConsolidacao com
+        // embutirMeta) — o passe antigo embutirMetadadosNoBackup reescrevia
+        // TODOS os arquivos já registrados no destino.
 
         if (!safeThis) return;
 

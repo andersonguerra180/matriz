@@ -1,4 +1,5 @@
 #include "BackupVersionsComponent.h"
+#include "../Consolidacao/Consolidacao.h"
 
 #include "../I18n/Strings.h"
 #include "../Model/ProjectLog.h"
@@ -71,7 +72,8 @@ public:
         int textoW = std::max(60, r.getRight() - botoesW - statusW - textoX);
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        g.drawText(versao_.rotulo, textoX, 4, textoW, h / 2 - 2, juce::Justification::bottomLeft, true);
+        g.drawText(versao_.codigo.isNotEmpty() ? versao_.codigo + "  " + versao_.rotulo : versao_.rotulo,
+                   textoX, 4, textoW, h / 2 - 2, juce::Justification::bottomLeft, true);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         g.drawText(versao_.caminho, textoX, h / 2, textoW, h / 2 - 4, juce::Justification::topLeft, true);
@@ -95,6 +97,10 @@ public:
                 status = matriz::i18n::t("backup.status_conectado");
             }
             numeros = matriz::i18n::t("backup.itens_fonte").replace("{n}", juce::String(versao_.totalItens));
+            if (versao_.ingestoes > 0)
+                numeros += "   |   " + matriz::i18n::t("backup.ingestoes_fonte")
+                                           .replace("{n}", juce::String(versao_.ingestoes))
+                                           .replace("{d}", dataCurta(versao_.ultimaData));
             if (versao_.dependentes > 0) {
                 numeros += "   |   " + matriz::i18n::t("backup.status_dependentes")
                                            .replace("{n}", juce::String(versao_.dependentes));
@@ -317,12 +323,38 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
         juce::AlertWindow::QuestionIcon);
 
     alert->addTextEditor("rotulo", versao.rotulo, isPt ? "Novo rótulo" : "New label");
+    // SOURCE: o código (sufixo _S01 / pasta raiz) é editável até o primeiro
+    // arquivo dele entrar no MAIN; depois fica fixo.
+    const bool editaCodigo = versao.papel == ProjetoAberto::VersaoResumo::Papel::Source && versao.codigoEditavel;
+    if (editaCodigo) alert->addTextEditor("codigo", versao.codigo, matriz::i18n::t("backup.codigo_source"));
     alert->addButton(isPt ? "Salvar" : "Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     alert->enterModalState(true, juce::ModalCallbackFunction::create([this, versao, alert](int result) {
         if (result != 1) return;
         juce::String novoRotulo = alert->getTextEditorContents("rotulo").trim();
+        if (versao.papel == ProjetoAberto::VersaoResumo::Papel::Source && versao.codigoEditavel) {
+            const juce::String novoCodigo = alert->getTextEditorContents("codigo").trim();
+            if (novoCodigo.isNotEmpty() && novoCodigo != versao.codigo) {
+                bool emUso = false;
+                for (const auto& [id, cod] : matriz::consolidacao::codigosDeSource(projeto_.projeto().registro()))
+                    if (id != versao.id && juce::String(cod).equalsIgnoreCase(novoCodigo)) emUso = true;
+                if (!matriz::consolidacao::codigoDeSourceValido(novoCodigo) || emUso) {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                                                           matriz::i18n::t("backup.codigo_source"),
+                                                           matriz::i18n::t(emUso ? "backup.codigo_source_em_uso"
+                                                                                 : "backup.codigo_source_invalido"));
+                    return;
+                }
+                projeto_.projeto().registro().run("UPDATE vault SET codigo = ? WHERE id = ?",
+                                                  {matriz::db::Value::of(novoCodigo.toStdString()),
+                                                   matriz::db::Value::of(versao.id)});
+                if (novoRotulo.isEmpty() || novoRotulo == versao.rotulo) {
+                    recarregar();
+                    return;
+                }
+            }
+        }
         if (novoRotulo.isEmpty() || novoRotulo == versao.rotulo) return;
 
         // Só o rótulo (apelido do disco). Num SOURCE a pasta no MAIN nunca muda.

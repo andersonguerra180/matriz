@@ -56,6 +56,14 @@ HierarquiaBackup hierarquiaPadrao();
 std::string hierarquiaParaCsv(const HierarquiaBackup& h);
 HierarquiaBackup hierarquiaDeCsv(const std::string& csv);
 
+// Código de cada SOURCE (etapa 5) — SOURCE = vault de onde veio algum
+// arquivo ingerido. vault.codigo gravado (custom, ou fixado na primeira cópia
+// daquele SOURCE pro MAIN) prevalece; os demais recebem o próximo "S01",
+// "S02"… livre, pela ordem da primeira ingestão. vault.id -> código.
+std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registro);
+// Só letras sem acento, números e hífen; 1 a 12 caracteres.
+bool codigoDeSourceValido(const juce::String& codigo);
+
 struct ItemPlanejado {
     std::string itemId;
     std::string codigoAcervo;
@@ -108,7 +116,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         ModoPrefixoArquivo modoPrefixo = ModoPrefixoArquivo::Mascara,
                                         const juce::String& prefixoCustomizado = {},
                                         bool autoResolverConflitos = false,
-                                        bool forcarRebackup = false);
+                                        bool forcarRebackup = false,
+                                        // Etapa 5, só pra MAIN criado a partir desta versão:
+                                        // "preservar estrutura original" ganha pasta raiz por
+                                        // SOURCE (S01/…) e nome original ganha sufixo _S01.
+                                        bool organizarPorSource = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);
@@ -143,11 +155,21 @@ using AoProgredir = std::function<bool(int feito, int total)>;
 // pro destino, verifica depois (existe, tamanho bate, checksum bate), e
 // registra em consolidacao_registro. Falha num item não aborta os outros —
 // mesma resiliência por-item já usada na ficha em lote (item 8).
+//
+// Modelo SOURCE/MAIN (etapa 5): a cópia sai com os MESMOS bytes do
+// original. `embutirNaCopia` (metadados + marcadores dentro do arquivo) só
+// pode ser true no PRIMEIRO backup, antes de o MAIN existir — nunca em
+// "Adicionar ao MAIN". `itensMarcadosWatermark` não é mais passado pelo
+// backup (marca d'água só em EXPORT); fica pra quem copia pra fora do MAIN.
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir = {},
-                                            const std::set<std::string>& itensMarcadosWatermark = {});
+                                            const std::set<std::string>& itensMarcadosWatermark = {},
+                                            bool embutirNaCopia = false);
 
+// SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
+// para referência — não chamar a partir do fluxo de backup.
+//
 // Depois que o título de um item muda (ProjetoAberto::renomearItens), o nome
 // físico do arquivo já consolidado no(s) backup(s) ativo(s) fica desatualizado
 // — a máscara de nomenclatura ("{codigo}-{seq:03}-{titulo}") incorpora o

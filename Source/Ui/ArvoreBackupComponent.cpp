@@ -303,6 +303,11 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 
     btnImportarEstrutura_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_importar"));
     btnImportarEstrutura_->onClick = [this] {
+        // Reimportar apaga toda a organização — com MAIN, bloqueado.
+        if (projeto_.mainExiste()) {
+            ProjetoAberto::avisarMapaTravado(i18n::t("mapa_main.importar_bloqueado"));
+            return;
+        }
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::WarningIcon)
@@ -1856,6 +1861,11 @@ void ArvoreBackupComponent::aplicarEsquemaDeVar(const juce::var& dados, int& ite
 }
 
 void ArvoreBackupComponent::confirmarECarregarEsquema(const juce::String& nomeExibicao, const juce::var& dados) {
+    // Carregar preset troca o esquema inteiro (apaga as pastas atuais).
+    if (projeto_.mainExiste()) {
+        ProjetoAberto::avisarMapaTravado(i18n::t("mapa_main.importar_bloqueado"));
+        return;
+    }
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     juce::AlertWindow::showAsync(
         juce::MessageBoxOptions()

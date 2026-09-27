@@ -297,8 +297,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         ModoPrefixoArquivo modoPrefixo,
                                         const juce::String& prefixoCustomizado,
                                         bool autoResolverConflitos,
-                                        bool forcarRebackup) {
+                                        bool forcarRebackup,
+                                        bool organizarPorSource) {
     PlanoConsolidacao plano;
+    std::map<std::string, std::string> codigoPorVault;
+    if (organizarPorSource) codigoPorVault = codigosDeSource(registro);
     // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
     const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
     HierarquiaBackup hierarquia = hierarquiaPedida.empty() ? hierarquiaDoProjeto(registro) : hierarquiaPedida;
@@ -333,7 +336,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     auto stmt = registro.prepare(
         "SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
         "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
-        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media "
+        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, '') "
         "FROM item i "
         "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id "
         "JOIN arquivo a ON a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id "
@@ -367,6 +370,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string collectionTypeAtual = stmt.columnIsNull(10) ? std::string() : stmt.columnText(10);
         std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
         std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
+        juce::String codigoSource;
+        if (organizarPorSource) {
+            auto itCod = codigoPorVault.find(stmt.columnText(13));
+            if (itCod != codigoPorVault.end()) codigoSource = juce::String(itCod->second);
+        }
 
         // Origem, não MAIN: o nome planejado parte do nome ORIGINAL, não do
         // nome (com máscara) que a cópia ganhou no backup.
@@ -511,10 +519,14 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             }
         }
 
+        // Etapa 5: na estrutura original cada SOURCE tem a sua pasta raiz.
+        if (usaEstruturaOriginal && codigoSource.isNotEmpty()) segmentosPasta.insert(0, codigoSource);
+
         juce::String pastaDestinoStr = segmentosPasta.joinIntoString("/");
         ctx.seq = ++seqPorDestino[pastaDestinoStr.toStdString()];
 
         juce::String nomeArquivoFinal;
+        bool manteveNomeOriginal = usaEstruturaOriginal;
         if (modoPrefixo == ModoPrefixoArquivo::Nenhum) {
             // "NO PREFIX" não quer dizer "nome físico original": o nome do
             // arquivo copiado é comandado pelo título da ficha de metadados
@@ -523,6 +535,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             // hierarquia "estrutura original" continua preservando o master,
             // via resolverNomeFinalBackup.
             juce::String tituloBase = juce::String(resolverMascara("{titulo}", ctx)).trim();
+            if (tituloBase.isEmpty()) manteveNomeOriginal = true;
             nomeArquivoFinal = tituloBase.isEmpty()
                 ? arquivoNoProjeto.getFileName()
                 : resolverNomeFinalBackup(arquivoNoProjeto, tituloBase.toStdString(), usaEstruturaOriginal);
@@ -534,7 +547,13 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             std::string nomeBase = resolverMascara(mascara, ctx);
             nomeArquivoFinal = resolverNomeFinalBackup(arquivoNoProjeto, nomeBase, usaEstruturaOriginal);
         }
-        juce::String caminhoRelDestino =
+        // Etapa 5: nome original + sufixo do SOURCE (DSC_0001_S01.JPG) — dois
+        // cartões com o mesmo nome de arquivo não colidem no MAIN.
+        if (manteveNomeOriginal && codigoSource.isNotEmpty()) {
+            juce::File fNome(nomeArquivoFinal);
+            nomeArquivoFinal = fNome.getFileNameWithoutExtension() + "_" + codigoSource + fNome.getFileExtension();
+        }
+                juce::String caminhoRelDestino =
             (segmentosPasta.isEmpty() ? juce::String() : pastaDestinoStr + "/") + nomeArquivoFinal;
 
         // Auto-resolver conflito de nomes se ativado
@@ -609,15 +628,51 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     return plano;
 }
 
+bool codigoDeSourceValido(const juce::String& codigo) {
+    if (codigo.isEmpty() || codigo.length() > 12) return false;
+    for (auto c : codigo)
+        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-')) return false;
+    return true;
+}
+
+std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registro) {
+    std::map<std::string, std::string> out;
+    std::set<std::string> usados;  // comparação sem caixa
+    try {
+        auto st = registro.prepare("SELECT id, codigo FROM vault WHERE COALESCE(codigo, '') <> ''");
+        while (st.step()) {
+            out[st.columnText(0)] = st.columnText(1);
+            usados.insert(juce::String(st.columnText(1)).toUpperCase().toStdString());
+        }
+        auto sv = registro.prepare("SELECT a.vault_id FROM arquivo a WHERE COALESCE(a.vault_id, '') <> '' "
+                                   "GROUP BY a.vault_id ORDER BY MIN(a.criado_em), a.vault_id");
+        int n = 1;
+        while (sv.step()) {
+            const std::string id = sv.columnText(0);
+            if (out.count(id)) continue;
+            std::string cod;
+            do {
+                cod = juce::String::formatted("S%02d", n++).toStdString();
+            } while (usados.count(cod));
+            usados.insert(cod);
+            out[id] = cod;
+        }
+    } catch (...) {}
+    return out;
+}
+
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir,
-                                            const std::set<std::string>& itensMarcadosWatermark) {
+                                            const std::set<std::string>& itensMarcadosWatermark,
+                                            bool embutirNaCopia) {
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
     // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
     const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
+    // Código do SOURCE fica fixo quando o primeiro arquivo dele entra no MAIN.
+    const auto codigosAtuais = codigosDeSource(registro);
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensMarcadosWatermark;
 #endif
@@ -701,18 +756,20 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             }
 #endif
 
-            // Embed WAV markers into backup copy if applicable (idempotent)
-            if (destinoArquivo.hasFileExtension("wav")) {
-                auto marcadores = marcadoresDoItem(registro, ip.itemId);
-                if (!marcadores.empty()) {
-                    embutirMarcadoresEmWav(destinoArquivo, marcadores);
-                    ++resultado.arquivosComMarcadorEmbutido;
+            // Metadados e marcadores dentro da cópia: só no primeiro backup
+            // (antes de o MAIN existir). Em "Adicionar ao MAIN" a cópia fica
+            // byte a byte igual ao original — edições vivem no banco/sidecar.
+            if (embutirNaCopia) {
+                if (destinoArquivo.hasFileExtension("wav")) {
+                    auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                    if (!marcadores.empty()) {
+                        embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                        ++resultado.arquivosComMarcadorEmbutido;
+                    }
                 }
+                auto meta = coletarMetadadosDoItem(registro, ip.itemId);
+                embutirMetadadosNoArquivo(destinoArquivo, meta);
             }
-
-            // Embed supported metadata into backup copy if applicable
-            auto meta = coletarMetadadosDoItem(registro, ip.itemId);
-            embutirMetadadosNoArquivo(destinoArquivo, meta);
 
             // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
             matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
@@ -763,6 +820,18 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                   Value::of(ip.arquivoId), Value::of(destPathStr)});
                 } catch (...) {}
             }
+
+            // Primeiro arquivo deste SOURCE no MAIN: o código (S01…) fica fixo.
+            try {
+                auto sv = registro.prepare("SELECT COALESCE(vault_id, '') FROM arquivo WHERE id = ?");
+                sv.bind(1, Value::of(ip.arquivoId));
+                if (sv.step()) {
+                    auto itCod = codigosAtuais.find(sv.columnText(0));
+                    if (itCod != codigosAtuais.end())
+                        registro.run("UPDATE vault SET codigo = ? WHERE id = ? AND COALESCE(codigo, '') = ''",
+                                     {Value::of(itCod->second), Value::of(itCod->first)});
+                }
+            } catch (...) {}
 
             // -------------------------------------------------------------------
             // Preservation events — PREMIS BACKUP_CREATED + BACKUP_VERIFIED.

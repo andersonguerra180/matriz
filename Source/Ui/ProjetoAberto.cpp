@@ -1911,8 +1911,49 @@ std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::
     return id;
 }
 
-void ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome) {
-    if (!projeto_) return;
+bool ProjetoAberto::mainExiste() const {
+    if (!projeto_) return false;
+    try {
+        auto st = projeto_->registro().prepare("SELECT 1 FROM consolidacao_registro LIMIT 1");
+        return st.step();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
+    if (!projeto_) return false;
+    try {
+        // A pasta e todas as subpastas: algum item dali (hoje ou quando foi
+        // copiado) já tem cópia registrada no MAIN.
+        auto st = projeto_->registro().prepare(
+            "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL "
+            "  SELECT p.id FROM acervo_pasta p JOIN sub ON p.pasta_pai_id = sub.id) "
+            "SELECT 1 FROM consolidacao_registro cr WHERE cr.pasta_id IN (SELECT id FROM sub) "
+            "   OR cr.item_id IN (SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.pasta_id IN (SELECT id FROM sub)) "
+            "LIMIT 1");
+        st.bind(1, matriz::db::Value::of(pastaId));
+        return st.step();
+    } catch (...) {
+        return false;
+    }
+}
+
+void ProjetoAberto::avisarMapaTravado(const juce::String& mensagem) {
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                     .withTitle(matriz::i18n::t("mapa_main.titulo"))
+                                     .withMessage(mensagem)
+                                     .withButton(matriz::i18n::t("dialogo.ok")),
+                                 nullptr);
+}
+
+bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome) {
+    if (!projeto_) return false;
+    if (pastaTemArquivosNoMain(pastaId)) {
+        avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
+        return false;
+    }
     if (!desfazendo_) {
         auto stmt = projeto_->registro().prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(pastaId));
@@ -1924,19 +1965,30 @@ void ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::s
     projeto_->registro().run("UPDATE acervo_pasta SET nome = ?, atualizado_em = ? WHERE id = ?",
                               {matriz::db::Value::of(novoNome), matriz::db::Value::of(matriz::model::agoraIso8601()),
                                matriz::db::Value::of(pastaId)});
+    return true;
 }
 
-void ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
-    if (!projeto_) return;
+bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
+    if (!projeto_) return false;
+    if (pastaTemArquivosNoMain(pastaId)) {
+        avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
+        return false;
+    }
     projeto_->registro().run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(pastaId)});
+    return true;
 }
 
-void ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {
-    if (!projeto_) return;
+bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {
+    if (!projeto_) return false;
+    if (pastaTemArquivosNoMain(pastaId)) {
+        avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
+        return false;
+    }
     projeto_->registro().run(
         "UPDATE acervo_pasta SET pasta_pai_id = ?, atualizado_em = ? WHERE id = ?",
         {novaPastaPaiId ? matriz::db::Value::of(*novaPastaPaiId) : matriz::db::Value::null(),
          matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(pastaId)});
+    return true;
 }
 
 void ProjetoAberto::atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y) {
@@ -2201,31 +2253,10 @@ void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const
                        {matriz::db::Value::of(notasNovas), matriz::db::Value::of(itemId)});
             }
 
-            // Sincroniza o nome físico já consolidado em backup(s) ativo(s) — não
-            // durante o desfazer (a nota também não é criada nesse caso; ver S3b).
-            //
-            // Sem "!tituloAntigo.empty()" aqui de propósito: esse guard faz
-            // sentido pra nota "Previous Name" (não vale a pena anotar "nome
-            // anterior: vazio"), mas não pro backup — o item pode ter sido
-            // ingerido sem título, já ter sido consolidado com {titulo} vazio na
-            // máscara, e o primeiro título digitado na ficha é tão "rename" pro
-            // arquivo já em backup quanto qualquer edição seguinte. Reusar a
-            // mesma condição das duas vezes fazia esse primeiro rename nunca
-            // propagar (item 3 da correção de UI).
-            if (!desfazendo_ && tituloRealmenteMudou) {
-                try {
-                    matriz::consolidacao::sincronizarNomeDeBackupAposRenomear(
-                        db, projeto_->pasta(), itemId, tituloAntigo, novoTitulo);
-                } catch (const std::exception& e) {
-                    matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Backup Rename Sync Failed", {
-                        "Item: " + juce::String(itemId),
-                        "Reason: " + juce::String(e.what())});
-                } catch (...) {
-                    matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Backup Rename Sync Failed", {
-                        "Item: " + juce::String(itemId),
-                        juce::String("Reason: unknown exception")});
-                }
-            }
+            // Modelo SOURCE/MAIN (etapa 5): o nome físico de um arquivo já no
+            // MAIN nunca muda — renomear o item muda só o catálogo (e o nome
+            // "Previous Name" nas notas). Antes, sincronizarNomeDeBackupAposRenomear
+            // renomeava a cópia no backup a cada edição de título.
 
             EventBus::obterInstancia().dispararItemAlterado(itemId, "titulo");
         }
@@ -3497,9 +3528,12 @@ std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
         auto st = db.prepare(
             "SELECT v.id, v.nome, v.localizacao, COUNT(a.id), MAX(a.criado_em), "
             "SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM consolidacao_registro c WHERE c.arquivo_id = a.id "
-            "      AND (COALESCE(c.destino_id, '') = '' OR c.destino_id = ?)) THEN 1 ELSE 0 END) "
+            "      AND (COALESCE(c.destino_id, '') = '' OR c.destino_id = ?)) THEN 1 ELSE 0 END), "
+            "COUNT(DISTINCT substr(a.criado_em, 1, 10)), "
+            "EXISTS (SELECT 1 FROM consolidacao_registro c JOIN arquivo a2 ON a2.id = c.arquivo_id WHERE a2.vault_id = v.id) "
             "FROM vault v JOIN arquivo a ON a.vault_id = v.id GROUP BY v.id ORDER BY MIN(a.criado_em)");
         st.bind(1, matriz::db::Value::of(mainDestinationId));
+        const auto codigos = matriz::consolidacao::codigosDeSource(db);
         while (st.step()) {
             VersaoResumo v;
             v.papel = VersaoResumo::Papel::Source;
@@ -3516,6 +3550,9 @@ std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
             v.totalItens = static_cast<int>(st.columnInt(3));
             v.ultimaData = juce::String::fromUTF8(st.columnText(4).c_str());
             v.dependentes = static_cast<int>(st.columnInt(5));
+            v.ingestoes = static_cast<int>(st.columnInt(6));
+            v.codigoEditavel = st.columnInt(7) == 0;
+            if (auto it = codigos.find(v.id); it != codigos.end()) v.codigo = juce::String(it->second);
             out.push_back(std::move(v));
         }
     } catch (...) {}

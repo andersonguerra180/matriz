@@ -174,6 +174,11 @@ public:
         int dependentes = 0;         // SOURCE: arquivos que ainda não estão no MAIN
         bool desatualizado = false;  // CLONE
         juce::String ultimaData;     // MAIN/CLONE: último backup/sync; SOURCE: última ingestão
+        // SOURCE (etapa 5): código S01…/custom; editável até o 1º arquivo dele
+        // entrar no MAIN; ingestões = dias distintos em que entrou arquivo dele.
+        juce::String codigo;
+        bool codigoEditavel = false;
+        int ingestoes = 0;
     };
     // Lê tudo (banco + existência das pastas): chamar FORA da message thread.
     std::vector<VersaoResumo> listarVersoes();
@@ -414,10 +419,17 @@ public:
     static NoArvore podarArvore(const NoArvore& raiz, const std::set<std::string>& idsPermitidos);
 
     std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId);
-    void renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
-    void apagarPastaAcervo(const std::string& pastaId);
+    // MAPA depois que existe MAIN (etapa 5): criar pasta é livre; renomear,
+    // mover ou apagar pasta que já tem arquivo no MAIN é bloqueado — estas
+    // devolvem false e avisam o operador. Trocar o esquema inteiro
+    // (IMPORTAR/ATUALIZAR ESTRUTURA, carregar preset) exige !mainExiste().
+    bool renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
+    bool apagarPastaAcervo(const std::string& pastaId);
 
-    void moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId);
+    bool moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId);
+    bool mainExiste() const;
+    bool pastaTemArquivosNoMain(const std::string& pastaId) const;
+    static void avisarMapaTravado(const juce::String& mensagem);
     void atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y);
     void alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo);
 
