@@ -483,8 +483,26 @@ void MosaicoComponent::recomputarBuscaResultado() {
     }
 }
 
+void MosaicoComponent::irParaPaginaLista(int pagina) {
+    const int alvo = juce::jlimit(0, totalPaginasLista() - 1, pagina);
+    if (alvo == paginaLista_) return;
+    paginaLista_ = alvo;
+    aplicarFiltrosEOrdenacao();
+    if (auto* vp = findParentComponentOfClass<juce::Viewport>()) vp->setViewPosition(0, 0);  // página nova começa do topo
+}
+
+void MosaicoComponent::definirItensPorPaginaLista(int n) {
+    if (n <= 0 || n == itensPorPaginaLista_) return;
+    const int primeiro = paginaLista_ * itensPorPaginaLista_;  // mantém o primeiro item à vista
+    itensPorPaginaLista_ = n;
+    paginaLista_ = primeiro / n;
+    aplicarFiltrosEOrdenacao();
+    if (auto* vp = findParentComponentOfClass<juce::Viewport>()) vp->setViewPosition(0, 0);
+}
+
 void MosaicoComponent::definirOrdenacao(Ordenacao ordenacao) {
     ordenacao_ = ordenacao;
+    colunaOrdenacaoLista_ = 0;  // escolher no menu desliga a ordenação por coluna da lista
     aplicarFiltrosEOrdenacao();
 }
 
@@ -530,6 +548,30 @@ int MosaicoComponent::indiceSubpastaNaPosicao(juce::Point<int> pos) const {
     int indice = linha * colunas_ + coluna;
     if (indice >= static_cast<int>(subpastas_.size())) return -1;
     return indice;
+}
+
+int MosaicoComponent::compararPorColunaDaLista(const ItemResumo& a, const ItemResumo& b, int coluna) {
+    auto texto = [](const std::string& x, const std::string& y) {
+        return juce::String::fromUTF8(x.c_str()).compareNatural(juce::String::fromUTF8(y.c_str()));
+    };
+    auto nome = [](const ItemResumo& i) { return i.titulo.empty() ? i.nomeOriginalArquivo : i.titulo; };
+    auto data = [](const ItemResumo& i) { return i.dataCriacao.empty() ? i.criadoEm : i.dataCriacao; };
+    auto marcas = [](const ItemResumo& i) {
+        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark);
+    };
+    switch (coluna) {
+        case 1: return categoriaDaLista(a.extensaoArquivo).compare(categoriaDaLista(b.extensaoArquivo));
+        case 2: return texto(nome(a), nome(b));
+        case 3: return texto(a.extensaoArquivo, b.extensaoArquivo);
+        case 4: return texto(data(a), data(b));
+        case 5: return a.tamanhoBytes < b.tamanhoBytes ? -1 : (a.tamanhoBytes > b.tamanhoBytes ? 1 : 0);
+        case 6: return texto(a.caminhoAbsolutoOrigem.empty() ? a.caminhoRelativoArquivo : a.caminhoAbsolutoOrigem,
+                             b.caminhoAbsolutoOrigem.empty() ? b.caminhoRelativoArquivo : b.caminhoAbsolutoOrigem);
+        case 7: return texto(a.collectionType.value_or(""), b.collectionType.value_or(""));
+        case 8: return texto(a.sourceMedia, b.sourceMedia);
+        case 9: return marcas(a) - marcas(b);
+        default: return 0;
+    }
 }
 
 std::vector<std::pair<int, int>> MosaicoComponent::colunasDaLista(int largura) {
@@ -738,6 +780,13 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     }
 
     auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
+        // Ordenação escolhida clicando no cabeçalho da LISTA (igual ao INTAKE);
+        // vale também na grade de miniaturas.
+        if (colunaOrdenacaoLista_ > 0) {
+            const int c = compararPorColunaDaLista(a, b, colunaOrdenacaoLista_);
+            if (c != 0) return ordenacaoListaAscendente_ ? c < 0 : c > 0;
+            return a.criadoEm > b.criadoEm;
+        }
         switch (ordenacao_) {
             case Ordenacao::Titulo: return a.titulo < b.titulo;
             case Ordenacao::Estado: return a.estado < b.estado;
@@ -978,6 +1027,30 @@ juce::Colour MosaicoComponent::corPorCategoria(const std::string& tipoMidia) con
 void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     if (indiceSubpastaNaPosicao(e.getPosition()) >= 0)
         return;
+
+    // Clique no cabeçalho de colunas da LISTA: ordena por aquela coluna
+    // (de novo na mesma coluna inverte), como na tabela do INTAKE.
+    if (modoVisao_ == ModoVisao::Lista && !e.mods.isPopupMenu()) {
+        for (const auto& grupo : grupos_) {
+            const int y0 = grupo.yTopo + kAlturaCabecalhoGrupo;
+            if (e.y < y0 || e.y >= y0 + kAlturaCabecalhoColunas) continue;
+            const auto cols = colunasDaLista(getWidth());
+            for (size_t c = 1; c < cols.size(); ++c) {
+                if (e.x < cols[c].first || e.x >= cols[c].first + cols[c].second) continue;
+                const int col = static_cast<int>(c);
+                if (colunaOrdenacaoLista_ == col) ordenacaoListaAscendente_ = !ordenacaoListaAscendente_;
+                else {
+                    colunaOrdenacaoLista_ = col;
+                    ordenacaoListaAscendente_ = true;
+                }
+                paginaLista_ = 0;
+                aplicarFiltrosEOrdenacao();
+                repaint();
+                return;
+            }
+            return;
+        }
+    }
 
     if (itensFiltrados_.empty()) {
         if (aoClicarEstadoVazio) aoClicarEstadoVazio();
@@ -1733,7 +1806,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
                 for (size_t c = 0; c < cols.size(); ++c) {
                     juce::Rectangle<int> r(cols[c].first, areaCols.getY(), cols[c].second, areaCols.getHeight());
-                    g.drawText(matriz::i18n::t(kRotulos[c]), r.reduced(6, 0), juce::Justification::centredLeft, true);
+                    juce::String rotulo = matriz::i18n::t(kRotulos[c]);
+                    if (static_cast<int>(c) == colunaOrdenacaoLista_)
+                        rotulo << (ordenacaoListaAscendente_ ? juce::String::fromUTF8("  \xe2\x96\xb2") : juce::String::fromUTF8("  \xe2\x96\xbc"));
+                    g.drawText(rotulo, r.reduced(6, 0), juce::Justification::centredLeft, true);
                     if (c > 0) g.fillRect(r.getX(), r.getY() + 6, 1, r.getHeight() - 12);
                 }
             }

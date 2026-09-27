@@ -283,6 +283,16 @@ public:
     static juce::String categoriaDaLista(const std::string& extensao);
     static juce::Colour corCategoriaDaLista(const juce::String& categoria);
     static juce::String formatarBytesDaLista(juce::int64 bytes);
+    // Ordenação pelo cabeçalho da lista (coluna 1..9; 0 = a ordenação normal).
+    // Vale também na grade de miniaturas.
+    static int compararPorColunaDaLista(const ItemResumo& a, const ItemResumo& b, int coluna);
+    int colunaOrdenacaoLista_ = 0;
+    ProjetoAberto::EscopoBusca escopoBusca_ = ProjetoAberto::EscopoBusca::Todos;
+    int paginaLista_ = 0;
+    int itensPorPaginaLista_ = 100;
+    int totalFiltradoLista_ = 0;
+    std::vector<std::string> idsFiltroCompleto_;  // todas as páginas (Cmd+A)
+    bool ordenacaoListaAscendente_ = true;
     static constexpr int kEspacoEntreGrupos = 6;
 
 private:
