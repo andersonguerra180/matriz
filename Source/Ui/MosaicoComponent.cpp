@@ -403,6 +403,12 @@ void MosaicoComponent::adicionarTermoBusca(const juce::String& texto) {
     recomputarBuscaResultado();
 }
 
+void MosaicoComponent::definirEscopoBusca(ProjetoAberto::EscopoBusca escopo) {
+    if (escopo == escopoBusca_) return;
+    escopoBusca_ = escopo;
+    recomputarBuscaResultado();
+}
+
 void MosaicoComponent::removerTermoBusca(int indice) {
     if (indice < 0 || indice >= buscaTermos_.size()) return;
     buscaTermos_.remove(indice);
@@ -457,11 +463,12 @@ void MosaicoComponent::recomputarBuscaResultado() {
     ProjetoAberto* projeto = &projeto_;
 
     for (auto& termo : termosPendentes) {
-        poolMiniaturas_.addJob([safeThis, projeto, geracao, termo, resultadosParciais, restantes]() {
+        const auto escopo = escopoBusca_;
+        poolMiniaturas_.addJob([safeThis, projeto, geracao, termo, resultadosParciais, restantes, escopo]() {
             matriz::diag::LogOperacao logOp("buscaTermo:" + termo.toStdString());
             std::set<std::string> resultado;
             try {
-                resultado = projeto->buscarItens(termo);
+                resultado = projeto->buscarItens(termo, escopo);
             } catch (const std::exception&) {
                 // projeto fechado no meio: entrega vazio, só pra não travar
                 // os outros termos esperando pra sempre.
@@ -728,6 +735,8 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         // categoria de chip. DENTRO de uma categoria de chip, múltipla
         // seleção é OU (Acréscimos §10.2 — "clicáveis e combináveis").
         if (filtroItens_ && !filtroItens_->count(item.id)) continue;
+        if (buscaResultado_ && !buscaResultado_->count(item.id) && escopoBusca_ != ProjetoAberto::EscopoBusca::Todos)
+            continue;  // busca com escopo: só o que o banco achou naquele campo
         if (buscaResultado_ && !buscaResultado_->count(item.id)) {
             // Fallback em memória (item 6): item não veio no conjunto do
             // FTS5 — ainda pode sobreviver se bater em TODOS os termos

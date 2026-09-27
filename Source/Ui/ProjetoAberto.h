@@ -549,7 +549,10 @@ public:
     // não existem ainda — gap declarado, não fingido: nenhum texto extraído
     // de imagem/áudio é buscável nesta etapa. String vazia devolve conjunto
     // vazio (nunca "todos", pra não confundir com "sem filtro").
-    std::set<std::string> buscarItens(const juce::String& texto) const;
+    // Escopo da busca (seletor sob o campo de busca do Metadata). Todos = a
+    // busca de sempre; os demais procuram o termo só naquele campo.
+    enum class EscopoBusca { Todos, NomeArquivo, Criador, Assunto, Conteudo, PessoasTags, Extensao, Notas, Geo };
+    std::set<std::string> buscarItens(const juce::String& texto, EscopoBusca escopo = EscopoBusca::Todos) const;
 
     // Contagens pra chips de filtro (§10.2 — "cada um com contagem"). Chave
     // "" no mapa de tipo de mídia = itens ainda não classificados.
@@ -784,6 +787,7 @@ private:
     mutable bool ultimosItensIngeridosValido_ = false;
 
     static constexpr int kMaxUndo = 25;
+    std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
     void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);
     std::vector<UndoEntry> pilhaUndo_;
     std::optional<UndoEntry> grupoAberto_;

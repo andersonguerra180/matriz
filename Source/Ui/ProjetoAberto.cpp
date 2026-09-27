@@ -1,4 +1,5 @@
 #include "ProjetoAberto.h"
+#include "TraducaoContent.h"
 
 #include "../Ingest/Miniaturas.h"
 #include "../Ingest/ProcessoExterno.h"
@@ -2797,12 +2798,13 @@ void ProjetoAberto::removerItemDaPasta(const std::string& itemId, const std::str
                               {matriz::db::Value::of(itemId), matriz::db::Value::of(pastaId)});
 }
 
-std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto) const {
+std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, EscopoBusca escopo) const {
     std::set<std::string> out;
     if (!projeto_) return out;
     juce::String termo = texto.trim();
     if (termo.isEmpty()) return out;
     std::string projetoId = projeto_->projetoId();
+    if (escopo != EscopoBusca::Todos) return buscarItensNoEscopo(termo, escopo);
 
     juce::StringArray tokens;
     tokens.addTokens(termo, " \t\r\n,", "\"");
@@ -2931,6 +2933,111 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto) cons
         if (out.empty()) break;
     }
 
+    return out;
+}
+
+std::set<std::string> ProjetoAberto::buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const {
+    // Um conjunto por palavra, intersectados (E lógico, como a busca geral);
+    // cada palavra procurada só nos campos do escopo.
+    std::set<std::string> out;
+    juce::StringArray tokens;
+    tokens.addTokens(termo, " \t\r\n,", "\"");
+    tokens.removeEmptyStrings();
+    const std::string pid = projeto_->projetoId();
+    bool primeiro = true;
+    for (auto token : tokens) {
+        token = token.trim().unquoted().trimCharactersAtStart("#");
+        if (token.isEmpty()) continue;
+        const std::string like = "%" + token.replace("%", "\\%").replace("_", "\\_").toStdString() + "%";
+        std::vector<std::pair<std::string, std::vector<std::string>>> consultas;  // SQL (1º ? = projeto), padrões
+        const std::string doItem = "SELECT i.id FROM item i WHERE i.projeto_id = ? AND (";
+        switch (escopo) {
+            case EscopoBusca::NomeArquivo:
+                consultas.push_back({doItem + "i.titulo LIKE ? ESCAPE '\\' OR i.codigo_acervo LIKE ? ESCAPE '\\')", {like, like}});
+                consultas.push_back({"SELECT a.item_id FROM arquivo a JOIN item i ON i.id = a.item_id WHERE i.projeto_id = ? AND "
+                                     "(a.caminho_relativo LIKE ? ESCAPE '\\' OR a.caminho_absoluto_origem LIKE ? ESCAPE '\\')", {like, like}});
+                break;
+            case EscopoBusca::Criador:
+                consultas.push_back({doItem + "i.dc_creator LIKE ? ESCAPE '\\')", {like}});
+                consultas.push_back({"SELECT c.item_id FROM item_campo c JOIN item i ON i.id = c.item_id WHERE i.projeto_id = ? AND "
+                                     "c.campo_id IN ('dc_creator', 'artista_principal', 'creator', 'autor') AND c.valor LIKE ? ESCAPE '\\'", {like}});
+                break;
+            case EscopoBusca::Assunto:
+                consultas.push_back({doItem + "i.dc_subject LIKE ? ESCAPE '\\')", {like}});
+                consultas.push_back({"SELECT ia.item_id FROM item_assunto ia JOIN assunto s ON s.id = ia.assunto_id JOIN item i ON i.id = ia.item_id "
+                                     "WHERE i.projeto_id = ? AND s.termo LIKE ? ESCAPE '\\'", {like}});
+                break;
+            case EscopoBusca::Conteudo: {
+                // Aceita o nome em português (o banco guarda em inglês).
+                const std::string likeEn = "%" + traduzirContent(token, false).toStdString() + "%";
+                consultas.push_back({doItem + "i.collection_type LIKE ? ESCAPE '\\' OR i.content_type LIKE ? ESCAPE '\\' "
+                                              "OR i.collection_type LIKE ? OR i.content_type LIKE ?)", {like, like, likeEn, likeEn}});
+                break;
+            }
+            case EscopoBusca::PessoasTags:
+                consultas.push_back({"SELECT t.item_id FROM item_tag t JOIN item i ON i.id = t.item_id WHERE i.projeto_id = ? AND "
+                                     "t.tag LIKE ? ESCAPE '\\'", {like}});
+                consultas.push_back({doItem + "i.dc_contributor LIKE ? ESCAPE '\\')", {like}});
+                consultas.push_back({"SELECT c.item_id FROM item_campo c JOIN item i ON i.id = c.item_id WHERE i.projeto_id = ? AND "
+                                     "(c.campo_id LIKE '%pesso%' OR c.campo_id LIKE '%people%' OR c.campo_id LIKE '%contributor%') "
+                                     "AND c.valor LIKE ? ESCAPE '\\'", {like}});
+                break;
+            case EscopoBusca::Extensao: {
+                const std::string ext = "%." + token.trimCharactersAtStart(".").toStdString();
+                consultas.push_back({"SELECT a.item_id FROM arquivo a JOIN item i ON i.id = a.item_id WHERE i.projeto_id = ? AND "
+                                     "a.caminho_relativo LIKE ?", {ext}});
+                break;
+            }
+            case EscopoBusca::Notas:
+                consultas.push_back({doItem + "i.notas_livres LIKE ? ESCAPE '\\')", {like}});
+                consultas.push_back({"SELECT o.item_id FROM item_observacao o JOIN item i ON i.id = o.item_id WHERE i.projeto_id = ? AND "
+                                     "o.texto LIKE ? ESCAPE '\\'", {like}});
+                break;
+            case EscopoBusca::Geo: {
+                // Termos do endereço ou coordenadas ("-16.44" acha latitude/longitude começando assim).
+                const std::string coord = token.toStdString() + "%";
+                consultas.push_back({"SELECT g.asset_id FROM asset_geolocation g JOIN item i ON i.id = g.asset_id WHERE i.projeto_id = ? AND ("
+                                     "g.city LIKE ?1x OR g.state_province LIKE ?1x OR g.country LIKE ?1x OR g.formatted_address LIKE ?1x "
+                                     "OR g.street LIKE ?1x OR g.neighborhood LIKE ?1x OR g.locality LIKE ?1x OR g.municipality LIKE ?1x "
+                                     "OR CAST(g.latitude AS TEXT) LIKE ?2x OR CAST(g.longitude AS TEXT) LIKE ?2x)", {like, coord}});
+                break;
+            }
+            case EscopoBusca::Todos:
+                break;
+        }
+        std::set<std::string> achados;
+        for (auto& [sqlBruto, padroes] : consultas) {
+            try {
+                // "?1x"/"?2x": o mesmo padrão repetido — expande pra ?s posicionais.
+                std::string sql;
+                std::vector<std::string> binds;
+                for (size_t k = 0; k < sqlBruto.size(); ++k) {
+                    if (sqlBruto[k] == '?' && k + 2 < sqlBruto.size() && sqlBruto[k + 2] == 'x') {
+                        binds.push_back(padroes[static_cast<size_t>(sqlBruto[k + 1] - '1')]);
+                        sql += '?';
+                        k += 2;
+                    } else {
+                        sql += sqlBruto[k];
+                    }
+                }
+                const bool expandiu = !binds.empty();
+                if (!expandiu) binds = padroes;
+                auto st = projeto_->registro().prepare(sql);
+                st.bind(1, matriz::db::Value::of(pid));
+                for (size_t k = 0; k < binds.size(); ++k) st.bind(static_cast<int>(k) + 2, matriz::db::Value::of(binds[k]));
+                while (st.step()) achados.insert(st.columnText(0));
+            } catch (...) {}
+        }
+        if (primeiro) {
+            out = std::move(achados);
+            primeiro = false;
+        } else {
+            std::set<std::string> inter;
+            for (const auto& id : out) if (achados.count(id)) inter.insert(id);
+            out = std::move(inter);
+        }
+        if (out.empty()) break;
+    }
     return out;
 }
 

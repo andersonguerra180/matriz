@@ -374,6 +374,20 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (btnLimparBusca_) btnLimparBusca_->setVisible(campoBusca_->getText().isNotEmpty() || temChips);
     };
     campoBusca_->onReturnKey = [this] { executarBusca(); };
+    comboEscopoBusca_ = std::make_unique<juce::ComboBox>();
+    comboEscopoBusca_->setTooltip(matriz::i18n::t("busca.escopo_dica"));
+    {
+        static const char* const kEscopos[] = {"busca.escopo_todos", "busca.escopo_nome", "busca.escopo_criador",
+                                               "busca.escopo_assunto", "busca.escopo_conteudo", "busca.escopo_pessoas",
+                                               "busca.escopo_extensao", "busca.escopo_notas", "busca.escopo_geo"};
+        for (int k = 0; k < 9; ++k) comboEscopoBusca_->addItem(matriz::i18n::t(kEscopos[k]), k + 1);
+    }
+    comboEscopoBusca_->setSelectedId(1, juce::dontSendNotification);
+    comboEscopoBusca_->onChange = [this] {
+        if (mosaico_)
+            mosaico_->definirEscopoBusca(static_cast<ProjetoAberto::EscopoBusca>(comboEscopoBusca_->getSelectedId() - 1));
+    };
+    addAndMakeVisible(*comboEscopoBusca_);
     campoBusca_->setTooltip("Type a term and click the magnifier (or press Enter) to search");
     addAndMakeVisible(*campoBusca_);
 
@@ -1940,6 +1954,8 @@ void CatalogWorkspaceComponent::resized() {
         buscaArea.removeFromRight(2);
     }
     campoBusca_->setBounds(buscaArea);
+    sidebar.removeFromTop(2);
+    if (comboEscopoBusca_) comboEscopoBusca_->setBounds(sidebar.removeFromTop(24).reduced(8, 1));
     sidebar.removeFromTop(4);
 
     // Item 1 (lista nova de hoje): chip de busca ativa logo abaixo da
