@@ -308,7 +308,12 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
             // Só "ano" é preenchido aqui (não dc_created/data_criacao): esses
             // dois continuam significando "metadado lido do arquivo", e a
             // ficha já resolve a exibição deles por conta própria.
+            // A mais antiga entre criação e modificação: copiar um arquivo
+            // (Finder, Drive, cp) costuma renovar a criação e manter a
+            // modificação — a de criação sozinha virava "hoje".
             auto criacao = analise.arquivo.getCreationTime();
+            const auto modificacao = analise.arquivo.getLastModificationTime();
+            if (modificacao != juce::Time() && (criacao == juce::Time() || modificacao < criacao)) criacao = modificacao;
             if (criacao != juce::Time()) {
                 std::string anoStr = criacao.formatted("%Y").toStdString();
                 if (anoStr.size() == 4)

@@ -210,9 +210,29 @@ LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
                 if (format.isObject() && format.hasProperty("duration"))
                     r.duracaoSegundos = juce::String(format["duration"].toString()).getDoubleValue();
 
+                // Data de gravação do vídeo/áudio (tags do container). Sem isto
+                // o ingest caía na data de criação do arquivo em disco — numa
+                // cópia, a data de hoje. QuickTime/iPhone: creationdate (hora
+                // local, com fuso) antes de creation_time (UTC).
+                auto dataValida = [](const juce::String& v) {
+                    const int ano = v.substring(0, 4).getIntValue();
+                    return v.length() >= 10 && ano > 1970 &&
+                           ano <= juce::Time::getCurrentTime().getYear() + 1;  // 1904/1970 = "sem data"
+                };
+                auto dataDasTags = [&](const juce::var& tags) -> std::optional<std::string> {
+                    if (!tags.isObject()) return std::nullopt;
+                    for (const char* chave : {"com.apple.quicktime.creationdate", "creation_time", "date"}) {
+                        const juce::String v = tags[juce::Identifier(chave)].toString().trim();
+                        if (dataValida(v)) return v.toStdString();
+                    }
+                    return std::nullopt;
+                };
+                if (format.isObject()) r.exifDataOriginal = dataDasTags(format["tags"]);
+
                 juce::var streams = root["streams"];
                 if (streams.isArray()) {
                     for (auto& streamVar : *streams.getArray()) {
+                        if (!r.exifDataOriginal) r.exifDataOriginal = dataDasTags(streamVar["tags"]);
                         juce::String tipo = streamVar["codec_type"].toString();
                         if (tipo == "video") {
                             if (streamVar.hasProperty("width"))
