@@ -277,6 +277,12 @@ public:
     }
 
     static constexpr int kAlturaCabecalhoGrupo = 26;
+    // Lista (igual à do INTAKE): cabeçalho de colunas sob o título do grupo.
+    static constexpr int kAlturaCabecalhoColunas = 26;
+    static std::vector<std::pair<int, int>> colunasDaLista(int largura);  // x, largura por coluna
+    static juce::String categoriaDaLista(const std::string& extensao);
+    static juce::Colour corCategoriaDaLista(const juce::String& categoria);
+    static juce::String formatarBytesDaLista(juce::int64 bytes);
     static constexpr int kEspacoEntreGrupos = 6;
 
 private:

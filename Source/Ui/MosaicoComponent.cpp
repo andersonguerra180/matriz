@@ -5,6 +5,8 @@
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
 #include "Tokens.h"
+#include "OriginalSourceMedium.h"
+#include "TraducaoContent.h"
 #include "ProgressoGlobal.h"
 #include "SendToPrintDialog.h"
 
@@ -530,6 +532,51 @@ int MosaicoComponent::indiceSubpastaNaPosicao(juce::Point<int> pos) const {
     return indice;
 }
 
+std::vector<std::pair<int, int>> MosaicoComponent::colunasDaLista(int largura) {
+    // Larguras padrão das colunas da tabela do INTAKE; PATH absorve a sobra.
+    static const int kLarg[] = {36, 80, 220, 110, 150, 80, 250, 150, 200, 80};
+    int fixas = 0;
+    for (int c = 0; c < 10; ++c) if (c != 6) fixas += kLarg[c];
+    const int path = juce::jmax(120, largura - fixas);
+    std::vector<std::pair<int, int>> out;
+    int x = 0;
+    for (int c = 0; c < 10; ++c) {
+        const int w = c == 6 ? path : kLarg[c];
+        out.push_back({x, w});
+        x += w;
+    }
+    return out;
+}
+
+juce::String MosaicoComponent::categoriaDaLista(const std::string& extensao) {
+    switch (matriz::ingest::categoriaPorExtensao(juce::String::fromUTF8(extensao.c_str()))) {
+        case matriz::ingest::CategoriaMidia::Audio: return "Audio";
+        case matriz::ingest::CategoriaMidia::Video: return "Video";
+        case matriz::ingest::CategoriaMidia::Imagem: return "Image";
+        case matriz::ingest::CategoriaMidia::Documento:
+        case matriz::ingest::CategoriaMidia::Texto: return "Document";
+        case matriz::ingest::CategoriaMidia::Sessao: return "Project";
+        default: return "Other";
+    }
+}
+
+juce::Colour MosaicoComponent::corCategoriaDaLista(const juce::String& cat) {
+    // Mesmas cores das etiquetas TYPE do INTAKE.
+    if (cat == "Audio") return juce::Colour(0xff38bdf8);
+    if (cat == "Video") return juce::Colour(0xffa855f7);
+    if (cat == "Image") return juce::Colour(0xfff59e0b);
+    if (cat == "Document") return juce::Colour(0xff10b981);
+    if (cat == "Project") return juce::Colour(0xffec4899);
+    return juce::Colour(0xff94a3b8);
+}
+
+juce::String MosaicoComponent::formatarBytesDaLista(juce::int64 bytes) {
+    if (bytes < 1024) return juce::String(bytes) + " B";
+    if (bytes < 1024 * 1024) return juce::String(bytes / 1024.0, 1) + " KB";
+    if (bytes < 1024 * 1024 * 1024) return juce::String(bytes / (1024.0 * 1024.0), 1) + " MB";
+    return juce::String(bytes / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
+}
+
 void MosaicoComponent::desenharSubpasta(juce::Graphics& g, juce::Rectangle<int> bounds, const SubpastaInfo& sub) const {
     const auto& tk = matriz::ui::tema();
     auto area = bounds.reduced(modoVisao_ == ModoVisao::Lista ? 1 : 4);
@@ -587,7 +634,7 @@ void MosaicoComponent::definirModoVisao(ModoVisao modo) {
     modoVisao_ = modo;
     if (modo == ModoVisao::Lista) {
         celulaLargura_ = getWidth() > 0 ? getWidth() : 600;
-        celulaAltura_ = 44;
+        celulaAltura_ = 32;  // mesma altura de linha da lista do INTAKE
     } else {
         switch (tamanhoCelula_) {
             case TamanhoCelula::Pequeno: celulaLargura_ = 112; celulaAltura_ = 100; break;
@@ -839,7 +886,7 @@ void MosaicoComponent::recalcularLayout() {
     int cursor = matriz::ui::tema().espacoPainel + alturaSecaoSubpastas();
     for (auto& g : grupos_) {
         g.yTopo = cursor;
-        g.yItens = cursor + kAlturaCabecalhoGrupo;
+        g.yItens = cursor + kAlturaCabecalhoGrupo + (modoVisao_ == ModoVisao::Lista ? kAlturaCabecalhoColunas : 0);
         g.linhas = (g.quantidade + colunas_ - 1) / colunas_;
         cursor = g.yItens + g.linhas * celulaAltura_ + kEspacoEntreGrupos;
     }
@@ -1011,7 +1058,7 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     {
         auto celula = boundsDaCelula(indice);
         if (modoVisao_ == ModoVisao::Lista) {
-            naCheckbox = e.getPosition().x < celula.getX() + 22;
+            naCheckbox = e.getPosition().x < celula.getX() + 36;  // coluna de seleção (igual ao INTAKE)
         } else {
             auto celulaReduzida = celula.reduced(4);
             auto areaImagem = celulaReduzida.withHeight(celulaReduzida.getHeight() - 34);
@@ -1671,6 +1718,26 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             g.setColour(tk.textoSecundario);
             g.setFont(font11Bold);
             g.drawText(grupo.rotulo, areaCabecalho.reduced(tema().espacoMedio, 0), juce::Justification::centredLeft);
+            if (modoVisao_ == ModoVisao::Lista) {
+                // Cabeçalho de colunas igual ao da tabela do INTAKE.
+                juce::Rectangle<int> areaCols(0, grupo.yTopo + kAlturaCabecalhoGrupo, getWidth(), kAlturaCabecalhoColunas);
+                g.setColour(tk.painelAlt);
+                g.fillRect(areaCols);
+                g.setColour(tk.borda);
+                g.fillRect(areaCols.getX(), areaCols.getBottom() - 1, areaCols.getWidth(), 1);
+                static const char* const kRotulos[] = {"intake.col_select", "intake.col_type", "intake.col_name",
+                                                       "intake.col_origin", "intake.col_date", "intake.col_size",
+                                                       "intake.col_path", "intake.col_collection",
+                                                       "intake.col_source_media", "intake.col_action"};
+                const auto cols = colunasDaLista(getWidth());
+                g.setColour(tk.textoPrimario);
+                g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+                for (size_t c = 0; c < cols.size(); ++c) {
+                    juce::Rectangle<int> r(cols[c].first, areaCols.getY(), cols[c].second, areaCols.getHeight());
+                    g.drawText(matriz::i18n::t(kRotulos[c]), r.reduced(6, 0), juce::Justification::centredLeft, true);
+                    if (c > 0) g.fillRect(r.getX(), r.getY() + 6, 1, r.getHeight() - 12);
+                }
+            }
         }
 
         int primeiraLinha = juce::jmax(0, (clip.getY() - grupo.yItens) / celulaAltura_);
@@ -1695,6 +1762,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 bool marcadoP = item.marcadoPrint;
                 bool temMarcacao = marcadoH || marcadoK || marcadoP;
 
+                // Fundo zebrado igual ao da tabela do INTAKE.
+                g.setColour(local % 2 == 1 ? tk.painelAlt.withAlpha(0.35f) : tk.painel);
+                g.fillRect(bounds.expanded(1));
+
                 if (marcadoH) {
                     g.setColour(juce::Colour(0xff39ff14).withAlpha(0.18f));
                     g.fillRect(bounds);
@@ -1705,7 +1776,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(juce::Colour(0xffff6b00).withAlpha(0.15f));
                     g.fillRect(bounds);
                 } else if (selecionado) {
-                    g.setColour(tk.acento.withAlpha(0.12f));
+                    g.setColour(tk.acento.withAlpha(0.25f));  // mesmo destaque de linha do INTAKE
                     g.fillRect(bounds);
                 } else if (sobHover) {
                     g.setColour(tk.painelAlt.withAlpha(0.6f));
@@ -1747,10 +1818,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     for (float y = barRect.getY() - barRect.getWidth() * 2; y <= barRect.getBottom() + barRect.getWidth() * 2; y += 8.0f) {
                         g.drawLine(barRect.getX() - 3.0f, y, barRect.getRight() + 3.0f, y + barRect.getWidth(), 3.5f);
                     }
-                } else {
-                    g.setColour(corCat);
-                    g.fillRoundedRectangle(barRect, 2.0f);
                 }
+                (void) corCat;  // lista igual à do INTAKE: sem barra de categoria (o TYPE é a etiqueta)
 
                 if (destacarEditados_ && item.metadadosEditados && !marcadoP && !selecionado) {
                     g.setColour(kZebraYellowList.withAlpha(0.45f));
@@ -1760,15 +1829,27 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(tk.borda.withAlpha(0.2f));
                 g.fillRect(bounds.getX(), bounds.getBottom() - 1, bounds.getWidth(), 1);
 
-                auto linha = bounds.reduced(0, 2);
-                linha.removeFromLeft(10);
+                // Mesmas colunas, larguras e badges da lista do INTAKE (pedido do
+                // operador): sem miniatura, TYPE como etiqueta colorida.
+                const auto cols = colunasDaLista(bounds.getWidth());
+                auto celulaCol = [&](int c) {
+                    return juce::Rectangle<int>(bounds.getX() + cols[static_cast<size_t>(c)].first, bounds.getY(),
+                                                cols[static_cast<size_t>(c)].second, bounds.getHeight());
+                };
+                const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+                auto semValor = [&](juce::Rectangle<int> r) {
+                    g.setColour(tk.textoTerciario);
+                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+                    g.drawText(isPt ? juce::String::fromUTF8("Nenhum") : juce::String("None"), r.reduced(6, 0),
+                               juce::Justification::centredLeft, true);
+                };
 
-                // Checkbox
+                // Seleção
                 constexpr int kCheckDiam = 16;
-                auto areaCheck = linha.removeFromLeft(kCheckDiam + 6);
-                float cx = static_cast<float>(areaCheck.getCentreX() - kCheckDiam / 2);
-                float cy = static_cast<float>(areaCheck.getCentreY() - kCheckDiam / 2);
-                juce::Rectangle<float> checkRect(cx, cy, static_cast<float>(kCheckDiam), static_cast<float>(kCheckDiam));
+                auto areaCheck = celulaCol(0);
+                juce::Rectangle<float> checkRect(static_cast<float>(areaCheck.getCentreX() - kCheckDiam / 2),
+                                                 static_cast<float>(areaCheck.getCentreY() - kCheckDiam / 2),
+                                                 static_cast<float>(kCheckDiam), static_cast<float>(kCheckDiam));
                 if (selecionado) {
                     g.setColour(tk.acento);
                     g.fillRoundedRectangle(checkRect, 3.0f);
@@ -1781,98 +1862,113 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawRoundedRectangle(checkRect, 3.0f, 1.2f);
                 }
 
-                // Thumbnail (square)
-                int thumbSize = bounds.getHeight() - 6;
-                auto areaThumb = linha.removeFromLeft(thumbSize + 4);
-                auto thumbRect = areaThumb.withSizeKeepingCentre(thumbSize, thumbSize);
-                const juce::Image* img = miniaturaCache(item.id);
-                if (img) {
-                    g.setColour(tk.painelAlt);
-                    g.fillRoundedRectangle(thumbRect.toFloat(), 3.0f);
-                    g.drawImage(*img, thumbRect.toFloat(), juce::RectanglePlacement::centred);
-                } else {
-                    pedirCarregamentoMiniatura(item.id);
-                    g.setColour(corCat.withAlpha(0.15f));
-                    g.fillRoundedRectangle(thumbRect.toFloat(), 3.0f);
-                    desenharPlaceholderCategoria(g, thumbRect, item.extensaoArquivo);
-                }
-                g.setColour(corCat);
-                g.drawRoundedRectangle(thumbRect.toFloat(), 3.0f, 1.0f);
-                linha.removeFromLeft(8);
-
-                // Extension badge (right side)
-                juce::String ext = juce::String(item.extensaoArquivo).toUpperCase();
-                int extW = juce::jmax(36, static_cast<int>(ext.length()) * 8 + 12);
-                auto areaExt = linha.removeFromRight(extW + 8);
-                g.setColour(corCat.withAlpha(0.18f));
-                auto extBadge = areaExt.withSizeKeepingCentre(extW, 20);
-                g.fillRoundedRectangle(extBadge.toFloat(), 10.0f);
-                g.setColour(corCat);
-                g.setFont(font10Bold);
-                g.drawText(ext, extBadge, juce::Justification::centred);
-
-                // Selos de marcação H / K / P na lista
-                if (item.marcadoPrint) {
-                    auto pBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
-                    g.setColour(juce::Colour(0xffff6b00));
-                    g.fillRoundedRectangle(pBadge.toFloat(), 3.0f);
+                // TYPE
+                const juce::String categoria = categoriaDaLista(item.extensaoArquivo);
+                {
+                    auto badge = celulaCol(1).reduced(4, 5);
+                    g.setColour(corCategoriaDaLista(categoria));
+                    g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                     g.setColour(juce::Colours::white);
-                    g.setFont(font9Bold);
-                    g.drawText("P", pBadge, juce::Justification::centred);
-                    linha.removeFromRight(3);
-                }
-                if (item.marcadoZip) {
-                    auto kBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
-                    g.setColour(juce::Colour(0xff0077ff));
-                    g.fillRoundedRectangle(kBadge.toFloat(), 3.0f);
-                    g.setColour(juce::Colours::white);
-                    g.setFont(font9Bold);
-                    g.drawText("K", kBadge, juce::Justification::centred);
-                    linha.removeFromRight(3);
-                }
-                if (item.marcadoPublicacao) {
-                    auto hBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
-                    g.setColour(juce::Colour(0xff39ff14));
-                    g.fillRoundedRectangle(hBadge.toFloat(), 3.0f);
-                    g.setColour(juce::Colours::black);
-                    g.setFont(font9Bold);
-                    g.drawText("H", hBadge, juce::Justification::centred);
-                    linha.removeFromRight(3);
-                }
-                if (item.marcadoWatermark) {
-                    auto wBadge = linha.removeFromRight(18).withSizeKeepingCentre(16, 16);
-                    g.setColour(juce::Colour(0xffffcc00));
-                    g.fillRoundedRectangle(wBadge.toFloat(), 3.0f);
-                    g.setColour(juce::Colours::black);
-                    g.setFont(font9Bold);
-                    g.drawText("W", wBadge, juce::Justification::centred);
-                    linha.removeFromRight(3);
+                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.drawText(categoria.toUpperCase(), badge, juce::Justification::centred, true);
                 }
 
-                auto areaTexto = linha.reduced(4, 0);
-                int metadeAltura = areaTexto.getHeight() / 2;
+                // ASSET / FILENAME (+ OFFLINE)
+                {
+                    auto r = celulaCol(2);
+                    juce::String nome = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str())
+                                                            : juce::String::fromUTF8(item.titulo.c_str());
+                    g.setColour(tk.textoPrimario);
+                    g.setFont(juce::Font(juce::FontOptions(12.5f)));
+                    if (item.offline) {
+                        auto off = juce::Rectangle<int>(r.getRight() - 64, r.getCentreY() - 9, 58, 18);
+                        g.drawText(nome, r.withRight(off.getX() - 4).reduced(6, 0), juce::Justification::centredLeft, true);
+                        g.setColour(juce::Colour(0xffef4444));
+                        g.fillRoundedRectangle(off.toFloat(), 3.0f);
+                        g.setColour(juce::Colours::white);
+                        g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+                        g.drawText("OFFLINE", off, juce::Justification::centred);
+                    } else {
+                        g.drawText(nome, r.reduced(6, 0), juce::Justification::centredLeft, true);
+                    }
+                }
 
-                juce::String nomeExibicaoList = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str()) : juce::String::fromUTF8(item.titulo.c_str());
+                // EXTENSION
+                g.setColour(tk.textoSecundario);
+                g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                g.drawText(item.extensaoArquivo.empty() ? juce::String("-")
+                                                        : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase(),
+                           celulaCol(3).reduced(6, 0), juce::Justification::centredLeft, true);
+
+                // DATE CREATED (só o ano, como no INTAKE)
+                {
+                    // Mesma regra do INTAKE: data do metadado; sem ela, a de entrada.
+                    juce::String data = juce::String::fromUTF8((item.dataCriacao.empty() ? item.criadoEm : item.dataCriacao).c_str());
+                    juce::String ano = data.length() >= 4 ? data.substring(0, 4) : juce::String();
+                    if (ano.isEmpty() && item.ano) ano = juce::String(*item.ano);
+                    g.setFont(juce::Font(juce::FontOptions(12.0f)));
+                    g.drawText(ano.isNotEmpty() ? ano : "-", celulaCol(4).reduced(6, 0), juce::Justification::centredLeft, true);
+                }
+
+                // SIZE
                 g.setColour(tk.textoPrimario);
-                g.setFont(font13Bold);
-                g.drawText(nomeExibicaoList, areaTexto.removeFromTop(metadeAltura),
+                g.drawText(formatarBytesDaLista(item.tamanhoBytes), celulaCol(5).reduced(4, 0),
                            juce::Justification::centredLeft, true);
 
-                juce::String info2 = item.extensaoArquivo.empty() ? juce::String("FILE") : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase();
-                if (!item.pastaNome.empty()) info2 += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
-                if (item.offline) info2 += "  |  OFFLINE";
-                g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
-                g.setFont(font11Normal);
-                g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
+                // PATH
+                g.setColour(tk.textoSecundario);
+                const std::string& caminho = !item.caminhoAbsolutoOrigem.empty() ? item.caminhoAbsolutoOrigem
+                                                                                  : item.caminhoRelativoArquivo;
+                g.drawText(caminho.empty() ? juce::String("-") : juce::String::fromUTF8(caminho.c_str()),
+                           celulaCol(6).reduced(6, 0), juce::Justification::centredLeft, true);
 
-                if (item.offline) {
-                    juce::Rectangle<int> offBadgeList = areaExt.withX(areaExt.getX() - 65).withWidth(58).withSizeKeepingCentre(58, 18);
-                    g.setColour(juce::Colour(0xd0000000));
-                    g.fillRoundedRectangle(offBadgeList.toFloat(), 4.0f);
-                    g.setColour(juce::Colour(0xfff97316));
-                    g.drawRoundedRectangle(offBadgeList.toFloat(), 4.0f, 1.0f);
-                    g.setFont(font9Bold);
-                    g.drawText("OFFLINE", offBadgeList, juce::Justification::centred);
+                // CONTENT
+                if (item.collectionType && !item.collectionType->empty()) {
+                    auto badge = celulaCol(7).reduced(4, 5);
+                    g.setColour(tk.acento);
+                    g.fillRoundedRectangle(badge.toFloat(), 3.0f);
+                    g.setColour(tk.textoSobreAcento);
+                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                    g.drawText(traduzirContent(juce::String::fromUTF8(item.collectionType->c_str()), isPt), badge,
+                               juce::Justification::centred, true);
+                } else {
+                    semValor(celulaCol(7));
+                }
+
+                // ORIGINAL SOURCE MEDIUM
+                {
+                    juce::String texto;
+                    if (!item.sourceMedia.empty())
+                        texto = juce::String::fromUTF8(OriginalSourceMediumInfo::deserialize(item.sourceMedia).toDisplaySummary().c_str());
+                    if (texto.isEmpty() || texto == "None / Unknown") {
+                        semValor(celulaCol(8));
+                    } else {
+                        auto badge = celulaCol(8).reduced(4, 5);
+                        g.setColour(juce::Colour(0xff0d9488));
+                        g.fillRoundedRectangle(badge.toFloat(), 3.0f);
+                        g.setColour(juce::Colours::white);
+                        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                        g.drawText(texto, badge.reduced(6, 0), juce::Justification::centredLeft, true);
+                    }
+                }
+
+                // ACTION: no Metadata, as marcas H / K / P / W
+                {
+                    auto r = celulaCol(9).reduced(4, 0);
+                    auto selo = [&](bool on, const char* letra, juce::Colour cor, juce::Colour corTexto) {
+                        if (!on) return;
+                        auto b = r.removeFromLeft(18).withSizeKeepingCentre(16, 16);
+                        r.removeFromLeft(2);
+                        g.setColour(cor);
+                        g.fillRoundedRectangle(b.toFloat(), 3.0f);
+                        g.setColour(corTexto);
+                        g.setFont(font9Bold);
+                        g.drawText(letra, b, juce::Justification::centred);
+                    };
+                    selo(item.marcadoPublicacao, "H", juce::Colour(0xff39ff14), juce::Colours::black);
+                    selo(item.marcadoZip, "K", juce::Colour(0xff0077ff), juce::Colours::white);
+                    selo(item.marcadoPrint, "P", juce::Colour(0xffff6b00), juce::Colours::white);
+                    selo(item.marcadoWatermark, "W", juce::Colour(0xffffcc00), juce::Colours::black);
                 }
 
                 continue;
