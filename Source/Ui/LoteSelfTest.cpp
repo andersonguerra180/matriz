@@ -1230,6 +1230,32 @@ int rodarLoteSelfTest() {
 
         DuplicatesWorkspaceComponent dw(pa);
         dw.gruposDetectados_ = {par(a1, a2), par(b1, b2)};
+        // Card de duplicata com miniatura grande (conferir a olho):
+        // test-output/duplicatas_card.png.
+        if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+            for (auto& g : dw.gruposDetectados_) {
+                for (auto* m : {&g.original, &g.duplicata}) {
+                    m->titulo = "Entrevista Dona Maria - fita 3";
+                    m->codigoAcervo = "CRT-000123";
+                    m->ext = "wav";
+                    m->duracao = 754.0;
+                    m->lufs = -18.4;
+                    m->tamanhoBytes = 133 * 1024 * 1024;
+                    m->fullPath = "/Volumes/ACERVO/Entrevistas/1987/Dona Maria/fita 3/Entrevista Dona Maria - fita 3.wav";
+                }
+                g.duplicata.tamanhoCoincide = g.original.tamanhoCoincide = true;
+            }
+            dw.setSize(1300, 520);
+            dw.estado_ = DuplicatesWorkspaceComponent::State::Results;
+            dw.viewport_->setVisible(true);
+            dw.atualizarListaEStatusAposResolucao();
+            bombear(100);
+            juce::PNGImageFormat png;
+            auto arq = dir.getChildFile("duplicatas_card.png");
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(dw.createComponentSnapshot(dw.getLocalBounds()), *out);
+        }
         dw.aplicarEscolhaGlobal(5);  // manter a primeira no backup
         checar(estado(a2) == "duplicata" && estado(a1) != "duplicata", "first in backup: pair A keeps file 1");
         checar(dw.gruposDetectados_.size() == 1 && dw.gruposDetectados_.front().original.itemId == b1 &&

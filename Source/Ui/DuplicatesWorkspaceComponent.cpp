@@ -16,8 +16,10 @@ namespace matriz::ui {
 
 namespace {
     // Closed: top margin (10) + subcard height (130) + bottom margin (12).
-    constexpr int kAlturaFechado = 152;
-    constexpr int kAlturaAberto = 490;
+    // Sub-card maior (miniatura ocupando a altura toda — item 2).
+    constexpr int kAlturaSubCard = 168;
+    constexpr int kAlturaFechado = kAlturaSubCard + 22;
+    constexpr int kAlturaAberto = kAlturaSubCard + 360;
 
     // Notas nunca são sobrescritas pela resolução de duplicatas: acrescenta.
     const char* const kSqlAcrescentarNota =
@@ -586,7 +588,7 @@ private:
             int rightPanelW = btnW + 20;
             int subCardsAreaW = w - rightPanelW - 20;
             int subW = std::max(120, (subCardsAreaW - 14) / 2);
-            int subH = 130;
+            int subH = kAlturaSubCard;
 
             auto drawSubCard = [&](juce::Graphics& g, int x, int y, int subWidth, int subHeight,
                                    const DuplicateMatch& m, const DuplicateMatch& other, bool isDup, const juce::Image& thumb) {
@@ -622,76 +624,88 @@ private:
                 }
                 g.drawText(headerTag, x + 8, y + 2, subWidth - 16, 20, juce::Justification::centredLeft, true);
 
-                // 4. Content layout
-                int contentY = y + 28;
-                int thumbSize = 64;
-                juce::Rectangle<int> thumbRect(x + 8, contentY, thumbSize, thumbSize);
+                // 4. Miniatura grande: ocupa toda a altura do sub-card abaixo
+                // da faixa do cabeçalho, colada à esquerda; as informações
+                // ficam à direita, em linhas com respiro.
+                const int topoConteudo = y + 25;
+                const int alturaConteudo = subHeight - 26;
+                const int thumbW = juce::jmin(alturaConteudo + 24, subWidth * 2 / 5);
+                juce::Rectangle<int> thumbRect(x + 1, topoConteudo, thumbW, alturaConteudo);
 
-                if (thumb.isValid()) {
-                    g.drawImageWithin(thumb, thumbRect.getX(), thumbRect.getY(), thumbRect.getWidth(), thumbRect.getHeight(),
-                                      juce::RectanglePlacement::centred, false);
-                } else {
-                    g.setColour(tk.painelAlt);
-                    g.fillRoundedRectangle(thumbRect.toFloat(), tk.raioPequeno);
-                    g.setColour(tk.textoTerciario);
-                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
-                    juce::String extension = juce::String(m.ext).toUpperCase();
-                    g.drawText(extension, thumbRect, juce::Justification::centred);
+                g.saveState();
+                {
+                    juce::Path clip;
+                    clip.addRoundedRectangle(static_cast<float>(thumbRect.getX()), static_cast<float>(thumbRect.getY()),
+                                             static_cast<float>(thumbRect.getWidth()), static_cast<float>(thumbRect.getHeight()),
+                                             5.0f, 5.0f, false, false, true, false);
+                    g.reduceClipRegion(clip);
+                    g.setColour(juce::Colours::black.withAlpha(0.35f));
+                    g.fillRect(thumbRect);
+                    if (thumb.isValid()) {
+                        g.drawImageWithin(thumb, thumbRect.getX() + 4, thumbRect.getY() + 4, thumbRect.getWidth() - 8,
+                                          thumbRect.getHeight() - 8, juce::RectanglePlacement::centred, false);
+                    } else {
+                        g.setColour(tk.textoTerciario);
+                        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                        g.drawText(juce::String(m.ext).toUpperCase(), thumbRect, juce::Justification::centred);
+                    }
                 }
-                g.setColour(tk.borda.withAlpha(0.60f));
-                g.drawRoundedRectangle(thumbRect.toFloat(), tk.raioPequeno, 1.0f);
+                g.restoreState();
+                g.setColour(tk.borda.withAlpha(0.50f));
+                g.drawVerticalLine(thumbRect.getRight(), static_cast<float>(thumbRect.getY()), static_cast<float>(thumbRect.getBottom()));
 
-                // Text fields shifted to right of thumbnail
-                int metaX = x + 8 + thumbSize + 8;
-                int metaW = subWidth - (metaX - x) - 8;
+                const int metaX = thumbRect.getRight() + 12;
+                const int metaW = x + subWidth - metaX - 10;
+                int linhaY = topoConteudo + 6;
 
-                // Row 1: Title
-                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+                // Título
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo + 1.0f, juce::Font::bold)));
                 g.setColour(m.nomeCoincide ? juce::Colour(0xffef4444) : tk.textoPrimario);
-                g.drawText(matriz::i18n::t("duplicatas.title") + " " + m.titulo, metaX, contentY, metaW, 16, juce::Justification::left, true);
+                g.drawText(m.titulo.empty() ? juce::String(m.caminhoRelativo) : juce::String(m.titulo),
+                           metaX, linhaY, metaW, 18, juce::Justification::centredLeft, true);
+                linhaY += 22;
 
-                // Row 2: Code + Format
-                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-                g.setColour(tk.textoSecundario);
-                juce::String row2 = matriz::i18n::t("duplicatas.code") + " " + (m.codigoAcervo.empty() ? "N/A" : m.codigoAcervo)
-                                  + " \u00B7 " + matriz::i18n::t("duplicatas.format") + " " + juce::String(m.ext).toUpperCase();
-                g.drawText(row2, metaX, contentY + 16, metaW, 15, juce::Justification::left, true);
+                auto linhaInfo = [&](const juce::String& rotulo, const juce::String& valor, juce::Colour corValor) {
+                    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+                    g.setColour(tk.textoTerciario);
+                    const int rotuloW = 78;
+                    g.drawText(rotulo, metaX, linhaY, rotuloW, 16, juce::Justification::centredLeft, true);
+                    g.setColour(corValor);
+                    g.drawText(valor, metaX + rotuloW, linhaY, metaW - rotuloW, 16, juce::Justification::centredLeft, true);
+                    linhaY += 17;
+                };
 
-                // Row 3: Duration / Dimensions / LUFS
-                juce::String row3;
+                linhaInfo(matriz::i18n::t("duplicatas.code"), m.codigoAcervo.empty() ? juce::String("N/A") : juce::String(m.codigoAcervo),
+                          tk.textoSecundario);
+                linhaInfo(matriz::i18n::t("duplicatas.format"), juce::String(m.ext).toUpperCase(), tk.textoSecundario);
+
                 if (m.duracao > 0.0) {
                     int min = static_cast<int>(m.duracao) / 60;
                     int sec = static_cast<int>(m.duracao) % 60;
-                    row3 = matriz::i18n::t("duplicatas.duration") + " " + juce::String::formatted("%02d:%02d", min, sec);
+                    juce::String dur = juce::String::formatted("%02d:%02d", min, sec);
+                    if (m.lufs != 0.0) dur += juce::String::fromUTF8("  \u00B7  LUFS ") + juce::String::formatted("%.1f", m.lufs);
+                    linhaInfo(matriz::i18n::t("duplicatas.duration"), dur, tk.textoSecundario);
                 } else if (m.largura > 0 && m.altura > 0) {
-                    row3 = matriz::i18n::t("duplicatas.dimensions") + " " + juce::String(m.largura) + "x" + juce::String(m.altura);
-                } else {
-                    row3 = matriz::i18n::t("duplicatas.duration") + " N/A";
+                    juce::String dim = juce::String(m.largura) + " x " + juce::String(m.altura);
+                    if (!m.orientation.empty() || !m.colorSpace.empty())
+                        dim += juce::String::fromUTF8("  \u00B7  ") + juce::String(m.orientation) + " " + juce::String(m.colorSpace);
+                    linhaInfo(matriz::i18n::t("duplicatas.dimensions"), dim.trim(), tk.textoSecundario);
                 }
-                if (m.lufs != 0.0) {
-                    row3 += " \u00B7 LUFS: " + juce::String::formatted("%.1f", m.lufs);
-                }
-                g.setColour(tk.textoSecundario);
-                g.drawText(row3, metaX, contentY + 31, metaW, 15, juce::Justification::left, true);
 
-                // Row 4: File Size + Extra tags
-                double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
-                juce::String row4 = matriz::i18n::t("duplicatas.file_size") + " " + juce::String::formatted("%.1f KB", kb);
-                if (!m.orientation.empty() || !m.colorSpace.empty()) {
-                    row4 += " \u00B7 " + juce::String(m.orientation) + " " + juce::String(m.colorSpace);
-                }
-                g.setColour(m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
-                g.drawText(row4, metaX, contentY + 46, metaW, 15, juce::Justification::left, true);
+                const double kb = static_cast<double>(m.tamanhoBytes) / 1024.0;
+                const juce::String tamanho = kb >= 1024.0 ? juce::String::formatted("%.1f MB", kb / 1024.0)
+                                                          : juce::String::formatted("%.1f KB", kb);
+                linhaInfo(matriz::i18n::t("duplicatas.file_size"), tamanho,
+                          m.tamanhoCoincide ? juce::Colour(0xffef4444) : tk.textoSecundario);
 
-                // Divider line before path
+                // Caminho no rodapé, até 2 linhas.
+                const int rodapeY = y + subHeight - 36;
                 g.setColour(tk.borda.withAlpha(0.35f));
-                g.drawHorizontalLine(contentY + 68, static_cast<float>(x + 6), static_cast<float>(x + subWidth - 6));
-
-                // Bottom Path row
+                g.drawHorizontalLine(rodapeY - 3, static_cast<float>(metaX), static_cast<float>(x + subWidth - 8));
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                g.setFont(juce::Font(juce::FontOptions(10.5f)));
                 juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
-                g.drawText(matriz::i18n::t("duplicatas.path") + " " + displayPath, x + 8, contentY + 70, subWidth - 16, 16, juce::Justification::left, true);
+                g.drawFittedText(displayPath, metaX, rodapeY, metaW, 30, juce::Justification::topLeft, 2, 1.0f);
             };
 
             // Draw Original sub-card
@@ -703,7 +717,7 @@ private:
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
-                g.drawHorizontalLine(140, 10.0f, static_cast<float>(getWidth() - 10));
+                g.drawHorizontalLine(10 + kAlturaSubCard + 10, 10.0f, static_cast<float>(getWidth() - 10));
             }
         }
 
@@ -716,8 +730,9 @@ private:
 
             if (isExpanded_) {
                 int previewW = w / 2 - 25;
-                if (previewOriginal_) previewOriginal_->setBounds(15, 195, previewW, 280);
-                if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, 195, previewW, 280);
+                const int previewY = 10 + kAlturaSubCard + 55;
+                if (previewOriginal_) previewOriginal_->setBounds(15, previewY, previewW, 280);
+                if (previewDuplicata_) previewDuplicata_->setBounds(w / 2 + 10, previewY, previewW, 280);
             }
         }
         
