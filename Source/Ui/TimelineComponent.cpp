@@ -1,5 +1,6 @@
 #include "TimelineComponent.h"
 
+#include "../Audio/FormatoAudioQuickTime.h"
 #include "../I18n/Strings.h"
 #include "FormatoTempo.h"
 #include "Tokens.h"
@@ -64,7 +65,7 @@ public:
 } // namespace
 
 TimelineComponent::TimelineComponent(ProjetoAberto& projeto) : projeto_(projeto) {
-    formatManager_.registerBasicFormats();
+    matriz::audio::registrarFormatosDeAudio(formatManager_);  // inclui .mov (vídeo QuickTime)
     onda_ = std::make_unique<juce::AudioThumbnail>(512, formatManager_, cacheOnda_);
     onda_->addChangeListener(nullptr);
     setWantsKeyboardFocus(true);

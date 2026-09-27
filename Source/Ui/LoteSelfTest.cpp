@@ -16,6 +16,7 @@
 #include "BackupVersionsComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Audio/FormatoAudioQuickTime.h"
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
 #include "DuplicatesWorkspaceComponent.h"
@@ -1284,6 +1285,31 @@ int rodarLoteSelfTest() {
     raizU.deleteRecursively();
 
     // ------------------- Lista de hoje: LOCATE na pasta, autocomplete único, CDR
+    std::cout << "\n-- Video preview: audio of a .mov (waveform + sound) --\n";
+    {
+        auto mov = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("tools/fixtures/video_aac.mov");
+        juce::AudioFormatManager basico;
+        basico.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> semQt(basico.createReaderFor(mov));
+        checar(mov.existsAsFile() && semQt == nullptr,
+               "fixture exists and plain JUCE formats cannot read a .mov (the bug)");
+        juce::AudioFormatManager gm;
+        matriz::audio::registrarFormatosDeAudio(gm);
+        std::unique_ptr<juce::AudioFormatReader> leitor(gm.createReaderFor(mov));
+        checar(leitor != nullptr, ".mov audio opens with the QuickTime reader (timeline)");
+        std::unique_ptr<juce::AudioFormatReader> leitorStream(
+            gm.createReaderFor(std::unique_ptr<juce::InputStream>(mov.createInputStream().release())));
+        checar(leitorStream != nullptr, ".mov audio opens from a stream too (waveform / AudioThumbnail)");
+        if (leitor) {
+            const double dur = static_cast<double>(leitor->lengthInSamples) / leitor->sampleRate;
+            juce::AudioBuffer<float> buf(static_cast<int>(leitor->numChannels), 4800);
+            leitor->read(&buf, 0, 4800, 24000, true, true);  // do meio do arquivo
+            checar(leitor->numChannels == 2 && std::abs(dur - 1.0) < 0.1 && buf.getMagnitude(0, 4800) > 0.05f,  // senoide do ffmpeg: amplitude 1/8
+                   ".mov: 2 channels, ~1 s, real signal (dur " + juce::String(dur, 2) + ", peak " +
+                       juce::String(buf.getMagnitude(0, 4800), 2) + ")");
+        }
+    }
+
     std::cout << "\n-- Locate opens in the file's folder, shared autocomplete, CorelDRAW icon --\n";
     {
         juce::File base = juce::File::getSpecialLocation(juce::File::tempDirectory)

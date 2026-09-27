@@ -352,6 +352,7 @@ target_sources(matriz PRIVATE
     Source/Ui/DocumentPreviewComponent.cpp
     Source/Ui/DocumentPreviewBridge.mm
     Source/Audio/MotorReproducao.cpp
+    Source/Audio/FormatoAudioQuickTime.cpp
     Source/Ingest/FluxoLote.cpp
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
