@@ -28,6 +28,9 @@ void gravarTema(const juce::String& tema);
 
 // "Asset Location Not Found" > SKIP: não perguntar de novo pra este projeto
 // enquanto faltar o mesmo arquivo de exemplo (situação diferente = pergunta).
+// Última conta do Google Drive escolhida (fica marcada no menu de contas).
+juce::String lerUltimaContaGoogleDrive();
+void gravarUltimaContaGoogleDrive(const juce::String& conta);
 juce::String lerRelinkIgnorado(const juce::String& projetoId);
 void gravarRelinkIgnorado(const juce::String& projetoId, const juce::String& amostraAusente);
 

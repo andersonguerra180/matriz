@@ -60,6 +60,13 @@ void gravarTema(const juce::String& tema) {
     arquivo().saveIfNeeded();
 }
 
+juce::String lerUltimaContaGoogleDrive() { return arquivo().getValue("gdrive_ultima_conta", {}); }
+
+void gravarUltimaContaGoogleDrive(const juce::String& conta) {
+    arquivo().setValue("gdrive_ultima_conta", conta);
+    arquivo().saveIfNeeded();
+}
+
 juce::String lerRelinkIgnorado(const juce::String& projetoId) {
     return arquivo().getValue("relink_ignorado_" + projetoId, {});
 }

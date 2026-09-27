@@ -221,8 +221,6 @@ private:
     bool googleDriveComoDestino_ = false;
     juce::File pastaGoogleDrive_;  // resolved GD mount, if selected
 
-    // Helper: detect Google Drive Desktop mount (macOS)
-    static juce::File detectarPastaGoogleDrive();
 
     // === ORGANIZATION section ===
     std::unique_ptr<juce::Label> labelOrg_;

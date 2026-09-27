@@ -1,4 +1,5 @@
 #include "StorageWorkspaceComponent.h"
+#include "GoogleDriveContas.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Reconciliacao.h"
@@ -1042,27 +1043,16 @@ void StorageWorkspaceComponent::carregarDados() {
         }
     } catch (...) {}
 
-    // Injetar card virtual do Google Drive se a pasta local estiver montada
+    // Um card virtual por conta do Google Drive montada (antes: só a primeira
+    // conta encontrada — com várias contas mostrava a errada).
     {
-        auto detectGDrive = [] () -> juce::File {
-            juce::File base = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                                  .getChildFile("Library/CloudStorage");
-            if (base.isDirectory()) {
-                for (auto& c : base.findChildFiles(juce::File::findDirectories, false, "GoogleDrive-*")) {
-                    auto myDrive = c.getChildFile("My Drive");
-                    if (myDrive.isDirectory()) return myDrive;
-                    if (c.isDirectory()) return c;
-                }
-            }
-            juce::File legacy = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                                    .getChildFile("Google Drive");
-            return legacy.isDirectory() ? legacy : juce::File();
-        };
-        juce::File gdPath = detectGDrive();
-        if (gdPath.isDirectory()) {
+        int n = 0;
+        for (const auto& conta : contasGoogleDrive()) {
+            if (conta.copiaAntiga) continue;
+            const juce::File gdPath = conta.pasta;
             StorageDevice gd;
-            gd.id = "__google_drive__";
-            gd.nome = "Google Drive";
+            gd.id = "__google_drive__" + std::to_string(n++);
+            gd.nome = "Google Drive - " + conta.rotulo.toStdString();
             gd.tipo = "cloud";
             gd.localizacao = gdPath.getFullPathName();
             gd.online = true;

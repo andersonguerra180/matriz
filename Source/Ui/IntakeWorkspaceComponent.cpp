@@ -4,6 +4,7 @@
 // ==============================================================================
 
 #include "IntakeWorkspaceComponent.h"
+#include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
 #include "../Ficha/AutocompleteHistorico.h"
 
@@ -1614,37 +1615,13 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     // Botão Google Drive — com logo googledrive.png
     auto btnGD = std::make_unique<GoogleDriveIconButton>();
     btnGD->onClick = [this] {
-        // Detectar pasta montada do Google Drive Desktop (macOS)
-        juce::File gdBase = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                                .getChildFile("Library/CloudStorage");
-        juce::File gdFolder;
-        if (gdBase.isDirectory()) {
-            for (auto& child : gdBase.findChildFiles(juce::File::findDirectories, false, "GoogleDrive-*")) {
-                auto myDrive = child.getChildFile("My Drive");
-                if (myDrive.isDirectory()) { gdFolder = myDrive; break; }
-                if (child.isDirectory()) { gdFolder = child; break; }
-            }
-        }
-        // Fallback: pasta legada
-        if (!gdFolder.isDirectory())
-            gdFolder = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Google Drive");
-
-        if (gdFolder.isDirectory()) {
-            // Abrir o seletor de arquivos apontado para a pasta do Google Drive
-            if (aoIngerirDeGoogleDrive) {
-                aoIngerirDeGoogleDrive(gdFolder);
-            } else if (aoPedirIngerirArquivos) {
-                aoPedirIngerirArquivos();
-            }
-        } else {
-            bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::MessageBoxIconType::InfoIcon,
-                "Google Drive",
-                isPt
-                    ? juce::String::fromUTF8("Pasta do Google Drive não encontrada.\nInstale o Google Drive para Desktop em drive.google.com/drive/download")
-                    : "Google Drive folder not found.\nInstall Google Drive for Desktop from drive.google.com/drive/download");
-        }
+        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
+        juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
+        escolherContaGoogleDrive(btnGoogleDrive_.get(), [safeThis](const juce::File& gdFolder) {
+            if (!safeThis) return;
+            if (safeThis->aoIngerirDeGoogleDrive) safeThis->aoIngerirDeGoogleDrive(gdFolder);
+            else if (safeThis->aoPedirIngerirArquivos) safeThis->aoPedirIngerirArquivos();
+        });
     };
     btnGoogleDrive_ = std::move(btnGD);
     addAndMakeVisible(*btnGoogleDrive_);

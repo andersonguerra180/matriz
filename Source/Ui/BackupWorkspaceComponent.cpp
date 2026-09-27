@@ -1,4 +1,5 @@
 #include "BackupWorkspaceComponent.h"
+#include "GoogleDriveContas.h"
 #include "BackupFileSelectorDialog.h"
 #include "BackupSyncDialog.h"
 #include "BackupScanProgressDialog.h"
@@ -1403,13 +1404,14 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         ? juce::String::fromUTF8("Criar destino no Google Drive (requer Google Drive para Desktop)")
         : "Create destination in Google Drive (requires Google Drive for Desktop)");
     btnGoogleDriveDest_->onClick = [this, isPtGDest] {
-        auto gdFolder = detectarPastaGoogleDrive();
-        if (gdFolder.isDirectory()) {
+        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
+        juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+        escolherContaGoogleDrive(btnGoogleDriveDest_.get(), [safeThis, isPtGDest](const juce::File& gdFolder) {
+            if (!safeThis) return;
             auto chooser = std::make_shared<juce::FileChooser>(
                 isPtGDest ? juce::String::fromUTF8("Selecione ou crie uma subpasta no Google Drive para o Destino")
                           : "Select or create a subfolder in Google Drive for the Destination",
                 gdFolder);
-            juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
             chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                                   [safeThis, chooser](const juce::FileChooser& fc) {
                                       if (!safeThis) return;
@@ -1417,14 +1419,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
                                       if (subpasta == juce::File()) return;
                                       safeThis->criarNovoClone(subpasta);
                                   });
-        } else {
-            juce::AlertWindow::showMessageBoxAsync(
-                juce::MessageBoxIconType::InfoIcon,
-                "Google Drive",
-                isPtGDest
-                    ? juce::String::fromUTF8("Pasta do Google Drive não encontrada.\nInstale o Google Drive para Desktop em drive.google.com/drive/download")
-                    : "Google Drive folder not found.\nInstall Google Drive for Desktop from drive.google.com/drive/download");
-        }
+        });
     };
     configContainer_->addAndMakeVisible(*btnGoogleDriveDest_);
 
@@ -2830,24 +2825,6 @@ void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
             }
         }
     });
-}
-
-juce::File BackupWorkspaceComponent::detectarPastaGoogleDrive() {
-    // Caminho moderno (Google Drive Desktop ≥ v55, macOS 12+)
-    juce::File base = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                          .getChildFile("Library/CloudStorage");
-    if (base.isDirectory()) {
-        for (auto& child : base.findChildFiles(juce::File::findDirectories, false, "GoogleDrive-*")) {
-            auto myDrive = child.getChildFile("My Drive");
-            if (myDrive.isDirectory()) return myDrive;
-            if (child.isDirectory()) return child;
-        }
-    }
-    // Caminho legado (Google Drive pré-2021)
-    juce::File legacy = juce::File::getSpecialLocation(juce::File::userHomeDirectory)
-                            .getChildFile("Google Drive");
-    if (legacy.isDirectory()) return legacy;
-    return juce::File(); // não encontrado
 }
 
 void BackupWorkspaceComponent::iniciarBackup() {
