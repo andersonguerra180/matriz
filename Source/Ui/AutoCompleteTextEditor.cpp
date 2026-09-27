@@ -21,6 +21,10 @@ public:
     PopupRow(juce::String valor, std::function<void(const juce::String&)> onSelecionar)
         : valor_(std::move(valor)), onSelecionar_(std::move(onSelecionar)) {
         setWantsKeyboardFocus(false);
+        // Sem isto o clique não chegava na linha: o JUCE move o foco no
+        // mouseDown (pra janela, já que a linha não aceita foco), o TextEditor
+        // perde o foco e esconde — destrói — o popup antes do mouseUp.
+        setMouseClickGrabsKeyboardFocus(false);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
@@ -49,7 +53,10 @@ private:
 // juce::Viewport onde a ficha vive), nunca do TextEditor.
 class AutoCompleteTextEditor::Popup : public juce::Component {
 public:
-    Popup() { setWantsKeyboardFocus(false); }
+    Popup() {
+        setWantsKeyboardFocus(false);
+        setMouseClickGrabsKeyboardFocus(false);
+    }
 
     void definirValores(const std::vector<juce::String>& valores, int largura,
                          std::function<void(const juce::String&)> onSelecionar) {
