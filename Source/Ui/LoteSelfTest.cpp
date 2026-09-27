@@ -15,6 +15,7 @@
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
 #include "BackupWorkspaceComponent.h"
+#include "DuplicatesWorkspaceComponent.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Analytics/AssetGeolocation.h"
@@ -1058,6 +1059,62 @@ int rodarLoteSelfTest() {
                "sidecars are recognised, a lone .xmp is still a file (" + nomes.joinIntoString(", ") + ")");
         pasta.deleteRecursively();
     }
+
+    // --------------------------------- Etapa 9: Duplicates, critérios rápidos
+    std::cout << "\n-- Duplicates quick criteria: most recent ingest / first in backup, ties stay manual --\n";
+    juce::File raizQ = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_criterios_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizQ.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Criterios";
+        params.prefixoNomenclatura = "CRT";
+        auto projeto = matriz::model::Project::criar(raizQ.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        auto novo = [&](const std::string& codigo, const std::string& ingerido) {
+            auto id = inserirItem(reg, projetoId, codigo, false);
+            reg.run("UPDATE arquivo SET criado_em = ? WHERE item_id = ?", {Value::of(ingerido), Value::of(id)});
+            return id;
+        };
+        auto noBackup = [&](const std::string& id, const std::string& quando) {
+            reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                    "checksum_sha256, consolidado_em) SELECT ?, item_id, '', id, ?, 'x', ? FROM arquivo WHERE item_id = ?",
+                    {Value::of(matriz::model::novoUuid()), Value::of(id + ".wav"), Value::of(quando), Value::of(id)});
+        };
+        auto par = [&](const std::string& a, const std::string& b) {
+            DuplicatesWorkspaceComponent::DuplicateGroup g;
+            g.original.itemId = a;
+            g.duplicata.itemId = b;
+            return g;
+        };
+        auto estado = [&](const std::string& id) {
+            auto st = reg.prepare("SELECT estado FROM item WHERE id = ?");
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        // Par A: o 1 entrou no backup; o 2 foi ingerido depois.
+        const auto a1 = novo("CRT-A1", "2026-01-01T10:00:00Z"), a2 = novo("CRT-A2", "2026-03-01T10:00:00Z");
+        noBackup(a1, "2026-01-05T10:00:00Z");
+        // Par B: nenhum tem backup.
+        const auto b1 = novo("CRT-B1", "2026-02-01T10:00:00Z"), b2 = novo("CRT-B2", "2026-01-01T10:00:00Z");
+
+        DuplicatesWorkspaceComponent dw(pa);
+        dw.gruposDetectados_ = {par(a1, a2), par(b1, b2)};
+        dw.aplicarEscolhaGlobal(5);  // manter a primeira no backup
+        checar(estado(a2) == "duplicata" && estado(a1) != "duplicata", "first in backup: pair A keeps file 1");
+        checar(dw.gruposDetectados_.size() == 1 && dw.gruposDetectados_.front().original.itemId == b1 &&
+                   estado(b1) != "duplicata" && estado(b2) != "duplicata",
+               "no backup on either side: pair B stays for a manual decision (flagged)");
+        dw.aplicarEscolhaGlobal(4);  // manter a ingestão mais recente
+        checar(estado(b2) == "duplicata" && estado(b1) != "duplicata" && dw.gruposDetectados_.empty(),
+               "most recent ingest: pair B keeps the newer file");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("criteria selftest: ") + e.what());
+    }
+    raizQ.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
