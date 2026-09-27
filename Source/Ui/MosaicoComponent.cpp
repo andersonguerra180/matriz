@@ -723,6 +723,14 @@ double MosaicoComponent::tamanhoContinuoAtual() const {
     return (celulaLargura_ - 80.0) / (320.0 - 80.0);
 }
 
+void MosaicoComponent::ordenarListaPorColuna(int coluna, bool ascendente) {
+    colunaOrdenacaoLista_ = coluna;
+    ordenacaoListaAscendente_ = ascendente;
+    paginaLista_ = 0;
+    aplicarFiltrosEOrdenacao();
+    repaint();
+}
+
 void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     itensFiltrados_.clear();
 
@@ -808,7 +816,12 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     std::map<juce::String, std::vector<ItemResumo>> baldes;
     for (auto& item : itensFiltrados_) {
         juce::String chave;
-        if (modoAgrupamento_ == ModoAgrupamento::PorAno) {
+        if (colunaOrdenacaoLista_ > 0) {
+            // Ordenação por coluna vale pra lista INTEIRA (todas as páginas):
+            // um grupo só, senão cada grupo de tipo/ano ordenaria à parte e a
+            // página 1 mostraria só o começo do primeiro grupo.
+            chave = "0:" + matriz::i18n::t("grade.todos_ordenados");
+        } else if (modoAgrupamento_ == ModoAgrupamento::PorAno) {
             // Ano como eixo de agrupamento (item 4.3). Material sem ano vai
             // pra um grupo "No year" no fim, nunca desaparece. O prefixo
             // numérico ordena os baldes (std::map ordena por string), então
@@ -1071,14 +1084,7 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
             for (size_t c = 1; c < cols.size(); ++c) {
                 if (e.x < cols[c].first || e.x >= cols[c].first + cols[c].second) continue;
                 const int col = static_cast<int>(c);
-                if (colunaOrdenacaoLista_ == col) ordenacaoListaAscendente_ = !ordenacaoListaAscendente_;
-                else {
-                    colunaOrdenacaoLista_ = col;
-                    ordenacaoListaAscendente_ = true;
-                }
-                paginaLista_ = 0;
-                aplicarFiltrosEOrdenacao();
-                repaint();
+                ordenarListaPorColuna(col, colunaOrdenacaoLista_ == col ? !ordenacaoListaAscendente_ : true);
                 return;
             }
             return;

@@ -151,6 +151,49 @@ int rodarLoteSelfTest() {
                 a.tamanhoBytes = 10; b.tamanhoBytes = 5;
                 checar(MosaicoComponent::compararPorColunaDaLista(a, b, 2) < 0 && MosaicoComponent::compararPorColunaDaLista(a, b, 5) > 0,
                        "column sort: name in natural order (2 before 10), size by bytes");
+                // Ordenar pela coluna vale pra lista INTEIRA, não só a página:
+                // a página 1 tem os 5 menores de todo o filtro, e a última
+                // página os maiores (antes cada grupo de tipo ordenava à parte).
+                {
+                    // Dois grupos de tipo (pares = vídeo): o bug só aparecia
+                    // com mais de um grupo na lista.
+                    reg.run("UPDATE item SET tipo_midia = 'digital_video' WHERE COALESCE(em_quarentena, 0) = 0 "
+                            "AND CAST(substr(codigo_acervo, 9) AS INTEGER) % 2 = 0", {});
+                    mosaico->recarregarSincrono();
+                    bombear(100);
+                    std::vector<std::pair<juce::String, std::string>> todos;
+                    for (const auto& it : mosaico->todosItensEmMemoria())
+                        todos.push_back({juce::String::fromUTF8((it.titulo.empty() ? it.nomeOriginalArquivo : it.titulo).c_str()), it.id});
+                    std::sort(todos.begin(), todos.end(), [](const auto& x, const auto& y) {
+                        const int c = x.first.compareNatural(y.first);
+                        return c != 0 ? c < 0 : x.second < y.second;
+                    });
+                    auto nomesDe = [&](const std::vector<std::string>& ids) {
+                        std::vector<juce::String> out;
+                        for (const auto& id : ids)
+                            for (const auto& t : todos) if (t.second == id) out.push_back(t.first);
+                        std::sort(out.begin(), out.end(), [](const juce::String& x, const juce::String& y) { return x.compareNatural(y) < 0; });
+                        return out;
+                    };
+                    std::vector<std::string> esperadosIni, esperadosFim;
+                    for (int i = 0; i < 5; ++i) esperadosIni.push_back(todos[(size_t) i].second);
+                    for (size_t i = todos.size() - 2; i < todos.size(); ++i) esperadosFim.push_back(todos[i].second);
+                    mosaico->ordenarListaPorColuna(2, true);
+                    checar(mosaico->paginaListaAtual() == 0 && nomesDe(mosaico->idsVisiveisEmOrdem()) == nomesDe(esperadosIni),
+                           "column sort ascending: page 1 holds the first 5 of the WHOLE list");
+                    mosaico->irParaPaginaLista(2);
+                    checar(nomesDe(mosaico->idsVisiveisEmOrdem()) == nomesDe(esperadosFim),
+                           "column sort ascending: the last page holds the last items of the WHOLE list");
+                    mosaico->ordenarListaPorColuna(2, false);
+                    std::vector<std::string> esperadosDesc;
+                    for (size_t i = todos.size() - 5; i < todos.size(); ++i) esperadosDesc.push_back(todos[i].second);
+                    checar(nomesDe(mosaico->idsVisiveisEmOrdem()) == nomesDe(esperadosDesc),
+                           "column sort descending: page 1 holds the last 5 of the WHOLE list");
+                    mosaico->definirOrdenacao(Ordenacao::Codigo);
+                    reg.run("UPDATE item SET tipo_midia = 'digital_audio'", {});
+                    mosaico->recarregarSincrono();
+                    bombear(100);
+                }
                 mosaico->definirItensPorPaginaLista(100);
                 mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
                 checar(!mosaico->paginacaoListaAtiva(), "the thumbnail grid is not paginated");

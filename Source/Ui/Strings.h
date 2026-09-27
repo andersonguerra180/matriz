@@ -636,6 +636,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"grade.agrupar_por_ano", "Group: year"},
         {"grade.nao_classificado", "Unknown"},
         {"grade.sem_ano", "No year"},
+        {"grade.todos_ordenados", "All files"},
         {"grade.tamanho_grande", "L"},
         {"grade.tamanho_lista", "List"},
         {"grade.tamanho_medio", "M"},

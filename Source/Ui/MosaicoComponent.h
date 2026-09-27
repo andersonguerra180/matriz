@@ -149,6 +149,14 @@ public:
     int totalFiltradoLista() const { return totalFiltradoLista_; }
     int itensPorPaginaLista() const { return itensPorPaginaLista_; }
     void irParaPaginaLista(int pagina);
+    // Mesmo efeito de clicar no cabeçalho da coluna da LISTA (1..9).
+    void ordenarListaPorColuna(int coluna, bool ascendente);
+    // Ids na ordem exibida (só a página atual, quando a lista pagina).
+    std::vector<std::string> idsVisiveisEmOrdem() const {
+        std::vector<std::string> out;
+        for (const auto& i : itensFiltrados_) out.push_back(i.id);
+        return out;
+    }
     void definirItensPorPaginaLista(int n);
     std::function<void()> aoMudarPaginacao;
 
