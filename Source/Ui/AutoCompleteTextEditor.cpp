@@ -40,7 +40,12 @@ public:
     void mouseExit(const juce::MouseEvent&) override { hover_ = false; repaint(); }
     void mouseUp(const juce::MouseEvent&) override {
         matriz::diag::WatchdogLogger::getInstance().log("[Autocomplete] PopupRow::mouseUp valor_='" + valor_ + "'");
-        if (onSelecionar_) onSelecionar_(valor_);
+        // O callback esconde (destrói) o popup — e esta linha junto. Copiar
+        // valor e callback pra locais antes, pra não executar nem ler nada
+        // que pertença a `this` depois de destruído.
+        auto callback = onSelecionar_;
+        const juce::String valor = valor_;
+        if (callback) callback(valor);
     }
 
 private:
@@ -162,7 +167,7 @@ void AutoCompleteTextEditor::selecionarValor(const juce::String& valor) {
     esconderPopup();
     setText(valorCopia, false);
     matriz::diag::WatchdogLogger::getInstance().log(
-        "[Autocomplete] selecionarValor: valor='" + valor + "' valorCopia='" + valorCopia +
+        "[Autocomplete] selecionarValor: valorCopia='" + valorCopia +
         "' getText()_apos_setText='" + getText() + "' temOnReturnKey=" + juce::String((int)(bool)onReturnKey) +
         " temOnFocusLost=" + juce::String((int)(bool)onFocusLost));
     // Dispara os MESMOS callbacks que Enter/blur disparariam — nenhum
@@ -170,9 +175,14 @@ void AutoCompleteTextEditor::selecionarValor(const juce::String& valor) {
     // (OriginalSourceMediumEditorComponent, que salva a cada tecla);
     // onReturnKey/onFocusLost cobre os campos de ficha (single/lote), que
     // salvam no blur/Enter (ver Fase 0).
+    // onReturnKey/onFocusLost podem reconstruir a ficha e destruir ESTE
+    // editor — nada de tocar em `this` depois sem conferir.
+    juce::Component::SafePointer<AutoCompleteTextEditor> vivo(this);
     if (onTextChange) onTextChange();
+    if (vivo == nullptr) return;
     if (onReturnKey) onReturnKey();
     else if (onFocusLost) onFocusLost();
+    if (vivo == nullptr) return;
     matriz::diag::WatchdogLogger::getInstance().log(
         "[Autocomplete] selecionarValor: FIM getText()='" + getText() + "'");
     grabKeyboardFocus();
