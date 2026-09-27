@@ -120,6 +120,20 @@ int rodarLoteSelfTest() {
                 return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= kItensPorLado;
             });
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
+            // Lista do Metadata no mesmo formato da do INTAKE (conferir a olho):
+            // test-output/metadata_lista.png x intake_lista.png.
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Lista);
+                bombear(300);
+                juce::PNGImageFormat png;
+                auto arq = dir.getChildFile("metadata_lista.png");
+                arq.deleteFile();
+                auto area = mosaico->getLocalBounds().withHeight(juce::jmin(mosaico->getHeight(), 520));
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                    png.writeImageToStream(mosaico->createComponentSnapshot(area), *out);
+                mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
+                bombear(100);
+            }
             // Item 5: tecla E aparece na hora (sem recarregar) e não marca
             // o item como "metadado editado".
             {
@@ -279,6 +293,14 @@ int rodarLoteSelfTest() {
             });
             checar(carregou, "Intake list loaded the " + juce::String(kItensPorLado) + " items (" +
                                  juce::String((int) iw->todosItens_.size()) + ")");
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                bombear(300);
+                juce::PNGImageFormat png;
+                auto arq = dir.getChildFile("intake_lista.png");
+                arq.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                    png.writeImageToStream(iw->createComponentSnapshot(iw->getLocalBounds()), *out);
+            }
             iw->selecionarTodos(true);
             checar(static_cast<int>(iw->itensSelecionados().size()) == kItensPorLado,
                    "all Intake items selected (" + juce::String((int) iw->itensSelecionados().size()) + ")");
