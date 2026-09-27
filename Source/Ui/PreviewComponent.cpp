@@ -322,9 +322,14 @@ void PreviewComponent::timerCallback() {
             else videoPlayer_->pausar();
         }
 
+        // Tocando, os dois relógios (placa de som x AVPlayer) andam juntos e
+        // divergem pouco; um seek EXATO a cada 80 ms de diferença travava a
+        // imagem (vídeo "lagando e dropando"). Tocando, só corrige desvio
+        // grande; parado (scrub/jog/clique na régua), segue exato.
         double posTimeline = timeline_->posicaoSegundos();
         double posVideo = videoPlayer_->posicaoAtual();
-        if (std::abs(posTimeline - posVideo) > 0.08) {
+        const double tolerancia = timelineTocando ? 0.35 : 0.04;
+        if (std::abs(posTimeline - posVideo) > tolerancia) {
             videoPlayer_->irPara(posTimeline);
         }
     }
