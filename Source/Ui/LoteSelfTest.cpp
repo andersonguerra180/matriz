@@ -1116,6 +1116,10 @@ int rodarLoteSelfTest() {
     }
     raizQ.deleteRecursively();
 
+    // ------------------------------ Etapa 10: INTAKE, Enter = APPLY nos popups
+    std::cout << "\n-- INTAKE batch popups: Enter = APPLY, Esc closes, autocomplete confirms first --\n";
+    IntakeWorkspaceComponent::autotesteTeclasPopupsParaTeste(checar);
+
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
