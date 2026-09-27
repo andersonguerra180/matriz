@@ -2757,6 +2757,39 @@ void testarSidecarsEtapa8(const juce::File& dirTemp) {
     fonte.deleteRecursively();
 }
 
+void testarDataDeVideo(const juce::File& dirTemp) {
+    std::cout << "\n== Video: recording date from the container, not the copy date ==\n";
+    using matriz::db::Value;
+    juce::File raiz = dirTemp.getChildFile("vid_" + juce::Uuid().toDashedString());
+    juce::File fonte = dirTemp.getChildFile("vid_src_" + juce::Uuid().toDashedString());
+    fonte.createDirectory();
+    try {
+        juce::File mov = fonte.getChildFile("clipe.mov");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "color=c=red:s=64x48:d=1", "-metadata", "creation_time=2014-06-01T10:00:00Z", mov.getFullPathName()});
+        auto leitura = matriz::ingest::lerTecnica(mov);
+        check(leitura.exifDataOriginal && juce::String(*leitura.exifDataOriginal).startsWith("2014-06-01"),
+              "the recording date is read from the video tags (" + leitura.exifDataOriginal.value_or("none") + ")");
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Vid";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "VID";
+        auto projeto = matriz::model::Project::criar(raiz, params);
+        auto& reg = projeto->registro();
+        const std::string agora = matriz::model::agoraIso8601(), item = matriz::model::novoUuid();
+        reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, criado_em, atualizado_em) VALUES (?, ?, 'VID-1', 'c', ?, ?)",
+                {Value::of(item), Value::of(projeto->projetoId()), Value::of(agora), Value::of(agora)});
+        matriz::ingest::ingerirArquivo(reg, projeto->pasta(), item, mov, "preservation_master", true);
+        auto st = reg.prepare("SELECT COALESCE(ano, '') FROM item WHERE id = ?");
+        st.bind(1, Value::of(item));
+        check(st.step() && st.columnText(0) == "2014", "the video's EVENT DATE is 2014, not today (" + st.columnText(0) + ")");
+    } catch (const std::exception& e) {
+        check(false, std::string("video date: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    fonte.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2796,6 +2829,7 @@ int main() {
     testarSourcesEtapa5(tmpDir);
     testarExportEtapa6(tmpDir);
     testarSidecarsEtapa8(tmpDir);
+    testarDataDeVideo(tmpDir);
 
     tmpDir.deleteRecursively();
 

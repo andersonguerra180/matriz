@@ -15,6 +15,9 @@
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
 #include "BackupWorkspaceComponent.h"
+#include "../Ingest/LeituraTecnica.h"
+#include "../Ficha/AutocompleteHistorico.h"
+#include "InitialRelinkDialog.h"
 #include "DuplicatesWorkspaceComponent.h"
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
@@ -1141,6 +1144,87 @@ int rodarLoteSelfTest() {
     // ------------------------------ Etapa 10: INTAKE, Enter = APPLY nos popups
     std::cout << "\n-- INTAKE batch popups: Enter = APPLY, Esc closes, autocomplete confirms first --\n";
     IntakeWorkspaceComponent::autotesteTeclasPopupsParaTeste(checar);
+
+    // ------------------------- Intake: Cmd+Z desfaz Reject e Send to Grid
+    std::cout << "\n-- Intake undo: Reject and Send to Grid come back with Cmd+Z --\n";
+    juce::File raizU = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_undo_intake_" + juce::Uuid().toDashedString());
+    try {
+        raizU.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "UndoIntake";
+        params.prefixoNomenclatura = "UND";
+        auto projeto = matriz::model::Project::criar(raizU.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        const auto i1 = inserirItem(reg, projetoId, "UND-1", true), i2 = inserirItem(reg, projetoId, "UND-2", true);
+        reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'show')", {Value::of(matriz::model::novoUuid()), Value::of(i1)});
+        reg.run("UPDATE item SET dc_creator = 'Fulano' WHERE id = ?", {Value::of(i2)});
+        auto contar = [&](const std::string& sql) {
+            auto st = reg.prepare(sql);
+            return st.step() ? st.columnInt(0) : -1LL;
+        };
+        pa.removerItensDoProjeto({i1, i2});
+        checar(contar("SELECT COUNT(*) FROM item") == 0 && contar("SELECT COUNT(*) FROM arquivo") == 0, "Reject removes the items");
+        checar(pa.podeDesfazer() && pa.desfazer(), "Reject is on the undo stack");
+        checar(contar("SELECT COUNT(*) FROM item WHERE em_quarentena = 1") == 2 && contar("SELECT COUNT(*) FROM arquivo") == 2 &&
+                   contar("SELECT COUNT(*) FROM item_tag WHERE tag = 'show'") == 1 &&
+                   contar("SELECT COUNT(*) FROM item WHERE dc_creator = 'Fulano'") == 1,
+               "Cmd+Z brings them back to Intake with files, tags and metadata");
+        pa.confirmarLoteGrid({i1, i2});
+        checar(contar("SELECT COUNT(*) FROM item WHERE em_quarentena = 0") == 2, "Send to Grid moves them");
+        checar(pa.desfazer() && contar("SELECT COUNT(*) FROM item WHERE em_quarentena = 1") == 2,
+               "Cmd+Z sends them back to Intake");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("intake undo selftest: ") + e.what());
+    }
+    raizU.deleteRecursively();
+
+    // ------------------- Lista de hoje: LOCATE na pasta, autocomplete único, CDR
+    std::cout << "\n-- Locate opens in the file's folder, shared autocomplete, CorelDRAW icon --\n";
+    {
+        juce::File base = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_locate_" + juce::Uuid().toDashedString());
+        base.getChildFile("fotos").createDirectory();
+        checar(InitialRelinkDialog::pastaInicialParaLocalizar(base.getChildFile("fotos/IMG_1.jpg").getFullPathName()) ==
+                   base.getChildFile("fotos"),
+               "LOCATE opens straight in the folder where the file was");
+        checar(InitialRelinkDialog::pastaInicialParaLocalizar(base.getChildFile("sumiu/sub/IMG_1.jpg").getFullPathName()) == base,
+               "folder gone: opens in the nearest folder that still exists");
+        checar(InitialRelinkDialog::pastaInicialParaLocalizar("") ==
+                   juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+               "no path: home folder");
+        base.deleteRecursively();
+        checar(matriz::ingest::obterLogoParaExtensao("cdr") == "corel.jpeg" &&
+                   juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets/corel.jpeg").existsAsFile(),
+               "CorelDRAW .cdr files get the Corel icon");
+    }
+    {
+        juce::File raizA = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_autocomp_" + juce::Uuid().toDashedString());
+        try {
+            matriz::model::NovoProjetoParams params;
+            params.nome = "Autocomp";
+            params.prefixoNomenclatura = "ACP";
+            auto projeto = matriz::model::Project::criar(raizA.getChildFile("MAIN"), params);
+            const auto item = inserirItem(projeto->registro(), projeto->projetoId(), "ACP-1", true);
+            // Aplicado no INTAKE (grava direto no item): tem que aparecer na ficha.
+            projeto->registro().run("UPDATE item SET dc_creator = 'Banda do Intake' WHERE id = ?",
+                                    {matriz::db::Value::of(item)});
+            // Digitado na ficha (histórico): tem que aparecer no INTAKE.
+            matriz::ficha::AutocompleteRepository::registrar(projeto->registro(), "dc_creator", "Autor da Ficha");
+            auto lista = matriz::ficha::AutocompleteRepository::listar(projeto->registro(), "dc_creator");
+            const bool temIntake = std::find(lista.begin(), lista.end(), "Banda do Intake") != lista.end();
+            const bool temFicha = std::find(lista.begin(), lista.end(), "Autor da Ficha") != lista.end();
+            checar(temIntake && temFicha, "CREATOR autocomplete is one list for Intake and Metadata (" +
+                                              juce::String((int) lista.size()) + " values)");
+        } catch (const std::exception& e) {
+            checar(false, juce::String("autocomplete selftest: ") + e.what());
+        }
+        raizA.deleteRecursively();
+    }
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
