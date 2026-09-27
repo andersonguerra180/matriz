@@ -3215,7 +3215,8 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                 for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
             }
             if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg);
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},
+                                                   nullptr, juce::ModalCallbackFunction::create([](int) {}));
         });
     });
 }

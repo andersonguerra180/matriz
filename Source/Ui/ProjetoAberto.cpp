@@ -1945,7 +1945,7 @@ void ProjetoAberto::avisarMapaTravado(const juce::String& mensagem) {
                                      .withTitle(matriz::i18n::t("mapa_main.titulo"))
                                      .withMessage(mensagem)
                                      .withButton(matriz::i18n::t("dialogo.ok")),
-                                 nullptr);
+                                 juce::ModalCallbackFunction::create([](int) {}));
 }
 
 bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome) {
