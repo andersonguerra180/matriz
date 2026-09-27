@@ -118,6 +118,12 @@ private:
     bool configTravada_ = false;
     bool organizarPorSource_ = false;  // pasta raiz/sufixo por SOURCE (só MAIN criado a partir da etapa 5)
     void atualizarTravasDoMain();
+    // Nada sai do projeto antes do FAZER BACKUP criar o MAIN (modo Coleção):
+    // PUBLISH TO HTML, EXPORTAR..., EXPORTAR PLANILHA e BACKUP SYNC... só
+    // liberam com mainSelado_. Único ponto de liberação/dica desses 4 —
+    // chamado pelo layout e pela atualização do resumo.
+    void atualizarBotoesDependentesDoMain();
+    bool saidaBloqueadaSemMain() const;
     void gravarConfigDoMain();
     void perguntarSincronizarClones();
     std::string destinoIdDoMain();

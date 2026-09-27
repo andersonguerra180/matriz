@@ -2049,6 +2049,7 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
 }
 
 void BackupWorkspaceComponent::mostrarJanelaExportar() {
+    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     struct JanelaExportarMetadata : public juce::DialogWindow {
         JanelaExportarMetadata(const juce::String& title, juce::Colour bg)
             : juce::DialogWindow(title, bg, true) {}
@@ -2128,6 +2129,7 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
 }
 
 void BackupWorkspaceComponent::publicarHtml() {
+    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     PublishHtmlDialog::exibirModal(projeto_);
 }
 
@@ -2189,7 +2191,10 @@ void BackupWorkspaceComponent::atualizarBotoesListas() {
         if (auto* mb = dynamic_cast<MarkedActionButton*>(btnPublishHtml_.get())) {
             mb->setCount((int)countHtml);
         }
-        btnPublishHtml_->setEnabled(countHtml > 0);
+        // Coleção: a liberação é só do MAIN (a escolha "só marcados H / todos"
+        // fica na janela de publicação). Catálogo: regra de antes.
+        if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) btnPublishHtml_->setEnabled(countHtml > 0);
+        else atualizarBotoesDependentesDoMain();
     }
 }
 
@@ -2545,6 +2550,10 @@ void BackupWorkspaceComponent::atualizarResumo() {
         return;
     }
 
+    // O estado do MAIN não depende de destino destacado: recalcula sempre,
+    // senão os botões de saída ficavam presos ao abrir um projeto com MAIN.
+    atualizarTravasDoMain();
+
     if (resolvedDestFolder_.getFullPathName().isEmpty()) {
         labelResumo_->setText(isPt ? juce::String::fromUTF8("Selecione um destino para ver a prévia do backup.") : "Select a destination to see backup preview.", juce::dontSendNotification);
         plano_.itens.clear();
@@ -2554,8 +2563,8 @@ void BackupWorkspaceComponent::atualizarResumo() {
     }
 
     std::set<std::string> itemIds = obterItensSelecionadosPeloCriterio();
-
-    atualizarTravasDoMain();  // antes de ler os controles: com MAIN, valem as escolhas do 1º backup
+    // atualizarTravasDoMain() já rodou acima: com MAIN, os controles têm as
+    // escolhas do 1º backup antes de serem lidos aqui.
 
     matriz::consolidacao::HierarquiaBackup h;
     if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState()) {
@@ -2742,6 +2751,32 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
             if (configContainer_) configContainer_->resized();
         }
     }
+    atualizarBotoesDependentesDoMain();
+}
+
+bool BackupWorkspaceComponent::saidaBloqueadaSemMain() const {
+    return projeto_.projeto().modo() != matriz::model::Modo::Catalogo && !mainSelado_;
+}
+
+void BackupWorkspaceComponent::atualizarBotoesDependentesDoMain() {
+    // Modo Catálogo não tem MAIN próprio (cada coleção tem o seu): lá esses
+    // botões seguem as regras de antes (resized / atualizarBotoesListas).
+    if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) return;
+    const bool isPt = matriz::i18n::localeAtivo() == "pt_BR";
+    const bool liberado = mainSelado_;
+    const juce::String dicaTravada = matriz::i18n::t("backup.saida_sem_main");
+    auto aplicar = [&](juce::Button* b, bool extra, const juce::String& dicaNormal) {
+        if (b == nullptr) return;
+        b->setEnabled(liberado && extra);
+        b->setTooltip(liberado ? dicaNormal : dicaTravada);
+    };
+    aplicar(btnPublishHtml_.get(), true, "Publish static HTML website preview / catalog");
+    aplicar(btnExportar_.get(), !exportando_, matriz::i18n::t("export.dica"));
+    aplicar(btnExportJanela_.get(), true,
+            isPt ? juce::String::fromUTF8("Exportar catálogo de metadados como CSV/XLS") : "Export metadata catalog as CSV/XLS");
+    aplicar(btnSyncDestino_.get(), true,
+            isPt ? juce::String::fromUTF8("Comparar destino ativo com outro disco/pasta para sincronização manual")
+                 : "Compare active destination with another drive/folder for manual sync review");
 }
 
 void BackupWorkspaceComponent::gravarConfigDoMain() {
@@ -3152,6 +3187,7 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
 }
 
 void BackupWorkspaceComponent::abrirExport() {
+    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     if (exportando_) return;
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
     const bool wmOk = ProjetoAberto::carregarConfiguracaoWatermarkDePasta(projeto_.projeto().pasta()).valida();
@@ -4094,6 +4130,7 @@ void BackupWorkspaceComponent::executarBackupAcao(bool forcarOverride) {
 }
 
 void BackupWorkspaceComponent::iniciarSyncComOutroDestino() {
+    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     SyncDestinationDialog::abrirModal(projeto_.projeto(), [safeThis] {
         if (safeThis) safeThis->recarregar();
@@ -4259,7 +4296,6 @@ void BackupWorkspaceComponent::resized() {
         if (btnExportar_ && !isCatalogMode) {
             btnExportar_->setBounds(botoes.removeFromRight(110));
             btnExportar_->setVisible(true);
-            btnExportar_->setEnabled(temItens && mainSelado_ && !exportando_);
             botoes.removeFromRight(tk.espacoPainel);
         }
         if (btnSyncDestino_) {
@@ -4270,7 +4306,7 @@ void BackupWorkspaceComponent::resized() {
         if (btnPublishHtml_) {
             btnPublishHtml_->setBounds(botoes.removeFromRight(175));
             btnPublishHtml_->setVisible(true);
-            btnPublishHtml_->setEnabled(temItens);
+            if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
         }
         botoes.removeFromRight(tk.espacoPainel);
         if (btnLimparZip_) {
@@ -4305,8 +4341,9 @@ void BackupWorkspaceComponent::resized() {
         botoes.removeFromRight(tk.espacoPainel);
         btnExportJanela_->setBounds(botoes.removeFromRight(230));
         btnExportJanela_->setVisible(true);
-        btnExportJanela_->setEnabled(temItens);
+        if (isCatalogMode) btnExportJanela_->setEnabled(temItens);  // Catálogo: regra de antes
     }
+    atualizarBotoesDependentesDoMain();  // Coleção: só o MAIN decide (4 botões de saída)
 
     // ---- Running / Done: um cartão só, centrado ----
     if (emAndamento) {

@@ -987,6 +987,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"backup.papel_main", "MAIN"},
         {"backup.btn_adicionar_ao_main", "ADICIONAR AO MAIN"},
         {"backup.definido_primeiro_backup", "Definido no primeiro backup"},
+        {"backup.saida_sem_main", "Disponível só depois do FAZER BACKUP: nada sai do projeto antes de existir o MAIN."},
         {"duplicatas.criterios", "Critérios rápidos:"},
         {"duplicatas.criterio_recente", "MANTER A INGESTÃO MAIS RECENTE"},
         {"duplicatas.criterio_backup", "MANTER A PRIMEIRA NO BACKUP"},
