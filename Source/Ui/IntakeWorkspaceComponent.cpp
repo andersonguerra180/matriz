@@ -1689,9 +1689,29 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     comboAno_->onChange = [this] {
         const int id = comboAno_->getSelectedId();
         filtroAnoAtual_ = id <= 1 ? 0 : (id == 2 ? -1 : id);  // ids: 1 todos, 2 sem data, ano = o próprio ano
+        filtroMesAtual_ = filtroDiaAtual_ = 0;
+        atualizarComboAno();
         atualizarFiltragem();
     };
     addAndMakeVisible(*comboAno_);
+    comboMes_ = std::make_unique<juce::ComboBox>();
+    comboMes_->setTooltip(i18n::t("intake.filtro_mes"));
+    comboMes_->onChange = [this] {
+        const int id = comboMes_->getSelectedId();
+        filtroMesAtual_ = id >= 100 ? id - 100 : 0;  // ids: 1 todos, 100 + mês
+        filtroDiaAtual_ = 0;
+        atualizarComboAno();
+        atualizarFiltragem();
+    };
+    addAndMakeVisible(*comboMes_);
+    comboDia_ = std::make_unique<juce::ComboBox>();
+    comboDia_->setTooltip(i18n::t("intake.filtro_dia"));
+    comboDia_->onChange = [this] {
+        const int id = comboDia_->getSelectedId();
+        filtroDiaAtual_ = id >= 100 ? id - 100 : 0;
+        atualizarFiltragem();
+    };
+    addAndMakeVisible(*comboDia_);
 
     setupPill(btnFiltroAll_, "All (0)", "ALL", juce::Colours::transparentBlack);
     setupPill(btnFiltroAudio_, "Audio (0)", "Audio", juce::Colour(0xff2a9d8f));
@@ -1994,13 +2014,30 @@ void IntakeWorkspaceComponent::definirModoVisao(ModoVisao modo) {
     }
 }
 
+bool IntakeWorkspaceComponent::partesDaData(const juce::String& data, int& ano, int& mes, int& dia) {
+    // "AAAA", "AAAA-MM-DD..." ou "AAAA:MM:DD ..." (EXIF). Mês/dia 0 = ausentes.
+    ano = mes = dia = 0;
+    if (data.length() < 4 || !data.substring(0, 4).containsOnly("0123456789")) return false;
+    ano = data.substring(0, 4).getIntValue();
+    if (data.length() >= 7) mes = data.substring(5, 7).getIntValue();
+    if (data.length() >= 10) dia = data.substring(8, 10).getIntValue();
+    if (mes < 1 || mes > 12) mes = dia = 0;
+    if (dia < 1 || dia > 31) dia = 0;
+    return ano > 0;
+}
+
 void IntakeWorkspaceComponent::atualizarComboAno() {
     if (!comboAno_) return;
-    std::map<int, int> porAno;
+    std::map<int, int> porAno, porMes, porDia;
     int semData = 0;
     for (const auto& it : todosItens_) {
-        if (it.ano) ++porAno[*it.ano];
-        else ++semData;
+        int a = 0, m = 0, d = 0;
+        if (!partesDaData(it.dataCriacao, a, m, d)) { ++semData; continue; }
+        ++porAno[a];
+        if (a == filtroAnoAtual_ && m > 0) {
+            ++porMes[m];
+            if (m == filtroMesAtual_ && d > 0) ++porDia[d];
+        }
     }
     comboAno_->clear(juce::dontSendNotification);
     comboAno_->addItem(i18n::t("intake.filtro_ano_todos") + " (" + juce::String((int) todosItens_.size()) + ")", 1);
@@ -2011,8 +2048,25 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
     const int idAtual = filtroAnoAtual_ == 0 ? 1 : (filtroAnoAtual_ == -1 ? 2 : filtroAnoAtual_);
     if (comboAno_->indexOfItemId(idAtual) >= 0) comboAno_->setSelectedId(idAtual, juce::dontSendNotification);
     else {
-        filtroAnoAtual_ = 0;
+        filtroAnoAtual_ = filtroMesAtual_ = filtroDiaAtual_ = 0;
         comboAno_->setSelectedId(1, juce::dontSendNotification);
+    }
+    // Mês e dia: só com um ano escolhido (e o dia, com um mês).
+    if (comboMes_ && comboDia_) {
+        comboMes_->clear(juce::dontSendNotification);
+        comboDia_->clear(juce::dontSendNotification);
+        comboMes_->addItem(i18n::t("intake.filtro_mes_todos"), 1);
+        comboDia_->addItem(i18n::t("intake.filtro_dia_todos"), 1);
+        const juce::StringArray nomesMes = juce::StringArray::fromTokens(i18n::t("intake.meses"), ",", "");
+        for (auto& [m, n] : porMes)
+            comboMes_->addItem((m <= nomesMes.size() ? nomesMes[m - 1] : juce::String(m)) + " (" + juce::String(n) + ")", 100 + m);
+        for (auto& [d, n] : porDia) comboDia_->addItem(juce::String(d) + " (" + juce::String(n) + ")", 100 + d);
+        if (comboMes_->indexOfItemId(100 + filtroMesAtual_) < 0) filtroMesAtual_ = filtroDiaAtual_ = 0;
+        if (comboDia_->indexOfItemId(100 + filtroDiaAtual_) < 0) filtroDiaAtual_ = 0;
+        comboMes_->setSelectedId(filtroMesAtual_ ? 100 + filtroMesAtual_ : 1, juce::dontSendNotification);
+        comboDia_->setSelectedId(filtroDiaAtual_ ? 100 + filtroDiaAtual_ : 1, juce::dontSendNotification);
+        comboMes_->setEnabled(filtroAnoAtual_ > 0 && !porMes.empty());
+        comboDia_->setEnabled(filtroMesAtual_ > 0 && !porDia.empty());
     }
 }
 
@@ -2020,9 +2074,13 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
     for (size_t i = 0; i < todosItens_.size(); ++i) {
         const auto& it = todosItens_[i];
-        const bool anoOk = filtroAnoAtual_ == 0 || (filtroAnoAtual_ == -1 ? !it.ano.has_value()
-                                                                             : it.ano.value_or(0) == filtroAnoAtual_);
-        if ((filtroCategoriaAtual_ == "ALL" || it.categoria == filtroCategoriaAtual_) && anoOk) {
+        int a = 0, m = 0, d = 0;
+        const bool temData = partesDaData(it.dataCriacao, a, m, d);
+        const bool dataOk = filtroAnoAtual_ == 0 ? true
+                          : filtroAnoAtual_ == -1 ? !temData
+                          : (temData && a == filtroAnoAtual_ && (filtroMesAtual_ == 0 || m == filtroMesAtual_) &&
+                             (filtroDiaAtual_ == 0 || d == filtroDiaAtual_));
+        if ((filtroCategoriaAtual_ == "ALL" || it.categoria == filtroCategoriaAtual_) && dataOk) {
             indicesFiltrados_.push_back(static_cast<int>(i));
         }
     }
@@ -3208,6 +3266,14 @@ void IntakeWorkspaceComponent::resized() {
     btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(6);
     if (comboAno_) comboAno_->setBounds(sidebar.removeFromTop(26));
+    if (comboMes_ && comboDia_) {
+        sidebar.removeFromTop(4);
+        auto linhaData = sidebar.removeFromTop(26);
+        const int meio = (linhaData.getWidth() - 6) * 3 / 5;
+        comboMes_->setBounds(linhaData.removeFromLeft(meio));
+        linhaData.removeFromLeft(6);
+        comboDia_->setBounds(linhaData);
+    }
     finalizarCard();
     sidebar.removeFromTop(8);
 

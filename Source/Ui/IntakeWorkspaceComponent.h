@@ -217,10 +217,12 @@ private:
     std::unique_ptr<juce::TextButton> btnFiltroImage_;
     std::unique_ptr<juce::TextButton> btnFiltroDoc_;
     std::unique_ptr<juce::TextButton> btnFiltroOther_;
-    // Filtro por ano (EVENT DATE): 0 = todos, -1 = sem data, senão o ano.
-    std::unique_ptr<juce::ComboBox> comboAno_;
-    int filtroAnoAtual_ = 0;
+    // Filtro pela DATE CREATED (mesma data da coluna): ano (0 = todos, -1 =
+    // sem data) e, opcionais, mês e dia (0 = todos).
+    std::unique_ptr<juce::ComboBox> comboAno_, comboMes_, comboDia_;
+    int filtroAnoAtual_ = 0, filtroMesAtual_ = 0, filtroDiaAtual_ = 0;
     void atualizarComboAno();
+    static bool partesDaData(const juce::String& data, int& ano, int& mes, int& dia);
 
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
