@@ -139,6 +139,23 @@ public:
 
     void definirOrdenacao(Ordenacao ordenacao);
 
+    // Paginação da LISTA (a grade de miniaturas rola tudo): a seleção vale
+    // entre páginas; Cmd+A seleciona o filtro inteiro.
+    bool paginacaoListaAtiva() const { return modoVisao_ == ModoVisao::Lista && totalFiltradoLista_ > itensPorPaginaLista_; }
+    int paginaListaAtual() const { return paginaLista_; }
+    int totalPaginasLista() const {
+        return juce::jmax(1, (totalFiltradoLista_ + itensPorPaginaLista_ - 1) / itensPorPaginaLista_);
+    }
+    int totalFiltradoLista() const { return totalFiltradoLista_; }
+    int itensPorPaginaLista() const { return itensPorPaginaLista_; }
+    void irParaPaginaLista(int pagina);
+    void definirItensPorPaginaLista(int n);
+    std::function<void()> aoMudarPaginacao;
+
+    // Escopo da busca (seletor sob o campo de busca).
+    void definirEscopoBusca(ProjetoAberto::EscopoBusca escopo);
+    ProjetoAberto::EscopoBusca escopoBusca() const { return escopoBusca_; }
+
     // Filtro por seleção da árvore Origem/Acervo (Reorientação completa
     // §8.1 — "clicar numa pasta filtra a grade"). nullopt = sem filtro de
     // pasta (todos os itens, sujeitos aos outros filtros normalmente).

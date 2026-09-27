@@ -280,6 +280,21 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     mosaicoViewport_->setViewedComponent(mosaico_.get(), false);
     addAndMakeVisible(*mosaicoViewport_);
 
+    btnPagAnterior_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x97\x80  ") + matriz::i18n::t("lista.pagina_anterior"));
+    btnPagAnterior_->onClick = [this] { if (mosaico_) mosaico_->irParaPaginaLista(mosaico_->paginaListaAtual() - 1); };
+    btnPagProxima_ = std::make_unique<juce::TextButton>(matriz::i18n::t("lista.pagina_proxima") + juce::String::fromUTF8("  \xe2\x96\xb6"));
+    btnPagProxima_->onClick = [this] { if (mosaico_) mosaico_->irParaPaginaLista(mosaico_->paginaListaAtual() + 1); };
+    lblPagina_ = std::make_unique<juce::Label>();
+    lblPagina_->setJustificationType(juce::Justification::centred);
+    comboPorPagina_ = std::make_unique<juce::ComboBox>();
+    for (int n : {50, 100, 200, 500}) comboPorPagina_->addItem(matriz::i18n::t("lista.por_pagina").replace("{n}", juce::String(n)), n);
+    comboPorPagina_->setSelectedId(100, juce::dontSendNotification);
+    comboPorPagina_->onChange = [this] { if (mosaico_) mosaico_->definirItensPorPaginaLista(comboPorPagina_->getSelectedId()); };
+    for (juce::Component* c : {static_cast<juce::Component*>(btnPagAnterior_.get()), static_cast<juce::Component*>(btnPagProxima_.get()),
+                               static_cast<juce::Component*>(lblPagina_.get()), static_cast<juce::Component*>(comboPorPagina_.get())})
+        addChildComponent(*c);
+    mosaico_->aoMudarPaginacao = [this] { atualizarBarraPaginacao(); };
+
     configurarLookAndFeel(sidebarButtonLf_);
 
     fichaPanel_ = std::make_unique<FichaPanelComponent>(projeto_);
@@ -1850,6 +1865,29 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
     }
 }
 
+void CatalogWorkspaceComponent::atualizarBarraPaginacao() {
+    if (!mosaico_ || !btnPagAnterior_) return;
+    const bool ativa = mosaico_->paginacaoListaAtiva();
+    const bool mudouVisibilidade = btnPagAnterior_->isVisible() != ativa;
+    for (juce::Component* c : {static_cast<juce::Component*>(btnPagAnterior_.get()), static_cast<juce::Component*>(btnPagProxima_.get()),
+                               static_cast<juce::Component*>(lblPagina_.get()), static_cast<juce::Component*>(comboPorPagina_.get())})
+        c->setVisible(ativa);
+    if (ativa) {
+        const int pag = mosaico_->paginaListaAtual(), total = mosaico_->totalPaginasLista();
+        const int porPag = mosaico_->itensPorPaginaLista(), n = mosaico_->totalFiltradoLista();
+        lblPagina_->setText(matriz::i18n::t("lista.pagina_de")
+                                .replace("{p}", juce::String(pag + 1)).replace("{t}", juce::String(total))
+                                .replace("{a}", juce::String(pag * porPag + 1))
+                                .replace("{b}", juce::String(juce::jmin(n, (pag + 1) * porPag)))
+                                .replace("{n}", juce::String(n)),
+                            juce::dontSendNotification);
+        btnPagAnterior_->setEnabled(pag > 0);
+        btnPagProxima_->setEnabled(pag + 1 < total);
+        comboPorPagina_->setSelectedId(porPag, juce::dontSendNotification);
+    }
+    if (mudouVisibilidade) resized();
+}
+
 void CatalogWorkspaceComponent::resized() {
     secaoHeaderBounds_.clear();
     secaoCardBounds_.clear();
@@ -2095,6 +2133,17 @@ void CatalogWorkspaceComponent::resized() {
 
     if (lblCaminhoNavegacao_ && lblCaminhoNavegacao_->isVisible()) {
         lblCaminhoNavegacao_->setBounds(area.removeFromTop(24));
+    }
+
+    // Barra de páginas da lista: fixa embaixo, só quando a lista tem mais de uma página.
+    if (mosaico_ && mosaico_->paginacaoListaAtiva() && btnPagAnterior_) {
+        auto barra = area.removeFromBottom(36).reduced(8, 4);
+        comboPorPagina_->setBounds(barra.removeFromRight(150));
+        barra.removeFromRight(12);
+        auto centro = barra.withSizeKeepingCentre(juce::jmin(barra.getWidth(), 620), barra.getHeight());
+        btnPagAnterior_->setBounds(centro.removeFromLeft(130));
+        btnPagProxima_->setBounds(centro.removeFromRight(130));
+        lblPagina_->setBounds(centro);
     }
 
     if (mosaicoViewport_) mosaicoViewport_->setBounds(area);

@@ -685,8 +685,7 @@ void MosaicoComponent::definirModoVisao(ModoVisao modo) {
             default: celulaLargura_ = 168; celulaAltura_ = 148; break;
         }
     }
-    recalcularLayout();
-    repaint();
+    aplicarFiltrosEOrdenacao();  // liga/desliga a paginação da lista (recalcula o layout)
 }
 
 void MosaicoComponent::definirTamanhoCelula(TamanhoCelula tamanho) {
@@ -843,6 +842,31 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     if (!selecionadoId_.empty() && !idsVisiveis.count(selecionadoId_))
         selecionadoId_.clear();
 
+    // Paginação da LISTA: fatia depois de ordenar e de podar a seleção pelo
+    // filtro INTEIRO (a seleção sobrevive à troca de página).
+    idsFiltroCompleto_.clear();
+    for (auto& item : itensFiltrados_) idsFiltroCompleto_.push_back(item.id);
+    totalFiltradoLista_ = static_cast<int>(itensFiltrados_.size());
+    if (modoVisao_ == ModoVisao::Lista && totalFiltradoLista_ > itensPorPaginaLista_) {
+        paginaLista_ = juce::jlimit(0, totalPaginasLista() - 1, paginaLista_);
+        const int ini = paginaLista_ * itensPorPaginaLista_;
+        const int fim = juce::jmin(totalFiltradoLista_, ini + itensPorPaginaLista_);
+        std::vector<GrupoMosaico> gruposDaPagina;
+        for (auto grupo : grupos_) {
+            const int gi = juce::jmax(grupo.indiceInicio, ini);
+            const int gf = juce::jmin(grupo.indiceInicio + grupo.quantidade, fim);
+            if (gi >= gf) continue;
+            grupo.indiceInicio = gi - ini;
+            grupo.quantidade = gf - gi;
+            gruposDaPagina.push_back(grupo);
+        }
+        itensFiltrados_ = std::vector<ItemResumo>(itensFiltrados_.begin() + ini, itensFiltrados_.begin() + fim);
+        grupos_ = std::move(gruposDaPagina);
+    } else {
+        paginaLista_ = 0;
+    }
+    if (aoMudarPaginacao) aoMudarPaginacao();
+
     recalcularLayout();
     repaint();
     if (aoMudarConteudoVisivel) aoMudarConteudoVisivel();
@@ -875,9 +899,9 @@ void MosaicoComponent::selecionarItem(const std::string& itemId) {
 }
 
 void MosaicoComponent::selecionarTodos() {
-    // Só o que está visível sob os filtros atuais — ver nota no header.
+    // Tudo o que passa pelos filtros atuais — todas as páginas da lista.
     selecionados_.clear();
-    for (auto& item : itensFiltrados_) selecionados_.insert(item.id);
+    for (auto& id : idsFiltroCompleto_) selecionados_.insert(id);
     if (!itensFiltrados_.empty()) {
         selecionadoId_ = itensFiltrados_.front().id;
         indiceAncoraShift_ = 0;

@@ -103,6 +103,12 @@ private:
     ProjetoAberto& projeto_;
 
     std::unique_ptr<juce::Viewport> mosaicoViewport_;
+    // Paginação da LISTA (barra fixa sob a lista; só aparece quando precisa).
+    std::unique_ptr<juce::ComboBox> comboEscopoBusca_;  // "Search in:" sob o campo de busca
+    std::unique_ptr<juce::TextButton> btnPagAnterior_, btnPagProxima_;
+    std::unique_ptr<juce::Label> lblPagina_;
+    std::unique_ptr<juce::ComboBox> comboPorPagina_;
+    void atualizarBarraPaginacao();
     std::unique_ptr<MosaicoComponent> mosaico_;
     std::unique_ptr<FichaPanelComponent> fichaPanel_;
 
