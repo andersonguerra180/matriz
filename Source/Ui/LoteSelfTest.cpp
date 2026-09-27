@@ -1248,6 +1248,46 @@ int rodarLoteSelfTest() {
         raizA.deleteRecursively();
     }
 
+    // ------------------- Backup: nada sai do projeto antes do MAIN existir
+    std::cout << "\n-- Backup screen: output buttons locked until MAKE BACKUP creates the MAIN --\n";
+    juce::File raizS2 = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getChildFile("matriz_saida_main_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "SaidaMain";
+        params.prefixoNomenclatura = "SMN";
+        auto projeto = matriz::model::Project::criar(raizS2.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        const auto item = inserirItem(pa.projeto().registro(), projetoId, "SMN-1", false);
+        BackupWorkspaceComponent bw(pa, {});
+        bw.setSize(1700, 900);
+        bw.resolvedDestFolder_ = juce::File();  // nenhum destino destacado
+        bw.atualizarResumo();
+        bw.resized();
+        auto travados = [&] {
+            for (auto* b : {static_cast<juce::Button*>(bw.btnPublishHtml_.get()), static_cast<juce::Button*>(bw.btnExportar_.get()),
+                            static_cast<juce::Button*>(bw.btnExportJanela_.get()), static_cast<juce::Button*>(bw.btnSyncDestino_.get())})
+                if (b == nullptr || b->isEnabled() || b->getTooltip() != matriz::i18n::t("backup.saida_sem_main")) return false;
+            return true;
+        };
+        checar(!bw.mainSelado_ && travados(), "no MAIN: PUBLISH / EXPORT / SPREADSHEET / SYNC locked, with the hint");
+        // FAZER BACKUP criou o MAIN (registro de cópia), ainda sem destino destacado.
+        pa.projeto().registro().run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                                    "checksum_sha256, consolidado_em) SELECT ?, item_id, '', id, 'x.wav', 'abc', ? FROM arquivo WHERE item_id = ?",
+                                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(matriz::model::agoraIso8601()),
+                                     matriz::db::Value::of(item)});
+        bw.atualizarResumo();
+        bool liberados = bw.mainSelado_;
+        for (auto* b : {static_cast<juce::Button*>(bw.btnPublishHtml_.get()), static_cast<juce::Button*>(bw.btnExportar_.get()),
+                        static_cast<juce::Button*>(bw.btnExportJanela_.get()), static_cast<juce::Button*>(bw.btnSyncDestino_.get())})
+            liberados = liberados && b->isEnabled() && b->getTooltip() != matriz::i18n::t("backup.saida_sem_main");
+        checar(liberados, "MAIN created: the 4 unlock even with no destination selected and no H marks");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("output lock selftest: ") + e.what());
+    }
+    raizS2.deleteRecursively();
+
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
