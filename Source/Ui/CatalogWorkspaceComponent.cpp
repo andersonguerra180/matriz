@@ -1010,7 +1010,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                                        ? std::optional<juce::String>(matriz::i18n::t("catwork.sem_leva_recente"))
                                        : std::nullopt);
 
+    if (filtroHerdadoIds_) anyFilter = true;
     for (const auto& item : itens) {
+        if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
         if (libChave == "selected") {
             if (selectedIds.find(item.id) == selectedIds.end()) continue;
         }
@@ -1440,6 +1442,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     }
 
     // Seleção herdada da árvore / SOURCE (definirFiltroItens) também cai.
+    filtroHerdadoIds_.reset();
     if (mosaico_) mosaico_->definirFiltroItens(std::nullopt);
     // Contagens cruzadas (DATE por MEDIA TYPE e vice-versa) sem filtro agora.
     atualizarContagens();
@@ -1461,6 +1464,7 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     // busca e a seleção herdada da árvore). O aplicarFiltrosAdicionais()
     // no fim desta função recalcula a grade já sem nada marcado.
     if (chave == "all") limparTodosOsFiltros();
+    filtroHerdadoIds_.reset();  // outra categoria: sai da pasta vinda do Folder Map
 
     if (indice < indiceInicioMediaType_) {
         categoriaSelecionada_ = indice;
@@ -1823,6 +1827,7 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
     anosSelecionados_.clear();
     collectionSelecionado_ = std::nullopt;
     subjectSelecionado_ = std::nullopt;
+    filtroHerdadoIds_ = itemIds;
     if (mosaico_) {
         mosaico_->definirFiltroItens(itemIds);
         mosaico_->definirSelecao(itemIds);

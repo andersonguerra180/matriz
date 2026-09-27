@@ -198,6 +198,21 @@ int rodarLoteSelfTest() {
                 mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
                 checar(!mosaico->paginacaoListaAtiva(), "the thumbnail grid is not paginated");
             }
+            // "Show content in grid" (Folder Map): salvar um campo da ficha
+            // reaplica os filtros — a pasta tem que continuar na grade.
+            {
+                std::set<std::string> pasta;
+                for (const auto& it : mosaico->todosItensEmMemoria())
+                    if (pasta.size() < 4) pasta.insert(it.id);
+                cw->definirSelecaoItens(pasta);
+                cw->atualizarFiltrosDeData();  // o que aoAplicarSucesso chama ao salvar
+                checar(mosaico->totalItensVisiveis() == 4,
+                       "Folder Map content stays in the grid after saving a field (" +
+                           juce::String(mosaico->totalItensVisiveis()) + "/4)");
+                cw->limparTodosOsFiltros();
+                checar(mosaico->totalItensVisiveis() == kItensPorLado, "HOME drops the folder filter");
+                mosaico->limparSelecao();
+            }
             // Item 5: tecla E aparece na hora (sem recarregar) e não marca
             // o item como "metadado editado".
             {

@@ -265,6 +265,11 @@ private:
     bool contagensAguardandoSnapshot_ = false;
     bool filtrosAguardandoSnapshot_ = false;
     bool reaplicandoFiltrosAposSnapshot_ = false;
+    // Arquivos vindos de "Show content in grid" (Folder Map/árvores): fica
+    // guardado aqui pra sobreviver a toda reaplicação de filtros (ex.: salvar
+    // um campo da ficha chama aplicarFiltrosAdicionais()). Cai com HOME,
+    // busca ou clique em outra categoria da sidebar.
+    std::optional<std::set<std::string>> filtroHerdadoIds_;
     int geracaoContagensAgendadas_ = 0;
     int versaoSnapshotContada_ = -1;  // MosaicoComponent::versaoSnapshot() da última contagem
 
