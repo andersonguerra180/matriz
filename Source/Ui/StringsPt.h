@@ -1492,6 +1492,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"relink.inicial_desc", "Os ativos deste projeto não foram localizados em seus caminhos registrados.\n\nPor favor, localize um arquivo de ativo deste projeto. O sistema irá deduzir automaticamente a nova raiz de armazenamento e reconectar os ativos acessíveis."},
         {"relink.arquivo_esperado_exemplo", "Arquivo esperado de exemplo ({t}):"},
         {"relink.dialog_inicial_titulo", "Localização dos Ativos Não Encontrada"},
+        {"relink.btn_pular", "PULAR"},
+        {"relink.btn_pular_dica", "Fechar e não perguntar de novo neste projeto enquanto faltarem os mesmos arquivos"},
         {"relink.localizar_ativo_conhecido", "Localizar Ativo Conhecido ({n})"},
         {"relink.ativo_offline", "ATIVO OFFLINE"},
         {"relink.offline_desc", "O arquivo físico original não foi encontrado na sua localização registrada."},

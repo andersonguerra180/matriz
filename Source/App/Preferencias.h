@@ -26,6 +26,11 @@ void gravarGeminiApiKey(const juce::String& key);
 juce::String lerTema();
 void gravarTema(const juce::String& tema);
 
+// "Asset Location Not Found" > SKIP: não perguntar de novo pra este projeto
+// enquanto faltar o mesmo arquivo de exemplo (situação diferente = pergunta).
+juce::String lerRelinkIgnorado(const juce::String& projetoId);
+void gravarRelinkIgnorado(const juce::String& projetoId, const juce::String& amostraAusente);
+
 bool lerTooltipsHabilitados();
 void gravarTooltipsHabilitados(bool habilitado);
 

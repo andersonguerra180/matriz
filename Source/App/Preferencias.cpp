@@ -60,6 +60,15 @@ void gravarTema(const juce::String& tema) {
     arquivo().saveIfNeeded();
 }
 
+juce::String lerRelinkIgnorado(const juce::String& projetoId) {
+    return arquivo().getValue("relink_ignorado_" + projetoId, {});
+}
+
+void gravarRelinkIgnorado(const juce::String& projetoId, const juce::String& amostraAusente) {
+    arquivo().setValue("relink_ignorado_" + projetoId, amostraAusente);
+    arquivo().saveIfNeeded();
+}
+
 bool lerTooltipsHabilitados() {
     return arquivo().getBoolValue("tooltips_habilitados", true);
 }

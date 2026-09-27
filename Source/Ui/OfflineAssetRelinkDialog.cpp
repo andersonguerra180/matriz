@@ -1,5 +1,6 @@
 #include "OfflineAssetRelinkDialog.h"
 #include "Tokens.h"
+#include "InitialRelinkDialog.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -79,7 +80,7 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
         juce::String fname = juce::File(expectedPath_).getFileName();
         fileChooser_ = std::make_unique<juce::FileChooser>(
             i18n::t("relink.localizar_arquivo_ativo").replace("{n}", fname),
-            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            InitialRelinkDialog::pastaInicialParaLocalizar(expectedPath_),
             "*.*");
 
         auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;

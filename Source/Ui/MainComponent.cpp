@@ -2489,7 +2489,10 @@ void MainComponent::verificarPresencaInicialAssets() {
                 else self->mosaico_->repaint();
             }
             if (report.totalAssets > 0 && report.onlineAssets == 0 && report.offlineAssets > 0) {
-                self->mostrarDialogoRelinkInicial(report);
+                // SKIP anterior pra esta mesma situação: não pergunta de novo.
+                const juce::String projetoId(self->projetoAberto_ ? self->projetoAberto_->projeto().projetoId() : "");
+                if (matriz::app::lerRelinkIgnorado(projetoId) != juce::String(report.sampleMissingExpectedPath))
+                    self->mostrarDialogoRelinkInicial(report);
             }
         });
     });
@@ -2528,7 +2531,12 @@ void MainComponent::mostrarDialogoRelinkInicial(const matriz::vault::AssetPresen
                 msg,
                 "OK");
         },
-        [] {});
+        [] {},
+        [safeThis, report] {
+            if (!safeThis || !safeThis->projetoAberto_) return;
+            matriz::app::gravarRelinkIgnorado(juce::String(safeThis->projetoAberto_->projeto().projetoId()),
+                                              juce::String(report.sampleMissingExpectedPath));
+        });
 }
 
 void MainComponent::abrirDialogoRelinkOffline(const std::string& itemId) {

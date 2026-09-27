@@ -7,11 +7,13 @@ namespace matriz::ui {
 InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpectedPath,
                                          const juce::String& sampleMissingTitle,
                                          std::function<void(const juce::File&)> onLocateFile,
-                                         std::function<void()> onWorkOffline)
+                                         std::function<void()> onWorkOffline,
+                                         std::function<void()> onSkip)
     : sampleMissingPath_(sampleMissingExpectedPath),
       sampleTitle_(sampleMissingTitle),
       onLocateFile_(std::move(onLocateFile)),
-      onWorkOffline_(std::move(onWorkOffline)) {
+      onWorkOffline_(std::move(onWorkOffline)),
+      onSkip_(std::move(onSkip)) {
     const auto& tk = tema();
 
     lblHeader_.setText(i18n::t("relink.inicial_titulo"), juce::dontSendNotification);
@@ -47,7 +49,7 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
         juce::String fname = juce::File(sampleMissingPath_).getFileName();
         fileChooser_ = std::make_unique<juce::FileChooser>(
             i18n::t("relink.localizar_ativo_conhecido").replace("{n}", fname),
-            juce::File::getSpecialLocation(juce::File::userHomeDirectory),
+            pastaInicialParaLocalizar(sampleMissingPath_),
             "*.*");
 
         auto chooserFlags = juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles;
@@ -75,6 +77,18 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
         if (cb) cb();
     };
     addAndMakeVisible(btnWorkOffline_);
+
+    btnSkip_.setButtonText(i18n::t("relink.btn_pular"));
+    btnSkip_.setTooltip(i18n::t("relink.btn_pular_dica"));
+    btnSkip_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    btnSkip_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    btnSkip_.onClick = [this] {
+        auto cb = onSkip_;
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        if (cb) cb();
+    };
+    btnSkip_.setVisible(static_cast<bool>(onSkip_));
+    addChildComponent(btnSkip_);
 
     setSize(560, 310);
 }
@@ -115,15 +129,26 @@ void InitialRelinkDialog::resized() {
     auto btnArea = r.removeFromBottom(38);
     int btnWidth = 160;
     btnWorkOffline_.setBounds(btnArea.removeFromLeft(btnWidth));
+    btnArea.removeFromLeft(10);
+    if (btnSkip_.isVisible()) btnSkip_.setBounds(btnArea.removeFromLeft(btnWidth));
     btnLocate_.setBounds(btnArea.removeFromRight(btnWidth));
+}
+
+juce::File InitialRelinkDialog::pastaInicialParaLocalizar(const juce::String& caminhoEsperado) {
+    const auto casa = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    if (caminhoEsperado.isEmpty() || !juce::File::isAbsolutePath(caminhoEsperado)) return casa;
+    juce::File pasta = juce::File(caminhoEsperado).getParentDirectory();
+    while (!pasta.isDirectory() && pasta != pasta.getParentDirectory()) pasta = pasta.getParentDirectory();
+    return (pasta.isDirectory() && pasta != pasta.getParentDirectory()) ? pasta : casa;
 }
 
 void InitialRelinkDialog::showModal(const juce::String& sampleExpectedPath,
                                    const juce::String& sampleTitle,
                                    std::function<void(const juce::File& fileSelected)> onLocateFile,
-                                   std::function<void()> onWorkOffline) {
+                                   std::function<void()> onWorkOffline,
+                                   std::function<void()> onSkip) {
     auto* dialog = new InitialRelinkDialog(sampleExpectedPath, sampleTitle,
-                                          std::move(onLocateFile), std::move(onWorkOffline));
+                                          std::move(onLocateFile), std::move(onWorkOffline), std::move(onSkip));
 
     juce::DialogWindow::LaunchOptions opt;
     opt.dialogTitle = i18n::t("relink.dialog_inicial_titulo");

@@ -1482,6 +1482,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"relink.inicial_desc", "The assets for this project could not be located at their recorded paths.\n\nPlease locate one known asset from this project. The system will automatically infer the new storage root and relink reachable assets."},
         {"relink.arquivo_esperado_exemplo", "Sample Expected File ({t}):"},
         {"relink.dialog_inicial_titulo", "Asset Location Not Found"},
+        {"relink.btn_pular", "SKIP"},
+        {"relink.btn_pular_dica", "Close and don't ask again for this project while the same files are missing"},
         {"relink.localizar_ativo_conhecido", "Locate Known Asset ({n})"},
         {"relink.ativo_offline", "ASSET OFFLINE"},
         {"relink.offline_desc", "The original physical file could not be found at its recorded location."},
