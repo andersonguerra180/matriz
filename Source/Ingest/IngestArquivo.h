@@ -39,8 +39,13 @@ struct ResultadoIngestArquivo {
 // Encontra (ou cria) o Vault que corresponde ao volume físico onde `arquivo`
 // mora — chave forte é o UUID de volume, com o ponto de montagem como
 // fallback (§8).
+// Etapa 5: se o volume reaparece com outro conteúdo (nenhum arquivo já
+// ingerido dele existe mais), aposenta o vault antigo e cria um SOURCE novo
+// — checado uma vez por vault por sessão.
 std::string obterOuCriarVaultParaArquivo(matriz::db::Database& registro, const juce::File& arquivo,
                                          const std::string& projetoId);
+// Só pra self-test: esquece quais vaults já foram checados nesta sessão.
+void esquecerChecagemDeSourceParaTeste();
 
 // true quando o arquivo é um placeholder de nuvem (iCloud/Dropbox) ainda não
 // baixado: tem tamanho lógico mas nenhum bloco alocado. Catalogar não pode

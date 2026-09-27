@@ -2,6 +2,8 @@
 #include "../Analytics/AssetGeolocation.h"
 
 #include <sys/stat.h>
+#include <set>
+#include <mutex>
 
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
@@ -41,8 +43,67 @@ juce::var construirCaracteristicasJson(const LeituraTecnicaResultado& leitura) {
 
 } // namespace
 
+namespace {
+std::mutex& mutexChecagemDeSource() {
+    static std::mutex m;
+    return m;
+}
+std::set<std::string>& vaultsChecadosNaSessao() {
+    static std::set<std::string> s;
+    return s;
+}
+} // namespace
+
+void esquecerChecagemDeSourceParaTeste() {
+    std::lock_guard<std::mutex> trava(mutexChecagemDeSource());
+    vaultsChecadosNaSessao().clear();
+}
+
 std::string obterOuCriarVaultParaArquivo(matriz::db::Database& registro, const juce::File& arquivo, const std::string& projetoId) {
-    return matriz::vault::obterOuCriarVaultParaDestino(registro, arquivo, projetoId);
+    using matriz::db::Value;
+    // Etapa 5: um volume que reaparece com OUTRO conteúdo é um SOURCE novo.
+    // Na primeira ingestão da sessão a partir de um vault que já tem
+    // arquivos: se o volume está montado e NENHUM dos arquivos ingeridos
+    // dele existe mais (cartão formatado/reaproveitado), o registro antigo é
+    // aposentado (continua na lista como SOURCE guardado, seus arquivos
+    // seguem resolvendo pelo MAIN) e nasce um vault novo. Checado uma vez
+    // por vault por sessão, sob mutex — ingest em várias threads não pode
+    // pendurar metade do lote no vault aposentado.
+    std::lock_guard<std::mutex> trava(mutexChecagemDeSource());
+    auto& vaultsChecados = vaultsChecadosNaSessao();
+
+    std::string vaultId = matriz::vault::obterOuCriarVaultParaDestino(registro, arquivo, projetoId);
+    if (vaultId.empty() || !vaultsChecados.insert(vaultId).second) return vaultId;
+    try {
+        std::string localizacao;
+        {
+            auto sv = registro.prepare("SELECT localizacao FROM vault WHERE id = ?");
+            sv.bind(1, Value::of(vaultId));
+            if (sv.step()) localizacao = sv.columnText(0);
+        }
+        juce::File raiz(juce::String::fromUTF8(localizacao.c_str()));
+        if (localizacao.empty() || !raiz.isDirectory()) return vaultId;
+        auto sa = registro.prepare("SELECT caminho_relativo FROM arquivo WHERE vault_id = ? "
+                                   "AND COALESCE(caminho_relativo, '') <> '' LIMIT 50");
+        sa.bind(1, Value::of(vaultId));
+        int conhecidos = 0, presentes = 0;
+        while (sa.step()) {
+            ++conhecidos;
+            if (raiz.getChildFile(juce::String::fromUTF8(sa.columnText(0).c_str())).existsAsFile()) ++presentes;
+        }
+        if (conhecidos == 0 || presentes > 0) return vaultId;
+
+        const std::string agora = matriz::model::agoraIso8601();
+        registro.run("UPDATE vault SET uuid_volume = '', status = 'offline', "
+                     "localizacao = localizacao || ' [' || ? || ']' WHERE id = ?",
+                     {Value::of(agora.substr(0, 10)), Value::of(vaultId)});
+        std::string novoId = matriz::vault::obterOuCriarVaultParaDestino(registro, arquivo, projetoId);
+        if (!novoId.empty()) {
+            vaultsChecados.insert(novoId);
+            return novoId;
+        }
+    } catch (...) {}
+    return vaultId;
 }
 
 bool verificarSePlaceholderNuvem(const juce::File& f) {
