@@ -810,6 +810,8 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "excel.jpeg";
     if (ext == "psd" || ext == "psb")
         return "photoshop.jpeg";
+    if (ext == "cdr" || ext == "cdt" || ext == "cdx")  // CorelDRAW (desenho, modelo, compactado)
+        return "corel.jpeg";
     if (ext == "doc" || ext == "docx" || ext == "txt" || ext == "rtf")
         return "word.jpeg";
     return "";
