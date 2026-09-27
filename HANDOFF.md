@@ -141,6 +141,36 @@ S01…), organização por ano/evento só no EXPORT.
   `build-asan/matriz_artefacts/BKR Matriz.app` (sem Debug/) é de agosto,
   não tem `--selftest-lote` e fica parado no loop se rodado.
 
+### Sessão 2026-09-27 (pós-etapa 10: listas de pedidos do usuário)
+
+Tudo em `fix/crash-freeze`, local (não pushado). Principais pontos:
+- **Metadata:** LISTA igual à do INTAKE, paginada (50/100/200/500),
+  ordenação por coluna vale pra lista INTEIRA (vira um grupo só "All
+  files"), "Buscar em" (escopo da busca), seleção só soma com Cmd.
+  Pasta vinda do Folder Map ("Show content in grid") fica em
+  `CatalogWorkspaceComponent::filtroHerdadoIds_` e sobrevive a
+  `aplicarFiltrosAdicionais()` (salvar um campo); cai com HOME/busca/outra
+  categoria.
+- **Autocomplete da ficha:** clicar numa sugestão derrubava o app
+  (referência pendurada à PopupRow destruída) — a linha copia valor e
+  callback antes; SafePointer no editor.
+- **Áudio:** um só `AudioDeviceManager` do app
+  (`Source/Audio/DispositivoAudioApp`), aberto com a escolha salva em
+  Preferences > Audio Device (`audio_dispositivo` nas preferências).
+  Timeline, Preview e AudioWorkspace usam esse. Antes cada um abria a
+  saída PADRÃO do macOS (aqui: HDMI da TV).
+- **Vídeo .mov:** `Source/Audio/FormatoAudioQuickTime` lê o áudio via
+  ExtAudioFileOpenURL (o CoreAudioFormat do JUCE abre por callbacks e o
+  CoreAudio recusa QuickTime assim). Fixture: `tools/fixtures/video_aac.mov`.
+  Sync vídeo x timeline: tolerância 350 ms tocando, 40 ms parado.
+- **Backup:** PUBLISH/EXPORT/planilha/SYNC travados sem MAIN.
+- **Storage:** selos MAIN/CLONE/SOURCE nos cards; Google Drive pergunta a
+  conta (`GoogleDriveContas.h`).
+- **Duplicates:** sub-card 168 px com miniatura na altura toda
+  (`kAlturaSubCard`).
+- Snapshots pra conferir a olho: `test-output/metadata_lista.png`,
+  `test-output/duplicatas_card.png`.
+
 ### Sessão 2026-09-26 (EVENT DATE x DATE CREATED)
 
 - `05ce298` — batch EVENT DATE do Intake: só o ano e igual ao ano do
