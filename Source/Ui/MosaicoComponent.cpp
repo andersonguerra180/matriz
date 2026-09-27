@@ -1086,13 +1086,15 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     } else if (e.mods.isCommandDown() || e.mods.isCtrlDown()) {
         if (!selecionados_.insert(id).second) selecionados_.erase(id);
         indiceAncoraShift_ = indice;
-    } else if (selecionados_.size() > 1) {
-        // Seleção múltipla em andamento: clique sem Cmd SOMA (e clicar num
-        // item já selecionado não desfaz as outras) — antes um clique sem Cmd
-        // trocava tudo por um item só. Esc / Clear Selection recomeçam.
-        selecionados_.insert(id);
+    } else if (selecionados_.count(id) && selecionados_.size() > 1) {
+        // Clique sem Cmd num item JÁ selecionado: pode ser o começo de um
+        // arrasto do grupo — só reduz a seleção a ele no mouseUp sem arrasto.
+        pendingDeselect_ = true;
+        pendingDeselectId_ = id;
         indiceAncoraShift_ = indice;
     } else {
+        // Clique sem Cmd troca a seleção pelo item; somar é só com Cmd
+        // (clique ou arrasto).
         selecionados_ = {id};
         indiceAncoraShift_ = indice;
     }
@@ -1156,15 +1158,12 @@ void MosaicoComponent::atualizarSelecaoDoLaco(const juce::MouseEvent& e) {
     // encolher o retângulo desmarca o que saiu de dentro dele, em vez de
     // acumular tudo o que o laço um dia tocou.
     selecionados_ = selecaoAntesDoLaco_;
-    bool removendo = e.mods.isCommandDown() || e.mods.isCtrlDown();
 
+    // Cmd+arrasto SOMA o que o laço tocar à seleção anterior (pedido do
+    // operador); sem Cmd/Shift o laço recomeça do zero (ver mouseDrag).
     for (size_t i = 0; i < itensFiltrados_.size(); ++i) {
         if (!boundsDaCelula(static_cast<int>(i)).intersects(lacoAtual_)) continue;
-        const std::string& id = itensFiltrados_[i].id;
-        // Cmd/Ctrl com o laço TIRA da seleção o que for tocado — é o
-        // complemento natural do Cmd+clique, que já alterna item a item.
-        if (removendo && selecaoAntesDoLaco_.count(id)) selecionados_.erase(id);
-        else selecionados_.insert(id);
+        selecionados_.insert(itensFiltrados_[i].id);
     }
 
     if (!selecionados_.empty() && selecionadoId_.empty()) selecionadoId_ = *selecionados_.begin();
