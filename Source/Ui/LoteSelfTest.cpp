@@ -134,6 +134,27 @@ int rodarLoteSelfTest() {
                 mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
                 bombear(100);
             }
+            // Lista paginada (item 8) e ordenação por coluna (item 7).
+            {
+                mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Lista);
+                mosaico->definirItensPorPaginaLista(5);
+                checar(mosaico->paginacaoListaAtiva() && mosaico->totalPaginasLista() == 3,
+                       "LIST paginates: 12 items at 5 per page -> 3 pages (" + juce::String(mosaico->totalPaginasLista()) + ")");
+                mosaico->irParaPaginaLista(2);
+                checar(mosaico->paginaListaAtual() == 2, "go to the last page");
+                mosaico->selecionarTodos();
+                checar(static_cast<int>(mosaico->itensSelecionados().size()) == kItensPorLado,
+                       "Cmd+A selects the whole filter, all pages (" + juce::String((int) mosaico->itensSelecionados().size()) + ")");
+                mosaico->limparSelecao();
+                ItemResumo a, b;
+                a.titulo = "Item 2"; b.titulo = "Item 10";
+                a.tamanhoBytes = 10; b.tamanhoBytes = 5;
+                checar(MosaicoComponent::compararPorColunaDaLista(a, b, 2) < 0 && MosaicoComponent::compararPorColunaDaLista(a, b, 5) > 0,
+                       "column sort: name in natural order (2 before 10), size by bytes");
+                mosaico->definirItensPorPaginaLista(100);
+                mosaico->definirModoVisao(MosaicoComponent::ModoVisao::Grade);
+                checar(!mosaico->paginacaoListaAtiva(), "the thumbnail grid is not paginated");
+            }
             // Item 5: tecla E aparece na hora (sem recarregar) e não marca
             // o item como "metadado editado".
             {
@@ -1287,6 +1308,39 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("output lock selftest: ") + e.what());
     }
     raizS2.deleteRecursively();
+
+    // ------------------------------- Metadata: "Buscar em" (escopo da busca)
+    std::cout << "\n-- Metadata search scope: All / Creator / People-Tags / Extension / Geo --\n";
+    juce::File raizBusca = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_escopo_busca_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Escopo";
+        params.prefixoNomenclatura = "ESC";
+        auto projeto = matriz::model::Project::criar(raizBusca.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        const auto comCriador = inserirItem(reg, projetoId, "ESC-1", false);
+        const auto comTag = inserirItem(reg, projetoId, "ESC-2", false, ".jpg");
+        reg.run("UPDATE item SET dc_creator = 'Maria Bethania' WHERE id = ?", {Value::of(comCriador)});
+        reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'maria')", {Value::of(matriz::model::novoUuid()), Value::of(comTag)});
+        reg.run("INSERT INTO asset_geolocation (asset_id, latitude, longitude, city, country, created_at, updated_at) "
+                "VALUES (?, -16.4435, -39.0643, 'Porto Seguro', 'Brazil', ?, ?)",
+                {Value::of(comTag), Value::of(matriz::model::agoraIso8601()), Value::of(matriz::model::agoraIso8601())});
+        using E = ProjetoAberto::EscopoBusca;
+        auto achou = [&](const char* t, E e) { return pa.buscarItens(t, e); };
+        checar(achou("maria", E::Criador) == std::set<std::string>{comCriador}, "Creator: only the item whose creator matches");
+        checar(achou("maria", E::PessoasTags) == std::set<std::string>{comTag}, "People/Tags: only the tagged item");
+        checar(achou("jpg", E::Extensao) == std::set<std::string>{comTag}, "Extension: .jpg");
+        checar(achou("porto", E::Geo) == std::set<std::string>{comTag} && achou("-16.44", E::Geo) == std::set<std::string>{comTag},
+               "Geo location: by place name and by coordinates");
+        checar(achou("maria", E::Notas).empty(), "Notes: nothing when no note matches");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("search scope selftest: ") + e.what());
+    }
+    raizBusca.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
