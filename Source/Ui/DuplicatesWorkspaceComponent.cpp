@@ -42,6 +42,15 @@ namespace {
                 matriz::model::ProjectLog(pasta).appendEntry("Duplicates Resolved", linhas, "User");
             });
         }
+        // Lote grande: UM aviso de recarga. Um evento por item (Validate All com
+        // ~2.000 itens) fazia a grade rodar atualizarItemEmMemoria ~2.000 vezes
+        // na message thread (43 s travada) e cada chamada invalidava o
+        // snapshot em andamento — a grade ficava vazia.
+        constexpr size_t kLimiteItemAItem = 20;
+        if (idsAlterados.size() > kLimiteItemAItem) {
+            EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+            return;
+        }
         for (const auto& id : idsAlterados) EventBus::obterInstancia().dispararItemAlterado(id, "metadado");
     }
 

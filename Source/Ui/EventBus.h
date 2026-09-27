@@ -7,7 +7,7 @@ namespace matriz::ui {
 
 struct EventoItemAlterado {
     std::string itemId;
-    std::string tipoAlteracao; // "classificacao", "campo", "arquivo"
+    std::string tipoAlteracao; // "classificacao", "campo", "arquivo"; "recarregar_tudo" (itemId vazio) = lote grande
 };
 
 class EventBusListener {

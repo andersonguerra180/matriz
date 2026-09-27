@@ -31,6 +31,12 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
     juce::MessageManager::callAsync([safeThis, e]() {
         if (safeThis == nullptr) return;
+        // Mudança em muitos itens de uma vez (ex. Duplicates > Validate All):
+        // uma recarga completa em background, não N atualizações por item.
+        if (e.tipoAlteracao == "recarregar_tudo") {
+            safeThis->recarregar();
+            return;
+        }
         if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
             bool marcadoH = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, e.itemId);
             bool marcadoK = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, e.itemId);
