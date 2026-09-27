@@ -51,6 +51,10 @@ private:
         bool online = false;
         bool isSource = false;
         bool isBackup = false;
+        // Selos do card: este volume guarda o MAIN / um CLONE (backup_destino).
+        // SOURCE = isSource (tem arquivos ingeridos).
+        bool temMain = false;
+        bool temClone = false;
 
         // Live space metrics
         juce::int64 espacoTotalBytes = 0;

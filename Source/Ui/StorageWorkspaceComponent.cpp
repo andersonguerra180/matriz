@@ -454,6 +454,25 @@ public:
             g.setColour(tk.textoSecundario);
             g.drawText(capStr, headerRow.removeFromRight(68), juce::Justification::centredRight);
 
+            // Selos: onde está o MAIN, os CLONEs e os SOURCEs (cores da lista de Versões).
+            {
+                auto selo = [&](bool on, const juce::String& texto, juce::Colour cor) {
+                    if (!on) return;
+                    const int w = texto.length() * 7 + 12;
+                    auto r = headerRow.removeFromRight(w).withSizeKeepingCentre(w, 16);
+                    headerRow.removeFromRight(4);
+                    g.setColour(cor);
+                    g.fillRoundedRectangle(r.toFloat(), 3.0f);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+                    g.drawText(texto, r, juce::Justification::centred);
+                };
+                headerRow.removeFromRight(6);
+                selo(d.isSource && d.totalArquivos > 0, i18n::t("backup.papel_source"), juce::Colour(0xff9a6b1f));
+                selo(d.temClone, i18n::t("backup.papel_clone"), juce::Colour(0xff0d9488));
+                selo(d.temMain, i18n::t("backup.papel_main"), juce::Colour(0xff2563eb));
+            }
+
             // Name & Online / Offline on the left
             juce::String displayTitle = d.nome;
             if (d.localizacao.isNotEmpty() && d.tipo != "cloud" && d.categoriaDispositivo != "cloud") {
@@ -1070,6 +1089,28 @@ void StorageWorkspaceComponent::carregarDados() {
             backupDevices_.push_back(std::move(gd));
         }
     }
+
+    // Selos MAIN / CLONE: o volume do card contém a pasta do destino. O disco
+    // do sistema ("/") só "contém" o que não está em /Volumes.
+    try {
+        std::vector<std::pair<juce::String, bool>> destinos;  // caminho, é MAIN
+        auto st = db.prepare("SELECT destino_path, COALESCE(papel, 'CLONE') FROM backup_destino "
+                             "WHERE ativo = 1 AND COALESCE(destino_path, '') <> ''");
+        while (st.step()) destinos.push_back({juce::String::fromUTF8(st.columnText(0).c_str()), st.columnText(1) == "ORIGINAL"});
+        auto marcar = [&](StorageDevice& d) {
+            if (d.localizacao.isEmpty()) return;
+            const juce::String raiz = matriz::vault::raizDoVault(juce::File(d.localizacao)).getFullPathName();
+            for (const auto& [caminho, ehMain] : destinos) {
+                const bool noVolume = raiz == "/" ? !caminho.startsWith("/Volumes/")
+                                                  : (caminho == raiz || caminho.startsWith(raiz + "/"));
+                if (!noVolume) continue;
+                if (ehMain) d.temMain = true;
+                else d.temClone = true;
+            }
+        };
+        for (auto& d : sourceDevices_) marcar(d);
+        for (auto& d : backupDevices_) marcar(d);
+    } catch (...) {}
 
     std::string targetVaultId = selectedVaultId_;
     bool targetIsSource = selectedIsSource_;
