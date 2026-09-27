@@ -911,6 +911,130 @@ int rodarLoteSelfTest() {
     }
     raizT.deleteRecursively();
 
+    // ------------------------- Etapa 7: CLONAR, sincronizar clone, promover a MAIN
+    std::cout << "\n-- Clone MAIN / SOURCE, sync clone (removals only on confirm), promote to MAIN --\n";
+    juce::File raizC = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_clones_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizC.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Clones";
+        params.prefixoNomenclatura = "CLN";
+        juce::File raizMain = raizC.getChildFile("MAIN");
+        auto projeto = matriz::model::Project::criar(raizMain, params);
+        const std::string projetoId = projeto->projetoId();
+        const std::string idMain = projeto->destinationId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        using matriz::sync::SyncEngine;
+        pa.listarVersoes();       // registra o MAIN em backup_destino
+        pa.normalizarPapelMain();
+        raizMain.getChildFile("Media").createDirectory();
+        raizMain.getChildFile("Media").getChildFile("a.txt").replaceWithText("arquivo a");
+        const std::string item = inserirItem(reg, projetoId, "CLN-1", false);
+        reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                "checksum_sha256, consolidado_em, destino_path, destino_id) SELECT ?, item_id, '', id, 'a.txt', 'x', ?, ?, ? "
+                "FROM arquivo WHERE item_id = ?",
+                {Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601()),
+                 Value::of(raizMain.getChildFile("Media").getFullPathName().toStdString()), Value::of(idMain), Value::of(item)});
+
+        // 1. CLONAR o MAIN numa pasta vazia.
+        juce::File pastaClone = raizC.getChildFile("DISCO2");
+        pastaClone.createDirectory();
+        auto rc = SyncEngine::clonarMain(pa.projeto(), pastaClone);
+        auto info = matriz::model::DestinationInfo::lerDeArquivo(rc.raiz.getChildFile("destination.json"));
+        checar(rc.sucesso && rc.raiz == pastaClone && info && info->papel == "CLONE" && info->projetoId == projetoId,
+               "CLONE of the MAIN: registered as CLONE of this project");
+        checar(rc.raiz.getChildFile("Media").getChildFile("a.txt").existsAsFile() &&
+                   rc.raiz.getChildFile("Project").getChildFile("registro.sqlite").existsAsFile(),
+               "the clone has the media and the project database");
+
+        // 2. Arquivo novo no MAIN + arquivo que só existe no clone.
+        raizMain.getChildFile("Media").getChildFile("b.txt").replaceWithText("arquivo b");
+        rc.raiz.getChildFile("Media").getChildFile("so_no_clone.txt").replaceWithText("so aqui");
+        auto plano = SyncEngine::compararCloneDoMain(pa.projeto(), rc.id);
+        int novos = 0, removidos = 0;
+        for (const auto& it : plano.itens) {
+            if (it.categoria != matriz::sync::CategoriaSync::Media) continue;
+            if (it.classe == matriz::sync::ClasseSync::Removido) ++removidos;
+            else if (it.classe != matriz::sync::ClasseSync::Igual) ++novos;
+        }
+        checar(novos == 1 && removidos == 1, "sync compare: 1 addition and 1 pending removal, listed separately");
+        auto rs = SyncEngine::sincronizarCloneDoMain(pa.projeto(), rc.id, /*aplicarRemocoes*/ false);
+        checar(rs.sucesso && rc.raiz.getChildFile("Media").getChildFile("b.txt").existsAsFile() &&
+                   rc.raiz.getChildFile("Media").getChildFile("so_no_clone.txt").existsAsFile(),
+               "sync without confirmation: addition copied, clone-only file kept");
+        rs = SyncEngine::sincronizarCloneDoMain(pa.projeto(), rc.id, /*aplicarRemocoes*/ true);
+        bool naLixeira = false;
+        for (const auto& e : juce::RangedDirectoryIterator(rc.raiz.getChildFile("Project").getChildFile("_lixeira"), true,
+                                                          "so_no_clone.txt", juce::File::findFiles)) {
+            (void) e;
+            naLixeira = true;
+        }
+        checar(!rc.raiz.getChildFile("Media").getChildFile("so_no_clone.txt").existsAsFile() && naLixeira,
+               "confirmed removal goes to the clone's _lixeira (never deleted)");
+
+        // 3. PROMOVER A MAIN.
+        juce::String erro;
+        checar(SyncEngine::promoverAMain(pa.projeto(), rc.id, erro), "promote to MAIN: " + erro);
+        auto papel = [&](matriz::db::Database& d, const std::string& id) {
+            auto st = d.prepare("SELECT papel FROM backup_destino WHERE id = ? OR destination_id = ?");
+            st.bind(1, Value::of(id));
+            st.bind(2, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string("-");
+        };
+        checar(papel(reg, rc.id) == "ORIGINAL" && papel(reg, idMain) == "CLONE", "open database: clone is MAIN, old MAIN is CLONE");
+        {
+            auto st = reg.prepare("SELECT destino_id FROM consolidacao_registro LIMIT 1");
+            checar(st.step() && st.columnText(0) == rc.id, "copy records now point to the new MAIN (mirror paths)");
+        }
+        {
+            matriz::db::Database dbClone(rc.raiz.getChildFile("Project").getChildFile("registro.sqlite").getFullPathName().toStdString());
+            checar(papel(dbClone, rc.id) == "ORIGINAL", "the clone's own database also says it is the MAIN");
+        }
+        auto infoNovo = matriz::model::DestinationInfo::lerDeArquivo(rc.raiz.getChildFile("destination.json"));
+        auto infoVelho = matriz::model::DestinationInfo::lerDeArquivo(raizMain.getChildFile("destination.json"));
+        checar(infoNovo && infoNovo->papel == "ORIGINAL" && infoVelho && infoVelho->papel == "CLONE",
+               "destination.json updated on both drives");
+        checar(raizMain.getChildFile("Media").getChildFile("a.txt").existsAsFile(), "nothing deleted from the old MAIN");
+
+        // 4. CLONAR um SOURCE (cópia bruta com checksums).
+        // Disco que não está em /Volumes: o clone copia a pasta comum aos
+        // arquivos ingeridos dele ("originais/", do inserirItem).
+        juce::File card = raizC.getChildFile("CARD");
+        juce::File base = card.getChildFile("originais");
+        base.getChildFile("DCIM").createDirectory();
+        base.getChildFile("DCIM").getChildFile("IMG_1.jpg").replaceWithText("foto 1");
+        base.getChildFile("DCIM").getChildFile("IMG_2.jpg").replaceWithText("foto 2");
+        base.getChildFile(".DS_Store").replaceWithText("x");
+        reg.run("INSERT INTO vault (id, projeto_id, nome, tipo, localizacao, status, criado_em) VALUES ('vault-card', ?, 'CARD', 'local', ?, 'online', ?)",
+                {Value::of(projetoId), Value::of(card.getFullPathName().toStdString()), Value::of(matriz::model::agoraIso8601())});
+        const std::string itemCard = inserirItem(reg, projetoId, "CLN-2", false, ".jpg");
+        reg.run("UPDATE arquivo SET vault_id = 'vault-card' WHERE item_id = ?", {Value::of(itemCard)});
+        juce::File destSrc = raizC.getChildFile("DISCO3");
+        destSrc.createDirectory();
+        auto rsrc = SyncEngine::clonarSource(pa.projeto(), "vault-card", destSrc);
+        const juce::String manifesto = rsrc.raiz.getChildFile("checksums.sha256").loadFileAsString();
+        checar(rsrc.sucesso && rsrc.copiados == 2 && rsrc.raiz.getChildFile("DCIM").getChildFile("IMG_2.jpg").existsAsFile() &&
+                   !rsrc.raiz.getChildFile(".DS_Store").exists(),
+               "CLONE SOURCE: original structure and names, system files skipped (" + rsrc.raiz.getFileName() + ")");
+        checar(manifesto.contains("DCIM/IMG_1.jpg") && manifesto.contains("DCIM/IMG_2.jpg"), "checksums.sha256 written with the clone");
+        base.getChildFile("DCIM").getChildFile("IMG_3.jpg").replaceWithText("foto 3");
+        auto ps = SyncEngine::compararCloneDeSource(pa.projeto(), rsrc.id);
+        checar(ps.erro.empty() && ps.novos.size() == 1 && ps.removidos.empty(), "SOURCE clone sync sees the new file");
+        auto rss = SyncEngine::sincronizarCloneDeSource(pa.projeto(), rsrc.id, false);
+        checar(rss.itensCopiados == 1 && rsrc.raiz.getChildFile("DCIM").getChildFile("IMG_3.jpg").existsAsFile(),
+               "SOURCE clone synced");
+        bool linhaClone = false;
+        for (const auto& v : pa.listarVersoes())
+            if (v.cloneDeSource && v.id == rsrc.id && v.origem.contains("CARD")) linhaClone = true;
+        checar(linhaClone, "the SOURCE clone is listed as CLONE with its origin");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("clones selftest: ") + e.what());
+    }
+    raizC.deleteRecursively();
+
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }
