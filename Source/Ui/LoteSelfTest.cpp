@@ -16,6 +16,7 @@
 #include "BackupVersionsComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "DuplicatesWorkspaceComponent.h"
+#include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Analytics/AssetGeolocation.h"
@@ -1100,6 +1101,27 @@ int rodarLoteSelfTest() {
         noBackup(a1, "2026-01-05T10:00:00Z");
         // Par B: nenhum tem backup.
         const auto b1 = novo("CRT-B1", "2026-02-01T10:00:00Z"), b2 = novo("CRT-B2", "2026-01-01T10:00:00Z");
+
+        // Lote grande: um aviso só pra grade (não um por item).
+        struct Contador : EventBusListener {
+            int porItem = 0, recarga = 0;
+            void aoItemAlterado(const EventoItemAlterado& e) override {
+                if (e.tipoAlteracao == "recarregar_tudo") ++recarga; else ++porItem;
+            }
+        } contador;
+        EventBus::obterInstancia().registrarListener(&contador);
+        {
+            DuplicatesWorkspaceComponent dwLote(pa);
+            for (int i = 0; i < 15; ++i) {
+                const auto x = novo("CRT-L" + std::to_string(i) + "a", "2026-01-01T10:00:00Z");
+                const auto y = novo("CRT-L" + std::to_string(i) + "b", "2026-02-01T10:00:00Z");
+                dwLote.gruposDetectados_.push_back(par(x, y));
+            }
+            dwLote.aplicarEscolhaGlobal(1);
+        }
+        EventBus::obterInstancia().removerListener(&contador);
+        checar(contador.recarga == 1 && contador.porItem == 0,
+               "Validate All on 15 pairs: ONE grid reload event, not one per item (" + juce::String(contador.porItem) + ")");
 
         DuplicatesWorkspaceComponent dw(pa);
         dw.gruposDetectados_ = {par(a1, a2), par(b1, b2)};
