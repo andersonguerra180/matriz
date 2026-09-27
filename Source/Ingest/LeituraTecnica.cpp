@@ -1,5 +1,7 @@
 #include "LeituraTecnica.h"
 
+#include <functional>
+
 #include "Loudness.h"
 #include "ProcessoExterno.h"
 
@@ -612,7 +614,91 @@ CategoriaMidia categoriaPorExtensao(const juce::String& extensaoSemPonto) {
     return CategoriaMidia::Desconhecida;
 }
 
+
+std::optional<DadosXmp> lerArquivoXmp(const juce::File& arquivoXmp) {
+    // O Exiv2 desta build não tem XMP (EXIV2_ENABLE_XMP OFF, sem expat):
+    // RDF/XML lido com o parser do JUCE. Aceita a propriedade como elemento
+    // (rdf:Alt/Seq/Bag ou texto) ou como atributo do rdf:Description.
+    if (!arquivoXmp.existsAsFile()) return std::nullopt;
+    auto raiz = juce::XmlDocument::parse(arquivoXmp);
+    if (raiz == nullptr) return std::nullopt;
+    DadosXmp d;
+    bool achouDescricao = false;
+    auto itensDe = [](const juce::XmlElement& prop) {
+        std::vector<std::string> out;
+        for (auto* colecao : prop.getChildIterator())
+            for (auto* li : colecao->getChildIterator())
+                if (li->getTagName() == "rdf:li") {
+                    auto t = li->getAllSubText().trim();
+                    if (t.isNotEmpty()) out.push_back(t.toStdString());
+                }
+        if (out.empty() && prop.getAllSubText().trim().isNotEmpty())
+            out.push_back(prop.getAllSubText().trim().toStdString());
+        return out;
+    };
+    std::function<void(const juce::XmlElement&)> visitar = [&](const juce::XmlElement& e) {
+        if (e.getTagName() == "rdf:Description") {
+            achouDescricao = true;
+            auto atributo = [&](const char* nome, std::string& destino) {
+                if (destino.empty() && e.hasAttribute(nome)) destino = e.getStringAttribute(nome).toStdString();
+            };
+            for (auto* prop : e.getChildIterator()) {
+                const auto nome = prop->getTagName();
+                auto itens = itensDe(*prop);
+                if (itens.empty()) continue;
+                if (nome == "dc:title") d.titulo = itens.front();
+                else if (nome == "dc:description") d.descricao = itens.front();
+                else if (nome == "dc:creator") d.autor = itens.front();
+                else if (nome == "dc:rights") d.direitos = itens.front();
+                else if (nome == "dc:subject") d.tags = itens;
+                else if ((nome == "photoshop:DateCreated" || nome == "xmp:CreateDate") && d.data.empty()) d.data = itens.front();
+            }
+            atributo("photoshop:DateCreated", d.data);
+            atributo("xmp:CreateDate", d.data);
+        }
+        for (auto* filho : e.getChildIterator()) visitar(*filho);
+    };
+    visitar(*raiz);
+    if (!achouDescricao) return std::nullopt;
+    return d;
+}
+
+namespace {
+LeituraTecnicaResultado lerTecnicaSemSidecar(const juce::File& arquivo);
+
+// Etapa 8: sidecar XMP que já vem no SOURCE (ex. RAW + .xmp do Lightroom:
+// "IMG_1.xmp" ou "IMG_1.CR2.xmp"). Os dados dele entram no banco — são edições
+// do cliente, valem sobre o que está embutido no arquivo. O .xmp em si nunca
+// é tocado (fica no SOURCE como veio).
+void enriquecerComSidecarXmp(LeituraTecnicaResultado& r, const juce::File& arquivo) {
+    if (arquivo.hasFileExtension("xmp")) return;
+    for (const auto& candidato : {juce::File(arquivo.getFullPathName() + ".xmp"), arquivo.withFileExtension("xmp")}) {
+        auto d = lerArquivoXmp(candidato);
+        if (!d) continue;
+        if (!d->titulo.empty()) r.metaTitle = d->titulo;
+        if (!d->descricao.empty()) r.metaDescription = d->descricao;
+        if (!d->autor.empty()) r.metaCreator = d->autor;
+        if (!d->direitos.empty()) r.metaRights = d->direitos;
+        if (!d->tags.empty()) {
+            juce::StringArray tags;
+            for (const auto& t : d->tags) tags.add(juce::String::fromUTF8(t.c_str()));
+            r.metaSubject = tags.joinIntoString(", ").toStdString();
+        }
+        if (!d->data.empty() && !r.exifDataOriginal) r.exifDataOriginal = d->data;
+        if (auto* obj = r.bruto.getDynamicObject()) obj->setProperty("sidecarXmp", candidato.getFullPathName());
+        return;
+    }
+}
+} // namespace
+
 LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
+    LeituraTecnicaResultado r = lerTecnicaSemSidecar(arquivo);
+    enriquecerComSidecarXmp(r, arquivo);
+    return r;
+}
+
+namespace {
+LeituraTecnicaResultado lerTecnicaSemSidecar(const juce::File& arquivo) {
     if (!arquivo.existsAsFile())
         throw LeituraTecnicaError("file not found: " + arquivo.getFullPathName().toStdString());
 
@@ -663,6 +749,7 @@ LeituraTecnicaResultado lerTecnica(const juce::File& arquivo) {
     }
     throw LeituraTecnicaError("unexpected media category");
 }
+} // namespace
 
 std::string paraJson(const LeituraTecnicaResultado& r) {
     return juce::JSON::toString(r.bruto, true).toStdString();

@@ -127,6 +127,9 @@ private:
     juce::ThreadPool poolExport_{1};
     bool exportando_ = false;
     std::shared_ptr<std::atomic<bool>> cancelarExport_ = std::make_shared<std::atomic<bool>>(false);
+    // Sidecars XMP (etapa 8): no lugar do embed depois que o MAIN existe.
+    std::unique_ptr<juce::TextButton> btnAtualizarSidecars_;
+    void atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar = {});
     void abrirExport();
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,

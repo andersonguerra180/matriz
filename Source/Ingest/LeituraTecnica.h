@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <optional>
+#include <vector>
 #include <stdexcept>
 #include <string>
 
@@ -87,6 +88,14 @@ struct LeituraTecnicaResultado {
     std::optional<int> pageCount;
     std::optional<std::string> metaUnmappedExtras;
 };
+
+// Campos de um .xmp (sidecar do cliente, ex. Lightroom, ou editado fora do
+// Matriz). Etapa 8.
+struct DadosXmp {
+    std::string titulo, descricao, autor, direitos, data;
+    std::vector<std::string> tags;
+};
+std::optional<DadosXmp> lerArquivoXmp(const juce::File& xmp);
 
 // Roda ffprobe (áudio/vídeo/imagem) ou o leitor de PDF conforme a categoria
 // do arquivo, e Exiv2 adicionalmente pra imagem. Lança LeituraTecnicaError

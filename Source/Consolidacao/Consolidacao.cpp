@@ -715,7 +715,10 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     auto marcadores = marcadoresDoItem(registro, ip.itemId);
                     if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
                 }
-                embutirMetadadosNoArquivo(destinoArquivo, coletarMetadadosDoItem(registro, ip.itemId));
+                // Embed onde o formato aceita; sidecar XMP onde não aceita (etapa 8).
+                if (embutirMetadadosNoArquivo(destinoArquivo, coletarMetadadosDoItem(registro, ip.itemId)) ==
+                    StatusEmbedding::Unsupported)
+                    escreverSidecarAvulso(registro, ip.itemId, destinoArquivo);
             }
             ++resultado.copiados;
         } catch (const std::exception& e) {

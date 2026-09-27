@@ -4,6 +4,8 @@
 #include "../Ingest/Checksum.h"
 #include "../Model/ProjectLog.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "../Vault/Resolucao.h"
+#include "../Consolidacao/MetadadoEmbutido.h"
 
 namespace matriz::sync {
 
@@ -873,6 +875,13 @@ ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto
                                                  bool aplicarRemocoes, const CallbackProgressoSync& progresso,
                                                  matriz::app::CancelamentoPtr cancelamento) {
     ResultadoSync res;
+    // Etapa 8: o clone recebe os sidecars do MAIN em dia (nunca sobrescreve
+    // um sidecar editado por fora — esse espera a decisão em ATUALIZAR SIDECARS).
+    try {
+        const juce::File refRaiz = matriz::model::normalizarParaRaizDestino(projeto.raiz());
+        matriz::consolidacao::atualizarSidecarsNoMain(projeto.registro(), refRaiz.getChildFile("Media"),
+                                                      matriz::vault::destinationIdDaRaiz(refRaiz), false);
+    } catch (...) {}
     auto plano = compararCloneDoMain(projeto, cloneId);
     if (!plano.podeAplicar()) {
         res.falhas.push_back(plano.errosValidacao.front());

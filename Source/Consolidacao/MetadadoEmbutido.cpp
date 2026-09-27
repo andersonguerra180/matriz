@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
+#include <map>
 #include <exiv2/exiv2.hpp>
 #include "../Model/Project.h"
 #include "../Vault/Resolucao.h"
+#include "../Ingest/LeituraTecnica.h"
 
 namespace matriz::consolidacao {
 
@@ -401,6 +404,195 @@ ResultadoEmbedding embutirMetadadosEmItens(matriz::db::Database& registro, const
         }
     }
     return resultado;
+}
+
+// ------------------------------------------------------------ Sidecars XMP
+
+namespace {
+
+void garantirTabelaSidecar(matriz::db::Database& registro) {
+    registro.exec("CREATE TABLE IF NOT EXISTS sidecar_registro ("
+                  "  caminho TEXT PRIMARY KEY, arquivo_id TEXT NOT NULL, sha256 TEXT NOT NULL, escrito_em TEXT NOT NULL)");
+}
+
+std::string sha256DeTexto(const std::string& t) {
+    return juce::SHA256(t.data(), t.size()).toHexString().toStdString();
+}
+
+std::string sha256DeArquivo(const juce::File& f) {
+    juce::MemoryBlock mb;
+    if (!f.loadFileAsData(mb)) return {};
+    return juce::SHA256(mb.getData(), mb.getSize()).toHexString().toStdString();
+}
+
+bool gravarTextoAtomico(const juce::File& destino, const std::string& texto) {
+    juce::File tmp = destino.getSiblingFile(destino.getFileName() + ".tmp");
+    if (!tmp.replaceWithData(texto.data(), texto.size())) return false;
+    if (!tmp.moveFileTo(destino)) {
+        tmp.deleteFile();
+        return false;
+    }
+    return true;
+}
+
+struct ArquivoNoMain {
+    std::string arquivoId, itemId, relativo;
+};
+
+std::vector<ArquivoNoMain> arquivosNoMain(matriz::db::Database& registro, const std::string& destinoIdMain) {
+    std::vector<ArquivoNoMain> out;
+    std::set<std::string> vistos;
+    auto st = registro.prepare("SELECT arquivo_id, item_id, caminho_relativo_destino FROM consolidacao_registro "
+                               "WHERE COALESCE(destino_id, '') = '' OR destino_id = ? ORDER BY consolidado_em");
+    st.bind(1, Value::of(destinoIdMain));
+    while (st.step()) {
+        const std::string rel = st.columnText(2);
+        if (rel.empty() || !vistos.insert(st.columnText(0)).second) continue;
+        out.push_back({st.columnText(0), st.columnText(1), rel});
+    }
+    return out;
+}
+
+} // namespace
+
+std::string gerarPacoteXmp(matriz::db::Database& registro, const std::string& itemId) {
+    // XMP padrão (RDF/XML, namespaces oficiais dc/xmp) escrito à mão: o
+    // Exiv2 desta build não tem o toolkit XMP (EXIV2_ENABLE_XMP OFF).
+    const auto meta = coletarMetadadosDoItem(registro, itemId);
+    std::string direitos;
+    std::vector<std::string> tags;
+    {
+        auto st = registro.prepare("SELECT COALESCE(dc_rights, '') FROM item WHERE id = ?");
+        st.bind(1, Value::of(itemId));
+        if (st.step()) direitos = st.columnText(0);
+        auto stt = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ? ORDER BY tag");
+        stt.bind(1, Value::of(itemId));
+        while (stt.step()) tags.push_back(stt.columnText(0));
+    }
+    if (meta.titulo.empty() && meta.descricao.empty() && meta.artista.empty() && meta.codigoAcervo.empty() &&
+        direitos.empty() && tags.empty())
+        return {};
+    auto esc = [](const std::string& v) {
+        return juce::String::fromUTF8(v.c_str()).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace("\"", "&quot;");
+    };
+    auto alt = [&](const char* prop, const std::string& v) {
+        return v.empty() ? juce::String()
+                         : juce::String("   <") + prop + "><rdf:Alt><rdf:li xml:lang=\"x-default\">" + esc(v) +
+                               "</rdf:li></rdf:Alt></" + prop + ">\n";
+    };
+    auto lista = [&](const char* prop, const char* tipo, const std::vector<std::string>& vs) {
+        if (vs.empty()) return juce::String();
+        juce::String out = juce::String("   <") + prop + "><rdf:" + tipo + ">";
+        for (const auto& v : vs) out << "<rdf:li>" << esc(v) << "</rdf:li>";
+        return out + "</rdf:" + tipo + "></" + prop + ">\n";
+    };
+    juce::String x;
+    x << "<?xpacket begin=\"" << juce::String::fromUTF8("\xef\xbb\xbf") << "\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+      << "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\" x:xmptk=\"BKR Matriz\">\n"
+      << " <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+      << "  <rdf:Description rdf:about=\"\"\n"
+      << "    xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n"
+      << "    xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"\n"
+      << "    xmp:CreatorTool=\"BKR Matriz\">\n"
+      << alt("dc:title", meta.titulo) << alt("dc:description", meta.descricao)
+      << lista("dc:creator", "Seq", meta.artista.empty() ? std::vector<std::string>{} : std::vector<std::string>{meta.artista})
+      << alt("dc:rights", direitos)
+      << (meta.codigoAcervo.empty() ? juce::String() : "   <dc:identifier>" + esc(meta.codigoAcervo) + "</dc:identifier>\n")
+      << lista("dc:date", "Seq", meta.ano ? std::vector<std::string>{std::to_string(*meta.ano)} : std::vector<std::string>{})
+      << lista("dc:subject", "Bag", tags)
+      << "  </rdf:Description>\n </rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>\n";
+    return x.toStdString();
+}
+
+bool escreverSidecarAvulso(matriz::db::Database& registro, const std::string& itemId, const juce::File& arquivo) {
+    const auto pacote = gerarPacoteXmp(registro, itemId);
+    if (pacote.empty()) return false;
+    return gravarTextoAtomico(juce::File(arquivo.getFullPathName() + ".xmp"), pacote);
+}
+
+ResultadoSidecars atualizarSidecarsNoMain(matriz::db::Database& registro, const juce::File& media,
+                                          const std::string& destinoIdMain, bool sobrescreverEditados,
+                                          const std::function<bool(int, int)>& aoProgredir) {
+    ResultadoSidecars r;
+    garantirTabelaSidecar(registro);
+    const auto arquivos = arquivosNoMain(registro, destinoIdMain);
+    const int total = static_cast<int>(arquivos.size());
+    for (int i = 0; i < total; ++i) {
+        if (aoProgredir && !aoProgredir(i, total)) break;
+        const auto& a = arquivos[(size_t) i];
+        const juce::File master = media.getChildFile(juce::String::fromUTF8(a.relativo.c_str()));
+        if (!master.existsAsFile()) continue;
+        const juce::String relSidecar = juce::String::fromUTF8(a.relativo.c_str()) + ".xmp";
+        const juce::File sidecar = media.getChildFile(relSidecar);
+        try {
+            const std::string pacote = gerarPacoteXmp(registro, a.itemId);
+            if (pacote.empty()) continue;
+            if (sidecar.existsAsFile()) {
+                std::string shaRegistrado;
+                auto st = registro.prepare("SELECT sha256 FROM sidecar_registro WHERE caminho = ?");
+                st.bind(1, Value::of(relSidecar.toStdString()));
+                if (st.step()) shaRegistrado = st.columnText(0);
+                const std::string shaAtual = sha256DeArquivo(sidecar);
+                if ((shaRegistrado.empty() || shaAtual != shaRegistrado) && !sobrescreverEditados) {
+                    r.editadosPorFora.push_back(relSidecar);
+                    continue;
+                }
+                if (shaAtual == sha256DeTexto(pacote)) {
+                    ++r.iguais;
+                    continue;
+                }
+            }
+            if (!gravarTextoAtomico(sidecar, pacote)) {
+                ++r.falhas;
+                continue;
+            }
+            registro.run("INSERT INTO sidecar_registro (caminho, arquivo_id, sha256, escrito_em) VALUES (?, ?, ?, ?) "
+                         "ON CONFLICT(caminho) DO UPDATE SET sha256 = excluded.sha256, escrito_em = excluded.escrito_em",
+                         {Value::of(relSidecar.toStdString()), Value::of(a.arquivoId), Value::of(sha256DeTexto(pacote)),
+                          Value::of(matriz::model::agoraIso8601())});
+            ++r.escritos;
+        } catch (...) {
+            ++r.falhas;
+        }
+    }
+    return r;
+}
+
+int importarSidecarsEditados(matriz::db::Database& registro, const juce::File& media, const std::string& destinoIdMain,
+                             const std::vector<juce::String>& caminhosRelativos) {
+    int importados = 0;
+    std::map<std::string, ArquivoNoMain> porSidecar;
+    for (const auto& a : arquivosNoMain(registro, destinoIdMain)) porSidecar[a.relativo + ".xmp"] = a;
+    const std::string agora = matriz::model::agoraIso8601();
+    for (const auto& rel : caminhosRelativos) {
+        auto it = porSidecar.find(rel.toStdString());
+        if (it == porSidecar.end()) continue;
+        auto d = matriz::ingest::lerArquivoXmp(media.getChildFile(rel));
+        if (!d) continue;
+        const std::string& itemId = it->second.itemId;
+        if (!d->titulo.empty())
+            registro.run("UPDATE item SET titulo = ?, dc_title = ? WHERE id = ?",
+                         {Value::of(d->titulo), Value::of(d->titulo), Value::of(itemId)});
+        if (!d->descricao.empty())
+            registro.run("UPDATE item SET dc_description = ? WHERE id = ?", {Value::of(d->descricao), Value::of(itemId)});
+        if (!d->autor.empty())
+            registro.run("UPDATE item SET dc_creator = ? WHERE id = ?", {Value::of(d->autor), Value::of(itemId)});
+        if (!d->direitos.empty())
+            registro.run("UPDATE item SET dc_rights = ? WHERE id = ?", {Value::of(d->direitos), Value::of(itemId)});
+        for (const auto& t : d->tags)
+            registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                         {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(t)});
+        registro.run("UPDATE item SET metadados_editados = 1, atualizado_em = ?, notas_livres = "
+                     "CASE WHEN TRIM(COALESCE(notas_livres, '')) = '' THEN ? ELSE notas_livres || char(10) || ? END "
+                     "WHERE id = ?",
+                     {Value::of(agora), Value::of("Imported from sidecar edited outside BKR Matriz: " + rel.toStdString()),
+                      Value::of("Imported from sidecar edited outside BKR Matriz: " + rel.toStdString()), Value::of(itemId)});
+        ++importados;
+    }
+    // O sidecar passa a refletir o catálogo de novo (e fica registrado).
+    atualizarSidecarsNoMain(registro, media, destinoIdMain, /*sobrescreverEditados*/ true);
+    return importados;
 }
 
 } // namespace matriz::consolidacao

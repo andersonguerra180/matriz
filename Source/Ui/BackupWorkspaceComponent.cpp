@@ -895,6 +895,10 @@ public:
                 if (owner_.toggleEmbutirMetadados_ && owner_.toggleEmbutirMetadados_->isVisible()) {
                     owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
                 }
+                if (owner_.btnAtualizarSidecars_ && owner_.btnAtualizarSidecars_->isVisible()) {
+                    owner_.btnAtualizarSidecars_->setBounds(
+                        dentro.removeFromTop(alturaLinhaToggle).reduced(0, 3).removeFromLeft(220));
+                }
                 if (owner_.toggleAutoResolverConflitos_) {
                     owner_.toggleAutoResolverConflitos_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
                 }
@@ -1615,6 +1619,12 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     toggleAutoResolverConflitos_->setToggleState(true, juce::dontSendNotification);
     toggleAutoResolverConflitos_->onClick = [this] { atualizarResumo(); };
     configContainer_->addAndMakeVisible(*toggleAutoResolverConflitos_);
+
+    btnAtualizarSidecars_ = std::make_unique<juce::TextButton>(matriz::i18n::t("sidecar.btn"));
+    aplicarEstiloBotao(*btnAtualizarSidecars_, false);
+    btnAtualizarSidecars_->setTooltip(matriz::i18n::t("sidecar.dica"));
+    btnAtualizarSidecars_->onClick = [this] { atualizarSidecars(false); };
+    configContainer_->addChildComponent(*btnAtualizarSidecars_);
 
     toggleForcarRebackup_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.forcar_rebackup"));
     toggleForcarRebackup_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
@@ -2720,6 +2730,10 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
     // Embed e "forçar backup completo" só existem antes do MAIN: depois o
     // MAIN só recebe arquivos novos, byte a byte (conjunto novo = CLONE).
     const bool mostrarOpcoesPrimeiroBackup = !mainSelado_;
+    if (btnAtualizarSidecars_ && btnAtualizarSidecars_->isVisible() != mainSelado_) {
+        btnAtualizarSidecars_->setVisible(mainSelado_);
+        if (configContainer_) configContainer_->resized();
+    }
     for (auto* t : {toggleEmbutirMetadados_.get(), toggleForcarRebackup_.get()}) {
         if (!t) continue;
         if (!mostrarOpcoesPrimeiroBackup) t->setToggleState(false, juce::dontSendNotification);
@@ -3217,6 +3231,73 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
             if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
             juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},
                                                    nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
+}
+
+void BackupWorkspaceComponent::atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar) {
+    if (exportando_) return;
+    exportando_ = true;  // um trabalho de disco por vez nesta tela
+    if (btnAtualizarSidecars_) btnAtualizarSidecars_->setEnabled(false);
+    ProgressoGlobal::obterInstancia().iniciarTarefa("sidecars", matriz::i18n::t("sidecar.btn"), 0);
+    auto* projeto = &projeto_.projeto();
+    const juce::File media = projeto->pastaMedia();
+    const std::string destinoId = destinoIdDoMain();
+    auto cancelado = cancelarExport_;
+    cancelado->store(false);
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    poolExport_.addJob([safeThis, projeto, media, destinoId, sobrescreverEditados, importar, cancelado] {
+        matriz::consolidacao::ResultadoSidecars r;
+        int importados = 0;
+        try {
+            if (!importar.empty())
+                importados = matriz::consolidacao::importarSidecarsEditados(projeto->registro(), media, destinoId, importar);
+            else
+                r = matriz::consolidacao::atualizarSidecarsNoMain(
+                    projeto->registro(), media, destinoId, sobrescreverEditados, [cancelado](int feito, int total) {
+                        juce::MessageManager::callAsync([feito, total] {
+                            ProgressoGlobal::obterInstancia().atualizarFracao("sidecars", (double) feito / std::max(1, total),
+                                                                            juce::String(feito) + " / " + juce::String(total));
+                        });
+                        return !cancelado->load();
+                    });
+        } catch (...) {
+            ++r.falhas;
+        }
+        juce::MessageManager::callAsync([safeThis, r, importados, importando = !importar.empty()] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("sidecars");
+            if (safeThis == nullptr) return;
+            safeThis->exportando_ = false;
+            if (safeThis->btnAtualizarSidecars_) safeThis->btnAtualizarSidecars_->setEnabled(true);
+            if (importando) {
+                juce::AlertWindow::showMessageBoxAsync(
+                    juce::AlertWindow::InfoIcon, matriz::i18n::t("sidecar.btn"),
+                    matriz::i18n::t("sidecar.importados").replace("{n}", juce::String(importados)), {}, nullptr,
+                    juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            juce::String msg = matriz::i18n::t("sidecar.fim")
+                                   .replace("{n}", juce::String(r.escritos))
+                                   .replace("{i}", juce::String(r.iguais));
+            if (r.falhas > 0) msg << "\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String(r.falhas));
+            if (r.editadosPorFora.empty()) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("sidecar.btn"), msg, {},
+                                                       nullptr, juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            // Editados por fora (ou que não são do Matriz): nunca em silêncio.
+            msg << "\n\n" << matriz::i18n::t("sidecar.editados").replace("{n}", juce::String((int) r.editadosPorFora.size()));
+            for (size_t i = 0; i < r.editadosPorFora.size() && i < 8; ++i) msg << "\n- " << r.editadosPorFora[i];
+            auto* aw = new juce::AlertWindow(matriz::i18n::t("sidecar.btn"), msg, juce::MessageBoxIconType::WarningIcon);
+            aw->addButton(matriz::i18n::t("sidecar.importar"), 2);
+            aw->addButton(matriz::i18n::t("sidecar.sobrescrever"), 1);
+            aw->addButton(matriz::i18n::t("sidecar.deixar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            auto editados = r.editadosPorFora;
+            aw->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, editados](int escolha) {
+                if (safeThis == nullptr || escolha == 0) return;
+                if (escolha == 1) safeThis->atualizarSidecars(true);
+                else safeThis->atualizarSidecars(false, editados);
+            }), true);
         });
     });
 }

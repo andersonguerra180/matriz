@@ -3134,6 +3134,17 @@ void MainComponent::fileDragExit(const juce::StringArray&) {
 }
 
 std::vector<juce::File> MainComponent::expandirArquivos(const juce::Array<juce::File>& arquivosOuPastas) const {
+    // Etapa 8: .xmp ao lado de uma mídia é sidecar (os dados entram pela
+    // leitura técnica da mídia), não um item à parte.
+    auto ehSidecarDeOutroArquivo = [](const juce::File& f) {
+        if (!f.hasFileExtension("xmp")) return false;
+        const juce::File semXmp = f.getSiblingFile(f.getFileNameWithoutExtension());  // IMG_1.CR2.xmp -> IMG_1.CR2
+        if (semXmp.existsAsFile() && semXmp.getFileExtension().isNotEmpty()) return true;
+        for (const auto& irmao : f.getParentDirectory().findChildFiles(juce::File::findFiles, false,
+                                                                        f.getFileNameWithoutExtension() + ".*"))
+            if (!irmao.hasFileExtension("xmp")) return true;  // IMG_1.xmp + IMG_1.CR2
+        return false;
+    };
     std::vector<juce::File> arquivos;
     for (auto& entrada : arquivosOuPastas) {
         if (entrada.isDirectory()) {
@@ -3144,6 +3155,7 @@ std::vector<juce::File> MainComponent::expandirArquivos(const juce::Array<juce::
 
                 if (name.startsWith(".") || f.getSize() == 0) continue;
                 if (ext == "sfk" || ext == "reapeaks" || ext == "asd") continue;
+                if (ehSidecarDeOutroArquivo(f)) continue;
 
                 arquivos.push_back(f);
             }
@@ -3153,6 +3165,7 @@ std::vector<juce::File> MainComponent::expandirArquivos(const juce::Array<juce::
 
             if (name.startsWith(".") || entrada.getSize() == 0) continue;
             if (ext == "sfk" || ext == "reapeaks" || ext == "asd") continue;
+            if (ehSidecarDeOutroArquivo(entrada)) continue;
 
             arquivos.push_back(entrada);
         }

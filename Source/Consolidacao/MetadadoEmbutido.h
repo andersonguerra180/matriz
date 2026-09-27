@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 
 #include <string>
 #include <vector>
@@ -78,5 +79,36 @@ struct ResultadoEmbedding {
 };
 ResultadoEmbedding embutirMetadadosEmItens(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const std::vector<std::string>& itemIds);
+
+// ------------------------------------------------------------ Sidecars XMP
+// Etapa 8. XMP padrão (Dublin Core + xmp:CreatorTool), legível por
+// Lightroom/Bridge/Resolve, com o nome completo do arquivo: ACR-001.wav.xmp.
+// O banco é a verdade; o sidecar é reflexo. No MAIN há masters (selados) e
+// sidecars (atualizáveis). sidecar_registro guarda o SHA-256 de cada sidecar
+// que o Matriz escreveu: sidecar alterado por fora (ou que não foi escrito
+// pelo Matriz, ex. do cliente) nunca é sobrescrito em silêncio.
+
+// Pacote XMP de um item (vazio se não há nada a dizer).
+std::string gerarPacoteXmp(matriz::db::Database& registro, const std::string& itemId);
+// Grava o pacote ao lado de `arquivo` (arquivo.ext.xmp) — pra EXPORT, sem registro.
+bool escreverSidecarAvulso(matriz::db::Database& registro, const std::string& itemId, const juce::File& arquivo);
+
+struct ResultadoSidecars {
+    int escritos = 0;
+    int iguais = 0;
+    int falhas = 0;
+    std::vector<juce::String> editadosPorFora;  // caminhos relativos a Media/
+};
+// Um sidecar por arquivo registrado no MAIN (`media` = <raiz do MAIN>/Media,
+// `destinoIdMain` = destination_id dele; registros legados sem destino contam).
+// sobrescreverEditados = true só com escolha explícita do operador.
+ResultadoSidecars atualizarSidecarsNoMain(matriz::db::Database& registro, const juce::File& media,
+                                          const std::string& destinoIdMain, bool sobrescreverEditados = false,
+                                          const std::function<bool(int, int)>& aoProgredir = {});
+// "Importar": lê os sidecars editados por fora de volta pro catálogo
+// (título, descrição, autor, direitos, tags) e regrava o sidecar do Matriz.
+int importarSidecarsEditados(matriz::db::Database& registro, const juce::File& media, const std::string& destinoIdMain,
+                             const std::vector<juce::String>& caminhosRelativos);
+
 
 } // namespace matriz::consolidacao
