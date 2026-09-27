@@ -193,6 +193,7 @@ public:
     std::vector<ItemResumo> listarItens() const;
     int contarItens() const { return static_cast<int>(listarItens().size()); }
     std::vector<ItemResumo> listarItensEmQuarentena() const;
+    // Send to Grid e Reject (Intake) entram na pilha de undo (Cmd+Z).
     void confirmarItemGrid(const std::string& itemId);
     void confirmarLoteGrid(const std::vector<std::string>& itemIds);
     // Soma o tamanho do master de cada item. Roda um SUM com função de
@@ -783,6 +784,7 @@ private:
     mutable bool ultimosItensIngeridosValido_ = false;
 
     static constexpr int kMaxUndo = 25;
+    void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);
     std::vector<UndoEntry> pilhaUndo_;
     std::optional<UndoEntry> grupoAberto_;
     bool desfazendo_ = false;

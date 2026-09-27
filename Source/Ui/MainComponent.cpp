@@ -4239,6 +4239,7 @@ void MainComponent::executarUndo() {
         if (backupWorkspace_) backupWorkspace_->recarregar();
         if (duplicatesWorkspace_) duplicatesWorkspace_->recarregar();
         if (catalogWorkspace_) catalogWorkspace_->recarregar();
+        if (intakeWorkspace_) intakeWorkspace_->recarregar();  // Undo de Reject / Send to Grid
         if (fichaPanel_ && !itemEmEscuta_.empty()) fichaPanel_->mostrarItem(itemEmEscuta_);
         if (filtros_) filtros_->recarregar();
         atualizarPainelDeApoio();

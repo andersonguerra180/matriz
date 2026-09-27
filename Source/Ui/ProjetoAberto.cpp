@@ -767,8 +767,36 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     return out;
 }
 
+void ProjetoAberto::registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds) {
+    if (desfazendo_ || !projeto_) return;
+    std::vector<std::pair<std::string, std::string>> antes;  // id -> lote_grid_id anterior
+    for (const auto& id : itemIds) {
+        auto st = projeto_->registro().prepare("SELECT COALESCE(lote_grid_id, '') FROM item WHERE id = ? AND em_quarentena = 1");
+        st.bind(1, matriz::db::Value::of(id));
+        if (st.step()) antes.push_back({id, st.columnText(0)});
+    }
+    if (antes.empty()) return;
+    registrarUndo(antes.size() == 1 ? "Send to Grid" : "Send " + std::to_string(antes.size()) + " Items to Grid",
+                  [this, antes]() {
+        auto& d = projeto_->registro();
+        d.run("BEGIN TRANSACTION", {});
+        try {
+            for (const auto& [id, lote] : antes)
+                d.run("UPDATE item SET em_quarentena = 1, lote_grid_id = ? WHERE id = ?",
+                      {lote.empty() ? matriz::db::Value::null() : matriz::db::Value::of(lote), matriz::db::Value::of(id)});
+            d.run("COMMIT", {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        ultimosItensIngeridosValido_ = false;
+        for (const auto& [id, lote] : antes) EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
+    });
+}
+
 void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     if (!projeto_ || itemId.empty()) return;
+    registrarUndoEnvioAoGrid({itemId});
     std::string agora = matriz::model::agoraIso8601();
     projeto_->registro().run(
         "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
@@ -778,6 +806,7 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
 
 void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& itemIds) {
     if (!projeto_ || itemIds.empty()) return;
+    registrarUndoEnvioAoGrid(itemIds);
     std::string agora = matriz::model::agoraIso8601();
     // Id da leva: ms desde a época (zero-padded, ordena como texto) + uuid
     // pra desempatar duas promoções no mesmo ms.
@@ -2193,14 +2222,65 @@ void ProjetoAberto::restaurarItensParaBackup(const std::vector<std::pair<std::st
     }
 }
 
+namespace {
+// Undo do REJECT (Intake): antes de apagar, as linhas do item e de tudo que
+// referencia item ou arquivo (FK — lido do próprio esquema) vão pra tabelas
+// TEMP da conexão, marcadas com um token; o undo as reinsere. TEMP = some ao
+// fechar o projeto (a pilha de undo também não sobrevive).
+struct TabelaLigada {
+    std::string tabela, coluna, alvo;  // alvo: "item" ou "arquivo"
+};
+std::vector<TabelaLigada> tabelasLigadasAoItem(matriz::db::Database& db) {
+    std::vector<TabelaLigada> out;
+    auto st = db.prepare("SELECT m.name, f.\"from\", f.\"table\" FROM sqlite_master m, pragma_foreign_key_list(m.name) f "
+                         "WHERE m.type = 'table' AND f.\"table\" IN ('item', 'arquivo')");
+    while (st.step()) out.push_back({st.columnText(0), st.columnText(1), st.columnText(2)});
+    return out;
+}
+std::string colunasDe(matriz::db::Database& db, const std::string& tabela) {
+    std::string cols;
+    auto st = db.prepare("SELECT name FROM pragma_table_info(?)");
+    st.bind(1, matriz::db::Value::of(tabela));
+    while (st.step()) cols += (cols.empty() ? "\"" : ", \"") + st.columnText(0) + "\"";
+    return cols;
+}
+void guardarParaUndo(matriz::db::Database& db, const std::string& token, const std::string& tabela,
+                     const std::string& onde) {
+    db.exec("CREATE TEMP TABLE IF NOT EXISTS \"undo__" + tabela + "\" AS SELECT '' AS undo_token, * FROM \"" + tabela +
+            "\" WHERE 0");
+    db.run("INSERT INTO temp.\"undo__" + tabela + "\" SELECT ?, * FROM \"" + tabela + "\" WHERE " + onde,
+           {matriz::db::Value::of(token), matriz::db::Value::of(token)});
+}
+} // namespace
+
 void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemIds) {
     if (!projeto_) return;
     // Uma transação só pro lote inteiro (era um DELETE autocommit por item —
     // cada um pagando seu próprio overhead de WAL + cascade de FK sozinho,
     // igual o removerItensDoBackup já fazia certo logo acima).
     auto& db = projeto_->registro();
+    const std::string token = matriz::model::novoUuid();
+    std::vector<std::string> tabelasGuardadas;
     db.run("BEGIN TRANSACTION", {});
     try {
+        if (!desfazendo_) {
+            db.exec("CREATE TEMP TABLE IF NOT EXISTS undo_ids (token TEXT, id TEXT)");
+            for (auto& itemId : itemIds)
+                db.run("INSERT INTO temp.undo_ids (token, id) VALUES (?, ?)",
+                       {matriz::db::Value::of(token), matriz::db::Value::of(itemId)});
+            const std::string idsItem = "(SELECT id FROM temp.undo_ids WHERE token = ?)";
+            const std::string idsArquivo = "(SELECT id FROM arquivo WHERE item_id IN " + idsItem + ")";
+            guardarParaUndo(db, token, "item", "id IN " + idsItem);
+            tabelasGuardadas.push_back("item");
+            guardarParaUndo(db, token, "arquivo", "item_id IN " + idsItem);
+            tabelasGuardadas.push_back("arquivo");
+            for (const auto& t : tabelasLigadasAoItem(db)) {
+                if (t.tabela == "arquivo") continue;
+                guardarParaUndo(db, token, t.tabela,
+                                "\"" + t.coluna + "\" IN " + (t.alvo == "item" ? idsItem : idsArquivo));
+                tabelasGuardadas.push_back(t.tabela);
+            }
+        }
         for (auto& itemId : itemIds)
             db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemId)});
         db.run("COMMIT", {});
@@ -2208,6 +2288,30 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
         db.run("ROLLBACK", {});
         throw;
     }
+    if (desfazendo_ || tabelasGuardadas.empty()) return;
+    // Ordem: item, arquivo, depois as filhas (FK). OR IGNORE: tabela alcançada
+    // por duas colunas (ex. item_relacao a/b) guardou a linha duas vezes.
+    std::sort(tabelasGuardadas.begin() + 2, tabelasGuardadas.end());
+    tabelasGuardadas.erase(std::unique(tabelasGuardadas.begin() + 2, tabelasGuardadas.end()), tabelasGuardadas.end());
+    const std::vector<std::string> ids = itemIds;
+    registrarUndo(itemIds.size() == 1 ? "Reject Item" : "Reject " + std::to_string(itemIds.size()) + " Items",
+                  [this, token, tabelasGuardadas, ids]() {
+        auto& d = projeto_->registro();
+        d.run("BEGIN TRANSACTION", {});
+        try {
+            for (const auto& t : tabelasGuardadas) {
+                const std::string cols = colunasDe(d, t);
+                d.run("INSERT OR IGNORE INTO \"" + t + "\" (" + cols + ") SELECT " + cols + " FROM temp.\"undo__" + t +
+                          "\" WHERE undo_token = ?",
+                      {matriz::db::Value::of(token)});
+            }
+            d.run("COMMIT", {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+            return;
+        }
+        for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
+    });
 }
 
 void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo) {
