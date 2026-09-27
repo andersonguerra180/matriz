@@ -1010,7 +1010,10 @@ void testarLoudnessEMarcadores(const juce::File& dirTemp) {
 
         auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), pastaProjeto, destino,
                                                                  soPastaManual());
-        auto resultado = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano);
+        // Primeiro backup (MAIN ainda não existe): o único momento em que o
+        // embed dentro da cópia é permitido.
+        auto resultado = matriz::consolidacao::executarConsolidacao(projeto->registro(), pastaProjeto, destino, plano,
+                                                                    {}, {}, /*embutirNaCopia*/ true);
         check(resultado.consolidados == 1, "backup copy");
         check(resultado.arquivosComMarcadorEmbutido == 1,
               "markers were embedded in 1 backup file (got " +
@@ -2451,11 +2454,131 @@ void testarAdicionarAoMain(const juce::File& dirTemp) {
             ++copias;
         }
         check(copias == 3, "no duplicate copy in the MAIN (" + std::to_string(copias) + " files)");
+        // Etapa 5: sem embed pedido, a cópia no MAIN é byte a byte o original.
+        {
+            juce::MemoryBlock orig, copia;
+            fonte.getChildFile("ADD-003.wav").loadFileAsData(orig);
+            if (p3) media.getChildFile(p3->caminhoRelativoDestino).loadFileAsData(copia);
+            check(orig.getSize() > 0 && orig == copia, "ADD TO MAIN copy has the same bytes as the SOURCE file (no embed)");
+        }
     } catch (const std::exception& e) {
         check(false, std::string("ADD TO MAIN: ") + e.what());
     }
     raiz.deleteRecursively();
     fonte.deleteRecursively();
+}
+
+void testarSourcesEtapa5(const juce::File& dirTemp) {
+    std::cout << "\n== SOURCE codes: S01 root folder / _S01 suffix, code fixed on first backup, reused volume ==\n";
+    using namespace matriz::consolidacao;
+    using matriz::db::Value;
+    juce::File raiz = dirTemp.getChildFile("src5_" + juce::Uuid().toDashedString());
+    juce::File fonteA = dirTemp.getChildFile("src5_a_" + juce::Uuid().toDashedString());
+    juce::File fonteB = dirTemp.getChildFile("src5_b_" + juce::Uuid().toDashedString());
+    fonteA.createDirectory();
+    fonteB.createDirectory();
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Src5";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "SRC";
+        auto projeto = matriz::model::Project::criar(raiz, params);
+        auto& reg = projeto->registro();
+        const std::string pid = projeto->projetoId();
+        auto novoItem = [&](const std::string& codigo, const juce::File& f, int freq) {
+            std::string id = matriz::model::novoUuid();
+            const std::string agora = matriz::model::agoraIso8601();
+            reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, '', 'fita_rolo', ?, ?)",
+                    {Value::of(id), Value::of(pid), Value::of(codigo), Value::of(agora), Value::of(agora)});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=" + std::to_string(freq) + ":duration=1", f.getFullPathName()});
+            auto ing = matriz::ingest::ingerirArquivo(reg, projeto->pasta(), id, f, "preservation_master", true);
+            return ing.arquivoId;
+        };
+        // Dois cartões com o mesmo nome de arquivo.
+        const std::string arqA = novoItem("SRC-A", fonteA.getChildFile("take.wav"), 300);
+        juce::Thread::sleep(20);
+        const std::string arqB = novoItem("SRC-B", fonteB.getChildFile("take.wav"), 400);
+        std::string vaultA;
+        {
+            auto st = reg.prepare("SELECT vault_id FROM arquivo WHERE id = ?");
+            st.bind(1, Value::of(arqA));
+            if (st.step()) vaultA = st.columnText(0);
+        }
+        // O segundo "cartão" vira outro volume (mesmo disco no teste): um
+        // vault próprio, desmontado — a cópia resolve pelo caminho absoluto.
+        reg.run("INSERT INTO vault (id, projeto_id, nome, tipo, localizacao, status, criado_em) "
+                "SELECT 'vault-b', projeto_id, 'CARD B', tipo, '/Volumes/CARD B (test, unmounted)', 'offline', criado_em "
+                "FROM vault WHERE id = ?",
+                {Value::of(vaultA)});
+        reg.run("UPDATE arquivo SET vault_id = 'vault-b' WHERE id = ?", {Value::of(arqB)});
+
+        auto codigos = codigosDeSource(reg);
+        check(codigos[vaultA] == "S01" && codigos["vault-b"] == "S02",
+              "SOURCE codes follow the order of first ingestion (S01, S02)");
+        check(codigoDeSourceValido("CARD-2") && !codigoDeSourceValido("S 01") && !codigoDeSourceValido("C\xc3\xa3o") &&
+                  !codigoDeSourceValido("a/b") && !codigoDeSourceValido(""),
+              "custom code accepts only letters without accents, numbers and hyphen");
+
+        juce::File media = raiz.getChildFile("Media");
+        media.createDirectory();
+        const HierarquiaBackup original = {NivelHierarquia::EstruturaOriginal};
+        auto semSource = planejarConsolidacao(reg, projeto->pasta(), media, original, {}, ModoPrefixoArquivo::Nenhum);
+        bool antigoIgual = true;
+        for (auto& ip : semSource.itens)
+            if (ip.caminhoRelativoDestino.startsWith("S0") || ip.caminhoRelativoDestino.contains("_S0")) antigoIgual = false;
+        check(antigoIgual, "without per-SOURCE organization (old MAIN) paths are unchanged");
+
+        auto plano = planejarConsolidacao(reg, projeto->pasta(), media, original, {}, ModoPrefixoArquivo::Nenhum, {},
+                                          false, false, /*organizarPorSource*/ true);
+        juce::String pA, pB;
+        for (auto& ip : plano.itens) (ip.arquivoId == arqA ? pA : pB) = ip.caminhoRelativoDestino;
+        check(pA.startsWith("S01/") && pA.endsWith("/take_S01.wav"), "preserve-original: root folder S01 + suffix (" + pA.toStdString() + ")");
+        check(pB.startsWith("S02/") && pB.endsWith("/take_S02.wav"), "second SOURCE gets S02 (" + pB.toStdString() + ")");
+        check(plano.podeConsolidar(), "same file name on two SOURCEs does not collide");
+
+        auto porAno = planejarConsolidacao(reg, projeto->pasta(), media, {NivelHierarquia::Ano}, {},
+                                           ModoPrefixoArquivo::Nenhum, {}, false, false, true);
+        bool sufixoSemPasta = true;
+        for (auto& ip : porAno.itens)
+            if (ip.caminhoRelativoDestino.startsWith("S0") || !ip.caminhoRelativoDestino.contains("take_S0")) sufixoSemPasta = false;
+        check(sufixoSemPasta, "other structures: suffix on original names, no SOURCE root folder");
+
+        auto r = executarConsolidacao(reg, projeto->pasta(), media, plano);
+        check(r.consolidados == 2 && r.falhas.empty(), "first backup copied both SOURCEs");
+        {
+            auto st = reg.prepare("SELECT codigo FROM vault WHERE id = 'vault-b'");
+            check(st.step() && st.columnText(0) == "S02", "the SOURCE code is fixed once its first file is in the MAIN");
+        }
+
+        // Volume reaproveitado: nenhum arquivo ingerido dele existe mais.
+        fonteA.getChildFile("take.wav").deleteFile();
+        fonteB.getChildFile("take.wav").deleteFile();
+        reg.run("DELETE FROM arquivo WHERE vault_id = ? AND id <> ?", {Value::of(vaultA), Value::of(arqA)});
+        matriz::ingest::esquecerChecagemDeSourceParaTeste();
+        const std::string arqC = novoItem("SRC-C", fonteA.getChildFile("novo.wav"), 500);
+        std::string vaultC;
+        {
+            auto st = reg.prepare("SELECT vault_id FROM arquivo WHERE id = ?");
+            st.bind(1, Value::of(arqC));
+            if (st.step()) vaultC = st.columnText(0);
+        }
+        check(!vaultC.empty() && vaultC != vaultA, "a volume back with different content becomes a new SOURCE");
+        {
+            auto st = reg.prepare("SELECT vault_id FROM arquivo WHERE id = ?");
+            st.bind(1, Value::of(arqA));
+            check(st.step() && st.columnText(0) == vaultA, "files of the old SOURCE stay linked to it (provenance)");
+        }
+        auto cod2 = codigosDeSource(reg);
+        check(cod2[vaultA] == "S01" && cod2["vault-b"] == "S02" && cod2[vaultC] == "S03",
+              "the new SOURCE gets the next code (" + cod2[vaultC] + ")");
+    } catch (const std::exception& e) {
+        check(false, std::string("SOURCE stage 5: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    fonteA.deleteRecursively();
+    fonteB.deleteRecursively();
 }
 
 int main() {
@@ -2494,6 +2617,7 @@ int main() {
     testarPublicacao(tmpDir);
     testarResolucaoPeloMain(tmpDir);
     testarAdicionarAoMain(tmpDir);
+    testarSourcesEtapa5(tmpDir);
 
     tmpDir.deleteRecursively();
 

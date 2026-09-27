@@ -5,6 +5,7 @@
 #include <iostream>
 
 #include "../Model/Project.h"
+#include "../I18n/Strings.h"
 #include "CatalogWorkspaceComponent.h"
 #include "FichaPanelComponent.h"
 #include "IntakeWorkspaceComponent.h"
@@ -13,6 +14,7 @@
 #include "OriginalSourceMedium.h"
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
+#include "BackupWorkspaceComponent.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Analytics/AssetGeolocation.h"
@@ -825,6 +827,74 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("duplicates selftest: ") + e.what());
     }
     raizSan.deleteRecursively();
+
+    // --------------------------- Etapa 5: travas do MAPA e da Configuração
+    std::cout << "\n-- After the MAIN exists: folder map and backup settings are locked --\n";
+    juce::File raizT = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_travas_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizT.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Travas";
+        params.prefixoNomenclatura = "TRV";
+        auto projeto = matriz::model::Project::criar(raizT.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        auto* bruto = projeto.get();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = bruto->registro();
+        using matriz::db::Value;
+        const std::string pastaEvento = pa.criarPastaAcervo("Evento", std::nullopt);
+        const std::string pastaLivre = pa.criarPastaAcervo("Livre", std::nullopt);
+        const std::string item = inserirItem(reg, projetoId, "TRV-1", false);
+        reg.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                {Value::of(matriz::model::novoUuid()), Value::of(item), Value::of(pastaEvento),
+                 Value::of(matriz::model::agoraIso8601())});
+        auto nomeDe = [&](const std::string& id) {
+            auto st = reg.prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        checar(!pa.mainExiste() && pa.renomearPastaAcervo(pastaEvento, "Evento 1") && nomeDe(pastaEvento) == "Evento 1",
+               "before the first backup the folder map is free");
+
+        // Primeiro backup (registro legado, sem destino gravado).
+        reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                "checksum_sha256, consolidado_em) SELECT ?, item_id, ?, id, 'Evento 1/TRV-1.wav', 'abc', ? FROM arquivo "
+                "WHERE item_id = ?",
+                {Value::of(matriz::model::novoUuid()), Value::of(pastaEvento), Value::of(matriz::model::agoraIso8601()),
+                 Value::of(item)});
+        checar(pa.mainExiste(), "the MAIN exists after the first backup");
+        checar(!pa.renomearPastaAcervo(pastaEvento, "Outro nome") && nomeDe(pastaEvento) == "Evento 1",
+               "renaming a folder with files in the MAIN is blocked");
+        checar(!pa.moverPastaAcervo(pastaEvento, pastaLivre), "moving a folder with files in the MAIN is blocked");
+        checar(!pa.apagarPastaAcervo(pastaEvento) && !nomeDe(pastaEvento).empty(), "deleting a folder with files in the MAIN is blocked");
+        checar(!pa.criarPastaAcervo("Nova", std::nullopt).empty(), "creating a new folder is still allowed");
+        checar(pa.renomearPastaAcervo(pastaLivre, "Livre 2"), "a folder with nothing in the MAIN can still be renamed");
+
+        BackupWorkspaceComponent bw(pa, {});
+        bw.atualizarTravasDoMain();
+        checar(bw.mainSelado_ && !bw.configTravada_,
+               "old MAIN without saved settings: not locked yet (locks on the next backup)");
+        checar(!bw.toggleEmbutirMetadados_->isVisible() && !bw.toggleForcarRebackup_->isVisible(),
+               "with a MAIN, embed and force-full-backup are gone from the add flow");
+        bw.comboOrg_->setSelectedId(3, juce::dontSendNotification);
+        bw.comboModoPrefixo_->setSelectedId(2, juce::dontSendNotification);
+        bw.gravarConfigDoMain();
+        bw.comboOrg_->setSelectedId(1, juce::dontSendNotification);  // operador tenta mudar depois
+        bw.comboModoPrefixo_->setSelectedId(1, juce::dontSendNotification);
+        bw.atualizarTravasDoMain();
+        checar(bw.configTravada_ && bw.comboOrg_->getSelectedId() == 3 && !bw.comboOrg_->isEnabled(),
+               "folder structure comes back to the first-backup choice, greyed out");
+        checar(bw.comboModoPrefixo_->getSelectedId() == 2 && !bw.comboModoPrefixo_->isEnabled() &&
+                   !bw.togglePreservarEstrutura_->isEnabled(),
+               "naming / prefix locked too");
+        checar(bw.labelOrg_->getText().contains(matriz::i18n::t("backup.definido_primeiro_backup")),
+               "the section says it was set in the first backup");
+        checar(!bw.organizarPorSource_, "an old MAIN keeps its naming rule (no per-SOURCE suffix)");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("locks selftest: ") + e.what());
+    }
+    raizT.deleteRecursively();
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
