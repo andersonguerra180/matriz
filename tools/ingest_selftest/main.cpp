@@ -2667,6 +2667,96 @@ void testarExportEtapa6(const juce::File& dirTemp) {
     saida.deleteRecursively();
 }
 
+void testarSidecarsEtapa8(const juce::File& dirTemp) {
+    std::cout << "\n== XMP sidecars: MAIN sidecars from the catalog, external edits never overwritten silently ==\n";
+    using namespace matriz::consolidacao;
+    using matriz::db::Value;
+    juce::File raiz = dirTemp.getChildFile("xmp8_" + juce::Uuid().toDashedString());
+    juce::File fonte = dirTemp.getChildFile("xmp8_src_" + juce::Uuid().toDashedString());
+    fonte.createDirectory();
+    try {
+        // Sidecar do cliente no SOURCE (padrão Lightroom: mesmo nome, .xmp).
+        juce::File foto = fonte.getChildFile("IMG_1.jpg");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                         "color=c=blue:s=64x48", "-frames:v", "1", foto.getFullPathName()});
+        juce::File xmpCliente = fonte.getChildFile("IMG_1.xmp");
+        xmpCliente.replaceWithText(
+            "<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>"
+            "<rdf:Description rdf:about='' xmlns:dc='http://purl.org/dc/elements/1.1/'>"
+            "<dc:title><rdf:Alt><rdf:li xml:lang='x-default'>Titulo do cliente</rdf:li></rdf:Alt></dc:title>"
+            "<dc:subject><rdf:Bag><rdf:li>show</rdf:li><rdf:li>palco</rdf:li></rdf:Bag></dc:subject>"
+            "</rdf:Description></rdf:RDF></x:xmpmeta>");
+        const std::string antesCliente = xmpCliente.loadFileAsString().toStdString();
+        auto leitura = matriz::ingest::lerTecnica(foto);
+        check(leitura.metaTitle && *leitura.metaTitle == "Titulo do cliente" && leitura.metaSubject &&
+                  juce::String(*leitura.metaSubject).contains("palco"),
+              "a client sidecar next to the file is imported at ingest (title + keywords)");
+        check(xmpCliente.loadFileAsString().toStdString() == antesCliente, "the client's .xmp is left exactly as it came");
+
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Xmp8";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "XMP";
+        auto projeto = matriz::model::Project::criar(raiz, params);
+        auto& reg = projeto->registro();
+        const std::string pid = projeto->projetoId();
+        const std::string agora = matriz::model::agoraIso8601();
+        const std::string item = matriz::model::novoUuid();
+        reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                "VALUES (?, ?, 'XMP-001', 'Fita do show', 'fita_rolo', ?, ?)",
+                {Value::of(item), Value::of(pid), Value::of(agora), Value::of(agora)});
+        reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'ao vivo')", {Value::of(matriz::model::novoUuid()), Value::of(item)});
+        juce::File wav = fonte.getChildFile("fita.wav");
+        gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=500:duration=1",
+                         wav.getFullPathName()});
+        matriz::ingest::ingerirArquivo(reg, projeto->pasta(), item, wav, "preservation_master", true);
+        juce::File media = raiz.getChildFile("Media");
+        media.createDirectory();
+        auto plano = planejarConsolidacao(reg, projeto->pasta(), media, {NivelHierarquia::Ano});
+        auto rc = executarConsolidacao(reg, projeto->pasta(), media, plano);
+        check(rc.consolidados == 1, "file in the MAIN");
+        const juce::File master = media.getChildFile(plano.itens.front().caminhoRelativoDestino);
+        const std::string destinoId = projeto->destinationId();
+        juce::MemoryBlock masterAntes;
+        master.loadFileAsData(masterAntes);
+
+        auto r1 = atualizarSidecarsNoMain(reg, media, destinoId);
+        const juce::File sidecar(master.getFullPathName() + ".xmp");
+        auto lido = matriz::ingest::lerArquivoXmp(sidecar);
+        check(r1.escritos == 1 && lido && lido->titulo == "Fita do show" && !lido->tags.empty(),
+              "UPDATE SIDECARS writes name.ext.xmp with the catalog metadata (" + sidecar.getFileName().toStdString() + ")");
+        juce::MemoryBlock masterDepois;
+        master.loadFileAsData(masterDepois);
+        check(masterDepois == masterAntes, "the master in the MAIN is not touched");
+        auto r2 = atualizarSidecarsNoMain(reg, media, destinoId);
+        check(r2.escritos == 0 && r2.iguais == 1, "running again changes nothing (already up to date)");
+
+        // Editado fora do Matriz: aviso, sem sobrescrever.
+        sidecar.replaceWithText(sidecar.loadFileAsString().replace("Fita do show", "Titulo editado no Bridge"));
+        reg.run("UPDATE item SET titulo = 'Titulo novo no catalogo' WHERE id = ?", {Value::of(item)});
+        auto r3 = atualizarSidecarsNoMain(reg, media, destinoId);
+        check(r3.editadosPorFora.size() == 1 && sidecar.loadFileAsString().contains("Titulo editado no Bridge"),
+              "a sidecar edited outside is reported and NOT overwritten");
+        importarSidecarsEditados(reg, media, destinoId, r3.editadosPorFora);
+        {
+            auto st = reg.prepare("SELECT titulo FROM item WHERE id = ?");
+            st.bind(1, Value::of(item));
+            check(st.step() && st.columnText(0) == "Titulo editado no Bridge", "Import brings the external edit into the catalog");
+        }
+        auto r4 = atualizarSidecarsNoMain(reg, media, destinoId);
+        check(r4.editadosPorFora.empty() && r4.iguais == 1, "after import the sidecar is the catalog's again");
+
+        // Sidecar que o Matriz não gravou (ex. do cliente) no MAIN: nunca em silêncio.
+        reg.run("DELETE FROM sidecar_registro", {});
+        auto r5 = atualizarSidecarsNoMain(reg, media, destinoId);
+        check(r5.editadosPorFora.size() == 1, "a sidecar not written by BKR Matriz is never overwritten silently");
+    } catch (const std::exception& e) {
+        check(false, std::string("sidecars stage 8: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    fonte.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2705,6 +2795,7 @@ int main() {
     testarAdicionarAoMain(tmpDir);
     testarSourcesEtapa5(tmpDir);
     testarExportEtapa6(tmpDir);
+    testarSidecarsEtapa8(tmpDir);
 
     tmpDir.deleteRecursively();
 

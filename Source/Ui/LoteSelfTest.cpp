@@ -891,6 +891,8 @@ int rodarLoteSelfTest() {
         checar(bw.labelOrg_->getText().contains(matriz::i18n::t("backup.definido_primeiro_backup")),
                "the section says it was set in the first backup");
         checar(!bw.organizarPorSource_, "an old MAIN keeps its naming rule (no per-SOURCE suffix)");
+        checar(bw.btnAtualizarSidecars_ && bw.btnAtualizarSidecars_->isVisible(),
+               "with a MAIN, UPDATE SIDECARS takes the place of embed");
         // Etapa 6: EXPORT ao lado do botão principal; planilha com nome novo.
         bw.setSize(1700, 900);
         bw.resized();
@@ -1034,6 +1036,28 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("clones selftest: ") + e.what());
     }
     raizC.deleteRecursively();
+
+    // ------------------------------- Etapa 8: .xmp do cliente não vira item
+    std::cout << "\n-- Ingest: a client .xmp next to its media is a sidecar, not an item --\n";
+    {
+        juce::File pasta = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_xmp_ingest_" + juce::Uuid().toDashedString());
+        pasta.createDirectory();
+        pasta.getChildFile("IMG_1.CR2").replaceWithText("raw");
+        pasta.getChildFile("IMG_1.xmp").replaceWithText("<x/>");
+        pasta.getChildFile("IMG_2.jpg").replaceWithText("jpg");
+        pasta.getChildFile("IMG_2.jpg.xmp").replaceWithText("<x/>");
+        pasta.getChildFile("solto.xmp").replaceWithText("<x/>");
+        MainComponent janelaXmp;
+        juce::Array<juce::File> entrada;
+        entrada.add(pasta);
+        juce::StringArray nomes;
+        for (const auto& f : janelaXmp.expandirArquivos(entrada)) nomes.add(f.getFileName());
+        checar(nomes.contains("IMG_1.CR2") && nomes.contains("IMG_2.jpg") && !nomes.contains("IMG_1.xmp") &&
+                   !nomes.contains("IMG_2.jpg.xmp") && nomes.contains("solto.xmp"),
+               "sidecars are recognised, a lone .xmp is still a file (" + nomes.joinIntoString(", ") + ")");
+        pasta.deleteRecursively();
+    }
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
