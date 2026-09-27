@@ -120,7 +120,11 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         // Etapa 5, só pra MAIN criado a partir desta versão:
                                         // "preservar estrutura original" ganha pasta raiz por
                                         // SOURCE (S01/…) e nome original ganha sufixo _S01.
-                                        bool organizarPorSource = false);
+                                        bool organizarPorSource = false,
+                                        // EXPORT (etapa 6): destino volátil — ignora o que já
+                                        // está registrado em algum destino (nenhum item é
+                                        // "já consolidado", nenhum caminho do MAIN é herdado).
+                                        bool paraExport = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);
@@ -166,6 +170,24 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const AoProgredir& aoProgredir = {},
                                             const std::set<std::string>& itensMarcadosWatermark = {},
                                             bool embutirNaCopia = false);
+
+// EXPORT (etapa 6): recorte volátil do MAIN. Copia cada item do plano (feito
+// com paraExport = true) pra `destinoExport`, SEMPRE a partir da cópia no
+// MAIN/CLONE — item que só existe no SOURCE é pulado e contado. Na cópia:
+// marca d'água nos ids pedidos, metadados/marcadores embutidos se
+// `embutir`. Não grava consolidacao_registro nem backup_destino: não vira
+// versão, não sincroniza, não conta como proteção. Só o ProjectLog registra.
+struct ResultadoExport {
+    int copiados = 0;
+    int foraDoMain = 0;       // ainda não entraram no MAIN: não exportados
+    int comMarcaDagua = 0;
+    std::vector<std::string> falhas;
+    bool cancelado = false;
+};
+ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                               const juce::File& destinoExport, const PlanoConsolidacao& plano,
+                               const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
+                               bool embutir);
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
 // para referência — não chamar a partir do fluxo de backup.

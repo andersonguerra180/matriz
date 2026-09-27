@@ -298,7 +298,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         const juce::String& prefixoCustomizado,
                                         bool autoResolverConflitos,
                                         bool forcarRebackup,
-                                        bool organizarPorSource) {
+                                        bool organizarPorSource,
+                                        bool paraExport) {
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
     if (organizarPorSource) codigoPorVault = codigosDeSource(registro);
@@ -579,8 +580,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         // máscara, a hierarquia ou a pasta do MAPA produzissem outro caminho hoje.
         // Busca pelo arquivo (não pela pasta): mover o item de pasta no MAPA não
         // pode gerar uma segunda cópia. Registros deste destino por id/caminho,
-        // ou legados (sem destino gravado).
-        {
+        // ou legados (sem destino gravado). EXPORT não herda nada disso.
+        if (!paraExport) {
             auto stmtJa = registro.prepare(
                 "SELECT caminho_relativo_destino FROM consolidacao_registro WHERE arquivo_id = ? "
                 "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
@@ -600,6 +601,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             } else {
                 ip.jaConsolidado = false;
             }
+        } else {
+            ip.jaConsolidado = false;
         }
 
         indicesPorDestino[caminhoRelDestino.toStdString()].push_back(plano.itens.size());
@@ -659,6 +662,75 @@ std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registr
         }
     } catch (...) {}
     return out;
+}
+
+ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                               const juce::File& destinoExport, const PlanoConsolidacao& plano,
+                               const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
+                               bool embutir) {
+    ResultadoExport resultado;
+#if !JUCE_MODULE_AVAILABLE_juce_gui_basics
+    (void)itensComMarcaDagua;
+#endif
+    const int total = static_cast<int>(plano.itens.size());
+    int processados = 0;
+    for (const auto& ip : plano.itens) {
+        if (aoProgredir && !aoProgredir(processados, total)) {
+            resultado.cancelado = true;
+            break;
+        }
+        ++processados;
+        if (ip.emConflito) {
+            resultado.falhas.push_back(ip.codigoAcervo + ": name conflict at destination");
+            continue;
+        }
+        try {
+            // A origem é sempre o MAIN (ou um CLONE, espelho dele): se a
+            // leitura cai no mesmo arquivo que a ORIGEM daria, não há cópia
+            // no backup — o SOURCE nunca é fonte de EXPORT.
+            auto noBackup = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+            auto naOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                           matriz::vault::Preferencia::Origem);
+            if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
+                ++resultado.foraDoMain;
+                continue;
+            }
+            juce::File destinoArquivo = destinoExport.getChildFile(ip.caminhoRelativoDestino);
+            if (destinoArquivo.existsAsFile())
+                throw std::runtime_error("already exists in the export folder: " +
+                                         destinoArquivo.getFullPathName().toStdString());
+            destinoArquivo.getParentDirectory().createDirectory();
+            if (!noBackup->copyFileTo(destinoArquivo) || destinoArquivo.getSize() != noBackup->getSize())
+                throw std::runtime_error("copy failed: " + destinoArquivo.getFullPathName().toStdString());
+#if JUCE_MODULE_AVAILABLE_juce_gui_basics
+            if (itensComMarcaDagua.count(ip.itemId) > 0) {
+                auto cfgWm = ui::ProjetoAberto::carregarConfiguracaoWatermarkDePasta(pastaProjeto);
+                if (cfgWm.valida() &&
+                    ui::BatchWatermarkDialog::aplicarMarcaDaguaEmArquivo(destinoArquivo, destinoArquivo, cfgWm))
+                    ++resultado.comMarcaDagua;
+            }
+#endif
+            if (embutir) {
+                if (destinoArquivo.hasFileExtension("wav")) {
+                    auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                    if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                }
+                embutirMetadadosNoArquivo(destinoArquivo, coletarMetadadosDoItem(registro, ip.itemId));
+            }
+            ++resultado.copiados;
+        } catch (const std::exception& e) {
+            resultado.falhas.push_back(ip.codigoAcervo + ": " + e.what());
+        }
+    }
+    try {
+        matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Created", {
+            "Destination: " + destinoExport.getFullPathName(),
+            "Files: " + juce::String(resultado.copiados) + " (not yet in MAIN, skipped: " +
+                juce::String(resultado.foraDoMain) + ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
+            juce::String("Embedded metadata: ") + (embutir ? "yes" : "no") +
+                ", watermarked: " + juce::String(resultado.comMarcaDagua)});
+    } catch (...) {}
+    return resultado;
 }
 
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,

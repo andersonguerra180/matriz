@@ -26,6 +26,152 @@ namespace matriz::ui {
 
 namespace {
 
+// EXPORT (etapa 6): opções livres — não afetam nada no MAIN.
+struct OpcoesExport {
+    juce::File destino;
+    matriz::consolidacao::HierarquiaBackup hierarquia;
+    matriz::consolidacao::ModoPrefixoArquivo modoPrefixo = matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+    juce::String prefixo;
+    bool embutir = true;
+    bool marcaDagua = false;
+};
+
+class ConteudoExport : public juce::Component {
+public:
+    ConteudoExport(int marcadosW, bool marcaDaguaConfigurada, const juce::String& prefixoPadrao,
+                   std::function<void(OpcoesExport)> aoExportar)
+        : aoExportar_(std::move(aoExportar)) {
+        const auto& tk = tema();
+        auto rotulo = [&](juce::Label& l, const juce::String& t) {
+            l.setText(t, juce::dontSendNotification);
+            l.setColour(juce::Label::textColourId, tk.textoSecundario);
+            l.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            addAndMakeVisible(l);
+        };
+        rotulo(lblIntro_, matriz::i18n::t("export.intro"));
+        lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        rotulo(lblPasta_, matriz::i18n::t("export.pasta"));
+        lblCaminho_.setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblCaminho_.setText(matriz::i18n::t("export.pasta_nenhuma"), juce::dontSendNotification);
+        addAndMakeVisible(lblCaminho_);
+        btnEscolher_.setButtonText(matriz::i18n::t("export.escolher"));
+        btnEscolher_.onClick = [this] { escolherPasta(); };
+        addAndMakeVisible(btnEscolher_);
+
+        rotulo(lblEstrutura_, matriz::i18n::t("backup.secao_organizacao"));
+        comboEstrutura_.addItem(matriz::i18n::t("backup.manter_organizacao"), 1);
+        comboEstrutura_.addItem(matriz::i18n::t("export.por_tipo"), 2);
+        comboEstrutura_.addItem(matriz::i18n::t("export.por_ano"), 3);
+        comboEstrutura_.addItem(matriz::i18n::t("export.por_tipo_ano"), 4);
+        comboEstrutura_.addItem(matriz::i18n::t("backup.preservar_estrutura"), 6);
+        comboEstrutura_.setSelectedId(1, juce::dontSendNotification);
+        addAndMakeVisible(comboEstrutura_);
+
+        rotulo(lblNomes_, matriz::i18n::t("backup.prefixo_arquivos"));
+        comboNomes_.addItem(matriz::i18n::t("backup.prefixo_modo_nenhum"), 1);
+        comboNomes_.addItem(matriz::i18n::t("backup.prefixo_modo_auto").replace("{prefix}", prefixoPadrao), 2);
+        comboNomes_.addItem(matriz::i18n::t("backup.prefixo_modo_custom"), 3);
+        comboNomes_.setSelectedId(1, juce::dontSendNotification);
+        comboNomes_.onChange = [this] { editPrefixo_.setVisible(comboNomes_.getSelectedId() == 3); };
+        addAndMakeVisible(comboNomes_);
+        editPrefixo_.setText(prefixoPadrao, juce::dontSendNotification);
+        addChildComponent(editPrefixo_);
+
+        toggleEmbutir_.setButtonText(matriz::i18n::t("export.embutir"));
+        toggleEmbutir_.setToggleState(true, juce::dontSendNotification);
+        addAndMakeVisible(toggleEmbutir_);
+        toggleMarca_.setButtonText(matriz::i18n::t("export.marca_dagua").replace("{n}", juce::String(marcadosW)));
+        toggleMarca_.setEnabled(marcadosW > 0 && marcaDaguaConfigurada);
+        toggleMarca_.setToggleState(marcadosW > 0 && marcaDaguaConfigurada, juce::dontSendNotification);
+        addAndMakeVisible(toggleMarca_);
+
+        btnExportar_.setButtonText(matriz::i18n::t("export.btn"));
+        btnExportar_.setEnabled(false);
+        btnExportar_.onClick = [this] { confirmar(); };
+        addAndMakeVisible(btnExportar_);
+        btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
+        btnCancelar_.onClick = [this] { fechar(); };
+        addAndMakeVisible(btnCancelar_);
+        setSize(560, 400);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        lblIntro_.setBounds(r.removeFromTop(40));
+        r.removeFromTop(6);
+        lblPasta_.setBounds(r.removeFromTop(20));
+        auto linha = r.removeFromTop(28);
+        btnEscolher_.setBounds(linha.removeFromRight(110));
+        lblCaminho_.setBounds(linha.withTrimmedRight(8));
+        r.removeFromTop(10);
+        lblEstrutura_.setBounds(r.removeFromTop(20));
+        comboEstrutura_.setBounds(r.removeFromTop(28));
+        r.removeFromTop(10);
+        lblNomes_.setBounds(r.removeFromTop(20));
+        linha = r.removeFromTop(28);
+        comboNomes_.setBounds(linha.removeFromLeft(linha.getWidth() * 2 / 3));
+        editPrefixo_.setBounds(linha.withTrimmedLeft(8));
+        r.removeFromTop(10);
+        toggleEmbutir_.setBounds(r.removeFromTop(26));
+        toggleMarca_.setBounds(r.removeFromTop(26));
+        auto botoes = r.removeFromBottom(32);
+        btnExportar_.setBounds(botoes.removeFromRight(130));
+        botoes.removeFromRight(8);
+        btnCancelar_.setBounds(botoes.removeFromRight(110));
+    }
+
+private:
+    void escolherPasta() {
+        chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("export.pasta"), juce::File(), "");
+        juce::Component::SafePointer<ConteudoExport> safeThis(this);
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [safeThis](const juce::FileChooser& fc) {
+                                  if (safeThis == nullptr || fc.getResult() == juce::File()) return;
+                                  safeThis->destino_ = fc.getResult();
+                                  safeThis->lblCaminho_.setText(safeThis->destino_.getFullPathName(), juce::dontSendNotification);
+                                  safeThis->btnExportar_.setEnabled(true);
+                              });
+    }
+
+    void confirmar() {
+        using matriz::consolidacao::NivelHierarquia;
+        OpcoesExport o;
+        o.destino = destino_;
+        switch (comboEstrutura_.getSelectedId()) {
+            case 2: o.hierarquia = {NivelHierarquia::TipoMidia}; break;
+            case 3: o.hierarquia = {NivelHierarquia::Ano}; break;
+            case 4: o.hierarquia = {NivelHierarquia::TipoMidia, NivelHierarquia::Ano}; break;
+            case 6: o.hierarquia = {NivelHierarquia::EstruturaOriginal}; break;
+            default: o.hierarquia = {NivelHierarquia::PastaManual}; break;
+        }
+        const int n = comboNomes_.getSelectedId();
+        o.modoPrefixo = n == 2 ? matriz::consolidacao::ModoPrefixoArquivo::Auto
+                      : n == 3 ? matriz::consolidacao::ModoPrefixoArquivo::Custom
+                               : matriz::consolidacao::ModoPrefixoArquivo::Nenhum;
+        o.prefixo = editPrefixo_.getText().trim();
+        o.embutir = toggleEmbutir_.getToggleState();
+        o.marcaDagua = toggleMarca_.isEnabled() && toggleMarca_.getToggleState();
+        auto cb = aoExportar_;
+        fechar();
+        if (cb) cb(o);
+    }
+
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    }
+
+    std::function<void(OpcoesExport)> aoExportar_;
+    juce::File destino_;
+    std::unique_ptr<juce::FileChooser> chooser_;
+    juce::Label lblIntro_, lblPasta_, lblCaminho_, lblEstrutura_, lblNomes_;
+    juce::TextButton btnEscolher_, btnExportar_, btnCancelar_;
+    juce::ComboBox comboEstrutura_, comboNomes_;
+    juce::TextEditor editPrefixo_;
+    juce::ToggleButton toggleEmbutir_, toggleMarca_;
+};
+
 class GoogleDriveIconButton : public juce::Button {
 public:
     GoogleDriveIconButton() : juce::Button("GoogleDrive") {
@@ -1522,6 +1668,13 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addAndMakeVisible(*btnStartBackup_);
 
+    // EXPORT (etapa 6): recorte volátil do MAIN pra um destino novo.
+    btnExportar_ = std::make_unique<juce::TextButton>(matriz::i18n::t("export.btn_abrir"));
+    aplicarEstiloBotao(*btnExportar_, false);
+    btnExportar_->setTooltip(matriz::i18n::t("export.dica"));
+    btnExportar_->onClick = [this] { abrirExport(); };
+    addChildComponent(*btnExportar_);
+
     btnSyncDestino_ = std::make_unique<juce::TextButton>("BACKUP SYNC...");
     aplicarEstiloBotao(*btnSyncDestino_, false);
     btnSyncDestino_->setColour(juce::TextButton::textColourOffId, tk.acento);
@@ -1643,6 +1796,10 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 BackupWorkspaceComponent::~BackupWorkspaceComponent() {
     EventBus::obterInstancia().removerListener(this);
     poolCatalogoBackup_.removeAllJobs(true, 2000);
+    // O job de EXPORT usa o Project: cancela entre arquivos e espera o
+    // arquivo em cópia terminar antes de o projeto poder ser fechado.
+    cancelarExport_->store(true);
+    poolExport_.removeAllJobs(true, 60000);
 }
 
 void BackupWorkspaceComponent::lookAndFeelChanged() {
@@ -1894,7 +2051,7 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
 
     int modalH = 300;
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
-    auto janela = std::make_shared<JanelaExportarMetadata>(isPt ? juce::String::fromUTF8("EXPORTAR METADADOS") : "EXPORT METADATA", tema().painel);
+    auto janela = std::make_shared<JanelaExportarMetadata>(matriz::i18n::t("backup.btn_exportar_metadados"), tema().painel);
 
     struct PainelExportar : public juce::Component {
         PainelExportar(BackupWorkspaceComponent& parent, std::shared_ptr<juce::DialogWindow> win)
@@ -1902,7 +2059,7 @@ void BackupWorkspaceComponent::mostrarJanelaExportar() {
             const auto& tk = tema();
             bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
-            lblTitulo_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("EXPORTAR METADADOS") : "EXPORT METADATA");
+            lblTitulo_ = std::make_unique<juce::Label>("", matriz::i18n::t("backup.btn_exportar_metadados"));
             lblTitulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
             lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
             lblTitulo_->setJustificationType(juce::Justification::centred);
@@ -2555,7 +2712,10 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
     if (editPrefixo_) editPrefixo_->setEnabled(livre);
     const juce::String sufixo = configTravada_ ? "  -  " + matriz::i18n::t("backup.definido_primeiro_backup") : juce::String();
     if (labelOrg_) labelOrg_->setText(matriz::i18n::t("backup.secao_organizacao") + sufixo, juce::dontSendNotification);
-    if (labelPrefixo_) labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos") + sufixo, juce::dontSendNotification);
+    // O aviso fica no título da seção; no rótulo estreito do prefixo, só na dica.
+    if (comboModoPrefixo_)
+        comboModoPrefixo_->setTooltip(configTravada_ ? matriz::i18n::t("backup.definido_primeiro_backup")
+                                                     : matriz::i18n::t("backup.prefixo_modo_nenhum_dica"));
 
     // Embed e "forçar backup completo" só existem antes do MAIN: depois o
     // MAIN só recebe arquivos novos, byte a byte (conjunto novo = CLONE).
@@ -2975,6 +3135,89 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
         if (st.step()) return st.columnText(0);
     } catch (...) {}
     return projeto_.projeto().destinationId();
+}
+
+void BackupWorkspaceComponent::abrirExport() {
+    if (exportando_) return;
+    const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
+    const bool wmOk = ProjetoAberto::carregarConfiguracaoWatermarkDePasta(projeto_.projeto().pasta()).valida();
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, [safeThis](OpcoesExport o) {
+        if (safeThis != nullptr) safeThis->iniciarExport(o.destino, o.hierarquia, o.modoPrefixo, o.prefixo, o.embutir,
+                                                          o.marcaDagua);
+    });
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(conteudo);
+    opts.dialogTitle = matriz::i18n::t("export.titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    opts.launchAsync();
+}
+
+void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
+                                             const matriz::consolidacao::HierarquiaBackup& hierarquia,
+                                             matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo,
+                                             bool embutir, bool marcaDagua) {
+    if (exportando_ || !destino.isDirectory()) return;
+    exportando_ = true;
+    resized();
+    cancelarExport_->store(false);
+    auto cancelado = cancelarExport_;
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.titulo"), 0,
+                                                    [cancelado] { cancelado->store(true); });
+    // Tudo que toca banco/disco roda fora da message thread.
+    const std::set<std::string> itens = obterItensSelecionadosPeloCriterio();
+    std::set<std::string> comW;
+    if (marcaDagua)
+        for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) comW.insert(id);
+    auto* projeto = &projeto_.projeto();
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado] {
+        matriz::consolidacao::ResultadoExport r;
+        try {
+            auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), projeto->pasta(), destino,
+                                                                    hierarquia, {}, modo, prefixo,
+                                                                    /*autoResolver*/ true, false, false,
+                                                                    /*paraExport*/ true);
+            std::vector<matriz::consolidacao::ItemPlanejado> doRecorte;
+            for (auto& ip : plano.itens)
+                if (itens.count(ip.itemId)) doRecorte.push_back(std::move(ip));
+            plano.itens = std::move(doRecorte);
+            r = matriz::consolidacao::executarExport(
+                projeto->registro(), projeto->pasta(), destino, plano,
+                [cancelado](int feito, int total) {
+                    juce::MessageManager::callAsync([feito, total] {
+                        ProgressoGlobal::obterInstancia().atualizarFracao(
+                            "export", static_cast<double>(feito) / std::max(1, total),
+                            juce::String(feito) + " / " + juce::String(total));
+                    });
+                    return !cancelado->load();
+                },
+                comW, embutir);
+        } catch (const std::exception& e) {
+            r.falhas.push_back(e.what());
+        }
+        juce::MessageManager::callAsync([safeThis, r, destino] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("export");
+            if (safeThis == nullptr) return;
+            safeThis->exportando_ = false;
+            safeThis->resized();
+            juce::String msg = matriz::i18n::t("export.fim")
+                                   .replace("{n}", juce::String(r.copiados))
+                                   .replace("{pasta}", destino.getFullPathName());
+            if (r.foraDoMain > 0)
+                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
+            if (!r.falhas.empty()) {
+                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
+                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
+            }
+            if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg);
+        });
+    });
 }
 
 void BackupWorkspaceComponent::perguntarSincronizarClones() {
@@ -3909,6 +4152,7 @@ void BackupWorkspaceComponent::resized() {
         btnDone_->setBounds(botoes.removeFromRight(110));
         btnDone_->setVisible(true);
         btnStartBackup_->setVisible(false);
+        if (btnExportar_) btnExportar_->setVisible(false);
         if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
         if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
         if (btnExportZip_) btnExportZip_->setVisible(false);
@@ -3930,6 +4174,12 @@ void BackupWorkspaceComponent::resized() {
         btnStartBackup_->setBounds(botoes.removeFromRight(170));
         btnStartBackup_->setVisible(true);
         botoes.removeFromRight(tk.espacoPainel);
+        if (btnExportar_ && !isCatalogMode) {
+            btnExportar_->setBounds(botoes.removeFromRight(110));
+            btnExportar_->setVisible(true);
+            btnExportar_->setEnabled(temItens && mainSelado_ && !exportando_);
+            botoes.removeFromRight(tk.espacoPainel);
+        }
         if (btnSyncDestino_) {
             btnSyncDestino_->setBounds(botoes.removeFromRight(190));
             btnSyncDestino_->setVisible(true);
@@ -3971,7 +4221,7 @@ void BackupWorkspaceComponent::resized() {
 
     if (btnExportJanela_) {
         botoes.removeFromRight(tk.espacoPainel);
-        btnExportJanela_->setBounds(botoes.removeFromRight(170));
+        btnExportJanela_->setBounds(botoes.removeFromRight(230));
         btnExportJanela_->setVisible(true);
         btnExportJanela_->setEnabled(temItens);
     }

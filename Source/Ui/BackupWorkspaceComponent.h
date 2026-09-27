@@ -122,6 +122,15 @@ private:
     void perguntarSincronizarClones();
     std::string destinoIdDoMain();
     juce::ThreadPool poolSyncClones_{1};
+    // EXPORT (etapa 6)
+    std::unique_ptr<juce::TextButton> btnExportar_;
+    juce::ThreadPool poolExport_{1};
+    bool exportando_ = false;
+    std::shared_ptr<std::atomic<bool>> cancelarExport_ = std::make_shared<std::atomic<bool>>(false);
+    void abrirExport();
+    void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
+                       matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
+                       bool marcaDagua);
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 
