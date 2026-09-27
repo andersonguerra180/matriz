@@ -971,11 +971,14 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
         lacoAtivo_ = true;
         lacoInicio_ = e.getPosition();
         lacoAtual_ = juce::Rectangle<int>(lacoInicio_, lacoInicio_);
+        // Clique simples no vazio NÃO esvazia a seleção (pedido do operador:
+        // perdia centenas de itens selecionados por um clique fora). Só um
+        // laço de verdade, sem Shift/Cmd, recomeça do zero — decidido no
+        // primeiro arrasto (mouseDrag). Esc / Clear Selection limpam.
         bool somando = e.mods.isShiftDown() || e.mods.isCommandDown() || e.mods.isCtrlDown();
-        if (!somando) selecionados_.clear();
+        lacoRecomecaAoArrastar_ = !somando;
         selecaoAntesDoLaco_ = selecionados_;
         repaint();
-        if (aoMudarSelecao) aoMudarSelecao();
         return;
     }
     if (editorInline_) cancelarEdicaoInline();
@@ -1036,9 +1039,11 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     } else if (e.mods.isCommandDown() || e.mods.isCtrlDown()) {
         if (!selecionados_.insert(id).second) selecionados_.erase(id);
         indiceAncoraShift_ = indice;
-    } else if (selecionados_.count(id) && selecionados_.size() > 1) {
-        pendingDeselect_ = true;
-        pendingDeselectId_ = id;
+    } else if (selecionados_.size() > 1) {
+        // Seleção múltipla em andamento: clique sem Cmd SOMA (e clicar num
+        // item já selecionado não desfaz as outras) — antes um clique sem Cmd
+        // trocava tudo por um item só. Esc / Clear Selection recomeçam.
+        selecionados_.insert(id);
         indiceAncoraShift_ = indice;
     } else {
         selecionados_ = {id};
@@ -1053,6 +1058,11 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
 
 void MosaicoComponent::mouseDrag(const juce::MouseEvent& e) {
     if (lacoAtivo_) {
+        if (e.getDistanceFromDragStart() < 5) return;  // tremida do clique não é laço
+        if (lacoRecomecaAoArrastar_) {
+            lacoRecomecaAoArrastar_ = false;
+            selecaoAntesDoLaco_.clear();
+        }
         atualizarSelecaoDoLaco(e);
         return;
     }
@@ -1138,6 +1148,12 @@ void MosaicoComponent::mouseUp(const juce::MouseEvent&) {
 }
 
 bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
+    if (tecla == juce::KeyPress::escapeKey && !selecionados_.empty()) {
+        selecionados_.clear();
+        repaint();
+        if (aoMudarSelecao) aoMudarSelecao();
+        return true;
+    }
     if (tecla.getKeyCode() == 'A' && (tecla.getModifiers().isCommandDown() || tecla.getModifiers().isCtrlDown())) {
         selecionarTodos(); // "tudo que está no filtro atual" — ver nota em selecionarTodos()
         if (aoSelecionar && !selecionadoId_.empty()) aoSelecionar(selecionadoId_);

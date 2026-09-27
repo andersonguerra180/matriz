@@ -352,6 +352,7 @@ private:
     juce::Point<int> lacoInicio_;
     juce::Rectangle<int> lacoAtual_;
     std::set<std::string> selecaoAntesDoLaco_;
+    bool lacoRecomecaAoArrastar_ = false;  // clique no vazio sem Shift/Cmd: só o arrasto limpa
 
     bool pendingDeselect_ = false;
     std::string pendingDeselectId_;
