@@ -1536,10 +1536,13 @@ int rodarUiSelfTest() {
                 checar(!pNoPrefix.itens.empty() && pNoPrefix.itens[0].caminhoRelativoDestino.endsWith(pNoPrefix.itens[0].nomeOriginal),
                        "ModoPrefixoArquivo::Nenhum preserves original filename for DAW session links");
 
+                // Os arquivos já estão neste destino e o destino só cresce (etapa
+                // 4): lá o caminho registrado prevalece. Nome livre = EXPORT.
                 auto pCustomPrefix = matriz::consolidacao::planejarConsolidacao(
                     projeto->projeto().registro(), projeto->projeto().pasta(), destinoCatalogo,
                     {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
-                    matriz::consolidacao::ModoPrefixoArquivo::Custom, "CUSTOM_PREF");
+                    matriz::consolidacao::ModoPrefixoArquivo::Custom, "CUSTOM_PREF", false, false, false,
+                    /*paraExport*/ true);
                 checar(!pCustomPrefix.itens.empty() && pCustomPrefix.itens[0].caminhoRelativoDestino.contains("CUSTOM_PREF"),
                        "ModoPrefixoArquivo::Custom applies user custom prefix");
             }

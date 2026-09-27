@@ -2581,6 +2581,92 @@ void testarSourcesEtapa5(const juce::File& dirTemp) {
     fonteB.deleteRecursively();
 }
 
+void testarExportEtapa6(const juce::File& dirTemp) {
+    std::cout << "\n== EXPORT: volatile copy from the MAIN, free options, nothing registered ==\n";
+    using namespace matriz::consolidacao;
+    using matriz::db::Value;
+    juce::File raiz = dirTemp.getChildFile("exp6_" + juce::Uuid().toDashedString());
+    juce::File fonte = dirTemp.getChildFile("exp6_src_" + juce::Uuid().toDashedString());
+    juce::File saida = dirTemp.getChildFile("exp6_out_" + juce::Uuid().toDashedString());
+    fonte.createDirectory();
+    saida.createDirectory();
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Exp6";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "EXP";
+        auto projeto = matriz::model::Project::criar(raiz, params);
+        auto& reg = projeto->registro();
+        const std::string pid = projeto->projetoId();
+        auto novoItem = [&](const std::string& codigo, int freq) {
+            std::string id = matriz::model::novoUuid();
+            const std::string agora = matriz::model::agoraIso8601();
+            reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, ?, 'fita_rolo', ?, ?)",
+                    {Value::of(id), Value::of(pid), Value::of(codigo), Value::of(codigo), Value::of(agora), Value::of(agora)});
+            juce::File f = fonte.getChildFile(codigo + ".wav");
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=" + std::to_string(freq) + ":duration=1", f.getFullPathName()});
+            matriz::ingest::ingerirArquivo(reg, projeto->pasta(), id, f, "preservation_master", true);
+            return id;
+        };
+        const std::string noMain = novoItem("EXP-001", 300);
+        const std::string soSource = novoItem("EXP-002", 400);
+        reg.run("INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms) VALUES (?, ?, 'marca', 'teste', ?, 500)",
+                {Value::of(matriz::model::novoUuid()), Value::of(noMain), Value::of(matriz::model::agoraIso8601())});
+
+        juce::File media = raiz.getChildFile("Media");
+        media.createDirectory();
+        auto plano = planejarConsolidacao(reg, projeto->pasta(), media, {NivelHierarquia::EstruturaOriginal});
+        std::vector<ItemPlanejado> so1;
+        for (auto& ip : plano.itens) if (ip.itemId == noMain) so1.push_back(ip);
+        plano.itens = so1;
+        auto r1 = executarConsolidacao(reg, projeto->pasta(), media, plano);
+        check(r1.consolidados == 1, "only EXP-001 is in the MAIN");
+        juce::String caminhoMain = so1.empty() ? juce::String() : so1.front().caminhoRelativoDestino;
+        juce::MemoryBlock mainAntes;
+        media.getChildFile(caminhoMain).loadFileAsData(mainAntes);
+
+        auto contar = [&](const char* sql) {
+            auto st = reg.prepare(sql);
+            return st.step() ? st.columnInt(0) : -1LL;
+        };
+        const auto registrosAntes = contar("SELECT COUNT(*) FROM consolidacao_registro");
+        const auto destinosAntes = contar("SELECT COUNT(*) FROM backup_destino");
+
+        auto planoExp = planejarConsolidacao(reg, projeto->pasta(), saida, {NivelHierarquia::Ano}, {},
+                                             ModoPrefixoArquivo::Custom, "CLIENTE", true, false, false, /*paraExport*/ true);
+        bool nenhumJa = true;
+        for (auto& ip : planoExp.itens) if (ip.jaConsolidado) nenhumJa = false;
+        check(planoExp.itens.size() == 2 && nenhumJa, "export plan ignores what is already registered in the MAIN");
+        auto rExp = executarExport(reg, projeto->pasta(), saida, planoExp, {}, {}, /*embutir*/ true);
+        check(rExp.copiados == 1 && rExp.foraDoMain == 1 && rExp.falhas.empty(),
+              "exports what is in the MAIN, skips what is only on the SOURCE (" + std::to_string(rExp.copiados) + " copied, " +
+                  std::to_string(rExp.foraDoMain) + " skipped)");
+        int exportados = 0;
+        juce::File copia;
+        for (const auto& e : juce::RangedDirectoryIterator(saida, true, "*.wav", juce::File::findFiles)) {
+            ++exportados;
+            copia = e.getFile();
+        }
+        check(exportados == 1 && copia.getFileName().startsWith("CLIENTE"),
+              "export uses its own names/structure (" + copia.getFileName().toStdString() + ")");
+        juce::MemoryBlock exportado, mainDepois;
+        copia.loadFileAsData(exportado);
+        media.getChildFile(caminhoMain).loadFileAsData(mainDepois);
+        check(exportado != mainAntes, "embed happened in the exported copy");
+        check(mainDepois == mainAntes, "the MAIN copy was not touched");
+        check(contar("SELECT COUNT(*) FROM consolidacao_registro") == registrosAntes &&
+                  contar("SELECT COUNT(*) FROM backup_destino") == destinosAntes,
+              "export is not registered as a backup version (not a protection)");
+    } catch (const std::exception& e) {
+        check(false, std::string("EXPORT stage 6: ") + e.what());
+    }
+    raiz.deleteRecursively();
+    fonte.deleteRecursively();
+    saida.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2618,6 +2704,7 @@ int main() {
     testarResolucaoPeloMain(tmpDir);
     testarAdicionarAoMain(tmpDir);
     testarSourcesEtapa5(tmpDir);
+    testarExportEtapa6(tmpDir);
 
     tmpDir.deleteRecursively();
 

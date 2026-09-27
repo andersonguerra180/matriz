@@ -891,6 +891,21 @@ int rodarLoteSelfTest() {
         checar(bw.labelOrg_->getText().contains(matriz::i18n::t("backup.definido_primeiro_backup")),
                "the section says it was set in the first backup");
         checar(!bw.organizarPorSource_, "an old MAIN keeps its naming rule (no per-SOURCE suffix)");
+        // Etapa 6: EXPORT ao lado do botão principal; planilha com nome novo.
+        bw.setSize(1700, 900);
+        bw.resized();
+        checar(bw.btnExportar_ && bw.btnExportar_->isVisible(), "EXPORT button is on the backup screen");
+        checar(bw.btnExportJanela_->getButtonText() == matriz::i18n::t("backup.btn_exportar_metadados") &&
+                   bw.btnExportJanela_->getButtonText().containsIgnoreCase(matriz::i18n::localeAtivo() == "pt_BR" ? "planilha" : "spreadsheet"),
+               "the metadata export button is now the metadata SPREADSHEET export");
+        if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+            bombear(200);
+            juce::PNGImageFormat png;
+            auto arq = dir.getChildFile("backup_config_locked.png");
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(bw.createComponentSnapshot(bw.getLocalBounds()), *out);
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("locks selftest: ") + e.what());
     }
