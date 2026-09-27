@@ -2409,7 +2409,28 @@ void MainComponent::verificarPapelMain() {
     poolVaults_.addJob([safeThis, proj]() {
         ProjetoAberto::SituacaoMain sit;
         try { sit = proj->normalizarPapelMain(); } catch (...) {}
-        if (sit.tipo != ProjetoAberto::SituacaoMain::Tipo::Perguntar) return;
+        if (sit.tipo != ProjetoAberto::SituacaoMain::Tipo::Perguntar) {
+            // Etapa 7: "Clone X desatualizado desde DD/MM." (clones do MAIN).
+            juce::StringArray avisos;
+            try {
+                for (const auto& v : proj->listarVersoes()) {
+                    if (v.papel != ProjetoAberto::VersaoResumo::Papel::Clone || v.cloneDeSource || !v.desatualizado) continue;
+                    const juce::String d = v.ultimaData.length() >= 10
+                                               ? v.ultimaData.substring(8, 10) + "/" + v.ultimaData.substring(5, 7)
+                                               : juce::String("?");
+                    avisos.add(matriz::i18n::t("versoes.aviso_desatualizado").replace("{c}", v.rotulo).replace("{d}", d));
+                }
+            } catch (...) {}
+            if (avisos.isEmpty()) return;
+            juce::MessageManager::callAsync([safeThis, proj, avisos]() {
+                if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                                       matriz::i18n::t("versoes.aviso_desatualizado_titulo"),
+                                                       avisos.joinIntoString("\n"), {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+            });
+            return;
+        }
         juce::MessageManager::callAsync([safeThis, proj, sit]() {
             if (!safeThis || safeThis->projetoAberto_.get() != proj) return;  // projeto trocou
             safeThis->perguntarQualEOMain(sit);

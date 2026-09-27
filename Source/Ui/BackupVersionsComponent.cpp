@@ -5,6 +5,8 @@
 #include "../Model/ProjectLog.h"
 #include "BackupRecoveryDialog.h"
 #include "Tokens.h"
+#include "../Sync/SyncEngine.h"
+#include "ProgressoGlobal.h"
 
 namespace matriz::ui {
 
@@ -14,10 +16,24 @@ class VersionRowComponent : public juce::Component {
 public:
     // Callbacks recebem a linha ATUAL: o ListBox reaproveita o componente
     // entre linhas ao rolar/recarregar.
-    VersionRowComponent(std::function<void(int)> onRenomear, std::function<void(int)> onDesvincular)
-        : onRenomear_(std::move(onRenomear)), onDesvincular_(std::move(onDesvincular))
+    VersionRowComponent(std::function<void(int)> onRenomear, std::function<void(int)> onDesvincular,
+                        std::function<void(int)> onAcao, std::function<void(int)> onPromover)
+        : onRenomear_(std::move(onRenomear)), onDesvincular_(std::move(onDesvincular)),
+          onAcao_(std::move(onAcao)), onPromover_(std::move(onPromover))
     {
         const auto& tk = tema();
+
+        // Etapa 7: CLONAR (MAIN/SOURCE) ou SINCRONIZAR (CLONE); PROMOVER A MAIN
+        // só no clone do MAIN.
+        btnAcao_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnAcao_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnAcao_.onClick = [this] { if (onAcao_) onAcao_(linha_); };
+        addAndMakeVisible(btnAcao_);
+        btnPromover_.setButtonText(matriz::i18n::t("versoes.promover"));
+        btnPromover_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnPromover_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        btnPromover_.onClick = [this] { if (onPromover_) onPromover_(linha_); };
+        addChildComponent(btnPromover_);
 
         btnRenomear_.setButtonText(matriz::i18n::t("backup.renomear"));
         btnRenomear_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -39,6 +55,9 @@ public:
         // SOURCE não se desvincula (é proveniência); o MAIN mostra o botão,
         // mas o clique só avisa (ver desvincularVersao).
         btnDesvincular_.setVisible(versao_.papel != ProjetoAberto::VersaoResumo::Papel::Source);
+        const bool ehClone = versao_.papel == ProjetoAberto::VersaoResumo::Papel::Clone;
+        btnAcao_.setButtonText(matriz::i18n::t(ehClone ? "versoes.sincronizar" : "versoes.clonar"));
+        btnPromover_.setVisible(ehClone && !versao_.cloneDeSource);
         repaint();
     }
 
@@ -68,7 +87,7 @@ public:
         // 2. Rótulo (linha de cima) e caminho (linha de baixo)
         int textoX = selo.getRight() + 12;
         int statusW = 300;
-        int botoesW = 190;
+        int botoesW = 400;
         int textoW = std::max(60, r.getRight() - botoesW - statusW - textoX);
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
@@ -76,7 +95,10 @@ public:
                    textoX, 4, textoW, h / 2 - 2, juce::Justification::bottomLeft, true);
         g.setColour(tk.textoSecundario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
-        g.drawText(versao_.caminho, textoX, h / 2, textoW, h / 2 - 4, juce::Justification::topLeft, true);
+        g.drawText(versao_.origem.isNotEmpty()
+                       ? matriz::i18n::t("versoes.clone_de").replace("{o}", versao_.origem) + "  -  " + versao_.caminho
+                       : versao_.caminho,
+                   textoX, h / 2, textoW, h / 2 - 4, juce::Justification::topLeft, true);
 
         // 3. Status (linha de cima) e números (linha de baixo)
         int statusX = textoX + textoW + 10;
@@ -107,7 +129,10 @@ public:
                 corStatus = versao_.online ? tk.alerta : corStatus;
             }
         } else {
-            if (versao_.papel == Papel::Clone) {
+            if (versao_.papel == Papel::Clone && versao_.cloneDeSource) {
+                status = versao_.online ? matriz::i18n::t("backup.status_online") : matriz::i18n::t("backup.status_offline");
+                corStatus = versao_.online ? tk.estadoQcOk : tk.textoSecundario;
+            } else if (versao_.papel == Papel::Clone) {
                 if (versao_.desatualizado) {
                     status = matriz::i18n::t("backup.status_desatualizado").replace("{d}", dataCurta(versao_.ultimaData));
                     corStatus = tk.alerta;
@@ -146,6 +171,8 @@ public:
 
         btnDesvincular_.setBounds(r.getRight() - 88, btnY, 88, btnH);
         btnRenomear_.setBounds(r.getRight() - 182, btnY, 86, btnH);
+        btnPromover_.setBounds(r.getRight() - 290, btnY, 102, btnH);
+        btnAcao_.setBounds(r.getRight() - 392, btnY, 96, btnH);
     }
 
 private:
@@ -154,8 +181,12 @@ private:
     int linha_ = -1;
     std::function<void(int)> onRenomear_;
     std::function<void(int)> onDesvincular_;
+    std::function<void(int)> onAcao_;
+    std::function<void(int)> onPromover_;
     juce::TextButton btnRenomear_;
     juce::TextButton btnDesvincular_;
+    juce::TextButton btnAcao_;
+    juce::TextButton btnPromover_;
 };
 
 } // namespace
@@ -190,7 +221,9 @@ BackupVersionsComponent::BackupVersionsComponent(ProjetoAberto& projeto)
     btnSincronizar_.onClick = [this] {
         BackupSyncDialog::showSyncDialog(projeto_, versoes_, [this] { recarregar(); });
     };
-    addAndMakeVisible(btnSincronizar_);
+    // Etapa 7: "Sincronizar entre versões" virou SINCRONIZAR na linha de cada
+    // CLONE (origem fixa: MAIN ou o SOURCE dele; nunca de clone pra MAIN).
+    addChildComponent(btnSincronizar_);
 
     btnRecuperar_.setButtonText(matriz::i18n::t("backup.btn_recuperar"));
     btnRecuperar_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
@@ -224,8 +257,6 @@ void BackupVersionsComponent::resized() {
     r.removeFromTop(16);
 
     auto linhaBotoes = r.removeFromBottom(40);
-    btnSincronizar_.setBounds(linhaBotoes.removeFromLeft(220));
-    linhaBotoes.removeFromLeft(16);
     btnRecuperar_.setBounds(linhaBotoes.removeFromLeft(220));
 
     r.removeFromBottom(16);
@@ -271,6 +302,15 @@ juce::Component* BackupVersionsComponent::refreshComponentForRow(int rowNumber, 
             },
             [this](int linha) {
                 if (linha >= 0 && linha < static_cast<int>(linhas_.size())) desvincularVersao(linhas_[static_cast<size_t>(linha)]);
+            },
+            [this](int linha) {
+                if (linha < 0 || linha >= static_cast<int>(linhas_.size())) return;
+                const auto& v = linhas_[static_cast<size_t>(linha)];
+                if (v.papel == ProjetoAberto::VersaoResumo::Papel::Clone) sincronizarClone(v);
+                else clonar(v);
+            },
+            [this](int linha) {
+                if (linha >= 0 && linha < static_cast<int>(linhas_.size())) promoverAMain(linhas_[static_cast<size_t>(linha)]);
             });
     }
 
@@ -343,7 +383,8 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
                     juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
                                                            matriz::i18n::t("backup.codigo_source"),
                                                            matriz::i18n::t(emUso ? "backup.codigo_source_em_uso"
-                                                                                 : "backup.codigo_source_invalido"));
+                                                                                 : "backup.codigo_source_invalido"),
+                                                           {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
                     return;
                 }
                 projeto_.projeto().registro().run("UPDATE vault SET codigo = ? WHERE id = ?",
@@ -360,7 +401,9 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
         // Só o rótulo (apelido do disco). Num SOURCE a pasta no MAIN nunca muda.
         const bool ehSource = versao.papel == ProjetoAberto::VersaoResumo::Papel::Source;
         projeto_.projeto().registro().run(
-            ehSource ? "UPDATE vault SET nome = ? WHERE id = ?" : "UPDATE backup_destino SET rotulo = ? WHERE id = ?",
+            ehSource ? "UPDATE vault SET nome = ? WHERE id = ?"
+                     : versao.cloneDeSource ? "UPDATE source_clone SET rotulo = ? WHERE id = ?"
+                                            : "UPDATE backup_destino SET rotulo = ? WHERE id = ?",
             {matriz::db::Value::of(novoRotulo.toStdString()), matriz::db::Value::of(versao.id)});
 
         matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
@@ -392,8 +435,9 @@ void BackupVersionsComponent::desvincularVersao(const ProjetoAberto::VersaoResum
         juce::ModalCallbackFunction::create([this, versao](int result) {
             if (result != 1) return;
 
+            // Clone de SOURCE: sai só do registro; os arquivos ficam onde estão.
             projeto_.projeto().registro().run(
-                "UPDATE backup_destino SET ativo = 0 WHERE id = ?",
+                versao.cloneDeSource ? "DELETE FROM source_clone WHERE id = ?" : "UPDATE backup_destino SET ativo = 0 WHERE id = ?",
                 {matriz::db::Value::of(versao.id)});
 
             matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
@@ -403,6 +447,182 @@ void BackupVersionsComponent::desvincularVersao(const ProjetoAberto::VersaoResum
             pLog.appendEntry("Backup Version Unlinked", details);
 
             recarregar();
+        }));
+}
+
+BackupVersionsComponent::~BackupVersionsComponent() {
+    // Clonar/sincronizar usam o Project: cancela entre arquivos e espera.
+    cancelamento_->pedir();
+    poolAcoes_.removeAllJobs(true, 60000);
+    poolCarga_.removeAllJobs(true, 5000);
+}
+
+void BackupVersionsComponent::rodarAcao(const juce::String& titulo,
+                                        std::function<juce::String(matriz::sync::CallbackProgressoSync,
+                                                                   matriz::app::CancelamentoPtr)> trabalho) {
+    if (acaoEmCurso_) return;
+    acaoEmCurso_ = true;
+    cancelamento_->rearmar();
+    auto cancelamento = cancelamento_;
+    ProgressoGlobal::obterInstancia().iniciarTarefa("versoes", titulo, 0, [cancelamento] { cancelamento->pedir(); });
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    poolAcoes_.addJob([safeThis, titulo, trabalho, cancelamento] {
+        auto progresso = [cancelamento](int atual, int total, const juce::String& msg) {
+            juce::MessageManager::callAsync([atual, total, msg] {
+                ProgressoGlobal::obterInstancia().atualizarFracao("versoes", total > 0 ? (double) atual / total : 0.0, msg);
+            });
+            return !cancelamento->pedido();
+        };
+        juce::String mensagem;
+        try {
+            mensagem = trabalho(progresso, cancelamento);
+        } catch (const std::exception& e) {
+            mensagem = juce::String(e.what());
+        }
+        juce::MessageManager::callAsync([safeThis, titulo, mensagem] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("versoes");
+            if (safeThis == nullptr) return;
+            safeThis->acaoEmCurso_ = false;
+            safeThis->recarregar();
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, titulo, mensagem, {}, nullptr,
+                                                   juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
+}
+
+namespace {
+juce::String resumoFalhas(const std::vector<std::string>& falhas) {
+    if (falhas.empty()) return {};
+    juce::String s = "\n\n" + matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) falhas.size()));
+    for (size_t i = 0; i < falhas.size() && i < 5; ++i) s << "\n- " << juce::String(falhas[i]);
+    return s;
+}
+} // namespace
+
+void BackupVersionsComponent::clonar(const ProjetoAberto::VersaoResumo& versao) {
+    const bool ehMain = versao.papel == ProjetoAberto::VersaoResumo::Papel::Main;
+    chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("versoes.clonar_escolher"), juce::File(), "");
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    auto* projeto = &projeto_.projeto();
+    const std::string id = versao.id;
+    chooser_->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [safeThis, projeto, id, ehMain](const juce::FileChooser& fc) {
+            const juce::File pasta = fc.getResult();
+            if (safeThis == nullptr || pasta == juce::File()) return;
+            safeThis->rodarAcao(matriz::i18n::t("versoes.clonar_titulo"),
+                                [projeto, id, ehMain, pasta](matriz::sync::CallbackProgressoSync prog,
+                                                             matriz::app::CancelamentoPtr canc) {
+                auto r = ehMain ? matriz::sync::SyncEngine::clonarMain(*projeto, pasta, prog, canc)
+                                : matriz::sync::SyncEngine::clonarSource(*projeto, id, pasta, prog, canc);
+                return matriz::i18n::t(r.cancelado ? "versoes.clonar_cancelado" : "versoes.clonar_fim")
+                           .replace("{n}", juce::String(r.copiados))
+                           .replace("{pasta}", r.raiz.getFullPathName()) +
+                       resumoFalhas(r.falhas);
+            });
+        });
+}
+
+void BackupVersionsComponent::sincronizarClone(const ProjetoAberto::VersaoResumo& versao) {
+    if (acaoEmCurso_) return;
+    // 1) Compara em background; 2) mostra adições e remoções pendentes
+    // separadas; 3) aplica — remoções só se o operador escolher.
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    auto* projeto = &projeto_.projeto();
+    const auto v = versao;
+    acaoEmCurso_ = true;
+    poolAcoes_.addJob([safeThis, projeto, v] {
+        int adicoes = 0;
+        juce::StringArray remocoes;
+        juce::String erro;
+        try {
+            if (v.cloneDeSource) {
+                auto p = matriz::sync::SyncEngine::compararCloneDeSource(*projeto, v.id);
+                erro = juce::String(p.erro);
+                adicoes = static_cast<int>(p.novos.size());
+                for (auto& r : p.removidos) remocoes.add(r);
+            } else {
+                auto p = matriz::sync::SyncEngine::compararCloneDoMain(*projeto, v.id);
+                if (!p.podeAplicar()) erro = juce::String(p.errosValidacao.front());
+                for (const auto& it : p.itens) {
+                    if (it.classe == matriz::sync::ClasseSync::Removido) remocoes.add(it.caminhoRelativo);
+                    else if (it.classe != matriz::sync::ClasseSync::Igual) ++adicoes;
+                }
+            }
+        } catch (const std::exception& e) {
+            erro = e.what();
+        }
+        juce::MessageManager::callAsync([safeThis, v, adicoes, remocoes, erro] {
+            if (safeThis == nullptr) return;
+            safeThis->acaoEmCurso_ = false;
+            safeThis->confirmarSincronizacao(v, adicoes, remocoes, erro);
+        });
+    });
+}
+
+void BackupVersionsComponent::confirmarSincronizacao(const ProjetoAberto::VersaoResumo& v, int adicoes,
+                                                    const juce::StringArray& remocoes, const juce::String& erro) {
+    const juce::String titulo = matriz::i18n::t("versoes.sincronizar_titulo").replace("{c}", v.rotulo);
+    if (erro.isNotEmpty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, titulo, erro, {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+    if (adicoes == 0 && remocoes.isEmpty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, titulo, matriz::i18n::t("versoes.em_dia"), {},
+                                               nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+    juce::String msg = matriz::i18n::t("versoes.sincronizar_msg").replace("{o}", v.origem).replace("{n}", juce::String(adicoes));
+    if (!remocoes.isEmpty()) {
+        msg << "\n\n" << matriz::i18n::t("versoes.remocoes_pendentes").replace("{n}", juce::String(remocoes.size()));
+        for (int i = 0; i < remocoes.size() && i < 8; ++i) msg << "\n- " << remocoes[i];
+        if (remocoes.size() > 8) msg << "\n...";
+    }
+    auto* aw = new juce::AlertWindow(titulo, msg, juce::MessageBoxIconType::QuestionIcon);
+    aw->addButton(matriz::i18n::t("versoes.copiar_adicoes"), 1);
+    if (!remocoes.isEmpty()) aw->addButton(matriz::i18n::t("versoes.copiar_e_remover"), 2);
+    aw->addButton(matriz::i18n::t("dialogo.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    auto* projeto = &projeto_.projeto();
+    aw->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, projeto, v, titulo](int res) {
+        if (res == 0 || safeThis == nullptr) return;
+        const bool remover = res == 2;
+        safeThis->rodarAcao(titulo, [projeto, v, remover](matriz::sync::CallbackProgressoSync prog,
+                                                          matriz::app::CancelamentoPtr canc) {
+            auto r = v.cloneDeSource
+                         ? matriz::sync::SyncEngine::sincronizarCloneDeSource(*projeto, v.id, remover, prog, canc)
+                         : matriz::sync::SyncEngine::sincronizarCloneDoMain(*projeto, v.id, remover, prog, canc);
+            return matriz::i18n::t("versoes.sincronizar_fim")
+                       .replace("{n}", juce::String(r.itensCopiados))
+                       .replace("{r}", juce::String(r.itensLixeira)) +
+                   resumoFalhas(r.falhas);
+        });
+    }), true);
+}
+
+void BackupVersionsComponent::promoverAMain(const ProjetoAberto::VersaoResumo& versao) {
+    if (!versao.online) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("versoes.promover"),
+                                               matriz::i18n::t("versoes.promover_offline"), {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+    juce::Component::SafePointer<BackupVersionsComponent> safeThis(this);
+    auto* projeto = &projeto_.projeto();
+    const auto v = versao;
+    juce::AlertWindow::showOkCancelBox(
+        juce::AlertWindow::WarningIcon, matriz::i18n::t("versoes.promover"),
+        matriz::i18n::t("versoes.promover_confirmar").replace("{c}", v.rotulo), matriz::i18n::t("versoes.promover"),
+        matriz::i18n::t("dialogo.cancelar"), nullptr,
+        juce::ModalCallbackFunction::create([safeThis, projeto, v](int res) {
+            if (res != 1 || safeThis == nullptr) return;
+            safeThis->rodarAcao(matriz::i18n::t("versoes.promover"),
+                                [projeto, v](matriz::sync::CallbackProgressoSync, matriz::app::CancelamentoPtr) {
+                juce::String erro;
+                if (!matriz::sync::SyncEngine::promoverAMain(*projeto, v.id, erro)) return erro;
+                return matriz::i18n::t("versoes.promover_fim").replace("{pasta}", v.caminho);
+            });
         }));
 }
 

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "../Ingest/Checksum.h"
 #include "../Model/ProjectLog.h"
+#include "../Consolidacao/Consolidacao.h"
 
 namespace matriz::sync {
 
@@ -766,5 +767,367 @@ std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAuto
 
     return resultados;
 }
+
+// ------------------------------------------------------------------ Etapa 7
+
+namespace {
+
+bool ehArquivoDeSistema(const juce::String& nome) {
+    return nome == ".DS_Store" || nome == ".Spotlight-V100" || nome == ".fseventsd" || nome == ".Trashes" ||
+           nome == ".TemporaryItems" || nome == ".DocumentRevisions-V100" || nome.startsWith("._");
+}
+
+// Arquivos de `base` (recursivo), relativos a ela; pula lixo de sistema, a
+// lixeira e o manifesto do próprio clone.
+void listarArquivos(const juce::File& base, const juce::File& atual, std::vector<juce::String>& out) {
+    juce::Array<juce::File> filhos;
+    atual.findChildFiles(filhos, juce::File::findFilesAndDirectories, false);
+    for (const auto& f : filhos) {
+        const auto nome = f.getFileName();
+        if (ehArquivoDeSistema(nome) || nome == "_lixeira") continue;
+        if (atual == base && nome == "checksums.sha256") continue;
+        if (f.isDirectory()) listarArquivos(base, f, out);
+        else if (f.existsAsFile()) out.push_back(f.getRelativePathFrom(base));
+    }
+}
+
+juce::File pastaLivre(const juce::File& dentro, const juce::String& nome) {
+    juce::File f = dentro.getChildFile(nome);
+    int n = 2;
+    while (f.exists()) f = dentro.getChildFile(nome + "_" + juce::String(n++));
+    return f;
+}
+
+void garantirTabelaSourceClone(matriz::db::Database& db) {
+    db.exec("CREATE TABLE IF NOT EXISTS source_clone ("
+            "  id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, origem_path TEXT NOT NULL, destino_path TEXT NOT NULL,"
+            "  rotulo TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, ultima_sync_em TEXT, arquivos INTEGER NOT NULL DEFAULT 0)");
+}
+
+} // namespace
+
+SyncEngine::ResultadoClone SyncEngine::clonarMain(matriz::model::Project& projeto, const juce::File& pastaEscolhida,
+                                                  const CallbackProgressoSync& progresso,
+                                                  matriz::app::CancelamentoPtr cancelamento) {
+    ResultadoClone r;
+    auto& db = projeto.registro();
+    const juce::File refRaiz = matriz::model::normalizarParaRaizDestino(projeto.raiz());
+    juce::File raiz = pastaEscolhida;
+    juce::Array<juce::File> conteudo;
+    if (raiz.isDirectory()) raiz.findChildFiles(conteudo, juce::File::findFilesAndDirectories, false);
+    bool vazia = true;
+    for (auto& f : conteudo) if (!ehArquivoDeSistema(f.getFileName())) vazia = false;
+    if (!vazia) raiz = pastaLivre(pastaEscolhida, juce::File::createLegalFileName(juce::String::fromUTF8(projeto.nome().c_str())) + " CLONE");
+    if (raiz == refRaiz || raiz.isAChildOf(refRaiz)) {
+        r.falhas.push_back("The clone cannot be inside the MAIN");
+        return r;
+    }
+    if (!raiz.createDirectory()) {
+        r.falhas.push_back("Could not create " + raiz.getFullPathName().toStdString());
+        return r;
+    }
+    const std::string agora = matriz::model::agoraIso8601();
+    matriz::model::DestinationInfo info;
+    info.destinationId = matriz::model::novoUuid();
+    info.projetoId = projeto.projetoId();
+    info.papel = "CLONE";
+    info.rotulo = raiz.getFileName().toStdString();
+    info.revisao = 0;
+    info.criadoEm = agora;
+    info.gravarEmArquivo(raiz.getChildFile("destination.json"));
+    db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+           "ultima_revisao_conhecida) VALUES (?, ?, ?, ?, 'CLONE', 1, ?, 0)",
+           {matriz::db::Value::of(info.destinationId), matriz::db::Value::of(info.destinationId),
+            matriz::db::Value::of(raiz.getFullPathName().toStdString()), matriz::db::Value::of(info.rotulo),
+            matriz::db::Value::of(agora)});
+    r.id = info.destinationId;
+    r.raiz = raiz;
+    auto res = sincronizarCloneDoMain(projeto, r.id, false, progresso, cancelamento);
+    r.sucesso = res.sucesso;
+    r.cancelado = res.cancelado;
+    r.copiados = res.itensCopiados;
+    r.falhas = res.falhas;
+    matriz::model::ProjectLog(projeto.pasta()).appendEntry("MAIN Cloned", {
+        "Clone: " + raiz.getFullPathName(), "Files copied: " + juce::String(r.copiados),
+        "Failures: " + juce::String((int) r.falhas.size())});
+    return r;
+}
+
+PlanoSync SyncEngine::compararCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId) {
+    PlanoSync vazio;
+    std::string caminho;
+    {
+        auto st = projeto.registro().prepare("SELECT destino_path FROM backup_destino WHERE id = ? AND papel <> 'ORIGINAL'");
+        st.bind(1, matriz::db::Value::of(cloneId));
+        if (st.step()) caminho = st.columnText(0);
+    }
+    const juce::File cloneRaiz = matriz::model::normalizarParaRaizDestino(juce::File(juce::String::fromUTF8(caminho.c_str())));
+    if (caminho.empty() || !cloneRaiz.isDirectory()) {
+        vazio.errosValidacao.push_back("Clone offline or not registered");
+        return vazio;
+    }
+    return escanearEComparar(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, false);
+}
+
+ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId,
+                                                 bool aplicarRemocoes, const CallbackProgressoSync& progresso,
+                                                 matriz::app::CancelamentoPtr cancelamento) {
+    ResultadoSync res;
+    auto plano = compararCloneDoMain(projeto, cloneId);
+    if (!plano.podeAplicar()) {
+        res.falhas.push_back(plano.errosValidacao.front());
+        return res;
+    }
+    if (!aplicarRemocoes) {
+        plano.itens.erase(std::remove_if(plano.itens.begin(), plano.itens.end(),
+                                         [](const ItemSync& it) { return it.classe == ClasseSync::Removido; }),
+                          plano.itens.end());
+        plano.totalRemovidos = 0;
+    }
+    std::string caminho;
+    {
+        auto st = projeto.registro().prepare("SELECT destino_path FROM backup_destino WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(cloneId));
+        if (st.step()) caminho = st.columnText(0);
+    }
+    const juce::File cloneRaiz = matriz::model::normalizarParaRaizDestino(juce::File(juce::String::fromUTF8(caminho.c_str())));
+    res = aplicarSync(matriz::model::normalizarParaRaizDestino(projeto.raiz()), cloneRaiz, plano, progresso, cancelamento);
+    if (res.sucesso)
+        projeto.registro().run("UPDATE backup_destino SET ultima_revisao_conhecida = ?, ultimo_visto_em = ? WHERE id = ?",
+                               {matriz::db::Value::of(static_cast<long long>(plano.revisaoRef)),
+                                matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(cloneId)});
+    return res;
+}
+
+SyncEngine::ResultadoClone SyncEngine::clonarSource(matriz::model::Project& projeto, const std::string& vaultId,
+                                                    const juce::File& pastaEscolhida,
+                                                    const CallbackProgressoSync& progresso,
+                                                    matriz::app::CancelamentoPtr cancelamento) {
+    ResultadoClone r;
+    auto& db = projeto.registro();
+    garantirTabelaSourceClone(db);
+    std::string localizacao, nome;
+    std::vector<std::string> relativos;
+    {
+        auto st = db.prepare("SELECT localizacao, nome FROM vault WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(vaultId));
+        if (st.step()) {
+            localizacao = st.columnText(0);
+            nome = st.columnText(1);
+        }
+        auto sa = db.prepare("SELECT caminho_relativo FROM arquivo WHERE vault_id = ? AND COALESCE(caminho_relativo, '') <> ''");
+        sa.bind(1, matriz::db::Value::of(vaultId));
+        while (sa.step()) relativos.push_back(sa.columnText(0));
+    }
+    juce::File volume(juce::String::fromUTF8(localizacao.c_str()));
+    if (localizacao.empty() || !volume.isDirectory()) {
+        r.falhas.push_back("The SOURCE is not connected");
+        return r;
+    }
+    // Cartão/HD externo: o volume inteiro. Disco do sistema: só a pasta comum
+    // aos arquivos ingeridos (clonar o Macintosh HD inteiro não faz sentido).
+    juce::File origem = volume;
+    if (!volume.getFullPathName().startsWith("/Volumes/") && !relativos.empty()) {
+        juce::StringArray comum;
+        comum.addTokens(juce::String(relativos.front()), "/", "");
+        comum.remove(comum.size() - 1);
+        for (const auto& rel : relativos) {
+            juce::StringArray partes;
+            partes.addTokens(juce::String(rel), "/", "");
+            partes.remove(partes.size() - 1);
+            int i = 0;
+            while (i < comum.size() && i < partes.size() && comum[i] == partes[i]) ++i;
+            comum.removeRange(i, comum.size() - i);
+        }
+        for (auto& p : comum) if (p.isNotEmpty()) origem = origem.getChildFile(p);
+    }
+    const auto codigos = matriz::consolidacao::codigosDeSource(db);
+    const juce::String codigo = codigos.count(vaultId) ? juce::String(codigos.at(vaultId)) : juce::String("SRC");
+    r.raiz = pastaLivre(pastaEscolhida, juce::File::createLegalFileName(juce::String::fromUTF8(nome.c_str()) + "_" + codigo));
+    if (!r.raiz.createDirectory()) {
+        r.falhas.push_back("Could not create " + r.raiz.getFullPathName().toStdString());
+        return r;
+    }
+    std::vector<juce::String> arquivos;
+    listarArquivos(origem, origem, arquivos);
+    juce::String manifesto;
+    const int total = static_cast<int>(arquivos.size());
+    for (int i = 0; i < total; ++i) {
+        if ((cancelamento && cancelamento->pedido()) || (progresso && !progresso(i, total, arquivos[(size_t) i]))) {
+            r.cancelado = true;
+            break;
+        }
+        const juce::File de = origem.getChildFile(arquivos[(size_t) i]);
+        const juce::File para = r.raiz.getChildFile(arquivos[(size_t) i]);
+        para.getParentDirectory().createDirectory();
+        const std::string shaOrigem = matriz::ingest::calcularChecksums(de).sha256;
+        if (!de.copyFileTo(para) || matriz::ingest::calcularChecksums(para).sha256 != shaOrigem) {
+            r.falhas.push_back("Copy/verification failed: " + arquivos[(size_t) i].toStdString());
+            continue;
+        }
+        manifesto << juce::String(shaOrigem) << "  " << arquivos[(size_t) i] << "\n";
+        ++r.copiados;
+    }
+    r.raiz.getChildFile("checksums.sha256").replaceWithText(manifesto);
+    const std::string agora = matriz::model::agoraIso8601();
+    r.id = matriz::model::novoUuid();
+    db.run("INSERT INTO source_clone (id, vault_id, origem_path, destino_path, rotulo, criado_em, ultima_sync_em, arquivos) "
+           "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+           {matriz::db::Value::of(r.id), matriz::db::Value::of(vaultId),
+            matriz::db::Value::of(origem.getFullPathName().toStdString()),
+            matriz::db::Value::of(r.raiz.getFullPathName().toStdString()),
+            matriz::db::Value::of(r.raiz.getFileName().toStdString()), matriz::db::Value::of(agora),
+            matriz::db::Value::of(agora), matriz::db::Value::of(r.copiados)});
+    r.sucesso = !r.cancelado && r.falhas.empty();
+    matriz::model::ProjectLog(projeto.pasta()).appendEntry("SOURCE Cloned (raw copy)", {
+        "SOURCE: " + codigo + " " + juce::String::fromUTF8(nome.c_str()), "From: " + origem.getFullPathName(),
+        "To: " + r.raiz.getFullPathName(), "Files: " + juce::String(r.copiados) + " (checksums.sha256)",
+        "Failures: " + juce::String((int) r.falhas.size())});
+    return r;
+}
+
+SyncEngine::PlanoCloneSource SyncEngine::compararCloneDeSource(matriz::model::Project& projeto, const std::string& cloneId) {
+    PlanoCloneSource p;
+    auto& db = projeto.registro();
+    garantirTabelaSourceClone(db);
+    auto st = db.prepare("SELECT origem_path, destino_path FROM source_clone WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(cloneId));
+    if (!st.step()) {
+        p.erro = "Clone not registered";
+        return p;
+    }
+    p.origem = juce::File(juce::String::fromUTF8(st.columnText(0).c_str()));
+    p.clone = juce::File(juce::String::fromUTF8(st.columnText(1).c_str()));
+    if (!p.origem.isDirectory()) { p.erro = "The SOURCE is not connected"; return p; }
+    if (!p.clone.isDirectory()) { p.erro = "The clone is offline"; return p; }
+    std::vector<juce::String> naOrigem, noClone;
+    listarArquivos(p.origem, p.origem, naOrigem);
+    listarArquivos(p.clone, p.clone, noClone);
+    std::set<juce::String> setClone(noClone.begin(), noClone.end()), setOrigem(naOrigem.begin(), naOrigem.end());
+    for (const auto& rel : naOrigem)
+        if (!setClone.count(rel) || p.clone.getChildFile(rel).getSize() != p.origem.getChildFile(rel).getSize())
+            p.novos.push_back(rel);
+    for (const auto& rel : noClone)
+        if (!setOrigem.count(rel)) p.removidos.push_back(rel);
+    return p;
+}
+
+ResultadoSync SyncEngine::sincronizarCloneDeSource(matriz::model::Project& projeto, const std::string& cloneId,
+                                                   bool aplicarRemocoes, const CallbackProgressoSync& progresso,
+                                                   matriz::app::CancelamentoPtr cancelamento) {
+    ResultadoSync res;
+    auto p = compararCloneDeSource(projeto, cloneId);
+    if (!p.erro.empty()) {
+        res.falhas.push_back(p.erro);
+        return res;
+    }
+    juce::File lixeira;
+    auto pastaLixeiraClone = [&] {
+        if (lixeira == juce::File()) {
+            lixeira = pastaLivre(p.clone.getChildFile("_lixeira"),
+                                 juce::Time::getCurrentTime().formatted("%Y-%m-%d_%H%M%S") + "_sync");
+            lixeira.createDirectory();
+        }
+        return lixeira;
+    };
+    juce::String manifesto = p.clone.getChildFile("checksums.sha256").loadFileAsString();
+    const int total = static_cast<int>(p.novos.size());
+    for (int i = 0; i < total; ++i) {
+        if ((cancelamento && cancelamento->pedido()) || (progresso && !progresso(i, total, p.novos[(size_t) i]))) {
+            res.cancelado = true;
+            break;
+        }
+        const auto& rel = p.novos[(size_t) i];
+        const juce::File de = p.origem.getChildFile(rel), para = p.clone.getChildFile(rel);
+        if (para.existsAsFile()) {  // tamanho mudou: a versão antiga vai pra lixeira do clone, nunca some
+            moverParaLixeira(para, pastaLixeiraClone(), "SOURCE", rel);
+            res.itensLixeira++;
+        }
+        para.getParentDirectory().createDirectory();
+        const std::string sha = matriz::ingest::calcularChecksums(de).sha256;
+        if (!de.copyFileTo(para) || matriz::ingest::calcularChecksums(para).sha256 != sha) {
+            res.falhas.push_back("Copy/verification failed: " + rel.toStdString());
+            continue;
+        }
+        manifesto << juce::String(sha) << "  " << rel << "\n";
+        res.itensCopiados++;
+    }
+    if (aplicarRemocoes && !res.cancelado)
+        for (const auto& rel : p.removidos)
+            if (moverParaLixeira(p.clone.getChildFile(rel), pastaLixeiraClone(), "SOURCE", rel)) res.itensLixeira++;
+    p.clone.getChildFile("checksums.sha256").replaceWithText(manifesto);
+    res.sucesso = !res.cancelado && res.falhas.empty();
+    res.pastaLixeiraCriada = lixeira;
+    projeto.registro().run("UPDATE source_clone SET ultima_sync_em = ?, arquivos = arquivos + ? WHERE id = ?",
+                           {matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(res.itensCopiados),
+                            matriz::db::Value::of(cloneId)});
+    return res;
+}
+
+bool SyncEngine::promoverAMain(matriz::model::Project& projeto, const std::string& cloneId, juce::String& erro) {
+    auto& db = projeto.registro();
+    std::string caminhoClone, destIdClone, idMainAntigo, caminhoMainAntigo;
+    {
+        auto st = db.prepare("SELECT destino_path, COALESCE(destination_id, id) FROM backup_destino "
+                             "WHERE id = ? AND papel <> 'ORIGINAL' AND ativo = 1");
+        st.bind(1, matriz::db::Value::of(cloneId));
+        if (!st.step()) { erro = "Not an active CLONE"; return false; }
+        caminhoClone = st.columnText(0);
+        destIdClone = st.columnText(1);
+        auto sm = db.prepare("SELECT COALESCE(destination_id, id), destino_path FROM backup_destino WHERE papel = 'ORIGINAL' LIMIT 1");
+        if (sm.step()) { idMainAntigo = sm.columnText(0); caminhoMainAntigo = sm.columnText(1); }
+    }
+    const juce::File cloneRaiz = matriz::model::normalizarParaRaizDestino(juce::File(juce::String::fromUTF8(caminhoClone.c_str())));
+    const juce::File bancoDoClone = cloneRaiz.getChildFile("Project").getChildFile("registro.sqlite");
+    if (!cloneRaiz.isDirectory() || !bancoDoClone.existsAsFile()) {
+        erro = "The clone must be connected and have the project database (sync it first)";
+        return false;
+    }
+    const std::string mediaNova = cloneRaiz.getChildFile("Media").getFullPathName().trimCharactersAtEnd("/").toStdString();
+    auto aplicar = [&](matriz::db::Database& d) {
+        d.run("BEGIN IMMEDIATE", {});
+        try {
+            d.run("UPDATE backup_destino SET papel = CASE WHEN id = ? OR destination_id = ? THEN 'ORIGINAL' ELSE 'CLONE' END "
+                  "WHERE ativo = 1",
+                  {matriz::db::Value::of(cloneId), matriz::db::Value::of(destIdClone)});
+            // É espelho: os mesmos caminhos relativos valem no novo MAIN.
+            d.run("UPDATE OR IGNORE consolidacao_registro SET destino_id = ?, destino_path = ? "
+                  "WHERE COALESCE(destino_id, '') = '' OR destino_id = ?",
+                  {matriz::db::Value::of(destIdClone), matriz::db::Value::of(mediaNova),
+                   matriz::db::Value::of(idMainAntigo)});
+            d.run("UPDATE projeto SET destino_backup_ativo_path = ?",
+                  {matriz::db::Value::of(cloneRaiz.getFullPathName().toStdString())});
+            d.run("COMMIT", {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+            throw;
+        }
+    };
+    try {
+        aplicar(db);
+        if (bancoDoClone != projeto.pasta().getChildFile("registro.sqlite")) {
+            matriz::db::Database dbClone(bancoDoClone.getFullPathName().toStdString());
+            aplicar(dbClone);
+        }
+    } catch (const std::exception& e) {
+        erro = e.what();
+        return false;
+    }
+    if (auto info = matriz::model::DestinationInfo::lerDeArquivo(cloneRaiz.getChildFile("destination.json"))) {
+        info->papel = "ORIGINAL";
+        info->gravarEmArquivo(cloneRaiz.getChildFile("destination.json"));
+    }
+    const juce::File mainAntigo = matriz::model::normalizarParaRaizDestino(juce::File(juce::String::fromUTF8(caminhoMainAntigo.c_str())));
+    if (!caminhoMainAntigo.empty() && mainAntigo != cloneRaiz)
+        if (auto info = matriz::model::DestinationInfo::lerDeArquivo(mainAntigo.getChildFile("destination.json"))) {
+            info->papel = "CLONE";
+            info->gravarEmArquivo(mainAntigo.getChildFile("destination.json"));
+        }
+    matriz::model::ProjectLog(projeto.pasta()).appendEntry("CLONE Promoted to MAIN", {
+        "New MAIN: " + cloneRaiz.getFullPathName(), "Previous MAIN: " + juce::String::fromUTF8(caminhoMainAntigo.c_str()),
+        "Nothing copied or deleted; open the project from the new MAIN"});
+    return true;
+}
+
 
 } // namespace matriz::sync

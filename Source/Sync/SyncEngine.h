@@ -102,6 +102,54 @@ public:
                                                                          const std::set<std::string>& ignorarIds = {},
                                                                          bool aplicarRemocoes = true);
 
+    // ---------------------------------------------------------------- Etapa 7
+    // CLONE = espelho integral. Nunca copia de CLONE pra MAIN; remoções no
+    // clone só com aplicarRemocoes = true (confirmação explícita na UI).
+    struct ResultadoClone {
+        bool sucesso = false;
+        bool cancelado = false;
+        int copiados = 0;
+        std::vector<std::string> falhas;
+        std::string id;      // backup_destino.id (clone do MAIN) ou source_clone.id
+        juce::File raiz;
+    };
+    // Clone do MAIN: registra um destino CLONE (destination.json + backup_destino)
+    // em `pastaEscolhida` (ou numa subpasta "<projeto> CLONE" se ela já tem
+    // outra coisa) e copia Media + Project (banco incluso).
+    static ResultadoClone clonarMain(matriz::model::Project& projeto, const juce::File& pastaEscolhida,
+                                     const CallbackProgressoSync& progresso = nullptr,
+                                     matriz::app::CancelamentoPtr cancelamento = nullptr);
+    // Compara MAIN -> clone (só leitura). As remoções (arquivo só no clone)
+    // vêm no plano como ClasseSync::Removido — a UI mostra separado.
+    static PlanoSync compararCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId);
+    static ResultadoSync sincronizarCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId,
+                                                bool aplicarRemocoes, const CallbackProgressoSync& progresso = nullptr,
+                                                matriz::app::CancelamentoPtr cancelamento = nullptr);
+
+    // Clone de SOURCE ("Clone Source"): cópia bruta, nomes e estrutura exatamente
+    // como estão no volume, com checksums.sha256 junto; registrado em
+    // source_clone. Não passa pelo catálogo.
+    static ResultadoClone clonarSource(matriz::model::Project& projeto, const std::string& vaultId,
+                                       const juce::File& pastaEscolhida, const CallbackProgressoSync& progresso = nullptr,
+                                       matriz::app::CancelamentoPtr cancelamento = nullptr);
+    struct PlanoCloneSource {
+        juce::File origem, clone;
+        std::vector<juce::String> novos;      // na origem, não no clone (ou tamanho diferente)
+        std::vector<juce::String> removidos;  // só no clone
+        std::string erro;
+    };
+    static PlanoCloneSource compararCloneDeSource(matriz::model::Project& projeto, const std::string& cloneId);
+    static ResultadoSync sincronizarCloneDeSource(matriz::model::Project& projeto, const std::string& cloneId,
+                                                  bool aplicarRemocoes, const CallbackProgressoSync& progresso = nullptr,
+                                                  matriz::app::CancelamentoPtr cancelamento = nullptr);
+
+    // Promover a MAIN (o MAIN morreu): o clone vira ORIGINAL, os outros CLONE;
+    // consolidacao_registro passa a apontar pro clone (é espelho: mesmos
+    // caminhos) — no banco aberto E no banco copiado no clone; destination.json
+    // dos dois lados. Nada é copiado nem apagado. Depois, abrir o projeto a
+    // partir do clone.
+    static bool promoverAMain(matriz::model::Project& projeto, const std::string& cloneId, juce::String& erro);
+
     // Verifica se há marcador de sync incompleto no destino
     static bool temMarcadorSyncIncompleto(const juce::File& destinoRaiz);
     static void criarMarcadorSync(const juce::File& destinoRaiz, const juce::String& refInfo);

@@ -179,6 +179,10 @@ public:
         juce::String codigo;
         bool codigoEditavel = false;
         int ingestoes = 0;
+        // CLONE (etapa 7): clone bruto de um SOURCE (tabela source_clone) ou
+        // espelho do MAIN; `origem` = "MAIN" ou "S01 CARD".
+        bool cloneDeSource = false;
+        juce::String origem;
     };
     // Lê tudo (banco + existência das pastas): chamar FORA da message thread.
     std::vector<VersaoResumo> listarVersoes();

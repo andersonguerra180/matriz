@@ -3502,6 +3502,7 @@ std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
             } else {
                 v.desatualizado = st.columnInt(5) < revisaoProjeto;
                 v.ultimaData = juce::String::fromUTF8(st.columnText(6).c_str());
+                v.origem = "MAIN";
             }
             // Registros deste destino (por id ou caminho); os legados (sem destino)
             // contam pro MAIN.
@@ -3553,6 +3554,32 @@ std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
             v.ingestoes = static_cast<int>(st.columnInt(6));
             v.codigoEditavel = st.columnInt(7) == 0;
             if (auto it = codigos.find(v.id); it != codigos.end()) v.codigo = juce::String(it->second);
+            out.push_back(std::move(v));
+        }
+    } catch (...) {}
+
+    // Clones brutos de SOURCE (etapa 7): também são CLONE, com a origem.
+    try {
+        db.exec("CREATE TABLE IF NOT EXISTS source_clone ("
+                "  id TEXT PRIMARY KEY, vault_id TEXT NOT NULL, origem_path TEXT NOT NULL, destino_path TEXT NOT NULL,"
+                "  rotulo TEXT NOT NULL DEFAULT '', criado_em TEXT NOT NULL, ultima_sync_em TEXT, arquivos INTEGER NOT NULL DEFAULT 0)");
+        const auto codigos = matriz::consolidacao::codigosDeSource(db);
+        auto st = db.prepare("SELECT c.id, c.rotulo, c.destino_path, COALESCE(c.ultima_sync_em, ''), c.arquivos, c.vault_id, "
+                             "COALESCE(v.nome, '') FROM source_clone c LEFT JOIN vault v ON v.id = c.vault_id "
+                             "ORDER BY c.criado_em");
+        while (st.step()) {
+            VersaoResumo v;
+            v.papel = VersaoResumo::Papel::Clone;
+            v.cloneDeSource = true;
+            v.id = st.columnText(0);
+            v.rotulo = juce::String::fromUTF8(st.columnText(1).c_str());
+            v.caminho = juce::String::fromUTF8(st.columnText(2).c_str());
+            v.online = juce::File(v.caminho).isDirectory();
+            v.ultimaData = juce::String::fromUTF8(st.columnText(3).c_str());
+            v.totalItens = static_cast<int>(st.columnInt(4));
+            auto it = codigos.find(st.columnText(5));
+            v.origem = (it != codigos.end() ? juce::String(it->second) + " " : juce::String()) +
+                       juce::String::fromUTF8(st.columnText(6).c_str());
             out.push_back(std::move(v));
         }
     } catch (...) {}
