@@ -88,6 +88,54 @@ S01…), organização por ano/evento só no EXPORT.
   não tira ninguém do backup. Rotina: `ProjetoAberto::sanitizarDuplicata`.
   Em aberto (usuário não respondeu): descartado que JÁ tem cópia no MAIN
   — hoje fica intocada e isso vai pro log.
+- **Etapa 5** (`81988e0`, `23b5c7f`, `a93dcb7`) — cópia pro MAIN byte a byte
+  (`executarConsolidacao(..., embutirNaCopia)` só no 1º backup; marca d'água
+  nunca no MAIN; o passe `embutirMetadadosNoBackup` que reescrevia a Media
+  inteira saiu). `projeto.backup_config_main` guarda estrutura/nomes/prefixo/
+  `por_source` do 1º backup e a Configuração fica travada ("Set in the first
+  backup"); embed e "Forçar backup completo" somem com MAIN. MAPA: renomear/
+  mover/apagar pasta com arquivo no MAIN e importar estrutura/carregar preset
+  bloqueados (criar pasta livre). Renomear item não renomeia mais no MAIN.
+  SOURCE: `vault.codigo` (S01… pela 1ª ingestão ou custom — letras sem acento,
+  números, hífen, único; editável na linha SOURCE até o 1º arquivo dele entrar
+  no MAIN, depois fixo); `organizarPorSource` (só MAIN criado a partir desta
+  versão): estrutura original ganha pasta raiz S01/, nome original ganha
+  sufixo `_S01`. Ingestões por SOURCE = dias distintos (linha SOURCE). Volume
+  que reaparece sem nenhum dos arquivos já ingeridos = vault antigo aposentado
+  + SOURCE novo (1x por vault por sessão, sob mutex).
+- **Etapa 6** (`142b0e8`, `e326fae`) — EXPORT...: recorte volátil sempre a partir
+  do MAIN/CLONE (item só no SOURCE é pulado e contado), estrutura/nomes/embed/
+  marca d'água livres, nada registrado (não é versão nem proteção), só log.
+  "Exportar planilha de metadados".
+- **Fix `a9a5e1d`**: AlertWindow/showMessageBoxAsync com callback nulo roda
+  `runModalLoop` síncrono (JUCE_MODAL_LOOPS_PERMITTED) — código novo sempre
+  passa `ModalCallbackFunction::create([](int){})`. O padrão antigo com nullptr
+  continua espalhado pelo app (não mexido).
+- **Etapa 7** (`9580012`, `cfe4a19`) — Versões: CLONAR (MAIN: destino CLONE +
+  Media/Project; SOURCE: cópia bruta + `checksums.sha256`, tabela
+  `source_clone`), SINCRONIZAR clone (origem fixa; remoções só confirmadas, pra
+  `_lixeira` do clone), PROMOVER A MAIN (papéis + consolidacao_registro no banco
+  aberto E no do clone + destination.json; depois abrir o projeto pelo clone),
+  aviso "Clone X desatualizado desde DD/MM" ao abrir.
+- **Etapa 8** (`0b9186a`, `5246870`) — sidecars `arquivo.ext.xmp` (XMP padrão
+  RDF/XML escrito à mão: o Exiv2 da build tem `EXIV2_ENABLE_XMP OFF`).
+  ATUALIZAR SIDECARS com MAIN; `sidecar_registro` (SHA-256) — editado por fora
+  ou não escrito pelo Matriz nunca é sobrescrito em silêncio (Importar /
+  Sobrescrever / Deixar). Sincronizar clone atualiza antes; EXPORT grava
+  sidecar onde o formato não aceita embed. Ingest lê o .xmp do cliente
+  (`IMG.xmp`/`IMG.CR2.xmp`) e não o transforma em item.
+  ATENÇÃO: com XMP desligado no Exiv2, o embed `Xmp.dc.*` antigo nunca gravou
+  nada; só o EXIF (ImageDescription/Artist) funciona. `embutirMetadadosEmItens`
+  (sem chamador) gravaria no ORIGINAL — não usar.
+- **Etapa 9** (`c7ec88b`, `32c8efa`) — Duplicates: critérios rápidos "manter a
+  ingestão mais recente" / "manter a primeira no backup"; sem backup ou empate
+  = decisão manual sinalizada. Resolução = sanitizar.
+- **Etapa 10** (`c348dfd`, `84be30f`) — INTAKE: Enter = APPLY nos popups de lote,
+  Esc fecha, autocomplete confirma a sugestão no 1º Enter, vazio não aplica,
+  CONTENT só depois de uma escolha.
+- uitest (2026-09-26, após etapa 6): mesma baseline de 41 FAIL; "within parent
+  bounds …/13|14/18/0" aparecem como /15|16/ (índice de filho). "Custom
+  prefix" adaptado (planeja como export).
 - Self-test ASan: o binário atual é
   `build-asan/matriz_artefacts/Debug/BKR Matriz.app` — o
   `build-asan/matriz_artefacts/BKR Matriz.app` (sem Debug/) é de agosto,
