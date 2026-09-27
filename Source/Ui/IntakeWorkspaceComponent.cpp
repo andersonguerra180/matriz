@@ -1754,6 +1754,15 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
         addAndMakeVisible(*btn);
     };
 
+    comboAno_ = std::make_unique<juce::ComboBox>();
+    comboAno_->setTooltip(i18n::t("intake.filtro_ano_dica"));
+    comboAno_->onChange = [this] {
+        const int id = comboAno_->getSelectedId();
+        filtroAnoAtual_ = id <= 1 ? 0 : (id == 2 ? -1 : id);  // ids: 1 todos, 2 sem data, ano = o próprio ano
+        atualizarFiltragem();
+    };
+    addAndMakeVisible(*comboAno_);
+
     setupPill(btnFiltroAll_, "All (0)", "ALL", juce::Colours::transparentBlack);
     setupPill(btnFiltroAudio_, "Audio (0)", "Audio", juce::Colour(0xff2a9d8f));
     setupPill(btnFiltroVideo_, "Video (0)", "Video", juce::Colour(0xff9d4edd));
@@ -2015,6 +2024,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         }
 
         it.dataCriacao = juce::String::fromUTF8(item.dataCriacao.c_str());
+        it.ano = item.ano;
         it.dataCriacaoDoMetadado = it.dataCriacao.isNotEmpty();
         if (it.dataCriacao.isEmpty()) {
             it.dataCriacao = juce::String::fromUTF8(item.criadoEm.c_str());
@@ -2028,6 +2038,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
 
     todosItens_ = std::move(novosItens);
 
+    atualizarComboAno();
     if (ultimoSortColumnId_ > 0) {
         sortOrderChanged(ultimoSortColumnId_, sortAscendente_);
     } else {
@@ -2053,10 +2064,35 @@ void IntakeWorkspaceComponent::definirModoVisao(ModoVisao modo) {
     }
 }
 
+void IntakeWorkspaceComponent::atualizarComboAno() {
+    if (!comboAno_) return;
+    std::map<int, int> porAno;
+    int semData = 0;
+    for (const auto& it : todosItens_) {
+        if (it.ano) ++porAno[*it.ano];
+        else ++semData;
+    }
+    comboAno_->clear(juce::dontSendNotification);
+    comboAno_->addItem(i18n::t("intake.filtro_ano_todos") + " (" + juce::String((int) todosItens_.size()) + ")", 1);
+    if (semData > 0) comboAno_->addItem(i18n::t("intake.filtro_ano_sem") + " (" + juce::String(semData) + ")", 2);
+    for (auto it = porAno.rbegin(); it != porAno.rend(); ++it)
+        if (it->first > 2) comboAno_->addItem(juce::String(it->first) + " (" + juce::String(it->second) + ")", it->first);
+    // Mantém o ano escolhido se ele ainda existe; senão volta pra "todos".
+    const int idAtual = filtroAnoAtual_ == 0 ? 1 : (filtroAnoAtual_ == -1 ? 2 : filtroAnoAtual_);
+    if (comboAno_->indexOfItemId(idAtual) >= 0) comboAno_->setSelectedId(idAtual, juce::dontSendNotification);
+    else {
+        filtroAnoAtual_ = 0;
+        comboAno_->setSelectedId(1, juce::dontSendNotification);
+    }
+}
+
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
     for (size_t i = 0; i < todosItens_.size(); ++i) {
-        if (filtroCategoriaAtual_ == "ALL" || todosItens_[i].categoria == filtroCategoriaAtual_) {
+        const auto& it = todosItens_[i];
+        const bool anoOk = filtroAnoAtual_ == 0 || (filtroAnoAtual_ == -1 ? !it.ano.has_value()
+                                                                             : it.ano.value_or(0) == filtroAnoAtual_);
+        if ((filtroCategoriaAtual_ == "ALL" || it.categoria == filtroCategoriaAtual_) && anoOk) {
             indicesFiltrados_.push_back(static_cast<int>(i));
         }
     }
@@ -2360,6 +2396,7 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
         auto& item = todosItens_[static_cast<size_t>(idx)];
         if (!item.selecionado) continue;
         ids.push_back(item.id);
+        if (const int anoNovo = v.substring(0, 4).getIntValue(); anoNovo > 0) item.ano = anoNovo;  // filtro por ano
         if (soAno && item.dataCriacaoDoMetadado && item.dataCriacao.substring(0, 4) == v) {
             manterDateCreated.insert({item.id, "dc_created"});
             continue;
@@ -2378,6 +2415,7 @@ void IntakeWorkspaceComponent::aplicarEventDateAosSelecionados(const juce::Strin
         tabela_->repaint();
     }
     atualizarContagens();
+    atualizarComboAno();
 }
 
 std::vector<juce::String> IntakeWorkspaceComponent::valoresExistentesParaColuna(const std::string& coluna) const {
@@ -3238,6 +3276,8 @@ void IntakeWorkspaceComponent::resized() {
     btnFiltroDoc_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
+    sidebar.removeFromTop(6);
+    if (comboAno_) comboAno_->setBounds(sidebar.removeFromTop(26));
     finalizarCard();
     sidebar.removeFromTop(8);
 

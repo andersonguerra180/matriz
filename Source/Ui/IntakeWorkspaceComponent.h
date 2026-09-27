@@ -99,6 +99,7 @@ private:
         juce::String nomeArquivo;
         juce::String extensao;
         juce::String dataCriacao;
+        std::optional<int> ano;  // EVENT DATE (item.ano) — filtro por ano
         bool dataCriacaoDoMetadado = false;  // false = dataCriacao é só a data do ingest (fallback)
         juce::int64 tamanhoBytes = 0;
         juce::String caminhoOrigem;
@@ -216,6 +217,10 @@ private:
     std::unique_ptr<juce::TextButton> btnFiltroImage_;
     std::unique_ptr<juce::TextButton> btnFiltroDoc_;
     std::unique_ptr<juce::TextButton> btnFiltroOther_;
+    // Filtro por ano (EVENT DATE): 0 = todos, -1 = sem data, senão o ano.
+    std::unique_ptr<juce::ComboBox> comboAno_;
+    int filtroAnoAtual_ = 0;
+    void atualizarComboAno();
 
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
