@@ -112,6 +112,7 @@ private:
 
     class ThumbnailsGridComponent;
     void pintarGridParaTeste();
+    static int autotesteTeclasPopupsParaTeste(const std::function<void(bool, const juce::String&)>& checar);  // etapa 10
     static int autotestePopupGeoParaTeste(matriz::db::Database& registro,
                                           const std::function<void(bool, const juce::String&)>& checar);
     bool miniaturaEmCacheParaTeste(const std::string& itemId) const;

@@ -359,6 +359,25 @@ public:
     }
 };
 
+// Etapa 10 — popups de Batch Assignment do INTAKE: Enter = APPLY, Esc fecha
+// sem aplicar, campo vazio + Enter não faz nada. Liga em todo TextEditor do
+// popup que ainda não tem tratamento próprio (o campo com autocomplete tem:
+// o 1º Enter confirma a sugestão destacada, o 2º aplica).
+void fecharCallOutDe(juce::Component& c) {
+    if (auto* callout = c.findParentComponentOfClass<juce::CallOutBox>()) callout->dismiss();
+}
+void ligarTeclasDoPopup(juce::Component& raiz, std::function<void()> aplicar) {
+    std::function<void(juce::Component&)> visitar = [&](juce::Component& c) {
+        if (auto* te = dynamic_cast<juce::TextEditor*>(&c)) {
+            if (!te->onReturnKey)
+                te->onReturnKey = [aplicar, te] { if (te->getText().trim().isNotEmpty()) aplicar(); };
+            if (!te->onEscapeKey) te->onEscapeKey = [te] { fecharCallOutDe(*te); };
+        }
+        for (auto* filho : c.getChildren()) visitar(*filho);
+    };
+    visitar(raiz);
+}
+
 class OriginalSourceMediumPopupContent : public juce::Component {
 public:
     OriginalSourceMediumPopupContent(const std::string& initialVal, bool isBatch, std::function<void(const std::string&)> onApply)
@@ -394,6 +413,8 @@ public:
             }
         };
         addAndMakeVisible(*btnApply_);
+        ligarTeclasDoPopup(*editor_, [this] { btnApply_->onClick(); });
+        setWantsKeyboardFocus(true);
 
         setSize(400, 380);
     }
@@ -411,6 +432,12 @@ public:
         if (editor_) {
             editor_->setBounds(0, 0, area.getWidth() - 10, editor_->getPreferredHeight());
         }
+    }
+
+    bool keyPressed(const juce::KeyPress& k) override {
+        if (k == juce::KeyPress::returnKey && !editor_->getValueString().empty()) { btnApply_->onClick(); return true; }
+        if (k == juce::KeyPress::escapeKey) { fecharCallOutDe(*this); return true; }
+        return false;
     }
 
 private:
@@ -443,6 +470,9 @@ public:
         editor_->setTextToShowWhenEmpty(placeholder, juce::Colours::grey);
         editor_->onTextChange = [this] { atualizarSugestoes(); };
         editor_->onFocus = [this] { mostrarTodasSugestoes(); };
+        editor_->onReturnKey = [this] { tratarEnter(); };
+        editor_->onEscapeKey = [this] { fecharCallOutDe(*this); };
+        editor_->aoSetaVertical = [this](int delta) { moverDestaque(delta); };
         editor_->onFocusLost = [this] {
             juce::Component::SafePointer<AutocompleteAssistedField> safe(this);
             juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->lista_) safe->lista_->setVisible(false); });
@@ -454,12 +484,13 @@ public:
         lista_->setRowHeight(22);
         lista_->setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
         lista_->setColour(juce::ListBox::outlineColourId, tk.borda);
-        lista_->setVisible(false);
-        addAndMakeVisible(*lista_);
+        addChildComponent(*lista_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
         lista_->toFront(false);
     }
 
     juce::String getText() const { return editor_->getText().trim(); }
+    // Enter com a lista fechada (valor já confirmado) — aplicar.
+    std::function<void()> aoEnter;
     void setText(const juce::String& t) { editor_->setText(t, false); }
     // Opcional: chamado quando o operador escolhe uma sugestão da lista.
     std::function<void(const juce::String&)> aoEscolher;
@@ -490,12 +521,34 @@ private:
         g.drawText(sugestoes_[static_cast<size_t>(rowNumber)], 6, 0, width - 12, height, juce::Justification::centredLeft);
     }
 
-    void listBoxItemClicked(int row, const juce::MouseEvent&) override {
+    void listBoxItemClicked(int row, const juce::MouseEvent&) override { escolher(row); }
+
+    void escolher(int row) {
         if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
         juce::String escolhido = sugestoes_[static_cast<size_t>(row)];
         editor_->setText(escolhido, false);
         lista_->setVisible(false);
         if (aoEscolher) aoEscolher(escolhido);
+    }
+
+    // 1º Enter com sugestão destacada: confirma a sugestão (nunca aplica um
+    // valor parcial por engano). Lista fechada: Enter aplica. Vazio: nada.
+    void tratarEnter() {
+        const int destacada = lista_->isVisible() ? lista_->getSelectedRow() : -1;
+        if (destacada >= 0 && destacada < static_cast<int>(sugestoes_.size())) {
+            escolher(destacada);
+            return;
+        }
+        if (getText().isEmpty()) return;
+        lista_->setVisible(false);
+        if (aoEnter) aoEnter();
+    }
+
+    void moverDestaque(int delta) {
+        if (!lista_->isVisible() || sugestoes_.empty()) return;
+        const int n = static_cast<int>(sugestoes_.size());
+        int r = lista_->getSelectedRow() + delta;
+        lista_->selectRow(juce::jlimit(0, n - 1, r));
     }
 
     void mostrarTodasSugestoes() {
@@ -513,6 +566,9 @@ private:
         for (auto& v : valores_)
             if (v.startsWithIgnoreCase(q)) sugestoes_.push_back(v);
         lista_->updateContent();
+        // Digitando: a 1ª sugestão fica destacada (é ela que o Enter confirma).
+        if (!sugestoes_.empty()) lista_->selectRow(0);
+        else lista_->deselectAllRows();
         lista_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
@@ -521,7 +577,15 @@ private:
     class FocusAwareTextEditor : public juce::TextEditor {
     public:
         std::function<void()> onFocus;
+        std::function<void(int)> aoSetaVertical;
         void focusGained(FocusChangeType) override { if (onFocus) onFocus(); }
+        bool keyPressed(const juce::KeyPress& k) override {
+            if (aoSetaVertical && (k == juce::KeyPress::upKey || k == juce::KeyPress::downKey)) {
+                aoSetaVertical(k == juce::KeyPress::downKey ? 1 : -1);
+                return true;
+            }
+            return juce::TextEditor::keyPressed(k);
+        }
     };
 
     std::vector<juce::String> valores_;
@@ -603,6 +667,8 @@ public:
             }
         };
         addAndMakeVisible(*btnApply_);
+        campoUsadas_->aoEnter = [this] { btnApply_->onClick(); };
+        ligarTeclasDoPopup(*this, [this] { btnApply_->onClick(); });
 
         btnSalvarFavorito_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xe2\x98\x85 Add to Favorites"));
         btnSalvarFavorito_->setTooltip("Save this place to the project favorites list");
@@ -832,6 +898,7 @@ public:
             if (auto* callout = findParentComponentOfClass<juce::CallOutBox>()) callout->dismiss();
         };
         addAndMakeVisible(*btnApply_);
+        campo_->aoEnter = [this] { btnApply_->onClick(); };
 
         setSize(340, 240);
     }
@@ -853,6 +920,7 @@ private:
 };
 
 class ContentLotePopupContent : public juce::Component {
+    friend class matriz::ui::IntakeWorkspaceComponent;  // autoteste da etapa 10
 public:
     ContentLotePopupContent(juce::Colour corDestaque, std::function<void(const juce::String&)> onApply)
         : onApply_(std::move(onApply)) {
@@ -869,7 +937,12 @@ public:
         combo_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         combo_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         IntakeWorkspaceComponent::popularComboColecoes(*combo_, true);
+        combo_->setWantsKeyboardFocus(false);  // Enter aplica (não reabre o menu)
+        // O combo abre em "None": Enter só aplica depois de uma escolha — senão
+        // um Enter por engano limparia o CONTENT de todos os selecionados.
+        combo_->onChange = [this] { escolheu_ = true; };
         addAndMakeVisible(*combo_);
+        setWantsKeyboardFocus(true);
 
         btnApply_ = std::make_unique<PillButton>(i18n::t("intake.btn_aplicar_selecionados"));
         btnApply_->corTextoCustom = corDestaque;
@@ -897,7 +970,21 @@ public:
         btnApply_->setBounds(area.removeFromBottom(30).removeFromRight(170));
     }
 
+    void parentHierarchyChanged() override {
+        juce::Component::SafePointer<ContentLotePopupContent> safe(this);
+        juce::MessageManager::callAsync([safe] { if (safe && safe->isShowing()) safe->grabKeyboardFocus(); });
+    }
+    bool keyPressed(const juce::KeyPress& k) override {
+        if (k == juce::KeyPress::returnKey) {
+            if (escolheu_ && combo_->getSelectedId() > 0) btnApply_->onClick();
+            return true;
+        }
+        if (k == juce::KeyPress::escapeKey) { fecharCallOutDe(*this); return true; }
+        return false;
+    }
+
 private:
+    bool escolheu_ = false;
     std::unique_ptr<juce::Label> lblTitle_;
     std::unique_ptr<juce::ComboBox> combo_;
     std::unique_ptr<PillButton> btnApply_;
@@ -3320,6 +3407,78 @@ void IntakeWorkspaceComponent::pintarGridParaTeste() {
 
 bool IntakeWorkspaceComponent::miniaturaEmCacheParaTeste(const std::string& itemId) const {
     return gridComponent_ && gridComponent_->temMiniaturaEmCache(itemId);
+}
+
+// Só pra --selftest-lote (etapa 10): Enter = APPLY nos popups de lote.
+int IntakeWorkspaceComponent::autotesteTeclasPopupsParaTeste(const std::function<void(bool, const juce::String&)>& checar) {
+    int falhas = 0;
+    auto ok = [&](bool c, const juce::String& d) { checar(c, d); if (!c) ++falhas; };
+    auto editorDe = [](juce::Component& raiz) {
+        std::function<juce::TextEditor*(juce::Component&)> achar = [&](juce::Component& c) -> juce::TextEditor* {
+            if (auto* te = dynamic_cast<juce::TextEditor*>(&c)) return te;
+            for (auto* f : c.getChildren()) if (auto* r = achar(*f)) return r;
+            return nullptr;
+        };
+        return achar(raiz);
+    };
+    const juce::KeyPress enter(juce::KeyPress::returnKey);
+    // O JUCE entrega Return/Esc/mudança de texto por mensagem assíncrona: o
+    // teste chama os mesmos callbacks direto (o mapeamento tecla -> callback
+    // é do JUCE; o que se testa aqui é a nossa lógica).
+    auto digitar = [](juce::TextEditor& te, const juce::String& t) {
+        te.setText(t, false);
+        if (te.onTextChange) te.onTextChange();
+    };
+    auto tecla = [](juce::TextEditor& te, bool enterTecla) {
+        if (enterTecla) { if (te.onReturnKey) te.onReturnKey(); }
+        else if (te.onEscapeKey) te.onEscapeKey();
+    };
+    {
+        std::vector<juce::String> aplicados;
+        AutocompleteLotePopupContent popup("t", "p", {"Creator Alfa", "Creator Beta"}, juce::Colours::red,
+                                          [&](const juce::String& v) { aplicados.push_back(v); });
+        popup.setSize(340, 240);
+        auto* te = editorDe(popup);
+        ok(te != nullptr, "popup has a text field");
+        if (te == nullptr) return falhas;
+        tecla(*te, true);
+        ok(aplicados.empty(), "empty field + Enter does nothing");
+        digitar(*te, "Creator A");  // autocomplete aberto, "Creator Alfa" destacada
+        tecla(*te, true);
+        ok(aplicados.empty() && te->getText() == "Creator Alfa", "1st Enter confirms the highlighted suggestion, applies nothing");
+        tecla(*te, true);
+        ok(aplicados.size() == 1 && aplicados.front() == "Creator Alfa", "2nd Enter = APPLY");
+        digitar(*te, "Outro");
+        tecla(*te, false);
+        ok(aplicados.size() == 1, "Esc closes without applying");
+        digitar(*te, "Texto livre");  // nenhuma sugestão casa: Enter aplica direto
+        tecla(*te, true);
+        ok(aplicados.size() == 2 && aplicados.back() == "Texto livre", "value with no matching suggestion: Enter applies");
+    }
+    {
+        int aplicados = 0;
+        ContentLotePopupContent popup(juce::Colours::red, [&](const juce::String&) { ++aplicados; });
+        popup.keyPressed(enter);
+        ok(aplicados == 0, "CONTENT: Enter with nothing chosen does nothing");
+        popup.combo_->setSelectedItemIndex(1, juce::sendNotificationSync);
+        popup.keyPressed(enter);
+        ok(aplicados == 1, "CONTENT: Enter = APPLY after choosing");
+    }
+    {
+        int aplicados = 0;
+        OriginalSourceMediumPopupContent popup("", true, [&](const std::string&) { ++aplicados; });
+        popup.setSize(400, 380);
+        auto* te = editorDe(popup);
+        if (te != nullptr) {
+            digitar(*te, "");
+            tecla(*te, true);
+            ok(aplicados == 0, "SOURCE MEDIUM: Enter on an empty field does nothing");
+            digitar(*te, "abc");
+            tecla(*te, true);
+            ok(aplicados == 1, "SOURCE MEDIUM: Enter in a filled field = APPLY");
+        }
+    }
+    return falhas;
 }
 
 // Só pra --selftest-lote: popup GEO LOCATION do Intake — autocomplete das
