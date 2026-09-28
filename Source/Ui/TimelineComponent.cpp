@@ -89,7 +89,8 @@ bool TimelineComponent::carregarItem(const std::string& itemId, const juce::File
     arquivo_ = arquivo;
 
     std::unique_ptr<juce::AudioFormatReader> leitor(formatManager_.createReaderFor(arquivo));
-    if (leitor == nullptr) {
+    bool temLeitorReal = (leitor != nullptr);
+    if (!temLeitorReal) {
         double dur = 0.0;
         if (auto info = projeto_.arquivoPrincipal(itemId)) {
             juce::var raiz = juce::JSON::parse(info->caracteristicasTecnicasJson);
@@ -103,7 +104,39 @@ bool TimelineComponent::carregarItem(const std::string& itemId, const juce::File
 
     sampleRate_ = leitor->sampleRate > 0 ? leitor->sampleRate : 44100.0;
     duracao_ = static_cast<double>(leitor->lengthInSamples) / sampleRate_;
-    onda_->setSource(new juce::FileInputSource(arquivo));
+
+    // A onda (AudioThumbnail) fica DESLIGADA por enquanto — nem
+    // setSource() nem setReader(). Histórico do que já foi tentado e por
+    // que nenhum dos dois é seguro neste componente hoje:
+    //
+    // 1. setSource(FileInputSource) (o código original) faz AudioThumbnail
+    //    reabrir o arquivo e testar CADA formato registrado por CONTEÚDO
+    //    (AudioFormatManager::createReaderFor(unique_ptr<InputStream>),
+    //    sem checar extensão — ao contrário do createReaderFor(File) logo
+    //    acima, que só tenta um formato se canHandleFile() bater a
+    //    extensão primeiro). Num arquivo que não é o formato testado
+    //    (ex.: .MOV caindo no decodificador FLAC) essa varredura byte a
+    //    byte pode travar a message thread por horas — pior ainda em
+    //    volume de rede (Google Drive/iCloud): bug real que motivou esta
+    //    mudança.
+    //
+    // 2. Restringir setSource()/setReader() a formatos "seguros"
+    //    (WAV/AIFF/FLAC/OGG/MP3) evita ISSO, mas expôs um segundo
+    //    problema, sem relação com o formato: os dois fazem AudioThumbnail
+    //    processar via a TimeSliceThread própria de cacheOnda_
+    //    (AudioThumbnailCache), e o destrutor dessa thread ESPERA ela
+    //    terminar sem prazo. Testado na prática (self-test dedicado): com
+    //    um .wav minúsculo e 100% válido, essa thread nunca sinaliza
+    //    término neste processo — ~TimelineComponent() trava para SEMPRE,
+    //    não só em vídeo. Como isso não depende do conteúdo do arquivo,
+    //    não tem extensão "seguravel": é a própria AudioThumbnailCache
+    //    deste componente que está com um problema de ciclo de vida.
+    //
+    // Até esse segundo problema ser investigado a fundo (fora do escopo
+    // desta correção), a onda fica sempre em branco — a reprodução via
+    // `fonte_`, mais abaixo, continua funcionando normalmente. Sem forma
+    // de onda é uma perda aceitável; nunca travar não é negociável.
+    onda_->clear();
 
     fonte_ = std::make_unique<juce::AudioFormatReaderSource>(leitor.release(), true);
     transporte_.setSource(fonte_.get(), 0, nullptr, sampleRate_);
