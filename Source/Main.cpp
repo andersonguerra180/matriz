@@ -9,6 +9,7 @@
 #include "Ui/MainWindow.h"
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/LoteSelfTest.h"
+#include "Model/CompactacaoRegistro.h"
 #include "Ui/MosaicoStressTest.h"
 #include "Ui/Tokens.h"
 #include "Ui/MatrizLookAndFeel.h"
@@ -235,6 +236,24 @@ public:
         }
         if (commandLine.contains("--selftest-uitest")) {
             setApplicationReturnValue(matriz::ui::rodarUiSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--compactar-registro")) {
+            // --compactar-registro "<pasta Project do projeto>" (projeto fechado).
+            auto args = juce::StringArray::fromTokens(commandLine, true);
+            const int i = args.indexOf("--compactar-registro");
+            const juce::File pasta(args[i + 1].unquoted());
+            std::cout << "Compacting " << pasta.getFullPathName() << " ..." << std::endl;
+            auto r = matriz::model::compactarRegistro(pasta);
+            if (r.ok)
+                std::cout << "OK  " << (r.bytesAntes / 1048576) << " MB -> " << (r.bytesDepois / 1048576) << " MB"
+                          << "  (thumbnail blobs " << r.miniaturasRemovidas << ", json " << r.jsonsLimpos
+                          << ", notes " << r.notasLimpas << ")\n    original kept as "
+                          << r.copiaOriginal.getFullPathName() << std::endl;
+            else
+                std::cout << "FAILED: " << r.erro << " (original untouched)" << std::endl;
+            setApplicationReturnValue(r.ok ? 0 : 1);
             quit();
             return;
         }

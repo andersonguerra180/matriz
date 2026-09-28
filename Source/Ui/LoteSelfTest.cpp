@@ -17,6 +17,9 @@
 #include "BackupWorkspaceComponent.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Audio/FormatoAudioQuickTime.h"
+#include "../Model/CompactacaoRegistro.h"
+#include "../Model/NotasEstruturadas.h"
+#include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
 #include "DuplicatesWorkspaceComponent.h"
@@ -1329,6 +1332,117 @@ int rodarLoteSelfTest() {
             gm.createReaderFor(std::unique_ptr<juce::InputStream>(mov.createInputStream().release())));
         checar(leitorStream != nullptr, ".mov audio opens from a stream too (waveform / AudioThumbnail)");
         if (leitor) {
+    std::cout << "\n-- registro.sqlite: no binary EXIF, no thumbnail blobs, compaction --\n";
+    {
+        using matriz::db::Value;
+        const std::string numeros = [] { std::string x; for (int i = 0; i < 400; ++i) x += std::to_string(i % 256) + " "; return x; }();
+        checar(matriz::ingest::ehExifBinarioVolumoso("Exif.Photo.MakerNote", "37 0 1") &&
+                   matriz::ingest::ehExifBinarioVolumoso("Exif.Canon.ColorData", numeros) &&
+                   !matriz::ingest::ehExifBinarioVolumoso("Exif.Photo.FNumber", "5/1") &&
+                   !matriz::ingest::ehExifBinarioVolumoso("Exif.Image.ImageDescription", std::string(400, 'a')),
+               "binary EXIF rule: MakerNote and long number dumps out; real text and short values stay");
+
+        const std::string outra = std::string(matriz::model::kOutraMetadataTitulo);
+        const std::string notasMinhas = "[NOTES]\nMinha nota: 12 34\nMakerNote: escrito por mim";
+        const std::string notas = "[" + outra + "]\nFNumber: 5/1\nMakerNote: 37 0 1\nColorData: " + numeros +
+                                  "\nISOSpeedRatings: 3200\n\n" + notasMinhas;
+        bool mudou = false;
+        const auto limpas = matriz::model::removerOutraMetadataDasNotas(notas, &mudou);
+        bool mudouMeio = false;
+        const auto meio = matriz::model::removerOutraMetadataDasNotas(
+            "[A]\nx\n\n[" + outra + "]\nFNumber: 5/1\n\n[B]\ny", &mudouMeio);
+        bool mudouSo = true;
+        const auto so = matriz::model::removerOutraMetadataDasNotas("[" + outra + "]\nFNumber: 5/1", &mudouSo);
+        checar(mudou && limpas == notasMinhas && mudouMeio && meio == "[A]\nx\n\n[B]\ny" && mudouSo && so.empty(),
+               "notes: the automatic [OTHER METADATA] section goes; the user's own sections stay byte-identical");
+
+        // Ingest: no banco só as chaves da ficha; GET EXIF traz o resto (sem binário).
+        {
+            juce::File dirJ = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                  .getChildFile("matriz_exif_" + juce::Uuid().toDashedString());
+            dirJ.createDirectory();
+            juce::File jpg = dirJ.getChildFile("foto.jpg");
+            {
+                juce::Image img(juce::Image::RGB, 64, 48, true);
+                juce::JPEGImageFormat fmt;
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(jpg.createOutputStream()))
+                    fmt.writeImageToStream(img, *out);
+            }
+            try {
+                auto image = Exiv2::ImageFactory::open(jpg.getFullPathName().toStdString());
+                image->readMetadata();
+                Exiv2::ExifData ed;
+                ed["Exif.Image.Make"] = "Canon";
+                ed["Exif.Image.Model"] = "Canon EOS 5D Mark II";
+                ed["Exif.Photo.FNumber"] = Exiv2::Rational(5, 1);
+                ed["Exif.Photo.DateTimeOriginal"] = "2011:04:09 15:32:23";
+                Exiv2::DataValue maker(Exiv2::undefined);
+                maker.read(numeros);
+                ed.add(Exiv2::ExifKey("Exif.Photo.MakerNote"), &maker);
+                image->setExifData(ed);
+                image->writeMetadata();
+            } catch (const std::exception& e) {
+                checar(false, juce::String("exiv2 write: ") + e.what());
+            }
+            try {
+                auto lt = matriz::ingest::lerTecnica(jpg);
+                auto json = juce::String(matriz::ingest::paraJson(lt));
+                checar(json.contains("Exif.Image.Make") && json.contains("Exif.Photo.DateTimeOriginal") &&
+                           !json.contains("FNumber") && !json.contains("MakerNote") && !lt.metaUnmappedExtras,
+                       "ingest keeps only the ficha's EXIF keys in the DB, no notes dump");
+            } catch (const std::exception& e) {
+                checar(false, juce::String("lerTecnica: ") + e.what());
+            }
+            auto completo = matriz::ingest::lerExifCompletoParaNotas(jpg);
+            checar(completo && juce::String(*completo).contains("FNumber: 5/1") && !juce::String(*completo).contains("MakerNote") &&
+                       !juce::String(*completo).contains("Make:"),
+                   "GET EXIF reads the full EXIF (FNumber), without binary or keys already in the ficha");
+            dirJ.deleteRecursively();
+        }
+
+        juce::File raizC = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_compactar_" + juce::Uuid().toDashedString());
+        try {
+            raizC.createDirectory();
+            matriz::model::NovoProjetoParams params;
+            params.nome = "Compactar";
+            params.prefixoNomenclatura = "CMP";
+            auto projeto = matriz::model::Project::criar(raizC.getChildFile("projeto"), params);
+            const juce::File pastaProject = projeto->pasta();
+            auto& reg = projeto->registro();
+            const std::string itemId = inserirItem(reg, projeto->projetoId(), "CMP-1", false, ".jpg");
+            reg.run("UPDATE item SET notas_livres = ? WHERE id = ?", {Value::of(notas), Value::of(itemId)});
+            const std::string json = "{\"codec\": \"mjpeg\", \"bruto\": {\"exif\": {\"Exif.Image.Orientation\": \"6\", \"Exif.Photo.FNumber\": \"5/1\", "
+                                     "\"Exif.Photo.MakerNote\": \"37 0 1\", \"Exif.Canon.ColorData\": \"" + numeros + "\"}}}";
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?", {Value::of(json), Value::of(itemId)});
+            std::string arquivoId;
+            { auto st = reg.prepare("SELECT id FROM arquivo WHERE item_id = ?"); st.bind(1, Value::of(itemId)); st.step(); arquivoId = st.columnText(0); }
+            reg.run("INSERT INTO cache_arquivo (arquivo_id, miniatura, lufs_i, calculado_em, versao_analise) VALUES (?, ?, -18.5, 'x', 1)",
+                    {Value::of(arquivoId), Value::ofBlob(std::vector<uint8_t>(40000, 0xAB))});
+            projeto.reset();  // projeto fechado (como exige a compactação)
+
+            auto r = matriz::model::compactarRegistro(pastaProject);
+            checar(r.ok && r.miniaturasRemovidas == 1 && r.jsonsLimpos == 1 && r.notasLimpas == 1 && r.copiaOriginal.existsAsFile(),
+                   "compaction ran: 1 blob, 1 json, 1 note cleaned; original kept aside (" + juce::String(r.erro) + ")");
+
+            matriz::db::Database db(pastaProject.getChildFile("registro.sqlite").getFullPathName().toStdString());
+            auto st = db.prepare("SELECT i.notas_livres, a.caracteristicas_tecnicas_json, c.miniatura IS NULL, c.lufs_i "
+                                 "FROM item i JOIN arquivo a ON a.item_id = i.id JOIN cache_arquivo c ON c.arquivo_id = a.id WHERE i.id = ?");
+            st.bind(1, Value::of(itemId));
+            const bool achou = st.step();
+            const std::string jsonDepois = achou ? st.columnText(1) : "";
+            checar(achou && st.columnText(0) == limpas && st.columnInt(2) == 1 && std::abs(st.columnReal(3) + 18.5) < 1e-9,
+                   "after compaction: notes cleaned, thumbnail blob gone, loudness kept");
+            checar(jsonDepois.find("MakerNote") == std::string::npos && jsonDepois.find("ColorData") == std::string::npos &&
+                       jsonDepois.find("FNumber") == std::string::npos &&
+                       jsonDepois.find("Exif.Image.Orientation") != std::string::npos && jsonDepois.find("mjpeg") != std::string::npos,
+                   "after compaction: technical JSON keeps the ficha keys (Orientation) and codec, drops the rest");
+        } catch (const std::exception& e) {
+            checar(false, juce::String("compaction selftest: ") + e.what());
+        }
+        raizC.deleteRecursively();
+    }
+
             const double dur = static_cast<double>(leitor->lengthInSamples) / leitor->sampleRate;
             juce::AudioBuffer<float> buf(static_cast<int>(leitor->numChannels), 4800);
             leitor->read(&buf, 0, 4800, 24000, true, true);  // do meio do arquivo

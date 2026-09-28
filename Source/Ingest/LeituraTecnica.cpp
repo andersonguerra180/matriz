@@ -7,6 +7,7 @@
 
 #include <exiv2/exiv2.hpp>
 
+#include <cctype>
 #include <memory>
 #include <set>
 
@@ -279,6 +280,32 @@ std::optional<double> gpsGrauDecimal(const Exiv2::ExifData& exifData, const char
     return decimal;
 }
 
+} // namespace
+
+const char* const kChavesExifGuardadas[] = {
+    "Exif.Photo.DateTimeOriginal", "Exif.Photo.DateTimeDigitized", "Exif.Image.DateTime",
+    "Exif.Image.Make", "Exif.Image.Model", "Exif.Photo.LensModel",
+    "Exif.Image.Artist", "Exif.Image.ImageDescription", "Exif.Image.Copyright", "Exif.Photo.UserComment",
+    "Exif.Image.Orientation", "Exif.Photo.ColorSpace",
+};
+
+bool ehChaveExifGuardada(const std::string& chave) {
+    for (const char* c : kChavesExifGuardadas)
+        if (chave == c) return true;
+    return false;
+}
+
+bool ehExifBinarioVolumoso(const std::string& chave, const std::string& valor) {
+    if (chave.find("MakerNote") != std::string::npos) return true;
+    if (valor.size() <= 256) return false;
+    for (char c : valor)
+        if (!(std::isdigit(static_cast<unsigned char>(c)) || c == ' ' || c == '-' || c == '/' || c == '.'))
+            return false;
+    return true;
+}
+
+namespace {
+
 // EXIF completo via Exiv2 (§A.2 — substitui exiftool/sips). Ausência de
 // EXIF é normal (screenshot, imagem gerada, scan sem câmera) e não lança —
 // só uma falha real de leitura do arquivo (corrompido, formato não
@@ -385,37 +412,15 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
         r.exifGpsLatitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLatitude", "Exif.GPSInfo.GPSLatitudeRef");
         r.exifGpsLongitude = gpsGrauDecimal(exifData, "Exif.GPSInfo.GPSLongitude", "Exif.GPSInfo.GPSLongitudeRef");
 
-        // --- Collect unmapped EXIF fields ---
-        // Keys already consumed above or intentionally ignored (GPS handled separately)
-        static const std::set<std::string> chavesConhecidas = {
-            "Exif.Photo.DateTimeOriginal", "Exif.Photo.DateTimeDigitized", "Exif.Image.DateTime",
-            "Exif.Image.Make", "Exif.Image.Model",
-            "Exif.Photo.LensModel",
-            "Exif.Image.Artist",
-            "Exif.Image.ImageDescription", "Exif.Photo.UserComment",
-            "Exif.Image.Copyright",
-            "Exif.Image.Orientation",
-        };
-        // GPS keys are handled separately; skip entire GPSInfo subtree
-        std::string extras;
-        for (const auto& datum : exifData) {
-            std::string key = datum.key();
-            if (chavesConhecidas.count(key)) continue;
-            if (key.find("Exif.GPSInfo") == 0) continue;   // GPS — already in geolocation
-            if (key.find("Exif.Thumbnail") == 0) continue; // embedded thumbnail — not useful
-            std::string val = datum.toString();
-            if (val.empty()) continue;
-            if (!extras.empty()) extras += "\n";
-            // Use the human-readable tag name (e.g. "FocalLength") not the full key
-            std::string tagName = datum.tagName();
-            extras += tagName + ": " + val;
-        }
-        if (!extras.empty())
-            r.metaUnmappedExtras = std::move(extras);
-
+        // Só as chaves que a ficha/grade usam vão pro banco (o EXIF inteiro
+        // continua no arquivo; "GET EXIF" traz o resto pras notas quando o
+        // usuário pedir — lerExifCompletoParaNotas()). Guardar tudo custava
+        // ~33 KB por foto no registro.sqlite.
         auto exifObj = std::make_unique<juce::DynamicObject>();
-        for (auto& datum : exifData)
-            exifObj->setProperty(juce::String(datum.key()), juce::String(datum.toString()));
+        for (const char* chave : kChavesExifGuardadas) {
+            auto v = obterStringExif(chave);
+            if (v && !ehExifBinarioVolumoso(chave, *v)) exifObj->setProperty(juce::String(chave), juce::String(*v));
+        }
 
         if (auto* raizObj = r.bruto.getDynamicObject())
             raizObj->setProperty("exif", juce::var(exifObj.release()));
@@ -423,6 +428,35 @@ void enriquecerComExif(LeituraTecnicaResultado& r, const juce::File& arquivo) {
         // Formato sem suporte ou metadado ausente
     }
 }
+
+} // namespace
+
+std::optional<std::string> lerExifCompletoParaNotas(const juce::File& arquivo) {
+    try {
+        auto image = Exiv2::ImageFactory::open(arquivo.getFullPathName().toStdString());
+        image->readMetadata();
+        const Exiv2::ExifData& exifData = image->exifData();
+        // Chaves que já têm campo próprio na ficha não se repetem nas notas.
+        std::set<std::string> jaNaFicha(std::begin(kChavesExifGuardadas), std::end(kChavesExifGuardadas));
+        std::string extras;
+        for (const auto& datum : exifData) {
+            const std::string key = datum.key();
+            if (jaNaFicha.count(key)) continue;
+            if (key.find("Exif.GPSInfo") == 0) continue;   // GPS — já vai pra geolocalização
+            if (key.find("Exif.Thumbnail") == 0) continue; // miniatura embutida — inútil em texto
+            const std::string val = datum.toString();
+            if (val.empty() || ehExifBinarioVolumoso(key, val)) continue;
+            if (!extras.empty()) extras += "\n";
+            extras += datum.tagName() + ": " + val;  // nome legível ("FocalLength")
+        }
+        if (extras.empty()) return std::nullopt;
+        return extras;
+    } catch (...) {
+        return std::nullopt;  // formato sem suporte / sem EXIF
+    }
+}
+
+namespace {
 
 // Contagem de páginas de PDF (§A.3): avaliamos PDFium e MuPDF, as duas
 // opções nomeadas. Nenhuma serve para "FetchContent + CMake, compila em

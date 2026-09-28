@@ -31,7 +31,9 @@ namespace matriz::ingest {
 inline constexpr int kVersaoAnalise = 1;
 
 struct AnaliseCache {
-    std::vector<uint8_t> miniatura;  // PNG; vazio quando não há prévia possível
+    // Não é mais gravada no ingest: a miniatura oficial é a de .miniaturas/
+    // (indice.sqlite). Fica só pra bancos antigos, até a compactação limpar.
+    std::vector<uint8_t> miniatura;
     std::vector<uint8_t> formaOnda;  // pares [min,max] float32 (Miniaturas.h::FormaDeOnda::paraBlob)
     std::optional<double> lufsI;
     std::optional<double> lra;

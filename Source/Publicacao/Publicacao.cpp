@@ -163,10 +163,28 @@ ResultadoPublicacao publicar(matriz::db::Database& registro, const juce::File& p
         // cache/: miniatura e forma de onda serializadas, pra o pacote ser
         // navegável sem os originais nem este software (I3 levado ao
         // pacote, não só ao projeto).
+        juce::File dirCache = cache.getChildFile(juce::String(item.arquivoId));
         if (auto analise = matriz::ingest::lerCache(registro, item.arquivoId)) {
-            juce::File dirCache = cache.getChildFile(juce::String(item.arquivoId));
-            escreverBytes(dirCache.getChildFile("thumb.png"), analise->miniatura);
+            escreverBytes(dirCache.getChildFile("thumb.png"), analise->miniatura);  // só bancos antigos
             escreverBytes(dirCache.getChildFile("waveform.bin"), analise->formaOnda);
+        }
+        // A miniatura oficial é a de .miniaturas/ (indexada no indice.sqlite).
+        if (!dirCache.getChildFile("thumb.png").existsAsFile()) {
+            try {
+                matriz::db::Database indice(pastaProjeto.getChildFile("indice.sqlite").getFullPathName().toStdString());
+                auto st = indice.prepare("SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' "
+                                         "ORDER BY gerado_em DESC LIMIT 1");
+                st.bind(1, Value::of(item.itemId));
+                if (st.step()) {
+                    const juce::File mini = pastaProjeto.getChildFile(juce::String(st.columnText(0)));
+                    if (mini.existsAsFile()) {
+                        dirCache.createDirectory();
+                        mini.copyFileTo(dirCache.getChildFile("thumb" + mini.getFileExtension()));
+                    }
+                }
+            } catch (const std::exception&) {
+                // sem índice/miniatura: o pacote sai sem prévia, como antes
+            }
         }
     }
 

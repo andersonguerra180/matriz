@@ -23,13 +23,6 @@ constexpr double kMaxSegundosAnalise = 600.0;
 // 72 mil baldes, ~576 KB — cabe no registro sem inchar o projeto.
 constexpr double kBucketsPorSegundo = 20.0;
 
-std::vector<uint8_t> lerBytes(const juce::File& arquivo) {
-    juce::MemoryBlock bloco;
-    if (!arquivo.loadFileAsData(bloco)) return {};
-    auto* dados = static_cast<const uint8_t*>(bloco.getData());
-    return std::vector<uint8_t>(dados, dados + bloco.getSize());
-}
-
 // Correlação de fase média entre L e R (§7 — indicador de estereofonia).
 // Pearson sobre o par, na forma normalizada usual de medidor de correlação:
 // +1 mono/em fase, 0 descorrelacionado, -1 em oposição de fase.
@@ -81,56 +74,22 @@ std::vector<uint8_t> formaDeOndaDoBuffer(const juce::AudioBuffer<float>& audio, 
     return onda.paraBlob();
 }
 
-// Miniatura de imagem: reduz num temporário e lê os bytes de volta. O
-// temporário morre aqui — quem guarda é o blob no registro (I3).
-std::vector<uint8_t> miniaturaDeImagem(const juce::File& origem, const juce::File& dirTemporario) {
-    juce::File tmp = dirTemporario.getChildFile("cache_min_" + juce::Uuid().toDashedString() + ".png");
-    std::vector<uint8_t> bytes;
-    try {
-        gerarMiniaturaImagem(origem, tmp, 512);
-        bytes = lerBytes(tmp);
-    } catch (const std::exception&) {
-        // Formato que o sips não abre: sem miniatura, com o item catalogado
-        // do mesmo jeito. O mosaico cai no ícone por categoria.
-    }
-    tmp.deleteFile();
-    return bytes;
-}
-
-std::vector<uint8_t> miniaturaDeVideo(const juce::File& origem, const juce::File& dirTemporario,
-                                       std::optional<double> duracaoSegundos) {
-    if (!duracaoSegundos || *duracaoSegundos <= 0.0) return {};
-    std::vector<uint8_t> bytes;
-    juce::File dir = dirTemporario.getChildFile("cache_kf_" + juce::Uuid().toDashedString());
-    dir.createDirectory();
-    try {
-        auto frames = gerarKeyframesVideo(origem, *duracaoSegundos, 1, dir, "kf", 512);
-        if (!frames.empty()) bytes = lerBytes(frames.front().arquivo);
-    } catch (const std::exception&) {
-        // Mesma regra da imagem: falta de prévia não invalida a catalogação.
-    }
-    dir.deleteRecursively();
-    return bytes;
-}
-
 } // namespace
 
 AnaliseCache calcularCache(const juce::File& arquivo, CategoriaMidia categoria,
                             const juce::File& dirTemporario, std::optional<double> duracaoSegundos) {
     AnaliseCache out;
+    juce::ignoreUnused(dirTemporario, duracaoSegundos);  // eram da miniatura (ver abaixo)
     if (!arquivo.existsAsFile()) return out;
 
-    if (categoria == CategoriaMidia::Imagem) {
-        out.miniatura = miniaturaDeImagem(arquivo, dirTemporario);
-        return out;
-    }
-
-    if (categoria == CategoriaMidia::Video) {
-        out.miniatura = miniaturaDeVideo(arquivo, dirTemporario, duracaoSegundos);
-        // A trilha de áudio de um vídeo precisaria ser extraída com ffmpeg
-        // pra ser medida; não é feito aqui (gap declarado, não silencioso).
-        return out;
-    }
+    // Miniatura de imagem/vídeo NÃO mora mais aqui: a única é a de
+    // .miniaturas/ (gerarEGravarMiniaturaPrincipal, indexada no
+    // indice.sqlite), que fica na pasta do projeto — junto do registro e do
+    // backup MAIN. O blob duplicado inflava o registro (~32 KB por foto) e
+    // custava uma segunda decodificação do original em cada ingest.
+    // A trilha de áudio de um vídeo precisaria ser extraída com ffmpeg pra
+    // ser medida; não é feito aqui (gap declarado, não silencioso).
+    if (categoria == CategoriaMidia::Imagem || categoria == CategoriaMidia::Video) return out;
 
     if (categoria != CategoriaMidia::Audio) return out;
 

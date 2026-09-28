@@ -86,6 +86,7 @@ struct LeituraTecnicaResultado {
     std::optional<std::string> metaSource;
     std::optional<std::string> metaCoverage;
     std::optional<int> pageCount;
+    // Não é mais preenchido no ingest (ver lerExifCompletoParaNotas / GET EXIF).
     std::optional<std::string> metaUnmappedExtras;
 };
 
@@ -103,6 +104,23 @@ std::optional<DadosXmp> lerArquivoXmp(const juce::File& xmp);
 // um resultado parcial em silêncio (EXIF ausente é uma exceção deliberada:
 // ver nota em LeituraTecnica.cpp).
 LeituraTecnicaResultado lerTecnica(const juce::File& arquivo);
+
+// EXIF binário que não serve pra nada legível: MakerNote (bloco do
+// fabricante) e qualquer valor longo feito só de números (é como o Exiv2
+// escreve tags binárias — ColorData, CameraInfo, DustRemovalData...). Não
+// entra nem nas notas (OTHER METADATA) nem em caracteristicas_tecnicas_json:
+// num projeto de 11.890 fotos Canon isso era ~270 MB do registro.sqlite.
+bool ehExifBinarioVolumoso(const std::string& chave, const std::string& valor);
+
+// true pras poucas chaves EXIF que o ingest guarda no banco (as que a
+// ficha/grade usam: data, câmera, lente, autor, direitos, orientação...).
+bool ehChaveExifGuardada(const std::string& chave);
+
+// "GET EXIF" (pedido do usuário, nunca no ingest): EXIF completo do arquivo
+// como linhas "Tag: valor" pra seção [OTHER METADATA] das notas — sem as
+// chaves que já têm campo na ficha, sem GPS, sem binário. nullopt = sem
+// EXIF/formato sem suporte.
+std::optional<std::string> lerExifCompletoParaNotas(const juce::File& arquivo);
 
 // Serializa `bruto` como texto JSON compacto, pronto para
 // arquivo.caracteristicas_tecnicas_json.

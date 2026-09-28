@@ -358,6 +358,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/IngestArquivo.cpp
     Source/Ingest/LeituraTecnica.cpp
     Source/Model/NotasEstruturadas.cpp
+    Source/Model/CompactacaoRegistro.cpp
     Source/Ui/NotesEstruturadasComponent.cpp
     Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp
