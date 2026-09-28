@@ -44,6 +44,18 @@ regras e decisões que não mudam de sessão pra sessão.
 
 ## Decisões que não devem ser revertidas sem entender a causa raiz
 
+- **EXIF no ingest = só as chaves da ficha** (`kChavesExifGuardadas`,
+  Source/Ingest/LeituraTecnica.cpp). O EXIF completo continua no arquivo e
+  só entra no banco a pedido ("GET EXIF" → seção [OTHER METADATA] das
+  notas, `acoes::obterExif`), sempre sem MakerNote/binário
+  (`ehExifBinarioVolumoso`). Gravar o EXIF inteiro inflou um projeto de
+  11.890 fotos para 965 MB.
+- **Miniatura: uma só, a de `.miniaturas/`** (indice.sqlite), na pasta do
+  projeto junto do registro e do backup MAIN. `cache_arquivo.miniatura`
+  não é mais gravada (a regra antiga I3 de blob no registro foi revista);
+  forma de onda/LUFS continuam no cache. Projetos antigos:
+  `--compactar-registro "<pasta Project>"` (projeto fechado; o original
+  fica como `registro.antes-compactacao-<data>.sqlite`).
 - **`ProgressoGlobal::notificarListeners()` não chama mais
   `runDispatchLoopUntil()`** (Source/Ui/ProgressoGlobal.cpp). Causava
   reentrância confirmada sob ASan: chamado de dentro de cadeias de

@@ -141,6 +141,18 @@ S01…), organização por ano/evento só no EXPORT.
   `build-asan/matriz_artefacts/BKR Matriz.app` (sem Debug/) é de agosto,
   não tem `--selftest-lote` e fica parado no loop se rodado.
 
+### Sessão 2026-09-28 (abertura travada, banco de 965 MB)
+
+- Abrir projeto travava: `contarItens()` era `listarItens().size()` (stat de
+  cada arquivo na message thread; origem no Google Drive preso). Agora COUNT.
+- "2011 a 2013": registro.sqlite 965 MB -> 166 MB com
+  `--compactar-registro` (EXIF inteiro + miniatura em blob; arquivo também
+  estava fragmentado no HD: 12 MB/s x 78 MB/s). Original guardado em
+  `Project/registro.antes-compactacao-20260928-065819.sqlite`; 11.890
+  itens/arquivos, quick_check ok, as 741 notas de usuário idênticas.
+  Os outros projetos (ex.: "2022 a 2026") ainda não foram compactados.
+- Novo: GET EXIF (ficha, ao lado de + ADD NOTE; menu da grade).
+
 ### Sessão 2026-09-27 (pós-etapa 10: listas de pedidos do usuário)
 
 Tudo em `fix/crash-freeze`, local (não pushado). Principais pontos:
