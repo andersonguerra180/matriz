@@ -121,6 +121,8 @@ int rodarLoteSelfTest() {
                 return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= kItensPorLado;
             });
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
+            checar(pa->contarItens() == kItensPorLado && pa->contarItens() == static_cast<int>(pa->listarItens().size()),
+                   "contarItens() (SQL COUNT, no disk access) matches listarItens()");
             // Lista do Metadata no mesmo formato da do INTAKE (conferir a olho):
             // test-output/metadata_lista.png x intake_lista.png.
             if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {

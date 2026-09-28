@@ -191,7 +191,10 @@ public:
     int arquivosQueDependemDoSource();
 
     std::vector<ItemResumo> listarItens() const;
-    int contarItens() const { return static_cast<int>(listarItens().size()); }
+    // COUNT(*) no banco — nunca listarItens() (que confere no disco se cada
+    // arquivo existe: com a origem no Google Drive travado, a abertura do
+    // projeto congelava na message thread).
+    int contarItens() const;
     std::vector<ItemResumo> listarItensEmQuarentena() const;
     // Send to Grid e Reject (Intake) entram na pilha de undo (Cmd+Z).
     void confirmarItemGrid(const std::string& itemId);

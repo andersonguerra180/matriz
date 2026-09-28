@@ -377,6 +377,13 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
     return out;
 }
 
+int ProjetoAberto::contarItens() const {
+    if (!projeto_) return 0;
+    // Mesmo filtro de listarItensDeProjeto() (fora da quarentena).
+    auto st = projeto_->registro().prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
+}
+
 std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     if (!projeto_) return {};
     // Cópia das marcações/relinks em memória sob marcacoesMutex_ (comentário
