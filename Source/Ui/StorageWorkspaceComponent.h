@@ -112,6 +112,7 @@ private:
 
     juce::Rectangle<int> sourceBounds_;
     juce::Rectangle<int> backupBounds_;
+    juce::Rectangle<int> legendaSelosBounds_;  // legenda M/C/S no cabeçalho
 
     juce::String lastStorageError_;
     juce::String lastStorageErrorDetails_;

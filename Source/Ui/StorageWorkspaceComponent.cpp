@@ -33,6 +33,20 @@ void desenharBordaZebra(juce::Graphics& g, const juce::Rectangle<float>& bounds,
     g.fillPath(faixasAmarelas);
 }
 
+// Cores dos papéis (as mesmas da lista de Versões do BACKUP).
+const juce::Colour kCorSeloMain(0xff2563eb);
+const juce::Colour kCorSeloClone(0xff0d9488);
+const juce::Colour kCorSeloSource(0xff9a6b1f);
+
+// Quadradinho colorido com a inicial do papel (M / C / S).
+void desenharSeloPapel(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& inicial, juce::Colour cor) {
+    g.setColour(cor);
+    g.fillRoundedRectangle(r.toFloat(), 3.0f);
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+    g.drawText(inicial, r, juce::Justification::centred);
+}
+
 juce::String formatBytes(juce::int64 bytes) {
     if (bytes <= 0) return "0 B";
     if (bytes < 1024) return juce::String(bytes) + " B";
@@ -454,23 +468,20 @@ public:
             g.setColour(tk.textoSecundario);
             g.drawText(capStr, headerRow.removeFromRight(68), juce::Justification::centredRight);
 
-            // Selos: onde está o MAIN, os CLONEs e os SOURCEs (cores da lista de Versões).
+            // Selos: onde está o MAIN, os CLONEs e os SOURCEs (cores da lista de
+            // Versões) — só a inicial num quadradinho, pra não cobrir o nome do
+            // volume; a legenda fica ao lado do SCAN/REFRESH ALL.
             {
-                auto selo = [&](bool on, const juce::String& texto, juce::Colour cor) {
+                auto selo = [&](bool on, const juce::String& inicial, juce::Colour cor) {
                     if (!on) return;
-                    const int w = texto.length() * 7 + 12;
-                    auto r = headerRow.removeFromRight(w).withSizeKeepingCentre(w, 16);
-                    headerRow.removeFromRight(4);
-                    g.setColour(cor);
-                    g.fillRoundedRectangle(r.toFloat(), 3.0f);
-                    g.setColour(juce::Colours::white);
-                    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-                    g.drawText(texto, r, juce::Justification::centred);
+                    auto r = headerRow.removeFromRight(16).withSizeKeepingCentre(16, 16);
+                    headerRow.removeFromRight(3);
+                    desenharSeloPapel(g, r, inicial, cor);
                 };
                 headerRow.removeFromRight(6);
-                selo(d.isSource && d.totalArquivos > 0, i18n::t("backup.papel_source"), juce::Colour(0xff9a6b1f));
-                selo(d.temClone, i18n::t("backup.papel_clone"), juce::Colour(0xff0d9488));
-                selo(d.temMain, i18n::t("backup.papel_main"), juce::Colour(0xff2563eb));
+                selo(d.isSource && d.totalArquivos > 0, "S", kCorSeloSource);
+                selo(d.temClone, "C", kCorSeloClone);
+                selo(d.temMain, "M", kCorSeloMain);
             }
 
             // Name & Online / Offline on the left
@@ -1531,6 +1542,24 @@ void StorageWorkspaceComponent::paint(juce::Graphics& g) {
         g.setColour(tk.borda.withAlpha(0.30f));
         g.drawRoundedRectangle(bb, tk.raioMedio, 1.0f);
     }
+
+    // Legenda dos selos dos cards (à esquerda do SCAN/REFRESH ALL).
+    if (!legendaSelosBounds_.isEmpty()) {
+        auto r = legendaSelosBounds_;
+        const std::pair<const char*, juce::Colour> itens[] = {
+            {"source", kCorSeloSource}, {"clone", kCorSeloClone}, {"main", kCorSeloMain}};
+        const auto fonte = juce::Font(juce::FontOptions(11.5f, juce::Font::bold));
+        for (const auto& [papel, cor] : itens) {  // da direita pra esquerda
+            const juce::String nome = i18n::t(juce::String("backup.papel_") + papel);
+            const int wNome = static_cast<int>(juce::GlyphArrangement::getStringWidth(fonte, nome)) + 2;
+            g.setFont(fonte);
+            g.setColour(tk.textoSecundario);
+            g.drawText(nome, r.removeFromRight(wNome), juce::Justification::centredLeft);
+            r.removeFromRight(4);
+            desenharSeloPapel(g, r.removeFromRight(16).withSizeKeepingCentre(16, 16), nome.substring(0, 1), cor);
+            r.removeFromRight(12);
+        }
+    }
 }
 
 void StorageWorkspaceComponent::resized() {
@@ -1543,6 +1572,8 @@ void StorageWorkspaceComponent::resized() {
         headerArea.removeFromRight(6);
     }
     btnRefresh_->setBounds(headerArea.removeFromRight(150).reduced(0, 6));
+    headerArea.removeFromRight(14);
+    legendaSelosBounds_ = headerArea.removeFromRight(260).withSizeKeepingCentre(260, 20);
     lblTitle_->setBounds(headerArea.removeFromTop(22));
     lblSubtitle_->setBounds(headerArea);
 
