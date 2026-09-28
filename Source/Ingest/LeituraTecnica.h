@@ -115,6 +115,8 @@ bool ehExifBinarioVolumoso(const std::string& chave, const std::string& valor);
 // true pras poucas chaves EXIF que o ingest guarda no banco (as que a
 // ficha/grade usam: data, câmera, lente, autor, direitos, orientação...).
 bool ehChaveExifGuardada(const std::string& chave);
+// A mesma lista, pra quem precisa montar SQL (compactação de projetos antigos).
+const std::vector<const char*>& kChavesExifGuardadasLista();
 
 // "GET EXIF" (pedido do usuário, nunca no ingest): EXIF completo do arquivo
 // como linhas "Tag: valor" pra seção [OTHER METADATA] das notas — sem as

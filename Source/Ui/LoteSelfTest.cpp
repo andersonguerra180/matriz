@@ -1412,7 +1412,12 @@ int rodarLoteSelfTest() {
             auto& reg = projeto->registro();
             const std::string itemId = inserirItem(reg, projeto->projetoId(), "CMP-1", false, ".jpg");
             reg.run("UPDATE item SET notas_livres = ? WHERE id = ?", {Value::of(notas), Value::of(itemId)});
-            const std::string json = "{\"codec\": \"mjpeg\", \"bruto\": {\"exif\": {\"Exif.Image.Orientation\": \"6\", \"Exif.Photo.FNumber\": \"5/1\", "
+            // 200 tags a mais: a 1ª versão (json_remove com uma chave por
+            // argumento) estourava o limite de argumentos do SQLite no
+            // projeto real.
+            std::string muitas;
+            for (int t = 0; t < 200; ++t) muitas += "\"Exif.Canon.Tag" + std::to_string(t) + "\": \"" + std::to_string(t) + "\", ";
+            const std::string json = "{\"codec\": \"mjpeg\", \"bruto\": {\"exif\": {" + muitas + "\"Exif.Image.Orientation\": \"6\", \"Exif.Photo.FNumber\": \"5/1\", "
                                      "\"Exif.Photo.MakerNote\": \"37 0 1\", \"Exif.Canon.ColorData\": \"" + numeros + "\"}}}";
             reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?", {Value::of(json), Value::of(itemId)});
             std::string arquivoId;
@@ -1434,7 +1439,7 @@ int rodarLoteSelfTest() {
             checar(achou && st.columnText(0) == limpas && st.columnInt(2) == 1 && std::abs(st.columnReal(3) + 18.5) < 1e-9,
                    "after compaction: notes cleaned, thumbnail blob gone, loudness kept");
             checar(jsonDepois.find("MakerNote") == std::string::npos && jsonDepois.find("ColorData") == std::string::npos &&
-                       jsonDepois.find("FNumber") == std::string::npos &&
+                       jsonDepois.find("FNumber") == std::string::npos && jsonDepois.find("Exif.Canon.Tag") == std::string::npos &&
                        jsonDepois.find("Exif.Image.Orientation") != std::string::npos && jsonDepois.find("mjpeg") != std::string::npos,
                    "after compaction: technical JSON keeps the ficha keys (Orientation) and codec, drops the rest");
         } catch (const std::exception& e) {

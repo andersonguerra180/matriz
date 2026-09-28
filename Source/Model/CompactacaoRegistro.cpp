@@ -83,16 +83,19 @@ ResultadoCompactacao compactarRegistro(const juce::File& pastaProject) {
 
     try {
         juce::int64 itensAntes = 0, arquivosAntes = 0;
-        {
-            // 1) Cópia contínua do original (o original só é lido).
-            matriz::db::Database db(original.getFullPathName().toStdString());
-            itensAntes = contar(db, "item");
-            arquivosAntes = contar(db, "arquivo");
-            db.exec("VACUUM INTO " + literalSql(copia));
-        }
+        // 1) Cópia do original como arquivo (leitura sequencial — um VACUUM
+        //    INTO direto do original lia as páginas fora de ordem e levava
+        //    ~20 min num banco fragmentado). O original nem é aberto pelo
+        //    SQLite. Um -wal com conteúdo significaria projeto aberto/não
+        //    fechado direito: aí não mexe.
+        if (juce::File(original.getFullPathName() + "-wal").getSize() > 0)
+            throw std::runtime_error("registro.sqlite-wal is not empty (project open or not closed cleanly)");
+        if (!original.copyFileTo(copia)) throw std::runtime_error("could not copy registro.sqlite");
         {
             // 2) Limpeza na cópia, numa transação só.
             matriz::db::Database db(copia.getFullPathName().toStdString());
+            itensAntes = contar(db, "item");
+            arquivosAntes = contar(db, "arquivo");
             db.exec("BEGIN IMMEDIATE");
 
             {
@@ -101,35 +104,23 @@ ResultadoCompactacao compactarRegistro(const juce::File& pastaProject) {
             }
             db.exec("UPDATE cache_arquivo SET miniatura = NULL WHERE miniatura IS NOT NULL");
 
-            // JSON técnico: json_remove só das chaves binárias — o resto do
-            // JSON fica byte a byte como estava.
+            // JSON técnico: o objeto bruto.exif é refeito só com as chaves
+            // guardadas (json_group_object) — o resto do JSON fica igual.
             {
-                std::vector<std::pair<std::string, std::vector<std::string>>> remover;
+                std::string lista;
+                for (const char* c : matriz::ingest::kChavesExifGuardadasLista()) {
+                    if (!lista.empty()) lista += ", ";
+                    lista += "'" + std::string(c) + "'";
+                }
                 auto st = db.prepare(
-                    "SELECT a.id, j.key, j.value FROM arquivo a, json_each(a.caracteristicas_tecnicas_json, '$.bruto.exif') j "
-                    "WHERE json_valid(a.caracteristicas_tecnicas_json)");
-                while (st.step()) {
-                    const std::string id = st.columnText(0), chave = st.columnText(1);
-                    const std::string valor = st.columnIsNull(2) ? std::string() : st.columnText(2);
-                    if (matriz::ingest::ehChaveExifGuardada(chave) && !matriz::ingest::ehExifBinarioVolumoso(chave, valor))
-                        continue;
-                    if (remover.empty() || remover.back().first != id) remover.push_back({id, {}});
-                    remover.back().second.push_back(chave);
-                }
-                for (const auto& [id, chaves] : remover) {
-                    std::string sql = "UPDATE arquivo SET caracteristicas_tecnicas_json = json_remove(caracteristicas_tecnicas_json";
-                    std::vector<Value> params;
-                    for (const auto& c : chaves) {
-                        std::string escapada;
-                        for (char ch : c) { if (ch == '"' || ch == '\\') escapada += '\\'; escapada += ch; }
-                        sql += ", ?";
-                        params.push_back(Value::of("$.bruto.exif.\"" + escapada + "\""));
-                    }
-                    sql += ") WHERE id = ?";
-                    params.push_back(Value::of(id));
-                    db.run(sql, params);
-                    ++r.jsonsLimpos;
-                }
+                    "SELECT COUNT(*) FROM arquivo WHERE json_valid(caracteristicas_tecnicas_json) "
+                    "AND json_type(caracteristicas_tecnicas_json, '$.bruto.exif') = 'object'");
+                if (st.step()) r.jsonsLimpos = static_cast<int>(st.columnInt(0));
+                db.exec("UPDATE arquivo SET caracteristicas_tecnicas_json = json_set(caracteristicas_tecnicas_json, "
+                        "'$.bruto.exif', (SELECT json_group_object(j.key, j.value) FROM "
+                        "json_each(arquivo.caracteristicas_tecnicas_json, '$.bruto.exif') j WHERE j.key IN (" + lista + "))) "
+                        "WHERE json_valid(caracteristicas_tecnicas_json) "
+                        "AND json_type(caracteristicas_tecnicas_json, '$.bruto.exif') = 'object'");
             }
 
             // Notas: sai a seção automática [OTHER METADATA] inteira.

@@ -289,6 +289,11 @@ const char* const kChavesExifGuardadas[] = {
     "Exif.Image.Orientation", "Exif.Photo.ColorSpace",
 };
 
+const std::vector<const char*>& kChavesExifGuardadasLista() {
+    static const std::vector<const char*> lista(std::begin(kChavesExifGuardadas), std::end(kChavesExifGuardadas));
+    return lista;
+}
+
 bool ehChaveExifGuardada(const std::string& chave) {
     for (const char* c : kChavesExifGuardadas)
         if (chave == c) return true;
