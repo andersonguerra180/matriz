@@ -388,6 +388,23 @@ CREATE TABLE IF NOT EXISTS acervo_item_pasta (
 CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_item ON acervo_item_pasta(item_id);
 CREATE INDEX IF NOT EXISTS idx_acervo_item_pasta_pasta ON acervo_item_pasta(pasta_id);
 
+-- Folder Maps múltiplos (Fase 1): cada projeto pode ter vários esquemas de
+-- pastas independentes. Só guarda mapas do USUÁRIO — o ORIGINAL (espelho
+-- ao vivo da estrutura da SOURCE) nunca tem linha aqui, é computado direto
+-- de arquivo.caminho_absoluto_origem (ver ProjetoAberto::kMapaOriginal).
+-- acervo_pasta.mapa_id/acervo_item_pasta.mapa_id (adicionadas via
+-- garantirColuna, Project.cpp) apontam pra cá.
+CREATE TABLE IF NOT EXISTS folder_map (
+    id            TEXT PRIMARY KEY,
+    projeto_id    TEXT NOT NULL REFERENCES projeto(id) ON DELETE CASCADE,
+    nome          TEXT NOT NULL,
+    ordem         INTEGER NOT NULL DEFAULT 0,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_folder_map_projeto ON folder_map(projeto_id);
+
 -- ---------------------------------------------------------------------------
 -- Coleção inteligente (Acréscimos §10.2 — "salvar busca como coleção
 -- inteligente, que se atualiza sozinha"): guarda a DEFINIÇÃO da busca

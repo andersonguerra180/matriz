@@ -8,7 +8,10 @@ namespace matriz::ui {
 
 class TreeDetailContent;
 
-class ArvoreBackupComponent : public juce::Component, private juce::Timer, public EventBusListener {
+class ArvoreBackupComponent : public juce::Component,
+                               private juce::Timer,
+                               public EventBusListener,
+                               public juce::DragAndDropTarget {
 public:
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
     ~ArvoreBackupComponent() override;
@@ -50,6 +53,16 @@ public:
 
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
 
+    // Fase 1 (Folder Maps múltiplos) — SEM PASTA (NO FOLDER) só aceita
+    // drop de itens arrastados da grade (MosaicoComponent::startDragging,
+    // descrição = array de item ids); não interfere no drag de pastas
+    // dentro do canvas, que continua em mouseDown/mouseDrag/mouseUp.
+    bool isInterestedInDragSource(const SourceDetails& details) override;
+    void itemDragEnter(const SourceDetails& details) override;
+    void itemDragMove(const SourceDetails& details) override;
+    void itemDragExit(const SourceDetails& details) override;
+    void itemDropped(const SourceDetails& details) override;
+
 private:
     struct FolderNode {
         std::string id;
@@ -86,14 +99,40 @@ private:
     std::unique_ptr<juce::TextButton> btnCriarPasta_;
     std::unique_ptr<juce::TextButton> btnRenomearPasta_;
     std::unique_ptr<juce::TextButton> btnApagarPasta_;
-    std::unique_ptr<juce::TextButton> btnImportarEstrutura_;
     std::unique_ptr<juce::TextButton> btnAutoArranjar_;
     std::unique_ptr<juce::TextButton> btnZoomIn_;
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
 
-    // S4/13 — presets de esquema de pastas
-    std::unique_ptr<juce::TextButton> btnPresets_;
+    // Fase 1 — dropdown com todos os folder maps do projeto (ORIGINAL +
+    // mapas do usuário), botão "⋯" (rename/duplicate/delete/export/import)
+    // e NEW FOLDER MAP. Substituem btnImportarEstrutura_/btnPresets_, que
+    // não existem mais (ver AGENTS.md / decisão da Fase 1: ORIGINAL, ao
+    // vivo, cobre o que "Import/Update Structure" fazia).
+    std::unique_ptr<juce::ComboBox> comboMapas_;
+    std::unique_ptr<juce::TextButton> btnMenuMapa_;
+    std::unique_ptr<juce::TextButton> btnNovoMapa_;
+    std::string mapaAtivoId_;
+    std::vector<ProjetoAberto::FolderMapInfo> mapasCache_; // espelha comboMapas_, id por índice
+    bool mapaAtivoEhOriginal() const { return mapaAtivoId_ == ProjetoAberto::kMapaOriginal; }
+    void recarregarComboMapas();
+    void selecionarMapaPorId(const std::string& mapaId);
+    void atualizarEstadoBotoesParaMapa();
+    void mostrarMenuMapa();
+    void mostrarDialogoNovoMapa();
+    void pedirNomeECriarMapa(std::optional<std::string> origemMapaId);
+    // Migra presets_pastas/*.json (mecanismo antigo, por arquivo) pra
+    // folder_map — uma vez só; cada arquivo migrado vira <nome>.json.importado
+    // (não apagado, só marcado, pra não reimportar no próximo load).
+    void migrarPresetsAntigosSeNecessario();
+
+    // SEM PASTA (NO FOLDER) — painel fixo em espaço de TELA (não pan/zoom
+    // com o canvas), canto inferior-esquerdo; nunca aparece com o ORIGINAL
+    // ativo (S4/13: "Não aparece no ORIGINAL").
+    juce::Rectangle<int> boundsSemPasta() const;
+    void desenharSemPasta(juce::Graphics& g) const;
+    bool semPastaHover_ = false;
+
     // S4/14 — slider de tamanho dos retângulos (independente do zoom)
     std::unique_ptr<juce::Slider> sliderTamanho_;
     float escalaTamanho_ = 1.0f;
@@ -106,15 +145,21 @@ private:
     void recalcularNodes();
     void autoArranjar();
 
-    // S4/13 — presets de esquema de pastas (pastas + posição + associação item->pasta)
+    // Fase 1 — Export/Import to file do mapa ATIVO, formato JSON herdado do
+    // antigo mecanismo de presets (S4/13). pastaPresets()/listarPresetsSalvos()
+    // hoje só servem pra migrarPresetsAntigosSeNecessario() achar os arquivos
+    // antigos — "Export to file" grava onde o usuário escolher (FileChooser),
+    // não mais nessa pasta.
     juce::File pastaPresets() const;
     std::vector<juce::String> listarPresetsSalvos() const;
     juce::var construirEsquemaAtualComoVar() const;
     bool salvarEsquemaComoPreset(const juce::String& nomePreset, juce::String& erro) const;
-    void salvarPresetAutoAntes() const;
-    void mostrarMenuPresets();
-    void confirmarECarregarEsquema(const juce::String& nomeExibicao, const juce::var& dados);
-    void aplicarEsquemaDeVar(const juce::var& dados, int& itensRelocados, int& itensPulados);
+    // Import from file/migração de preset antigo SEMPRE cria um mapa novo
+    // (nunca substitui o ativo) — ver S4/13. itensPulados conta itens cujo
+    // item_id nem codigoAcervo foram encontrados neste projeto.
+    void importarEsquemaComoNovoMapa(const juce::String& nomeMapa, const juce::var& dados, int& itensRelocados,
+                                      int& itensPulados);
+    void confirmarImportarComoNovoMapa(const juce::String& nomeSugerido, const juce::var& dados);
     void exportarPresetParaArquivo();
     void importarPresetDeArquivo();
 

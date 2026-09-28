@@ -95,6 +95,55 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     return n;
 }
 
+// Fase 1 — árvore do mapa ORIGINAL: mesma lógica de arvoreOrigem(true)
+// (segmentos de caminho de arquivo.caminho_absoluto_origem, prefixo comum
+// descartado), mas com um id ESTÁVEL por nó (derivado do caminho
+// acumulado) — arvoreOrigem() deixa `id` vazio de propósito pros seus
+// outros usos (árvore Origem/Explorer), e ArvoreBackupComponent precisa de
+// um id não-vazio pra renderizar, selecionar e abrir "Show in Grid" num
+// nó. Puramente computado — nunca lê nem grava acervo_pasta.
+ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db) {
+    struct Par { std::string itemId; juce::StringArray segmentos; };
+    std::vector<Par> pares;
+    auto stmt = db.prepare(
+        "SELECT a.item_id, a.caminho_absoluto_origem FROM arquivo a WHERE a.caminho_absoluto_origem IS NOT NULL "
+        "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1)");
+    while (stmt.step()) {
+        Par p;
+        p.itemId = stmt.columnText(0);
+        juce::File pasta = juce::File(juce::String(stmt.columnText(1))).getParentDirectory();
+        p.segmentos.addTokens(pasta.getFullPathName(), juce::File::getSeparatorString(), "");
+        p.segmentos.removeEmptyStrings();
+        pares.push_back(std::move(p));
+    }
+
+    int prefixoComum = 0;
+    if (!pares.empty()) {
+        prefixoComum = pares[0].segmentos.size();
+        for (size_t i = 1; i < pares.size(); ++i) {
+            int n = juce::jmin(prefixoComum, pares[i].segmentos.size());
+            int match = 0;
+            while (match < n && pares[0].segmentos[match] == pares[i].segmentos[match]) ++match;
+            prefixoComum = match;
+        }
+        if (prefixoComum > 0) prefixoComum -= 1;
+    }
+
+    NoBuilder raiz;
+    for (auto& p : pares) {
+        NoBuilder* atual = &raiz;
+        juce::String caminhoAcumulado;
+        for (int s = prefixoComum; s < p.segmentos.size(); ++s) {
+            caminhoAcumulado += (caminhoAcumulado.isEmpty() ? "" : "/") + p.segmentos[s];
+            NoBuilder* filho = obterOuCriarFilhoPorNome(*atual, p.segmentos[s]);
+            if (filho->id.empty()) filho->id = "original:" + caminhoAcumulado.toStdString();
+            atual = filho;
+        }
+        atual->itemIdsDiretos.insert(p.itemId);
+    }
+    return materializar(raiz, true);
+}
+
 } // namespace
 
 ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : projeto_(std::move(projeto)) {
@@ -1863,8 +1912,142 @@ ProjetoAberto::NoArvore ProjetoAberto::podarArvore(const NoArvore& raiz, const s
     return podado;
 }
 
-ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
+const std::string ProjetoAberto::kMapaOriginal = "__ORIGINAL__";
+
+std::string ProjetoAberto::mapaAtivoPadrao() const {
     if (!projeto_) return {};
+    if (!mapaAtivoSelecionado_.empty() && mapaAtivoSelecionado_ != kMapaOriginal) {
+        auto stmtSel = projeto_->registro().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
+        stmtSel.bind(1, matriz::db::Value::of(mapaAtivoSelecionado_));
+        stmtSel.bind(2, matriz::db::Value::of(projeto_->projetoId()));
+        if (stmtSel.step()) return mapaAtivoSelecionado_;
+    }
+    auto stmt = projeto_->registro().prepare(
+        "SELECT id FROM folder_map WHERE projeto_id = ? ORDER BY ordem, criado_em LIMIT 1");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    return stmt.step() ? stmt.columnText(0) : std::string();
+}
+
+std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() const {
+    std::vector<FolderMapInfo> out;
+    FolderMapInfo original;
+    original.id = kMapaOriginal;
+    original.nome = matriz::i18n::t("mapa.original");
+    original.original = true;
+    out.push_back(original);
+    if (!projeto_) return out;
+
+    auto stmt = projeto_->registro().prepare(
+        "SELECT id, nome FROM folder_map WHERE projeto_id = ? ORDER BY ordem, criado_em");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    while (stmt.step()) {
+        FolderMapInfo info;
+        info.id = stmt.columnText(0);
+        info.nome = juce::String(stmt.columnText(1));
+        out.push_back(info);
+    }
+    return out;
+}
+
+std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::optional<std::string>& origemMapaId) {
+    if (!projeto_ || nome.trim().isEmpty()) return {};
+
+    std::string mapaId = matriz::model::novoUuid();
+    std::string agora = matriz::model::agoraIso8601();
+    auto& db = projeto_->registro();
+
+    int ordem = 0;
+    {
+        auto stmt = db.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM folder_map WHERE projeto_id = ?");
+        stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        if (stmt.step()) ordem = stmt.columnInt(0);
+    }
+
+    db.run("INSERT INTO folder_map (id, projeto_id, nome, ordem, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?)",
+           {matriz::db::Value::of(mapaId), matriz::db::Value::of(projeto_->projetoId()),
+            matriz::db::Value::of(nome.trim().toStdString()), matriz::db::Value::of(ordem),
+            matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+
+    if (!origemMapaId) return mapaId; // em branco
+
+    // Cópia do ORIGINAL ou de outro mapa: um RETRATO do momento, não uma
+    // referência viva — recria pastas + item->pasta com ids novos, nunca
+    // reaproveita os do mapa de origem (evita colisão e mantém os mapas
+    // totalmente independentes daqui em diante).
+    NoArvore origem = arvoreAcervo(*origemMapaId);
+    for (auto& raizFilho : origem.filhos) {
+        // arvoreAcervo() sempre acrescenta um nó sintético "não organizados"
+        // como filho da raiz, com id vazio (nenhuma pasta real tem id
+        // vazio) — nunca copiado pra dentro do mapa novo.
+        if (raizFilho.id.empty()) continue;
+        replicarSubarvoreNoAcervo(raizFilho, "", true, mapaId);
+    }
+    return mapaId;
+}
+
+bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::String& novoNome) {
+    if (!projeto_ || mapaId == kMapaOriginal || novoNome.trim().isEmpty()) return false;
+    projeto_->registro().run("UPDATE folder_map SET nome = ?, atualizado_em = ? WHERE id = ? AND projeto_id = ?",
+                              {matriz::db::Value::of(novoNome.trim().toStdString()),
+                               matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(mapaId),
+                               matriz::db::Value::of(projeto_->projetoId())});
+    return true;
+}
+
+bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
+    if (!projeto_ || mapaId == kMapaOriginal) return false;
+    // Fase 2: mapa do MAIN (backup_config_main.mapa_id) também não pode
+    // ser apagado — checado aqui quando essa coluna passar a existir.
+    projeto_->registro().run("DELETE FROM folder_map WHERE id = ? AND projeto_id = ?",
+                              {matriz::db::Value::of(mapaId), matriz::db::Value::of(projeto_->projetoId())});
+    return true;
+}
+
+std::set<std::string> ProjetoAberto::itensSemPasta(const std::string& mapaId) const {
+    std::set<std::string> out;
+    if (!projeto_ || mapaId == kMapaOriginal) return out;
+    auto stmt = projeto_->registro().prepare(
+        "SELECT id FROM item WHERE projeto_id = ? AND id NOT IN "
+        "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    stmt.bind(2, matriz::db::Value::of(mapaId));
+    while (stmt.step()) out.insert(stmt.columnText(0));
+    return out;
+}
+
+int ProjetoAberto::contarItensSemPasta(const std::string& mapaId) const {
+    if (!projeto_ || mapaId == kMapaOriginal) return 0;
+    auto stmt = projeto_->registro().prepare(
+        "SELECT COUNT(*) FROM item WHERE projeto_id = ? AND id NOT IN "
+        "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+    stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    stmt.bind(2, matriz::db::Value::of(mapaId));
+    return stmt.step() ? stmt.columnInt(0) : 0;
+}
+
+std::string ProjetoAberto::mapaIdDaPasta(const std::string& pastaId) const {
+    if (!projeto_ || pastaId.empty()) return {};
+    auto stmt = projeto_->registro().prepare("SELECT mapa_id FROM acervo_pasta WHERE id = ?");
+    stmt.bind(1, matriz::db::Value::of(pastaId));
+    if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+    return {};
+}
+
+void ProjetoAberto::inserirItemPastaInterno(const std::string& itemId, const std::string& pastaId,
+                                             const std::string& agora) {
+    if (!projeto_) return;
+    std::string mapaId = mapaIdDaPasta(pastaId);
+    projeto_->registro().run(
+        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+         matriz::db::Value::of(pastaId),
+         mapaId.empty() ? matriz::db::Value::null() : matriz::db::Value::of(mapaId),
+         matriz::db::Value::of(agora)});
+}
+
+ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) const {
+    if (!projeto_) return {};
+    if (mapaId == kMapaOriginal) return construirArvoreOriginalVirtual(projeto_->registro());
 
     struct Registro {
         std::string id;
@@ -1875,8 +2058,10 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = projeto_->registro().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada FROM acervo_pasta WHERE projeto_id = ? ORDER BY ordem, criado_em");
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada FROM acervo_pasta "
+        "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+    stmt.bind(2, matriz::db::Value::of(mapaId));
     while (stmt.step()) {
         Registro r;
         r.id = stmt.columnText(0);
@@ -1902,9 +2087,8 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
     }
 
     auto stmtItens = projeto_->registro().prepare(
-        "SELECT aip.pasta_id, aip.item_id FROM acervo_item_pasta aip "
-        "JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE ap.projeto_id = ?");
-    stmtItens.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        "SELECT pasta_id, item_id FROM acervo_item_pasta WHERE mapa_id = ?");
+    stmtItens.bind(1, matriz::db::Value::of(mapaId));
     while (stmtItens.step()) {
         auto it = ptrPorId.find(stmtItens.columnText(0));
         if (it != ptrPorId.end()) it->second->itemIdsDiretos.insert(stmtItens.columnText(1));
@@ -1916,36 +2100,43 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo() const {
 
     NoArvore naoOrganizados;
     naoOrganizados.nome = matriz::i18n::t("arvore.nao_organizados");
-    auto stmtOrfaos = projeto_->registro().prepare(
-        "SELECT id FROM item WHERE projeto_id = ? AND id NOT IN (SELECT item_id FROM acervo_item_pasta)");
-    stmtOrfaos.bind(1, matriz::db::Value::of(projeto_->projetoId()));
-    while (stmtOrfaos.step()) naoOrganizados.itemIds.insert(stmtOrfaos.columnText(0));
+    naoOrganizados.itemIds = itensSemPasta(mapaId);
     naoOrganizados.itemIdsDiretos = naoOrganizados.itemIds;
     raizFinal.filhos.push_back(std::move(naoOrganizados));
 
     return raizFinal;
 }
 
-std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
-    if (!projeto_) return {};
+std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId,
+                                             const std::string& mapaId) {
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
     std::string id = matriz::model::novoUuid();
     std::string agora = matriz::model::agoraIso8601();
+
+    // pastaPaiId, se dado, precisa pertencer ao MESMO mapa — senão a nova
+    // pasta viraria uma ponte entre dois mapas que deveriam ser
+    // independentes. Defensivo: promove a raiz do mapa em vez de falhar.
+    std::optional<std::string> pastaPaiIdSaneado = pastaPaiId;
+    if (pastaPaiIdSaneado && mapaIdDaPasta(*pastaPaiIdSaneado) != mapaId) pastaPaiIdSaneado = std::nullopt;
+    const auto& pastaPaiIdEfetivo = pastaPaiIdSaneado;
 
     int ordem = 0;
     {
         auto stmt = projeto_->registro().prepare(
-            pastaPaiId ? "SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id = ?"
-                       : "SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id IS NULL AND projeto_id = ?");
-        stmt.bind(1, pastaPaiId ? matriz::db::Value::of(*pastaPaiId) : matriz::db::Value::of(projeto_->projetoId()));
+            pastaPaiIdEfetivo ? "SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id = ?"
+                       : "SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id IS NULL AND projeto_id = ? AND mapa_id = ?");
+        stmt.bind(1, pastaPaiIdEfetivo ? matriz::db::Value::of(*pastaPaiIdEfetivo) : matriz::db::Value::of(projeto_->projetoId()));
+        if (!pastaPaiIdEfetivo) stmt.bind(2, matriz::db::Value::of(mapaId));
         if (stmt.step()) ordem = stmt.columnInt(0);
     }
 
     projeto_->registro().run(
-        "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, posicao_x, posicao_y, ativo, criado_em, atualizado_em) "
-        "VALUES (?, ?, ?, ?, ?, 0, 0, 1, ?, ?)",
+        "INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, posicao_y, ativo, criado_em, atualizado_em) "
+        "VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)",
         {matriz::db::Value::of(id), matriz::db::Value::of(projeto_->projetoId()),
-         pastaPaiId ? matriz::db::Value::of(*pastaPaiId) : matriz::db::Value::null(), matriz::db::Value::of(nome),
-         matriz::db::Value::of(ordem), matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+         pastaPaiIdEfetivo ? matriz::db::Value::of(*pastaPaiIdEfetivo) : matriz::db::Value::null(), matriz::db::Value::of(nome),
+         matriz::db::Value::of(ordem), matriz::db::Value::of(mapaId), matriz::db::Value::of(agora),
+         matriz::db::Value::of(agora)});
     return id;
 }
 
@@ -2094,27 +2285,27 @@ void ProjetoAberto::definirHistoricoCoresPasta(const std::vector<juce::String>& 
 
 void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId) {
     if (!projeto_) return;
+    std::string mapaId = mapaIdDaPasta(pastaId);
+    if (mapaId.empty()) return;
     if (!desfazendo_) {
         std::map<std::string, std::vector<std::string>> antigasPastas;
         for (const auto& id : itemIds) {
+            // Só as pastas DESTE mapa — mover num mapa nunca deve mexer na
+            // posição do item em outro mapa (Fase 1).
             auto stmtOld = projeto_->registro().prepare(
-                "SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ?");
+                "SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?");
             stmtOld.bind(1, matriz::db::Value::of(id));
+            stmtOld.bind(2, matriz::db::Value::of(mapaId));
             std::vector<std::string> pastas;
             while (stmtOld.step()) pastas.push_back(stmtOld.columnText(0));
             antigasPastas[id] = std::move(pastas);
         }
-        registrarUndo("Move Items to Folder", [this, antigasPastas]() {
+        registrarUndo("Move Items to Folder", [this, antigasPastas, mapaId]() {
             std::string agora = matriz::model::agoraIso8601();
             for (const auto& [id, pastas] : antigasPastas) {
-                projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                                         {matriz::db::Value::of(id)});
-                for (const auto& oldPasta : pastas) {
-                    projeto_->registro().run(
-                        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
-                         matriz::db::Value::of(oldPasta), matriz::db::Value::of(agora)});
-                }
+                projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                                         {matriz::db::Value::of(id), matriz::db::Value::of(mapaId)});
+                for (const auto& oldPasta : pastas) inserirItemPastaInterno(id, oldPasta, agora);
             }
         });
     }
@@ -2123,12 +2314,9 @@ void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds
     db.run("BEGIN TRANSACTION", {});
     try {
         for (auto& itemId : itemIds) {
-            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                   {matriz::db::Value::of(itemId)});
-            db.run(
-                "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-                 matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            inserirItemPastaInterno(itemId, pastaId, agora);
         }
         db.run("COMMIT", {});
     } catch (...) {
@@ -2139,10 +2327,7 @@ void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds
 
 void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
     if (!projeto_ || itemId.empty() || pastaId.empty()) return;
-    projeto_->registro().run(
-        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-         matriz::db::Value::of(pastaId), matriz::db::Value::of(matriz::model::agoraIso8601())});
+    inserirItemPastaInterno(itemId, pastaId, matriz::model::agoraIso8601());
 }
 
 std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::string& codigoAcervo) const {
@@ -2155,23 +2340,22 @@ std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::stri
     return std::nullopt;
 }
 
-std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& itemIds) {
-    if (!projeto_) return {};
-    
-    std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt);
+std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& itemIds,
+                                                    const std::string& mapaId) {
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
+
+    std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt, mapaId);
 
     std::string agora = matriz::model::agoraIso8601();
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
     try {
         for (const auto& itemId : itemIds) {
-            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                   {matriz::db::Value::of(itemId)});
-
-            db.run(
-                "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-                 matriz::db::Value::of(newFolderId), matriz::db::Value::of(agora)});
+            // Só tira o item das pastas DESTE mapa — outros mapas não são
+            // afetados (Fase 1: mapas totalmente independentes).
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            inserirItemPastaInterno(itemId, newFolderId, agora);
         }
         db.run("COMMIT", {});
     } catch (...) {
@@ -2182,13 +2366,15 @@ std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string
     return newFolderId;
 }
 
-void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds) {
-    if (!projeto_) return;
+void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds, const std::string& mapaId) {
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
     if (!desfazendo_) {
         std::vector<std::pair<std::string, std::string>> anteriores;
         for (const auto& itemId : itemIds) {
-            auto stmt = projeto_->registro().prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ?");
+            auto stmt = projeto_->registro().prepare(
+                "SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?");
             stmt.bind(1, matriz::db::Value::of(itemId));
+            stmt.bind(2, matriz::db::Value::of(mapaId));
             if (stmt.step()) {
                 anteriores.push_back({itemId, stmt.columnText(0)});
             }
@@ -2201,8 +2387,8 @@ void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds
     db.run("BEGIN TRANSACTION", {});
     try {
         for (auto& itemId : itemIds)
-            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                   {matriz::db::Value::of(itemId)});
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
         db.run("COMMIT", {});
     } catch (...) {
         db.run("ROLLBACK", {});
@@ -2216,14 +2402,8 @@ void ProjetoAberto::restaurarItensParaBackup(const std::vector<std::pair<std::st
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
     try {
-        for (const auto& [itemId, pastaId] : itensPastas) {
-            if (!pastaId.empty()) {
-                db.run(
-                    "INSERT OR REPLACE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-                     matriz::db::Value::of(pastaId), matriz::db::Value::of(agora)});
-            }
-        }
+        for (const auto& [itemId, pastaId] : itensPastas)
+            if (!pastaId.empty()) inserirItemPastaInterno(itemId, pastaId, agora);
         db.run("COMMIT", {});
     } catch (...) {
         db.run("ROLLBACK", {});
@@ -2692,14 +2872,14 @@ void ProjetoAberto::atualizarEstadoItem(const std::string& itemId, const std::st
 }
 
 int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId,
-                                              bool manterEstrutura) {
-    if (!projeto_) return 0;
+                                              bool manterEstrutura, const std::string& mapaId) {
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return 0;
     if (!manterEstrutura) {
         std::vector<std::string> ids(origem.itemIds.begin(), origem.itemIds.end());
         if (ids.empty()) return 0;
         std::string destino = pastaPaiId;
         if (destino.empty())
-            destino = criarPastaAcervo(origem.nome.toStdString(), std::nullopt);
+            destino = criarPastaAcervo(origem.nome.toStdString(), std::nullopt, mapaId);
         adicionarItensAPasta(ids, destino);
         return static_cast<int>(ids.size());
     }
@@ -2728,17 +2908,15 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
             // conteúdo dela derramado na pasta de destino.
             std::optional<std::string> pai =
                 atual.pastaPaiId.empty() ? std::nullopt : std::optional(atual.pastaPaiId);
-            std::string novaPastaId = criarPastaAcervo(atual.no->nome.toStdString(), pai);
+            std::string novaPastaId = criarPastaAcervo(atual.no->nome.toStdString(), pai, mapaId);
 
             if (!atual.no->itemIdsDiretos.empty()) {
                 std::string agoraItem = matriz::model::agoraIso8601();
                 for (const auto& itemId : atual.no->itemIdsDiretos) {
-                    projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                                             {matriz::db::Value::of(itemId)});
-                    projeto_->registro().run(
-                        "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-                         matriz::db::Value::of(novaPastaId), matriz::db::Value::of(agoraItem)});
+                    // Só tira o item das pastas DESTE mapa (Fase 1).
+                    projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                                             {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+                    inserirItemPastaInterno(itemId, novaPastaId, agoraItem);
                 }
                 vinculados += static_cast<int>(atual.no->itemIdsDiretos.size());
             }
@@ -2751,105 +2929,6 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
         throw;
     }
     return vinculados;
-}
-
-void ProjetoAberto::resetarEImportarEstruturaOrigem() {
-    if (!projeto_) return;
-    std::string projetoId = projeto_->projetoId();
-
-    // 1. Collect original folder paths for ALL items (not just unorganized ones)
-    struct Par { std::string itemId; juce::StringArray segmentos; };
-    std::vector<Par> pares;
-
-    {
-        auto stmt = projeto_->registro().prepare(
-            "SELECT a.item_id, a.caminho_absoluto_origem FROM arquivo a "
-            "JOIN item i ON i.id = a.item_id "
-            "WHERE i.projeto_id = ? AND a.caminho_absoluto_origem IS NOT NULL "
-            "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1)");
-        stmt.bind(1, matriz::db::Value::of(projetoId));
-        while (stmt.step()) {
-            Par p;
-            p.itemId = stmt.columnText(0);
-            juce::File pasta = juce::File(juce::String(stmt.columnText(1))).getParentDirectory();
-            p.segmentos.addTokens(pasta.getFullPathName(), juce::File::getSeparatorString(), "");
-            p.segmentos.removeEmptyStrings();
-            pares.push_back(std::move(p));
-        }
-    }
-
-    // 2. Compute common prefix to strip volume/ancestor directories
-    int prefixoComum = 0;
-    if (!pares.empty()) {
-        prefixoComum = pares[0].segmentos.size();
-        for (size_t i = 1; i < pares.size(); ++i) {
-            int n = juce::jmin(prefixoComum, pares[i].segmentos.size());
-            int match = 0;
-            while (match < n && pares[0].segmentos[match] == pares[i].segmentos[match])
-                ++match;
-            prefixoComum = match;
-        }
-        if (prefixoComum > 0)
-            prefixoComum = prefixoComum - 1;
-    }
-
-    // 3. Inside a transaction: wipe existing tree, rebuild from original paths
-    projeto_->registro().run("BEGIN", {});
-    try {
-        // Clear all item-folder assignments and all folders for this project
-        projeto_->registro().run(
-            "DELETE FROM acervo_item_pasta WHERE pasta_id IN "
-            "(SELECT id FROM acervo_pasta WHERE projeto_id = ?)",
-            {matriz::db::Value::of(projetoId)});
-        projeto_->registro().run(
-            "DELETE FROM acervo_pasta WHERE projeto_id = ?",
-            {matriz::db::Value::of(projetoId)});
-
-        // Rebuild: for each item, create the chain of folders from its original path
-        // and place the item in its leaf folder.
-        // Cache folder IDs by (parentId, name) to avoid duplicates.
-        std::map<std::pair<std::string, std::string>, std::string> folderCache;
-
-        for (auto& p : pares) {
-            std::string currentParentId;
-            for (int s = prefixoComum; s < p.segmentos.size(); ++s) {
-                std::string segName = p.segmentos[s].toStdString();
-                auto key = std::make_pair(currentParentId, segName);
-                auto it = folderCache.find(key);
-                if (it != folderCache.end()) {
-                    currentParentId = it->second;
-                } else {
-                    std::optional<std::string> pai = currentParentId.empty()
-                        ? std::nullopt : std::optional<std::string>(currentParentId);
-                    std::string newId = criarPastaAcervo(segName, pai);
-                    folderCache[key] = newId;
-                    currentParentId = newId;
-                }
-            }
-
-            // Assign item to its leaf folder — inline, não via
-            // adicionarItensAPasta(): aquela função abre sua PRÓPRIA
-            // transação (e registra undo por item), e já estamos dentro de
-            // uma transação aqui — daí o "cannot start a transaction within
-            // a transaction". Uma reconstrução em massa como esta também
-            // não devia gerar centenas de entradas de undo individuais; é
-            // uma ação atômica só.
-            if (!currentParentId.empty()) {
-                std::string agoraItem = matriz::model::agoraIso8601();
-                projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ?",
-                                          {matriz::db::Value::of(p.itemId)});
-                projeto_->registro().run(
-                    "INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(p.itemId),
-                     matriz::db::Value::of(currentParentId), matriz::db::Value::of(agoraItem)});
-            }
-        }
-
-        projeto_->registro().run("COMMIT", {});
-    } catch (...) {
-        projeto_->registro().run("ROLLBACK", {});
-        throw;
-    }
 }
 
 void ProjetoAberto::removerItemDaPasta(const std::string& itemId, const std::string& pastaId) {

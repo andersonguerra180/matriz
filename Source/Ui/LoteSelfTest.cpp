@@ -1611,6 +1611,154 @@ int rodarLoteSelfTest() {
     }
     raizBusca.deleteRecursively();
 
+    // ------------------------------- Fase 1: Folder Maps múltiplos
+    std::cout << "\n-- Phase 1: multiple independent folder maps per project --\n";
+    juce::File raizMapas = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_folder_maps_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Mapas";
+        params.prefixoNomenclatura = "MAP";
+        auto projeto = matriz::model::Project::criar(raizMapas.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+
+        const std::string itemA = inserirItem(reg, projetoId, "MAP-1", false);
+        const std::string itemB = inserirItem(reg, projetoId, "MAP-2", false);
+
+        std::string mapaPadrao = pa.mapaAtivoPadrao();
+        checar(!mapaPadrao.empty(), "a fresh project already has a default user folder map");
+
+        auto contemDireto = [](const ProjetoAberto::NoArvore& raiz, const std::string& pastaId, const std::string& itemId) {
+            for (auto& f : raiz.filhos) if (f.id == pastaId) return f.itemIdsDiretos.count(itemId) > 0;
+            return false;
+        };
+        auto achaPastaPorNome = [](const ProjetoAberto::NoArvore& raiz, const juce::String& nome) {
+            for (auto& f : raiz.filhos) if (f.nome == nome) return true;
+            return false;
+        };
+        auto checarSincroniaMapaId = [&](const juce::String& contexto) {
+            auto st = reg.prepare(
+                "SELECT COUNT(*) FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+                "WHERE aip.mapa_id IS NOT ap.mapa_id");
+            st.step();
+            checar(st.columnInt(0) == 0, "acervo_item_pasta.mapa_id matches its folder's mapa_id — " + contexto);
+        };
+
+        // --- isolamento entre mapas ---
+        std::string mapaB = pa.criarFolderMap("Mapa B", std::nullopt);
+        checar(!mapaB.empty() && mapaB != mapaPadrao, "criarFolderMap creates an independent second map");
+
+        std::string pastaA1 = pa.criarPastaAcervo("Pasta A1", std::nullopt, mapaPadrao);
+        std::string pastaB1 = pa.criarPastaAcervo("Pasta B1", std::nullopt, mapaB);
+        pa.adicionarItensAPasta({itemA}, pastaA1);
+        pa.adicionarItensAPasta({itemA}, pastaB1);
+
+        checar(contemDireto(pa.arvoreAcervo(mapaPadrao), pastaA1, itemA) &&
+                   contemDireto(pa.arvoreAcervo(mapaB), pastaB1, itemA),
+               "the same item sits in different folders on independent maps at the same time");
+        checar(pa.itensSemPasta(mapaPadrao).count(itemB) == 1 && pa.itensSemPasta(mapaB).count(itemB) == 1,
+               "an item unassigned in both maps counts as SEM PASTA in both");
+        checar(pa.contarItensSemPasta(mapaPadrao) == 1 && pa.contarItensSemPasta(mapaB) == 1,
+               "SEM PASTA count matches per map");
+
+        std::string pastaA2 = pa.criarPastaAcervo("Pasta A2", std::nullopt, mapaPadrao);
+        checar(pa.moverPastaAcervo(pastaA1, pastaA2), "moving a folder within its own map works");
+        checar(contemDireto(pa.arvoreAcervo(mapaB), pastaB1, itemA),
+               "moving a folder in one map leaves the other map's placement untouched");
+
+        // Arrastar pra SEM PASTA (removerItensDoBackup escopado por mapa) só
+        // afeta o mapa dado.
+        pa.removerItensDoBackup({itemA}, mapaPadrao);
+        checar(pa.itensSemPasta(mapaPadrao).count(itemA) == 1 && contemDireto(pa.arvoreAcervo(mapaB), pastaB1, itemA),
+               "removing an item to SEM PASTA in one map leaves it untouched in the other map");
+
+        // --- ORIGINAL somente leitura ---
+        checar(pa.criarPastaAcervo("X", std::nullopt, ProjetoAberto::kMapaOriginal).empty(),
+               "ORIGINAL rejects creating a folder");
+        checar(pa.itensSemPasta(ProjetoAberto::kMapaOriginal).empty() &&
+                   pa.contarItensSemPasta(ProjetoAberto::kMapaOriginal) == 0,
+               "ORIGINAL never has a SEM PASTA count");
+        auto listaMapas = pa.listarFolderMaps();
+        checar(!listaMapas.empty() && listaMapas.front().id == ProjetoAberto::kMapaOriginal && listaMapas.front().original,
+               "listarFolderMaps() always puts ORIGINAL first");
+        checar(!pa.apagarFolderMap(ProjetoAberto::kMapaOriginal), "ORIGINAL can't be deleted");
+        checar(!pa.renomearFolderMap(ProjetoAberto::kMapaOriginal, "Novo nome"), "ORIGINAL can't be renamed");
+
+        checarSincroniaMapaId("after create/move/remove-to-SEM-PASTA");
+
+        // --- duplicar mapa (== mecanismo por trás de "Import from file") ---
+        int totalMapasAntes = static_cast<int>(pa.listarFolderMaps().size());
+        std::string mapaDup = pa.criarFolderMap("Mapa A copy", mapaPadrao);
+        checar(!mapaDup.empty() && mapaDup != mapaPadrao,
+               "duplicating/importing a map always creates a brand-new map, never overwrites the source");
+        checar(static_cast<int>(pa.listarFolderMaps().size()) == totalMapasAntes + 1,
+               "the map count grows by exactly one after duplicate/import");
+        checar(achaPastaPorNome(pa.arvoreAcervo(mapaDup), "Pasta A2"), "the duplicate contains the source map's folders");
+
+        pa.renomearPastaAcervo(pastaA2, "Pasta A2 renomeada");
+        checar(achaPastaPorNome(pa.arvoreAcervo(mapaDup), "Pasta A2") &&
+                   !achaPastaPorNome(pa.arvoreAcervo(mapaPadrao), "Pasta A2"),
+               "renaming a folder in the source map never changes the duplicate (fully independent copies)");
+
+        checarSincroniaMapaId("after duplicate/import into a new map");
+
+        checar(pa.apagarFolderMap(mapaDup), "a user map can be deleted");
+        checarSincroniaMapaId("after deleting a map");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder maps selftest: ") + e.what());
+    }
+    raizMapas.deleteRecursively();
+
+    // ------------------------------- Fase 1: migração de projeto anterior à Fase 1
+    std::cout << "\n-- Phase 1: migrating a pre-multi-map project preserves the old single map --\n";
+    juce::File raizMig = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                             .getChildFile("matriz_folder_maps_migracao_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Migracao";
+        params.prefixoNomenclatura = "MIG";
+        auto projeto = matriz::model::Project::criar(raizMig.getChildFile("MAIN"), params);
+        juce::File pastaProjeto = projeto->pasta();
+        const std::string projetoId = projeto->projetoId();
+        std::string pastaVelhaId, itemVelhoId;
+        {
+            ProjetoAberto pa(std::move(projeto));
+            auto& reg = pa.projeto().registro();
+            using matriz::db::Value;
+            itemVelhoId = inserirItem(reg, projetoId, "MIG-1", false);
+            pastaVelhaId = pa.criarPastaAcervo("Pasta Antiga", std::nullopt, pa.mapaAtivoPadrao());
+            pa.adicionarItensAPasta({itemVelhoId}, pastaVelhaId);
+
+            // Simula o estado de ANTES da Fase 1: apaga o folder_map e zera
+            // mapa_id, como um banco criado por uma versão anterior do app.
+            reg.run("DELETE FROM folder_map WHERE projeto_id = ?", {Value::of(projetoId)});
+            reg.run("UPDATE acervo_pasta SET mapa_id = NULL WHERE projeto_id = ?", {Value::of(projetoId)});
+            reg.run("UPDATE acervo_item_pasta SET mapa_id = NULL WHERE pasta_id = ?", {Value::of(pastaVelhaId)});
+        } // fecha o ProjetoAberto/Project antes de reabrir
+
+        auto reaberto = matriz::model::Project::abrir(pastaProjeto);
+        checar(reaberto != nullptr, "the project reopens after simulating a pre-Phase-1 database");
+        if (reaberto) {
+            ProjetoAberto pa2(std::move(reaberto));
+            bool achouFolderMap1 = false;
+            for (auto& m : pa2.listarFolderMaps())
+                if (!m.original && m.nome == juce::String("Folder Map 1")) achouFolderMap1 = true;
+            checar(achouFolderMap1, "migration recreates the single legacy map as \"Folder Map 1\"");
+
+            auto arvore = pa2.arvoreAcervo(pa2.mapaAtivoPadrao());
+            bool achouPastaAntiga = false;
+            for (auto& f : arvore.filhos)
+                if (f.id == pastaVelhaId && f.itemIdsDiretos.count(itemVelhoId)) achouPastaAntiga = true;
+            checar(achouPastaAntiga, "migration keeps the old folder and its item placement intact");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder maps migration selftest: ") + e.what());
+    }
+    raizMig.deleteRecursively();
+
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
 }

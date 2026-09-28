@@ -301,41 +301,6 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnApagarPasta_);
 
-    btnImportarEstrutura_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_importar"));
-    btnImportarEstrutura_->onClick = [this] {
-        // Reimportar apaga toda a organização — com MAIN, bloqueado.
-        if (projeto_.mainExiste()) {
-            ProjetoAberto::avisarMapaTravado(i18n::t("mapa_main.importar_bloqueado"));
-            return;
-        }
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions()
-                .withIconType(juce::MessageBoxIconType::WarningIcon)
-                .withTitle(i18n::t("arvore_backup.btn_importar"))
-                .withMessage(i18n::t("arvore_backup.importar_msg"))
-                .withButton(i18n::t("arvore_backup.importar_btn"))
-                .withButton(i18n::t("dialogo.cancelar")),
-            [this](int res) {
-                if (res == 1) {
-                    try {
-                        salvarPresetAutoAntes();
-                        projeto_.resetarEImportarEstruturaOrigem();
-                    } catch (const std::exception& e) {
-                        juce::AlertWindow::showAsync(
-                            juce::MessageBoxOptions()
-                                .withIconType(juce::MessageBoxIconType::WarningIcon)
-                                .withTitle(i18n::t("dialogo.erro"))
-                                .withMessage(juce::String(i18n::t("arvore_backup.falha_importar")) + e.what())
-                                .withButton(i18n::t("dialogo.ok")),
-                            nullptr);
-                        return;
-                    }
-                    recarregar();
-                }
-            });
-    };
-    addAndMakeVisible(*btnImportarEstrutura_);
-
     btnAutoArranjar_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_auto_arranjar"));
     btnAutoArranjar_->onClick = [this] { autoArranjar(); };
     addAndMakeVisible(*btnAutoArranjar_);
@@ -352,9 +317,20 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnZoomFit_->onClick = [this] { zoom_ = 1.0f; panOffset_ = {0.0f, 0.0f}; repaint(); };
     addAndMakeVisible(*btnZoomFit_);
 
-    btnPresets_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_presets"));
-    btnPresets_->onClick = [this] { mostrarMenuPresets(); };
-    addAndMakeVisible(*btnPresets_);
+    comboMapas_ = std::make_unique<juce::ComboBox>();
+    comboMapas_->onChange = [this] {
+        int idx = comboMapas_->getSelectedItemIndex();
+        if (idx >= 0 && idx < static_cast<int>(mapasCache_.size())) selecionarMapaPorId(mapasCache_[static_cast<size_t>(idx)].id);
+    };
+    addAndMakeVisible(*comboMapas_);
+
+    btnMenuMapa_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xE2\x8B\xAF")); // "⋯"
+    btnMenuMapa_->onClick = [this] { mostrarMenuMapa(); };
+    addAndMakeVisible(*btnMenuMapa_);
+
+    btnNovoMapa_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_novo_mapa"));
+    btnNovoMapa_->onClick = [this] { mostrarDialogoNovoMapa(); };
+    addAndMakeVisible(*btnNovoMapa_);
 
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sliderTamanho_->setRange(50.0, 200.0, 1.0);
@@ -376,6 +352,11 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*detailViewport_);
 
     setWantsKeyboardFocus(true);
+
+    migrarPresetsAntigosSeNecessario();
+    mapaAtivoId_ = projeto_.mapaAtivoPadrao();
+    recarregarComboMapas();
+    atualizarEstadoBotoesParaMapa();
     recarregar();
 
     EventBus::obterInstancia().registrarListener(this);
@@ -410,7 +391,7 @@ void ArvoreBackupComponent::recarregar() {
 
 void ArvoreBackupComponent::recalcularNodes() {
     nodes_.clear();
-    auto arvore = projeto_.arvoreAcervo();
+    auto arvore = projeto_.arvoreAcervo(mapaAtivoId_);
 
     std::function<void(const ProjetoAberto::NoArvore&, int, int)> adicionarNo =
         [&](const ProjetoAberto::NoArvore& no, int nivel, int index) {
@@ -584,7 +565,7 @@ std::vector<juce::String> ArvoreBackupComponent::obterListaPastas() const {
 }
 
 void ArvoreBackupComponent::moverItemParaPasta(const std::string& itemId, const std::string& novaPasta) {
-    if (itemId.empty()) return;
+    if (itemId.empty() || mapaAtivoEhOriginal()) return;
     for (const auto& n : nodes_) {
         if (n.nome.toStdString() == novaPasta || n.id == novaPasta) {
             projeto_.adicionarItensAPasta({itemId}, n.id);
@@ -595,6 +576,7 @@ void ArvoreBackupComponent::moverItemParaPasta(const std::string& itemId, const 
 }
 
 void ArvoreBackupComponent::selecionarERenomearPasta(const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return;
     recarregar();
     
     bool encontrou = false;
@@ -628,8 +610,9 @@ void ArvoreBackupComponent::selecionarERenomearPasta(const std::string& pastaId)
 }
 
 void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
+    if (mapaAtivoEhOriginal()) return;
     auto pos = posicaoLivrePertoDoCentro(190, 84);
-    std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId);
+    std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
     projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
     destaqueNovaPastaId_ = novoId;
@@ -639,21 +622,25 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
 }
 
 void ArvoreBackupComponent::renomearPastaSelecionada(const std::string& pastaId, const std::string& novoNome) {
+    if (mapaAtivoEhOriginal()) return;
     projeto_.renomearPastaAcervo(pastaId, novoNome);
     recarregar();
 }
 
 void ArvoreBackupComponent::apagarPastaSelecionada(const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return;
     projeto_.apagarPastaAcervo(pastaId);
     recarregar();
 }
 
 void ArvoreBackupComponent::conectarPastas(const std::string& pastaFilhoId, const std::optional<std::string>& novaPastaPaiId) {
+    if (mapaAtivoEhOriginal()) return;
     projeto_.moverPastaAcervo(pastaFilhoId, novaPastaPaiId);
     recarregar();
 }
 
 void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return;
     for (const auto& n : nodes_) {
         if (n.id == pastaId) {
             projeto_.alternarAtivoPastaAcervo(pastaId, !n.ativo);
@@ -912,6 +899,78 @@ juce::Rectangle<int> ArvoreBackupComponent::minimapBounds() const {
     return {getWidth() - kMinimapW - kMargin, getHeight() - kMinimapH - kMargin, kMinimapW, kMinimapH};
 }
 
+// Fase 1 — SEM PASTA (NO FOLDER): canto inferior-esquerdo, espaço de TELA
+// (fixo, não acompanha pan/zoom do canvas — S4/13: "visualmente separado
+// da árvore e sem ligação com as outras pastas"). Nunca aparece no
+// ORIGINAL: lá não existe conceito de "sem pasta".
+juce::Rectangle<int> ArvoreBackupComponent::boundsSemPasta() const {
+    constexpr int kW = 172, kH = 46, kMargin = 8;
+    return {kMargin, getHeight() - kH - kMargin, kW, kH};
+}
+
+void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
+    if (mapaAtivoEhOriginal()) return;
+    auto b = boundsSemPasta().toFloat();
+    const auto& tk = tema();
+
+    g.setColour(semPastaHover_ ? tk.acento.withAlpha(0.22f) : tk.painel);
+    g.fillRoundedRectangle(b, 8.0f);
+    g.setColour(semPastaHover_ ? tk.acento : tk.borda);
+    g.drawRoundedRectangle(b.reduced(0.5f), 8.0f, semPastaHover_ ? 2.0f : 1.2f);
+
+    int n = projeto_.contarItensSemPasta(mapaAtivoId_);
+    auto content = boundsSemPasta().reduced(10, 6);
+    g.setColour(tk.textoPrimario);
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.drawText(i18n::t("arvore_backup.sem_pasta_titulo"), content.removeFromTop(18), juce::Justification::centredLeft, true);
+    g.setColour(tk.textoSecundario);
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), content, juce::Justification::centredLeft, true);
+}
+
+// Fase 1 — arrastar itens (MosaicoComponent::startDragging, descrição =
+// array de item ids, mesmo formato que ArvoreComponent já aceita) pra
+// dentro de SEM PASTA remove-os de todas as pastas do mapa ativo. Não
+// interessa nenhum outro alvo de drop no canvas — reposicionar/reconectar
+// pasta continua só em mouseDown/mouseDrag/mouseUp, sem relação com
+// DragAndDropTarget.
+bool ArvoreBackupComponent::isInterestedInDragSource(const SourceDetails& details) {
+    return !mapaAtivoEhOriginal() && details.description.isArray();
+}
+
+void ArvoreBackupComponent::itemDragEnter(const SourceDetails& details) { itemDragMove(details); }
+
+void ArvoreBackupComponent::itemDragMove(const SourceDetails& details) {
+    bool sobre = boundsSemPasta().contains(details.localPosition);
+    if (sobre != semPastaHover_) {
+        semPastaHover_ = sobre;
+        repaint();
+    }
+}
+
+void ArvoreBackupComponent::itemDragExit(const SourceDetails&) {
+    if (semPastaHover_) {
+        semPastaHover_ = false;
+        repaint();
+    }
+}
+
+void ArvoreBackupComponent::itemDropped(const SourceDetails& details) {
+    bool sobre = semPastaHover_;
+    semPastaHover_ = false;
+    repaint();
+    if (!sobre || mapaAtivoEhOriginal()) return;
+
+    auto* arr = details.description.getArray();
+    if (!arr) return;
+    std::vector<std::string> itemIds;
+    for (auto& v : *arr) itemIds.push_back(v.toString().toStdString());
+    if (itemIds.empty()) return;
+
+    projeto_.removerItensDoBackup(itemIds, mapaAtivoId_);
+    recarregar();
+}
+
 void ArvoreBackupComponent::iniciarEdicaoInline(int nodeIndex) {
     finalizarEdicaoInline();
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) return;
@@ -1028,6 +1087,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
         g.drawText(i18n::t("arvore_backup.vazio"),
                    getLocalBounds(), juce::Justification::centred, true);
+        desenharSemPasta(g);
         desenharBarraDeAbas(g);
         return;
     }
@@ -1159,13 +1219,18 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     // Minimap (drawn in screen space)
     desenharMinimap(g);
 
+    desenharSemPasta(g);
     desenharBarraDeAbas(g);
 }
 
 void ArvoreBackupComponent::resized() {
     auto area = getLocalBounds().removeFromTop(44).reduced(16, 6);
 
-    if (btnImportarEstrutura_) btnImportarEstrutura_->setBounds(area.removeFromLeft(280));
+    if (comboMapas_) comboMapas_->setBounds(area.removeFromLeft(190));
+    area.removeFromLeft(4);
+    if (btnMenuMapa_) btnMenuMapa_->setBounds(area.removeFromLeft(28));
+    area.removeFromLeft(10);
+    if (btnNovoMapa_) btnNovoMapa_->setBounds(area.removeFromLeft(150));
     area.removeFromLeft(16);
 
     if (btnCriarPasta_) btnCriarPasta_->setBounds(area.removeFromLeft(110));
@@ -1181,8 +1246,6 @@ void ArvoreBackupComponent::resized() {
     if (btnZoomFit_) btnZoomFit_->setBounds(area.removeFromLeft(36));
     area.removeFromLeft(2);
     if (btnZoomIn_) btnZoomIn_->setBounds(area.removeFromLeft(30));
-    area.removeFromLeft(16);
-    if (btnPresets_) btnPresets_->setBounds(area.removeFromLeft(100));
     area.removeFromLeft(16);
     if (sliderTamanho_) sliderTamanho_->setBounds(area.removeFromLeft(180));
 
@@ -1226,16 +1289,25 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
+    // SEM PASTA (Fase 1) — painel fixo, nunca aparece no ORIGINAL.
+    if (!mapaAtivoEhOriginal() && boundsSemPasta().contains(e.getPosition())) {
+        if (aoMostrarConteudoNaGrade) aoMostrarConteudoNaGrade(projeto_.itensSemPasta(mapaAtivoId_));
+        return;
+    }
+
     auto canvasClick = screenToCanvas(e.getPosition());
 
     // Check Output Socket Handles for dragging connections (in canvas space)
-    for (size_t i = 0; i < nodes_.size(); ++i) {
-        juce::Point<float> outPort(static_cast<float>(nodes_[i].bounds.getRight()), static_cast<float>(nodes_[i].bounds.getCentreY()));
-        if (outPort.getDistanceSquaredFrom(canvasClick) <= 225.0f / (zoom_ * zoom_) + 225.0f) {
-            socketDragParentId_ = nodes_[i].id;
-            socketDragPos_ = canvasClick;
-            repaint();
-            return;
+    // — ORIGINAL é somente leitura, nunca aceita reconectar pastas (S4/13).
+    if (!mapaAtivoEhOriginal()) {
+        for (size_t i = 0; i < nodes_.size(); ++i) {
+            juce::Point<float> outPort(static_cast<float>(nodes_[i].bounds.getRight()), static_cast<float>(nodes_[i].bounds.getCentreY()));
+            if (outPort.getDistanceSquaredFrom(canvasClick) <= 225.0f / (zoom_ * zoom_) + 225.0f) {
+                socketDragParentId_ = nodes_[i].id;
+                socketDragPos_ = canvasClick;
+                repaint();
+                return;
+            }
         }
     }
 
@@ -1248,7 +1320,9 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
 
     if (hitNode) {
         auto& hitNodeRef = nodes_[static_cast<size_t>(hitIndex)];
-        nodeDragIndice_ = hitIndex;
+        // ORIGINAL: seleção/"Show in Grid" continuam livres, só a posição
+        // não é arrastável (nunca persistiria mesmo, ver kMapaOriginal).
+        nodeDragIndice_ = mapaAtivoEhOriginal() ? -1 : hitIndex;
         arrastoOffset_ = e.getPosition() - canvasToScreen(hitNodeRef.bounds.getPosition().toFloat());
 
         // Um clique dentro de uma seleção múltipla (feita via marquee, item 7)
@@ -1648,10 +1722,9 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     if (btnCriarPasta_) btnCriarPasta_->setButtonText(i18n::t("arvore_backup.btn_criar_pasta"));
     if (btnRenomearPasta_) btnRenomearPasta_->setButtonText(i18n::t("arvore_backup.btn_renomear"));
     if (btnApagarPasta_) btnApagarPasta_->setButtonText(i18n::t("arvore_backup.btn_apagar"));
-    if (btnImportarEstrutura_) btnImportarEstrutura_->setButtonText(i18n::t("arvore_backup.btn_importar"));
     if (btnAutoArranjar_) btnAutoArranjar_->setButtonText(i18n::t("arvore_backup.btn_auto_arranjar"));
     if (btnZoomFit_) btnZoomFit_->setButtonText(i18n::t("arvore_backup.btn_fit"));
-    if (btnPresets_) btnPresets_->setButtonText(i18n::t("arvore_backup.btn_presets"));
+    if (btnNovoMapa_) btnNovoMapa_->setButtonText(i18n::t("arvore_backup.btn_novo_mapa"));
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
     repaint();
@@ -1773,22 +1846,19 @@ bool ArvoreBackupComponent::salvarEsquemaComoPreset(const juce::String& nomePres
     return true;
 }
 
-void ArvoreBackupComponent::salvarPresetAutoAntes() const {
-    juce::String erro; // melhor esforço — nunca bloqueia a ação principal por causa do backup automático
-    salvarEsquemaComoPreset("auto_antes_" + juce::Time::getCurrentTime().formatted("%Y%m%d_%H%M%S"), erro);
-}
-
-void ArvoreBackupComponent::aplicarEsquemaDeVar(const juce::var& dados, int& itensRelocados, int& itensPulados) {
+// Fase 1 — nunca substitui o mapa ativo: sempre cria um folder_map NOVO
+// (em branco) e recria pastas/itens do JSON dentro dele. Usado por Import
+// from file e pela migração de presets antigos.
+void ArvoreBackupComponent::importarEsquemaComoNovoMapa(const juce::String& nomeMapa, const juce::var& dados,
+                                                         int& itensRelocados, int& itensPulados) {
     itensRelocados = 0;
     itensPulados = 0;
     if (!dados.isObject()) return;
 
-    // 1. Apaga o esquema atual inteiro — cascade (FK ON DELETE CASCADE) cuida
-    // de subpastas e de acervo_item_pasta sozinho.
-    for (const auto& n : nodes_)
-        if (n.pastaPaiId.empty()) projeto_.apagarPastaAcervo(n.id);
+    std::string novoMapaId = projeto_.criarFolderMap(nomeMapa, std::nullopt);
+    if (novoMapaId.empty()) return;
 
-    // 2. Recria pastas do preset em ordem pai-antes-de-filho, remapeando o id
+    // Recria pastas do preset em ordem pai-antes-de-filho, remapeando o id
     // antigo (gravado no preset) pro novo id que criarPastaAcervo devolve.
     std::map<std::string, std::string> idAntigoParaNovo;
     auto pastasVar = dados["pastas"];
@@ -1810,7 +1880,7 @@ void ArvoreBackupComponent::aplicarEsquemaDeVar(const juce::var& dados, int& ite
 
                 juce::String nome = p["nome"].toString();
                 if (nome.isEmpty()) nome = i18n::t("arvore_backup.criar_pasta_padrao");
-                std::string novoId = projeto_.criarPastaAcervo(nome.toStdString(), paiNovo);
+                std::string novoId = projeto_.criarPastaAcervo(nome.toStdString(), paiNovo, novoMapaId);
                 idAntigoParaNovo[idAntigo] = novoId;
 
                 projeto_.atualizarPosicaoPastaAcervo(novoId, static_cast<int>(p["x"]), static_cast<int>(p["y"]));
@@ -1825,14 +1895,14 @@ void ArvoreBackupComponent::aplicarEsquemaDeVar(const juce::var& dados, int& ite
             std::string idAntigo = p["id"].toString().toStdString();
             juce::String nome = p["nome"].toString();
             if (nome.isEmpty()) nome = i18n::t("arvore_backup.criar_pasta_padrao");
-            std::string novoId = projeto_.criarPastaAcervo(nome.toStdString(), std::nullopt);
+            std::string novoId = projeto_.criarPastaAcervo(nome.toStdString(), std::nullopt, novoMapaId);
             idAntigoParaNovo[idAntigo] = novoId;
             projeto_.atualizarPosicaoPastaAcervo(novoId, static_cast<int>(p["x"]), static_cast<int>(p["y"]));
         }
     }
 
-    // 3. Recoloca os itens: por item_id quando é o mesmo projeto do preset,
-    // por codigoAcervo quando é de outro (item_id original não existe aqui).
+    // Recoloca os itens: por item_id quando é o mesmo projeto do preset, por
+    // codigoAcervo quando é de outro (item_id original não existe aqui).
     auto itensVar = dados["itens"];
     if (itensVar.isArray()) {
         for (auto& it : *itensVar.getArray()) {
@@ -1857,35 +1927,26 @@ void ArvoreBackupComponent::aplicarEsquemaDeVar(const juce::var& dados, int& ite
         }
     }
 
+    selecionarMapaPorId(novoMapaId);
+    recarregarComboMapas();
     recarregar();
 }
 
-void ArvoreBackupComponent::confirmarECarregarEsquema(const juce::String& nomeExibicao, const juce::var& dados) {
-    // Carregar preset troca o esquema inteiro (apaga as pastas atuais).
-    if (projeto_.mainExiste()) {
-        ProjetoAberto::avisarMapaTravado(i18n::t("mapa_main.importar_bloqueado"));
-        return;
-    }
+void ArvoreBackupComponent::confirmarImportarComoNovoMapa(const juce::String& nomeSugerido, const juce::var& dados) {
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions()
-            .withIconType(juce::MessageBoxIconType::WarningIcon)
-            .withTitle(i18n::t("arvore_backup.preset_carregar_titulo"))
-            .withMessage(i18n::t("arvore_backup.preset_carregar_confirmar_msg").replace("{n}", nomeExibicao))
-            .withButton(i18n::t("arvore_backup.preset_carregar_titulo"))
-            .withButton(i18n::t("comum.cancelar")),
-        [safeThis, dados, nomeExibicao](int res) {
-            if (res != 1 || !safeThis) return;
-            safeThis->salvarPresetAutoAntes();
+    pedirTextoBackup(i18n::t("arvore_backup.mapa_novo_titulo"), i18n::t("arvore_backup.preset_importar_nome_msg"),
+                     nomeSugerido,
+        [safeThis, dados](std::optional<juce::String> nomeMapa) {
+            if (!safeThis || !nomeMapa || nomeMapa->trim().isEmpty()) return;
             int relocados = 0, pulados = 0;
-            safeThis->aplicarEsquemaDeVar(dados, relocados, pulados);
+            safeThis->importarEsquemaComoNovoMapa(nomeMapa->trim(), dados, relocados, pulados);
             juce::String msg = pulados > 0
-                ? i18n::t("arvore_backup.preset_carregado").replace("{n}", nomeExibicao).replace("{s}", juce::String(pulados))
-                : i18n::t("arvore_backup.preset_carregado_ok").replace("{n}", nomeExibicao);
+                ? i18n::t("arvore_backup.preset_carregado").replace("{n}", *nomeMapa).replace("{s}", juce::String(pulados))
+                : i18n::t("arvore_backup.preset_carregado_ok").replace("{n}", *nomeMapa);
             juce::AlertWindow::showAsync(
                 juce::MessageBoxOptions()
                     .withIconType(juce::MessageBoxIconType::InfoIcon)
-                    .withTitle(i18n::t("arvore_backup.preset_carregar_titulo"))
+                    .withTitle(i18n::t("arvore_backup.preset_importar_titulo"))
                     .withMessage(msg)
                     .withButton(i18n::t("comum.ok")),
                 nullptr);
@@ -1936,60 +1997,176 @@ void ArvoreBackupComponent::importarPresetDeArquivo() {
                     nullptr);
                 return;
             }
-            safeThis->confirmarECarregarEsquema(arquivo.getFileNameWithoutExtension(), dados);
+            safeThis->confirmarImportarComoNovoMapa(arquivo.getFileNameWithoutExtension(), dados);
         });
 }
 
-void ArvoreBackupComponent::mostrarMenuPresets() {
+// ── Fase 1 — dropdown/menu de Folder Maps múltiplos ──────────────────
+
+void ArvoreBackupComponent::recarregarComboMapas() {
+    mapasCache_ = projeto_.listarFolderMaps();
+    comboMapas_->clear(juce::dontSendNotification);
+    int idSelecionar = -1;
+    for (size_t i = 0; i < mapasCache_.size(); ++i) {
+        int itemId = static_cast<int>(i) + 1; // juce::ComboBox: ids começam em 1
+        comboMapas_->addItem(mapasCache_[i].nome, itemId);
+        if (mapasCache_[i].id == mapaAtivoId_) idSelecionar = itemId;
+    }
+    if (idSelecionar < 0 && !mapasCache_.empty()) {
+        // Mapa ativo sumiu (apagado) — volta pro primeiro mapa do usuário.
+        size_t idx = mapasCache_.size() > 1 ? 1 : 0;
+        mapaAtivoId_ = mapasCache_[idx].id;
+        projeto_.definirMapaAtivo(mapaAtivoId_);
+        idSelecionar = static_cast<int>(idx) + 1;
+    }
+    comboMapas_->setSelectedId(idSelecionar, juce::dontSendNotification);
+}
+
+void ArvoreBackupComponent::selecionarMapaPorId(const std::string& mapaId) {
+    if (mapaId == mapaAtivoId_) return;
+    mapaAtivoId_ = mapaId;
+    projeto_.definirMapaAtivo(mapaId);
+    editingNodeId_.clear();
+    selectedFolderId_.clear();
+    atualizarEstadoBotoesParaMapa();
+    recarregar();
+}
+
+void ArvoreBackupComponent::atualizarEstadoBotoesParaMapa() {
+    bool original = mapaAtivoEhOriginal();
+    juce::String dica = original ? i18n::t("arvore_backup.original_somente_leitura") : juce::String();
+    if (btnCriarPasta_) { btnCriarPasta_->setEnabled(!original); btnCriarPasta_->setTooltip(dica); }
+    if (btnRenomearPasta_) { btnRenomearPasta_->setEnabled(!original); btnRenomearPasta_->setTooltip(dica); }
+    if (btnApagarPasta_) { btnApagarPasta_->setEnabled(!original); btnApagarPasta_->setTooltip(dica); }
+}
+
+void ArvoreBackupComponent::mostrarMenuMapa() {
+    bool original = mapaAtivoEhOriginal();
     juce::PopupMenu menu;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
 
-    menu.addItem(i18n::t("arvore_backup.preset_salvar"), [safeThis] {
+    juce::String nomeAtivo;
+    for (auto& m : mapasCache_) if (m.id == mapaAtivoId_) nomeAtivo = m.nome;
+
+    menu.addItem(i18n::t("arvore_backup.mapa_renomear"), !original, false, [safeThis] {
         if (!safeThis) return;
-        pedirTextoBackup(i18n::t("arvore_backup.preset_salvar_titulo"), i18n::t("arvore_backup.preset_salvar_msg"),
-                         i18n::t("arvore_backup.preset_salvar_padrao"),
-            [safeThis](std::optional<juce::String> nome) {
+        std::string mapaId = safeThis->mapaAtivoId_;
+        juce::String nomeAtual;
+        for (auto& m : safeThis->mapasCache_) if (m.id == mapaId) nomeAtual = m.nome;
+        pedirTextoBackup(i18n::t("arvore_backup.mapa_renomear_titulo"), i18n::t("arvore_backup.mapa_renomear_msg"),
+                         nomeAtual,
+            [safeThis, mapaId](std::optional<juce::String> nome) {
                 if (!safeThis || !nome || nome->trim().isEmpty()) return;
-                juce::String erro;
-                bool ok = safeThis->salvarEsquemaComoPreset(nome->trim(), erro);
-                juce::AlertWindow::showAsync(
-                    juce::MessageBoxOptions()
-                        .withIconType(ok ? juce::MessageBoxIconType::InfoIcon : juce::MessageBoxIconType::WarningIcon)
-                        .withTitle(i18n::t("arvore_backup.preset_salvar_titulo"))
-                        .withMessage(ok ? i18n::t("arvore_backup.preset_salvo").replace("{n}", nome->trim())
-                                        : juce::String(i18n::t("arvore_backup.preset_falha_salvar")) + erro)
-                        .withButton(i18n::t("comum.ok")),
-                    nullptr);
+                safeThis->projeto_.renomearFolderMap(mapaId, nome->trim());
+                safeThis->recarregarComboMapas();
             });
     });
 
-    juce::PopupMenu submenuCarregar;
-    auto presets = listarPresetsSalvos();
-    for (auto& nome : presets) {
-        submenuCarregar.addItem(nome, [safeThis, nome] {
-            if (!safeThis) return;
-            auto arquivo = safeThis->pastaPresets().getChildFile(juce::File::createLegalFileName(nome) + ".json");
-            auto dados = juce::JSON::parse(arquivo);
-            if (!dados.isObject()) {
-                juce::AlertWindow::showAsync(
-                    juce::MessageBoxOptions()
-                        .withIconType(juce::MessageBoxIconType::WarningIcon)
-                        .withTitle(i18n::t("arvore_backup.btn_presets"))
-                        .withMessage(i18n::t("arvore_backup.preset_falha_ler_arquivo"))
-                        .withButton(i18n::t("comum.ok")),
-                    nullptr);
-                return;
-            }
-            safeThis->confirmarECarregarEsquema(nome, dados);
-        });
-    }
-    menu.addSubMenu(i18n::t("arvore_backup.preset_carregar"), submenuCarregar, !presets.empty());
+    menu.addItem(i18n::t("arvore_backup.mapa_duplicar"), [safeThis, nomeAtivo] {
+        if (!safeThis) return;
+        std::string origemId = safeThis->mapaAtivoId_;
+        pedirTextoBackup(i18n::t("arvore_backup.mapa_duplicar_titulo"), i18n::t("arvore_backup.mapa_duplicar_msg"),
+                         nomeAtivo + " " + i18n::t("arvore_backup.mapa_copia_sufixo"),
+            [safeThis, origemId](std::optional<juce::String> nome) {
+                if (!safeThis || !nome || nome->trim().isEmpty()) return;
+                std::string novoId = safeThis->projeto_.criarFolderMap(nome->trim(), origemId);
+                if (novoId.empty()) return;
+                safeThis->mapaAtivoId_ = novoId;
+                safeThis->projeto_.definirMapaAtivo(novoId);
+                safeThis->recarregarComboMapas();
+                safeThis->atualizarEstadoBotoesParaMapa();
+                safeThis->recarregar();
+            });
+    });
+
+    menu.addItem(i18n::t("arvore_backup.mapa_apagar"), !original, false, [safeThis] {
+        if (!safeThis) return;
+        int totalUsuario = 0;
+        for (auto& m : safeThis->mapasCache_) if (!m.original) ++totalUsuario;
+        if (totalUsuario <= 1) {
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::WarningIcon)
+                    .withTitle(i18n::t("arvore_backup.mapa_apagar_titulo"))
+                    .withMessage(i18n::t("arvore_backup.mapa_apagar_unico"))
+                    .withButton(i18n::t("comum.ok")),
+                nullptr);
+            return;
+        }
+        std::string mapaId = safeThis->mapaAtivoId_;
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::WarningIcon)
+                .withTitle(i18n::t("arvore_backup.mapa_apagar_titulo"))
+                .withMessage(i18n::t("arvore_backup.mapa_apagar_confirmar"))
+                .withButton(i18n::t("arvore_backup.mapa_apagar_titulo"))
+                .withButton(i18n::t("comum.cancelar")),
+            [safeThis, mapaId](int res) {
+                if (res != 1 || !safeThis) return;
+                if (!safeThis->projeto_.apagarFolderMap(mapaId)) return;
+                safeThis->mapaAtivoId_ = safeThis->projeto_.mapaAtivoPadrao();
+                safeThis->projeto_.definirMapaAtivo(safeThis->mapaAtivoId_);
+                safeThis->recarregarComboMapas();
+                safeThis->atualizarEstadoBotoesParaMapa();
+                safeThis->recarregar();
+            });
+    });
 
     menu.addSeparator();
     menu.addItem(i18n::t("arvore_backup.preset_exportar"), [safeThis] { if (safeThis) safeThis->exportarPresetParaArquivo(); });
     menu.addItem(i18n::t("arvore_backup.preset_importar"), [safeThis] { if (safeThis) safeThis->importarPresetDeArquivo(); });
 
     menu.showMenuAsync(juce::PopupMenu::Options());
+}
+
+void ArvoreBackupComponent::mostrarDialogoNovoMapa() {
+    juce::PopupMenu menu;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+
+    menu.addItem(i18n::t("arvore_backup.mapa_novo_em_branco"), [safeThis] {
+        if (safeThis) safeThis->pedirNomeECriarMapa(std::nullopt);
+    });
+    menu.addItem(i18n::t("arvore_backup.mapa_novo_copia_original"), [safeThis] {
+        if (safeThis) safeThis->pedirNomeECriarMapa(ProjetoAberto::kMapaOriginal);
+    });
+    menu.addItem(i18n::t("arvore_backup.mapa_novo_copia_atual"), !mapaAtivoEhOriginal(), false, [safeThis] {
+        if (safeThis) safeThis->pedirNomeECriarMapa(safeThis->mapaAtivoId_);
+    });
+
+    menu.showMenuAsync(juce::PopupMenu::Options());
+}
+
+void ArvoreBackupComponent::pedirNomeECriarMapa(std::optional<std::string> origemMapaId) {
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    pedirTextoBackup(i18n::t("arvore_backup.mapa_novo_titulo"), i18n::t("arvore_backup.mapa_novo_msg"),
+                     i18n::t("arvore_backup.mapa_novo_padrao"),
+        [safeThis, origemMapaId](std::optional<juce::String> nome) {
+            if (!safeThis || !nome || nome->trim().isEmpty()) return;
+            std::string novoId = safeThis->projeto_.criarFolderMap(nome->trim(), origemMapaId);
+            if (novoId.empty()) return;
+            safeThis->mapaAtivoId_ = novoId;
+            safeThis->projeto_.definirMapaAtivo(novoId);
+            safeThis->recarregarComboMapas();
+            safeThis->atualizarEstadoBotoesParaMapa();
+            safeThis->recarregar();
+        });
+}
+
+// Presets antigos (S4/13, arquivos presets_pastas/*.json) viram mapas do
+// usuário uma vez só, na primeira abertura desta tela após o upgrade —
+// cada arquivo migrado ganha o sufixo .importado (não é apagado) pra não
+// ser reprocessado no próximo load. Melhor esforço: uma falha num arquivo
+// não impede os demais nem trava a UI.
+void ArvoreBackupComponent::migrarPresetsAntigosSeNecessario() {
+    for (const auto& nome : listarPresetsSalvos()) {
+        auto arquivo = pastaPresets().getChildFile(juce::File::createLegalFileName(nome) + ".json");
+        auto dados = juce::JSON::parse(arquivo);
+        if (dados.isObject()) {
+            int relocados = 0, pulados = 0;
+            importarEsquemaComoNovoMapa(nome, dados, relocados, pulados);
+        }
+        arquivo.moveFileTo(arquivo.getSiblingFile(arquivo.getFileName() + ".importado"));
+    }
 }
 
 } // namespace matriz::ui

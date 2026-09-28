@@ -621,6 +621,41 @@ void migrarBuscaFtsIndexada(matriz::db::Database& registro) {
     }
 }
 
+// Fase 1 (Folder Maps múltiplos): até aqui só existia UM mapa implícito por
+// projeto (acervo_pasta.projeto_id). Roda depois que a tabela folder_map já
+// existe (execScript acima) e as colunas mapa_id já foram acrescentadas.
+// Idempotente: sai cedo se o projeto já tem algum folder_map do usuário.
+// O mapa ORIGINAL nunca ganha linha aqui — é computado ao vivo a partir de
+// arquivo.caminho_absoluto_origem (ver ProjetoAberto::kMapaOriginal).
+void migrarFolderMapUnico(matriz::db::Database& registro) {
+    std::string projetoId;
+    {
+        auto stmt = registro.prepare("SELECT id FROM projeto LIMIT 1");
+        if (!stmt.step()) return; // banco ainda sem linha de projeto
+        projetoId = stmt.columnText(0);
+    }
+
+    {
+        auto stmt = registro.prepare("SELECT COUNT(*) FROM folder_map WHERE projeto_id = ?");
+        stmt.bind(1, db::Value::of(projetoId));
+        stmt.step();
+        if (stmt.columnInt(0) > 0) return; // já migrado
+    }
+
+    std::string mapaId = novoUuid();
+    std::string agora = agoraIso8601();
+    registro.run(
+        "INSERT INTO folder_map (id, projeto_id, nome, ordem, criado_em, atualizado_em) VALUES (?, ?, ?, 0, ?, ?)",
+        {db::Value::of(mapaId), db::Value::of(projetoId), db::Value::of(std::string("Folder Map 1")),
+         db::Value::of(agora), db::Value::of(agora)});
+    registro.run("UPDATE acervo_pasta SET mapa_id = ? WHERE projeto_id = ? AND mapa_id IS NULL",
+                  {db::Value::of(mapaId), db::Value::of(projetoId)});
+    registro.run(
+        "UPDATE acervo_item_pasta SET mapa_id = ? WHERE mapa_id IS NULL AND pasta_id IN "
+        "(SELECT id FROM acervo_pasta WHERE projeto_id = ?)",
+        {db::Value::of(mapaId), db::Value::of(projetoId)});
+}
+
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     migrarItemParaCodigoOpcional(registro);
     migrarAiScanParaIndice(registro, indice);
@@ -678,6 +713,15 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // hex (ex.: "ffcc3333") — NULL/vazio = sem cor customizada, mantém a
     // aparência padrão do bloco.
     garantirColuna(registro, "acervo_pasta", "cor_customizada", "TEXT");
+    // Folder Maps múltiplos (Fase 1): qual folder_map cada pasta pertence.
+    // NULL até a migração abaixo rodar (bancos antigos têm um único mapa
+    // implícito hoje). acervo_item_pasta.mapa_id é redundante com o da
+    // pasta associada — só existe pra contar "SEM PASTA" por mapa sem JOIN
+    // no caminho quente da UI; ProjetoAberto::inserirItemPastaInterno() é o
+    // único lugar que escreve nela, sempre em sincronia com a pasta.
+    garantirColuna(registro, "acervo_pasta", "mapa_id", "TEXT");
+    garantirColuna(registro, "acervo_item_pasta", "mapa_id", "TEXT");
+    migrarFolderMapUnico(registro);
 
     // Reconstrução leva única
     garantirColuna(registro, "marcador", "tipo_id", "TEXT REFERENCES tipo_marcador(id)");
@@ -1116,6 +1160,14 @@ std::unique_ptr<Project> Project::criar(const juce::File& pastaRaiz, const NovoP
             matriz::db::Value::of(agora),
             matriz::db::Value::of(pastaRaiz.getFullPathName().toStdString()),
         });
+
+    // aplicarSchemas() (linha acima) roda ANTES desta linha existir — a
+    // migração de folder maps (Fase 1) lê "SELECT id FROM projeto LIMIT 1"
+    // e não achava nada num projeto recém-criado, saindo sem criar o mapa
+    // "Folder Map 1". Chamar de novo agora, com a linha de projeto já
+    // gravada, é idempotente (garantirColuna/CREATE TABLE IF NOT EXISTS já
+    // rodaram) e resolve isso sem duplicar o resto da migração.
+    migrarFolderMapUnico(*registro);
 
     registro->run(
         "INSERT OR REPLACE INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "

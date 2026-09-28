@@ -425,14 +425,72 @@ public:
     };
 
     NoArvore arvoreOrigem(bool incluirTodos = false) const;
-    NoArvore arvoreAcervo() const;
+
+    // Folder Maps múltiplos (Fase 1). kMapaOriginal é o único valor
+    // especial: nunca é uma linha de folder_map, é computado ao vivo a
+    // partir de arquivo.caminho_absoluto_origem — o que "importar/
+    // atualizar estrutura da origem" fazia antes desta fase (esse botão
+    // foi removido: ORIGINAL cobre o mesmo caso sem nunca ficar
+    // desatualizado e sem apagar nada). Todo outro mapaId é um id real de
+    // folder_map, dono de um subconjunto de acervo_pasta/acervo_item_pasta
+    // totalmente independente dos demais mapas.
+    static const std::string kMapaOriginal;
+    struct FolderMapInfo {
+        std::string id; // kMapaOriginal para o ORIGINAL
+        juce::String nome;
+        bool original = false;
+    };
+    // ORIGINAL sempre primeiro, depois os mapas do usuário em ordem.
+    std::vector<FolderMapInfo> listarFolderMaps() const;
+    // origem: nullopt = em branco; kMapaOriginal = cópia do ORIGINAL (é um
+    // retrato do momento da cópia — não acompanha mudanças futuras da
+    // SOURCE, só o ORIGINAL é ao vivo); outro id = cópia desse mapa do
+    // usuário. "" em erro (nome vazio, origem inexistente).
+    std::string criarFolderMap(const juce::String& nome, const std::optional<std::string>& origemMapaId);
+    bool renomearFolderMap(const std::string& mapaId, const juce::String& novoNome);
+    // false se mapaId for o ORIGINAL, o mapa do MAIN (Fase 2) ou não existir.
+    bool apagarFolderMap(const std::string& mapaId);
+    // Primeiro mapa do usuário do projeto, em ordem — usado por todo
+    // consumidor que ainda não tem seletor de mapa na UI própria (ver as
+    // sobrecargas sem mapaId logo abaixo). "" só é possível num projeto sem
+    // nenhum folder_map, o que a migração da Fase 1 nunca deveria deixar
+    // acontecer. Se ArvoreBackupComponent já chamou definirMapaAtivo() com
+    // um mapa do usuário válido nesta sessão, devolve esse em vez do
+    // primeiro — assim SEND TO FOLDER (AcoesItem) e as outras telas que só
+    // conhecem "o mapa atual" seguem o dropdown da aba STRUCTURE sem
+    // precisar saber que mapas múltiplos existem. Não persiste: cada
+    // abertura do projeto volta a usar o primeiro mapa até alguém escolher
+    // de novo.
+    std::string mapaAtivoPadrao() const;
+    // "" ou kMapaOriginal = limpa a seleção (volta a usar o primeiro mapa
+    // do usuário). Chamado pelo dropdown de ArvoreBackupComponent.
+    void definirMapaAtivo(const std::string& mapaId) { mapaAtivoSelecionado_ = mapaId; }
+
+    NoArvore arvoreAcervo(const std::string& mapaId) const;
+    // Compat (pré Fase 1) — opera no mapaAtivoPadrao(). Só
+    // ArvoreBackupComponent, dono do seletor de mapa da UI, chama a versão
+    // com mapaId explícito; o resto do app (ArvoreComponent,
+    // CatalogWorkspaceComponent, AcoesItem, self-tests) continua chamando
+    // esta sem precisar saber que mapas múltiplos existem.
+    NoArvore arvoreAcervo() const { return arvoreAcervo(mapaAtivoPadrao()); }
     static NoArvore podarArvore(const NoArvore& raiz, const std::set<std::string>& idsPermitidos);
 
-    std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId);
+    // SEM PASTA (NO FOLDER): itens do projeto sem nenhuma pasta no mapa
+    // dado. Sempre vazio pro ORIGINAL (não existe "sem pasta" lá — S4/13).
+    // Contagem por agregação (COUNT), nunca varredura por item na UI.
+    std::set<std::string> itensSemPasta(const std::string& mapaId) const;
+    int contarItensSemPasta(const std::string& mapaId) const;
+
+    std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId,
+                                  const std::string& mapaId);
+    // Compat (pré Fase 1) — ver arvoreAcervo() sem mapaId acima.
+    std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
+        return criarPastaAcervo(nome, pastaPaiId, mapaAtivoPadrao());
+    }
     // MAPA depois que existe MAIN (etapa 5): criar pasta é livre; renomear,
     // mover ou apagar pasta que já tem arquivo no MAIN é bloqueado — estas
-    // devolvem false e avisam o operador. Trocar o esquema inteiro
-    // (IMPORTAR/ATUALIZAR ESTRUTURA, carregar preset) exige !mainExiste().
+    // devolvem false e avisam o operador. O ORIGINAL nunca aceita nenhuma
+    // destas (é computado, não tem pasta real pra editar); ver kMapaOriginal.
     bool renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome);
     bool apagarPastaAcervo(const std::string& pastaId);
 
@@ -455,8 +513,15 @@ public:
     std::vector<juce::String> historicoCoresPasta() const;
     void definirHistoricoCoresPasta(const std::vector<juce::String>& coresHex);
 
+    // MOVE: tira o item de toda pasta antiga NO MESMO MAPA da pasta de
+    // destino antes de pôr na nova — mapas diferentes nunca se afetam
+    // (Fase 1: "editar um mapa nunca afeta outro").
     void adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId);
-    std::string agruparItensEmNovaPasta(const std::vector<std::string>& itemIds);
+    std::string agruparItensEmNovaPasta(const std::vector<std::string>& itemIds, const std::string& mapaId);
+    // Compat (pré Fase 1) — ver arvoreAcervo() sem mapaId acima.
+    std::string agruparItensEmNovaPasta(const std::vector<std::string>& itemIds) {
+        return agruparItensEmNovaPasta(itemIds, mapaAtivoPadrao());
+    }
 
     // S4/13 — ao contrário de adicionarItensAPasta (que MOVE: tira o item de
     // toda pasta antiga antes de pôr na nova), esta só ACRESCENTA uma
@@ -483,10 +548,14 @@ public:
     // manterEstrutura = false → todos os itens da subárvore (recursivo) vão
     //                           direto pra `pastaPaiId`, sem criar subpasta.
     //
-    // pastaPaiId vazio = raiz da BACKUP. Devolve quantos itens foram
+    // pastaPaiId vazio = raiz do mapa `mapaId`. Devolve quantos itens foram
     // vinculados (contando um item uma vez por pasta em que entrou).
-    int replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId, bool manterEstrutura);
-    void resetarEImportarEstruturaOrigem();
+    int replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId, bool manterEstrutura,
+                                   const std::string& mapaId);
+    // Compat (pré Fase 1) — ver arvoreAcervo() sem mapaId acima.
+    int replicarSubarvoreNoAcervo(const NoArvore& origem, const std::string& pastaPaiId, bool manterEstrutura) {
+        return replicarSubarvoreNoAcervo(origem, pastaPaiId, manterEstrutura, mapaAtivoPadrao());
+    }
     void removerItemDaPasta(const std::string& itemId, const std::string& pastaId);
 
     // --- Ações sobre item/seleção (menu de contexto e painel direito) ---
@@ -495,9 +564,14 @@ public:
     // cópia dentro do projeto: "remover" aqui é sempre sobre o registro e o
     // plano de organização. A interface diz isso explicitamente ao operador.
 
-    // Tira os itens de TODAS as pastas da BACKUP — eles continuam no
-    // projeto, só voltam a ser "ainda sem pasta".
-    void removerItensDoBackup(const std::vector<std::string>& itemIds);
+    // Tira os itens de TODAS as pastas do mapa `mapaId` — eles continuam no
+    // projeto (e em qualquer outro mapa), só voltam a ser "sem pasta" NESTE
+    // mapa.
+    void removerItensDoBackup(const std::vector<std::string>& itemIds, const std::string& mapaId);
+    // Compat (pré Fase 1) — ver arvoreAcervo() sem mapaId acima.
+    void removerItensDoBackup(const std::vector<std::string>& itemIds) {
+        removerItensDoBackup(itemIds, mapaAtivoPadrao());
+    }
 
     // Remove os itens do projeto (cascateia pra ficha, arquivo, pastas).
     // Some da grade; o arquivo de origem no disco fica intacto, e a cópia
@@ -774,6 +848,19 @@ public:
     std::recursive_mutex& writeMutex() { return projeto_->writeMutex(); }
 
 private:
+    // Folder Maps múltiplos (Fase 1) — único caminho de código que insere
+    // em acervo_item_pasta: resolve o mapa_id da pasta e grava as duas
+    // colunas juntas, sempre em sincronia (self-test dedicado cobra isto
+    // depois de mover pasta, duplicar mapa e importar mapa). Chame dentro
+    // de uma transação já aberta pelo chamador — não abre a própria.
+    void inserirItemPastaInterno(const std::string& itemId, const std::string& pastaId, const std::string& agora);
+    // mapa_id de uma pasta existente ("" se não achar — chamador decide o
+    // que fazer, normalmente tratar como erro silencioso como o resto do
+    // arquivo já faz).
+    std::string mapaIdDaPasta(const std::string& pastaId) const;
+    // Ver definirMapaAtivo()/mapaAtivoPadrao() acima.
+    std::string mapaAtivoSelecionado_;
+
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
 
