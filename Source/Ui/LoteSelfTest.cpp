@@ -126,6 +126,22 @@ int rodarLoteSelfTest() {
             checar(carregou, "Catalog grid loaded the " + juce::String(kItensPorLado) + " items");
             checar(pa->contarItens() == kItensPorLado && pa->contarItens() == static_cast<int>(pa->listarItens().size()),
                    "contarItens() (SQL COUNT, no disk access) matches listarItens()");
+            // GET EXIF grava a OTHER METADATA sem tocar nas notas do usuário;
+            // rodar de novo substitui (não duplica).
+            {
+                // back(): o teste da tecla E logo abaixo usa o front() e exige
+                // um item nunca editado.
+                const std::string alvo = mosaico->todosItensEmMemoria().back().id;
+                const std::string antes = pa->lerMetadado(alvo, "notas_livres").value_or("");
+                pa->salvarMetadado(alvo, "notas_livres", "[NOTES]\nminha nota");
+                pa->gravarOutraMetadataEmLote({{alvo, "FNumber: 5/1"}});
+                pa->gravarOutraMetadataEmLote({{alvo, "FNumber: 8/1\nISOSpeedRatings: 400"}});
+                const std::string depois = pa->lerMetadado(alvo, "notas_livres").value_or("");
+                checar(depois == "[" + std::string(matriz::model::kOutraMetadataTitulo) +
+                                     "]\nFNumber: 8/1\nISOSpeedRatings: 400\n\n[NOTES]\nminha nota",
+                       "GET EXIF writes OTHER METADATA, replaces it on a second run, keeps the user's notes");
+                pa->salvarMetadado(alvo, "notas_livres", antes);
+            }
             // Lista do Metadata no mesmo formato da do INTAKE (conferir a olho):
             // test-output/metadata_lista.png x intake_lista.png.
             if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
@@ -1316,22 +1332,6 @@ int rodarLoteSelfTest() {
     raizU.deleteRecursively();
 
     // ------------------- Lista de hoje: LOCATE na pasta, autocomplete único, CDR
-    std::cout << "\n-- Video preview: audio of a .mov (waveform + sound) --\n";
-    {
-        auto mov = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("tools/fixtures/video_aac.mov");
-        juce::AudioFormatManager basico;
-        basico.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> semQt(basico.createReaderFor(mov));
-        checar(mov.existsAsFile() && semQt == nullptr,
-               "fixture exists and plain JUCE formats cannot read a .mov (the bug)");
-        juce::AudioFormatManager gm;
-        matriz::audio::registrarFormatosDeAudio(gm);
-        std::unique_ptr<juce::AudioFormatReader> leitor(gm.createReaderFor(mov));
-        checar(leitor != nullptr, ".mov audio opens with the QuickTime reader (timeline)");
-        std::unique_ptr<juce::AudioFormatReader> leitorStream(
-            gm.createReaderFor(std::unique_ptr<juce::InputStream>(mov.createInputStream().release())));
-        checar(leitorStream != nullptr, ".mov audio opens from a stream too (waveform / AudioThumbnail)");
-        if (leitor) {
     std::cout << "\n-- registro.sqlite: no binary EXIF, no thumbnail blobs, compaction --\n";
     {
         using matriz::db::Value;
@@ -1443,6 +1443,22 @@ int rodarLoteSelfTest() {
         raizC.deleteRecursively();
     }
 
+    std::cout << "\n-- Video preview: audio of a .mov (waveform + sound) --\n";
+    {
+        auto mov = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("tools/fixtures/video_aac.mov");
+        juce::AudioFormatManager basico;
+        basico.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> semQt(basico.createReaderFor(mov));
+        checar(mov.existsAsFile() && semQt == nullptr,
+               "fixture exists and plain JUCE formats cannot read a .mov (the bug)");
+        juce::AudioFormatManager gm;
+        matriz::audio::registrarFormatosDeAudio(gm);
+        std::unique_ptr<juce::AudioFormatReader> leitor(gm.createReaderFor(mov));
+        checar(leitor != nullptr, ".mov audio opens with the QuickTime reader (timeline)");
+        std::unique_ptr<juce::AudioFormatReader> leitorStream(
+            gm.createReaderFor(std::unique_ptr<juce::InputStream>(mov.createInputStream().release())));
+        checar(leitorStream != nullptr, ".mov audio opens from a stream too (waveform / AudioThumbnail)");
+        if (leitor) {
             const double dur = static_cast<double>(leitor->lengthInSamples) / leitor->sampleRate;
             juce::AudioBuffer<float> buf(static_cast<int>(leitor->numChannels), 4800);
             leitor->read(&buf, 0, 4800, 24000, true, true);  // do meio do arquivo

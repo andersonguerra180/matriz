@@ -6,6 +6,7 @@
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/CacheArquivo.h"
 #include "../Vault/Reconciliacao.h"
+#include "../Model/NotasEstruturadas.h"
 #include "../Vault/Resolucao.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Model/ProjectLog.h"
@@ -2422,6 +2423,58 @@ void ProjetoAberto::limparTodosMarcadosRevisado() {
     if (!projeto_) return;
     projeto_->registro().run("UPDATE item SET marcado_revisado = 0 WHERE marcado_revisado != 0", {});
     EventBus::obterInstancia().dispararItemAlterado("", "marcado_revisado");
+}
+
+std::vector<ProjetoAberto::AlvoArquivo> ProjetoAberto::alvosArquivoPrincipal(const std::vector<std::string>& itemIds) const {
+    std::vector<AlvoArquivo> out;
+    if (!projeto_) return out;
+    auto stmt = projeto_->registro().prepare(
+        std::string("SELECT a.id, ") + matriz::vault::colunasDeResolucao() + " FROM arquivo a " +
+        matriz::vault::joinDeResolucao() + " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
+    for (const auto& itemId : itemIds) {
+        stmt.reset();
+        stmt.bind(1, matriz::db::Value::of(itemId));
+        if (!stmt.step()) continue;
+        out.push_back({itemId, stmt.columnText(0), stmt.columnText(1), stmt.columnText(2), stmt.columnText(3)});
+    }
+    return out;
+}
+
+std::shared_ptr<matriz::vault::ResolvedorEmLote> ProjetoAberto::criarResolvedorEmLote() const {
+    if (!projeto_) return nullptr;
+    return std::make_shared<matriz::vault::ResolvedorEmLote>(projeto_->registro(), projeto_->pasta());
+}
+
+int ProjetoAberto::gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem) {
+    if (!projeto_ || textoPorItem.empty()) return 0;
+    auto& db = projeto_->registro();
+    const std::string agora = matriz::model::agoraIso8601();
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_->writeMutex());
+    int gravados = 0;
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        auto ler = db.prepare("SELECT notas_livres FROM item WHERE id = ?");
+        for (const auto& [itemId, texto] : textoPorItem) {
+            ler.reset();
+            ler.bind(1, matriz::db::Value::of(itemId));
+            std::string atual;
+            if (ler.step() && !ler.columnIsNull(0)) atual = ler.columnText(0);
+            // A automática vai sempre primeiro (como no ingest); as seções do
+            // usuário ficam como estavam.
+            std::vector<matriz::model::SecaoNota> secoes = {{matriz::model::kOutraMetadataTitulo, texto, true}};
+            for (auto& sec : matriz::model::parseNotasEstruturadas(atual))
+                if (!sec.automatica) secoes.push_back(std::move(sec));
+            db.run("UPDATE item SET notas_livres = ?, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(matriz::model::serializarNotasEstruturadas(secoes)),
+                    matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+            ++gravados;
+        }
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return 0;
+    }
+    return gravados;
 }
 
 std::optional<juce::String> ProjetoAberto::caminhoDeOrigem(const std::string& itemId) const {

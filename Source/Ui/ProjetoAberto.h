@@ -16,6 +16,8 @@
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
 
+namespace matriz::vault { class ResolvedorEmLote; }
+
 // Estado do projeto atualmente aberto na UI: dono do matriz::model::Project,
 // cache de FichaDefinition por tipo de mídia (carregadas sob demanda de
 // fichas/*.yaml), e as consultas que Mosaico/Ficha precisam. Um único ponto
@@ -518,6 +520,21 @@ public:
     // origem" e "Copiar caminho". nullopt se o item não tem arquivo com
     // origem registrada.
     std::optional<juce::String> caminhoDeOrigem(const std::string& itemId) const;
+
+    // GET EXIF (a pedido do usuário): o que a thread de fundo precisa pra
+    // achar o arquivo de cada item SEM tocar neste objeto — as colunas de
+    // resolução (só banco, sem disco) e um resolvedor já carregado (MAIN/
+    // CLONE/origem; resolver() só usa memória + disco).
+    struct AlvoArquivo {
+        std::string itemId, arquivoId, localizacaoVault, caminhoRelativo, caminhoAbsolutoOrigem;
+    };
+    std::vector<AlvoArquivo> alvosArquivoPrincipal(const std::vector<std::string>& itemIds) const;
+    std::shared_ptr<matriz::vault::ResolvedorEmLote> criarResolvedorEmLote() const;
+    // Troca a seção automática [OTHER METADATA] das notas de cada item pelo
+    // texto dado, numa transação só. Devolve quantos itens foram gravados.
+    int gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem);
+    // Expira quando este ProjetoAberto é destruído (callbacks assíncronos).
+    std::weak_ptr<bool> tokenVida() const { return vivo_; }
 
     // Outros itens do projeto cujo conteúdo é idêntico (mesmo SHA-256 de
     // algum arquivo). Inclui o próprio item quando há duplicata, pra a grade

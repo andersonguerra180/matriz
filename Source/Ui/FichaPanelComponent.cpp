@@ -6,6 +6,7 @@
 #include "TagChipsEditor.h"
 #include "PeoplePickerComponent.h"
 #include "NotesEstruturadasComponent.h"
+#include "AcoesItem.h"
 #include "../Analytics/AssetGeolocation.h"
 
 #include "../Ficha/AutocompleteHistorico.h"
@@ -2657,6 +2658,17 @@ private:
                 }
             };
             ed->onCommit = linha->onCommit;
+            {
+                juce::Component::SafePointer<NotesEstruturadasComponent> edSafe(ed.get());
+                ed->definirAoObterExif([this, itemId, edSafe] {
+                    // aoConcluir só roda com o projeto vivo (ver obterExif).
+                    ProjetoAberto* proj = &projeto_;
+                    acoes::obterExif(projeto_, {itemId}, [proj, itemId, edSafe](int) {
+                        // Relê as notas gravadas, se o editor ainda existir.
+                        if (edSafe) edSafe->setTexto(proj->lerMetadado(itemId, "notas_livres").value_or(""));
+                    });
+                });
+            }
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
 
@@ -4570,6 +4582,7 @@ private:
                 projeto_.finalizarGrupoUndo();
                 if (aoAplicarEmLote) aoAplicarEmLote();
             };
+            notes->definirAoObterExif([this] { acoes::obterExif(projeto_, itemIds_); });
             addAndMakeVisible(*notes);
             linha->editor = std::move(notes);
         };

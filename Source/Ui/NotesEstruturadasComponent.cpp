@@ -1,5 +1,6 @@
 #include "NotesEstruturadasComponent.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 #include <algorithm>
 
@@ -11,6 +12,7 @@ constexpr int kAlturaCabecalho = 22;
 constexpr int kAlturaCorpoEditavel = 84;
 constexpr int kAlturaBotaoAddNote = 18;
 constexpr int kLarguraBotaoAddNote = 86;
+constexpr int kLarguraBotaoObterExif = 70;
 constexpr int kEspacoEntreLinhas = 6;
 constexpr int kLarguraBotaoRemover = 20;
 constexpr int kPadCard = 6; // respiro entre a borda do sub-card e o conteúdo
@@ -202,10 +204,27 @@ void NotesEstruturadasComponent::resized() {
     // Botão discreto, encostado no canto direito da janela de notas.
     botaoAddNote_->setBounds(std::max(0, largura - kLarguraBotaoAddNote), y,
                              std::min(largura, kLarguraBotaoAddNote), kAlturaBotaoAddNote);
+    if (botaoObterExif_)
+        botaoObterExif_->setBounds(std::max(0, largura - kLarguraBotaoAddNote - 4 - kLarguraBotaoObterExif), y,
+                                   kLarguraBotaoObterExif, kAlturaBotaoAddNote);
     y += kAlturaBotaoAddNote;
 
     conteudoInterno_->setSize(largura, y);
     conteudoInterno_->setBounds(0, 0, area.getWidth() - viewport_->getScrollBarThickness(), y);
+}
+
+void NotesEstruturadasComponent::definirAoObterExif(std::function<void()> acao) {
+    if (!botaoObterExif_) {
+        botaoObterExif_ = std::make_unique<juce::TextButton>(matriz::i18n::t("notas.obter_exif"));
+        const auto& tk = tema();
+        botaoObterExif_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+        botaoObterExif_->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
+        botaoObterExif_->setTooltip(isPt_ ? "Traz o EXIF completo do arquivo pra OTHER METADATA"
+                                          : "Bring the file's full EXIF into OTHER METADATA");
+        conteudoInterno_->addAndMakeVisible(*botaoObterExif_);
+    }
+    botaoObterExif_->onClick = std::move(acao);
+    resized();
 }
 
 void NotesEstruturadasComponent::paint(juce::Graphics& g) {

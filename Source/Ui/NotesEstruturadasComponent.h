@@ -32,6 +32,10 @@ public:
     // aoAplicarSucesso etc.), este componente só serializa/mantém o texto.
     std::function<void()> onCommit;
 
+    // "GET EXIF": quando definido, aparece um botão ao lado de "+ ADD NOTE"
+    // que traz o EXIF completo do arquivo pra seção OTHER METADATA.
+    void definirAoObterExif(std::function<void()> acao);
+
 private:
     struct LinhaSecao {
         matriz::model::SecaoNota dados;
@@ -49,6 +53,7 @@ private:
     bool isPt_ = false;
     std::vector<std::unique_ptr<LinhaSecao>> linhas_;
     std::unique_ptr<juce::TextButton> botaoAddNote_;
+    std::unique_ptr<juce::TextButton> botaoObterExif_;
 
     std::unique_ptr<juce::Component> conteudoInterno_;
     std::unique_ptr<juce::Viewport> viewport_;

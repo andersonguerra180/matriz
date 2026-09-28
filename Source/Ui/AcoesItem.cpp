@@ -5,7 +5,10 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
+#include "EventBus.h"
 #include "ProgressoGlobal.h"
+#include "../Ingest/LeituraTecnica.h"
+#include "../Vault/Resolucao.h"
 
 namespace matriz::ui::acoes {
 
@@ -29,6 +32,7 @@ enum Comando {
     kLimparMetadados,
     kRecarregarArquivo,
     kSubstituirArquivo,
+    kObterExif,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -331,6 +335,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kLimparMetadados, matriz::i18n::t("menu.limpar_metadados") + " (C)");
     // Item D.9/10 — só fazem sentido pra um arquivo por vez (mesma regra de
     // "Mostrar na origem"/"Ver duplicatas" logo abaixo).
+    menu.addItem(kObterExif, matriz::i18n::t("acoes.obter_exif"));
     menu.addItem(kRecarregarArquivo, matriz::i18n::t("acoes.recarregar_arquivo"), umSo);
     menu.addItem(kSubstituirArquivo, matriz::i18n::t("acoes.substituir_arquivo"), umSo);
 
@@ -497,6 +502,10 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             break;
         }
 
+        case kObterExif:
+            obterExif(projeto, itemIds);
+            break;
+
         case kVerDuplicatas: {
             auto duplicatas = projeto.itensComMesmoConteudo(itemIds.front());
             if (duplicatas.empty()) {
@@ -606,6 +615,54 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
         ProgressoGlobal::obterInstancia().concluirTarefa("batch_rename", juce::String(processados) + " assets renamed");
         if (ganchos.aoMudarDados) ganchos.aoMudarDados();
     }));
+}
+
+void obterExif(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
+               std::function<void(int gravados)> aoConcluir) {
+    if (itemIds.empty()) return;
+    // Message thread: só banco. A thread de fundo recebe cópias e nunca toca
+    // no ProjetoAberto (que pode fechar no meio).
+    auto alvos = projeto.alvosArquivoPrincipal(itemIds);
+    auto resolvedor = projeto.criarResolvedorEmLote();
+    std::weak_ptr<bool> vivo = projeto.tokenVida();
+    ProjetoAberto* p = &projeto;
+    const int total = static_cast<int>(itemIds.size());
+    const int semArquivoNoBanco = total - static_cast<int>(alvos.size());
+    if (!resolvedor) return;
+
+    ProgressoGlobal::obterInstancia().iniciarTarefa("get_exif", matriz::i18n::t("exif.progresso"), total);
+    juce::Thread::launch([alvos, resolvedor, vivo, p, total, semArquivoNoBanco, aoConcluir]() {
+        auto textos = std::make_shared<std::map<std::string, std::string>>();
+        int semArquivo = semArquivoNoBanco, semExif = 0, feitos = 0;
+        for (const auto& a : alvos) {
+            auto f = resolvedor->resolver(a.arquivoId, a.localizacaoVault, a.caminhoRelativo, a.caminhoAbsolutoOrigem);
+            if (!f || !f->existsAsFile()) ++semArquivo;
+            else if (auto t = matriz::ingest::lerExifCompletoParaNotas(*f)) (*textos)[a.itemId] = *t;
+            else ++semExif;
+            if (++feitos % 25 == 0)
+                juce::MessageManager::callAsync([feitos] {
+                    ProgressoGlobal::obterInstancia().atualizarProgresso("get_exif", feitos);
+                });
+        }
+        juce::MessageManager::callAsync([textos, vivo, p, total, semArquivo, semExif, aoConcluir] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("get_exif");
+            if (vivo.expired()) return;  // projeto fechado enquanto lia
+            const int gravados = p->gravarOutraMetadataEmLote(*textos);
+            EventBus::obterInstancia().dispararItemAlterado("", "metadado");
+            if (aoConcluir) aoConcluir(gravados);
+
+            juce::String msg = matriz::i18n::t("exif.resultado_ok").replace("{n}", juce::String(gravados))
+                                   .replace("{total}", juce::String(total));
+            if (semExif > 0) msg << "\n" << matriz::i18n::t("exif.resultado_sem_exif").replace("{n}", juce::String(semExif));
+            if (semArquivo > 0) msg << "\n" << matriz::i18n::t("exif.resultado_offline").replace("{n}", juce::String(semArquivo));
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                             .withTitle(matriz::i18n::t("acoes.obter_exif"))
+                                             .withMessage(msg)
+                                             .withButton(matriz::i18n::t("comum.ok")),
+                                         juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
 }
 
 } // namespace matriz::ui::acoes

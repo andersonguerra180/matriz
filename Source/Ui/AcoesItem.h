@@ -67,5 +67,12 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
 void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 void limparMetadados(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos);
 
+// GET EXIF: lê o EXIF completo do arquivo de cada item (em segundo plano —
+// nada de disco na message thread) e grava na seção [OTHER METADATA] das
+// notas, numa transação só. O ingest não guarda mais o EXIF inteiro; isto é
+// só a pedido. `aoConcluir` roda na message thread, com o projeto ainda vivo.
+void obterExif(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
+               std::function<void(int gravados)> aoConcluir = {});
+
 } // namespace matriz::ui::acoes
 
