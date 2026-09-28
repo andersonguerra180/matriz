@@ -57,15 +57,16 @@ void BarraNavegacaoComponent::reconstruirTabs() {
         tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("4 - Disco") : "4 - Disk", {}, {}, false });
         tabs_.push_back({ Tab::Backup, "5 - Backup", {}, {}, false });
     } else {
+        // Ordem pedida: INTAKE, STRUCTURE, DUPLICATES, METADATA, STORAGE, BACKUP.
         tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("1 - Ingestão") : "1 - Intake", {}, {}, false });
-        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("2 - Metadados") : "2 - Metadata", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
         // Item 4 (nova lista): STORAGE (Analytics) e TREEMAP (Tree) viraram
         // uma aba só — "Structure" — com sub-abas FOLDER MAP/SPACE MAP
         // dentro (ver MainComponent::mostrarStructure). Tab::Tree fica sem
         // entrada própria na barra; Tab::Analytics passa a representar a
         // aba combinada.
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("4 - Estrutura") : "4 - Structure", {}, {}, false });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("2 - Estrutura") : "2 - Structure", {}, {}, false });
+        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("4 - Metadados") : "4 - Metadata", {}, {}, false });
         tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("5 - Armazenamento") : "5 - Storage", {}, {}, false });
         tabs_.push_back({ Tab::Backup, "6 - Backup", {}, {}, false });
     }
