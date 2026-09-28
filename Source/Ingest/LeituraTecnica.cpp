@@ -495,7 +495,10 @@ LeituraTecnicaResultado lerDocumentoPdf(const juce::File& arquivo) {
     r.metaType = "Text";
     r.metaFormat = "application/pdf";
 
-    juce::String content = arquivo.loadFileAsString();
+    // PDF enorme (scan de livro, portfólio): não carrega tudo como texto —
+    // título/páginas ficam ausentes (explícito), o ingest segue.
+    constexpr juce::int64 kMaxBytesVarreduraPdf = 256LL * 1024 * 1024;
+    juce::String content = arquivo.getSize() <= kMaxBytesVarreduraPdf ? arquivo.loadFileAsString() : juce::String();
     if (content.isNotEmpty()) {
         auto parsePdfPdfTag = [&](const juce::String& key) -> std::optional<std::string> {
             int idx = content.indexOfIgnoreCase(key);
@@ -517,13 +520,22 @@ LeituraTecnicaResultado lerDocumentoPdf(const juce::File& arquivo) {
         if (!r.metaPublisher) r.metaPublisher = parsePdfPdfTag("/Creator");
         r.metaDate = parsePdfPdfTag("/CreationDate");
 
-        // Count pages: count occurrences of "/Type /Page" or "/Type/Page"
-        int pageCount = 0;
-        int pIdx = 0;
-        while ((pIdx = content.indexOfIgnoreCase(pIdx, "/Type /Page")) >= 0 || (pIdx = content.indexOfIgnoreCase(pIdx, "/Type/Page")) >= 0) {
-            ++pageCount;
-            pIdx += 10;
-        }
+        // Páginas = ocorrências de "/Type /Page" e "/Type/Page", cada forma
+        // contada à parte e sempre avançando. (O laço antigo, com as duas
+        // buscas num "||", zerava a posição quando a 1ª forma não existia e
+        // a 2ª recomeçava do início — loop infinito em todo PDF que só usa
+        // "/Type/Page".) "/Type /Pages" é o nó da árvore, não uma página.
+        auto contarPaginas = [&](const juce::String& padrao) {
+            int n = 0;
+            for (int i = content.indexOfIgnoreCase(0, padrao); i >= 0;
+                 i = content.indexOfIgnoreCase(i + padrao.length(), padrao)) {
+                const int depois = i + padrao.length();
+                if (depois < content.length() && (content[depois] == 's' || content[depois] == 'S')) continue;
+                ++n;
+            }
+            return n;
+        };
+        const int pageCount = contarPaginas("/Type /Page") + contarPaginas("/Type/Page");
         if (pageCount > 0) r.pageCount = pageCount;
     }
 

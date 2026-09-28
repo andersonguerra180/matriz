@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <future>
 #include <iostream>
 
 #include "../Model/Project.h"
@@ -1446,6 +1447,27 @@ int rodarLoteSelfTest() {
             checar(false, juce::String("compaction selftest: ") + e.what());
         }
         raizC.deleteRecursively();
+    }
+
+    std::cout << "\n-- PDF page count: no infinite loop --\n";
+    {
+        juce::File dirP = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_pdf_" + juce::Uuid().toDashedString());
+        dirP.createDirectory();
+        auto so = dirP.getChildFile("so_sem_espaco.pdf");
+        so.replaceWithText("%PDF-1.4\n1 0 obj <</Type/Pages /Kids [2 0 R 3 0 R]>>\n2 0 obj <</Type/Page>>\n3 0 obj <</Type/Page>>\n/Title (Teste)\n");
+        auto mix = dirP.getChildFile("misto.pdf");
+        mix.replaceWithText("%PDF-1.4\n<</Type /Pages>>\n<</Type /Page>>\n<</Type/Page>>\n<</Type /Page>>\n");
+        auto contar = [](const juce::File& f) {
+            auto fut = std::async(std::launch::async, [f] { return matriz::ingest::lerTecnica(f).pageCount; });
+            if (fut.wait_for(std::chrono::seconds(10)) != std::future_status::ready) return -99;  // travou
+            auto n = fut.get();
+            return n ? static_cast<int>(*n) : 0;
+        };
+        const int nSo = contar(so), nMix = contar(mix);
+        checar(nSo == 2, "PDF with only \"/Type/Page\": 2 pages, no infinite loop (" + juce::String(nSo) + ")");
+        checar(nMix == 3, "PDF with both forms: 3 pages, \"/Type /Pages\" not counted (" + juce::String(nMix) + ")");
+        if (nSo != -99 && nMix != -99) dirP.deleteRecursively();
     }
 
     std::cout << "\n-- Video preview: audio of a .mov (waveform + sound) --\n";
