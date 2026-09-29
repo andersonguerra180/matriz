@@ -693,7 +693,9 @@ void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
 }
 
 void ArvoreBackupComponent::mostrarSeletorDeCorPasta(std::vector<std::string> pastaIds, juce::Rectangle<int> screenBounds) {
-    if (pastaIds.empty()) return;
+    // Trava de ORIGINAL que faltava aqui (item 9) — os outros mutadores
+    // (criarNovaPasta, renomear, conectar, alternarAtivo) já checam isto.
+    if (mapaAtivoEhOriginal() || pastaIds.empty()) return;
 
     // Parte da cor já atribuída à primeira pasta selecionada, se houver —
     // reabrir o picker pra ajustar mostra o estado atual, não sempre vermelho.
@@ -714,7 +716,8 @@ void ArvoreBackupComponent::mostrarSeletorDeCorPasta(std::vector<std::string> pa
         [safeThis](juce::Colour corFinal) {
             if (safeThis) safeThis->registrarCorNoHistorico(corFinal);
         });
-    juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
+    // Guardado pra C de novo (keyPressed) fechar em vez de reabrir.
+    corCallout_ = &juce::CallOutBox::launchAsynchronously(std::move(content), screenBounds, nullptr);
 }
 
 void ArvoreBackupComponent::registrarCorNoHistorico(juce::Colour cor) {
@@ -729,6 +732,7 @@ void ArvoreBackupComponent::registrarCorNoHistorico(juce::Colour cor) {
 }
 
 void ArvoreBackupComponent::aplicarCorAPastas(const std::vector<std::string>& pastaIds, juce::Colour cor) {
+    if (mapaAtivoEhOriginal()) return;
     // toDisplayString(true) inclui o alfa — fromString() em recalcularNodes()
     // faz o caminho de volta. Persistida por pasta (item 12): fechar/reabrir
     // o projeto ou reconstruir o Treemap não apaga, porque recalcularNodes()
@@ -1523,13 +1527,16 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
 
             // FOLDER COLOR (item 12): funciona igual pra uma pasta só ou pro
             // lote inteiro selecionado — selectedIds já cobre os dois casos.
+            // C é o atalho equivalente (item 9).
             {
                 auto topLeft = canvasToScreen(hitNodeRef.bounds.getTopLeft().toFloat());
                 auto bottomRight = canvasToScreen(hitNodeRef.bounds.getBottomRight().toFloat());
                 juce::Rectangle<int> ancora(topLeft, bottomRight);
-                menu.addItem("Folder Color", [this, selectedIds, ancora] {
-                    mostrarSeletorDeCorPasta(selectedIds, ancora);
-                });
+                juce::PopupMenu::Item item(i18n::t("arvore_backup.cor_pasta"));
+                item.itemID = -1;
+                item.shortcutKeyDescription = "C";
+                item.action = [this, selectedIds, ancora] { mostrarSeletorDeCorPasta(selectedIds, ancora); };
+                menu.addItem(std::move(item));
             }
 
             if (!batch) {
@@ -1750,6 +1757,46 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
         for (int i = 0; i < static_cast<int>(nodes_.size()); ++i)
             if (nodes_[static_cast<size_t>(i)].selecionado) { iniciarEdicaoInline(i); return true; }
     }
+
+    // Item 9 — C (Folder Color) e D (Disconnect from Parent): nunca
+    // enquanto o usuário está renomeando uma pasta (inlineEditor_ com
+    // foco) — proteção explícita, além do roteamento normal de foco do
+    // JUCE já impedir isto na prática. Nunca no ORIGINAL (somente leitura).
+    if (inlineEditor_ && inlineEditor_->hasKeyboardFocus(true)) return false;
+
+    auto c = key.getTextCharacter();
+    bool semModificadores = !key.getModifiers().isCommandDown() &&
+                            !key.getModifiers().isCtrlDown() &&
+                            !key.getModifiers().isAltDown();
+
+    if ((key.getKeyCode() == 'D' || c == 'd' || c == 'D') && semModificadores) {
+        if (mapaAtivoEhOriginal()) return false;
+        desconectarSelecionadas();
+        return true;
+    }
+
+    if ((key.getKeyCode() == 'C' || c == 'c' || c == 'C') && semModificadores) {
+        if (mapaAtivoEhOriginal()) return false;
+        // C de novo com o picker aberto fecha em vez de reabrir.
+        if (corCallout_ != nullptr) {
+            corCallout_->dismiss();
+            corCallout_ = nullptr;
+            return true;
+        }
+        std::vector<std::string> selectedIds;
+        for (const auto& n : nodes_) if (n.selecionado) selectedIds.push_back(n.id);
+        if (selectedIds.empty()) return false;
+        for (const auto& n : nodes_) {
+            if (n.id == selectedIds.front()) {
+                auto topLeft = canvasToScreen(n.bounds.getTopLeft().toFloat());
+                auto bottomRight = canvasToScreen(n.bounds.getBottomRight().toFloat());
+                mostrarSeletorDeCorPasta(selectedIds, juce::Rectangle<int>(topLeft, bottomRight));
+                break;
+            }
+        }
+        return true;
+    }
+
     return false;
 }
 

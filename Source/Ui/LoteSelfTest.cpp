@@ -1064,6 +1064,72 @@ int rodarLoteSelfTest() {
     }
     raizBloco.deleteRecursively();
 
+    // ------------------------- Folder Map: atalhos C e D (item 9, 2026-09-29)
+    std::cout << "\n-- Folder Map: C (Folder Color) / D (Disconnect) shortcuts --\n";
+    juce::File raizCD = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                             .getChildFile("matriz_folder_cd_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizCD.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "AtalhosCD";
+        params.prefixoNomenclatura = "ACD";
+        auto projeto = matriz::model::Project::criar(raizCD.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        std::string mapaPadrao = pa.mapaAtivoPadrao();
+        std::string root = pa.criarPastaAcervo("Root", std::nullopt, mapaPadrao);
+        std::string filha = pa.criarPastaAcervo("Filha", root, mapaPadrao);
+
+        ArvoreBackupComponent arvore(pa);
+        auto& reg = pa.projeto().registro();
+        auto lerCor = [&](const std::string& id) -> juce::String {
+            auto stmt = reg.prepare("SELECT cor_customizada FROM acervo_pasta WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(id));
+            if (stmt.step() && !stmt.columnIsNull(0)) return juce::String(stmt.columnText(0));
+            return {};
+        };
+        auto lerPai = [&](const std::string& id) -> std::string {
+            auto stmt = reg.prepare("SELECT pasta_pai_id FROM acervo_pasta WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(id));
+            if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+            return {};
+        };
+
+        // D desconecta a(s) selecionada(s) — mesma rotina do item 7, agora
+        // pelo atalho de teclado.
+        for (auto& n : arvore.nodes_) if (n.id == filha) n.selecionado = true;
+        checar(arvore.keyPressed(juce::KeyPress('D', juce::ModifierKeys(), (juce::juce_wchar) 'd')),
+               "D is handled (returns true) with a folder selected");
+        checar(lerPai(filha).empty(), "D disconnected the selected folder from its parent");
+
+        // C abre o color picker pra seleção; C de novo fecha em vez de reabrir.
+        for (auto& n : arvore.nodes_) if (n.id == filha) n.selecionado = true;
+        checar(arvore.corCallout_ == nullptr, "setup: no color picker open yet");
+        checar(arvore.keyPressed(juce::KeyPress('C', juce::ModifierKeys(), (juce::juce_wchar) 'c')),
+               "C is handled (returns true) with a folder selected");
+        bombear(100);
+        checar(arvore.corCallout_ != nullptr, "C opened the folder color picker");
+        checar(arvore.keyPressed(juce::KeyPress('C', juce::ModifierKeys(), (juce::juce_wchar) 'c')),
+               "C again is handled (returns true) while the picker is open");
+        checar(arvore.corCallout_ == nullptr, "C again CLOSED the picker instead of reopening it");
+
+        // ORIGINAL: C e D desabilitados (a trava que faltava em
+        // mostrarSeletorDeCorPasta/aplicarCorAPastas, ver item 9).
+        arvore.mapaAtivoId_ = ProjetoAberto::kMapaOriginal;
+        for (auto& n : arvore.nodes_) if (n.id == filha) n.selecionado = true;
+        juce::String corAntes = lerCor(filha);
+        checar(!arvore.keyPressed(juce::KeyPress('C', juce::ModifierKeys(), (juce::juce_wchar) 'c')),
+               "C on the read-only ORIGINAL map is not handled (returns false)");
+        checar(arvore.corCallout_ == nullptr, "C on ORIGINAL never opens the picker");
+        checar(!arvore.keyPressed(juce::KeyPress('D', juce::ModifierKeys(), (juce::juce_wchar) 'd')),
+               "D on the read-only ORIGINAL map is not handled (returns false)");
+        // aplicarCorAPastas() direto (defesa em profundidade) também trava.
+        arvore.aplicarCorAPastas({filha}, juce::Colours::red);
+        checar(lerCor(filha) == corAntes, "aplicarCorAPastas() itself refuses to write on ORIGINAL, even called directly");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder C/D shortcuts selftest: ") + e.what());
+    }
+    raizCD.deleteRecursively();
+
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica
     // vazio com indicador "mixed" e NÃO pode ser gravado sem edição real;

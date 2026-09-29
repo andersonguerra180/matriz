@@ -204,6 +204,10 @@ private:
     juce::Point<float> marqueeStartCanvas_;
     juce::Rectangle<float> marqueeRectCanvas_;
 
+    // Item 9 — C abre o color picker (mostrarSeletorDeCorPasta já guarda
+    // aqui); C de novo com ele aberto fecha em vez de reabrir.
+    juce::Component::SafePointer<juce::CallOutBox> corCallout_;
+
     static constexpr int kDetailPanelWidth = 280;
     std::unique_ptr<juce::Viewport> detailViewport_;
     std::unique_ptr<TreeDetailContent> detailContent_;
