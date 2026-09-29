@@ -1479,7 +1479,9 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     // busca e a seleção herdada da árvore). O aplicarFiltrosAdicionais()
     // no fim desta função recalcula a grade já sem nada marcado.
     if (chave == "all") limparTodosOsFiltros();
-    filtroHerdadoIds_.reset();  // outra categoria: sai da pasta vinda do Folder Map
+    // A pasta vinda do Folder Map (filtroHerdadoIds_) NÃO cai aqui: os filtros da
+    // coluna esquerda funilam dentro dela; só ALL ASSETS (limparTodosOsFiltros,
+    // acima) a desliga.
 
     if (indice < indiceInicioMediaType_) {
         categoriaSelecionada_ = indice;
