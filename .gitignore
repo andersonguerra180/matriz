@@ -10,6 +10,7 @@ __MACOSX/
 *.sqlite-wal
 *.sqlite-shm
 *.app/
+OBSOLETOS/
 BKP/
 Media/
 Project/
