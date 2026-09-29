@@ -1,5 +1,6 @@
 #include "AssetGeolocation.h"
 #include "../Model/Project.h"
+#include <algorithm>
 #include <cmath>
 #include <ctime>
 
@@ -101,42 +102,67 @@ void AssetGeolocationRepository::remover(matriz::db::Database& db, const std::st
     db.run("DELETE FROM asset_geolocation WHERE asset_id = ?", {matriz::db::Value::of(assetId)});
 }
 
-std::optional<AssetGeolocation> AssetGeolocationRepository::obterPorAssetId(matriz::db::Database& db, const std::string& assetId) {
-    std::string sql = "SELECT asset_id, latitude, longitude, altitude, continent, country, country_code, "
-                      "state_province, state_code, city, municipality, neighborhood, district, postal_code, "
-                      "street, street_number, locality, formatted_address, source, precision_accuracy, confidence, "
-                      "created_at, updated_at FROM asset_geolocation WHERE asset_id = ?";
-    auto stmt = db.prepare(sql);
-    stmt.bind(1, matriz::db::Value::of(assetId));
+namespace {
+constexpr const char* kColunasGeo =
+    "asset_id, latitude, longitude, altitude, continent, country, country_code, "
+    "state_province, state_code, city, municipality, neighborhood, district, postal_code, "
+    "street, street_number, locality, formatted_address, source, precision_accuracy, confidence, "
+    "created_at, updated_at";
 
-    if (stmt.step()) {
-        AssetGeolocation g;
-        g.assetId = stmt.columnText(0);
-        if (!stmt.columnIsNull(1)) g.latitude = stmt.columnReal(1);
-        if (!stmt.columnIsNull(2)) g.longitude = stmt.columnReal(2);
-        if (!stmt.columnIsNull(3)) g.altitude = stmt.columnReal(3);
-        if (!stmt.columnIsNull(4)) g.continent = stmt.columnText(4);
-        if (!stmt.columnIsNull(5)) g.country = stmt.columnText(5);
-        if (!stmt.columnIsNull(6)) g.countryCode = stmt.columnText(6);
-        if (!stmt.columnIsNull(7)) g.stateProvince = stmt.columnText(7);
-        if (!stmt.columnIsNull(8)) g.stateCode = stmt.columnText(8);
-        if (!stmt.columnIsNull(9)) g.city = stmt.columnText(9);
-        if (!stmt.columnIsNull(10)) g.municipality = stmt.columnText(10);
-        if (!stmt.columnIsNull(11)) g.neighborhood = stmt.columnText(11);
-        if (!stmt.columnIsNull(12)) g.district = stmt.columnText(12);
-        if (!stmt.columnIsNull(13)) g.postalCode = stmt.columnText(13);
-        if (!stmt.columnIsNull(14)) g.street = stmt.columnText(14);
-        if (!stmt.columnIsNull(15)) g.streetNumber = stmt.columnText(15);
-        if (!stmt.columnIsNull(16)) g.locality = stmt.columnText(16);
-        if (!stmt.columnIsNull(17)) g.formattedAddress = stmt.columnText(17);
-        g.source = geoSourceFromString(stmt.columnText(18));
-        if (!stmt.columnIsNull(19)) g.precisionAccuracy = stmt.columnReal(19);
-        if (!stmt.columnIsNull(20)) g.confidence = stmt.columnReal(20);
-        g.createdAt = stmt.columnText(21);
-        g.updatedAt = stmt.columnText(22);
-        return g;
-    }
+AssetGeolocation lerLinhaGeo(matriz::db::Statement& stmt) {
+    AssetGeolocation g;
+    g.assetId = stmt.columnText(0);
+    if (!stmt.columnIsNull(1)) g.latitude = stmt.columnReal(1);
+    if (!stmt.columnIsNull(2)) g.longitude = stmt.columnReal(2);
+    if (!stmt.columnIsNull(3)) g.altitude = stmt.columnReal(3);
+    if (!stmt.columnIsNull(4)) g.continent = stmt.columnText(4);
+    if (!stmt.columnIsNull(5)) g.country = stmt.columnText(5);
+    if (!stmt.columnIsNull(6)) g.countryCode = stmt.columnText(6);
+    if (!stmt.columnIsNull(7)) g.stateProvince = stmt.columnText(7);
+    if (!stmt.columnIsNull(8)) g.stateCode = stmt.columnText(8);
+    if (!stmt.columnIsNull(9)) g.city = stmt.columnText(9);
+    if (!stmt.columnIsNull(10)) g.municipality = stmt.columnText(10);
+    if (!stmt.columnIsNull(11)) g.neighborhood = stmt.columnText(11);
+    if (!stmt.columnIsNull(12)) g.district = stmt.columnText(12);
+    if (!stmt.columnIsNull(13)) g.postalCode = stmt.columnText(13);
+    if (!stmt.columnIsNull(14)) g.street = stmt.columnText(14);
+    if (!stmt.columnIsNull(15)) g.streetNumber = stmt.columnText(15);
+    if (!stmt.columnIsNull(16)) g.locality = stmt.columnText(16);
+    if (!stmt.columnIsNull(17)) g.formattedAddress = stmt.columnText(17);
+    g.source = geoSourceFromString(stmt.columnText(18));
+    if (!stmt.columnIsNull(19)) g.precisionAccuracy = stmt.columnReal(19);
+    if (!stmt.columnIsNull(20)) g.confidence = stmt.columnReal(20);
+    g.createdAt = stmt.columnText(21);
+    g.updatedAt = stmt.columnText(22);
+    return g;
+}
+} // namespace
+
+std::optional<AssetGeolocation> AssetGeolocationRepository::obterPorAssetId(matriz::db::Database& db, const std::string& assetId) {
+    auto stmt = db.prepare(std::string("SELECT ") + kColunasGeo + " FROM asset_geolocation WHERE asset_id = ?");
+    stmt.bind(1, matriz::db::Value::of(assetId));
+    if (stmt.step()) return lerLinhaGeo(stmt);
     return std::nullopt;
+}
+
+std::unordered_map<std::string, AssetGeolocation> AssetGeolocationRepository::obterPorAssetIds(matriz::db::Database& db, const std::vector<std::string>& assetIds) {
+    std::unordered_map<std::string, AssetGeolocation> out;
+    if (assetIds.empty()) return out;
+    // Limite de parâmetros do SQLite (SQLITE_MAX_VARIABLE_NUMBER, tipicamente
+    // 999+): busca em blocos em vez de um IN(...) só com milhares de "?".
+    constexpr size_t kBloco = 500;
+    for (size_t inicio = 0; inicio < assetIds.size(); inicio += kBloco) {
+        size_t fim = std::min(inicio + kBloco, assetIds.size());
+        std::string placeholders;
+        for (size_t i = inicio; i < fim; ++i) placeholders += (i == inicio ? "?" : ",?");
+        auto stmt = db.prepare(std::string("SELECT ") + kColunasGeo + " FROM asset_geolocation WHERE asset_id IN (" + placeholders + ")");
+        for (size_t i = inicio; i < fim; ++i) stmt.bind(static_cast<int>(i - inicio + 1), matriz::db::Value::of(assetIds[i]));
+        while (stmt.step()) {
+            AssetGeolocation g = lerLinhaGeo(stmt);
+            out[g.assetId] = std::move(g);
+        }
+    }
+    return out;
 }
 
 std::vector<AssetGeolocation> AssetGeolocationRepository::obterTodosGeolocalizados(matriz::db::Database& db) {

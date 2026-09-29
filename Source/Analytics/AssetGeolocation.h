@@ -5,6 +5,7 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <unordered_map>
 #include <cstdint>
 
 namespace matriz::analytics {
@@ -114,6 +115,10 @@ public:
     static void salvar(matriz::db::Database& db, const AssetGeolocation& geo);
     static void remover(matriz::db::Database& db, const std::string& assetId);
     static std::optional<AssetGeolocation> obterPorAssetId(matriz::db::Database& db, const std::string& assetId);
+    // Uma consulta (em blocos, por causa do limite de parâmetros do SQLite)
+    // em vez de N buscas por asset_id — usado pelo card de GEO LOCATION em
+    // lote da ficha para não travar a interface com seleções grandes.
+    static std::unordered_map<std::string, AssetGeolocation> obterPorAssetIds(matriz::db::Database& db, const std::vector<std::string>& assetIds);
     static std::vector<AssetGeolocation> obterTodosGeolocalizados(matriz::db::Database& db);
     static GeolocationCoverageStats obterEstatisticasCobertura(matriz::db::Database& db);
     static void salvarEmLote(matriz::db::Database& db, const std::vector<std::string>& assetIds, const AssetGeolocation& geoTemplate);

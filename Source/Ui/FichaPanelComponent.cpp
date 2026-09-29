@@ -4058,7 +4058,11 @@ public:
     }
 
     juce::Component* editorDoCampoParaTeste(const std::string& campoId) {
+        if (campoId == "geo_coords") return geoLote_.editorCoords.get();
+        if (campoId == "geo_address") return geoLote_.editorAddress.get();
         if (campoId == "geo_city") return geoLote_.editorCity.get();
+        if (campoId == "geo_state") return geoLote_.editorState.get();
+        if (campoId == "geo_country") return geoLote_.editorCountry.get();
         for (auto* linha : linhas_) {
             if (linha->campoId == campoId) return linha->editor.get();
         }
@@ -4132,6 +4136,11 @@ private:
         std::unique_ptr<juce::TextButton> botaoFavoritos;
         std::unique_ptr<juce::TextButton> botaoSalvarFavoritos;   // ★ Add to Favorites (Fase 2)
         bool tocado = false;
+        // Valor comum (ou vazio se os selecionados divergem) capturado ao
+        // montar o card — item 2 (correção METADATA 2026-09-28): só um
+        // subcampo cujo texto mudou em relação a isto é gravado; um "mixed"
+        // nunca sobrescreve o que os itens já tinham.
+        juce::String seedCoords, seedAddress, seedCity, seedState, seedCountry;
     };
 
     void limpar() {
@@ -4641,8 +4650,52 @@ private:
             geoLote_.badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*geoLote_.badge);
 
+            // Item 2 (correção METADATA 2026-09-28): mesmo padrão de "valor
+            // comum" dos campos Dublin Core (addEditableTextLote) — um valor
+            // só aparece pré-preenchido quando é idêntico em 100% dos
+            // selecionados; senão o campo fica vazio com o indicador de
+            // "valores diferentes" e o seed capturado fica vazio, então
+            // aplicarGeoAgora() nunca grava esse subcampo a menos que o
+            // usuário digite algo nele. Uma passada só sobre itemIds_ (em
+            // vez de uma por subcampo) — importante com seleções grandes.
+            struct GeoComum {
+                bool primeiro = true;
+                bool coordsIguais = true, addrIguais = true, cityIguais = true, stateIguais = true, countryIguais = true;
+                std::string coords, addr, city, state, country;
+            } gc;
+            auto formatarCoords = [](const matriz::analytics::AssetGeolocation& g) -> std::string {
+                if (!g.latitude || !g.longitude) return {};
+                std::ostringstream ss;
+                ss << std::fixed << std::setprecision(6) << *g.latitude << ", " << *g.longitude;
+                return ss.str();
+            };
+            // Uma consulta em blocos pra seleção inteira, não uma por item —
+            // com 1000+ itens isso sozinho já levava quase 3 s pra montar o
+            // card.
+            auto geoPorId = matriz::analytics::AssetGeolocationRepository::obterPorAssetIds(projeto_.projeto().registro(), itemIds_);
+            for (const auto& id : itemIds_) {
+                auto it = geoPorId.find(id);
+                const matriz::analytics::AssetGeolocation* geoPtr = it != geoPorId.end() ? &it->second : nullptr;
+                std::string c = geoPtr ? formatarCoords(*geoPtr) : std::string();
+                std::string a = (geoPtr && geoPtr->formattedAddress) ? *geoPtr->formattedAddress : std::string();
+                std::string ci = (geoPtr && geoPtr->city) ? *geoPtr->city : std::string();
+                std::string st = (geoPtr && geoPtr->stateProvince) ? *geoPtr->stateProvince : std::string();
+                std::string co = (geoPtr && geoPtr->country) ? *geoPtr->country : std::string();
+                if (gc.primeiro) {
+                    gc.coords = c; gc.addr = a; gc.city = ci; gc.state = st; gc.country = co;
+                    gc.primeiro = false;
+                } else {
+                    if (c != gc.coords) gc.coordsIguais = false;
+                    if (a != gc.addr) gc.addrIguais = false;
+                    if (ci != gc.city) gc.cityIguais = false;
+                    if (st != gc.state) gc.stateIguais = false;
+                    if (co != gc.country) gc.countryIguais = false;
+                }
+            }
+
             auto makeGeoSubfield = [this, &tk](std::unique_ptr<juce::Label>& lbl, std::unique_ptr<juce::TextEditor>& ed,
-                                               const juce::String& textRotulo, const juce::String& placeholder) {
+                                               const juce::String& textRotulo, const juce::String& placeholder,
+                                               bool todosIguais, const std::string& valorComum, juce::String& seedOut) {
                 lbl = std::make_unique<juce::Label>();
                 lbl->setText(textRotulo, juce::dontSendNotification);
                 // Bold, como os rótulos de geo da ficha de item único.
@@ -4655,18 +4708,23 @@ private:
                 ed->setColour(juce::TextEditor::textColourId, tk.textoPrimario);
                 ed->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
                 ed->setColour(juce::TextEditor::outlineColourId, tk.borda);
-                ed->setTextToShowWhenEmpty(placeholder, tk.textoTerciario);
+                if (todosIguais && !valorComum.empty()) {
+                    ed->setText(juce::String(valorComum), false);
+                } else {
+                    ed->setTextToShowWhenEmpty(todosIguais ? placeholder : matriz::i18n::t("ficha.lote_valores_multiplos"), tk.textoTerciario);
+                }
+                seedOut = ed->getText();
                 auto commitGeo = [this] { aplicarGeoAgora(); };
                 ed->onFocusLost = commitGeo;
                 ed->onReturnKey = commitGeo;
                 addAndMakeVisible(*ed);
             };
 
-            makeGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords, isPt ? juce::String::fromUTF8("Coordenadas GPS (Lat, Long)") : juce::String("GPS Coordinates (Lat, Lng)"), "e.g. -16.4435, -39.0643");
-            makeGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress, isPt ? juce::String::fromUTF8("Endereço Formatado") : juce::String("Formatted Address"), "e.g. Av. Paulista, 1000");
-            makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, isPt ? juce::String::fromUTF8("Cidade") : juce::String("City"), "e.g. Porto Seguro");
-            makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, isPt ? juce::String::fromUTF8("Estado / Província") : juce::String("State / Province"), "e.g. Bahia");
-            makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, isPt ? juce::String::fromUTF8("País") : juce::String("Country"), isPt ? juce::String::fromUTF8("Ex: Brasil") : juce::String("e.g. Brazil"));
+            makeGeoSubfield(geoLote_.labelCoords, geoLote_.editorCoords, isPt ? juce::String::fromUTF8("Coordenadas GPS (Lat, Long)") : juce::String("GPS Coordinates (Lat, Lng)"), "e.g. -16.4435, -39.0643", gc.coordsIguais, gc.coords, geoLote_.seedCoords);
+            makeGeoSubfield(geoLote_.labelAddress, geoLote_.editorAddress, isPt ? juce::String::fromUTF8("Endereço Formatado") : juce::String("Formatted Address"), "e.g. Av. Paulista, 1000", gc.addrIguais, gc.addr, geoLote_.seedAddress);
+            makeGeoSubfield(geoLote_.labelCity, geoLote_.editorCity, isPt ? juce::String::fromUTF8("Cidade") : juce::String("City"), "e.g. Porto Seguro", gc.cityIguais, gc.city, geoLote_.seedCity);
+            makeGeoSubfield(geoLote_.labelState, geoLote_.editorState, isPt ? juce::String::fromUTF8("Estado / Província") : juce::String("State / Province"), "e.g. Bahia", gc.stateIguais, gc.state, geoLote_.seedState);
+            makeGeoSubfield(geoLote_.labelCountry, geoLote_.editorCountry, isPt ? juce::String::fromUTF8("País") : juce::String("Country"), isPt ? juce::String::fromUTF8("Ex: Brasil") : juce::String("e.g. Brazil"), gc.countryIguais, gc.country, geoLote_.seedCountry);
 
             // ★ Add to Favorites (Fase 2): mesmo fluxo de diálogo do
             // single-item (btnSalvarFavorito), salvando os campos
@@ -5074,43 +5132,41 @@ private:
 
     void aplicarGeoAgora() {
         if (itemIds_.empty()) return;
-        matriz::analytics::AssetGeolocation geoTemplate;
-        std::string coordsText = geoLote_.editorCoords ? geoLote_.editorCoords->getText().trim().toStdString() : "";
-        if (!coordsText.empty()) {
-            auto commaPos = coordsText.find(',');
-            if (commaPos != std::string::npos) {
-                try {
-                    double lat = std::stod(coordsText.substr(0, commaPos));
-                    double lng = std::stod(coordsText.substr(commaPos + 1));
-                    if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) {
-                        geoTemplate.latitude = lat;
-                        geoTemplate.longitude = lng;
-                        geoTemplate.source = matriz::analytics::GeoSource::UserCoordinates;
-                    }
-                } catch (...) {}
+
+        // Item 2 (correção METADATA 2026-09-28): só os subcampos cujo texto
+        // mudou em relação ao seed (valor comum capturado ao montar o card,
+        // vazio se os selecionados já divergiam) são gravados. Um subcampo
+        // "mixed" nunca é sobrescrito por Enter/focus-lost sem edição real,
+        // e nada roda se nenhum subcampo mudou.
+        const bool coordsMudou  = geoLote_.editorCoords  && geoLote_.editorCoords->getText()  != geoLote_.seedCoords;
+        const bool addrMudou    = geoLote_.editorAddress && geoLote_.editorAddress->getText() != geoLote_.seedAddress;
+        const bool cityMudou    = geoLote_.editorCity    && geoLote_.editorCity->getText()    != geoLote_.seedCity;
+        const bool stateMudou   = geoLote_.editorState   && geoLote_.editorState->getText()   != geoLote_.seedState;
+        const bool countryMudou = geoLote_.editorCountry && geoLote_.editorCountry->getText() != geoLote_.seedCountry;
+        if (!coordsMudou && !addrMudou && !cityMudou && !stateMudou && !countryMudou) return;
+
+        std::optional<double> novaLat, novaLng;
+        if (coordsMudou) {
+            std::string coordsText = geoLote_.editorCoords->getText().trim().toStdString();
+            if (!coordsText.empty()) {
+                auto commaPos = coordsText.find(',');
+                if (commaPos != std::string::npos) {
+                    try {
+                        double lat = std::stod(coordsText.substr(0, commaPos));
+                        double lng = std::stod(coordsText.substr(commaPos + 1));
+                        if (lat >= -90.0 && lat <= 90.0 && lng >= -180.0 && lng <= 180.0) { novaLat = lat; novaLng = lng; }
+                    } catch (...) {}
+                }
             }
         }
-        std::string addr = geoLote_.editorAddress ? geoLote_.editorAddress->getText().trim().toStdString() : "";
-        if (!addr.empty()) {
-            geoTemplate.formattedAddress = addr;
-            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserAddress;
-        }
-        std::string city = geoLote_.editorCity ? geoLote_.editorCity->getText().trim().toStdString() : "";
-        if (!city.empty()) {
-            geoTemplate.city = city;
-            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCity;
-        }
-        std::string state = geoLote_.editorState ? geoLote_.editorState->getText().trim().toStdString() : "";
-        if (!state.empty()) {
-            geoTemplate.stateProvince = state;
-            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserState;
-        }
-        std::string country = geoLote_.editorCountry ? geoLote_.editorCountry->getText().trim().toStdString() : "";
-        if (!country.empty()) {
-            geoTemplate.country = country;
-            if (geoTemplate.source == matriz::analytics::GeoSource::None) geoTemplate.source = matriz::analytics::GeoSource::UserCountry;
-        }
-        if (!geoTemplate.hasAnyLocationData()) return;
+        auto textoOuNulo = [](juce::TextEditor* ed) -> std::optional<std::string> {
+            std::string v = ed->getText().trim().toStdString();
+            return v.empty() ? std::nullopt : std::optional<std::string>(v);
+        };
+        std::optional<std::string> novoAddr    = addrMudou    ? textoOuNulo(geoLote_.editorAddress.get())  : std::nullopt;
+        std::optional<std::string> novoCity    = cityMudou    ? textoOuNulo(geoLote_.editorCity.get())     : std::nullopt;
+        std::optional<std::string> novoState   = stateMudou   ? textoOuNulo(geoLote_.editorState.get())    : std::nullopt;
+        std::optional<std::string> novoCountry = countryMudou ? textoOuNulo(geoLote_.editorCountry.get())  : std::nullopt;
 
         // Item "Progress bar para operações de metadata" (exemplo
         // obrigatório: GEO LOCATION em lote) — mesma ProgressoGlobal já
@@ -5125,17 +5181,58 @@ private:
 
         projeto_.iniciarGrupoUndo("Batch edit: geo location");
         int concluidos = 0;
-        // Fase 2b: uma transação só pros N itens em vez de uma por INSERT
-        // (AssetGeolocationRepository::salvar chamado por item).
+        // Fase 2b: uma transação só pros N itens (leitura + mescla + escrita)
+        // em vez de uma por INSERT — com seleções grandes (1000+ itens) o
+        // custo fica todo no COMMIT final, não em N fsyncs.
+        //
+        // aoAplicarSucessoItem (chamado pelos campos Dublin Core) não é
+        // chamado aqui: ele cai em MosaicoComponent::atualizarItemEmMemoria,
+        // que faz ~6 SELECTs e um refiltro completo POR ITEM — nenhum dos
+        // campos que ele atualiza (título, ano, tags, content/collection
+        // type) existe em GEO LOCATION, então em 1200 itens isso sozinho
+        // levava ~40 s pra nada. aoAplicarEmLote() no fim já recalcula as
+        // contagens da sidebar, que é o único estado visível que dependeria
+        // disto.
         auto& dbGeoLote = projeto_.projeto().registro();
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacaoGeo = false;
         try { dbGeoLote.exec("BEGIN IMMEDIATE"); emTransacaoGeo = true; } catch (...) {}
         for (const auto& id : itemIds_) {
-            geoTemplate.assetId = id;
             try {
-                matriz::analytics::AssetGeolocationRepository::salvar(dbGeoLote, geoTemplate);
-                if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+                auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
+                matriz::analytics::AssetGeolocation geo = existenteOpt.value_or(matriz::analytics::AssetGeolocation{});
+                geo.assetId = id;
+                // Nunca reescreve por cima de uma fonte mais autoritativa
+                // (EXIF embutido, geocodificação) — só recalcula a fonte
+                // quando ela já era "do usuário" ou inexistente.
+                bool sourceEhDeUsuario = geo.source == matriz::analytics::GeoSource::None ||
+                    geo.source == matriz::analytics::GeoSource::UserCoordinates ||
+                    geo.source == matriz::analytics::GeoSource::UserAddress ||
+                    geo.source == matriz::analytics::GeoSource::UserCity ||
+                    geo.source == matriz::analytics::GeoSource::UserState ||
+                    geo.source == matriz::analytics::GeoSource::UserCountry;
+
+                if (coordsMudou)  { geo.latitude = novaLat; geo.longitude = novaLng; }
+                if (addrMudou)    geo.formattedAddress = novoAddr;
+                if (cityMudou)    geo.city = novoCity;
+                if (stateMudou)   geo.stateProvince = novoState;
+                if (countryMudou) geo.country = novoCountry;
+
+                if (sourceEhDeUsuario) {
+                    if (geo.hasValidCoordinates())        geo.source = matriz::analytics::GeoSource::UserCoordinates;
+                    else if (geo.formattedAddress)        geo.source = matriz::analytics::GeoSource::UserAddress;
+                    else if (geo.city)                    geo.source = matriz::analytics::GeoSource::UserCity;
+                    else if (geo.stateProvince)            geo.source = matriz::analytics::GeoSource::UserState;
+                    else if (geo.country)                 geo.source = matriz::analytics::GeoSource::UserCountry;
+                    else                                   geo.source = matriz::analytics::GeoSource::None;
+                }
+
+                // Mesma regra do salvarGeolocalizacao (item único): só grava
+                // se sobrar algum dado de localização — limpar tudo não
+                // apaga a linha existente, só evita gravar um estado vazio.
+                if (geo.hasAnyLocationData()) {
+                    matriz::analytics::AssetGeolocationRepository::salvar(dbGeoLote, geo);
+                }
             } catch (...) {}
             ++concluidos;
             if (ehLote) {
@@ -5149,6 +5246,14 @@ private:
             ProgressoGlobal::obterInstancia().concluirTarefa(
                 kIdTarefa, juce::String(concluidos) + " item(s) updated");
         }
+        // Seeds refletem o que acabou de ser gravado — sem isto, um segundo
+        // Enter sem mais edição acharia os campos "mudados" de novo (o texto
+        // não mudou, mas o seed antigo já não bate com o valor comum atual).
+        if (coordsMudou)  geoLote_.seedCoords  = geoLote_.editorCoords->getText();
+        if (addrMudou)    geoLote_.seedAddress = geoLote_.editorAddress->getText();
+        if (cityMudou)    geoLote_.seedCity    = geoLote_.editorCity->getText();
+        if (stateMudou)   geoLote_.seedState   = geoLote_.editorState->getText();
+        if (countryMudou) geoLote_.seedCountry = geoLote_.editorCountry->getText();
         if (aoAplicarEmLote) aoAplicarEmLote();
     }
 

@@ -603,6 +603,142 @@ int rodarLoteSelfTest() {
     }
     raizR.deleteRecursively();
 
+    // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
+    // Valor comum só quando 100% dos selecionados concordam; divergente fica
+    // vazio com indicador "mixed" e NÃO pode ser gravado sem edição real;
+    // editar um subcampo não pode apagar os outros por item; leitura+mescla+
+    // escrita da seleção inteira numa transação só, mesmo com 1000+ itens.
+    std::cout << "\n-- METADATA: GEO LOCATION common values / partial write / large selection --\n";
+    juce::File raizGeoLote = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_geo_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizGeoLote.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Geo";
+        params.prefixoNomenclatura = "GEO";
+        auto projeto = matriz::model::Project::criar(raizGeoLote.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        std::vector<std::string> ids;
+        for (int i = 0; i < 4; ++i) ids.push_back(inserirItem(projeto->registro(), projetoId, "GEO-" + std::to_string(i), false));
+        auto& reg = projeto->registro();
+        auto gravarGeoDireto = [&](const std::string& id, const std::string& city, const std::string& state, const std::string& country) {
+            reg.run("INSERT INTO asset_geolocation (asset_id, city, state_province, country, source, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, 'USER_CITY', datetime('now'), datetime('now'))",
+                    {matriz::db::Value::of(id), matriz::db::Value::of(city), matriz::db::Value::of(state), matriz::db::Value::of(country)});
+        };
+        gravarGeoDireto(ids[0], "Rio de Janeiro", "RJ", "Brazil");
+        gravarGeoDireto(ids[1], "Sao Paulo", "SP", "Brazil");
+        gravarGeoDireto(ids[2], "Salvador", "BA", "Brazil");
+        // ids[3]: só COUNTRY (sem city/state) — os 4 concordam em COUNTRY
+        // (testa "valor comum"), mas CITY/STATE continuam divergentes entre
+        // eles (testa "mixed"), e o merge parte de uma linha existente
+        // incompleta em vez de nenhuma linha.
+        reg.run("INSERT INTO asset_geolocation (asset_id, country, source, created_at, updated_at) "
+                "VALUES (?, 'Brazil', 'USER_COUNTRY', datetime('now'), datetime('now'))",
+                {matriz::db::Value::of(ids[3])});
+
+        auto janela = std::make_unique<MainComponent>();
+        janela->setBounds(0, 0, 1400, 900);
+        janela->abrirProjeto(std::move(projeto));
+        bombear(200);
+        janela->mostrarGrid();
+        auto* cw = janela->catalogWorkspace_.get();
+        auto* mosaico = cw->mosaico_.get();
+        esperarAte([&] { return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= (int) ids.size(); });
+
+        std::set<std::string> sel(ids.begin(), ids.end());
+        mosaico->definirSelecao(sel);
+        cw->selecionarItem({});  // mesmo truque do Select All: definirSelecao() só dispara aoMudarSelecao
+        bombear(100);
+        auto* ficha = cw->fichaPanel_.get();
+
+        auto* edCountry = ficha ? dynamic_cast<juce::TextEditor*>(ficha->editorDoCampoLoteParaTeste("geo_country")) : nullptr;
+        auto* edCity = ficha ? dynamic_cast<juce::TextEditor*>(ficha->editorDoCampoLoteParaTeste("geo_city")) : nullptr;
+        auto* edState = ficha ? dynamic_cast<juce::TextEditor*>(ficha->editorDoCampoLoteParaTeste("geo_state")) : nullptr;
+        checar(edCountry != nullptr && edCity != nullptr && edState != nullptr, "GEO LOCATION batch editors exist for a mixed selection");
+
+        auto cidadeDe = [&](const std::string& id) {
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, id);
+            return g && g->city ? *g->city : std::string();
+        };
+        auto estadoDe = [&](const std::string& id) {
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, id);
+            return g && g->stateProvince ? *g->stateProvince : std::string();
+        };
+        auto paisDe = [&](const std::string& id) {
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, id);
+            return g && g->country ? *g->country : std::string();
+        };
+
+        if (edCountry && edCity && edState) {
+            checar(edCountry->getText() == "Brazil", "COUNTRY shows the common value when all selected items agree (" + edCountry->getText() + ")");
+            checar(edCity->getText().isEmpty(), "CITY is blank when the selected items disagree (" + edCity->getText() + ")");
+            checar(edCity->getTextToShowWhenEmpty() == matriz::i18n::t("ficha.lote_valores_multiplos"),
+                   "CITY shows the \"different values\" indicator instead of a plain placeholder");
+
+            // Enter sem digitar nada num campo "mixed": nada pode ser gravado.
+            if (edCity->onReturnKey) edCity->onReturnKey();
+            bombear(200);
+            checar(cidadeDe(ids[0]) == "Rio de Janeiro" && cidadeDe(ids[1]) == "Sao Paulo" && cidadeDe(ids[2]) == "Salvador",
+                   "committing a mixed CITY field with no real edit doesn't wipe any item's own value");
+
+            // Edita só CITY: aplica a todos; COUNTRY/STATE (não tocados) sobrevivem por item.
+            edCity->setText("Curitiba", false);
+            if (edCity->onReturnKey) edCity->onReturnKey();
+            bombear(200);
+            checar(cidadeDe(ids[0]) == "Curitiba" && cidadeDe(ids[1]) == "Curitiba" &&
+                       cidadeDe(ids[2]) == "Curitiba" && cidadeDe(ids[3]) == "Curitiba",
+                   "editing only CITY applies the new value to every selected item, including one that had no CITY before (only COUNTRY)");
+            checar(estadoDe(ids[0]) == "RJ" && estadoDe(ids[1]) == "SP" && estadoDe(ids[2]) == "BA" && estadoDe(ids[3]).empty(),
+                   "editing CITY alone leaves each item's own STATE untouched");
+            checar(paisDe(ids[0]) == "Brazil" && paisDe(ids[1]) == "Brazil" && paisDe(ids[2]) == "Brazil" && paisDe(ids[3]) == "Brazil",
+                   "editing CITY alone leaves COUNTRY untouched per item, including the one whose only prior data was COUNTRY");
+        }
+
+        // Performance (ajuste do pedido: seleção grande não pode travar a
+        // interface): 1200 itens sem geolocalização prévia, uma edição de
+        // CITY em lote precisa ler+mesclar+gravar todos numa transação só.
+        constexpr int kGrande = 1200;
+        std::vector<std::string> idsGrande;
+        idsGrande.reserve(kGrande);
+        reg.exec("BEGIN TRANSACTION");
+        for (int i = 0; i < kGrande; ++i) idsGrande.push_back(inserirItem(reg, projetoId, "GEO-BIG-" + std::to_string(i), false));
+        reg.exec("COMMIT");
+
+        cw->recarregar();
+        esperarAte([&] { return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= kGrande; }, 20000);
+        std::set<std::string> selGrande(idsGrande.begin(), idsGrande.end());
+        mosaico->definirSelecao(selGrande);
+        // Construir o card em lote pra 1200 itens também mexe nos campos
+        // Dublin Core (cada um com sua própria varredura O(N) preexistente,
+        // fora do escopo deste item) — não cronometrado aqui de propósito;
+        // o pedido do usuário é sobre a GRAVAÇÃO de GEO LOCATION, não sobre
+        // abrir a ficha.
+        cw->selecionarItem({});
+        auto* fichaG = cw->fichaPanel_.get();
+        auto* edCityG = fichaG ? dynamic_cast<juce::TextEditor*>(fichaG->editorDoCampoLoteParaTeste("geo_city")) : nullptr;
+        checar(edCityG != nullptr, "GEO LOCATION batch editor exists for a " + juce::String(kGrande) + "-item selection");
+        if (edCityG) {
+            edCityG->setText("Manaus", false);
+            auto t2 = juce::Time::getMillisecondCounter();
+            if (edCityG->onReturnKey) edCityG->onReturnKey();
+            auto t3 = juce::Time::getMillisecondCounter();
+            bombear(200);
+            double msAplicar = static_cast<double>(t3 - t2);
+            checar(msAplicar < 3000.0, "applying GEO LOCATION to " + juce::String(kGrande) + " items in one transaction stays under 3s (" + juce::String(msAplicar, 1) + " ms)");
+            auto st = reg.prepare("SELECT COUNT(*) FROM asset_geolocation WHERE city = ?");
+            st.bind(1, matriz::db::Value::of(std::string("Manaus")));
+            st.step();
+            int cGrande = st.columnInt(0);
+            checar(cGrande == kGrande, "GEO LOCATION written to all " + juce::String(kGrande) + " items in the large selection (" + juce::String(cGrande) + ")");
+        }
+
+        janela.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("geo location selftest: ") + e.what());
+    }
+    raizGeoLote.deleteRecursively();
+
     // ------------------------------------------ Miniatura no grid do Intake
     // O card entra na grade ANTES da miniatura existir (ingest insere o item
     // e só depois gera a miniatura). O grid não pode guardar "sem miniatura"
