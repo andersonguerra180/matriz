@@ -329,7 +329,14 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // texto depois de um Enter em lote (o campo mantém o foco — só
     // reselecionar na grade devolvia o foco de teclado e destravava o
     // atalho). Mesmo padrão do "Select All" (btnSelecionarTodos_ abaixo).
-    fichaPanel_->aoPedirFocoGrade = [this] { if (mosaico_) mosaico_->grabKeyboardFocus(); };
+    // Adiado (callAsync): o onChange de um dropdown roda com o popup ainda aberto;
+    // ao fechar, o foco volta ao ComboBox e desfazia um grab síncrono.
+    fichaPanel_->aoPedirFocoGrade = [this] {
+        juce::Component::SafePointer<MosaicoComponent> safeMosaico(mosaico_.get());
+        juce::MessageManager::callAsync([safeMosaico] {
+            if (safeMosaico != nullptr) safeMosaico->grabKeyboardFocus();
+        });
+    };
     addAndMakeVisible(*fichaPanel_);
 
     auto resizer = std::make_unique<FichaResizerBar>();
