@@ -6,6 +6,7 @@
 #include <iostream>
 
 #include "../Model/Project.h"
+#include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
 #include "CatalogWorkspaceComponent.h"
 #include "FichaPanelComponent.h"
@@ -732,6 +733,78 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("folder selection selftest: ") + e.what());
     }
     raizFolderSel.deleteRecursively();
+
+    // --------------------------------- PROJETO: Rename Project (item 5, 2026-09-28)
+    // Só o rótulo muda: pasta, prefixo, máscara e o .mtz/.bkm original (por
+    // conteúdo, não por nome reconstruído) continuam intactos. Testa o
+    // modelo direto (Project::renomear) — o diálogo em si (MainWindow) é só
+    // fiação sobre isto, sem lógica própria pra errar.
+    std::cout << "\n-- PROJECT: Rename Project --\n";
+    juce::File raizRename = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                 .getChildFile("matriz_rename_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizRename.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Antes do Rename";
+        params.prefixoNomenclatura = "REN";
+        auto projeto = matriz::model::Project::criar(raizRename.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        const juce::File pastaProjetoDb = raizRename.getChildFile("projeto");
+
+        auto lerPrefixoMascara = [&]() {
+            auto stmt = projeto->registro().prepare("SELECT prefixo_nomenclatura, mascara_nomenclatura FROM projeto LIMIT 1");
+            stmt.step();
+            return std::make_pair(stmt.columnText(0), stmt.columnText(1));
+        };
+        auto [prefixoAntes, mascaraAntes] = lerPrefixoMascara();
+
+        juce::Array<juce::File> markersAntes;
+        projeto->raiz().findChildFiles(markersAntes, juce::File::findFiles, false, "*.mtz");
+        checar(markersAntes.size() == 1, "project creation writes exactly one .mtz marker file (" + juce::String(markersAntes.size()) + ")");
+        juce::String conteudoOriginal = markersAntes.isEmpty() ? juce::String() : markersAntes.getReference(0).loadFileAsString();
+        juce::var jsonOriginal = juce::JSON::parse(conteudoOriginal);
+        juce::String criadoEmOriginal = jsonOriginal.isObject() ? jsonOriginal.getProperty("criado_em", "").toString() : juce::String();
+        checar(criadoEmOriginal.isNotEmpty(), "the original marker file has a criado_em to compare against after rename");
+
+        projeto->renomear("Depois do Rename");
+        checar(projeto->nome() == "Depois do Rename", "renomear() updates nome() live (\"" + juce::String(projeto->nome()) + "\")");
+
+        auto [prefixoDepois, mascaraDepois] = lerPrefixoMascara();
+        checar(prefixoAntes == prefixoDepois, "renaming never touches prefixo_nomenclatura (" + juce::String(prefixoDepois) + ")");
+        checar(mascaraAntes == mascaraDepois, "renaming never touches mascara_nomenclatura");
+        checar(projeto->raiz().getFullPathName() == pastaProjetoDb.getFullPathName() && pastaProjetoDb.exists(),
+               "renaming never moves or renames the project folder (" + projeto->raiz().getFullPathName() + ")");
+
+        // Fecha e reabre: Project::abrir() reconstruía o nome do arquivo a
+        // partir do nome AO VIVO e, não achando o antigo, criava um .mtz
+        // órfão novo — precisa continuar achando o original por extensão.
+        projeto.reset();
+        auto reaberto = matriz::model::Project::abrir(pastaProjetoDb);
+        juce::Array<juce::File> markersDepois;
+        reaberto->raiz().findChildFiles(markersDepois, juce::File::findFiles, false, "*.mtz");
+        checar(markersDepois.size() == 1,
+               "reopening after a rename still finds exactly one .mtz — no orphaned duplicate (" + juce::String(markersDepois.size()) + ")");
+        if (markersDepois.size() == 1) {
+            juce::var jsonDepois = juce::JSON::parse(markersDepois.getReference(0).loadFileAsString());
+            juce::String criadoEmDepois = jsonDepois.isObject() ? jsonDepois.getProperty("criado_em", "").toString() : juce::String();
+            checar(criadoEmDepois == criadoEmOriginal,
+                   "the marker file found after rename is the ORIGINAL one (same criado_em), not a freshly synthesized replacement");
+        }
+
+        // Lista de Arquivos Recentes (o que pedirRenomearProjeto() chama
+        // depois de Project::renomear).
+        matriz::app::registrarRecente(reaberto->raiz().getFullPathName(), "Depois do Rename",
+                                       matriz::model::modoToString(reaberto->modo()));
+        bool achouRecente = false;
+        for (const auto& r : matriz::app::lerRecentes())
+            if (r.pasta == reaberto->raiz().getFullPathName()) achouRecente = (r.nome == "Depois do Rename");
+        checar(achouRecente, "the Recent Files entry reflects the new name, keyed by the same folder path");
+
+        reaberto.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("rename project selftest: ") + e.what());
+    }
+    raizRename.deleteRecursively();
 
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica

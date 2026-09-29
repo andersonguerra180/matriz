@@ -31,6 +31,7 @@ enum ComandoMenu {
     kCmdVoltarAoCatalogo,
     kCmdSalvarProjeto,
     kCmdSalvarProjetoComo,
+    kCmdRenomearProjeto,
     kCmdInfoProjeto,
     kCmdSair,
     kCmdRenomearItem,
@@ -195,6 +196,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
 
         menu.addItem(kCmdSalvarProjeto, saveText, temProjeto);
         menu.addItem(kCmdSalvarProjetoComo, saveAsText, temProjeto);
+        menu.addItem(kCmdRenomearProjeto, isPt ? juce::String::fromUTF8("Renomear Projeto...") : "Rename Project...", temProjeto);
         menu.addItem(kCmdFecharProjeto, closeText, temProjeto && podeTrocarProjeto);
         // Voltar ao catálogo pai: era a segunda função do botão CLOSE PROJECT
         // das abas, que foi removido — agora mora aqui, junto de Close.
@@ -251,6 +253,7 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdAbrirCatalogo: pedirAbrirCatalogo(); break;
         case kCmdSalvarProjeto: conteudo_->salvarProjeto(); break;
         case kCmdSalvarProjetoComo: pedirSalvarProjetoComo(); break;
+        case kCmdRenomearProjeto: pedirRenomearProjeto(); break;
         case kCmdFecharProjeto: conteudo_->fecharProjeto(); break;
         case kCmdVoltarAoCatalogo: conteudo_->retornarAoCatalogo(); break;
         case kCmdInfoProjeto: pedirConfiguracoesProjeto(); break;
@@ -449,6 +452,53 @@ void MainWindow::pedirAbrirCatalogo() {
 void MainWindow::pedirConfiguracoesProjeto() {
     if (!conteudo_->temProjetoAberto()) return;
     mostrarDialogoConfiguracoesProjeto(*conteudo_->projetoAberto(), [] {});
+}
+
+// Rename Project (item 5, correção METADATA 2026-09-28): só o rótulo em
+// `projeto.nome` muda — pasta, arquivos e prefixo de nomenclatura nunca são
+// derivados dele depois da criação. Mesmo padrão de diálogo de
+// BackupVersionsComponent::renomearVersao (AlertWindow + 1 TextEditor).
+void MainWindow::pedirRenomearProjeto() {
+    if (!conteudo_->temProjetoAberto()) return;
+    auto* projetoAberto = conteudo_->projetoAberto();
+    auto& projeto = projetoAberto->projeto();
+    juce::String nomeAtual = juce::String::fromUTF8(projeto.nome().c_str());
+    bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+
+    auto alert = std::make_shared<juce::AlertWindow>(
+        isPt ? "Renomear Projeto" : "Rename Project",
+        isPt ? "Digite o novo nome do projeto:" : "Enter the new project name:",
+        juce::AlertWindow::QuestionIcon);
+    alert->addTextEditor("nome", nomeAtual, isPt ? "Novo nome" : "New name");
+    alert->addButton(isPt ? "Salvar" : "Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainWindow> safeThis(this);
+    alert->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, alert, &projeto, nomeAtual](int result) {
+        if (!safeThis || result != 1) return;
+        juce::String novoNome = alert->getTextEditorContents("nome").trim();
+        if (novoNome.isEmpty() || novoNome == nomeAtual) return;
+
+        projeto.renomear(novoNome.toStdString());
+
+        matriz::model::ProjectLog pLog(projeto.pasta());
+        juce::StringArray details;
+        details.add("Old Name: " + nomeAtual);
+        details.add("New Name: " + novoNome);
+        pLog.appendEntry("Project Renamed", details);
+
+        // Título da janela: mesmo callback que MainComponent já chama em
+        // toda mudança de estado do projeto — já lê projeto.nome() ao vivo.
+        if (safeThis->conteudo_ && safeThis->conteudo_->aoMudarEstadoProjeto)
+            safeThis->conteudo_->aoMudarEstadoProjeto();
+
+        // Lista de Arquivos Recentes: só é escrita na abertura/criação —
+        // sem isto, o item ficaria com o nome antigo até fechar e reabrir.
+        matriz::app::registrarRecente(projeto.raiz().getFullPathName(), novoNome,
+                                       matriz::model::modoToString(projeto.modo()));
+
+        safeThis->menuItemsChanged();
+    }));
 }
 
 void MainWindow::pedirConsolidar() {

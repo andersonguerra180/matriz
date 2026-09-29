@@ -1478,14 +1478,22 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
             if (stmtModo.step()) modoStr = stmtModo.columnText(0);
         }
         juce::String ext = (modoStr == "catalogo" ? ".bkm" : ".mtz");
-        std::string nomeProj = "";
-        {
-            auto stmtNome = registro->prepare("SELECT nome FROM projeto LIMIT 1");
-            if (stmtNome.step()) nomeProj = stmtNome.columnText(0);
-        }
-        if (nomeProj.empty()) nomeProj = pastaRaiz.getFileName().toStdString();
-        juce::File arquivoProjeto = pastaRaiz.getChildFile(juce::File::createLegalFileName(nomeProj) + ext);
-        if (!arquivoProjeto.existsAsFile()) {
+        // Rename Project (item 5, 2026-09-28): o nome pode não bater mais
+        // com o arquivo já existente. Acha por extensão na raiz antes de
+        // assumir que falta um — reconstruir o nome do arquivo a partir do
+        // nome AO VIVO criava um .mtz/.bkm novo (órfão, com criado_em
+        // reiniciado) toda vez que o projeto era reaberto depois de
+        // renomeado, deixando o original pra trás sem ninguém achar.
+        juce::Array<juce::File> existentes;
+        pastaRaiz.findChildFiles(existentes, juce::File::findFiles, false, "*" + ext);
+        if (existentes.isEmpty()) {
+            std::string nomeProj = "";
+            {
+                auto stmtNome = registro->prepare("SELECT nome FROM projeto LIMIT 1");
+                if (stmtNome.step()) nomeProj = stmtNome.columnText(0);
+            }
+            if (nomeProj.empty()) nomeProj = pastaRaiz.getFileName().toStdString();
+            juce::File arquivoProjeto = pastaRaiz.getChildFile(juce::File::createLegalFileName(nomeProj) + ext);
             juce::DynamicObject::Ptr projObj = new juce::DynamicObject();
             projObj->setProperty("formato", 1);
             projObj->setProperty("modo", juce::String(modoStr));
@@ -1529,6 +1537,13 @@ std::string Project::nome() {
     auto stmt = registro_->prepare("SELECT nome FROM projeto LIMIT 1");
     stmt.step();
     return stmt.columnText(0);
+}
+
+void Project::renomear(const std::string& novoNome) {
+    if (novoNome.empty()) return;
+    registro_->run("UPDATE projeto SET nome = ?, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(novoNome), matriz::db::Value::of(agoraIso8601()),
+                    matriz::db::Value::of(projetoId_)});
 }
 
 std::string Project::destinoBackupAtivo() {

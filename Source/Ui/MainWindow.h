@@ -32,6 +32,7 @@ private:
     void pedirAbrirCatalogo();
     void abrirPasta(const juce::File& pasta);
     void pedirConfiguracoesProjeto();
+    void pedirRenomearProjeto();
     void pedirIngerirArquivos();
     void pedirSalvarProjetoComo();
     void pedirConsolidar();

@@ -99,6 +99,13 @@ public:
     // nenhuma tela hoje, mas ler ao vivo custa uma linha e evita dúvida
     // sobre staleness se isso mudar.
     std::string nome();
+    // Rename Project (item 5, correção METADATA 2026-09-28): só o rótulo em
+    // `projeto.nome` muda. Nunca renomeia a pasta do projeto, nenhum
+    // arquivo, prefixo de nomenclatura ou código de SOURCE — nenhum desses
+    // é derivado de `nome` depois da criação (ver AGENTS.md). Falha se
+    // `novoNome` vier vazio (validação fica pra quem chama, com o texto já
+    // aparado).
+    void renomear(const std::string& novoNome);
     std::string destinoBackupAtivo();
     void definirDestinoBackupAtivo(const std::string& path);
     // O modo é decidido na criação do projeto e nunca muda — lê do banco

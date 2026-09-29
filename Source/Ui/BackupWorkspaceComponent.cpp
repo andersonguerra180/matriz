@@ -2866,7 +2866,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
     juce::String extProj = isCatalogMode ? ".bkm" : ".mtz";
     juce::String nomeDoProjeto = juce::String::fromUTF8(projeto.projeto().nome().c_str());
     juce::File arqProjBackup = pastaBackupRaiz.getChildFile(juce::File::createLegalFileName(nomeDoProjeto) + extProj);
-    juce::File arqProjOrig = projeto.projeto().raiz().getChildFile(juce::File::createLegalFileName(nomeDoProjeto) + extProj);
+    // Rename Project (item 5, 2026-09-28): reconstruir o nome do arquivo
+    // original a partir do nome AO VIVO falha depois de um rename (o
+    // arquivo real ainda tem o nome antigo) — cai no synthetic abaixo, que
+    // reinventa criado_em/ids em vez de copiar o de verdade. Acha por
+    // extensão na raiz do projeto, igual já faz a cópia pro CLONE logo mais
+    // abaixo nesta função.
+    juce::Array<juce::File> arqsProjOrig;
+    projeto.projeto().raiz().findChildFiles(arqsProjOrig, juce::File::findFiles, false, "*" + extProj);
+    juce::File arqProjOrig = arqsProjOrig.isEmpty() ? juce::File() : arqsProjOrig.getFirst();
     if (arqProjOrig.existsAsFile()) {
         arqProjOrig.copyFileTo(arqProjBackup);
     } else {
