@@ -381,6 +381,50 @@ int rodarLoteSelfTest() {
             bombear(300);
             c = contar(false, "dc_creator", "Creator Lote");
             checar(c == kItensPorLado, "batch UNDO restores the previous CREATOR on every item" + n(c));
+
+            // Item 3 (correção METADATA 2026-09-28): E ficava preso no campo
+            // até reselecionar na grade porque o campo mantém o foco depois
+            // de Enter. O fix pede o foco de volta (aoPedirFocoGrade) só
+            // quando o commit veio de Enter — nunca de onFocusLost (Tab/
+            // clique noutro campo), senão isso rouba o foco do campo que o
+            // usuário acabou de entrar. Sem depender de foco real de janela
+            // (o harness não usa addToDesktop): espiona o próprio sinal.
+            // Fica por último no bloco Catalog — muda CREATOR mais uma vez,
+            // sem mais nada abaixo que dependa do valor ou da pilha de undo.
+            {
+                int pedidosFoco = 0;
+                auto espiao = [&] { ++pedidosFoco; };
+                auto original = cw->fichaPanel_->aoPedirFocoGrade;
+                cw->fichaPanel_->aoPedirFocoGrade = espiao;
+
+                auto* edCreator = dynamic_cast<juce::TextEditor*>(ficha->editorDoCampoLoteParaTeste("creator"));
+                checar(edCreator != nullptr, "CREATOR editor available for the focus-return test");
+                if (edCreator) {
+                    // Caso 1: Enter -> pede o foco de volta pra grade.
+                    edCreator->setText("Creator Enter", false);
+                    if (edCreator->onReturnKey) edCreator->onReturnKey();
+                    bombear(100);
+                    checar(pedidosFoco == 1,
+                           "pressing Enter after a batch edit asks the grid for focus back, so E works with no reselect (" +
+                               juce::String(pedidosFoco) + ")");
+                    checar(contar(false, "dc_creator", "Creator Enter") == kItensPorLado,
+                           "the Enter case still writes the value to every selected item");
+
+                    // Caso 2: sair do campo (Tab/clique noutro campo) ->
+                    // NUNCA pede o foco de volta (roubaria do campo pro qual
+                    // o usuário acabou de ir).
+                    pedidosFoco = 0;
+                    edCreator->setText("Creator Blur", false);
+                    if (edCreator->onFocusLost) edCreator->onFocusLost();
+                    bombear(100);
+                    checar(pedidosFoco == 0,
+                           "leaving the field via Tab/click (focus-lost) never asks for the grid's focus back (" +
+                               juce::String(pedidosFoco) + ")");
+                    checar(contar(false, "dc_creator", "Creator Blur") == kItensPorLado,
+                           "the focus-lost case still writes the value to every selected item, it just doesn't steal focus");
+                }
+                cw->fichaPanel_->aoPedirFocoGrade = original;
+            }
         }
 
         // ------------------------------------------------------------- Intake

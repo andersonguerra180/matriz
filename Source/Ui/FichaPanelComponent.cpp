@@ -4035,6 +4035,12 @@ public:
 
     std::function<void()> aoRelayoutNecessario;
     std::function<void()> aoAplicarEmLote;
+    // Item 3 (correção METADATA 2026-09-28): só Enter conta como "terminei
+    // de editar este campo" — devolve o foco à grade pra o atalho E
+    // funcionar sem reselecionar. onFocusLost (Tab/clique noutro campo)
+    // NUNCA chama isto: o usuário está indo pra outro campo, e roubar o
+    // foco de volta pra grade tiraria o foco de onde ele acabou de clicar.
+    std::function<void()> aoPedirFocoGrade;
     // Real-time (correção METADATA): disparado por item, a cada campo
     // aplicado — mesma função que o single-item usa (aoAplicarSucesso) pra
     // manter o card do item em memória atualizado sem recarregar a lista
@@ -4360,7 +4366,12 @@ private:
             // linha), não mais "marca tocado e espera o botão Apply".
             auto commitTexto = [this, linha] { aplicarCampoAgora(linha); };
             ed->onFocusLost = commitTexto;
-            if (!ehNotes) ed->onReturnKey = commitTexto;
+            // Item 3: só Enter pede o foco de volta pra grade (ver
+            // aoPedirFocoGrade) — onFocusLost sozinho nunca pede.
+            if (!ehNotes) ed->onReturnKey = [this, linha] {
+                aplicarCampoAgora(linha);
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
         };
@@ -4714,9 +4725,13 @@ private:
                     ed->setTextToShowWhenEmpty(todosIguais ? placeholder : matriz::i18n::t("ficha.lote_valores_multiplos"), tk.textoTerciario);
                 }
                 seedOut = ed->getText();
-                auto commitGeo = [this] { aplicarGeoAgora(); };
-                ed->onFocusLost = commitGeo;
-                ed->onReturnKey = commitGeo;
+                ed->onFocusLost = [this] { aplicarGeoAgora(); };
+                // Item 3: só Enter pede o foco de volta pra grade — Tab/
+                // clique noutro subcampo (onFocusLost) nunca pede.
+                ed->onReturnKey = [this] {
+                    aplicarGeoAgora();
+                    if (aoPedirFocoGrade) aoPedirFocoGrade();
+                };
                 addAndMakeVisible(*ed);
             };
 
@@ -5473,6 +5488,7 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
         conteudoLote_->aoAplicarSucessoItem = [this](const std::string& itemId) {
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         };
+        conteudoLote_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
     }
     viewport_->setViewedComponent(conteudoLote_.get(), false);
     conteudoLote_->mostrarSelecao(itemIds);

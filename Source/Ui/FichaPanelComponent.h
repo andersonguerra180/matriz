@@ -46,6 +46,11 @@ public:
     std::function<void()> aoAplicarEmLote;
     std::function<void()> aoMudar;
     std::function<void(const std::string& itemId)> aoAplicarSucesso;
+    // Item 3 (correção METADATA 2026-09-28): disparado só quando um campo em
+    // lote é confirmado com Enter (nunca por Tab/clique noutro campo) — o
+    // dono (CatalogWorkspaceComponent) devolve o foco de teclado à grade,
+    // senão o atalho E fica preso no campo até o usuário reselecionar.
+    std::function<void()> aoPedirFocoGrade;
 
     // Introspecção pra teste (Parte 2 da correção crítica — perda de
     // dado): acesso ao editor de um campo específico pra simular digitação

@@ -325,6 +325,11 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
         if (aoItemAlterado) aoItemAlterado(itemId);
     };
+    // Item 3 (correção METADATA 2026-09-28): E ficava preso no campo de
+    // texto depois de um Enter em lote (o campo mantém o foco — só
+    // reselecionar na grade devolvia o foco de teclado e destravava o
+    // atalho). Mesmo padrão do "Select All" (btnSelecionarTodos_ abaixo).
+    fichaPanel_->aoPedirFocoGrade = [this] { if (mosaico_) mosaico_->grabKeyboardFocus(); };
     addAndMakeVisible(*fichaPanel_);
 
     auto resizer = std::make_unique<FichaResizerBar>();
