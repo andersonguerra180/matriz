@@ -1201,6 +1201,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"arvore_backup.nova_subpasta_msg", "Enter subfolder name:"},
         {"arvore_backup.nova_subpasta_padrao", "New Subfolder"},
         {"arvore_backup.desconectar_pai", "Disconnect from Parent"},
+        {"arvore_backup.desconectar_puladas", "{n} folder(s) were skipped because they already have files in the MAIN."},
+        {"arvore_backup.cor_pasta", "Folder Color..."},
         {"arvore_backup.renomear_pasta_menu", "Rename Folder..."},
         {"arvore_backup.alternar_ativo", "Toggle ACTIVE / DISABLED"},
         {"arvore_backup.apagar_pasta_menu", "Delete Folder"},

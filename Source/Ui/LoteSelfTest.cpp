@@ -17,6 +17,7 @@
 #include "ProjetoAberto.h"
 #include "BackupVersionsComponent.h"
 #include "BackupWorkspaceComponent.h"
+#include "ArvoreBackupComponent.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Audio/FormatoAudioQuickTime.h"
 #include "../Model/CompactacaoRegistro.h"
@@ -913,6 +914,77 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("print/watermark photo-only selftest: ") + e.what());
     }
     raizFotoPW.deleteRecursively();
+
+    // ------------------- Folder Map: Disconnect from Parent em lote (item 7, 2026-09-29)
+    std::cout << "\n-- Folder Map: batch Disconnect from Parent + undo (item 7) --\n";
+    juce::File raizDisc = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_folder_disconnect_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizDisc.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Disconnect";
+        params.prefixoNomenclatura = "DSC";
+        auto projeto = matriz::model::Project::criar(raizDisc.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        std::string mapaPadrao = pa.mapaAtivoPadrao();
+
+        std::string root = pa.criarPastaAcervo("Root", std::nullopt, mapaPadrao);
+        std::string a = pa.criarPastaAcervo("A", root, mapaPadrao);
+        std::string b = pa.criarPastaAcervo("B", root, mapaPadrao);
+        std::string c = pa.criarPastaAcervo("C", root, mapaPadrao);  // vai ficar travada pelo MAIN
+
+        const std::string itemC = inserirItem(reg, projetoId, "DSC-C", false);
+        reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                "checksum_sha256, consolidado_em) SELECT ?, item_id, ?, id, 'x.wav', 'abc', ? FROM arquivo WHERE item_id = ?",
+                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(c),
+                 matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(itemC)});
+        checar(pa.pastaTemArquivosNoMain(c), "setup: folder C is locked by the MAIN");
+
+        ArvoreBackupComponent arvore(pa);
+        auto lerPai = [&](const std::string& id) -> std::string {
+            auto stmt = reg.prepare("SELECT pasta_pai_id FROM acervo_pasta WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(id));
+            if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
+            return {};
+        };
+
+        // Seleciona A, B, C (com pai) e Root (sem pai — deve ser ignorada
+        // em silêncio, sem contar como pulada).
+        for (auto& n : arvore.nodes_)
+            if (n.id == a || n.id == b || n.id == c || n.id == root) n.selecionado = true;
+
+        checar(!pa.podeDesfazer(), "setup: nothing to undo yet");
+        arvore.desconectarSelecionadas();
+
+        checar(lerPai(a).empty() && lerPai(b).empty(), "A and B (unlocked) got disconnected from Root");
+        checar(lerPai(c) == root, "C (locked by the MAIN) stayed connected — skipped, no error");
+        checar(pa.podeDesfazer(), "the batch disconnect left an undo entry");
+
+        pa.desfazer();
+        checar(lerPai(a) == root && lerPai(b) == root,
+               "a SINGLE Undo restores BOTH A and B back under Root — one undo step for the whole batch");
+        checar(!pa.podeDesfazer(),
+               "after undoing, the stack is empty — the batch really was one single step, not two");
+
+        // Pedido explícito: arrastar (mover) uma pasta pra outro pai e
+        // desfazer — moverPastaAcervo registra undo pra QUALQUER move de
+        // hierarquia, não só desconectar; e desfazer() nunca registra a si
+        // mesmo de novo (guard desfazendo_).
+        std::string outroPai = pa.criarPastaAcervo("Outro Pai", std::nullopt, mapaPadrao);
+        checar(pa.moverPastaAcervo(a, outroPai), "dragging A to a brand-new parent succeeds");
+        checar(lerPai(a) == outroPai, "A is now under the new parent");
+        checar(pa.podeDesfazer(), "the move left an undo entry");
+        pa.desfazer();
+        checar(lerPai(a) == root, "undo restores A back to its original parent (Root)");
+        checar(!pa.podeDesfazer(),
+               "the undo stack is empty right after reverting the move — the reverse move did NOT "
+               "register a new undo entry (not registered twice)");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder disconnect selftest: ") + e.what());
+    }
+    raizDisc.deleteRecursively();
 
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica

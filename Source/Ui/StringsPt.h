@@ -1213,6 +1213,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.nova_subpasta_msg", "Digite o nome da subpasta:"},
         {"arvore_backup.nova_subpasta_padrao", "Nova Subpasta"},
         {"arvore_backup.desconectar_pai", "Desconectar da Pasta Pai"},
+        {"arvore_backup.desconectar_puladas", "{n} pasta(s) foram puladas porque já têm arquivos no MAIN."},
+        {"arvore_backup.cor_pasta", "Cor da Pasta..."},
         {"arvore_backup.renomear_pasta_menu", "Renomear Pasta..."},
         {"arvore_backup.alternar_ativo", "Alternar ATIVO / DESATIVADO"},
         {"arvore_backup.apagar_pasta_menu", "Excluir Pasta"},

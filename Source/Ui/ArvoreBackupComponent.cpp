@@ -639,6 +639,48 @@ void ArvoreBackupComponent::conectarPastas(const std::string& pastaFilhoId, cons
     recarregar();
 }
 
+void ArvoreBackupComponent::desconectarSelecionadas() {
+    if (mapaAtivoEhOriginal()) return;
+    std::vector<std::string> selectedIds;
+    for (const auto& n : nodes_) if (n.selecionado) selectedIds.push_back(n.id);
+    if (selectedIds.empty()) return;
+
+    // Sem pai: ignorada em silêncio (não é um erro, não conta no aviso).
+    std::vector<std::string> comPai;
+    for (const auto& id : selectedIds) {
+        for (const auto& n : nodes_) {
+            if (n.id == id) {
+                if (!n.pastaPaiId.empty()) comPai.push_back(id);
+                break;
+            }
+        }
+    }
+    if (comPai.empty()) return;
+
+    // Um grupo de desfazer só pro lote inteiro — moverPastaAcervo() já
+    // registra a reversão de cada pasta dentro dele (item 7/geral).
+    projeto_.iniciarGrupoUndo("Disconnect from Parent");
+    int desconectadas = 0, puladas = 0;
+    for (const auto& id : comPai) {
+        // Pré-checa aqui pra nunca deixar moverPastaAcervo mostrar seu
+        // próprio avisarMapaTravado() por pasta — um resumo só, no final.
+        if (projeto_.pastaTemArquivosNoMain(id)) { ++puladas; continue; }
+        if (projeto_.moverPastaAcervo(id, std::nullopt)) ++desconectadas;
+    }
+    projeto_.finalizarGrupoUndo();
+
+    if (puladas > 0) {
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::WarningIcon)
+                .withTitle(i18n::t("mapa_main.titulo"))
+                .withMessage(i18n::t("arvore_backup.desconectar_puladas").replace("{n}", juce::String(puladas)))
+                .withButton(i18n::t("dialogo.ok")),
+            juce::ModalCallbackFunction::create([](int) {}));
+    }
+    if (desconectadas > 0) recarregar();
+}
+
 void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
     if (mapaAtivoEhOriginal()) return;
     for (const auto& n : nodes_) {
@@ -1359,7 +1401,6 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             bool batch = selectedIds.size() > 1;
 
             std::string pId = hitNodeRef.id;
-            bool temPai = !hitNodeRef.pastaPaiId.empty();
             int idx = hitIndex;
 
             std::function<void(const std::string&, std::set<std::string>&)> coletarFilhos =
@@ -1408,13 +1449,29 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                         });
                 });
                 menu.addSeparator();
+            }
 
-                if (temPai) {
-                    menu.addItem(i18n::t("arvore_backup.desconectar_pai"), [this, pId] {
-                        conectarPastas(pId, std::nullopt);
-                    });
+            // Disconnect from Parent (item 7): agora funciona em lote também
+            // — D é o atalho equivalente (ver keyPressed). Habilitado se
+            // ALGUMA selecionada tem pai (as sem pai são puladas em silêncio
+            // por desconectarSelecionadas(), sem erro).
+            {
+                bool algumaComPai = false;
+                for (const auto& id : selectedIds) {
+                    for (const auto& n : nodes_) {
+                        if (n.id == id && !n.pastaPaiId.empty()) { algumaComPai = true; break; }
+                    }
+                    if (algumaComPai) break;
                 }
+                juce::PopupMenu::Item item(i18n::t("arvore_backup.desconectar_pai"));
+                item.itemID = -1;
+                item.isEnabled = algumaComPai;
+                item.shortcutKeyDescription = "D";
+                item.action = [this] { desconectarSelecionadas(); };
+                menu.addItem(std::move(item));
+            }
 
+            if (!batch) {
                 menu.addItem(i18n::t("arvore_backup.renomear_pasta_menu"), [this, pId, idx] {
                     iniciarEdicaoInline(idx);
                 });

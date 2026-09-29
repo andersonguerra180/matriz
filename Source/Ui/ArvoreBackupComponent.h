@@ -13,6 +13,7 @@ class ArvoreBackupComponent : public juce::Component,
                                public EventBusListener,
                                public juce::DragAndDropTarget {
 public:
+    friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
     ~ArvoreBackupComponent() override;
 
@@ -27,6 +28,12 @@ public:
     void apagarPastaSelecionada(const std::string& pastaId);
     void conectarPastas(const std::string& pastaFilhoId, const std::optional<std::string>& novaPastaPaiId);
     void alternarAtivoPasta(const std::string& pastaId);
+    // Item 7 — desconecta todas as pastas selecionadas de seus pais numa
+    // única operação (menu de contexto e atalho D, ver keyPressed). Sem
+    // pai: ignorada em silêncio. Travada pelo MAIN: pulada, contada num
+    // aviso único no final (nunca um alerta por pasta). Tudo num só grupo
+    // de desfazer.
+    void desconectarSelecionadas();
 
     // FOLDER COLOR (item 12) — menu de contexto "FOLDER COLOR" abre um
     // color picker; a cor escolhida vira overlay translúcido em todas as

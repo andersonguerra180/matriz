@@ -2213,6 +2213,19 @@ bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::opti
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
     }
+    // Vale pra QUALQUER move de hierarquia (desconectar, reconectar via
+    // socket-drag, futura reorganização) — não só o desconectar do item 7.
+    // Mesmo padrão de renomearPastaAcervo: guardado por desfazendo_, então
+    // desfazer() nunca registra a si mesmo de novo ao reverter.
+    if (!desfazendo_) {
+        std::optional<std::string> oldPaiId;
+        auto stmt = projeto_->registro().prepare("SELECT pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(pastaId));
+        if (stmt.step() && !stmt.columnIsNull(0)) oldPaiId = stmt.columnText(0);
+        registrarUndo("Move Folder", [this, pastaId, oldPaiId]() {
+            moverPastaAcervo(pastaId, oldPaiId);
+        });
+    }
     projeto_->registro().run(
         "UPDATE acervo_pasta SET pasta_pai_id = ?, atualizado_em = ? WHERE id = ?",
         {novaPastaPaiId ? matriz::db::Value::of(*novaPastaPaiId) : matriz::db::Value::null(),
