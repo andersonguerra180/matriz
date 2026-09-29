@@ -464,7 +464,13 @@ public:
     std::string mapaAtivoPadrao() const;
     // "" ou kMapaOriginal = limpa a seleção (volta a usar o primeiro mapa
     // do usuário). Chamado pelo dropdown de ArvoreBackupComponent.
-    void definirMapaAtivo(const std::string& mapaId) { mapaAtivoSelecionado_ = mapaId; }
+    // Também persiste o mapa escolhido (mapa_ativo.txt na pasta do projeto).
+    void definirMapaAtivo(const std::string& mapaId);
+    // Mapa com que o Folder Map abre: o último usado neste projeto (persistido,
+    // pode ser o ORIGINAL); sem registro (1ª abertura) ou se o mapa lembrado
+    // foi apagado, o ORIGINAL. Não afeta mapaAtivoPadrao(), que continua
+    // devolvendo sempre um mapa editável para os mutadores compat.
+    std::string mapaInicialDoFolderMap() const;
 
     NoArvore arvoreAcervo(const std::string& mapaId) const;
     // Compat (pré Fase 1) — opera no mapaAtivoPadrao(). Só

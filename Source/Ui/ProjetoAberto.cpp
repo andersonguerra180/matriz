@@ -1932,6 +1932,24 @@ std::string ProjetoAberto::mapaAtivoPadrao() const {
     return stmt.step() ? stmt.columnText(0) : std::string();
 }
 
+void ProjetoAberto::definirMapaAtivo(const std::string& mapaId) {
+    mapaAtivoSelecionado_ = mapaId;
+    if (!projeto_ || mapaId.empty()) return;
+    projeto_->pasta().getChildFile("mapa_ativo.txt").replaceWithText(juce::String(mapaId));
+}
+
+std::string ProjetoAberto::mapaInicialDoFolderMap() const {
+    if (!projeto_) return kMapaOriginal;
+    const auto arq = projeto_->pasta().getChildFile("mapa_ativo.txt");
+    if (!arq.existsAsFile()) return kMapaOriginal;
+    const std::string lembrado = arq.loadFileAsString().trim().toStdString();
+    if (lembrado.empty() || lembrado == kMapaOriginal) return kMapaOriginal;
+    auto stmt = projeto_->registro().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
+    stmt.bind(1, matriz::db::Value::of(lembrado));
+    stmt.bind(2, matriz::db::Value::of(projeto_->projetoId()));
+    return stmt.step() ? lembrado : kMapaOriginal;
+}
+
 std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() const {
     std::vector<FolderMapInfo> out;
     FolderMapInfo original;

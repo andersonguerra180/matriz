@@ -354,7 +354,8 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     setWantsKeyboardFocus(true);
 
     migrarPresetsAntigosSeNecessario();
-    mapaAtivoId_ = projeto_.mapaAtivoPadrao();
+    mapaAtivoId_ = projeto_.mapaInicialDoFolderMap();
+    projeto_.definirMapaAtivo(mapaAtivoId_);  // mutadores compat seguem o mapa aberto
     recarregarComboMapas();
     atualizarEstadoBotoesParaMapa();
     recarregar();
@@ -2251,7 +2252,7 @@ void ArvoreBackupComponent::mostrarMenuMapa() {
             [safeThis, mapaId](int res) {
                 if (res != 1 || !safeThis) return;
                 if (!safeThis->projeto_.apagarFolderMap(mapaId)) return;
-                safeThis->mapaAtivoId_ = safeThis->projeto_.mapaAtivoPadrao();
+                safeThis->mapaAtivoId_ = ProjetoAberto::kMapaOriginal;
                 safeThis->projeto_.definirMapaAtivo(safeThis->mapaAtivoId_);
                 safeThis->recarregarComboMapas();
                 safeThis->atualizarEstadoBotoesParaMapa();
