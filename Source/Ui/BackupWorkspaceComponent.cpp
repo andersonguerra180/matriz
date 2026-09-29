@@ -2749,7 +2749,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     // FAZER BACKUP antes do primeiro backup; depois, ADICIONAR AO MAIN
     // (mainSelado_ calculado em atualizarTravasDoMain).
     btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
-    btnStartBackup_->setEnabled(pronto && destacadoEhMain());
+    btnStartBackup_->setEnabled(pronto && destacadoEhMain() && !projeto_.somenteLeitura());
 }
 
 void BackupWorkspaceComponent::atualizarTravasDoMain() {
@@ -2994,6 +2994,7 @@ void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
 
 void BackupWorkspaceComponent::iniciarBackup() {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    if (projeto_.somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: sem backup
 
     // Backup só vai pro MAIN (a pasta do projeto) — outros destinos são CLONE
     // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
@@ -3490,6 +3491,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
 }
 
 void BackupWorkspaceComponent::atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar) {
+    if (projeto_.somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
     if (exportando_) return;
     exportando_ = true;  // um trabalho de disco por vez nesta tela
     if (btnAtualizarSidecars_) btnAtualizarSidecars_->setEnabled(false);

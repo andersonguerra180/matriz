@@ -1563,6 +1563,10 @@ void Project::confirmarRevisao() {
     registro_->limparSujo();
 }
 
+void Project::recarregarPapel() {
+    if (auto info = DestinationInfo::lerDeArquivo(raiz().getChildFile("destination.json"))) destinationInfo_.papel = info->papel;
+}
+
 std::string Project::nome() {
     auto stmt = registro_->prepare("SELECT nome FROM projeto LIMIT 1");
     stmt.step();

@@ -154,8 +154,12 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
 ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : projeto_(std::move(projeto)) {
     juce::File registroFile = projeto_->pasta().getChildFile("registro.sqlite");
     juce::File pastaProjeto = projeto_->pasta();
+    // Fase 5: destino com papel CLONE abre somente leitura.
+    somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
 
-    std::thread([registroFile, pastaProjeto]() {
+    const bool somenteLeituraNaAbertura = somenteLeitura_;
+    std::thread([registroFile, pastaProjeto, somenteLeituraNaAbertura]() {
+        if (somenteLeituraNaAbertura) return;  // manutenção de tamanho_bytes escreve no banco: não num clone
         try {
             matriz::db::Database db(registroFile.getFullPathName().toStdString());
 
@@ -202,6 +206,33 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
             // Ignore/log errors safely
         }
     }).detach();
+}
+
+void ProjetoAberto::avisarSomenteLeitura() {
+    static juce::int64 ultimoAviso = 0;
+    const auto agora = juce::Time::currentTimeMillis();
+    if (agora - ultimoAviso < 4000) return;  // um aviso, não um por chamada
+    ultimoAviso = agora;
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                     .withTitle(matriz::i18n::t("clone_ro.titulo"))
+                                     .withMessage(matriz::i18n::t("clone_ro.bloqueado"))
+                                     .withButton(matriz::i18n::t("dialogo.ok")),
+                                 juce::ModalCallbackFunction::create([](int) {}));
+}
+
+bool ProjetoAberto::reavaliarSomenteLeitura() {
+    if (!projeto_) return false;
+    projeto_->recarregarPapel();
+    const bool novo = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
+    if (novo == somenteLeitura_) return false;
+    somenteLeitura_ = novo;
+    if (!novo) {
+        try {
+            matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Clone promoted to MAIN", {"Editing is unlocked for this project."});
+        } catch (...) {}
+    }
+    return true;
 }
 
 juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
@@ -982,6 +1013,7 @@ std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string
 }
 
 int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const juce::File& imagem) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return 0; }
     if (!projeto_ || !imagem.existsAsFile()) return 0;
 
     int aplicadas = 0;
@@ -1040,6 +1072,7 @@ int ProjetoAberto::definirCapa(const std::vector<std::string>& itemIds, const ju
 }
 
 void ProjetoAberto::removerCapa(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
@@ -1181,6 +1214,7 @@ std::string ProjetoAberto::descricaoUndoAtual() const {
 }
 
 void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
 
     if (!desfazendo_) {
@@ -1230,6 +1264,7 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
 void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
                                           const std::vector<std::pair<std::string, std::string>>& camposEValores,
                                           const std::set<std::pair<std::string, std::string>>& pular) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty() || camposEValores.empty()) return;
 
     // Uma entrada de Undo só pro lote inteiro (não uma por item x campo):
@@ -1338,6 +1373,7 @@ bool ProjetoAberto::preencherAnoPadraoSeVazio(const std::string& itemId, const s
 }
 
 void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty()) return;
     auto& db = projeto_->registro();
     std::string agora = matriz::model::agoraIso8601();
@@ -1402,6 +1438,7 @@ std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const
 }
 
 void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std::string>& tags) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
         auto oldTags = lerTags(itemId);
@@ -1451,6 +1488,7 @@ void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std
 }
 
 void ProjetoAberto::adicionarTag(const std::string& itemId, const std::string& tag) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || tag.empty()) return;
     juce::String clean = juce::String(tag).trimCharactersAtStart("#").trim();
     if (clean.isEmpty()) return;
@@ -1483,6 +1521,7 @@ void ProjetoAberto::adicionarTag(const std::string& itemId, const std::string& t
 }
 
 void ProjetoAberto::removerTag(const std::string& itemId, const std::string& tag) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || tag.empty()) return;
     juce::String clean = juce::String(tag).trimCharactersAtStart("#").trim();
     std::string cleanStr = clean.toStdString();
@@ -1520,6 +1559,7 @@ std::vector<std::string> ProjetoAberto::listarPessoas() const {
 }
 
 bool ProjetoAberto::adicionarPessoa(const std::string& nome) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || nome.empty()) return false;
     juce::String clean = juce::String(nome).trim();
     if (clean.isEmpty()) return false;
@@ -1545,6 +1585,7 @@ bool ProjetoAberto::adicionarPessoa(const std::string& nome) {
 }
 
 bool ProjetoAberto::removerPessoa(const std::string& nome) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || nome.empty()) return false;
     try {
         auto stmt = projeto_->registro().prepare("DELETE FROM collection_person WHERE nome = ?");
@@ -1573,6 +1614,7 @@ const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
 bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, const juce::File& novoCaminho,
                                                    juce::String& erro) {
     if (!projeto_) { erro = "Nenhum projeto aberto."; return false; }
+    if (somenteLeitura_) { erro = matriz::i18n::t("clone_ro.bloqueado").toStdString(); return false; }
     if (!novoCaminho.existsAsFile()) {
         erro = "Arquivo nao encontrado: " + novoCaminho.getFullPathName();
         return false;
@@ -1852,6 +1894,7 @@ std::vector<ProjetoAberto::ItemObservacao> ProjetoAberto::observacoesDoItem(cons
 
 std::string ProjetoAberto::adicionarObservacao(const std::string& itemId, const std::string& texto,
                                                 std::optional<int64_t> minutagemMs, const std::string& autor) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_) return {};
     std::string id = matriz::model::novoUuid();
     projeto_->registro().run(
@@ -1864,6 +1907,7 @@ std::string ProjetoAberto::adicionarObservacao(const std::string& itemId, const 
 
 void ProjetoAberto::atualizarObservacao(const std::string& observacaoId, const std::string& texto,
                                          std::optional<int64_t> minutagemMs) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     projeto_->registro().run(
         "UPDATE item_observacao SET texto = ?, minutagem_ms = ? WHERE id = ?",
@@ -1873,6 +1917,7 @@ void ProjetoAberto::atualizarObservacao(const std::string& observacaoId, const s
 }
 
 void ProjetoAberto::removerObservacao(const std::string& observacaoId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     projeto_->registro().run("DELETE FROM item_observacao WHERE id = ?", {matriz::db::Value::of(observacaoId)});
 }
@@ -2010,6 +2055,7 @@ std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() cons
 }
 
 std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::optional<std::string>& origemMapaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_ || nome.trim().isEmpty()) return {};
 
     std::string mapaId = matriz::model::novoUuid();
@@ -2046,6 +2092,7 @@ std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::o
 }
 
 bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::String& novoNome) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || mapaId == kMapaOriginal || novoNome.trim().isEmpty()) return false;
     projeto_->registro().run("UPDATE folder_map SET nome = ?, atualizado_em = ? WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(novoNome.trim().toStdString()),
@@ -2055,6 +2102,7 @@ bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::Str
 }
 
 bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || mapaId == kMapaOriginal) return false;
     // Fase 2: o mapa do MAIN (backup_config_main.mapa_id) não pode ser apagado.
     if (mapaId == mapaDoMainId()) return false;
@@ -2169,6 +2217,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
 
 std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId,
                                              const std::string& mapaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
     std::string id = matriz::model::novoUuid();
     std::string agora = matriz::model::agoraIso8601();
@@ -2290,6 +2339,7 @@ void ProjetoAberto::avisarMapaTravado(const juce::String& mensagem) {
 }
 
 bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_) return false;
     // MAIN EDIT MODE: renomear pasta do mapa do MAIN renomeia a pasta no disco e
     // reaponta os caminhos registrados, juntos (motor MainEdit).
@@ -2326,6 +2376,7 @@ bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::s
 }
 
 bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_) return false;
     if (pastaTemArquivosNoMain(pastaId)) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
@@ -2336,6 +2387,7 @@ bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
 }
 
 bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_) return false;
     if (editandoMain_ && !mapaDoMainId().empty() && mapaIdDaPasta(pastaId) == mapaDoMainId()) {
         std::optional<std::string> paiAntes;
@@ -2378,6 +2430,7 @@ bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::opti
 }
 
 void ProjetoAberto::atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y) {
+    if (somenteLeitura_) return;
     if (!projeto_) return;
     projeto_->registro().run(
         "UPDATE acervo_pasta SET posicao_x = ?, posicao_y = ?, atualizado_em = ? WHERE id = ?",
@@ -2386,6 +2439,7 @@ void ProjetoAberto::atualizarPosicaoPastaAcervo(const std::string& pastaId, int 
 }
 
 void ProjetoAberto::alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo) {
+    if (somenteLeitura_) return;
     if (!projeto_) return;
     projeto_->registro().run(
         "UPDATE acervo_pasta SET ativo = ?, atualizado_em = ? WHERE id = ?",
@@ -2394,6 +2448,7 @@ void ProjetoAberto::alternarAtivoPastaAcervo(const std::string& pastaId, bool at
 }
 
 void ProjetoAberto::definirCorPastaAcervo(const std::string& pastaId, const juce::String& corArgbHex) {
+    if (somenteLeitura_) return;
     if (!projeto_) return;
     projeto_->registro().run(
         "UPDATE acervo_pasta SET cor_customizada = ?, atualizado_em = ? WHERE id = ?",
@@ -2430,6 +2485,7 @@ std::vector<juce::String> ProjetoAberto::historicoCoresPasta() const {
 }
 
 void ProjetoAberto::definirHistoricoCoresPasta(const std::vector<juce::String>& coresHex) {
+    if (somenteLeitura_) return;
     if (!projeto_) return;
     juce::Array<juce::var> arr;
     for (const auto& hex : coresHex) arr.add(hex);
@@ -2441,6 +2497,7 @@ void ProjetoAberto::definirHistoricoCoresPasta(const std::vector<juce::String>& 
 }
 
 void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     std::string mapaId = mapaIdDaPasta(pastaId);
     if (mapaId.empty()) return;
@@ -2483,6 +2540,7 @@ void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds
 }
 
 void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemId.empty() || pastaId.empty()) return;
     inserirItemPastaInterno(itemId, pastaId, matriz::model::agoraIso8601());
 }
@@ -2499,6 +2557,7 @@ std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::stri
 
 std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& itemIds,
                                                     const std::string& mapaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
 
     std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt, mapaId);
@@ -2524,6 +2583,7 @@ std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string
 }
 
 void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds, const std::string& mapaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
     if (!desfazendo_) {
         std::vector<std::pair<std::string, std::string>> anteriores;
@@ -2554,6 +2614,7 @@ void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds
 }
 
 void ProjetoAberto::restaurarItensParaBackup(const std::vector<std::pair<std::string, std::string>>& itensPastas) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     std::string agora = matriz::model::agoraIso8601();
     auto& db = projeto_->registro();
@@ -2600,6 +2661,7 @@ void guardarParaUndo(matriz::db::Database& db, const std::string& token, const s
 } // namespace
 
 void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     // Uma transação só pro lote inteiro (era um DELETE autocommit por item —
     // cada um pagando seu próprio overhead de WAL + cascade de FK sozinho,
@@ -2661,6 +2723,7 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
 }
 
 void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
         std::vector<std::pair<std::string, std::string>> antigosTitulos;
@@ -2718,6 +2781,7 @@ void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const
 }
 
 void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty()) return;
     bool todosMarcados = true;
     for (const auto& id : itemIds) {
@@ -2757,6 +2821,7 @@ bool ProjetoAberto::itemMarcadoRevisado(const std::string& itemId) const {
 }
 
 void ProjetoAberto::limparTodosMarcadosRevisado() {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     projeto_->registro().run("UPDATE item SET marcado_revisado = 0 WHERE marcado_revisado != 0", {});
     EventBus::obterInstancia().dispararItemAlterado("", "marcado_revisado");
@@ -3021,6 +3086,7 @@ std::vector<ProjetoAberto::ParDuplicatas> ProjetoAberto::listarGruposDuplicados(
 }
 
 void ProjetoAberto::atualizarEstadoItem(const std::string& itemId, const std::string& novoEstado) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     std::string agora = matriz::model::agoraIso8601();
     projeto_->registro().run("UPDATE item SET estado = ?, atualizado_em = ? WHERE id = ?",
@@ -3089,6 +3155,7 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
 }
 
 void ProjetoAberto::removerItemDaPasta(const std::string& itemId, const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?",
                               {matriz::db::Value::of(itemId), matriz::db::Value::of(pastaId)});
@@ -3567,6 +3634,7 @@ bool ProjetoAberto::relocarColecaoLink(const std::string& linkId, const juce::Fi
 }
 
 bool ProjetoAberto::atualizarGrupoColecao(const std::string& linkId, const juce::String& novoGrupo) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || linkId.empty()) return false;
     try {
         projeto_->registro().run(
@@ -3691,6 +3759,7 @@ std::vector<ProjetoAberto::ColecaoInteligente> ProjetoAberto::listarColecoes() c
 }
 
 std::string ProjetoAberto::salvarColecao(const ColecaoInteligente& colecao) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_) return {};
     std::string id = colecao.id.empty() ? matriz::model::novoUuid() : colecao.id;
     std::string agora = matriz::model::agoraIso8601();
@@ -3718,6 +3787,7 @@ std::string ProjetoAberto::salvarColecao(const ColecaoInteligente& colecao) {
 }
 
 void ProjetoAberto::apagarColecao(const std::string& id) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     projeto_->registro().run("DELETE FROM colecao_inteligente WHERE id = ?", {matriz::db::Value::of(id)});
 }
@@ -3785,6 +3855,7 @@ std::set<int> ProjetoAberto::indicesExistentes(const std::string& itemId, const 
 }
 
 void ProjetoAberto::atualizarTipoMidia(const std::string& itemId, const std::string& tipoMidia) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
         auto stmt = projeto_->registro().prepare("SELECT tipo_midia FROM item WHERE id = ?");
@@ -3818,6 +3889,7 @@ void ProjetoAberto::atualizarTipoMidia(const std::string& itemId, const std::str
 }
 
 void ProjetoAberto::aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
         std::map<std::string, std::string> antigosTipos;
@@ -4235,6 +4307,7 @@ std::optional<preservation::DireitosPreservacao> ProjetoAberto::obterDireitos(co
 }
 
 void ProjetoAberto::salvarDireitos(const std::string& itemId, const preservation::DireitosPreservacao& d) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     try {
         preservation::salvarDireitos(projeto_->registro(), itemId, d, "bkr-agent-sistema");

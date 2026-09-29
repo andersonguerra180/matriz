@@ -496,6 +496,7 @@ private:
     // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).
     std::unique_ptr<FaixaAvisoComponent> faixaAviso_;
     void atualizarFaixaAviso();
+    void abrirPromocaoDoClone();
     std::unique_ptr<StorageWorkspaceComponent> storageWorkspace_; // STORAGE
     std::unique_ptr<PreservationWorkspaceComponent> preservationWorkspace_;
     std::unique_ptr<FloatingPreviewWindow> activePreviewWindow_;

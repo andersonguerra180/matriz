@@ -90,6 +90,9 @@ public:
     std::string destinationId() const { return destinationInfo_.destinationId; }
     std::string papel() const { return destinationInfo_.papel; }
     const DestinationInfo& destinationInfo() const { return destinationInfo_; }
+    // Relê o papel gravado em destination.json (depois de "promover a MAIN" o papel
+    // muda no arquivo mas este objeto continua com o que leu ao abrir).
+    void recarregarPapel();
 
     // Se houve alterações no banco de registro, incrementa a revisão,
     // atualiza destination.json atomicamente e zera a flag de dirty.

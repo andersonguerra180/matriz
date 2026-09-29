@@ -525,6 +525,18 @@ public:
     // projeto ou depois de kTimeoutEdicaoMainMs sem operações.
     // ------------------------------------------------------------------
     static constexpr juce::int64 kTimeoutEdicaoMainMs = 15 * 60 * 1000;
+
+    // ------------------------------------------------------------------
+    // Clone somente leitura (Fase 5). Projeto aberto a partir de um destino com
+    // papel CLONE navega, busca, vê e exporta; não edita metadado, não ingere,
+    // não mexe em mapas e não faz backup. A única saída é PROMOVER A MAIN
+    // (fluxo existente). Relê o papel depois da promoção.
+    // ------------------------------------------------------------------
+    bool somenteLeitura() const { return somenteLeitura_; }
+    // Relê destination.json; true se o estado mudou (ex.: clone promovido a MAIN).
+    bool reavaliarSomenteLeitura();
+    // Aviso único (com trava de tempo) usado por todo guarda de escrita.
+    static void avisarSomenteLeitura();
     bool editandoMain() const { return editandoMain_; }
     // MAIN existe e é este projeto (não CLONE) — condição pra oferecer o modo.
     bool podeEditarMain() const;
@@ -955,6 +967,7 @@ private:
     // MAIN EDIT MODE. O pool vem DEPOIS de projeto_: é destruído antes dele
     // (o job em curso ainda usa o banco) — não reordenar.
     bool editandoMain_ = false;
+    bool somenteLeitura_ = false;
     juce::int64 ultimaAtividadeMainMs_ = 0;
     std::atomic<bool> operacaoMainEmCurso_{false};
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,

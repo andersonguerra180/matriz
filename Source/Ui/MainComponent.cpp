@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "BackupVersionsComponent.h"
 
 #include "../App/Cancelamento.h"
 #include "../App/Preferencias.h"
@@ -1115,6 +1116,9 @@ void MainComponent::reconstruirLayoutProjeto() {
 
     barraAcoesFicha_ = std::make_unique<BarraAcoesFicha>();
     addAndMakeVisible(*barraAcoesFicha_);
+    // Clone somente leitura: a ficha e as ações ficam desabilitadas (Fase 5).
+    fichaPanel_->setEnabled(!projetoAberto_->somenteLeitura());
+    barraAcoesFicha_->setEnabled(!projetoAberto_->somenteLeitura());
     {
         // Mesmos ganchos do menu de contexto — as duas portas compartilham
         // não só as funções de ação, mas também o que acontece depois delas.
@@ -1936,6 +1940,7 @@ void MainComponent::mostrarTree() { mostrarStructure(SubTabEstrutura::FolderMap)
 
 void MainComponent::mostrarIngestWizard() {
     if (!projetoAberto_) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
 
     auto chooser = std::make_shared<juce::FileChooser>(
         "Select files or folders to ingest",
@@ -2670,6 +2675,7 @@ void MainComponent::atualizarBarraMetricas() {}
 
 void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas) {
     if (!projetoAberto_) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
 
     bool temDiretorio = false;
     for (const auto& entrada : arquivosOuPastas) {
@@ -4362,18 +4368,53 @@ void MainComponent::paintOverChildren(juce::Graphics& g) {
 
 void MainComponent::atualizarFaixaAviso() {
     if (!faixaAviso_) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
     if (projetoAberto_ && projetoAberto_->editandoMain()) {
-        juce::Component::SafePointer<MainComponent> safeThis(this);
         faixaAviso_->definir(matriz::i18n::t("main_edit.faixa"), juce::Colour(0xffb91c1c),
                              matriz::i18n::t("main_edit.faixa_sair"), [safeThis] {
                                  if (safeThis && safeThis->projetoAberto_) safeThis->projetoAberto_->sairModoEdicaoMain("user left");
                              });
         faixaAviso_->setVisible(true);
+    } else if (projetoAberto_ && projetoAberto_->somenteLeitura()) {
+        // Fase 5: clone abre somente leitura; a única saída é promover a MAIN.
+        faixaAviso_->definir(matriz::i18n::t("clone_ro.faixa"), juce::Colour(0xff1d4ed8),
+                             matriz::i18n::t("clone_ro.promover"), [safeThis] {
+                                 if (safeThis) safeThis->abrirPromocaoDoClone();
+                             });
+        faixaAviso_->setVisible(true);
     } else {
         faixaAviso_->setVisible(false);
     }
+    if (projetoAberto_) {
+        const bool editavel = !projetoAberto_->somenteLeitura();
+        if (fichaPanel_) fichaPanel_->setEnabled(editavel);
+        if (barraAcoesFicha_) barraAcoesFicha_->setEnabled(editavel);
+    }
     resized();
     repaint();
+}
+
+// Fluxo EXISTENTE de "promover a MAIN" (BackupVersionsComponent, sem alteração):
+// abre a lista de versões; ao fechar, relê o papel e libera a edição se o clone
+// foi promovido.
+void MainComponent::abrirPromocaoDoClone() {
+    if (!projetoAberto_) return;
+    struct Janela : public juce::DialogWindow {
+        Janela(const juce::String& titulo, juce::Colour bg) : juce::DialogWindow(titulo, bg, true) {}
+        void closeButtonPressed() override { exitModalState(0); }
+    };
+    auto* janela = new Janela(matriz::i18n::t("clone_ro.promover"), tema().painel);
+    auto* conteudo = new BackupVersionsComponent(*projetoAberto_);
+    conteudo->setSize(920, 520);
+    janela->setContentOwned(conteudo, true);
+    janela->setResizable(true, true);
+    janela->centreWithSize(920, 520);
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    janela->setVisible(true);
+    janela->enterModalState(true, juce::ModalCallbackFunction::create([safeThis](int) {
+        if (safeThis && safeThis->projetoAberto_ && safeThis->projetoAberto_->reavaliarSomenteLeitura())
+            safeThis->atualizarFaixaAviso();
+    }), true);
 }
 
 void MainComponent::resized() {
