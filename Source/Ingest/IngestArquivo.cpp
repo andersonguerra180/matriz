@@ -305,9 +305,9 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
             // ficha já usa para exibir DATE CREATED. Sem isso o campo nascia
             // vazio e o arquivo ficava fora de qualquer filtro de data.
             //
-            // Só "ano" é preenchido aqui (não dc_created/data_criacao): esses
-            // dois continuam significando "metadado lido do arquivo", e a
-            // ficha já resolve a exibição deles por conta própria.
+            // "ano" (EVENT DATE) e data_criacao (data completa do arquivo, ver
+            // abaixo) são preenchidos aqui; dc_created continua significando
+            // "metadado lido do arquivo".
             // A mais antiga entre criação e modificação: copiar um arquivo
             // (Finder, Drive, cp) costuma renovar a criação e manter a
             // modificação — a de criação sozinha virava "hoje".
@@ -319,6 +319,10 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
                 if (anoStr.size() == 4)
                     registro.run("UPDATE item SET ano = ? WHERE id = ? AND (ano IS NULL OR ano = '')",
                                  {Value::of(anoStr), Value::of(itemId)});
+                // Sem tag de data no arquivo (foto sem EXIF, MOV/MP4 sem creation_time):
+                // sem data_criacao o Intake/Grid caíam em item.criado_em = hoje.
+                // Grava a data completa do arquivo (mesma regra "mais antiga").
+                gravarCampoNativo("data_criacao", criacao.formatted("%Y-%m-%d %H:%M:%S").toStdString());
             }
         }
 
