@@ -136,7 +136,11 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
         for (int s = prefixoComum; s < p.segmentos.size(); ++s) {
             caminhoAcumulado += (caminhoAcumulado.isEmpty() ? "" : "/") + p.segmentos[s];
             NoBuilder* filho = obterOuCriarFilhoPorNome(*atual, p.segmentos[s]);
-            if (filho->id.empty()) filho->id = "original:" + caminhoAcumulado.toStdString();
+            if (filho->id.empty()) {
+                filho->id = "original:" + caminhoAcumulado.toStdString();
+                // Sem pastaPaiId o canvas não desenha a linha pai->filho.
+                filho->pastaPaiId = atual->id;
+            }
             atual = filho;
         }
         atual->itemIdsDiretos.insert(p.itemId);
