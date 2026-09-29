@@ -1327,6 +1327,15 @@ public:
                 if (owner_.tabela_) owner_.tabela_->repaint();
                 repaint();
             }
+        } else if (clickedCardIdx_ < 0 && !e.mods.isPopupMenu()) {
+            // Clique no vazio (nenhum card sob o cursor) deseleciona tudo —
+            // mesmo comportamento do Folder Map.
+            bool haviaSelecao = std::any_of(owner_.todosItens_.begin(), owner_.todosItens_.end(),
+                                             [](const auto& it) { return it.selecionado; });
+            if (haviaSelecao) {
+                owner_.selecionarTodos(false);
+                repaint();
+            }
         }
         clickedCardIdx_ = -1;
     }
@@ -3039,8 +3048,12 @@ void IntakeWorkspaceComponent::mouseDown(const juce::MouseEvent& e) {
     if (!tabela_ || modoVisao_ != ModoVisao::Lista) return;
 
     auto rel = e.getEventRelativeTo(tabela_.get());
-    if (rel.x < 0 || rel.y < 0 || rel.x >= tabela_->getWidth() || rel.y >= tabela_->getHeight())
+    if (rel.x < 0 || rel.y < 0 || rel.x >= tabela_->getWidth() || rel.y >= tabela_->getHeight()) {
+        // Clique no vazio (fora da tabela) deseleciona tudo — mesmo
+        // comportamento do Folder Map.
+        if (e.mods.isLeftButtonDown() && !itensSelecionados().empty()) selecionarTodos(false);
         return;
+    }
 
     // Check click in header area of column kColSelect
     if (rel.y < tabela_->getHeaderHeight()) {
@@ -3063,6 +3076,10 @@ void IntakeWorkspaceComponent::mouseDown(const juce::MouseEvent& e) {
         isDraggingRows_ = true;
         dragStartRow_ = row;
         dragSelectState_ = true;
+    } else {
+        // Dentro da área da tabela, mas abaixo da última linha (lista mais
+        // curta que a viewport) — também é "vazio".
+        if (!itensSelecionados().empty()) selecionarTodos(false);
     }
 }
 

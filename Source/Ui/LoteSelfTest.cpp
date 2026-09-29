@@ -424,6 +424,26 @@ int rodarLoteSelfTest() {
                     checar(contar(false, "dc_creator", "Creator Blur") == kItensPorLado,
                            "the focus-lost case still writes the value to every selected item, it just doesn't steal focus");
                 }
+
+                // Pedido 2026-09-29: dropdown (ComboBox) também precisa
+                // pedir o foco de volta — diferente de texto, escolher uma
+                // opção é sempre um commit completo, nunca um "só passando
+                // por aqui" ambíguo, então não tem o mesmo cuidado do
+                // onFocusLost acima.
+                pedidosFoco = 0;
+                auto* cbContent = dynamic_cast<juce::ComboBox*>(ficha->editorDoCampoLoteParaTeste("collection"));
+                checar(cbContent != nullptr && cbContent->getNumItems() > 1, "CONTENT dropdown has enough options for the focus-return test");
+                if (cbContent && cbContent->getNumItems() > 1) {
+                    // Índice diferente do já selecionado (um clique acima já
+                    // deixou em 0) — senão onChange não dispara (sem mudança
+                    // real) e o teste não provaria nada.
+                    int idxAlvo = cbContent->getSelectedItemIndex() == 0 ? 1 : 0;
+                    cbContent->setSelectedItemIndex(idxAlvo, juce::sendNotificationSync);
+                    bombear(100);
+                    checar(pedidosFoco == 1,
+                           "picking a dropdown option also asks the grid for focus back, so E works right after it without reselecting (" +
+                               juce::String(pedidosFoco) + ")");
+                }
                 cw->fichaPanel_->aoPedirFocoGrade = original;
             }
         }
@@ -847,6 +867,52 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("rename project selftest: ") + e.what());
     }
     raizRename.deleteRecursively();
+
+    // ------------------ METADATA: P/W só aceitam fotos (pedido 2026-09-29)
+    std::cout << "\n-- METADATA: P (Send to Print) / W (Watermark) only apply to photos --\n";
+    juce::File raizFotoPW = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                 .getChildFile("matriz_foto_pw_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizFotoPW.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "FotoPW";
+        params.prefixoNomenclatura = "FPW";
+        auto projeto = matriz::model::Project::criar(raizFotoPW.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        std::string idFoto = inserirItem(projeto->registro(), projetoId, "FPW-FOTO", false, ".jpg");
+        std::string idAudio = inserirItem(projeto->registro(), projetoId, "FPW-AUDIO", false, ".wav");
+
+        auto janela = std::make_unique<MainComponent>();
+        janela->setBounds(0, 0, 1400, 900);
+        janela->abrirProjeto(std::move(projeto));
+        bombear(200);
+        janela->mostrarGrid();
+        auto* cw = janela->catalogWorkspace_.get();
+        auto* mosaico = cw->mosaico_.get();
+        esperarAte([&] { return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= 2; });
+
+        std::set<std::string> sel{idFoto, idAudio};
+        mosaico->definirSelecao(sel);
+        bombear(50);
+
+        mosaico->keyPressed(juce::KeyPress('P', juce::ModifierKeys(), (juce::juce_wchar) 'p'));
+        bombear(100);
+        auto* pa = janela->projetoAberto();
+        checar(pa->contemMarcacao(ProjetoAberto::TipoMarcacao::Print, idFoto), "P marks the photo for Print");
+        checar(!pa->contemMarcacao(ProjetoAberto::TipoMarcacao::Print, idAudio),
+               "P does not mark the non-photo item for Print, even though it was selected too");
+
+        mosaico->keyPressed(juce::KeyPress('W', juce::ModifierKeys(), (juce::juce_wchar) 'w'));
+        bombear(100);
+        checar(pa->contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, idFoto), "W marks the photo for Watermark");
+        checar(!pa->contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, idAudio),
+               "W does not mark the non-photo item for Watermark, even though it was selected too");
+
+        janela.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("print/watermark photo-only selftest: ") + e.what());
+    }
+    raizFotoPW.deleteRecursively();
 
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica

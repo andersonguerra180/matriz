@@ -261,8 +261,15 @@ private:
             switch (c) {
                 case 'H': tipo = ProjetoAberto::TipoMarcacao::Html;      break;
                 case 'K': tipo = ProjetoAberto::TipoMarcacao::Zip;       break;
-                case 'P': tipo = ProjetoAberto::TipoMarcacao::Print;     break;
-                case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
+                // P (Send to Print) e W (Watermark) só fazem sentido pra fotos.
+                case 'P': case 'W': {
+                    auto resumo = projeto_.obterItemResumo(itemId_);
+                    bool ehFoto = resumo && matriz::ingest::categoriaPorExtensao(juce::String(resumo->extensaoArquivo)) ==
+                                                matriz::ingest::CategoriaMidia::Imagem;
+                    if (!ehFoto) return false;
+                    tipo = (c == 'P') ? ProjetoAberto::TipoMarcacao::Print : ProjetoAberto::TipoMarcacao::Watermark;
+                    break;
+                }
                 default: temTipo = false; break;
             }
             if (temTipo) {

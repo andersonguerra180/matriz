@@ -58,6 +58,14 @@ std::vector<std::pair<std::string, juce::String>> pastasDoBackup(ProjetoAberto& 
     return out;
 }
 
+// P (Send to Print) e W (Watermark) só fazem sentido pra fotos.
+bool ehFoto(ProjetoAberto& projeto, const std::string& id) {
+    auto resumo = projeto.obterItemResumo(id);
+    if (!resumo) return false;
+    return matriz::ingest::categoriaPorExtensao(juce::String(resumo->extensaoArquivo)) ==
+           matriz::ingest::CategoriaMidia::Imagem;
+}
+
 void confirmar(const juce::String& titulo, const juce::String& mensagem, const juce::String& rotuloConfirmar,
                 std::function<void()> aoConfirmar) {
     auto janela = std::make_shared<juce::AlertWindow>(titulo, mensagem, juce::MessageBoxIconType::WarningIcon);
@@ -353,19 +361,26 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     juce::String labelZip = (todosZip ? matriz::i18n::t("acoes.remover_zip") : matriz::i18n::t("acoes.adicionar_zip")) + " (K)";
     menu.addItem(kAlternarZip, labelZip);
 
+    // Só fotos aceitam Print/Watermark — item desabilitado se a seleção não
+    // tiver nenhuma (evita um clique que silenciosamente não faz nada).
+    bool algumaFoto = false;
+    for (const auto& id : itemIds) {
+        if (ehFoto(projeto, id)) { algumaFoto = true; break; }
+    }
+
     bool todosPrint = true;
     for (const auto& id : itemIds) {
         if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, id)) { todosPrint = false; break; }
     }
     juce::String labelPrint = (todosPrint ? matriz::i18n::t("acoes.remover_print") : matriz::i18n::t("acoes.adicionar_print")) + " (P)";
-    menu.addItem(kAlternarPrint, labelPrint);
+    menu.addItem(kAlternarPrint, labelPrint, algumaFoto);
 
     bool todosWatermark = true;
     for (const auto& id : itemIds) {
         if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id)) { todosWatermark = false; break; }
     }
     juce::String labelWatermark = (todosWatermark ? matriz::i18n::t("acoes.remover_watermark") : matriz::i18n::t("acoes.adicionar_watermark")) + " (W)";
-    menu.addItem(kAlternarWatermark, labelWatermark);
+    menu.addItem(kAlternarWatermark, labelWatermark, algumaFoto);
 
     menu.addSeparator();
     menu.addItem(kDefinirCapa, matriz::i18n::t("acoes.definir_capa"));
@@ -429,15 +444,21 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
 
-        case kAlternarPrint:
-            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, itemIds);
+        case kAlternarPrint: {
+            std::vector<std::string> fotos;
+            for (const auto& id : itemIds) if (ehFoto(projeto, id)) fotos.push_back(id);
+            if (!fotos.empty()) projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, fotos);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
+        }
 
-        case kAlternarWatermark:
-            projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemIds);
+        case kAlternarWatermark: {
+            std::vector<std::string> fotos;
+            for (const auto& id : itemIds) if (ehFoto(projeto, id)) fotos.push_back(id);
+            if (!fotos.empty()) projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, fotos);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
+        }
 
         case kDefinirCapa:
             definirCapa(projeto, itemIds, ganchos);

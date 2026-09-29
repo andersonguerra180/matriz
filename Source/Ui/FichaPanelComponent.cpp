@@ -4422,7 +4422,16 @@ private:
                 cb->setTextWhenNothingSelected(matriz::i18n::t("ficha.lote_valores_multiplos"));
             }
 
-            cb->onChange = [this, linha] { aplicarCampoAgora(linha); };
+            // Selecionar uma opção é sempre um commit deliberado e completo
+            // (ao contrário de Enter/onFocusLost num texto, não existe um
+            // "só passando por aqui" ambíguo pra um dropdown) — sempre pede
+            // o foco de volta pra grade, mesmo padrão do item 3 nos campos
+            // de texto (Enter). Sem isto, E ficava preso no dropdown se ele
+            // fosse o último campo editado.
+            cb->onChange = [this, linha] {
+                aplicarCampoAgora(linha);
+                if (aoPedirFocoGrade) aoPedirFocoGrade();
+            };
             addAndMakeVisible(*cb);
             linha->editor = std::move(cb);
         };

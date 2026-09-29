@@ -1408,9 +1408,22 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         }
     }
 
+    // P (Send to Print) e W (Watermark) só fazem sentido pra fotos — filtra
+    // a seleção antes de marcar, ignorando silenciosamente áudio/vídeo/
+    // documentos/sessões que estejam junto. Baseado em extensaoArquivo,
+    // mesma categoriaPorExtensao já usada pelo filtro MEDIA TYPE.
+    auto ehFoto = [this](const std::string& id) {
+        auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
+                                [&id](const ItemResumo& r) { return r.id == id; });
+        if (it == itensTodos_.end()) return false;
+        return matriz::ingest::categoriaPorExtensao(juce::String(it->extensaoArquivo)) ==
+               matriz::ingest::CategoriaMidia::Imagem;
+    };
+
     if ((tecla.getKeyCode() == 'P' || c == 'p' || c == 'P') && semModificadores) {
         std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        alvos.erase(std::remove_if(alvos.begin(), alvos.end(), [&](const std::string& id) { return !ehFoto(id); }), alvos.end());
         if (!alvos.empty()) {
             projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, alvos);
             bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, alvos.front());
@@ -1433,6 +1446,7 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
     if ((tecla.getKeyCode() == 'W' || c == 'w' || c == 'W') && semModificadores) {
         std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        alvos.erase(std::remove_if(alvos.begin(), alvos.end(), [&](const std::string& id) { return !ehFoto(id); }), alvos.end());
         if (!alvos.empty()) {
             projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, alvos);
             bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, alvos.front());
