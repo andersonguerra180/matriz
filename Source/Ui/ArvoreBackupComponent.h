@@ -179,6 +179,13 @@ private:
     void timerCallback() override; // pulso do destaque de pasta nova
     void desenharLinhaConexaoN8n(juce::Graphics& g, juce::Point<float> p1, juce::Point<float> p2, bool ativo, bool rascunho = false) const;
     bool ehDescendente(const std::string& noPaiId, const std::string& noFilhoId) const;
+    // Item 8 — índices (em nodes_) de todas as descendentes de nodeIndex
+    // (filhas, netas etc.), pra "arrastar pasta-pai move o bloco inteiro".
+    void coletarDescendentesIndices(int nodeIndex, std::set<int>& acc) const;
+    // Grava a posição atual (nodes_[idx].bounds) de cada índice numa única
+    // transação — chamado do mouseUp ao soltar o arrasto (item 8); extraído
+    // à parte pra dar pra testar sem simular um MouseEvent de verdade.
+    void persistirPosicoesEmLote(const std::vector<int>& indices);
 
     void aplicarZoom(float novoZoom, juce::Point<float> centro);
     juce::Point<float> screenToCanvas(juce::Point<int> screen) const;

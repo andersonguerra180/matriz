@@ -764,6 +764,32 @@ bool ArvoreBackupComponent::ehDescendente(const std::string& noPaiId, const std:
     return false;
 }
 
+void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<int>& acc) const {
+    if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) return;
+    const std::string& parentId = nodes_[static_cast<size_t>(nodeIndex)].id;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        if (nodes_[i].pastaPaiId != parentId) continue;
+        int idx = static_cast<int>(i);
+        if (acc.insert(idx).second) coletarDescendentesIndices(idx, acc);
+    }
+}
+
+void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
+    if (indices.empty()) return;
+    auto& db = projeto_.projeto().registro();
+    std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
+    bool emTransacao = false;
+    try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+    for (int idx : indices) {
+        if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
+        const auto& node = nodes_[static_cast<size_t>(idx)];
+        projeto_.atualizarPosicaoPastaAcervo(node.id, node.bounds.getX(), node.bounds.getY());
+    }
+    if (emTransacao) {
+        try { db.exec("COMMIT"); } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} }
+    }
+}
+
 void ArvoreBackupComponent::autoArranjar() {
     if (nodes_.empty()) return;
 
@@ -1386,13 +1412,27 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             hitNodeRef.selecionado = true;
         }
 
-        // Item 10: registra onde cada pasta selecionada está agora — o
-        // mouseDrag usa isto pra mover o lote inteiro junto com a pasta
-        // clicada, não só ela.
+        // Item 8: arrastar uma pasta com filhas move o bloco inteiro (ela +
+        // descendentes) junto — SHIFT arrasta só a pasta sob o cursor,
+        // ignorando seleção e descendentes ("move solo", regra única pra
+        // qualquer pasta do canvas). Sem SHIFT, cada pasta selecionada
+        // (item 10) contribui sua própria subárvore; uma pasta que caia em
+        // mais de um bloco (selecionada E descendente de outra selecionada)
+        // se move uma vez só (std::set dedup).
+        std::set<int> indicesParaMover;
+        if (e.mods.isShiftDown()) {
+            indicesParaMover.insert(hitIndex);
+        } else {
+            for (size_t i = 0; i < nodes_.size(); ++i) {
+                if (!nodes_[i].selecionado) continue;
+                int idx = static_cast<int>(i);
+                indicesParaMover.insert(idx);
+                coletarDescendentesIndices(idx, indicesParaMover);
+            }
+        }
         arrastoGrupoPosicoesIniciais_.clear();
-        for (size_t i = 0; i < nodes_.size(); ++i) {
-            if (nodes_[i].selecionado)
-                arrastoGrupoPosicoesIniciais_.push_back({static_cast<int>(i), nodes_[i].bounds.getPosition().toFloat()});
+        for (int idx : indicesParaMover) {
+            arrastoGrupoPosicoesIniciais_.push_back({idx, nodes_[static_cast<size_t>(idx)].bounds.getPosition().toFloat()});
         }
 
         if (e.mods.isPopupMenu()) {
@@ -1649,15 +1689,18 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         return;
     }
 
-    if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size())) {
-        // Item 10: persiste a posição de toda a pasta movida junto, não só
-        // a que recebeu o clique.
+    if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size()) && !arrastoGrupoPosicoesIniciais_.empty()) {
+        // Item 8/10: persiste a posição do bloco inteiro (pasta + descendentes
+        // arrastadas junto) numa única transação ao soltar o mouse — com
+        // centenas de pastas, N UPDATEs isolados seriam N transações
+        // implícitas.
+        std::vector<int> indices;
+        indices.reserve(arrastoGrupoPosicoesIniciais_.size());
         for (auto& [idx, posInicial] : arrastoGrupoPosicoesIniciais_) {
             juce::ignoreUnused(posInicial);
-            if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
-            const auto& node = nodes_[static_cast<size_t>(idx)];
-            projeto_.atualizarPosicaoPastaAcervo(node.id, node.bounds.getX(), node.bounds.getY());
+            indices.push_back(idx);
         }
+        persistirPosicoesEmLote(indices);
     }
     nodeDragIndice_ = -1;
     arrastoGrupoPosicoesIniciais_.clear();

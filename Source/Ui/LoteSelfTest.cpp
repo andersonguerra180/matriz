@@ -986,6 +986,84 @@ int rodarLoteSelfTest() {
     }
     raizDisc.deleteRecursively();
 
+    // ------------------- Folder Map: arrastar pasta-pai move o bloco (item 8, 2026-09-29)
+    // mouseDown/mouseDrag/mouseUp dependem de juce::MouseEvent real (sem
+    // precedente de simular isso em nenhum self-test deste arquivo) — testa
+    // direto as duas peças que eles orquestram: coletarDescendentesIndices()
+    // (que pastas entram no bloco) e persistirPosicoesEmLote() (a escrita
+    // em lote de verdade, numa transação só). A separação entre Shift+
+    // arrastar-sobre-pasta (move solo) e Shift+arrastar-no-vazio (laço de
+    // seleção) é estrutural — ramos mutuamente exclusivos por hitNode em
+    // mouseDown, conferida por leitura de código, não por este teste.
+    std::cout << "\n-- Folder Map: dragging a parent moves the whole descendant block (item 8) --\n";
+    juce::File raizBloco = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("matriz_folder_bloco_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizBloco.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Bloco";
+        params.prefixoNomenclatura = "BLC";
+        auto projeto = matriz::model::Project::criar(raizBloco.getChildFile("MAIN"), params);
+        ProjetoAberto pa(std::move(projeto));
+        std::string mapaPadrao = pa.mapaAtivoPadrao();
+
+        // G -> P -> C (3 níveis) e S, irmã de P (mesmo pai G, fora da
+        // subárvore de P).
+        std::string g = pa.criarPastaAcervo("G", std::nullopt, mapaPadrao);
+        std::string p = pa.criarPastaAcervo("P", g, mapaPadrao);
+        std::string c = pa.criarPastaAcervo("C", p, mapaPadrao);
+        std::string s = pa.criarPastaAcervo("S", g, mapaPadrao);
+        pa.atualizarPosicaoPastaAcervo(g, 10, 10);  // (0,0) é tratado como "sem posição" (auto-arranja) em recalcularNodes()
+        pa.atualizarPosicaoPastaAcervo(p, 100, 100);
+        pa.atualizarPosicaoPastaAcervo(c, 200, 200);
+        pa.atualizarPosicaoPastaAcervo(s, 300, 0);
+
+        ArvoreBackupComponent arvore(pa);
+        auto indiceDe = [&](const std::string& id) -> int {
+            for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == id) return static_cast<int>(i);
+            return -1;
+        };
+        int idxG = indiceDe(g), idxP = indiceDe(p), idxC = indiceDe(c), idxS = indiceDe(s);
+        checar(idxG >= 0 && idxP >= 0 && idxC >= 0 && idxS >= 0, "setup: G/P/C/S nodes all found on the canvas");
+
+        std::set<int> desc;
+        arvore.coletarDescendentesIndices(idxP, desc);
+        bool soC = desc.size() == 1 && desc.count(idxC) == 1;
+        checar(soC, "descendants of P are only C (P's child) — not S (a sibling) or P/G themselves (" + juce::String((int) desc.size()) + ")");
+
+        std::set<int> descG;
+        arvore.coletarDescendentesIndices(idxG, descG);
+        checar(descG.size() == 3 && descG.count(idxP) == 1 && descG.count(idxC) == 1 && descG.count(idxS) == 1,
+               "descendants of G are P, C (grandchild) and S (G's other direct child) — the whole subtree (" +
+                   juce::String((int) descG.size()) + ")");
+
+        // Simula o resultado de um arrasto: P e sua descendente C recebem o
+        // MESMO delta (mouseDrag já aplica isto); S e G ficam parados.
+        auto posAntesS = arvore.nodes_[static_cast<size_t>(idxS)].bounds.getPosition();
+        auto posAntesG = arvore.nodes_[static_cast<size_t>(idxG)].bounds.getPosition();
+        juce::Point<int> delta(150, 80);
+        arvore.nodes_[static_cast<size_t>(idxP)].bounds.setPosition(arvore.nodes_[static_cast<size_t>(idxP)].bounds.getPosition() + delta);
+        arvore.nodes_[static_cast<size_t>(idxC)].bounds.setPosition(arvore.nodes_[static_cast<size_t>(idxC)].bounds.getPosition() + delta);
+        auto posDepoisP = arvore.nodes_[static_cast<size_t>(idxP)].bounds.getPosition();
+        auto posDepoisC = arvore.nodes_[static_cast<size_t>(idxC)].bounds.getPosition();
+
+        arvore.persistirPosicoesEmLote({idxP, idxC});
+
+        auto lerPos = [&](const std::string& id) {
+            auto stmt = pa.projeto().registro().prepare("SELECT posicao_x, posicao_y FROM acervo_pasta WHERE id = ?");
+            stmt.bind(1, matriz::db::Value::of(id));
+            stmt.step();
+            return juce::Point<int>(stmt.columnInt(0), stmt.columnInt(1));
+        };
+        checar(lerPos(p) == posDepoisP, "P's new position was persisted (single batched transaction)");
+        checar(lerPos(c) == posDepoisC, "C moved together with its parent P (same delta)");
+        checar(lerPos(s) == posAntesS, "S (a sibling, not part of the dragged block) keeps its original position");
+        checar(lerPos(g) == posAntesG, "G (the ancestor, not selected/dragged) keeps its original position");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder drag block selftest: ") + e.what());
+    }
+    raizBloco.deleteRecursively();
+
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica
     // vazio com indicador "mixed" e NÃO pode ser gravado sem edição real;
