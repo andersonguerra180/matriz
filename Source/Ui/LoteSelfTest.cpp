@@ -942,6 +942,12 @@ int rodarLoteSelfTest() {
                  matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(itemC)});
         checar(pa.pastaTemArquivosNoMain(c), "setup: folder C is locked by the MAIN");
 
+        // Folder Map abre no ORIGINAL na 1ª vez e depois no último mapa usado.
+        checar(pa.mapaInicialDoFolderMap() == ProjetoAberto::kMapaOriginal,
+               "Folder Map opens on ORIGINAL the first time (no remembered map)");
+        pa.definirMapaAtivo(mapaPadrao);  // o componente abre no último mapa usado (persistido)
+        checar(pa.mapaInicialDoFolderMap() == mapaPadrao,
+               "Folder Map reopens on the last used map");
         ArvoreBackupComponent arvore(pa);
         auto lerPai = [&](const std::string& id) -> std::string {
             auto stmt = reg.prepare("SELECT pasta_pai_id FROM acervo_pasta WHERE id = ?");
@@ -1018,6 +1024,7 @@ int rodarLoteSelfTest() {
         pa.atualizarPosicaoPastaAcervo(c, 200, 200);
         pa.atualizarPosicaoPastaAcervo(s, 300, 0);
 
+        pa.definirMapaAtivo(mapaPadrao);  // o componente abre no último mapa usado (persistido)
         ArvoreBackupComponent arvore(pa);
         auto indiceDe = [&](const std::string& id) -> int {
             for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == id) return static_cast<int>(i);
@@ -1079,6 +1086,7 @@ int rodarLoteSelfTest() {
         std::string root = pa.criarPastaAcervo("Root", std::nullopt, mapaPadrao);
         std::string filha = pa.criarPastaAcervo("Filha", root, mapaPadrao);
 
+        pa.definirMapaAtivo(mapaPadrao);  // o componente abre no último mapa usado (persistido)
         ArvoreBackupComponent arvore(pa);
         auto& reg = pa.projeto().registro();
         auto lerCor = [&](const std::string& id) -> juce::String {
