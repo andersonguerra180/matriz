@@ -209,6 +209,12 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
 }
 
 void ProjetoAberto::avisarSomenteLeitura() {
+    // Alguns mutadores rodam em thread de fundo (ex.: salvarMetadadoEmLote): a janela
+    // sempre nasce na message thread.
+    if (!juce::MessageManager::getInstance()->isThisTheMessageThread()) {
+        juce::MessageManager::callAsync([] { avisarSomenteLeitura(); });
+        return;
+    }
     static juce::int64 ultimoAviso = 0;
     const auto agora = juce::Time::currentTimeMillis();
     if (agora - ultimoAviso < 4000) return;  // um aviso, não um por chamada

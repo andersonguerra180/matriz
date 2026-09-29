@@ -527,3 +527,41 @@ desenhar — tem 7 requisitos numerados específicos.
   mesmo valor, N itens"; onde a lógica por item é condicional demais pra
   generalizar (ex.: `FichaPanelComponent::aplicarCampoAgora`), pelo menos
   envolver o loop existente numa transação.
+
+## Folder Maps — Fases 2 a 6 (branch `feat/folder-maps-fases-2-6`, 2026-09-29)
+
+Uma fase por commit (Fase 1 já estava em `3507648`). Decisões que não mudam sem
+entender a causa:
+
+- **`backup_config_main.mapa_id`** guarda o ID do mapa do MAIN (nunca o nome).
+  Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado; os outros
+  mapas do usuário são sempre livres (`ProjetoAberto::mapaDoMainId`).
+- **`_SEM_PASTA`** só existe com o MAIN em folder map (planner:
+  `planejarConsolidacao(..., mapaId)`); item que ganha pasta depois é OFERECIDO
+  pra mover no backup seguinte (`executarMovimentosSemPasta`), nunca recopiado.
+  Export por mapa exclui e conta os sem pasta.
+- **`acervo_item_pasta.mapa_id`**: único caminho que escreve é
+  `ProjetoAberto::inserirItemPastaInterno` (o MainEdit chama via callback
+  `mapaMoverItem`).
+- **MAIN EDIT MODE** = `Source/Consolidacao/MainEdit.*` (motor) +
+  `ProjetoAberto::editarMain*` (background, uma por vez) + `MainEditPanel`.
+  Journal `main_edit_journal` é gravado ANTES do disco; recuperação em
+  `recuperarOperacoesDoMain()` ao abrir. NUNCA usar `File::moveFileTo` no MAIN:
+  ele apaga o alvo antes (rename só de caixa apagaria o próprio arquivo) — o
+  motor usa `std::filesystem::rename` e recusa alvo existente.
+- **Clones**: `clone_move_pendente` (por clone, cadeia colapsa) é aplicada por
+  `SyncEngine::aplicarMovesPendentesNoClone` antes de comparar, só se a regra de
+  divergência liberou; hash só confirma, sem rehash da árvore; fallback = cópia
+  normal + log.
+- **Quarentena**: `<raiz do MAIN>/_QUARENTENA` (fora de Media/ e Project/, logo
+  fora de scan/export/espelhamento). Linha do `consolidacao_registro` sai ao
+  deletar (a saúde deixa de contar o item) e o planner não recopia arquivo
+  'deletado'.
+- **Clone somente leitura**: `ProjetoAberto::somenteLeitura()` (papel CLONE em
+  destination.json). Guardas nos mutadores de `ProjetoAberto` + UI; NÃO usa
+  `PRAGMA query_only` (thumbnails/caches escrevem no indice e derrubariam telas).
+- **EXPORT unificado**: os botões antigos seguem existindo (escondidos) e a
+  opção do dropdown dispara o `onClick` deles — não apagar.
+
+Pendência conhecida: sidecar `.xmp` de arquivo deletado/substituído no MAIN não
+vai junto pra quarentena (só o rename leva o sidecar).

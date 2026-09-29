@@ -303,28 +303,32 @@ Resultado renomearArquivo(const ContextoMain& ctx, const std::string& registroId
         const juce::String deRel = l.caminho;
         const juce::String paraRel = (l.caminho.contains("/") ? l.caminho.upToLastOccurrenceOf("/", true, false) : juce::String()) + novoNome;
 
-        // Companheiros que viajam junto: XMP e capa (mesmo nome-base).
-        juce::StringArray extsComp;
-        extsComp.add(".xmp");
+        // Companheiros que viajam junto: sidecar XMP ("<arquivo>.ext.xmp", ver
+        // MetadadoEmbutido) e capa (mesmo nome-base, extensão da capa).
+        std::vector<std::pair<juce::String, juce::String>> nomesComp;  // {nome antes, nome depois}
+        nomesComp.emplace_back(atual.getFileName() + ".xmp", alvo.getFileName() + ".xmp");
         try {
             auto stc = ctx.registro->prepare("SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
             stc.bind(1, Value::of(l.itemId));
             if (stc.step()) {
                 const auto e = juce::File(jstr(stc.columnText(0))).getFileExtension();
-                if (e.isNotEmpty() && !extsComp.contains(e, true)) extsComp.add(e);
+                if (e.isNotEmpty() && !e.equalsIgnoreCase(atual.getFileExtension()))
+                    nomesComp.emplace_back(atual.getFileNameWithoutExtension() + e, alvo.getFileNameWithoutExtension() + e);
             }
         } catch (...) {}
+        const juce::String dirDe = deRel.contains("/") ? deRel.upToLastOccurrenceOf("/", true, false) : juce::String();
+        const juce::String dirPara = paraRel.contains("/") ? paraRel.upToLastOccurrenceOf("/", true, false) : juce::String();
         juce::Array<juce::var> companheiros;
         std::vector<std::pair<juce::File, juce::File>> movs;
         movs.emplace_back(atual, alvo);
-        for (auto& e : extsComp) {
-            juce::File cDe = atual.getParentDirectory().getChildFile(atual.getFileNameWithoutExtension() + e);
-            juce::File cPara = alvo.getParentDirectory().getChildFile(alvo.getFileNameWithoutExtension() + e);
+        for (auto& [nDe, nPara] : nomesComp) {
+            juce::File cDe = atual.getParentDirectory().getChildFile(nDe);
+            juce::File cPara = alvo.getParentDirectory().getChildFile(nPara);
             if (cDe.existsAsFile() && !cPara.exists() && cDe != atual) {
                 movs.emplace_back(cDe, cPara);
                 juce::var c = novoObjeto();
-                c.getDynamicObject()->setProperty("de", (deRel.contains("/") ? deRel.upToLastOccurrenceOf("/", true, false) : juce::String()) + cDe.getFileName());
-                c.getDynamicObject()->setProperty("para", (paraRel.contains("/") ? paraRel.upToLastOccurrenceOf("/", true, false) : juce::String()) + cPara.getFileName());
+                c.getDynamicObject()->setProperty("de", dirDe + nDe);
+                c.getDynamicObject()->setProperty("para", dirPara + nPara);
                 companheiros.add(c);
             }
         }
