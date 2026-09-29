@@ -172,6 +172,15 @@ void MosaicoComponent::recarregar() {
                 // precisa fechar mesmo assim, senão o modal "Loading Catalog"
                 // fica preso em 0% pra sempre.
                 ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
+                // Quem pediu ESTE snapshot (ex.: "Show Recently Ingested"
+                // esperando o lote promovido do Intake) nunca seria avisado —
+                // o resultado foi descartado e aoMudarConteudoVisivel não
+                // dispara para uma geração superada. Se atualizarItemEmMemoria
+                // pediu um recarregar de reposição, honra agora.
+                if (self->recarregarAoTerminarSnapshot_) {
+                    self->recarregarAoTerminarSnapshot_ = false;
+                    self->recarregar();
+                }
                 return;
             }
             MATRIZ_TRACE("MosaicoComponent::aplicarSnapshot");
@@ -193,6 +202,11 @@ void MosaicoComponent::recarregar() {
 void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (itemId.empty()) return;
 
+    // Um recarregar() em voo (ex.: um filtro esperando o catálogo completo)
+    // fica órfão quando a geração muda aqui: sua resposta chega descartada
+    // (branch de geração divergente em recarregar()). Sem isto, quem estava
+    // esperando aquele snapshot nunca é avisado do desfecho.
+    if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
     ++geracaoSnapshot_;
     snapshotPendente_ = false;
 

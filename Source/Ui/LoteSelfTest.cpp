@@ -473,10 +473,11 @@ int rodarLoteSelfTest() {
         params.prefixoNomenclatura = "REC";
         auto projeto = matriz::model::Project::criar(raizR.getChildFile("projeto"), params);
         const std::string projetoId = projeto->projetoId();
-        std::vector<std::string> antigos, loteA, loteB;
+        std::vector<std::string> antigos, loteA, loteB, loteC;
         for (int i = 0; i < 3; ++i) antigos.push_back(inserirItem(projeto->registro(), projetoId, "REC-OLD-" + std::to_string(i), false));
         for (int i = 0; i < 6; ++i) loteA.push_back(inserirItem(projeto->registro(), projetoId, "REC-A-" + std::to_string(i), true));
         for (int i = 0; i < 4; ++i) loteB.push_back(inserirItem(projeto->registro(), projetoId, "REC-B-" + std::to_string(i), true));
+        for (int i = 0; i < 5; ++i) loteC.push_back(inserirItem(projeto->registro(), projetoId, "REC-C-" + std::to_string(i), true));
         auto& regR = projeto->registro();
         regR.run("UPDATE item SET dc_subject = 'Show, Tour' WHERE id = ?", {matriz::db::Value::of(antigos[0])});
         regR.run("UPDATE item SET dc_subject = 'Tour' WHERE id = ?", {matriz::db::Value::of(antigos[1])});
@@ -561,6 +562,41 @@ int rodarLoteSelfTest() {
         std::set<std::string> esperadoB(loteB.begin(), loteB.end());
         auto recentes = janela->projetoAberto()->ultimosItensIngeridos();
         checar(std::set<std::string>(recentes.begin(), recentes.end()) == esperadoB, "the persisted batch is exactly B");
+
+        // Reproduz a corrida real (item 1 do pedido 2026-09-28): Send to Grid
+        // dispara um evento "quarentena" POR ITEM (EventBus -> callAsync na
+        // message thread). Se um desses eventos chega enquanto o recarregar()
+        // que o toggle "Show Recently Ingested" disparou ainda está em voo,
+        // ele bumps MosaicoComponent::geracaoSnapshot_ (mesmo pra um item
+        // ainda fora de memória) e orfanava esse recarregar() — a resposta
+        // chegava descartada, aoMudarConteudoVisivel nunca disparava, e
+        // filtrosAguardandoSnapshot_ ficava travado até um clique qualquer
+        // (ex.: MEDIA TYPE) forçar outro aplicarFiltrosAdicionais().
+        //
+        // O reopen do projeto acima recria o CatalogWorkspaceComponent, que
+        // agenda um job de miniaturas faltantes (500 ms, ver construtor) cujo
+        // recarregar() de conclusão poderia, por coincidência de tempo,
+        // disparar bem no meio da corrida abaixo e mascarar um fix quebrado —
+        // deixa esse job terminar e se acomodar primeiro.
+        bombear(900);
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+
+        cw->btnMostrarRecentes_->onClick();  // desliga (estava mostrando B)
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
+        promover(loteC);  // drena os próprios eventos "quarentena" (no-op: C ainda não está em itensTodos_)
+
+        // Chama atualizarItemEmMemoria() diretamente, na MESMA pilha, logo
+        // após o recarregar() do toggle e antes de qualquer bombear — o
+        // mesmo efeito de um evento "quarentena" chegando em voo, mas sem
+        // depender do tempo real do job em background (determinístico).
+        cw->btnMostrarRecentes_->onClick();  // liga; loteC ainda fora de itensTodos_ -> recarregar() em voo
+        checar(cw->mosaico_->snapshotPendente(), "toggling ON with a fresh batch not yet in memory starts a snapshot reload");
+        for (const auto& id : loteC) cw->mosaico_->atualizarItemEmMemoria(id);
+        esperarAte([&] { return !cw->mosaico_->snapshotPendente() && visiveis(cw) == static_cast<int>(loteC.size()); }, 10000);
+        checar(visiveis(cw) == static_cast<int>(loteC.size()),
+               "an item-changed event landing mid-flight (e.g. Send to Grid) doesn't strand the toggle — it still shows the new batch with no extra click (" +
+                   juce::String(visiveis(cw)) + ")");
+
         janela.reset();
     } catch (const std::exception& e) {
         checar(false, juce::String("recent batch selftest: ") + e.what());
