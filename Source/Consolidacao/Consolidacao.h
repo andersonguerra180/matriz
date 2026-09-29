@@ -70,6 +70,21 @@ bool codigoDeSourceValido(const juce::String& codigo);
 // (ArvoreBackupComponent rejeita "SEM PASTA"/"NO FOLDER", que cobre este).
 inline const char* const kPastaSemPasta = "_SEM_PASTA";
 
+// Fase 4 — registra um move feito no MAIN (arquivo ou pasta, caminhos relativos a
+// Media/) na fila de CADA clone ativo (clone_move_pendente): o próximo sync do
+// clone aplica como move autoritativo (o hash só confirma), nunca como apagar +
+// copiar. Cadeia A->B + B->C colapsa em A->C; A->B + B->A some. Chamar dentro da
+// transação que muda o registro.
+void anotarMovePendentePraClones(matriz::db::Database& registro, const char* tipo, const std::string& de,
+                                 const std::string& para, const std::string& sha256);
+
+// Caminho físico (relativo a Media/) da pasta do folder map: nomes da raiz até
+// a pasta, "/"-separados, como o planner monta em PastaManual. "" se pastaId
+// vazio ou inexistente.
+juce::String caminhoFisicoDaPasta(matriz::db::Database& registro, const std::string& pastaId);
+// Segmento de pasta seguro nos dois sistemas de arquivos (mesma regra do planner).
+juce::String segmentoDePastaSeguro(const juce::String& nome);
+
 struct ItemPlanejado {
     std::string itemId;
     std::string codigoAcervo;

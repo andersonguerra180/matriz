@@ -11,6 +11,7 @@
 #include "../Vault/AssetRelinkEngine.h"
 #include "AudioWorkspace.h"
 #include "OverlayComponent.h"
+#include "FaixaAvisoComponent.h"
 #include "ProjetoAberto.h"
 
 // Workflow layer (Phase 1+2)
@@ -188,6 +189,7 @@ public:
     void executarUndo();
 
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     bool keyPressed(const juce::KeyPress&) override;
 
@@ -491,6 +493,9 @@ private:
     std::unique_ptr<juce::TextButton> btnEstruturaFolderMap_;
     std::unique_ptr<juce::TextButton> btnEstruturaSpaceMap_;
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
+    // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).
+    std::unique_ptr<FaixaAvisoComponent> faixaAviso_;
+    void atualizarFaixaAviso();
     std::unique_ptr<StorageWorkspaceComponent> storageWorkspace_; // STORAGE
     std::unique_ptr<PreservationWorkspaceComponent> preservationWorkspace_;
     std::unique_ptr<FloatingPreviewWindow> activePreviewWindow_;

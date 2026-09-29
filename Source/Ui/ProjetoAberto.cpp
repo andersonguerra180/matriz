@@ -2197,6 +2197,22 @@ std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::
          pastaPaiIdEfetivo ? matriz::db::Value::of(*pastaPaiIdEfetivo) : matriz::db::Value::null(), matriz::db::Value::of(nome),
          matriz::db::Value::of(ordem), matriz::db::Value::of(mapaId), matriz::db::Value::of(agora),
          matriz::db::Value::of(agora)});
+
+    // MAIN EDIT MODE: pasta nova no mapa do MAIN nasce junto no disco, com desfazer.
+    if (editandoMain_ && !mapaDoMainId().empty() && mapaId == mapaDoMainId()) {
+        auto r = matriz::mainedit::criarPastaFisica(contextoDoMain(), id);
+        if (!r.ok) avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str()));
+        tocarAtividadeMain();
+        if (r.ok && !desfazendo_) {
+            registrarUndo("Create Folder", [this, id]() {
+                const auto rel = matriz::consolidacao::caminhoFisicoDaPasta(projeto_->registro(), id);
+                if (!apagarPastaAcervo(id)) return;
+                const juce::File dir = contextoDoMain().media().getChildFile(rel);
+                if (rel.isNotEmpty() && dir.isDirectory() && dir.getNumberOfChildFiles(juce::File::findFilesAndDirectories) == 0)
+                    dir.deleteFile();
+            });
+        }
+    }
     return id;
 }
 
@@ -2275,6 +2291,22 @@ void ProjetoAberto::avisarMapaTravado(const juce::String& mensagem) {
 
 bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::string& novoNome) {
     if (!projeto_) return false;
+    // MAIN EDIT MODE: renomear pasta do mapa do MAIN renomeia a pasta no disco e
+    // reaponta os caminhos registrados, juntos (motor MainEdit).
+    if (editandoMain_ && !mapaDoMainId().empty() && mapaIdDaPasta(pastaId) == mapaDoMainId()) {
+        std::string nomeAntes;
+        {
+            auto st = projeto_->registro().prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(pastaId));
+            if (st.step()) nomeAntes = st.columnText(0);
+        }
+        auto r = matriz::mainedit::renomearPasta(contextoDoMain(), pastaId, juce::String::fromUTF8(novoNome.c_str()));
+        tocarAtividadeMain();
+        if (!r.ok) { avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str())); return false; }
+        if (!desfazendo_)
+            registrarUndo("Rename Folder", [this, pastaId, nomeAntes]() { renomearPastaAcervo(pastaId, nomeAntes); });
+        return true;
+    }
     if (pastaTemArquivosNoMain(pastaId)) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
@@ -2305,6 +2337,22 @@ bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
 
 bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {
     if (!projeto_) return false;
+    if (editandoMain_ && !mapaDoMainId().empty() && mapaIdDaPasta(pastaId) == mapaDoMainId()) {
+        std::optional<std::string> paiAntes;
+        {
+            auto st = projeto_->registro().prepare("SELECT pasta_pai_id FROM acervo_pasta WHERE id = ?");
+            st.bind(1, matriz::db::Value::of(pastaId));
+            if (st.step() && !st.columnIsNull(0)) paiAntes = st.columnText(0);
+        }
+        // Mesmo pai = nada a mover (arrastar sem soltar em outra pasta).
+        if (paiAntes.value_or("") == novaPastaPaiId.value_or("")) return true;
+        auto r = matriz::mainedit::moverPasta(contextoDoMain(), pastaId, novaPastaPaiId.value_or(""));
+        tocarAtividadeMain();
+        if (!r.ok) { avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str())); return false; }
+        if (!desfazendo_)
+            registrarUndo("Move Folder", [this, pastaId, paiAntes]() { moverPastaAcervo(pastaId, paiAntes); });
+        return true;
+    }
     if (pastaTemArquivosNoMain(pastaId)) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
@@ -4865,6 +4913,293 @@ ConfiguracaoWatermark ProjetoAberto::carregarConfiguracaoWatermarkDePasta(const 
     if (obj->hasProperty("customPosY_V")) cfg.customPosY_V = static_cast<float>(static_cast<double>(obj->getProperty("customPosY_V")));
 
     return cfg;
+}
+
+// ============================================================================
+// MAIN EDIT MODE (Fase 4)
+// ============================================================================
+
+bool ProjetoAberto::podeEditarMain() const {
+    return projeto_ && projeto_->papel() == "ORIGINAL" && projeto_->modo() != matriz::model::Modo::Catalogo && mainExiste();
+}
+
+bool ProjetoAberto::nomeConfereComProjeto(const juce::String& digitado) const {
+    if (!projeto_) return false;
+    // Nome ATUAL (File > Rename Project pode ter mudado): compara com o que está no banco agora.
+    const auto atual = juce::String::fromUTF8(projeto_->nome().c_str()).trim();
+    return atual.isNotEmpty() && digitado.trim() == atual;
+}
+
+bool ProjetoAberto::entrarModoEdicaoMain(const juce::String& nomeDigitado) {
+    if (editandoMain_) return true;
+    if (!podeEditarMain() || !nomeConfereComProjeto(nomeDigitado)) return false;
+    editandoMain_ = true;
+    tocarAtividadeMain();
+    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: entered", {"The MAIN is now editable through Matriz."}); } catch (...) {}
+    if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+    return true;
+}
+
+void ProjetoAberto::sairModoEdicaoMain(const juce::String& motivo) {
+    if (!editandoMain_) return;
+    editandoMain_ = false;
+    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: left", {"Reason: " + motivo}); } catch (...) {}
+    if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+}
+
+void ProjetoAberto::tocarAtividadeMain() { ultimaAtividadeMainMs_ = juce::Time::currentTimeMillis(); }
+
+bool ProjetoAberto::verificarTimeoutEdicaoMain() {
+    if (!editandoMain_ || operacaoMainEmCurso_.load()) return false;
+    if (juce::Time::currentTimeMillis() - ultimaAtividadeMainMs_ < kTimeoutEdicaoMainMs) return false;
+    sairModoEdicaoMain("no operations for 15 minutes");
+    return true;
+}
+
+void ProjetoAberto::mapaMoverItemDoMain(const std::string& itemId, const std::string& pastaDe, const std::string& pastaPara) {
+    if (!projeto_ || pastaPara.empty()) return;
+    if (!pastaDe.empty())
+        projeto_->registro().run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?",
+                                  {matriz::db::Value::of(itemId), matriz::db::Value::of(pastaDe)});
+    inserirItemPastaInterno(itemId, pastaPara, matriz::model::agoraIso8601());
+}
+
+matriz::mainedit::ContextoMain ProjetoAberto::contextoDoMain() const {
+    matriz::mainedit::ContextoMain c;
+    c.registro = &projeto_->registro();
+    c.raiz = matriz::model::normalizarParaRaizDestino(projeto_->raiz());
+    c.pastaProjeto = projeto_->pasta();
+    c.destinoId = projeto_->destinationId();
+    c.mainUsaMapa = mainUsaMapa();
+    auto* self = const_cast<ProjetoAberto*>(this);
+    c.mapaMoverItem = [self](const std::string& item, const std::string& de, const std::string& para) {
+        self->mapaMoverItemDoMain(item, de, para);
+    };
+    return c;
+}
+
+void ProjetoAberto::executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
+                                       AoConcluirEdicaoMain aoConcluir) {
+    auto falhar = [&](const std::string& msg) {
+        matriz::mainedit::Resultado r;
+        r.erro = msg;
+        if (aoConcluir) aoConcluir(r);
+    };
+    if (!editandoMain_) { falhar("MAIN EDIT MODE is not active"); return; }
+    bool esperado = false;
+    if (!operacaoMainEmCurso_.compare_exchange_strong(esperado, true)) { falhar("another MAIN operation is still running"); return; }
+    tocarAtividadeMain();
+    ProgressoGlobal::obterInstancia().iniciarTarefa("main_edit", titulo, 0, nullptr, titulo + "...");
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMainEdit_.addJob([this, vivo, trabalho = std::move(trabalho), aoConcluir = std::move(aoConcluir), titulo]() {
+        matriz::mainedit::Resultado r;
+        try {
+            r = trabalho();
+        } catch (const std::exception& e) {
+            r.ok = false;
+            r.erro = e.what();
+        }
+        juce::MessageManager::callAsync([this, vivo, r, aoConcluir, titulo]() {
+            auto vivoAgora = vivo.lock();
+            if (!vivoAgora) return;  // o projeto foi fechado no meio
+            operacaoMainEmCurso_.store(false);
+            tocarAtividadeMain();
+            ProgressoGlobal::obterInstancia().concluirTarefa(
+                "main_edit", r.ok ? titulo + ": done" : titulo + ": failed - " + juce::String::fromUTF8(r.erro.c_str()));
+            if (aoConcluir) aoConcluir(r);
+        });
+    });
+}
+
+void ProjetoAberto::editarMainRenomearArquivo(const std::string& registroId, const juce::String& novoNome,
+                                              AoConcluirEdicaoMain aoConcluir, bool registrarUndoDesta) {
+    auto ctx = contextoDoMain();
+    executarEdicaoMain("Renaming file in MAIN", [ctx, registroId, novoNome] {
+        return matriz::mainedit::renomearArquivo(ctx, registroId, novoNome);
+    }, [this, registroId, aoConcluir, registrarUndoDesta](const matriz::mainedit::Resultado& r) {
+        if (r.ok && registrarUndoDesta) {
+            const auto nomeAntes = juce::File(r.deRel).getFileName();
+            registrarUndo("Rename file in MAIN", [this, registroId, nomeAntes]() {
+                editarMainRenomearArquivo(registroId, nomeAntes, nullptr, false);
+            });
+        }
+        if (aoConcluir) aoConcluir(r);
+    });
+}
+
+void ProjetoAberto::editarMainMoverArquivo(const std::string& registroId, const std::string& novaPastaId,
+                                           AoConcluirEdicaoMain aoConcluir, bool registrarUndoDesta) {
+    auto ctx = contextoDoMain();
+    std::string pastaAntes;
+    {
+        auto st = projeto_->registro().prepare("SELECT pasta_id FROM consolidacao_registro WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(registroId));
+        if (st.step()) pastaAntes = st.columnText(0);
+    }
+    executarEdicaoMain("Moving file in MAIN", [ctx, registroId, novaPastaId] {
+        return matriz::mainedit::moverArquivo(ctx, registroId, novaPastaId);
+    }, [this, registroId, aoConcluir, registrarUndoDesta, pastaAntes](const matriz::mainedit::Resultado& r) {
+        if (r.ok && registrarUndoDesta && !pastaAntes.empty()) {
+            registrarUndo("Move file in MAIN", [this, registroId, pastaAntes]() {
+                editarMainMoverArquivo(registroId, pastaAntes, nullptr, false);
+            });
+        }
+        if (aoConcluir) aoConcluir(r);
+    });
+}
+
+void ProjetoAberto::editarMainSubstituirArquivo(const std::string& registroId, const juce::File& novaVersao,
+                                                AoConcluirEdicaoMain aoConcluir) {
+    auto ctx = contextoDoMain();
+    executarEdicaoMain("Replacing file in MAIN", [ctx, registroId, novaVersao] {
+        return matriz::mainedit::substituirArquivo(ctx, registroId, novaVersao);
+    }, std::move(aoConcluir));
+}
+
+void ProjetoAberto::editarMainDeletarArquivo(const std::string& registroId, AoConcluirEdicaoMain aoConcluir) {
+    auto ctx = contextoDoMain();
+    executarEdicaoMain("Moving file to quarantine", [ctx, registroId] {
+        return matriz::mainedit::deletarArquivo(ctx, registroId);
+    }, std::move(aoConcluir));
+}
+
+void ProjetoAberto::editarMainRestaurar(const std::string& quarentenaId, const juce::String& destinoAlternativoRel,
+                                        AoConcluirEdicaoMain aoConcluir) {
+    auto ctx = contextoDoMain();
+    executarEdicaoMain("Restoring from quarantine", [ctx, quarentenaId, destinoAlternativoRel] {
+        return matriz::mainedit::restaurar(ctx, quarentenaId, destinoAlternativoRel);
+    }, std::move(aoConcluir));
+}
+
+void ProjetoAberto::editarMainEsvaziarQuarentena(std::function<void(const matriz::mainedit::ResultadoEsvaziar&)> aoConcluir) {
+    auto ctx = contextoDoMain();
+    auto resultado = std::make_shared<matriz::mainedit::ResultadoEsvaziar>();
+    executarEdicaoMain("Emptying quarantine", [ctx, resultado] {
+        *resultado = matriz::mainedit::esvaziarQuarentena(ctx, [](int feito, int total) {
+            juce::MessageManager::callAsync([feito, total] {
+                ProgressoGlobal::obterInstancia().atualizarFracao("main_edit", static_cast<double>(feito) / std::max(1, total),
+                                                                   juce::String(feito) + " / " + juce::String(total));
+            });
+            return true;
+        });
+        matriz::mainedit::Resultado r;
+        r.ok = resultado->falhas.empty() && !resultado->cancelado;
+        if (!r.ok && !resultado->falhas.empty()) r.erro = resultado->falhas.front();
+        return r;
+    }, [resultado, aoConcluir](const matriz::mainedit::Resultado&) {
+        if (aoConcluir) aoConcluir(*resultado);
+    });
+}
+
+void ProjetoAberto::converterMainParaFolderMap(
+    std::function<void(const juce::String& erro, const juce::String& nomeDoMapa)> aoConcluir) {
+    if (!editandoMain_ || !projeto_) { if (aoConcluir) aoConcluir("MAIN EDIT MODE is not active", {}); return; }
+    if (mainUsaMapa()) { if (aoConcluir) aoConcluir("The MAIN already uses a folder map", {}); return; }
+    auto nomeDoMapa = std::make_shared<juce::String>();
+    executarEdicaoMain("Converting MAIN to folder map", [this, nomeDoMapa]() {
+        matriz::mainedit::Resultado r;
+        auto& db = projeto_->registro();
+        struct Linha { std::string id, item; juce::String caminho; };
+        std::vector<Linha> linhas;
+        {
+            auto st = db.prepare("SELECT id, item_id, caminho_relativo_destino FROM consolidacao_registro");
+            while (st.step()) linhas.push_back({st.columnText(0), st.columnText(1), juce::String::fromUTF8(st.columnText(2).c_str())});
+        }
+        if (linhas.empty()) { r.erro = "the MAIN has no registered files"; return r; }
+
+        // Pastas reais: todo prefixo de diretório dos caminhos registrados.
+        std::set<juce::String> dirs;
+        for (auto& l : linhas) {
+            juce::StringArray partes;
+            partes.addTokens(l.caminho, "/", "");
+            juce::String acumulado;
+            for (int i = 0; i < partes.size() - 1; ++i) {
+                acumulado += (acumulado.isEmpty() ? "" : "/") + partes[i];
+                if (partes[i].isNotEmpty()) dirs.insert(acumulado);
+            }
+        }
+        std::vector<juce::String> ordenadas(dirs.begin(), dirs.end());
+        std::sort(ordenadas.begin(), ordenadas.end(), [](const juce::String& a, const juce::String& b) {
+            const int da = a.retainCharacters("/").length(), dbb = b.retainCharacters("/").length();
+            return da != dbb ? da < dbb : a < b;
+        });
+
+        const juce::String nome = "MAIN structure";
+        std::string mapaId = criarFolderMap(nome, std::nullopt);
+        if (mapaId.empty()) { r.erro = "could not create the folder map"; return r; }
+        *nomeDoMapa = nome;
+
+        matriz::db::Database::Trava trava(db);
+        db.exec("BEGIN IMMEDIATE");
+        try {
+            std::map<juce::String, std::string> idPorDir;
+            for (auto& dir : ordenadas) {
+                const juce::String pai = dir.contains("/") ? dir.upToLastOccurrenceOf("/", false, false) : juce::String();
+                const juce::String seg = dir.contains("/") ? dir.fromLastOccurrenceOf("/", false, false) : dir;
+                std::optional<std::string> paiId;
+                if (pai.isNotEmpty()) paiId = idPorDir[pai];
+                idPorDir[dir] = criarPastaAcervo(seg.toStdString(), paiId, mapaId);
+            }
+            const auto agora = matriz::model::agoraIso8601();
+            for (auto& l : linhas) {
+                if (!l.caminho.contains("/")) continue;  // raiz de Media/: fica em NO FOLDER
+                const auto pastaId = idPorDir[l.caminho.upToLastOccurrenceOf("/", false, false)];
+                if (pastaId.empty()) continue;
+                inserirItemPastaInterno(l.item, pastaId, agora);
+                db.run("UPDATE consolidacao_registro SET pasta_id = ? WHERE id = ?",
+                       {matriz::db::Value::of(pastaId), matriz::db::Value::of(l.id)});
+            }
+            // A partir daqui o MAIN segue as regras "com folder map".
+            juce::var cfg;
+            {
+                auto st = db.prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+                if (st.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(st.columnText(0).c_str()));
+            }
+            if (!cfg.isObject()) cfg = juce::var(new juce::DynamicObject());
+            auto* o = cfg.getDynamicObject();
+            o->setProperty("preservar", false);
+            o->setProperty("mapa", true);
+            o->setProperty("org", 1);
+            o->setProperty("por_source", false);
+            o->setProperty("mapa_id", juce::String(mapaId));
+            db.run("UPDATE projeto SET backup_config_main = ?", {matriz::db::Value::of(juce::JSON::toString(cfg, true).toStdString())});
+            db.exec("COMMIT");
+        } catch (...) {
+            try { db.exec("ROLLBACK"); } catch (...) {}
+            throw;
+        }
+        try {
+            matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+                "MAIN EDIT: MAIN converted to folder map",
+                {"New folder map: " + nome, "Folders created: " + juce::String(static_cast<int>(ordenadas.size())),
+                 "Automatic organization by year/type/source no longer applies; new items go to _SEM_PASTA until organized."});
+        } catch (...) {}
+        r.ok = true;
+        return r;
+    }, [nomeDoMapa, aoConcluir](const matriz::mainedit::Resultado& r) {
+        if (aoConcluir) aoConcluir(r.ok ? juce::String() : juce::String::fromUTF8(r.erro.c_str()), *nomeDoMapa);
+    });
+}
+
+void ProjetoAberto::recuperarOperacoesDoMain() {
+    if (!projeto_ || projeto_->papel() != "ORIGINAL" || projeto_->modo() == matriz::model::Modo::Catalogo) return;
+    auto ctx = contextoDoMain();
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMainEdit_.addJob([ctx, vivo]() {
+        auto res = matriz::mainedit::recuperarJournal(ctx);
+        if (res.conflitos.empty()) return;
+        juce::MessageManager::callAsync([vivo, res]() {
+            if (!vivo.lock()) return;
+            juce::String msg = matriz::i18n::t("main_edit.recuperacao_conflito");
+            for (size_t i = 0; i < res.conflitos.size() && i < 5; ++i) msg << "\n\n" << juce::String::fromUTF8(res.conflitos[i].c_str());
+            juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                             .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                             .withTitle(matriz::i18n::t("main_edit.titulo"))
+                                             .withMessage(msg)
+                                             .withButton(matriz::i18n::t("dialogo.ok")),
+                                         juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
 }
 
 } // namespace matriz::ui

@@ -475,6 +475,61 @@ CREATE TABLE IF NOT EXISTS consolidacao_registro (
 );
 
 CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_arquivo ON consolidacao_registro(arquivo_id);
+CREATE INDEX IF NOT EXISTS idx_consolidacao_registro_caminho ON consolidacao_registro(caminho_relativo_destino);
+
+-- ---------------------------------------------------------------------------
+-- MAIN EDIT MODE (Fase 4). Tudo aditivo e idempotente.
+--
+-- main_edit_journal: uma linha por operação de arquivo/pasta no MAIN, gravada
+-- ANTES de mexer no disco (estado 'pendente') e fechada ('aplicado') na mesma
+-- transação que atualiza consolidacao_registro. Ao reabrir o projeto, as
+-- 'pendente' são retomadas ou desfeitas (nunca fica arquivo movido sem
+-- registro). mapa_pendente = 1: o efeito no folder map do MAIN ainda não foi
+-- confirmado (ProjetoAberto reaplica de forma idempotente).
+CREATE TABLE IF NOT EXISTS main_edit_journal (
+    id             TEXT PRIMARY KEY,
+    op             TEXT NOT NULL,
+    estado         TEXT NOT NULL DEFAULT 'pendente', -- pendente | aplicado | cancelado | conflito
+    payload        TEXT NOT NULL,                     -- JSON com de/para/hashes/ids
+    mapa_pendente  INTEGER NOT NULL DEFAULT 0,
+    criado_em      TEXT NOT NULL,
+    concluido_em   TEXT
+);
+
+-- Quarentena do MAIN: <raiz do MAIN>/_QUARENTENA. Guarda o caminho original,
+-- o motivo, a data e o hash. Sem FK em item/arquivo: o registro sobrevive a
+-- qualquer limpeza do catálogo.
+CREATE TABLE IF NOT EXISTS quarentena_item (
+    id                  TEXT PRIMARY KEY,
+    item_id             TEXT NOT NULL DEFAULT '',
+    arquivo_id          TEXT NOT NULL DEFAULT '',
+    pasta_id            TEXT NOT NULL DEFAULT '',
+    caminho_original    TEXT NOT NULL,   -- relativo a Media/
+    caminho_quarentena  TEXT NOT NULL,   -- relativo a _QUARENTENA/
+    motivo              TEXT NOT NULL CHECK (motivo IN ('substituido','deletado')),
+    checksum_sha256     TEXT NOT NULL DEFAULT '',
+    tamanho_bytes       INTEGER NOT NULL DEFAULT 0,
+    destino_path        TEXT NOT NULL DEFAULT '',
+    destino_id          TEXT NOT NULL DEFAULT '',
+    criado_em           TEXT NOT NULL,
+    restaurado_em       TEXT,
+    esvaziado_em        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_quarentena_item_arquivo ON quarentena_item(arquivo_id);
+
+-- Moves feitos no MAIN que cada CLONE ainda não recebeu. O próximo sync do
+-- clone aplica como move autoritativo (o hash só confirma). Cadeias A->B->C
+-- colapsam em A->C na inserção.
+CREATE TABLE IF NOT EXISTS clone_move_pendente (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    clone_id   TEXT NOT NULL,             -- backup_destino.id
+    tipo       TEXT NOT NULL DEFAULT 'arquivo', -- arquivo | pasta
+    de         TEXT NOT NULL,             -- relativo a Media/
+    para       TEXT NOT NULL,
+    sha256     TEXT NOT NULL DEFAULT '',  -- só arquivo
+    criado_em  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_clone_move_pendente_clone ON clone_move_pendente(clone_id);
 
 -- ---------------------------------------------------------------------------
 -- Vault (Cofre de Preservação)

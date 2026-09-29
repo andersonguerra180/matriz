@@ -278,6 +278,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MatrizLookAndFeel.h
     Source/Ui/MatrizLookAndFeel.cpp
     Source/Ui/ProjetoAberto.cpp
+    Source/Ui/MainEditPanel.cpp
     Source/Ui/AcoesItem.cpp
     Source/Ui/ArvoreComponent.cpp
     Source/Ui/BarraFerramentasComponent.cpp
@@ -384,6 +385,7 @@ target_sources(matriz PRIVATE
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/MainEdit.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Catalogo/CatalogoProxies.cpp

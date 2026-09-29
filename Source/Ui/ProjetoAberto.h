@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -12,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "../Consolidacao/MainEdit.h"
 #include "../Ficha/FichaDefinition.h"
 #include "../Model/Project.h"
 #include "../Preservation/Preservation.h"
@@ -515,6 +517,51 @@ public:
     std::string mapaDoMainId() const;
     // Nome atual do mapa do MAIN ("" se não houver).
     juce::String nomeDoMapaDoMain() const;
+
+    // ------------------------------------------------------------------
+    // MAIN EDIT MODE (Fase 4). Fora do modo o MAIN fica travado como sempre.
+    // A barreira é UMA por sessão (não por operação): digitar o nome ATUAL do
+    // projeto (File > Rename Project pode ter mudado). Sai sozinho ao fechar o
+    // projeto ou depois de kTimeoutEdicaoMainMs sem operações.
+    // ------------------------------------------------------------------
+    static constexpr juce::int64 kTimeoutEdicaoMainMs = 15 * 60 * 1000;
+    bool editandoMain() const { return editandoMain_; }
+    // MAIN existe e é este projeto (não CLONE) — condição pra oferecer o modo.
+    bool podeEditarMain() const;
+    // Só compara o texto com o nome atual; false = barreira não passou.
+    bool nomeConfereComProjeto(const juce::String& digitado) const;
+    bool entrarModoEdicaoMain(const juce::String& nomeDigitado);
+    void sairModoEdicaoMain(const juce::String& motivo);
+    void tocarAtividadeMain();
+    // Chamado por timer da UI: se passou do timeout, sai do modo e devolve true.
+    bool verificarTimeoutEdicaoMain();
+    std::function<void()> aoMudarModoEdicaoMain;
+    // MAIN organizado por folder map (mover/pastas só nesse caso).
+    bool mainUsaMapa() const { return !mapaDoMainId().empty(); }
+    matriz::mainedit::ContextoMain contextoDoMain() const;
+
+    // Operações de arquivo no MAIN: rodam numa thread de fundo (uma por vez,
+    // com progresso global); `aoConcluir` volta na message thread. Só dentro do modo.
+    using AoConcluirEdicaoMain = std::function<void(const matriz::mainedit::Resultado&)>;
+    bool operacaoMainEmCurso() const { return operacaoMainEmCurso_.load(); }
+    // Leitura em fundo pro painel do MAIN (o pool é encerrado antes do banco fechar).
+    void agendarNoPoolDoMain(std::function<void()> trabalho) { poolMainEdit_.addJob(std::move(trabalho)); }
+    void editarMainRenomearArquivo(const std::string& registroId, const juce::String& novoNome, AoConcluirEdicaoMain aoConcluir,
+                                    bool registrarUndoDesta = true);
+    void editarMainMoverArquivo(const std::string& registroId, const std::string& novaPastaId, AoConcluirEdicaoMain aoConcluir,
+                                bool registrarUndoDesta = true);
+    void editarMainSubstituirArquivo(const std::string& registroId, const juce::File& novaVersao, AoConcluirEdicaoMain aoConcluir);
+    void editarMainDeletarArquivo(const std::string& registroId, AoConcluirEdicaoMain aoConcluir);
+    void editarMainRestaurar(const std::string& quarentenaId, const juce::String& destinoAlternativoRel, AoConcluirEdicaoMain aoConcluir);
+    // A barreira do nome do projeto já foi conferida pelo chamador.
+    void editarMainEsvaziarQuarentena(std::function<void(const matriz::mainedit::ResultadoEsvaziar&)> aoConcluir);
+    // Só de ida: gera um mapa do usuário a partir da ESTRUTURA REAL do MAIN e o
+    // torna o mapa do MAIN. Devolve "" em sucesso ou a mensagem de erro.
+    void converterMainParaFolderMap(std::function<void(const juce::String& erro, const juce::String& nomeDoMapa)> aoConcluir);
+    // Retoma/desfaz operações interrompidas por queda (ao abrir o projeto).
+    void recuperarOperacoesDoMain();
+    // Mapa: item passa de uma pasta pra outra no mapa do MAIN (idempotente).
+    void mapaMoverItemDoMain(const std::string& itemId, const std::string& pastaDe, const std::string& pastaPara);
     static void avisarMapaTravado(const juce::String& mensagem);
     void atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y);
     void alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo);
@@ -904,6 +951,15 @@ private:
 
     std::unique_ptr<matriz::model::Project> projeto_;
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
+
+    // MAIN EDIT MODE. O pool vem DEPOIS de projeto_: é destruído antes dele
+    // (o job em curso ainda usa o banco) — não reordenar.
+    bool editandoMain_ = false;
+    juce::int64 ultimaAtividadeMainMs_ = 0;
+    std::atomic<bool> operacaoMainEmCurso_{false};
+    void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
+                            AoConcluirEdicaoMain aoConcluir);
+    juce::ThreadPool poolMainEdit_{1};
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
     bool dirty_ = false;

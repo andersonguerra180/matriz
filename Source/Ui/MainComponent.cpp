@@ -1523,7 +1523,19 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     esperarJobsDeVaults();
     reconstruirTelaInicial();
 
+    faixaAviso_.reset();
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
+    {
+        // MAIN EDIT MODE (Fase 4): a faixa/borda seguem o estado do modo; abrir o
+        // projeto retoma ou desfaz qualquer operação interrompida por queda.
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        projetoAberto_->aoMudarModoEdicaoMain = [safeThis] {
+            if (!safeThis) return;
+            safeThis->atualizarFaixaAviso();
+            if (safeThis->backupWorkspace_) safeThis->backupWorkspace_->recarregar();
+        };
+        projetoAberto_->recuperarOperacoesDoMain();
+    }
 
     bool isCatalog = (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo);
     juce::String nomeProj = juce::String::fromUTF8(projetoAberto_->projeto().nome().c_str());
@@ -1553,6 +1565,9 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         else if (tab == BarraNavegacaoComponent::Tab::Storage) mostrarStorage();
     };
     addAndMakeVisible(*barraNavegacao_);
+    faixaAviso_ = std::make_unique<FaixaAvisoComponent>();
+    addChildComponent(*faixaAviso_);
+    atualizarFaixaAviso();
 
     barraProgressoGlobal_ = std::make_unique<BarraProgressoGlobalComponent>();
     addAndMakeVisible(*barraProgressoGlobal_);
@@ -2234,6 +2249,16 @@ void MainComponent::timerCallback() {
         }
     }
 
+    // MAIN EDIT MODE: sai sozinho depois de 15 min sem operações.
+    if (projetoAberto_ && projetoAberto_->verificarTimeoutEdicaoMain()) {
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                         .withIconType(juce::MessageBoxIconType::InfoIcon)
+                                         .withTitle(matriz::i18n::t("main_edit.titulo"))
+                                         .withMessage(matriz::i18n::t("main_edit.saiu_timeout"))
+                                         .withButton(matriz::i18n::t("dialogo.ok")),
+                                     juce::ModalCallbackFunction::create([](int) {}));
+    }
+
     if (++ticksDoTimer_ >= 50) {
         ticksDoTimer_ = 0;
         verificarVaultsConectados();
@@ -2403,6 +2428,8 @@ void MainComponent::fecharProjeto() {
     catalogoPai_ = juce::File();
     telaAtiva_ = TelaAtiva::Inicial;
     reconstruirTelaInicial();
+    faixaAviso_.reset();
+    if (projetoAberto_) projetoAberto_->sairModoEdicaoMain("project closed");
     projetoAberto_.reset();
     resized();
     repaint();
@@ -4325,6 +4352,30 @@ void MainComponent::paint(juce::Graphics& g) {
     g.drawRect(getLocalBounds(), 3);
 }
 
+void MainComponent::paintOverChildren(juce::Graphics& g) {
+    // MAIN EDIT MODE: borda de alerta em volta de tudo, em qualquer aba.
+    if (projetoAberto_ && projetoAberto_->editandoMain()) {
+        g.setColour(juce::Colour(0xffdc2626));
+        g.drawRect(getLocalBounds(), 4);
+    }
+}
+
+void MainComponent::atualizarFaixaAviso() {
+    if (!faixaAviso_) return;
+    if (projetoAberto_ && projetoAberto_->editandoMain()) {
+        juce::Component::SafePointer<MainComponent> safeThis(this);
+        faixaAviso_->definir(matriz::i18n::t("main_edit.faixa"), juce::Colour(0xffb91c1c),
+                             matriz::i18n::t("main_edit.faixa_sair"), [safeThis] {
+                                 if (safeThis && safeThis->projetoAberto_) safeThis->projetoAberto_->sairModoEdicaoMain("user left");
+                             });
+        faixaAviso_->setVisible(true);
+    } else {
+        faixaAviso_->setVisible(false);
+    }
+    resized();
+    repaint();
+}
+
 void MainComponent::resized() {
     MATRIZ_TRACE("MainComponent::resized");
 
@@ -4333,6 +4384,7 @@ void MainComponent::resized() {
     overlay_.setBounds(getLocalBounds());
 
     auto area = getLocalBounds();
+    if (faixaAviso_ && faixaAviso_->isVisible()) faixaAviso_->setBounds(area.removeFromTop(FaixaAvisoComponent::kAltura));
 
     // Item 4 (nova lista): a visibilidade das sub-abas FOLDER MAP/SPACE MAP
     // tem que ser decidida incondicionalmente, aqui no topo — os blocos

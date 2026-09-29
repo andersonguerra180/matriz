@@ -1,6 +1,7 @@
 #include "SyncEngine.h"
 
 #include <algorithm>
+#include <filesystem>
 #include "../Ingest/Checksum.h"
 #include "../Model/ProjectLog.h"
 #include "../Consolidacao/Consolidacao.h"
@@ -667,6 +668,63 @@ ResultadoSync SyncEngine::aplicarSync(const juce::File& referenciaRaiz,
     return res;
 }
 
+// Fase 4 — moves feitos no MAIN (MAIN EDIT MODE / _SEM_PASTA) que este clone ainda
+// não recebeu (clone_move_pendente). O journal do MAIN é a instrução AUTORITATIVA;
+// o hash só confirma. Sem rehash da árvore: só os arquivos movidos são lidos.
+// Se o arquivo não está no caminho antigo, o destino já existe ou o hash não bate,
+// nada é tocado: o sync normal segue (cópia normal) e o motivo vai pro log.
+// Chamar SÓ quando a regra de divergência já liberou o clone.
+static int aplicarMovesPendentesNoClone(matriz::model::Project& projeto, const std::string& cloneId, const juce::File& cloneRaiz,
+                                        const juce::String& rotuloClone) {
+    struct Linha { long long id; std::string tipo, de, para, sha; };
+    std::vector<Linha> linhas;
+    try {
+        auto st = projeto.registro().prepare(
+            "SELECT id, tipo, de, para, sha256 FROM clone_move_pendente WHERE clone_id = ? ORDER BY id");
+        st.bind(1, matriz::db::Value::of(cloneId));
+        while (st.step()) linhas.push_back({st.columnInt(0), st.columnText(1), st.columnText(2), st.columnText(3), st.columnText(4)});
+    } catch (...) { return 0; }
+    if (linhas.empty()) return 0;
+
+    const juce::File media = cloneRaiz.getChildFile("Media");
+    matriz::model::ProjectLog log(projeto.pasta());
+    int aplicados = 0;
+    for (const auto& l : linhas) {
+        const juce::String deRel = juce::String::fromUTF8(l.de.c_str());
+        const juce::String paraRel = juce::String::fromUTF8(l.para.c_str());
+        juce::String motivoFallback;
+        if (deRel.isEmpty() || paraRel.isEmpty() || deRel.contains("..") || paraRel.contains("..")) {
+            motivoFallback = "invalid path";
+        } else {
+            const juce::File src = media.getChildFile(deRel);
+            const juce::File dst = media.getChildFile(paraRel);
+            const bool ehPasta = (l.tipo == "pasta");
+            if (ehPasta ? !src.isDirectory() : !src.existsAsFile()) motivoFallback = "not at the old path in the clone";
+            else if (dst.exists()) motivoFallback = "target already exists in the clone";
+            else if (!ehPasta && !l.sha.empty() && matriz::ingest::calcularChecksums(src).sha256 != l.sha)
+                motivoFallback = "hash does not match";
+            else {
+                dst.getParentDirectory().createDirectory();
+                std::error_code ec;
+                std::filesystem::rename(src.getFullPathName().toStdString(), dst.getFullPathName().toStdString(), ec);
+                if (ec) motivoFallback = juce::String("rename failed: ") + ec.message();
+            }
+        }
+        if (motivoFallback.isEmpty()) {
+            ++aplicados;
+            log.appendEntry("Clone sync: move applied",
+                            {"Clone: " + rotuloClone, "From: " + deRel, "To: " + paraRel});
+        } else {
+            log.appendEntry("Clone sync: move NOT applied, falling back to normal copy",
+                            {"Clone: " + rotuloClone, "From: " + deRel, "To: " + paraRel, "Reason: " + motivoFallback});
+        }
+        try {
+            projeto.registro().run("DELETE FROM clone_move_pendente WHERE id = ?", {matriz::db::Value::of(l.id)});
+        } catch (...) {}
+    }
+    return aplicados;
+}
+
 std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAutomatico(matriz::model::Project& projeto,
                                                                                     const std::set<std::string>& ignorarIds,
                                                                                     bool aplicarRemocoes) {
@@ -732,7 +790,8 @@ std::vector<SyncEngine::StatusEspelhamento> SyncEngine::executarEspelhamentoAuto
             }
 
             if (cloneInfo->revisao == r.ultimaRevisao) {
-                // Alvo não mudou por conta própria: aplicar espelhamento
+                // Alvo não mudou por conta própria: primeiro os moves do MAIN, depois o espelhamento
+                aplicarMovesPendentesNoClone(projeto, r.id, cloneRaiz, r.rotulo);
                 PlanoSync plano = escanearEComparar(refRaiz, cloneRaiz, false);
                 if (!aplicarRemocoes) {
                     plano.itens.erase(std::remove_if(plano.itens.begin(), plano.itens.end(),
@@ -881,6 +940,17 @@ ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto
         const juce::File refRaiz = matriz::model::normalizarParaRaizDestino(projeto.raiz());
         matriz::consolidacao::atualizarSidecarsNoMain(projeto.registro(), refRaiz.getChildFile("Media"),
                                                       matriz::vault::destinationIdDaRaiz(refRaiz), false);
+    } catch (...) {}
+    // Fase 4: moves do MAIN entram no clone como move (antes de comparar, pra o
+    // plano já enxergar o clone com a estrutura nova).
+    try {
+        std::string caminhoMoves, rotuloMoves;
+        auto stm = projeto.registro().prepare("SELECT destino_path, rotulo FROM backup_destino WHERE id = ? AND papel <> 'ORIGINAL'");
+        stm.bind(1, matriz::db::Value::of(cloneId));
+        if (stm.step()) { caminhoMoves = stm.columnText(0); rotuloMoves = stm.columnText(1); }
+        const juce::File raizMoves = matriz::model::normalizarParaRaizDestino(juce::File(juce::String::fromUTF8(caminhoMoves.c_str())));
+        if (!caminhoMoves.empty() && raizMoves.isDirectory())
+            aplicarMovesPendentesNoClone(projeto, cloneId, raizMoves, juce::String::fromUTF8(rotuloMoves.c_str()));
     } catch (...) {}
     auto plano = compararCloneDoMain(projeto, cloneId);
     if (!plano.podeAplicar()) {

@@ -199,6 +199,51 @@ juce::String segmentoSeguro(const juce::String& bruto, const juce::String& fallb
 
 } // namespace
 
+juce::String segmentoDePastaSeguro(const juce::String& nome) { return segmentoSeguro(nome, "Folder"); }
+
+void anotarMovePendentePraClones(matriz::db::Database& registro, const char* tipo, const std::string& de,
+                                 const std::string& para, const std::string& sha) {
+    if (de == para) return;
+    std::vector<std::string> clones;
+    try {
+        auto st = registro.prepare("SELECT id FROM backup_destino WHERE ativo = 1 AND papel <> 'ORIGINAL'");
+        while (st.step()) clones.push_back(st.columnText(0));
+    } catch (...) { return; }
+    for (const auto& clone : clones) {
+        long long idExistente = 0;
+        std::string deOriginal;
+        {
+            auto st = registro.prepare(
+                "SELECT id, de FROM clone_move_pendente WHERE clone_id = ? AND tipo = ? AND para = ? ORDER BY id DESC LIMIT 1");
+            st.bind(1, Value::of(clone));
+            st.bind(2, Value::of(std::string(tipo)));
+            st.bind(3, Value::of(de));
+            if (st.step()) { idExistente = st.columnInt(0); deOriginal = st.columnText(1); }
+        }
+        if (idExistente != 0) {
+            if (deOriginal == para)
+                registro.run("DELETE FROM clone_move_pendente WHERE id = ?", {Value::of(idExistente)});
+            else
+                registro.run("UPDATE clone_move_pendente SET para = ? WHERE id = ?",
+                                  {Value::of(para), Value::of(idExistente)});
+        } else {
+            registro.run(
+                "INSERT INTO clone_move_pendente (clone_id, tipo, de, para, sha256, criado_em) VALUES (?, ?, ?, ?, ?, ?)",
+                {Value::of(clone), Value::of(std::string(tipo)), Value::of(de), Value::of(para), Value::of(sha),
+                 Value::of(matriz::model::agoraIso8601())});
+        }
+    }
+}
+
+
+
+juce::String caminhoFisicoDaPasta(matriz::db::Database& registro, const std::string& pastaId) {
+    if (pastaId.empty()) return {};
+    juce::StringArray segs;
+    for (auto& [id, nome] : cadeiaAncestral(registro, pastaId)) segs.add(segmentoSeguro(nome, "Folder"));
+    return segs.joinIntoString("/");
+}
+
 juce::String resolverNomeFinalBackup(const juce::File& arquivoOrigem, const std::string& nomeBaseMascara, bool usaEstruturaOriginal) {
     if (usaEstruturaOriginal)
         return arquivoOrigem.getFileName();
@@ -356,6 +401,16 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         "ORDER BY i.codigo_acervo");
     if (filtrarMapa) stmt.bind(1, Value::of(mapaId));
 
+    // Fase 4: arquivo que o usuário deletou no MAIN EDIT MODE (foi pra
+    // quarentena) não volta no backup seguinte — só se for restaurado.
+    std::set<std::string> arquivosDeletadosDoMain;
+    if (!paraExport) {
+        try {
+            auto stq = registro.prepare("SELECT arquivo_id FROM quarentena_item WHERE motivo = 'deletado' AND restaurado_em IS NULL");
+            while (stq.step()) arquivosDeletadosDoMain.insert(stq.columnText(0));
+        } catch (...) {}
+    }
+
     std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
     std::unordered_set<std::string> itensProcessados;
 
@@ -380,6 +435,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string titulo = stmt.columnText(3);
         std::string tipoMidia = stmt.columnText(4);
         ip.arquivoId = stmt.columnText(5);
+        if (arquivosDeletadosDoMain.count(ip.arquivoId)) continue;
         juce::String caminhoRelativoOrigem = stmt.columnText(6);
         std::string checksumAtual = stmt.columnText(7);
         std::string dcCreatorAtual = stmt.columnIsNull(9) ? std::string() : stmt.columnText(9);
@@ -737,6 +793,15 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                 } catch (...) {}
             }
             // (origem ausente + alvo presente = move já feito, registro atrasado: só atualiza o banco.)
+            std::string shaMovido;
+            try {
+                auto stSha = registro.prepare("SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
+                                              "AND caminho_relativo_destino = ? LIMIT 1");
+                stSha.bind(1, Value::of(mv.itemId));
+                stSha.bind(2, Value::of(mv.arquivoId));
+                stSha.bind(3, Value::of(mv.moverDe.toStdString()));
+                if (stSha.step()) shaMovido = stSha.columnText(0);
+            } catch (...) {}
             try {
                 registro.run("UPDATE consolidacao_registro SET pasta_id = ?, caminho_relativo_destino = ? "
                              "WHERE item_id = ? AND arquivo_id = ? AND caminho_relativo_destino = ?",
@@ -748,6 +813,10 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                              "AND caminho_relativo_destino = ?",
                              {Value::of(mv.itemId), Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
             }
+            try {
+                anotarMovePendentePraClones(registro, "arquivo", mv.moverDe.toStdString(),
+                                            mv.caminhoRelativoDestino.toStdString(), shaMovido);
+            } catch (...) {}
             matriz::model::ProjectLog pLog(pastaProjeto);
             pLog.appendEntry("Media Moved Out Of _SEM_PASTA",
                              {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,

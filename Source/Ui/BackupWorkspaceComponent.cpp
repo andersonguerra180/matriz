@@ -8,6 +8,7 @@
 #include "ExportZipDialog.h"
 #include "SendToPrintDialog.h"
 #include "BatchWatermarkDialog.h"
+#include "MainEditPanel.h"
 #include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
@@ -804,7 +805,7 @@ public:
             bool temEditCustomPrefixo = (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible());
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
-            int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
+            int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + (alturaControle + 4) + padCartaoY * 2;
             int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
             int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
             int minTotal = minH1 + minH2 + minH3 + minH4;
@@ -859,10 +860,22 @@ public:
             dentro.removeFromTop(2);
 
             int alturaDestInfo = 20;
-            int reservedBottom = alturaControle + 4 + alturaDestInfo;
+            const int alturaLinhaMainEdit = isCatalogMode ? 0 : alturaControle + 4;
+            int reservedBottom = alturaControle + 4 + alturaDestInfo + alturaLinhaMainEdit;
             int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
             owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
             dentro.removeFromTop(4);
+
+            // MAIN EDIT MODE: entrar/sair + MAIN EDITOR (só Coleção).
+            if (!isCatalogMode && owner_.btnMainEdit_) {
+                auto linhaEdit = dentro.removeFromTop(alturaControle);
+                dentro.removeFromTop(4);
+                if (owner_.btnMainEditor_ && owner_.btnMainEditor_->isVisible()) {
+                    owner_.btnMainEditor_->setBounds(linhaEdit.removeFromRight(linhaEdit.getWidth() / 2 - 2));
+                    linhaEdit.removeFromRight(4);
+                }
+                owner_.btnMainEdit_->setBounds(linhaEdit);
+            }
 
             // Browse and Google Drive buttons side by side
             {
@@ -1724,6 +1737,19 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
                                      : "Compare active destination with another drive/folder for manual sync review");
     btnSyncDestino_->onClick = [this] { iniciarSyncComOutroDestino(); };
     addAndMakeVisible(*btnSyncDestino_);
+
+    btnMainEdit_ = std::make_unique<juce::TextButton>(matriz::i18n::t("main_edit.botao_entrar"));
+    aplicarEstiloBotao(*btnMainEdit_, false);
+    btnMainEdit_->setTooltip(matriz::i18n::t("main_edit.botao_dica"));
+    btnMainEdit_->onClick = [this] { alternarModoEdicaoMain(); };
+    addChildComponent(*btnMainEdit_);
+    btnMainEditor_ = std::make_unique<juce::TextButton>(matriz::i18n::t("main_edit.botao_editor"));
+    aplicarEstiloBotao(*btnMainEditor_, false);
+    btnMainEditor_->onClick = [this] {
+        juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+        MainEditPanel::abrir(projeto_, [safeThis] { if (safeThis) safeThis->recarregar(); });
+    };
+    addChildComponent(*btnMainEditor_);
 
     btnPublishHtml_ = std::make_unique<MarkedActionButton>("PUBLISH TO HTML", "H", juce::Colour(0xff39ff14));
     aplicarEstiloBotao(*btnPublishHtml_, false);
@@ -2797,6 +2823,7 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         }
     }
     atualizarBotoesDependentesDoMain();
+    atualizarBotoesMainEdit();
 }
 
 bool BackupWorkspaceComponent::saidaBloqueadaSemMain() const {
@@ -2822,6 +2849,35 @@ void BackupWorkspaceComponent::atualizarBotoesDependentesDoMain() {
     aplicar(btnSyncDestino_.get(), true,
             isPt ? juce::String::fromUTF8("Comparar destino ativo com outro disco/pasta para sincronização manual")
                  : "Compare active destination with another drive/folder for manual sync review");
+}
+
+void BackupWorkspaceComponent::atualizarBotoesMainEdit() {
+    if (!btnMainEdit_ || !btnMainEditor_) return;
+    const bool catalogo = projeto_.projeto().modo() == matriz::model::Modo::Catalogo;
+    const bool pode = !catalogo && projeto_.podeEditarMain();
+    const bool editando = pode && projeto_.editandoMain();
+    const bool mudou = btnMainEdit_->isVisible() != pode || btnMainEditor_->isVisible() != editando;
+    btnMainEdit_->setVisible(pode);
+    btnMainEditor_->setVisible(editando);
+    btnMainEdit_->setButtonText(matriz::i18n::t(editando ? "main_edit.botao_sair" : "main_edit.botao_entrar"));
+    btnMainEdit_->setColour(juce::TextButton::textColourOffId, editando ? tema().perigo : tema().textoPrimario);
+    if (mudou) resized();
+}
+
+void BackupWorkspaceComponent::alternarModoEdicaoMain() {
+    if (projeto_.editandoMain()) {
+        projeto_.sairModoEdicaoMain("user left");
+        atualizarBotoesMainEdit();
+        return;
+    }
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    MainEditPanel::pedirNomeDoProjeto(projeto_, matriz::i18n::t("main_edit.titulo"), matriz::i18n::t("main_edit.barreira_msg"),
+                                      matriz::i18n::t("main_edit.barreira_confirmar"), [safeThis](const juce::String& digitado) {
+                                          if (!safeThis) return;
+                                          if (!safeThis->projeto_.entrarModoEdicaoMain(digitado)) return;
+                                          safeThis->atualizarBotoesMainEdit();
+                                          MainEditPanel::abrir(safeThis->projeto_, [safeThis] { if (safeThis) safeThis->recarregar(); });
+                                      });
 }
 
 bool BackupWorkspaceComponent::hierarquiaUsaMapa() const {
