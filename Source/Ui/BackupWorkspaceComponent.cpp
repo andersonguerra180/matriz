@@ -1419,13 +1419,13 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     listVaults_->setRowHeight(32);
     configContainer_->addAndMakeVisible(*listVaults_);
 
-    btnBrowseVault_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("+ Adicionar Destino...") : "+ Add Destination...");
-    btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um destino de backup") : "Create or link a backup destination folder");
+    btnBrowseVault_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("+ Adicionar Clone...") : "+ Add Clone...");
+    btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um clone (versão de backup)") : "Create or link a clone (backup version) folder");
     aplicarEstiloBotao(*btnBrowseVault_, false);
     btnBrowseVault_->onClick = [this, isPt] {
         auto chooser = std::make_shared<juce::FileChooser>(
-            isPt ? juce::String::fromUTF8("Selecione a pasta para o novo Destino")
-                 : "Select folder for the new Destination");
+            isPt ? juce::String::fromUTF8("Selecione a pasta para o novo CLONE")
+                 : "Select folder for the new CLONE");
         juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
         chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                               [safeThis, chooser](const juce::FileChooser& fc) {
@@ -1441,16 +1441,16 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     bool isPtGDest = isPt;
     btnGoogleDriveDest_ = std::make_unique<GoogleDriveIconButton>();
     btnGoogleDriveDest_->setTooltip(isPtGDest
-        ? juce::String::fromUTF8("Criar destino no Google Drive (requer Google Drive para Desktop)")
-        : "Create destination in Google Drive (requires Google Drive for Desktop)");
+        ? juce::String::fromUTF8("Criar CLONE no Google Drive (requer Google Drive para Desktop)")
+        : "Create a CLONE in Google Drive (requires Google Drive for Desktop)");
     btnGoogleDriveDest_->onClick = [this, isPtGDest] {
         // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
         juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
         escolherContaGoogleDrive(btnGoogleDriveDest_.get(), [safeThis, isPtGDest](const juce::File& gdFolder) {
             if (!safeThis) return;
             auto chooser = std::make_shared<juce::FileChooser>(
-                isPtGDest ? juce::String::fromUTF8("Selecione ou crie uma subpasta no Google Drive para o Destino")
-                          : "Select or create a subfolder in Google Drive for the Destination",
+                isPtGDest ? juce::String::fromUTF8("Selecione ou crie uma subpasta no Google Drive para o CLONE")
+                          : "Select or create a subfolder in Google Drive for the CLONE",
                 gdFolder);
             chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                                   [safeThis, chooser](const juce::FileChooser& fc) {
@@ -1733,8 +1733,8 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnSyncDestino_ = std::make_unique<juce::TextButton>("BACKUP SYNC...");
     aplicarEstiloBotao(*btnSyncDestino_, false);
     btnSyncDestino_->setColour(juce::TextButton::textColourOffId, tk.acento);
-    btnSyncDestino_->setTooltip(isPt ? juce::String::fromUTF8("Comparar destino ativo com outro disco/pasta para sincronização manual")
-                                     : "Compare active destination with another drive/folder for manual sync review");
+    btnSyncDestino_->setTooltip(isPt ? juce::String::fromUTF8("Comparar a versão ativa com outro disco/pasta para sincronização manual")
+                                     : "Compare the active version with another drive/folder for manual sync review");
     btnSyncDestino_->onClick = [this] { iniciarSyncComOutroDestino(); };
     addAndMakeVisible(*btnSyncDestino_);
 
@@ -1853,6 +1853,43 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnExportJanela_->onClick = [this] { mostrarJanelaExportar(); };
     addChildComponent(*btnExportJanela_);
 
+    // EXPORT unificado (Fase 6)
+    {
+        const bool catalogo = projeto_.projeto().modo() == matriz::model::Modo::Catalogo;
+        comboExportOrigem_ = std::make_unique<juce::ComboBox>();
+        comboExportOrigem_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboExportOrigem_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+        comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
+        for (int id = kExpSelecionados; id <= kExpPlanilha; ++id) comboExportOrigem_->addItem("-", id);
+        // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá).
+        comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
+        int inicial = catalogo ? kExpZip : kExpSelecionados;
+        const auto arq = arquivoExportOrigem();
+        if (arq.existsAsFile()) {
+            const int lembrado = arq.loadFileAsString().trim().getIntValue();
+            if (lembrado >= kExpSelecionados && lembrado <= kExpPlanilha && !(catalogo && lembrado == kExpSelecionados))
+                inicial = lembrado;
+        }
+        comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
+        comboExportOrigem_->onChange = [this] {
+            // Lembra a última escolha, por projeto (arquivo na pasta do projeto).
+            if (!projeto_.somenteLeitura())
+                arquivoExportOrigem().replaceWithText(juce::String(comboExportOrigem_->getSelectedId()));
+            atualizarExportUnificado();
+            resized();
+        };
+        addChildComponent(*comboExportOrigem_);
+
+        btnExportUnificado_ = std::make_unique<juce::TextButton>(matriz::i18n::t("export.unificado_btn"));
+        aplicarEstiloBotao(*btnExportUnificado_, false);
+        btnExportUnificado_->setTooltip(matriz::i18n::t("export.unificado_dica"));
+        btnExportUnificado_->onClick = [this] { executarExportUnificado(); };
+        addChildComponent(*btnExportUnificado_);
+        setWantsKeyboardFocus(true);
+    }
+
     addChildComponent(overlay_);
 
     EventBus::obterInstancia().registrarListener(this);
@@ -1932,13 +1969,13 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelDest_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (btnBrowseVault_) {
-        btnBrowseVault_->setButtonText(isPt ? juce::String::fromUTF8("+ Adicionar Destino...") : "+ Add Destination...");
-        btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um destino de backup") : "Create or link a backup destination folder");
+        btnBrowseVault_->setButtonText(isPt ? juce::String::fromUTF8("+ Adicionar Clone...") : "+ Add Clone...");
+        btnBrowseVault_->setTooltip(isPt ? juce::String::fromUTF8("Criar ou vincular um clone (versão de backup)") : "Create or link a clone (backup version) folder");
     }
     if (btnGoogleDriveDest_) {
         btnGoogleDriveDest_->setTooltip(isPt
-            ? juce::String::fromUTF8("Criar destino no Google Drive (requer Google Drive para Desktop)")
-            : "Create destination in Google Drive (requires Google Drive for Desktop)");
+            ? juce::String::fromUTF8("Criar CLONE no Google Drive (requer Google Drive para Desktop)")
+            : "Create a CLONE in Google Drive (requires Google Drive for Desktop)");
     }
     if (listVaults_) {
         listVaults_->setColour(juce::ListBox::backgroundColourId, tk.painelAlt);
@@ -2204,6 +2241,78 @@ void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado& e) {
     });
 }
 
+juce::File BackupWorkspaceComponent::arquivoExportOrigem() const {
+    return projeto_.projeto().pasta().getChildFile("export_origem.txt");
+}
+
+// Contadores nas opções do dropdown, botão EXPORT e botões de limpar. As regras de
+// habilitar são as dos botões antigos: "só depois do MAIN" para arquivos
+// selecionados e planilha (modo Coleção); listas ZIP/Print/Watermark só precisam de itens.
+void BackupWorkspaceComponent::atualizarExportUnificado() {
+    if (!comboExportOrigem_ || !btnExportUnificado_) return;
+    const bool catalogo = projeto_.projeto().modo() == matriz::model::Modo::Catalogo;
+    const int nZip = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip));
+    const int nPrint = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print));
+    const int nWm = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
+    auto opcao = [&](int id, const char* chave, int n) {
+        comboExportOrigem_->changeItemText(id, matriz::i18n::t(chave).replace("{n}", juce::String(n)));
+    };
+    opcao(kExpSelecionados, "export.op_selecionados", contagemSelecionados_);
+    opcao(kExpZip, "export.op_zip", nZip);
+    opcao(kExpPrint, "export.op_print", nPrint);
+    opcao(kExpWatermark, "export.op_watermark", nWm);
+    comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
+
+    const int id = comboExportOrigem_->getSelectedId();
+    bool habilitado = false;
+    switch (id) {
+        case kExpSelecionados: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
+        case kExpZip: habilitado = nZip > 0; break;
+        case kExpPrint: habilitado = nPrint > 0; break;
+        case kExpWatermark: habilitado = nWm > 0; break;
+        case kExpPlanilha: habilitado = catalogo ? !plano_.itens.empty() || projeto_.listarColecoesLinkadas().size() > 0
+                                                 : mainSelado_; break;
+        default: break;
+    }
+    btnExportUnificado_->setEnabled(habilitado);
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha)
+                                        ? matriz::i18n::t("backup.saida_sem_main")
+                                        : matriz::i18n::t("export.unificado_dica"));
+
+    // Limpar só aparece ao lado do dropdown quando a lista correspondente está escolhida.
+    auto mostrarLimpar = [&](juce::TextButton* b, bool ativo) { if (b && b->isVisible() != ativo) b->setVisible(ativo); };
+    mostrarLimpar(btnLimparZip_.get(), id == kExpZip && estado_ == Estado::Config);
+    mostrarLimpar(btnLimparPrint_.get(), id == kExpPrint && estado_ == Estado::Config);
+    mostrarLimpar(btnLimparWatermark_.get(), id == kExpWatermark && estado_ == Estado::Config);
+}
+
+void BackupWorkspaceComponent::executarExportUnificado() {
+    if (!comboExportOrigem_ || !btnExportUnificado_ || !btnExportUnificado_->isEnabled()) return;
+    juce::TextButton* alvo = nullptr;
+    switch (comboExportOrigem_->getSelectedId()) {
+        case kExpSelecionados: alvo = btnExportar_.get(); break;
+        case kExpZip: alvo = btnExportZip_.get(); break;
+        case kExpPrint: alvo = btnSendToPrint_.get(); break;
+        case kExpWatermark: alvo = btnExportWatermark_.get(); break;
+        case kExpPlanilha: alvo = btnExportJanela_.get(); break;
+        default: break;
+    }
+    // Exatamente a ação e o diálogo do botão antigo correspondente.
+    if (alvo && alvo->onClick) alvo->onClick();
+}
+
+// Atalho W na aba BACKUP: escolhe "Watermark List" e dispara o export (se houver itens marcados).
+bool BackupWorkspaceComponent::keyPressed(const juce::KeyPress& tecla) {
+    const auto c = tecla.getTextCharacter();
+    if ((c == 'w' || c == 'W') && !tecla.getModifiers().isAnyModifierKeyDown() && comboExportOrigem_ && btnExportUnificado_
+        && comboExportOrigem_->isVisible()) {
+        comboExportOrigem_->setSelectedId(kExpWatermark, juce::sendNotificationSync);
+        executarExportUnificado();
+        return true;
+    }
+    return false;
+}
+
 void BackupWorkspaceComponent::atualizarBotoesListas() {
     const size_t countZip = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip);
     const size_t countPrint = projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print);
@@ -2254,6 +2363,7 @@ void BackupWorkspaceComponent::atualizarBotoesListas() {
         if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) btnPublishHtml_->setEnabled(countHtml > 0);
         else atualizarBotoesDependentesDoMain();
     }
+    atualizarExportUnificado();
 }
 
 void BackupWorkspaceComponent::exportarCsv() {
@@ -2621,6 +2731,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     }
 
     std::set<std::string> itemIds = obterItensSelecionadosPeloCriterio();
+    contagemSelecionados_ = static_cast<int>(itemIds.size());
     // atualizarTravasDoMain() já rodou acima: com MAIN, os controles têm as
     // escolhas do 1º backup antes de serem lidos aqui.
 
@@ -2741,9 +2852,9 @@ void BackupWorkspaceComponent::atualizarResumo() {
     // desabilitado e o resumo diz por quê.
     if (!destacadoEhMain()) {
         summary += isPt ? juce::String::fromUTF8("  -  Backups vão só para o MAIN (a pasta do projeto). Selecione a linha MAIN; "
-                                                 "outros destinos serão CLONE ou EXPORT.")
+                                                 "outras versões são CLONE ou EXPORT.")
                         : "  -  Backups only go to the MAIN (the project folder). Select the MAIN row; "
-                          "other destinations are CLONE or EXPORT.";
+                          "other versions are CLONE or EXPORT.";
         labelResumo_->setText(summary, juce::dontSendNotification);
     }
     // FAZER BACKUP antes do primeiro backup; depois, ADICIONAR AO MAIN
@@ -2831,6 +2942,7 @@ bool BackupWorkspaceComponent::saidaBloqueadaSemMain() const {
 }
 
 void BackupWorkspaceComponent::atualizarBotoesDependentesDoMain() {
+    atualizarExportUnificado();
     // Modo Catálogo não tem MAIN próprio (cada coleção tem o seu): lá esses
     // botões seguem as regras de antes (resized / atualizarBotoesListas).
     if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) return;
@@ -2847,8 +2959,8 @@ void BackupWorkspaceComponent::atualizarBotoesDependentesDoMain() {
     aplicar(btnExportJanela_.get(), true,
             isPt ? juce::String::fromUTF8("Exportar catálogo de metadados como CSV/XLS") : "Export metadata catalog as CSV/XLS");
     aplicar(btnSyncDestino_.get(), true,
-            isPt ? juce::String::fromUTF8("Comparar destino ativo com outro disco/pasta para sincronização manual")
-                 : "Compare active destination with another drive/folder for manual sync review");
+            isPt ? juce::String::fromUTF8("Comparar a versão ativa com outro disco/pasta para sincronização manual")
+                 : "Compare the active version with another drive/folder for manual sync review");
 }
 
 void BackupWorkspaceComponent::atualizarBotoesMainEdit() {
@@ -3682,9 +3794,9 @@ void BackupWorkspaceComponent::adicionarOuAtivarDestino(const juce::File& pasta,
     if (dentroDeMediaOuProject(pasta) || pasta.isAChildOf(projeto_.projeto().raiz()) || pasta.isAChildOf(projeto_.projeto().pasta())) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::WarningIcon,
-            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
-            isPt ? juce::String::fromUTF8("A pasta de destino não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
-                 : "The destination folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
+            isPt ? juce::String::fromUTF8("Pasta de Clone Inválida") : juce::String("Invalid Clone Folder"),
+            isPt ? juce::String::fromUTF8("A pasta do clone não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
+                 : "The clone folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
         return;
     }
 
@@ -3751,18 +3863,18 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
     if (dentroDeMediaOuProject(folder) || folder.isAChildOf(projeto_.projeto().raiz()) || folder.isAChildOf(projeto_.projeto().pasta())) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::WarningIcon,
-            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
-            isPt ? juce::String::fromUTF8("A pasta de destino não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
-                 : "The destination folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
+            isPt ? juce::String::fromUTF8("Pasta de Clone Inválida") : juce::String("Invalid Clone Folder"),
+            isPt ? juce::String::fromUTF8("A pasta do clone não pode se chamar 'Media' ou 'Project', nem estar dentro de uma pasta Media ou Project.")
+                 : "The clone folder cannot be named 'Media' or 'Project', nor be inside a Media or Project folder.");
         return;
     }
 
     if (folder == projeto_.projeto().raiz() || folder == projeto_.projeto().pasta()) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::WarningIcon,
-            isPt ? juce::String::fromUTF8("Destino Inválido") : juce::String("Invalid Destination"),
-            isPt ? juce::String::fromUTF8("A pasta de destino não pode ser a própria pasta do projeto atual.")
-                 : "The destination folder cannot be the active project's own folder.");
+            isPt ? juce::String::fromUTF8("Pasta de Clone Inválida") : juce::String("Invalid Clone Folder"),
+            isPt ? juce::String::fromUTF8("A pasta do clone não pode ser a própria pasta do projeto atual.")
+                 : "The clone folder cannot be the active project's own folder.");
         return;
     }
 
@@ -3774,9 +3886,9 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
             if (destInfoOpt->destinationId == projeto_.projeto().destinationId()) {
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::InfoIcon,
-                    isPt ? juce::String::fromUTF8("Destino Existente") : juce::String("Existing Destination"),
-                    isPt ? juce::String::fromUTF8("Esta pasta já é o próprio DESTINATION ativo.")
-                         : "This folder is already the active DESTINATION.");
+                    isPt ? juce::String::fromUTF8("Versão Existente") : juce::String("Existing Version"),
+                    isPt ? juce::String::fromUTF8("Esta pasta já é a própria versão ativa.")
+                         : "This folder is already the active version.");
                 return;
             }
             // Link existing destination
@@ -3814,9 +3926,9 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
             carregarDestinosBackup();
             juce::AlertWindow::showMessageBoxAsync(
                 juce::AlertWindow::InfoIcon,
-                isPt ? juce::String::fromUTF8("Destino Vinculado") : juce::String("Destination Linked"),
-                isPt ? juce::String::fromUTF8("Destino existente vinculado com sucesso ao projeto.")
-                     : "Existing destination linked successfully to the project.");
+                isPt ? juce::String::fromUTF8("Clone Vinculado") : juce::String("Clone Linked"),
+                isPt ? juce::String::fromUTF8("Clone existente vinculado com sucesso ao projeto.")
+                     : "Existing clone linked successfully to the project.");
             return;
         }
     }
@@ -3825,8 +3937,8 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
         bool ok = juce::AlertWindow::showOkCancelBox(
             juce::AlertWindow::WarningIcon,
             isPt ? juce::String::fromUTF8("Pasta Não Vazia") : juce::String("Folder Not Empty"),
-            isPt ? juce::String::fromUTF8("A pasta selecionada não está vazia. Deseja criar o destino nesta pasta?")
-                 : "The selected folder is not empty. Do you want to create the destination here?",
+            isPt ? juce::String::fromUTF8("A pasta selecionada não está vazia. Deseja criar o clone nesta pasta?")
+                 : "The selected folder is not empty. Do you want to create the clone here?",
             isPt ? juce::String::fromUTF8("Continuar") : juce::String("Proceed"),
             isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"));
         if (!ok) return;
@@ -3845,10 +3957,10 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::WarningIcon,
             isPt ? juce::String::fromUTF8("Espaço Insuficiente") : juce::String("Insufficient Disk Space"),
-            isPt ? juce::String::fromUTF8("Espaço livre em disco insuficiente para criar o destino.\nNecessário: ") +
+            isPt ? juce::String::fromUTF8("Espaço livre em disco insuficiente para criar o clone.\nNecessário: ") +
                    juce::File::descriptionOfSizeInBytes(espacoNecessario) + juce::String::fromUTF8("\nDisponível: ") +
                    juce::File::descriptionOfSizeInBytes(espacoLivre)
-                 : "Insufficient disk space to create destination.\nRequired: " +
+                 : "Insufficient disk space to create the clone.\nRequired: " +
                    juce::File::descriptionOfSizeInBytes(espacoNecessario) + "\nAvailable: " +
                    juce::File::descriptionOfSizeInBytes(espacoLivre));
         return;
@@ -3857,7 +3969,7 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
     // Perform backup creation
     ProgressoGlobal::obterInstancia().iniciarTarefa(
         "clone",
-        isPt ? "Criando Destino de Backup" : "Creating Backup Destination",
+        isPt ? "Criando Clone" : "Creating Clone",
         100,
         nullptr,
         isPt ? "Copiando banco de dados e arquivos..." : "Copying database and project files...");
@@ -4019,7 +4131,7 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
             cloneLog.appendEntry("Clone Initialized", {"Origin: " + raizProjeto.getFullPathName()});
 
             juce::MessageManager::callAsync([safeThis, folderPath = folder.getFullPathName(), isPt]() {
-                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Destino criado com sucesso." : "Destination created successfully.");
+                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Clone criado com sucesso." : "Clone created successfully.");
                 if (safeThis) {
                     safeThis->carregarDestinosBackup();
                     for (int i = 0; i < static_cast<int>(safeThis->destinosBackup_.size()); ++i) {
@@ -4036,17 +4148,17 @@ void BackupWorkspaceComponent::criarNovoClone(const juce::File& folder) {
 
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::InfoIcon,
-                    isPt ? "Destino Criado" : "Destination Created",
-                    isPt ? juce::String::fromUTF8("Novo destino de backup criado com sucesso em:\n") + folderPath
-                         : "New backup destination created successfully at:\n" + folderPath);
+                    isPt ? "Clone Criado" : "Clone Created",
+                    isPt ? juce::String::fromUTF8("Novo clone criado com sucesso em:\n") + folderPath
+                         : "New clone created successfully at:\n" + folderPath);
             });
         } catch (const std::exception& e) {
             juce::String erroMsg(e.what());
             juce::MessageManager::callAsync([isPt, erroMsg]() {
-                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Erro ao criar destino." : "Error creating destination.");
+                ProgressoGlobal::obterInstancia().concluirTarefa("clone", isPt ? "Erro ao criar clone." : "Error creating clone.");
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::WarningIcon,
-                    isPt ? "Erro ao Criar Destino" : "Destination Creation Error",
+                    isPt ? "Erro ao Criar Clone" : "Clone Creation Error",
                     erroMsg);
             });
         }
@@ -4170,8 +4282,8 @@ void BackupWorkspaceComponent::listBoxItemClicked(int rowNumber, const juce::Mou
         customDestFolder_ = resolvedDestFolder_;
         bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
         juce::String tipoStr = (dest.papel == "ORIGINAL")
-            ? (isPt ? juce::String::fromUTF8("[MAIN ORIGINAL - Destino Oficial]") : "[MAIN ORIGINAL - Official Destination]")
-            : (isPt ? juce::String::fromUTF8("[DESTINO - Cópia de Backup]") : "[DESTINATION - Backup Copy]");
+            ? (isPt ? juce::String::fromUTF8("[MAIN - Versão Oficial]") : "[MAIN - Official Version]")
+            : (isPt ? juce::String::fromUTF8("[CLONE - Cópia de Backup]") : "[CLONE - Backup Copy]");
         juce::String textoInfo = (isPt ? juce::String::fromUTF8("Selecionado: ") : "Selected: ") + loc + "  " + tipoStr;
         labelDestInfo_->setText(textoInfo, juce::dontSendNotification);
         labelDestInfo_->setTooltip(textoInfo);
@@ -4273,9 +4385,9 @@ void BackupWorkspaceComponent::carregarDestinoAtivoInicial() {
         customDestFolder_ = resolvedDestFolder_;
         if (labelDestInfo_) {
             juce::String tipoStr = (dest.papel == "ORIGINAL")
-                ? (isPt ? juce::String::fromUTF8("[MAIN ORIGINAL - Destino Oficial]") : "[MAIN ORIGINAL - Official Destination]")
-                : (isPt ? juce::String::fromUTF8("[DESTINO - Cópia de Backup]") : "[DESTINATION - Backup Copy]");
-            juce::String activeInfo = (isPt ? juce::String::fromUTF8("Destino Ativo: ") : "Active Destination: ")
+                ? (isPt ? juce::String::fromUTF8("[MAIN - Versão Oficial]") : "[MAIN - Official Version]")
+                : (isPt ? juce::String::fromUTF8("[CLONE - Cópia de Backup]") : "[CLONE - Backup Copy]");
+            juce::String activeInfo = (isPt ? juce::String::fromUTF8("Versão Ativa: ") : "Active Version: ")
                                     + dest.caminho + "  " + tipoStr;
             labelDestInfo_->setText(activeInfo, juce::dontSendNotification);
             labelDestInfo_->setTooltip(activeInfo);
@@ -4492,6 +4604,9 @@ void BackupWorkspaceComponent::resized() {
         btnDone_->setVisible(true);
         btnStartBackup_->setVisible(false);
         if (btnExportar_) btnExportar_->setVisible(false);
+        if (comboExportOrigem_) comboExportOrigem_->setVisible(false);
+        if (btnExportUnificado_) btnExportUnificado_->setVisible(false);
+        if (btnExportJanela_) btnExportJanela_->setVisible(false);
         if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
         if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
         if (btnExportZip_) btnExportZip_->setVisible(false);
@@ -4513,9 +4628,27 @@ void BackupWorkspaceComponent::resized() {
         btnStartBackup_->setBounds(botoes.removeFromRight(170));
         btnStartBackup_->setVisible(true);
         botoes.removeFromRight(tk.espacoPainel);
-        if (btnExportar_ && !isCatalogMode) {
-            btnExportar_->setBounds(botoes.removeFromRight(110));
-            btnExportar_->setVisible(true);
+        // EXPORT unificado: [dropdown][×][EXPORT] no lugar dos 4 botões de saída. Os antigos
+        // seguem existindo (escondidos) e são disparados pelas opções do dropdown.
+        for (auto* antigo : {btnExportar_.get(), btnExportZip_.get(), btnSendToPrint_.get(), btnExportWatermark_.get(), btnExportJanela_.get()})
+            if (antigo) antigo->setVisible(false);
+        if (btnExportUnificado_ && comboExportOrigem_) {
+            btnExportUnificado_->setBounds(botoes.removeFromRight(100));
+            btnExportUnificado_->setVisible(true);
+            botoes.removeFromRight(tk.espacoPainel);
+            const int opcaoExport = comboExportOrigem_->getSelectedId();
+            juce::TextButton* limpar = opcaoExport == kExpZip ? btnLimparZip_.get()
+                                     : opcaoExport == kExpPrint ? btnLimparPrint_.get()
+                                     : opcaoExport == kExpWatermark ? btnLimparWatermark_.get() : nullptr;
+            for (auto* l : {btnLimparZip_.get(), btnLimparPrint_.get(), btnLimparWatermark_.get()})
+                if (l && l != limpar) l->setVisible(false);
+            if (limpar) {
+                limpar->setBounds(botoes.removeFromRight(26));
+                limpar->setVisible(true);
+                botoes.removeFromRight(tk.espacoPequeno);
+            }
+            comboExportOrigem_->setBounds(botoes.removeFromRight(230));
+            comboExportOrigem_->setVisible(true);
             botoes.removeFromRight(tk.espacoPainel);
         }
         if (btnSyncDestino_) {
@@ -4528,41 +4661,8 @@ void BackupWorkspaceComponent::resized() {
             btnPublishHtml_->setVisible(true);
             if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
         }
-        botoes.removeFromRight(tk.espacoPainel);
-        if (btnLimparZip_) {
-            btnLimparZip_->setBounds(botoes.removeFromRight(26));
-            btnLimparZip_->setVisible(true);
-        }
-        if (btnExportZip_) {
-            btnExportZip_->setBounds(botoes.removeFromRight(170));
-            btnExportZip_->setVisible(true);
-        }
-        botoes.removeFromRight(tk.espacoPainel);
-        if (btnLimparPrint_) {
-            btnLimparPrint_->setBounds(botoes.removeFromRight(26));
-            btnLimparPrint_->setVisible(true);
-        }
-        if (btnSendToPrint_) {
-            btnSendToPrint_->setBounds(botoes.removeFromRight(185));
-            btnSendToPrint_->setVisible(true);
-        }
-        botoes.removeFromRight(tk.espacoPainel);
-        if (btnLimparWatermark_) {
-            btnLimparWatermark_->setBounds(botoes.removeFromRight(26));
-            btnLimparWatermark_->setVisible(true);
-        }
-        if (btnExportWatermark_) {
-            btnExportWatermark_->setBounds(botoes.removeFromRight(220));
-            btnExportWatermark_->setVisible(true);
-        }
     }
 
-    if (btnExportJanela_) {
-        botoes.removeFromRight(tk.espacoPainel);
-        btnExportJanela_->setBounds(botoes.removeFromRight(230));
-        btnExportJanela_->setVisible(true);
-        if (isCatalogMode) btnExportJanela_->setEnabled(temItens);  // Catálogo: regra de antes
-    }
     atualizarBotoesDependentesDoMain();  // Coleção: só o MAIN decide (4 botões de saída)
 
     // ---- Running / Done: um cartão só, centrado ----

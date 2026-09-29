@@ -44,6 +44,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    bool keyPressed(const juce::KeyPress& tecla) override;
     void recarregar();
     void aoItemAlterado(const EventoItemAlterado& e) override;
 
@@ -289,6 +290,16 @@ private:
     std::unique_ptr<juce::TextButton> btnExportDublinCore_;
     std::unique_ptr<juce::TextButton> btnExportChecksums_;
     std::unique_ptr<juce::TextButton> btnExportJanela_;
+    // EXPORT unificado (Fase 6): um botão + dropdown de origem no lugar dos 4 botões de saída.
+    // Os botões antigos continuam existindo (escondidos): cada opção dispara o onClick do antigo,
+    // então a ação e o diálogo são exatamente os de antes.
+    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha };
+    std::unique_ptr<juce::ComboBox> comboExportOrigem_;
+    std::unique_ptr<juce::TextButton> btnExportUnificado_;
+    int contagemSelecionados_ = 0;
+    void atualizarExportUnificado();
+    void executarExportUnificado();
+    juce::File arquivoExportOrigem() const;
 
     void mostrarJanelaExportar();
     void exportarXls();

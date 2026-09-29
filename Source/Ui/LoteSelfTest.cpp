@@ -1763,7 +1763,11 @@ int rodarLoteSelfTest() {
         // Etapa 6: EXPORT ao lado do botão principal; planilha com nome novo.
         bw.setSize(1700, 900);
         bw.resized();
-        checar(bw.btnExportar_ && bw.btnExportar_->isVisible(), "EXPORT button is on the backup screen");
+        // Fase 6: os 4 botões de saída viraram um EXPORT + dropdown; o antigo segue existindo (escondido)
+        // e é o que a opção "Selected Files" dispara.
+        checar(bw.btnExportUnificado_ && bw.btnExportUnificado_->isVisible() && bw.comboExportOrigem_ &&
+                   bw.comboExportOrigem_->isVisible() && bw.btnExportar_,
+               "EXPORT button + source dropdown are on the backup screen");
         checar(bw.btnExportJanela_->getButtonText() == matriz::i18n::t("backup.btn_exportar_metadados") &&
                    bw.btnExportJanela_->getButtonText().containsIgnoreCase(matriz::i18n::localeAtivo() == "pt_BR" ? "planilha" : "spreadsheet"),
                "the metadata export button is now the metadata SPREADSHEET export");
