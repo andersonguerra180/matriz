@@ -548,6 +548,12 @@ public:
     // Chamado por timer da UI: se passou do timeout, sai do modo e devolve true.
     bool verificarTimeoutEdicaoMain();
     std::function<void()> aoMudarModoEdicaoMain;
+    // Rename/move de pasta do mapa do MAIN com muitos arquivos roda em background; ao
+    // terminar (ok ou erro) a UI do Folder Map precisa reler o mapa.
+    std::function<void()> aoTerminarEdicaoPastaMain;
+    static constexpr int kLimiteArquivosPastaSincrona = 300;
+    // Arquivos registrados no MAIN dentro da pasta (uma consulta agregada).
+    int contarArquivosDaPastaNoMain(const std::string& pastaId) const;
     // MAIN organizado por folder map (mover/pastas só nesse caso).
     bool mainUsaMapa() const { return !mapaDoMainId().empty(); }
     matriz::mainedit::ContextoMain contextoDoMain() const;

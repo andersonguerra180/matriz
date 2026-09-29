@@ -2356,10 +2356,26 @@ bool ProjetoAberto::renomearPastaAcervo(const std::string& pastaId, const std::s
             st.bind(1, matriz::db::Value::of(pastaId));
             if (st.step()) nomeAntes = st.columnText(0);
         }
+        const bool registrarUndoDesta = !desfazendo_;
+        auto aoTerminar = [this, pastaId, nomeAntes, registrarUndoDesta](const matriz::mainedit::Resultado& r) {
+            if (!r.ok) avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str()));
+            else if (registrarUndoDesta)
+                registrarUndo("Rename Folder", [this, pastaId, nomeAntes]() { renomearPastaAcervo(pastaId, nomeAntes); });
+            if (aoTerminarEdicaoPastaMain) aoTerminarEdicaoPastaMain();
+        };
+        if (contarArquivosDaPastaNoMain(pastaId) > kLimiteArquivosPastaSincrona) {
+            // Muitos arquivos: background com progresso global (a UI não trava). Mesma transação única no banco.
+            auto ctx = contextoDoMain();
+            const auto novo = juce::String::fromUTF8(novoNome.c_str());
+            executarEdicaoMain("Renaming folder in MAIN", [ctx, pastaId, novo] {
+                return matriz::mainedit::renomearPasta(ctx, pastaId, novo);
+            }, aoTerminar);
+            return true;
+        }
         auto r = matriz::mainedit::renomearPasta(contextoDoMain(), pastaId, juce::String::fromUTF8(novoNome.c_str()));
         tocarAtividadeMain();
         if (!r.ok) { avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str())); return false; }
-        if (!desfazendo_)
+        if (registrarUndoDesta)
             registrarUndo("Rename Folder", [this, pastaId, nomeAntes]() { renomearPastaAcervo(pastaId, nomeAntes); });
         return true;
     }
@@ -2404,10 +2420,25 @@ bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::opti
         }
         // Mesmo pai = nada a mover (arrastar sem soltar em outra pasta).
         if (paiAntes.value_or("") == novaPastaPaiId.value_or("")) return true;
-        auto r = matriz::mainedit::moverPasta(contextoDoMain(), pastaId, novaPastaPaiId.value_or(""));
+        const bool registrarUndoDesta = !desfazendo_;
+        const std::string novoPai = novaPastaPaiId.value_or("");
+        auto aoTerminar = [this, pastaId, paiAntes, registrarUndoDesta](const matriz::mainedit::Resultado& r) {
+            if (!r.ok) avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str()));
+            else if (registrarUndoDesta)
+                registrarUndo("Move Folder", [this, pastaId, paiAntes]() { moverPastaAcervo(pastaId, paiAntes); });
+            if (aoTerminarEdicaoPastaMain) aoTerminarEdicaoPastaMain();
+        };
+        if (contarArquivosDaPastaNoMain(pastaId) > kLimiteArquivosPastaSincrona) {
+            auto ctx = contextoDoMain();
+            executarEdicaoMain("Moving folder in MAIN", [ctx, pastaId, novoPai] {
+                return matriz::mainedit::moverPasta(ctx, pastaId, novoPai);
+            }, aoTerminar);
+            return true;
+        }
+        auto r = matriz::mainedit::moverPasta(contextoDoMain(), pastaId, novoPai);
         tocarAtividadeMain();
         if (!r.ok) { avisarMapaTravado(juce::String::fromUTF8(r.erro.c_str())); return false; }
-        if (!desfazendo_)
+        if (registrarUndoDesta)
             registrarUndo("Move Folder", [this, pastaId, paiAntes]() { moverPastaAcervo(pastaId, paiAntes); });
         return true;
     }
@@ -5033,6 +5064,22 @@ bool ProjetoAberto::verificarTimeoutEdicaoMain() {
     if (juce::Time::currentTimeMillis() - ultimaAtividadeMainMs_ < kTimeoutEdicaoMainMs) return false;
     sairModoEdicaoMain("no operations for 15 minutes");
     return true;
+}
+
+int ProjetoAberto::contarArquivosDaPastaNoMain(const std::string& pastaId) const {
+    if (!projeto_) return 0;
+    try {
+        const auto pref = matriz::consolidacao::caminhoFisicoDaPasta(projeto_->registro(), pastaId);
+        if (pref.isEmpty()) return 0;
+        const std::string prefixo = (pref + "/").toStdString();
+        auto st = projeto_->registro().prepare(
+            "SELECT COUNT(*) FROM consolidacao_registro WHERE substr(caminho_relativo_destino, 1, ?) = ?");
+        st.bind(1, matriz::db::Value::of(static_cast<long long>(pref.length() + 1)));
+        st.bind(2, matriz::db::Value::of(prefixo));
+        return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
+    } catch (...) {
+        return 0;
+    }
 }
 
 void ProjetoAberto::mapaMoverItemDoMain(const std::string& itemId, const std::string& pastaDe, const std::string& pastaPara) {

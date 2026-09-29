@@ -42,6 +42,16 @@ bool renomearSeguro(const juce::File& de, const juce::File& para, std::string& e
     return true;
 }
 
+// Sidecar XMP de um arquivo é "<arquivo.ext>.xmp" (ver MetadadoEmbutido). Acompanha o
+// arquivo pra quarentena e volta junto no restore; melhor esforço (nunca sobrescreve).
+bool moverSidecar(const juce::File& deArquivo, const juce::File& paraArquivo) {
+    const juce::File s = deArquivo.getSiblingFile(deArquivo.getFileName() + ".xmp");
+    const juce::File d = paraArquivo.getSiblingFile(paraArquivo.getFileName() + ".xmp");
+    if (!s.existsAsFile() || d.exists()) return false;
+    std::string e;
+    return renomearSeguro(s, d, e);
+}
+
 bool nomeDeArquivoValido(const juce::String& n) {
     if (n.trim().isEmpty() || n == "." || n == "..") return false;
     if (n.containsAnyOf("/\\:") || n.toUTF8().sizeInBytes() > 255) return false;
@@ -221,6 +231,32 @@ void completarRestaurar(const ContextoMain& ctx, const juce::var& p, const std::
         fecharJournal(ctx, jid, "aplicado");
     });
     logar(ctx, "File restored from quarantine", {"From: _QUARENTENA/" + p["quarentenaRel"].toString(), "To: " + p["paraRel"].toString()});
+}
+
+void completarSwap(const ContextoMain& ctx, const juce::var& p, const std::string& jid) {
+    transacao(ctx, [&] {
+        // A versão que estava em uso vira item de quarentena "substituído" (restaurável de volta).
+        ctx.registro->run(
+            "INSERT OR IGNORE INTO quarentena_item (id, item_id, arquivo_id, pasta_id, caminho_original, caminho_quarentena, "
+            "motivo, checksum_sha256, tamanho_bytes, destino_path, destino_id, criado_em) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'substituido', ?, ?, ?, ?, ?)",
+            {Value::of(p["novaQuarentenaId"].toString().toStdString()), Value::of(p["itemId"].toString().toStdString()),
+             Value::of(p["arquivoId"].toString().toStdString()), Value::of(p["pastaId"].toString().toStdString()),
+             Value::of(p["paraRel"].toString().toStdString()), Value::of(p["novaQuarentenaRel"].toString().toStdString()),
+             Value::of(p["curSha"].toString().toStdString()), Value::of(static_cast<long long>(static_cast<juce::int64>(p["curTam"]))),
+             Value::of(p["destinoPath"].toString().toStdString()), Value::of(p["destinoId"].toString().toStdString()),
+             Value::of(agora())});
+        ctx.registro->run("UPDATE quarentena_item SET restaurado_em = ? WHERE id = ?",
+                          {Value::of(agora()), Value::of(p["quarentenaId"].toString().toStdString())});
+        ctx.registro->run(
+            "UPDATE consolidacao_registro SET checksum_sha256 = ?, caminho_relativo_destino = ?, consolidado_em = ? WHERE id = ?",
+            {Value::of(p["antigoSha"].toString().toStdString()), Value::of(p["paraRel"].toString().toStdString()),
+             Value::of(agora()), Value::of(p["registroId"].toString().toStdString())});
+        fecharJournal(ctx, jid, "aplicado");
+    });
+    logar(ctx, "Replaced version restored (swap)",
+          {"Item: " + p["codigo"].toString(), "Path: " + p["paraRel"].toString(),
+           "Restored SHA-256: " + p["antigoSha"].toString(), "Now in quarantine SHA-256: " + p["curSha"].toString()});
 }
 
 // ------------------------------------------------- estado do disco (recuperação)
@@ -431,6 +467,7 @@ Resultado deletarArquivo(const ContextoMain& ctx, const std::string& registroId)
             fecharJournal(ctx, jid, "cancelado");
             return falha(erro);
         }
+        moverSidecar(atual, arqQuarentena(ctx, qRel));
         try {
             completarDeletar(ctx, p, jid);
         } catch (const std::exception& e) {
@@ -483,7 +520,11 @@ Resultado substituirArquivo(const ContextoMain& ctx, const std::string& registro
             fecharJournal(ctx, jid, "cancelado");
             return falha(erro);
         }
-        auto desfazerQuarentena = [&] { std::string e2; renomearSeguro(arqQuarentena(ctx, qRel), atual, e2); };
+        moverSidecar(atual, arqQuarentena(ctx, qRel));
+        auto desfazerQuarentena = [&] {
+            std::string e2;
+            if (renomearSeguro(arqQuarentena(ctx, qRel), atual, e2)) moverSidecar(arqQuarentena(ctx, qRel), atual);
+        };
         if (!novoArquivo.copyFileTo(tmp) || !tmp.existsAsFile() || tmp.getSize() != novoArquivo.getSize()) {
             tmp.deleteFile();
             desfazerQuarentena();
@@ -686,6 +727,70 @@ Resultado restaurar(const ContextoMain& ctx, const std::string& quarentenaId, co
         const juce::File naQuarentena = arqQuarentena(ctx, qRel);
         if (!naQuarentena.existsAsFile()) return falha("the quarantined file is missing from _QUARENTENA");
 
+        // Versão SUBSTITUÍDA: TROCA. A versão atual vai pra quarentena (motivo "substituído")
+        // e a antiga volta pro caminho dela, registrada com o hash dela — sempre reversível,
+        // nunca sobra arquivo sem registro.
+        if (p["motivo"].toString() == "substituido") {
+            std::string regId, regCaminho, regSha;
+            {
+                auto sr = ctx.registro->prepare(
+                    "SELECT id, caminho_relativo_destino, checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
+                    "ORDER BY (caminho_relativo_destino = ?) DESC LIMIT 1");
+                sr.bind(1, Value::of(p["itemId"].toString().toStdString()));
+                sr.bind(2, Value::of(p["arquivoId"].toString().toStdString()));
+                sr.bind(3, Value::of(original.toStdString()));
+                if (!sr.step()) return falha("the item has no registered version in the MAIN to swap with");
+                regId = sr.columnText(0);
+                regCaminho = sr.columnText(1);
+                regSha = sr.columnText(2);
+            }
+            const juce::String curRel = jstr(regCaminho);
+            if (!caminhoRelativoSeguro(curRel) || !caminhoRelativoSeguro(original)) return falha("unsafe path in the registry");
+            const juce::File cur = arq(ctx, curRel);
+            const juce::File destinoAntiga = arq(ctx, original);
+            if (!cur.existsAsFile()) return falha("the current version is missing from the MAIN: " + curRel.toStdString());
+            if (destinoAntiga.exists() && destinoAntiga != cur) {
+                Resultado r;
+                r.destinoOcupado = true;
+                r.erro = "another file is at the original path; nothing was changed";
+                return r;
+            }
+            const juce::String novaQ = nomeNaQuarentena(cur);
+            o->setProperty("registroId", jstr(regId));
+            o->setProperty("quarentenaId", jstr(quarentenaId));
+            o->setProperty("quarentenaRel", qRel);
+            o->setProperty("novaQuarentenaId", jstr(matriz::model::novoUuid()));
+            o->setProperty("novaQuarentenaRel", novaQ);
+            o->setProperty("curRel", curRel);
+            o->setProperty("paraRel", original);
+            o->setProperty("curSha", jstr(regSha));
+            o->setProperty("curTam", static_cast<juce::int64>(cur.getSize()));
+            o->setProperty("codigo", codigoDoItem(ctx, p["itemId"].toString().toStdString()));
+            const std::string jid = abrirJournal(ctx, "swap_restore", p);
+            std::string erro;
+            ctx.quarentena().createDirectory();
+            if (!renomearSeguro(cur, arqQuarentena(ctx, novaQ), erro)) {
+                fecharJournal(ctx, jid, "cancelado");
+                return falha(erro);
+            }
+            moverSidecar(cur, arqQuarentena(ctx, novaQ));
+            if (!renomearSeguro(naQuarentena, destinoAntiga, erro)) {
+                std::string e2;
+                if (renomearSeguro(arqQuarentena(ctx, novaQ), cur, e2)) moverSidecar(arqQuarentena(ctx, novaQ), cur);
+                fecharJournal(ctx, jid, "cancelado");
+                return falha(erro);
+            }
+            moverSidecar(naQuarentena, destinoAntiga);
+            try {
+                completarSwap(ctx, p, jid);
+            } catch (const std::exception& e) {
+                return falha(std::string("the versions were swapped but the registry update failed; it will be completed when the project reopens: ") + e.what());
+            }
+            Resultado r;
+            r.ok = true; r.idJournal = jid; r.paraRel = original;
+            return r;
+        }
+
         const juce::String paraRel = destinoAlternativoRel.isNotEmpty() ? destinoAlternativoRel : original;
         if (!caminhoRelativoSeguro(paraRel)) return falha("unsafe destination path");
         const juce::File alvo = arq(ctx, paraRel);
@@ -698,8 +803,6 @@ Resultado restaurar(const ContextoMain& ctx, const std::string& quarentenaId, co
         o->setProperty("quarentenaId", jstr(quarentenaId));
         o->setProperty("quarentenaRel", qRel);
         o->setProperty("paraRel", paraRel);
-        // Restaurar uma versão SUBSTITUÍDA vira arquivo avulso no MAIN (o registro segue
-        // apontando pra versão nova). Só 'deletado' volta ao registro, no caminho restaurado.
 
         const std::string jid = abrirJournal(ctx, "restore_file", p);
         std::string erro;
@@ -707,6 +810,7 @@ Resultado restaurar(const ContextoMain& ctx, const std::string& quarentenaId, co
             fecharJournal(ctx, jid, "cancelado");
             return falha(erro);
         }
+        moverSidecar(naQuarentena, alvo);
         try {
             completarRestaurar(ctx, p, jid);
         } catch (const std::exception& e) {
@@ -740,6 +844,7 @@ ResultadoEsvaziar esvaziarQuarentena(const ContextoMain& ctx, const AoProgredirE
         try {
             const juce::File f = arqQuarentena(ctx, l.rel);
             if (f.exists() && !f.deleteFile()) throw std::runtime_error("could not delete " + l.rel.toStdString());
+            f.getSiblingFile(f.getFileName() + ".xmp").deleteFile();
             ctx.registro->run("UPDATE quarentena_item SET esvaziado_em = ? WHERE id = ?", {Value::of(agora()), Value::of(l.id)});
             ++res.apagados;
             res.bytes += l.tam;
@@ -787,7 +892,10 @@ ResultadoRecuperacao recuperarJournal(const ContextoMain& ctx) {
             } else if (j.op == "delete_file") {
                 estado = estadoMovimento(arq(ctx, p["deRel"].toString()), arqQuarentena(ctx, p["quarentenaRel"].toString()));
                 // (de = MAIN, para = quarentena): Concluido quando o arquivo já saiu do MAIN e está na quarentena
-                if (estado == EstadoFs::Concluido) completarDeletar(ctx, p, j.id);
+                if (estado == EstadoFs::Concluido) {
+                    moverSidecar(arq(ctx, p["deRel"].toString()), arqQuarentena(ctx, p["quarentenaRel"].toString()));
+                    completarDeletar(ctx, p, j.id);
+                }
             } else if (j.op == "replace_file") {
                 const juce::File destinoNovo = arq(ctx, p["paraRel"].toString());
                 const juce::File q = arqQuarentena(ctx, p["quarentenaRel"].toString());
@@ -796,21 +904,43 @@ ResultadoRecuperacao recuperarJournal(const ContextoMain& ctx) {
                     jstr(matriz::ingest::calcularChecksums(destinoNovo).sha256) == p["novoSha"].toString()) {
                     tmp.deleteFile();
                     estado = EstadoFs::Concluido;
+                    moverSidecar(destinoNovo, q);  // sidecar da versão antiga vai com ela
                     completarSubstituir(ctx, p, j.id);
                 } else if (q.existsAsFile() && !destinoNovo.exists()) {
                     // Copia incompleta: devolve o original ao lugar.
                     tmp.deleteFile();
                     std::string e2;
                     estado = renomearSeguro(q, arq(ctx, p["deRel"].toString()), e2) ? EstadoFs::NaoIniciado : EstadoFs::Conflito;
+                    if (estado == EstadoFs::NaoIniciado) moverSidecar(q, arq(ctx, p["deRel"].toString()));
                 } else if (!q.exists() && arq(ctx, p["deRel"].toString()).existsAsFile()) {
                     tmp.deleteFile();
                     estado = EstadoFs::NaoIniciado;
                 } else {
                     estado = EstadoFs::Conflito;
                 }
+            } else if (j.op == "swap_restore") {
+                const juce::File cur = arq(ctx, p["curRel"].toString());
+                const juce::File novaQ = arqQuarentena(ctx, p["novaQuarentenaRel"].toString());
+                const juce::File velhaQ = arqQuarentena(ctx, p["quarentenaRel"].toString());
+                const juce::File alvo = arq(ctx, p["paraRel"].toString());
+                if (!velhaQ.exists() && alvo.exists() && novaQ.exists()) {
+                    estado = EstadoFs::Concluido;
+                    completarSwap(ctx, p, j.id);
+                } else if (velhaQ.exists() && cur.exists() && !novaQ.exists()) {
+                    estado = EstadoFs::NaoIniciado;
+                } else if (velhaQ.exists() && novaQ.exists() && !cur.exists()) {
+                    std::string e2;  // metade feita: devolve a versão atual ao lugar
+                    estado = renomearSeguro(novaQ, cur, e2) ? EstadoFs::NaoIniciado : EstadoFs::Conflito;
+                    if (estado == EstadoFs::NaoIniciado) moverSidecar(novaQ, cur);
+                } else {
+                    estado = EstadoFs::Conflito;
+                }
             } else if (j.op == "restore_file") {
                 estado = estadoMovimento(arqQuarentena(ctx, p["quarentenaRel"].toString()), arq(ctx, p["paraRel"].toString()));
-                if (estado == EstadoFs::Concluido) completarRestaurar(ctx, p, j.id);
+                if (estado == EstadoFs::Concluido) {
+                    moverSidecar(arqQuarentena(ctx, p["quarentenaRel"].toString()), arq(ctx, p["paraRel"].toString()));
+                    completarRestaurar(ctx, p, j.id);
+                }
             }
             if (estado == EstadoFs::Concluido) {
                 ++res.retomadas;

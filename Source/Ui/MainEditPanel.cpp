@@ -421,7 +421,7 @@ void MainEditPanel::restaurar() {
     projeto_.editarMainRestaurar(item.id, {}, [weak, item](const matriz::mainedit::Resultado& r) {
         auto* p = weak.get();
         if (!p) return;
-        if (!r.destinoOcupado) { p->concluir(r); return; }
+        if (!r.destinoOcupado || item.motivo == "substituido") { auto r2 = r; r2.destinoOcupado = false; p->concluir(r2); return; }
         // Já existe algo no caminho original: pede outro destino (nunca sobrescreve).
         const juce::File original(item.caminhoOriginal);
         const juce::String sugestao = (original.getParentDirectory().getFullPathName().isNotEmpty() && item.caminhoOriginal.contains("/")

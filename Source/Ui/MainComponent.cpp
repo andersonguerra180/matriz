@@ -1538,6 +1538,9 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
             safeThis->atualizarFaixaAviso();
             if (safeThis->backupWorkspace_) safeThis->backupWorkspace_->recarregar();
         };
+        projetoAberto_->aoTerminarEdicaoPastaMain = [safeThis] {
+            if (safeThis && safeThis->treeWorkspace_) safeThis->treeWorkspace_->recarregar();
+        };
         projetoAberto_->recuperarOperacoesDoMain();
     }
 
