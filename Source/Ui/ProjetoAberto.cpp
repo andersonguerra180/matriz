@@ -274,7 +274,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "COALESCE(i.marcado_revisado, 0) != 0, "
         "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN CAST(json_extract(a.caracteristicas_tecnicas_json, '$.duracaoSegundos') AS REAL) ELSE NULL END, "
         "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END, "
-        "i.dc_subject "
+        "i.dc_subject, "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao') "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -332,6 +334,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             std::string subj = stmt.columnText(27);
             if (!subj.empty()) r.subject = subj;
         }
+        // Data do metadado (mesma regra do Intake, ver listarItensEmQuarentena):
+        // sem isto a coluna DATE CREATED do Grid caía em criado_em (data do ingest).
+        if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
+        else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
         // Status offline: o cache (preenchido em background na abertura) evita
         // stat por item; só os que estão no cache são re-verificados em disco
