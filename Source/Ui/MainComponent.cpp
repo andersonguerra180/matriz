@@ -1888,6 +1888,17 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
                     catalogWorkspace_->filtrarPorIds(ids);
                 }
             };
+            // Fase 3: mesmo caminho do clique no nó SEM PASTA do Folder Map
+            // (atualiza a ficha e escopa as contagens de MEDIA TYPE/ano).
+            analyticsWorkspace_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
+                mostrarGrid();
+                if (catalogWorkspace_) {
+                    catalogWorkspace_->definirSelecaoItens(itemIds);
+                } else if (mosaico_) {
+                    mosaico_->definirFiltroItens(itemIds);
+                    mosaico_->definirSelecao(itemIds);
+                }
+            };
             analyticsWorkspace_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
                 mostrarGrid();
                 if (catalogWorkspace_) {

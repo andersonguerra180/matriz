@@ -474,6 +474,9 @@ public:
     // foi apagado, o ORIGINAL. Não afeta mapaAtivoPadrao(), que continua
     // devolvendo sempre um mapa editável para os mutadores compat.
     std::string mapaInicialDoFolderMap() const;
+    // Mapa hoje selecionado no dropdown do Folder Map (pode ser o ORIGINAL);
+    // antes de qualquer seleção nesta sessão, o mesmo que mapaInicialDoFolderMap().
+    std::string mapaSelecionadoNoFolderMap() const;
 
     NoArvore arvoreAcervo(const std::string& mapaId) const;
     // Compat (pré Fase 1) — opera no mapaAtivoPadrao(). Só

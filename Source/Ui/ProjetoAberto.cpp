@@ -1984,6 +1984,10 @@ std::string ProjetoAberto::mapaInicialDoFolderMap() const {
     return stmt.step() ? lembrado : kMapaOriginal;
 }
 
+std::string ProjetoAberto::mapaSelecionadoNoFolderMap() const {
+    return mapaAtivoSelecionado_.empty() ? mapaInicialDoFolderMap() : mapaAtivoSelecionado_;
+}
+
 std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() const {
     std::vector<FolderMapInfo> out;
     FolderMapInfo original;

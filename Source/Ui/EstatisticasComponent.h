@@ -19,6 +19,8 @@ public:
     std::function<void(const std::string& itemId)> aoSelecionarItem;
     std::function<void(const std::set<std::string>& assetIds)> aoAbrirNoGrid;
     std::function<void(const std::set<std::string>& assetIds)> aoClicarNeedsAttention;
+    // Fase 3: clique no card SEM PASTA (itens sem pasta no mapa do Folder Map).
+    std::function<void(const std::set<std::string>& assetIds)> aoAbrirSemPasta;
 
     void paint(juce::Graphics& g) override;
     void resized() override;
@@ -63,6 +65,12 @@ private:
     std::set<std::string> needsAttentionIds_;
     juce::Rectangle<int> needsAttentionCardBounds_;
     juce::Rectangle<int> backupHealthCardBounds_;
+    // Fase 3: card SEM PASTA — mapa e contagem (uma consulta agregada por recarregar()).
+    juce::Rectangle<int> semPastaCardBounds_;
+    std::string semPastaMapaId_;
+    juce::String semPastaMapaNome_;
+    int semPastaContagem_ = 0;
+    bool semPastaOriginal_ = false;
 
     void carregarMetricasDoBanco(matriz::db::Database& db);
     void carregarMetricasCatalogo();

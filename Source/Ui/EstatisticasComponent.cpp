@@ -201,6 +201,13 @@ void EstatisticasComponent::recarregar() {
         treemapComponent_.setVisible(true);
         matriz::db::Database& db = projeto_.projeto().registro();
         carregarMetricasDoBanco(db);
+        // Fase 3: mapa do dropdown do Folder Map; contagem = 1 COUNT agregado.
+        semPastaMapaId_ = projeto_.mapaSelecionadoNoFolderMap();
+        semPastaOriginal_ = (semPastaMapaId_ == ProjetoAberto::kMapaOriginal);
+        semPastaMapaNome_ = {};
+        for (auto& m : projeto_.listarFolderMaps())
+            if (m.id == semPastaMapaId_) semPastaMapaNome_ = m.nome;
+        semPastaContagem_ = semPastaOriginal_ ? 0 : projeto_.contarItensSemPasta(semPastaMapaId_);
         treemapComponent_.recarregarDoBanco(db);
     }
     repaint();
@@ -376,7 +383,7 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
 
 void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area) {
     const auto& tk = tema();
-    int cardW = (area.getWidth() - 48) / 5;
+    int cardW = (area.getWidth() - 60) / 6;
     int cardH = area.getHeight();
 
     auto drawCard = [&](int x, const juce::String& title, const juce::String& val, const juce::String& subtitle, juce::Colour accentColor) -> juce::Rectangle<int> {
@@ -413,7 +420,15 @@ void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::R
     drawCard(x, i18n::t("analytics.storage_size"), formatSizeHuman(summaryKpi_.totalBytes), i18n::t("analytics.storage_size_sub"), juce::Colour(0xff10b981)); x += cardW + 12;
     drawCard(x, i18n::t("analytics.primary_format"), juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " " + i18n::t("analytics.ativos"), juce::Colour(0xfff59e0b)); x += cardW + 12;
     needsAttentionCardBounds_ = drawCard(x, i18n::t("analytics.needs_attention"), juce::String(summaryKpi_.needsAttentionCount), i18n::t("analytics.needs_attention_sub"), juce::Colour(0xfff97316)); x += cardW + 12;
-    backupHealthCardBounds_ = drawCard(x, i18n::t("analytics.backup_health"), juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444));
+    backupHealthCardBounds_ = drawCard(x, i18n::t("analytics.backup_health"), juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444)); x += cardW + 12;
+    // Fase 3: SEM PASTA — número do mapa selecionado no Folder Map. Com o
+    // ORIGINAL o card fica neutro (ORIGINAL não tem itens sem pasta).
+    juce::String valorSemPasta = semPastaOriginal_
+        ? juce::String::fromUTF8("\xe2\x80\x94")
+        : i18n::t("analytics.sem_pasta_valor").replace("{n}", juce::String(semPastaContagem_));
+    juce::String subSemPasta = semPastaOriginal_ ? i18n::t("analytics.sem_pasta_original") : semPastaMapaNome_;
+    semPastaCardBounds_ = drawCard(x, i18n::t("analytics.sem_pasta"), valorSemPasta, subSemPasta,
+                                   semPastaOriginal_ ? juce::Colour(0xff6b7280) : juce::Colour(0xff6366f1));
 }
 
 void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
@@ -423,6 +438,8 @@ void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
         } else if (aoAbrirNoGrid) {
             aoAbrirNoGrid(needsAttentionIds_);
         }
+    } else if (semPastaCardBounds_.contains(e.getPosition())) {
+        if (!semPastaOriginal_ && aoAbrirSemPasta) aoAbrirSemPasta(projeto_.itensSemPasta(semPastaMapaId_));
     } else if (backupHealthCardBounds_.contains(e.getPosition())) {
         VulnerabilidadesDialog::exibirModal(projeto_, this, [this](const std::set<std::string>& ids) {
             if (aoAbrirNoGrid) {
