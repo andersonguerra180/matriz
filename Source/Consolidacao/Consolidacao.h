@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -64,6 +65,11 @@ std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registr
 // Só letras sem acento, números e hífen; 1 a 12 caracteres.
 bool codigoDeSourceValido(const juce::String& codigo);
 
+// Fase 2 — pasta física na raiz do MAIN para itens que ficaram sem pasta no
+// mapa do MAIN. Nome reservado: nenhuma pasta comum do mapa pode usá-lo
+// (ArvoreBackupComponent rejeita "SEM PASTA"/"NO FOLDER", que cobre este).
+inline const char* const kPastaSemPasta = "_SEM_PASTA";
+
 struct ItemPlanejado {
     std::string itemId;
     std::string codigoAcervo;
@@ -74,12 +80,22 @@ struct ItemPlanejado {
     juce::int64 tamanhoBytes = 0;
     bool jaConsolidado = false;            // incremental — já tem registro com o mesmo checksum, não precisa copiar de novo
     bool emConflito = false;               // caminhoRelativoDestino colide com outro item do plano
+    // Fase 2 — item que está em _SEM_PASTA no MAIN e agora tem pasta no mapa
+    // do MAIN: caminho atual no MAIN (a ser movido pra caminhoRelativoDestino,
+    // nunca recopiado). Vazio = sem movimento.
+    juce::String moverDe;
 };
 
 struct PlanoConsolidacao {
     std::vector<ItemPlanejado> itens;
     std::vector<juce::String> nomesEmConflito; // caminhos que aparecem em mais de um item — bloqueiam consolidar
     int itensNaoOrganizados = 0;               // §5.5 — fora do plano, só contados pro aviso
+    // Fase 2 — export por folder map: itens sem pasta no mapa escolhido ficam
+    // fora do plano (não existe _SEM_PASTA em export); ids pra o aviso final.
+    std::set<std::string> semPastaExcluidos;
+    // Fase 2 — itens a mover de _SEM_PASTA (oferta no backup seguinte).
+    // Cada item aparece uma vez, com moverDe preenchido.
+    std::vector<ItemPlanejado> movimentosSemPasta;
     int conflitosAutoResolvidos = 0;           // Nomes duplicados auto-resolvidos com sufixo único
     juce::int64 espacoNecessarioBytes = 0;     // soma dos itens que NÃO estão jaConsolidado
     juce::int64 espacoDisponivelBytes = 0;
@@ -124,7 +140,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         // EXPORT (etapa 6): destino volátil — ignora o que já
                                         // está registrado em algum destino (nenhum item é
                                         // "já consolidado", nenhum caminho do MAIN é herdado).
-                                        bool paraExport = false);
+                                        bool paraExport = false,
+                                        // Fase 2: folder map do usuário que alimenta PastaManual.
+                                        // Vazio = sem filtro (comportamento anterior).
+                                        const std::string& mapaId = {});
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);
@@ -170,6 +189,20 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const AoProgredir& aoProgredir = {},
                                             const std::set<std::string>& itensMarcadosWatermark = {},
                                             bool embutirNaCopia = false);
+
+// Fase 2 — move (nunca recopia) os itens de _SEM_PASTA pra pasta nova do mapa
+// do MAIN, dentro do MAIN. Não sobrescreve: destino já existente vira falha.
+// Atualiza consolidacao_registro (pasta_id + caminho) e o ProjectLog. Cada
+// item aparece uma vez em `movimentos` (ItemPlanejado::moverDe preenchido).
+struct ResultadoMovimentos {
+    int movidos = 0;
+    std::vector<std::string> falhas;
+    bool cancelado = false;
+};
+ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                                const juce::File& destino,
+                                                const std::vector<ItemPlanejado>& movimentos,
+                                                const AoProgredir& aoProgredir = {});
 
 // EXPORT (etapa 6): recorte volátil do MAIN. Copia cada item do plano (feito
 // com paraExport = true) pra `destinoExport`, SEMPRE a partir da cópia no

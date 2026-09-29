@@ -35,13 +35,16 @@ struct OpcoesExport {
     juce::String prefixo;
     bool embutir = true;
     bool marcaDagua = false;
+    std::string mapaId;  // Fase 2: folder map do usuário que estrutura o export ("" = mapa padrão)
+    bool porMapa = false;
 };
 
 class ConteudoExport : public juce::Component {
 public:
     ConteudoExport(int marcadosW, bool marcaDaguaConfigurada, const juce::String& prefixoPadrao,
+                   std::vector<std::pair<std::string, juce::String>> mapas,
                    std::function<void(OpcoesExport)> aoExportar)
-        : aoExportar_(std::move(aoExportar)) {
+        : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
             l.setText(t, juce::dontSendNotification);
@@ -65,8 +68,16 @@ public:
         comboEstrutura_.addItem(matriz::i18n::t("export.por_ano"), 3);
         comboEstrutura_.addItem(matriz::i18n::t("export.por_tipo_ano"), 4);
         comboEstrutura_.addItem(matriz::i18n::t("backup.preservar_estrutura"), 6);
+        if (!mapas_.empty()) comboEstrutura_.addItem(matriz::i18n::t("export.por_mapa"), 7);
         comboEstrutura_.setSelectedId(1, juce::dontSendNotification);
+        comboEstrutura_.onChange = [this] {
+            comboMapa_.setVisible(comboEstrutura_.getSelectedId() == 7);
+            resized();
+        };
         addAndMakeVisible(comboEstrutura_);
+        for (size_t i = 0; i < mapas_.size(); ++i) comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
+        if (!mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
+        addChildComponent(comboMapa_);
 
         rotulo(lblNomes_, matriz::i18n::t("backup.prefixo_arquivos"));
         comboNomes_.addItem(matriz::i18n::t("backup.prefixo_modo_nenhum"), 1);
@@ -93,7 +104,7 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
-        setSize(560, 400);
+        setSize(560, 440);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
@@ -109,6 +120,10 @@ public:
         r.removeFromTop(10);
         lblEstrutura_.setBounds(r.removeFromTop(20));
         comboEstrutura_.setBounds(r.removeFromTop(28));
+        if (comboMapa_.isVisible()) {
+            r.removeFromTop(4);
+            comboMapa_.setBounds(r.removeFromTop(28));
+        }
         r.removeFromTop(10);
         lblNomes_.setBounds(r.removeFromTop(20));
         linha = r.removeFromTop(28);
@@ -145,6 +160,13 @@ private:
             case 3: o.hierarquia = {NivelHierarquia::Ano}; break;
             case 4: o.hierarquia = {NivelHierarquia::TipoMidia, NivelHierarquia::Ano}; break;
             case 6: o.hierarquia = {NivelHierarquia::EstruturaOriginal}; break;
+            case 7: {
+                o.hierarquia = {NivelHierarquia::PastaManual};
+                o.porMapa = true;
+                const int idx = comboMapa_.getSelectedId() - 1;
+                if (idx >= 0 && idx < static_cast<int>(mapas_.size())) o.mapaId = mapas_[static_cast<size_t>(idx)].first;
+                break;
+            }
             default: o.hierarquia = {NivelHierarquia::PastaManual}; break;
         }
         const int n = comboNomes_.getSelectedId();
@@ -168,7 +190,8 @@ private:
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::Label lblIntro_, lblPasta_, lblCaminho_, lblEstrutura_, lblNomes_;
     juce::TextButton btnEscolher_, btnExportar_, btnCancelar_;
-    juce::ComboBox comboEstrutura_, comboNomes_;
+    juce::ComboBox comboEstrutura_, comboNomes_, comboMapa_;
+    std::vector<std::pair<std::string, juce::String>> mapas_;
     juce::TextEditor editPrefixo_;
     juce::ToggleButton toggleEmbutir_, toggleMarca_;
 };
@@ -782,7 +805,7 @@ public:
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
             int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
-            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
+            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
             int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
             int minTotal = minH1 + minH2 + minH3 + minH4;
 
@@ -862,6 +885,10 @@ public:
             dentro.removeFromTop(2);
             if (owner_.togglePreservarEstrutura_) owner_.togglePreservarEstrutura_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleUsarEstruturaMapa_) owner_.toggleUsarEstruturaMapa_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
+            if (owner_.comboMapaMain_) {
+                dentro.removeFromTop(3);
+                owner_.comboMapaMain_->setBounds(dentro.removeFromTop(alturaControle));
+            }
             dentro.removeFromTop(3);
             owner_.comboOrg_->setBounds(dentro.removeFromTop(alturaControle));
             if (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible()) {
@@ -1481,6 +1508,16 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     configContainer_->addAndMakeVisible(*togglePreservarEstrutura_);
     configContainer_->addAndMakeVisible(*toggleUsarEstruturaMapa_);
+
+    comboMapaMain_ = std::make_unique<juce::ComboBox>();
+    comboMapaMain_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboMapaMain_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboMapaMain_->setColour(juce::ComboBox::outlineColourId, tk.borda);
+    comboMapaMain_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+    comboMapaMain_->setTooltip(matriz::i18n::t("backup.mapa_main_dica"));
+    comboMapaMain_->onChange = [this] { atualizarResumo(); };
+    configContainer_->addAndMakeVisible(*comboMapaMain_);
+    recarregarComboMapaMain();
 
     comboOrg_ = std::make_unique<juce::ComboBox>();
     comboOrg_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
@@ -2589,7 +2626,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
     try {
         plano_ = matriz::consolidacao::planejarConsolidacao(
             projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
-            autoResolver, forcarRebackup, organizarPorSource_);
+            autoResolver, forcarRebackup, organizarPorSource_, /*paraExport*/ false, mapaParaBackup());
     } catch (const std::exception& e) {
         plano_ = {};
         labelResumo_->setText(
@@ -2602,6 +2639,12 @@ void BackupWorkspaceComponent::atualizarResumo() {
         return;
     }
 
+    {
+        std::vector<matriz::consolidacao::ItemPlanejado> mv;
+        for (auto& m : plano_.movimentosSemPasta)
+            if (itemIds.count(m.itemId)) mv.push_back(std::move(m));
+        plano_.movimentosSemPasta = std::move(mv);
+    }
     std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
     juce::int64 sz = 0; // space to copy
     juce::int64 totalSz = 0; // total backup size
@@ -2638,8 +2681,12 @@ void BackupWorkspaceComponent::atualizarResumo() {
 
     // Botão desabilitado sem explicação é indistinguível de botão ausente —
     // o motivo vai junto do resumo sempre que o backup não puder rodar.
-    bool pronto = plano_.podeConsolidar() && !plano_.itens.empty();
-    if (plano_.itens.empty())
+    const bool soMovimentos = plano_.itens.empty() && !plano_.movimentosSemPasta.empty();
+    bool pronto = plano_.podeConsolidar() && (!plano_.itens.empty() || soMovimentos);
+    if (!plano_.movimentosSemPasta.empty())
+        summary += "  -  " + matriz::i18n::t("backup.mover_sem_pasta_resumo")
+                                 .replace("{n}", juce::String(static_cast<int>(plano_.movimentosSemPasta.size())));
+    if (plano_.itens.empty() && !soMovimentos)
         summary += isPt ? juce::String::fromUTF8("  -  NÃO É POSSÍVEL EXECUTAR: nenhum item corresponde à seleção.")
                         : "  -  CANNOT RUN: no assets match the selection.";
     else if (!plano_.podeConsolidar()) {
@@ -2716,10 +2763,13 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         if (editPrefixo_) editPrefixo_->setVisible(modo == 3);
     }
 
+    recarregarComboMapaMain();
     const bool livre = !configTravada_;
     const bool usaOriginal = togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState();
     if (togglePreservarEstrutura_) togglePreservarEstrutura_->setEnabled(livre);
     if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setEnabled(livre);
+    if (comboMapaMain_)
+        comboMapaMain_->setEnabled(livre && toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState());
     if (comboOrg_) comboOrg_->setEnabled(livre && !usaOriginal);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setEnabled(livre && !usaOriginal);
     if (comboModoPrefixo_) comboModoPrefixo_->setEnabled(livre);
@@ -2774,6 +2824,63 @@ void BackupWorkspaceComponent::atualizarBotoesDependentesDoMain() {
                  : "Compare active destination with another drive/folder for manual sync review");
 }
 
+bool BackupWorkspaceComponent::hierarquiaUsaMapa() const {
+    if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState()) return false;
+    if (toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState()) return true;
+    const int orgId = comboOrg_ ? comboOrg_->getSelectedId() : 1;
+    if (orgId == 1) return true;
+    return orgId == 5 && std::find(hierarquiaCustom_.begin(), hierarquiaCustom_.end(),
+                                   matriz::consolidacao::NivelHierarquia::PastaManual) != hierarquiaCustom_.end();
+}
+
+std::string BackupWorkspaceComponent::mapaParaBackup() const {
+    if (!hierarquiaUsaMapa()) return {};
+    if (configTravada_) return projeto_.mapaDoMainId();  // "" = MAIN por regra: sem mapa
+    if (!comboMapaMain_) return {};
+    const int idx = comboMapaMain_->getSelectedId() - 1;
+    return idx >= 0 && idx < static_cast<int>(idsComboMapaMain_.size()) ? idsComboMapaMain_[static_cast<size_t>(idx)]
+                                                                         : std::string();
+}
+
+// Só mapas do usuário. Travado (MAIN com config): mostra só o mapa do MAIN,
+// pelo nome ATUAL (o id é o que fica gravado).
+void BackupWorkspaceComponent::recarregarComboMapaMain() {
+    if (!comboMapaMain_) return;
+    std::string selecionadoAntes;
+    {
+        const int idx = comboMapaMain_->getSelectedId() - 1;
+        if (idx >= 0 && idx < static_cast<int>(idsComboMapaMain_.size()))
+            selecionadoAntes = idsComboMapaMain_[static_cast<size_t>(idx)];
+    }
+    comboMapaMain_->clear(juce::dontSendNotification);
+    idsComboMapaMain_.clear();
+    if (configTravada_) {
+        const auto idMain = projeto_.mapaDoMainId();
+        if (!idMain.empty()) {
+            idsComboMapaMain_.push_back(idMain);
+            comboMapaMain_->addItem(projeto_.nomeDoMapaDoMain(), 1);
+            comboMapaMain_->setSelectedId(1, juce::dontSendNotification);
+        } else {
+            comboMapaMain_->setText(matriz::i18n::t("backup.mapa_main_nenhum"), juce::dontSendNotification);
+        }
+        return;
+    }
+    int n = 0;
+    for (auto& m : projeto_.listarFolderMaps()) {
+        if (m.original) continue;
+        idsComboMapaMain_.push_back(m.id);
+        comboMapaMain_->addItem(m.nome, ++n);
+    }
+    // Padrão: MAIN legado sem config = primeiro mapa (o antigo mapa único);
+    // senão o mapa aberto no Folder Map.
+    std::string alvo = selecionadoAntes;
+    if (alvo.empty()) alvo = mainSelado_ && !idsComboMapaMain_.empty() ? idsComboMapaMain_.front() : projeto_.mapaAtivoPadrao();
+    int selecionar = 1;
+    for (size_t i = 0; i < idsComboMapaMain_.size(); ++i)
+        if (idsComboMapaMain_[i] == alvo) selecionar = static_cast<int>(i) + 1;
+    if (!idsComboMapaMain_.empty()) comboMapaMain_->setSelectedId(selecionar, juce::dontSendNotification);
+}
+
 void BackupWorkspaceComponent::gravarConfigDoMain() {
     if (configTravada_) return;  // já definido no primeiro backup
     juce::DynamicObject::Ptr o = new juce::DynamicObject();
@@ -2784,6 +2891,8 @@ void BackupWorkspaceComponent::gravarConfigDoMain() {
     o->setProperty("modo_prefixo", comboModoPrefixo_ ? comboModoPrefixo_->getSelectedId() : 1);
     o->setProperty("prefixo", prefixoCustomizado_);
     o->setProperty("por_source", organizarPorSource_);
+    // Fase 2: guarda o ID do mapa (nunca o nome — o mapa pode ser renomeado).
+    if (hierarquiaUsaMapa()) o->setProperty("mapa_id", juce::String(mapaParaBackup()));
     try {
         projeto_.projeto().registro().run("UPDATE projeto SET backup_config_main = ?",
                                           {matriz::db::Value::of(juce::JSON::toString(juce::var(o.get()), true).toStdString())});
@@ -2833,6 +2942,16 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // Backup só vai pro MAIN (a pasta do projeto) — outros destinos são CLONE
     // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
     if (!isCatalogMode && !destacadoEhMain()) return;
+
+    // Fase 2: itens de _SEM_PASTA que ganharam pasta no mapa do MAIN — oferece
+    // mover (lista + confirmação) antes de qualquer cópia.
+    if (!isCatalogMode && !movimentosDecididos_ && !plano_.movimentosSemPasta.empty()) {
+        perguntarMoverSemPasta();
+        return;
+    }
+    const bool moverAgora = !isCatalogMode && moverSemPasta_;
+    movimentosDecididos_ = false;
+    moverSemPasta_ = false;
 
     estado_ = Estado::Running;
     executando_ = true;
@@ -3016,8 +3135,23 @@ void BackupWorkspaceComponent::iniciarBackup() {
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
     juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto,
-                                      gerarCatalogo, embutirMeta]() {
+                                      gerarCatalogo, embutirMeta, moverAgora]() {
         if (!safeThis) return;
+
+        // Fase 2: moves de _SEM_PASTA primeiro (rename no mesmo volume, sem recópia).
+        matriz::consolidacao::ResultadoMovimentos movs;
+        if (moverAgora) {
+            movs = matriz::consolidacao::executarMovimentosSemPasta(
+                projeto.projeto().registro(), projeto.projeto().pasta(), destinoMedia, plano.movimentosSemPasta,
+                [safeThis, cancelamento](int feito, int total) {
+                    if (!safeThis) return false;
+                    safeThis->labelProgressoStatus_->setText("Moving from _SEM_PASTA: " + juce::String(feito) + " of " + juce::String(total) + "...", juce::dontSendNotification);
+                    ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Moving " + juce::String(feito) + " of " + juce::String(total) + " out of _SEM_PASTA...");
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+                    return !cancelamento->pedido() && safeThis != nullptr;
+                });
+            if (!safeThis) return;
+        }
 
         // Marca d'água nunca vai pro MAIN (só EXPORT): nenhum id marcado com W
         // é passado; embed só no primeiro backup (embutirMeta).
@@ -3044,6 +3178,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
         safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
         safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
         safeThis->falhasLista_.clear();
+        for (const auto& f : movs.falhas) safeThis->falhasLista_.push_back("move: " + f);
+        safeThis->falhasCount_ += static_cast<int>(movs.falhas.size());
         for (const auto& f : resultado.falhas)
             safeThis->falhasLista_.push_back(f);
 
@@ -3162,6 +3298,33 @@ void BackupWorkspaceComponent::iniciarBackup() {
     });
 }
 
+void BackupWorkspaceComponent::perguntarMoverSemPasta() {
+    juce::String lista;
+    int n = 0;
+    for (const auto& m : plano_.movimentosSemPasta) {
+        if (n++ >= 12) break;
+        lista << "\n" << juce::String::fromUTF8(m.codigoAcervo.c_str()) << ":  " << m.moverDe << "  ->  " << m.caminhoRelativoDestino;
+    }
+    const int total = static_cast<int>(plano_.movimentosSemPasta.size());
+    if (total > 12) lista << "\n... +" << (total - 12);
+
+    PainelOverlay::Config cfg;
+    cfg.titulo = matriz::i18n::t("backup.mover_sem_pasta_titulo");
+    cfg.mensagem = matriz::i18n::t("backup.mover_sem_pasta_msg").replace("{n}", juce::String(total)) + "\n" + lista;
+    cfg.botoes = {
+        { matriz::i18n::t("backup.mover_sem_pasta_mover"), 1, true, false },
+        { matriz::i18n::t("backup.mover_sem_pasta_pular"), 2, false, false },
+        { matriz::i18n::t("dialogo.cancelar"), 3, false, true }
+    };
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    overlay_.mostrar(cfg, [safeThis](PainelOverlay::Resultado res) {
+        if (!safeThis || res.botaoId == 3 || res.botaoId == 0) return;
+        safeThis->movimentosDecididos_ = true;
+        safeThis->moverSemPasta_ = (res.botaoId == 1);
+        safeThis->iniciarBackup();
+    });
+}
+
 std::string BackupWorkspaceComponent::destinoIdDoMain() {
     try {
         auto st = projeto_.projeto().registro().prepare(
@@ -3177,9 +3340,12 @@ void BackupWorkspaceComponent::abrirExport() {
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
     const bool wmOk = ProjetoAberto::carregarConfiguracaoWatermarkDePasta(projeto_.projeto().pasta()).valida();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, [safeThis](OpcoesExport o) {
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps())
+        if (!m.original) mapas.emplace_back(m.id, m.nome);
+    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis](OpcoesExport o) {
         if (safeThis != nullptr) safeThis->iniciarExport(o.destino, o.hierarquia, o.modoPrefixo, o.prefixo, o.embutir,
-                                                          o.marcaDagua);
+                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string());
     });
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
@@ -3195,8 +3361,15 @@ void BackupWorkspaceComponent::abrirExport() {
 void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                              const matriz::consolidacao::HierarquiaBackup& hierarquia,
                                              matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo,
-                                             bool embutir, bool marcaDagua) {
+                                             bool embutir, bool marcaDagua, const std::string& mapaIdPedido) {
     if (exportando_ || !destino.isDirectory()) return;
+    // "Manter organização" (PastaManual sem mapa escolhido) usa o mapa do MAIN
+    // ou o mapa aberto — sem isso um item em pastas de dois mapas sairia duas vezes.
+    std::string mapaId = mapaIdPedido;
+    if (mapaId.empty() && std::find(hierarquia.begin(), hierarquia.end(), matriz::consolidacao::NivelHierarquia::PastaManual) != hierarquia.end()) {
+        mapaId = projeto_.mapaDoMainId();
+        if (mapaId.empty()) mapaId = projeto_.mapaAtivoPadrao();
+    }
     exportando_ = true;
     resized();
     cancelarExport_->store(false);
@@ -3210,13 +3383,15 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
         for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) comW.insert(id);
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado] {
+    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId] {
+        int semPasta = 0;
         matriz::consolidacao::ResultadoExport r;
         try {
             auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), projeto->pasta(), destino,
                                                                     hierarquia, {}, modo, prefixo,
                                                                     /*autoResolver*/ true, false, false,
-                                                                    /*paraExport*/ true);
+                                                                    /*paraExport*/ true, mapaId);
+            for (const auto& id : plano.semPastaExcluidos) if (itens.count(id)) ++semPasta;
             std::vector<matriz::consolidacao::ItemPlanejado> doRecorte;
             for (auto& ip : plano.itens)
                 if (itens.count(ip.itemId)) doRecorte.push_back(std::move(ip));
@@ -3235,7 +3410,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r, destino] {
+        juce::MessageManager::callAsync([safeThis, r, destino, semPasta] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
@@ -3243,6 +3418,8 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
             juce::String msg = matriz::i18n::t("export.fim")
                                    .replace("{n}", juce::String(r.copiados))
                                    .replace("{pasta}", destino.getFullPathName());
+            if (semPasta > 0)
+                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(semPasta));
             if (r.foraDoMain > 0)
                 msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
             if (!r.falhas.empty()) {

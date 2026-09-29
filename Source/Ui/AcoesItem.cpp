@@ -319,6 +319,14 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
     auto pastas = pastasDoBackup(projeto);
 
     juce::PopupMenu menu;
+    if (projeto.mapaAtivoEhOriginal()) {
+        // ORIGINAL é somente leitura: mostra o motivo em vez de esconder a ação.
+        menu.addItem(-1, matriz::i18n::t("acoes.enviar_original_bloqueado"), false);
+        auto op = juce::PopupMenu::Options();
+        if (ancora) op = op.withTargetComponent(ancora);
+        menu.showMenuAsync(op, [](int) {});
+        return;
+    }
     int id = kPrimeiraPasta;
     for (auto& [pastaId, caminho] : pastas) menu.addItem(id++, caminho);
     if (pastas.empty()) menu.addItem(-1, matriz::i18n::t("acoes.sem_pastas"), false);

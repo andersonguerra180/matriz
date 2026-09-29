@@ -2052,8 +2052,8 @@ bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::Str
 
 bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
     if (!projeto_ || mapaId == kMapaOriginal) return false;
-    // Fase 2: mapa do MAIN (backup_config_main.mapa_id) também não pode
-    // ser apagado — checado aqui quando essa coluna passar a existir.
+    // Fase 2: o mapa do MAIN (backup_config_main.mapa_id) não pode ser apagado.
+    if (mapaId == mapaDoMainId()) return false;
     projeto_->registro().run("DELETE FROM folder_map WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(mapaId), matriz::db::Value::of(projeto_->projetoId())});
     return true;
@@ -2206,9 +2206,45 @@ bool ProjetoAberto::mainExiste() const {
     }
 }
 
+std::string ProjetoAberto::mapaDoMainId() const {
+    if (!projeto_) return {};
+    try {
+        auto st = projeto_->registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+        if (!st.step()) return {};
+        juce::var cfg = juce::JSON::parse(juce::String::fromUTF8(st.columnText(0).c_str()));
+        if (!cfg.isObject()) return {};
+        return cfg.getProperty("mapa_id", "").toString().toStdString();
+    } catch (...) {
+        return {};
+    }
+}
+
+juce::String ProjetoAberto::nomeDoMapaDoMain() const {
+    const auto id = mapaDoMainId();
+    if (id.empty() || !projeto_) return {};
+    try {
+        auto st = projeto_->registro().prepare("SELECT nome FROM folder_map WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(id));
+        return st.step() ? juce::String::fromUTF8(st.columnText(0).c_str()) : juce::String();
+    } catch (...) {
+        return {};
+    }
+}
+
 bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
     if (!projeto_) return false;
     try {
+        // Fase 2: as travas valem só pro mapa do MAIN; os outros mapas do
+        // usuário ficam sempre livres. Sem mapa_id gravado, MAIN por regra
+        // ou estrutura original não usa mapa nenhum. Só projeto sem config
+        // (MAIN legado) segue a regra antiga, sem distinguir mapa.
+        const auto mapaMain = mapaDoMainId();
+        bool temConfig = false;
+        {
+            auto sc = projeto_->registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            if (sc.step()) temConfig = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str())).isObject();
+        }
+        if (temConfig && mapaIdDaPasta(pastaId) != mapaMain) return false;
         // A pasta e todas as subpastas: algum item dali (hoje ou quando foi
         // copiado) já tem cópia registrada no MAIN.
         auto st = projeto_->registro().prepare(

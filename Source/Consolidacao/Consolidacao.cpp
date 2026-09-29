@@ -299,7 +299,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool autoResolverConflitos,
                                         bool forcarRebackup,
                                         bool organizarPorSource,
-                                        bool paraExport) {
+                                        bool paraExport,
+                                        const std::string& mapaId) {
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
     if (organizarPorSource) codigoPorVault = codigosDeSource(registro);
@@ -325,6 +326,14 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     bool usaPastaManual = std::find(hierarquia.begin(), hierarquia.end(),
                                     NivelHierarquia::PastaManual) != hierarquia.end();
 
+    // Fase 2: com folder map escolhido, PastaManual lê só as pastas DESSE mapa
+    // (o item pode estar em pastas de vários mapas). Item sem pasta nesse mapa:
+    // backup -> _SEM_PASTA na raiz do MAIN; export -> excluído e contado.
+    const bool filtrarMapa = !mapaId.empty();
+    const bool mapaEmUso = filtrarMapa && usaPastaManual && !usaEstruturaOriginal;
+    const bool semPastaFisica = mapaEmUso && !paraExport;
+    std::set<std::string> itensComMovimento;
+
     // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
     std::map<std::string, int> seqPorDestino;
 
@@ -335,15 +344,17 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     // Make Backup normalmente. Exclui aqui, sem apagar nada do catálogo
     // nem do disco: só tira da PRÓXIMA leva de backup.
     auto stmt = registro.prepare(
-        "SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
+        std::string("SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
         "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
         "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, '') "
         "FROM item i "
-        "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id "
+        "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id ") +
+        (filtrarMapa ? "AND aip.mapa_id = ? " : "") +
         "JOIN arquivo a ON a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = i.id "
         "                          ORDER BY eh_master DESC, id LIMIT 1) "
         "WHERE i.estado != 'duplicata' "
         "ORDER BY i.codigo_acervo");
+    if (filtrarMapa) stmt.bind(1, Value::of(mapaId));
 
     std::map<std::string, std::vector<size_t>> indicesPorDestino; // caminho final -> índices em plano.itens, pra achar conflito
     std::unordered_set<std::string> itensProcessados;
@@ -357,6 +368,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         std::string pastaIdCandidata = stmt.columnText(1);
         if (pastaOuAncestralDesativada(registro, pastaIdCandidata)) continue; // pasta desabilitada na TREEMAP — bypass total
+        if (mapaEmUso && paraExport && pastaIdCandidata.empty()) {
+            plano.semPastaExcluidos.insert(itemId);  // export por mapa: sem pasta = fora
+            continue;
+        }
 
         ItemPlanejado ip;
         ip.itemId = std::move(itemId);
@@ -505,6 +520,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 case NivelHierarquia::PastaManual:
                     // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
+                    if (cadeia.empty() && semPastaFisica) segmentosPasta.add(kPastaSemPasta);
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
                     juce::File fRel(caminhoRelativoOrigem);
@@ -594,10 +610,24 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
             stmtJa.bind(5, Value::of(ip.pastaId));
             stmtJa.bind(6, Value::of(ip.itemId));
             if (stmtJa.step() && !stmtJa.columnIsNull(0) && !stmtJa.columnText(0).empty()) {
-                caminhoRelDestino = juce::String::fromUTF8(stmtJa.columnText(0).c_str());
-                ip.caminhoRelativoDestino = caminhoRelDestino;
-                // Sumiu do disco: recopia NO MESMO caminho. Forçado: idem.
-                ip.jaConsolidado = !forcarRebackup && destino.getChildFile(caminhoRelDestino).existsAsFile();
+                const juce::String registrado = juce::String::fromUTF8(stmtJa.columnText(0).c_str());
+                // Fase 2: estava em _SEM_PASTA e agora tem pasta no mapa do MAIN ->
+                // oferece MOVER (nunca recopiar). Só o primeiro registro do item
+                // leva o move; se o item entrou em mais de uma pasta, os demais
+                // ficam como já consolidados (uma única cópia física no MAIN).
+                if (semPastaFisica && !ip.pastaId.empty() &&
+                    registrado.startsWith(juce::String(kPastaSemPasta) + "/")) {
+                    if (itensComMovimento.insert(ip.itemId).second) {
+                        ip.moverDe = registrado;
+                        plano.movimentosSemPasta.push_back(ip);  // ip.caminhoRelativoDestino é o NOVO caminho
+                    }
+                    ip.jaConsolidado = true;
+                } else {
+                    caminhoRelDestino = registrado;
+                    ip.caminhoRelativoDestino = caminhoRelDestino;
+                    // Sumiu do disco: recopia NO MESMO caminho. Forçado: idem.
+                    ip.jaConsolidado = !forcarRebackup && destino.getChildFile(caminhoRelDestino).existsAsFile();
+                }
             } else {
                 ip.jaConsolidado = false;
             }
@@ -620,7 +650,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     }
 
     auto stmtNaoOrg = registro.prepare(
-        "SELECT COUNT(*) FROM item WHERE id NOT IN (SELECT item_id FROM acervo_item_pasta)");
+        filtrarMapa ? "SELECT COUNT(*) FROM item WHERE id NOT IN (SELECT item_id FROM acervo_item_pasta WHERE mapa_id = ?)"
+                    : "SELECT COUNT(*) FROM item WHERE id NOT IN (SELECT item_id FROM acervo_item_pasta)");
+    if (filtrarMapa) stmtNaoOrg.bind(1, Value::of(mapaId));
     if (stmtNaoOrg.step()) plano.itensNaoOrganizados = static_cast<int>(stmtNaoOrg.columnInt(0));
 
     for (auto& ip : plano.itens)
@@ -662,6 +694,70 @@ std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registr
         }
     } catch (...) {}
     return out;
+}
+
+ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, const juce::File& pastaProjeto,
+                                                const juce::File& destino,
+                                                const std::vector<ItemPlanejado>& movimentos,
+                                                const AoProgredir& aoProgredir) {
+    ResultadoMovimentos resultado;
+    const int total = static_cast<int>(movimentos.size());
+    int feito = 0;
+    for (const auto& mv : movimentos) {
+        if (aoProgredir && !aoProgredir(feito, total)) {
+            resultado.cancelado = true;
+            break;
+        }
+        ++feito;
+        try {
+            if (mv.moverDe.isEmpty()) continue;
+            juce::File origem = destino.getChildFile(mv.moverDe);
+            juce::File alvo = destino.getChildFile(mv.caminhoRelativoDestino);
+            const bool origemExiste = origem.existsAsFile();
+            const bool alvoExiste = alvo.existsAsFile();
+            if (!origemExiste && !alvoExiste)
+                throw std::runtime_error("file not found in the MAIN (_SEM_PASTA)");
+            if (origemExiste && alvoExiste)
+                throw std::runtime_error("target already exists, not overwritten: " + mv.caminhoRelativoDestino.toStdString());
+            if (origemExiste) {
+                alvo.getParentDirectory().createDirectory();
+                if (!origem.moveFileTo(alvo) || !alvo.existsAsFile())
+                    throw std::runtime_error("move failed: " + mv.caminhoRelativoDestino.toStdString());
+                // Capa que viajou junto da cópia (mesmo nome-base, extensão da capa).
+                try {
+                    auto stCapa = registro.prepare(
+                        "SELECT caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
+                    stCapa.bind(1, Value::of(mv.itemId));
+                    if (stCapa.step()) {
+                        const juce::String ext = juce::File(juce::String::fromUTF8(stCapa.columnText(0).c_str())).getFileExtension();
+                        juce::File capaOrigem = origem.getParentDirectory().getChildFile(origem.getFileNameWithoutExtension() + ext);
+                        juce::File capaAlvo = alvo.getParentDirectory().getChildFile(alvo.getFileNameWithoutExtension() + ext);
+                        if (capaOrigem.existsAsFile() && !capaAlvo.existsAsFile()) capaOrigem.moveFileTo(capaAlvo);
+                    }
+                } catch (...) {}
+            }
+            // (origem ausente + alvo presente = move já feito, registro atrasado: só atualiza o banco.)
+            try {
+                registro.run("UPDATE consolidacao_registro SET pasta_id = ?, caminho_relativo_destino = ? "
+                             "WHERE item_id = ? AND arquivo_id = ? AND caminho_relativo_destino = ?",
+                             {Value::of(mv.pastaId), Value::of(mv.caminhoRelativoDestino.toStdString()),
+                              Value::of(mv.itemId), Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
+            } catch (...) {
+                // Já existe registro (item, pasta nova, arquivo, destino): fica só ele.
+                registro.run("DELETE FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
+                             "AND caminho_relativo_destino = ?",
+                             {Value::of(mv.itemId), Value::of(mv.arquivoId), Value::of(mv.moverDe.toStdString())});
+            }
+            matriz::model::ProjectLog pLog(pastaProjeto);
+            pLog.appendEntry("Media Moved Out Of _SEM_PASTA",
+                             {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,
+                              "To: " + mv.caminhoRelativoDestino});
+            ++resultado.movidos;
+        } catch (const std::exception& e) {
+            resultado.falhas.push_back(mv.codigoAcervo + ": " + e.what());
+        }
+    }
+    return resultado;
 }
 
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,

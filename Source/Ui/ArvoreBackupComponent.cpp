@@ -610,8 +610,25 @@ void ArvoreBackupComponent::selecionarERenomearPasta(const std::string& pastaId)
     repaint();
 }
 
+// Fase 1 — "SEM PASTA"/"NO FOLDER" é nome reservado (o nó fixo do mapa):
+// o usuário não cria nem renomeia pasta comum com ele, em nenhum idioma.
+static bool nomeReservadoDePasta(const std::string& nome) {
+    auto n = juce::String(nome).replaceCharacter('_', ' ').trim().toUpperCase();
+    return n == "SEM PASTA" || n == "NO FOLDER";
+}
+
+static void avisarNomeReservado() {
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                     .withTitle(matriz::i18n::t("arvore_backup.nome_reservado_titulo"))
+                                     .withMessage(matriz::i18n::t("arvore_backup.nome_reservado_msg"))
+                                     .withButton(matriz::i18n::t("dialogo.ok")),
+                                 juce::ModalCallbackFunction::create([](int) {}));
+}
+
 void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
     if (mapaAtivoEhOriginal()) return;
+    if (nomeReservadoDePasta(nome)) { avisarNomeReservado(); return; }
     auto pos = posicaoLivrePertoDoCentro(190, 84);
     std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
     projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
@@ -624,6 +641,7 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
 
 void ArvoreBackupComponent::renomearPastaSelecionada(const std::string& pastaId, const std::string& novoNome) {
     if (mapaAtivoEhOriginal()) return;
+    if (nomeReservadoDePasta(novoNome)) { avisarNomeReservado(); return; }
     projeto_.renomearPastaAcervo(pastaId, novoNome);
     recarregar();
 }
@@ -2227,7 +2245,8 @@ void ArvoreBackupComponent::mostrarMenuMapa() {
             });
     });
 
-    menu.addItem(i18n::t("arvore_backup.mapa_apagar"), !original, false, [safeThis] {
+    menu.addItem(i18n::t("arvore_backup.mapa_apagar"),
+                 !original && mapaAtivoId_ != projeto_.mapaDoMainId(), false, [safeThis] {
         if (!safeThis) return;
         int totalUsuario = 0;
         for (auto& m : safeThis->mapasCache_) if (!m.original) ++totalUsuario;
@@ -2251,7 +2270,10 @@ void ArvoreBackupComponent::mostrarMenuMapa() {
                 .withButton(i18n::t("comum.cancelar")),
             [safeThis, mapaId](int res) {
                 if (res != 1 || !safeThis) return;
-                if (!safeThis->projeto_.apagarFolderMap(mapaId)) return;
+                if (!safeThis->projeto_.apagarFolderMap(mapaId)) {
+                    ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.mapa_do_main_nao_apaga"));
+                    return;
+                }
                 safeThis->mapaAtivoId_ = ProjetoAberto::kMapaOriginal;
                 safeThis->projeto_.definirMapaAtivo(safeThis->mapaAtivoId_);
                 safeThis->recarregarComboMapas();

@@ -466,6 +466,9 @@ public:
     // do usuário). Chamado pelo dropdown de ArvoreBackupComponent.
     // Também persiste o mapa escolhido (mapa_ativo.txt na pasta do projeto).
     void definirMapaAtivo(const std::string& mapaId);
+    // true quando o dropdown do Folder Map está no ORIGINAL (somente leitura):
+    // SEND TO FOLDER fica desabilitado nesse estado.
+    bool mapaAtivoEhOriginal() const { return mapaAtivoSelecionado_ == kMapaOriginal; }
     // Mapa com que o Folder Map abre: o último usado neste projeto (persistido,
     // pode ser o ORIGINAL); sem registro (1ª abertura) ou se o mapa lembrado
     // foi apagado, o ORIGINAL. Não afeta mapaAtivoPadrao(), que continua
@@ -503,6 +506,12 @@ public:
     bool moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId);
     bool mainExiste() const;
     bool pastaTemArquivosNoMain(const std::string& pastaId) const;
+    // Fase 2 — ID do folder map gravado em projeto.backup_config_main.mapa_id
+    // ("" = MAIN ainda não existe, ou foi criado por regra/estrutura original).
+    // Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado.
+    std::string mapaDoMainId() const;
+    // Nome atual do mapa do MAIN ("" se não houver).
+    juce::String nomeDoMapaDoMain() const;
     static void avisarMapaTravado(const juce::String& mensagem);
     void atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y);
     void alternarAtivoPastaAcervo(const std::string& pastaId, bool ativo);

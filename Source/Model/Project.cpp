@@ -656,6 +656,30 @@ void migrarFolderMapUnico(matriz::db::Database& registro) {
         {db::Value::of(mapaId), db::Value::of(projetoId)});
 }
 
+// Fase 2: backup_config_main passa a guardar o ID do mapa do MAIN
+// ("mapa_id", nunca o nome — o mapa pode ser renomeado). MAIN já criado
+// com "mapa": true e sem mapa_id herda o primeiro mapa do usuário, que é o
+// antigo mapa único migrado pela Fase 1. Idempotente.
+void migrarMapaDoMain(matriz::db::Database& registro) {
+    try {
+        std::string cfgTexto;
+        {
+            auto st = registro.prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            if (!st.step()) return;
+            cfgTexto = st.columnText(0);
+        }
+        if (cfgTexto.empty()) return;
+        juce::var cfg = juce::JSON::parse(juce::String::fromUTF8(cfgTexto.c_str()));
+        auto* obj = cfg.getDynamicObject();
+        if (!obj || obj->hasProperty("mapa_id") || !static_cast<bool>(obj->getProperty("mapa"))) return;
+        auto stMapa = registro.prepare("SELECT id FROM folder_map ORDER BY ordem, criado_em LIMIT 1");
+        if (!stMapa.step()) return;
+        obj->setProperty("mapa_id", juce::String(stMapa.columnText(0)));
+        registro.run("UPDATE projeto SET backup_config_main = ?",
+                      {db::Value::of(juce::JSON::toString(cfg, true).toStdString())});
+    } catch (...) {}
+}
+
 void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice) {
     migrarItemParaCodigoOpcional(registro);
     migrarAiScanParaIndice(registro, indice);
@@ -722,6 +746,7 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "acervo_pasta", "mapa_id", "TEXT");
     garantirColuna(registro, "acervo_item_pasta", "mapa_id", "TEXT");
     migrarFolderMapUnico(registro);
+    migrarMapaDoMain(registro);
 
     // Reconstrução leva única
     garantirColuna(registro, "marcador", "tipo_id", "TEXT REFERENCES tipo_marcador(id)");

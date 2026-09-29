@@ -139,7 +139,7 @@ private:
     void abrirExport();
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
-                       bool marcaDagua);
+                       bool marcaDagua, const std::string& mapaId = {});
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 
@@ -229,6 +229,17 @@ private:
     matriz::consolidacao::HierarquiaBackup hierarquiaCustom_;
     std::unique_ptr<juce::ToggleButton> togglePreservarEstrutura_;
     std::unique_ptr<juce::ToggleButton> toggleUsarEstruturaMapa_;
+    // Fase 2: dropdown de mapas do USUÁRIO (sem o ORIGINAL). No 1º backup o
+    // escolhido vira o mapa do MAIN (backup_config_main.mapa_id); depois trava.
+    std::unique_ptr<juce::ComboBox> comboMapaMain_;
+    std::vector<std::string> idsComboMapaMain_;  // id do ComboBox (i+1) -> folder_map.id
+    void recarregarComboMapaMain();
+    bool hierarquiaUsaMapa() const;
+    std::string mapaParaBackup() const;  // "" quando a estrutura escolhida não usa mapa
+    // Fase 2: oferta de mover itens de _SEM_PASTA (backup seguinte).
+    bool movimentosDecididos_ = false;
+    bool moverSemPasta_ = false;
+    void perguntarMoverSemPasta();
     std::unique_ptr<juce::Label> labelPrefixo_;
     std::unique_ptr<juce::ComboBox> comboModoPrefixo_;
     std::unique_ptr<juce::TextEditor> editPrefixo_;
