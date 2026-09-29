@@ -4046,6 +4046,18 @@ public:
     // manter o card do item em memória atualizado sem recarregar a lista
     // inteira nem mexer no filtro/seleção corrente.
     std::function<void(const std::string& itemId)> aoAplicarSucessoItem;
+    // Envolvem cada loop por item: a grade só refiltra/reordena uma vez no fim.
+    std::function<void()> aoIniciarLoteAtualizacao;
+    std::function<void()> aoFinalizarLoteAtualizacao;
+    struct EscopoLoteAtualizacao {
+        explicit EscopoLoteAtualizacao(FichaLoteConteudo& o) : dono(o) {
+            if (dono.aoIniciarLoteAtualizacao) dono.aoIniciarLoteAtualizacao();
+        }
+        ~EscopoLoteAtualizacao() {
+            if (dono.aoFinalizarLoteAtualizacao) dono.aoFinalizarLoteAtualizacao();
+        }
+        FichaLoteConteudo& dono;
+    };
 
     // Correção realtime (Bug 1), modo lote: mesmo papel do
     // FichaConteudo::comitarPendencias() — commita texto digitado e ainda
@@ -4535,10 +4547,13 @@ private:
                 if (adicionadas.empty() && removidas.empty()) return;
 
                 projeto_.iniciarGrupoUndo("Batch edit: tags");
+                {
+                EscopoLoteAtualizacao escopoLote(*this);
                 for (const auto& id : itemIds_) {
                     for (const auto& t : adicionadas) projeto_.adicionarTag(id, t);
                     for (const auto& t : removidas) projeto_.removerTag(id, t);
                     if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
+                }
                 }
                 projeto_.finalizarGrupoUndo();
                 if (aoAplicarEmLote) aoAplicarEmLote();
@@ -4594,6 +4609,8 @@ private:
                 if (mudou.empty()) return;
 
                 projeto_.iniciarGrupoUndo("Batch edit: notes");
+                {
+                EscopoLoteAtualizacao escopoLote(*this);
                 for (const auto& id : itemIds_) {
                     try {
                         auto secoesItem = matriz::model::parseNotasEstruturadas(projeto_.lerMetadado(id, "notas_livres").value_or(""));
@@ -4607,6 +4624,7 @@ private:
                         projeto_.salvarMetadado(id, "notas_livres", matriz::model::serializarNotasEstruturadas(secoesItem));
                         if (aoAplicarSucessoItem) aoAplicarSucessoItem(id);
                     } catch (...) {}
+                }
                 }
                 projeto_.finalizarGrupoUndo();
                 if (aoAplicarEmLote) aoAplicarEmLote();
@@ -5047,6 +5065,7 @@ private:
         if (!linha->ehTags && !linha->ehNotes && val == linha->valorSeed) return;
 
         projeto_.iniciarGrupoUndo("Batch edit: " + linha->campoId);
+        EscopoLoteAtualizacao escopoLote(*this);
         int sucessos = 0, falhas = 0;
         // Fase 2b (freeze de edição em lote): uma transação só pros N itens
         // em vez de uma implícita por INSERT/UPDATE (salvarMetadado/
@@ -5498,6 +5517,8 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         };
         conteudoLote_->aoPedirFocoGrade = [this] { if (aoPedirFocoGrade) aoPedirFocoGrade(); };
+        conteudoLote_->aoIniciarLoteAtualizacao = [this] { if (aoIniciarLoteAtualizacao) aoIniciarLoteAtualizacao(); };
+        conteudoLote_->aoFinalizarLoteAtualizacao = [this] { if (aoFinalizarLoteAtualizacao) aoFinalizarLoteAtualizacao(); };
     }
     viewport_->setViewedComponent(conteudoLote_.get(), false);
     conteudoLote_->mostrarSelecao(itemIds);

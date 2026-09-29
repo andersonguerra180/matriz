@@ -51,6 +51,9 @@ public:
     // dono (CatalogWorkspaceComponent) devolve o foco de teclado à grade,
     // senão o atalho E fica preso no campo até o usuário reselecionar.
     std::function<void()> aoPedirFocoGrade;
+    // Edição em lote: envolve o loop por item (ver MosaicoComponent::iniciarLoteAtualizacao).
+    std::function<void()> aoIniciarLoteAtualizacao;
+    std::function<void()> aoFinalizarLoteAtualizacao;
 
     // Introspecção pra teste (Parte 2 da correção crítica — perda de
     // dado): acesso ao editor de um campo específico pra simular digitação

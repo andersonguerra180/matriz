@@ -45,6 +45,11 @@ public:
     void recarregar();
     void recarregarSincrono();
     void atualizarItemEmMemoria(const std::string& itemId);
+    // Edição em lote: entre iniciar/finalizar, atualizarItemEmMemoria só atualiza
+    // o item; o refiltro/reordenação da lista inteira roda UMA vez no finalizar
+    // (antes rodava por item: O(N itens x N catálogo) com seleções grandes).
+    void iniciarLoteAtualizacao() { ++loteAtualizacaoProfundidade_; }
+    void finalizarLoteAtualizacao();
     bool snapshotEmAndamentoParaTeste() const { return poolSnapshot_.getNumJobs() > 0; }
 
     // Chips de filtro (Acréscimos §10.2 — "clicáveis e combináveis"):
@@ -349,6 +354,8 @@ private:
                                    .withNumberOfThreads(1)
                                    .withDesiredThreadPriority(juce::Thread::Priority::low)};
     int geracaoSnapshot_ = 0;
+    int loteAtualizacaoProfundidade_ = 0;
+    bool refiltroAdiado_ = false;
     int versaoSnapshot_ = 0;
     bool refiltroAgendado_ = false;
     std::optional<juce::String> mensagemVazia_;

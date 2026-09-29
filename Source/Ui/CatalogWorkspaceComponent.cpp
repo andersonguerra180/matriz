@@ -331,6 +331,8 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     // atalho). Mesmo padrão do "Select All" (btnSelecionarTodos_ abaixo).
     // Adiado (callAsync): o onChange de um dropdown roda com o popup ainda aberto;
     // ao fechar, o foco volta ao ComboBox e desfazia um grab síncrono.
+    fichaPanel_->aoIniciarLoteAtualizacao = [this] { if (mosaico_) mosaico_->iniciarLoteAtualizacao(); };
+    fichaPanel_->aoFinalizarLoteAtualizacao = [this] { if (mosaico_) mosaico_->finalizarLoteAtualizacao(); };
     fichaPanel_->aoPedirFocoGrade = [this] {
         juce::Component::SafePointer<MosaicoComponent> safeMosaico(mosaico_.get());
         juce::MessageManager::callAsync([safeMosaico] {

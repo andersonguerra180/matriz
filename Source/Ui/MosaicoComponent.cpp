@@ -245,7 +245,16 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
         it->marcadoWatermark = resumo->marcadoWatermark;
     }
 
-    aplicarFiltrosEOrdenacao();
+    if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
+    else aplicarFiltrosEOrdenacao();
+}
+
+void MosaicoComponent::finalizarLoteAtualizacao() {
+    if (loteAtualizacaoProfundidade_ > 0) --loteAtualizacaoProfundidade_;
+    if (loteAtualizacaoProfundidade_ == 0 && refiltroAdiado_) {
+        refiltroAdiado_ = false;
+        aplicarFiltrosEOrdenacao();
+    }
 }
 
 void MosaicoComponent::recarregarSincrono() {
