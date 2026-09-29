@@ -1088,6 +1088,11 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         registro.exec("CREATE INDEX IF NOT EXISTS idx_item_quarentena_criado ON item(em_quarentena, criado_em)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_item_master ON arquivo(item_id, eh_master)");
         registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_estado_sincronizacao ON arquivo(estado_sincronizacao)");
+        // FKs ON DELETE CASCADE sem índice na coluna filha: cada DELETE FROM item
+        // (Reject no Intake) fazia um scan completo dessas tabelas por item.
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_preservation_event_arquivo ON preservation_event(arquivo_id)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_arquivo_derivada_de ON arquivo(derivada_de_arquivo_id)");
+        registro.exec("CREATE INDEX IF NOT EXISTS idx_proveniencia_item ON proveniencia(item_id)");
     } catch (...) {}
 }
 
