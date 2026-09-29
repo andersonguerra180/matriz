@@ -800,6 +800,48 @@ int rodarLoteSelfTest() {
             if (r.pasta == reaberto->raiz().getFullPathName()) achouRecente = (r.nome == "Depois do Rename");
         checar(achouRecente, "the Recent Files entry reflects the new name, keyed by the same folder path");
 
+        // Compatibilidade retroativa (pedido explícito 2026-09-29): um
+        // projeto criado ANTES desta mudança pode ter o .mtz num nome que
+        // nunca bateu com projeto.nome, por qualquer motivo — não só
+        // rename (ex.: sanitização diferente numa versão antiga do app).
+        // Sem chamar renomear() nenhuma vez: simula renomeando só o ARQUIVO
+        // no disco, deixando o banco intocado.
+        {
+            juce::File raizLegado = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                         .getChildFile("matriz_rename_legado_selftest_" + juce::Uuid().toDashedString());
+            raizLegado.createDirectory();
+            matriz::model::NovoProjetoParams paramsLegado;
+            paramsLegado.nome = "Projeto Legado";
+            paramsLegado.prefixoNomenclatura = "LEG";
+            auto projetoLegado = matriz::model::Project::criar(raizLegado.getChildFile("projeto"), paramsLegado);
+            const juce::File pastaLegado = raizLegado.getChildFile("projeto");
+            juce::Array<juce::File> markersLegado;
+            projetoLegado->raiz().findChildFiles(markersLegado, juce::File::findFiles, false, "*.mtz");
+            checar(markersLegado.size() == 1, "legacy scenario setup: exactly one .mtz created (" + juce::String(markersLegado.size()) + ")");
+            juce::String criadoEmLegado;
+            if (!markersLegado.isEmpty()) {
+                juce::var jAntes = juce::JSON::parse(markersLegado.getReference(0).loadFileAsString());
+                criadoEmLegado = jAntes.isObject() ? jAntes.getProperty("criado_em", "").toString() : juce::String();
+                markersLegado.getReference(0).moveFileTo(projetoLegado->raiz().getChildFile("Nome Bem Diferente Do Projeto.mtz"));
+            }
+            projetoLegado.reset();
+
+            auto reabertoLegado = matriz::model::Project::abrir(pastaLegado);
+            juce::Array<juce::File> markersLegadoDepois;
+            reabertoLegado->raiz().findChildFiles(markersLegadoDepois, juce::File::findFiles, false, "*.mtz");
+            checar(markersLegadoDepois.size() == 1,
+                   "opening a project whose .mtz filename never matched its nome (pre-dating this fix) still finds exactly one, not a new one (" +
+                       juce::String(markersLegadoDepois.size()) + ")");
+            if (markersLegadoDepois.size() == 1) {
+                juce::var jDepois = juce::JSON::parse(markersLegadoDepois.getReference(0).loadFileAsString());
+                juce::String criadoEmDepois = jDepois.isObject() ? jDepois.getProperty("criado_em", "").toString() : juce::String();
+                checar(criadoEmDepois == criadoEmLegado && markersLegadoDepois.getReference(0).getFileName() == "Nome Bem Diferente Do Projeto.mtz",
+                       "the mismatched-name marker is used as-is (same content, same old filename) — nothing new synthesized");
+            }
+            reabertoLegado.reset();
+            raizLegado.deleteRecursively();
+        }
+
         reaberto.reset();
     } catch (const std::exception& e) {
         checar(false, juce::String("rename project selftest: ") + e.what());
@@ -896,6 +938,37 @@ int rodarLoteSelfTest() {
                    "editing CITY alone leaves each item's own STATE untouched");
             checar(paisDe(ids[0]) == "Brazil" && paisDe(ids[1]) == "Brazil" && paisDe(ids[2]) == "Brazil" && paisDe(ids[3]) == "Brazil",
                    "editing CITY alone leaves COUNTRY untouched per item, including the one whose only prior data was COUNTRY");
+
+            // Auditoria (2026-09-29): confirma que remover aoAplicarSucessoItem
+            // do caminho de geo (item 2) não perdeu nada — Database::run()
+            // já marca o registro sujo pra QUALQUER escrita (inclusive a
+            // UPSERT crua de geo), independente daquele callback; nenhum
+            // campo em lote (Dublin Core ou geo) grava em log.md; e nada em
+            // ItemResumo reflete geo location, então não há atualização
+            // visual do grid pra perder.
+            auto& projLive = janela->projetoAberto()->projeto();
+            projLive.registro().limparSujo();  // zera pra medir só a próxima edição
+            juce::File logFile = projLive.pasta().getChildFile("log.md");
+            juce::String logAntes = logFile.existsAsFile() ? logFile.loadFileAsString() : juce::String();
+            int versaoSnapshotAntes = mosaico->versaoSnapshot();
+
+            edCity->setText("Belo Horizonte", false);
+            if (edCity->onReturnKey) edCity->onReturnKey();
+            bombear(200);
+
+            checar(projLive.registro().estaSujo(),
+                   "a geo batch edit marks the registro dirty, same as any other write (revision bump feeds off this)");
+            int64_t revAntes = projLive.revisao();
+            projLive.confirmarRevisao();
+            checar(projLive.revisao() == revAntes + 1,
+                   "confirmarRevisao() (called by the clone's auto-sync, not by individual edits) bumps after a geo batch edit exactly like it would after any other edit");
+
+            juce::String logDepois = logFile.existsAsFile() ? logFile.loadFileAsString() : juce::String();
+            checar(logDepois == logAntes,
+                   "geo batch edits don't write to log.md — neither do Dublin Core batch edits (salvarMetadado doesn't log either), so this is consistent, not a loss");
+
+            checar(mosaico->versaoSnapshot() == versaoSnapshotAntes,
+                   "no full grid reload/version bump happens for a geo-only edit — nothing in ItemResumo reflects geo location, so there's no applicable visual update to perform");
         }
 
         // Performance (ajuste do pedido: seleção grande não pode travar a
