@@ -19,3 +19,10 @@ backups/
 # regenerados a cada execução, não são fonte.
 test-output/
 *.zip
+
+# Material de referência/divulgação solto na raiz — não usado pelo app
+# (matriz-logo.png não está em juce_add_binary_data nem referenciado em
+# lugar nenhum do código; bkr_matriz.mp4 e corel.jpeg idem).
+/bkr_matriz.mp4
+/Assets/corel.jpeg
+/Assets/matriz-logo.png
