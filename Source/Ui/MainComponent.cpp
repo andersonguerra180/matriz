@@ -1728,9 +1728,6 @@ void MainComponent::mostrarGrid() {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_view", "Opening Catalog", 100, nullptr, "Loading catalog view...",
-                                                   /*temModalProprio*/ false, /*somenteBarra*/ true);
-
     if (barraNavegacao_) {
         barraNavegacao_->setSelectedTab(BarraNavegacaoComponent::Tab::Grid);
         barraNavegacao_->setVisible(true);
@@ -1768,7 +1765,8 @@ void MainComponent::mostrarGrid() {
         catalogWorkspace_->recarregar();
     }
 
-    ProgressoGlobal::obterInstancia().concluirTarefa("catalog_view", "Catalog ready");
+    // Sem "Catalog ready" aqui: era falso (nada carregado ainda). O progresso real
+    // vem de catalog_assets (leitura do índice) e catalog_thumbs (miniaturas).
 
     resized();
     repaint();

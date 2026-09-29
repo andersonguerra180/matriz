@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <thread>
 #include "EventBus.h"
+#include "ProgressoGlobal.h"
 #include "../Ficha/OrigemPadrao.h"
 
 namespace matriz::ui {
@@ -1670,6 +1671,19 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         " FROM arquivo a " + matriz::vault::joinDeResolucao() +
         " ORDER BY a.eh_master DESC, a.id");
 
+    // Progresso visível (a geração rodava muda em background): total aproximado =
+    // itens com arquivo que ainda não têm miniatura. Sem nada faltando, nenhuma tarefa.
+    int totalFaltando = 0;
+    {
+        auto st = reg.prepare("SELECT COUNT(DISTINCT item_id) FROM arquivo");
+        if (st.step()) totalFaltando = juce::jmax(0, static_cast<int>(st.columnInt(0)) - static_cast<int>(comMiniatura.size()));
+    }
+    const juce::String kIdTarefa = "catalog_thumbs";
+    if (totalFaltando > 0)
+        ProgressoGlobal::obterInstancia().iniciarTarefa(kIdTarefa, "Generating thumbnails", totalFaltando, nullptr,
+                                                       "Checking files on disk...", false, true);
+    juce::uint32 ultimoAviso = 0;
+
     std::set<std::string> jaProcessados;
     int gerados = 0, pulados = 0;
     while (stmt.step()) {
@@ -1681,6 +1695,16 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         std::string jsonTecnico = stmt.columnText(2);
         juce::File arq = matriz::vault::caminhoEsperado(pasta, stmt.columnText(3),
                                                          stmt.columnText(4), stmt.columnText(5));
+        if (totalFaltando > 0) {
+            const juce::uint32 agora = juce::Time::getMillisecondCounter();
+            if (agora - ultimoAviso >= 250) {
+                ultimoAviso = agora;
+                ProgressoGlobal::obterInstancia().atualizarProgresso(
+                    kIdTarefa, juce::jmin(static_cast<int>(jaProcessados.size()), totalFaltando),
+                    "Thumbnails " + juce::String(static_cast<int>(jaProcessados.size())) + " of " +
+                        juce::String(totalFaltando) + "  |  " + arq.getFileName());
+            }
+        }
         if (!arq.existsAsFile()) { ++pulados; continue; }
 
         auto cat = matriz::ingest::categoriaPorExtensao(arq);
@@ -1718,6 +1742,10 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
             DBG("gerarMiniatura ERRO: " + juce::String(e.what()));
         }
     }
+    if (totalFaltando > 0)
+        ProgressoGlobal::obterInstancia().concluirTarefa(
+            kIdTarefa, "Catalog ready  |  " + juce::String(gerados) + " thumbnails created" +
+                           (pulados > 0 ? "  |  " + juce::String(pulados) + " files offline" : juce::String()));
     DBG("gerarMiniaturasFaltantes: gerados=" + juce::String(gerados) + " pulados=" + juce::String(pulados)
         + " processados=" + juce::String((int)jaProcessados.size()));
 }
