@@ -1193,8 +1193,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
         const auto& ids = projeto_.ultimosItensIngeridos();
         soRecentes = std::set<std::string>(ids.begin(), ids.end());
     }
+    // Item 4 (correção METADATA 2026-09-28): pasta do Folder Map/SOURCE/
+    // Acervo (definirSelecaoItens) tinha as contagens de MEDIA TYPE/ano
+    // calculadas sobre o catálogo inteiro, não sobre o conjunto herdado —
+    // mesmo tratamento que mostrarApenasRecentes_ já recebe acima.
+    std::optional<std::set<std::string>> filtroHerdado = filtroHerdadoIds_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, soRecentes,
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, soRecentes, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1202,6 +1207,11 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             if (soRecentes) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
+                            itens.end());
+            }
+            if (filtroHerdado) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !filtroHerdado->count(r.id); }),
                             itens.end());
             }
             res.total = static_cast<int>(itens.size());
@@ -1836,8 +1846,15 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
     if (mosaico_) {
         mosaico_->definirFiltroItens(itemIds);
         mosaico_->definirSelecao(itemIds);
+        // Item 4 (correção METADATA 2026-09-28): definirSelecao() só dispara
+        // aoMudarSelecao, nunca aoSelecionar — o mesmo gap já corrigido pro
+        // "Select All" (btnSelecionarTodos_). Sem isto, o CONTENT ficava
+        // mostrando o que a ficha exibia antes (genérico/parado) em vez do
+        // conteúdo real da pasta/nó recém-selecionado.
+        selecionarItem({});
+        mosaico_->grabKeyboardFocus();
     }
-    atualizarContagens();  // tipo/ano zerados acima
+    atualizarContagens();  // tipo/ano zerados acima; respeita filtroHerdadoIds_ (ver ali)
     repaint();
 }
 

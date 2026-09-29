@@ -554,6 +554,10 @@ int rodarLoteSelfTest() {
             for (const auto& c : cw->categorias_) if (c.chave == "all") return c.contagem;
             return -1;
         };
+        auto contagemPorChave = [](CatalogWorkspaceComponent* cw, const std::string& chave) {
+            for (const auto& c : cw->categorias_) if (c.chave == chave) return c.contagem;
+            return -1;
+        };
 
         auto* cw = abrirGrid();
         // SUBJECT: opções vindas dos subjects existentes, filtro por um deles.
@@ -588,6 +592,14 @@ int rodarLoteSelfTest() {
         checar(visiveis(cw) == 6, "after promoting A, the filter shows only A (" + juce::String(visiveis(cw)) + ")");
         esperarAte([&] { return contagemTotal(cw) == 6; }, 5000);
         checar(contagemTotal(cw) == 6, "sidebar counts follow the recent filter (" + juce::String(contagemTotal(cw)) + ")");
+        // Item 4 (correção METADATA 2026-09-28), caminho "Send to Grid +
+        // Recently Ingested": não é só o total que precisa ficar restrito à
+        // leva — MEDIA TYPE também. Catálogo tem 9 itens de áudio (3
+        // antigos + 6 de A); sem o filtro aplicado à contagem por tipo isto
+        // daria 9, não 6.
+        checar(contagemPorChave(cw, "audio") == 6,
+               "MEDIA TYPE count (audio) also follows Send to Grid + Recently Ingested, not the whole catalog (" +
+                   juce::String(contagemPorChave(cw, "audio")) + "/6)");
 
         promover(loteB);  // filtro continua ligado
         cw = abrirGrid();
@@ -646,6 +658,80 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("recent batch selftest: ") + e.what());
     }
     raizR.deleteRecursively();
+
+    // --------------------- METADATA: pasta enviada ao grid = seleção real (item 4, 2026-09-28)
+    // "Show content in grid" (Folder Map/SOURCE/Acervo tree) precisa se
+    // comportar como uma seleção feita no próprio grid: MEDIA TYPE e ano
+    // contam só o conjunto da pasta, e a ficha (CONTENT) mostra o valor
+    // real da pasta, não o que estava selecionado antes.
+    std::cout << "\n-- METADATA: folder-sent-to-grid behaves like a real grid selection --\n";
+    juce::File raizFolderSel = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                   .getChildFile("matriz_folder_selecao_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizFolderSel.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "FolderSel";
+        params.prefixoNomenclatura = "FSEL";
+        auto projeto = matriz::model::Project::criar(raizFolderSel.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        // Pasta: 2 áudio + 1 vídeo, CONTENT "Music". Fora da pasta: 3
+        // imagens, CONTENT "Interview" — se a contagem ou o CONTENT vazarem
+        // do catálogo inteiro, esses 3 aparecem onde não deveriam.
+        std::vector<std::string> pastaIds, foraIds;
+        pastaIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-A0", false, ".wav"));
+        pastaIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-A1", false, ".wav"));
+        pastaIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-V0", false, ".mp4"));
+        foraIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-I0", false, ".jpg"));
+        foraIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-I1", false, ".jpg"));
+        foraIds.push_back(inserirItem(projeto->registro(), projetoId, "FSEL-I2", false, ".jpg"));
+        auto& regF = projeto->registro();
+        for (const auto& id : pastaIds) regF.run("UPDATE item SET collection_type = 'Music' WHERE id = ?", {matriz::db::Value::of(id)});
+        for (const auto& id : foraIds) regF.run("UPDATE item SET collection_type = 'Interview' WHERE id = ?", {matriz::db::Value::of(id)});
+
+        auto janela = std::make_unique<MainComponent>();
+        janela->setBounds(0, 0, 1400, 900);
+        janela->abrirProjeto(std::move(projeto));
+        bombear(200);
+        janela->mostrarGrid();
+        auto* cw = janela->catalogWorkspace_.get();
+        auto* mosaico = cw->mosaico_.get();
+        esperarAte([&] { return !mosaico->snapshotPendente() && mosaico->totalItensCarregados() >= 6; });
+
+        // Estado anterior "sujo" de propósito: seleciona um item DE FORA da
+        // pasta primeiro, pra garantir que o fix realmente troca o que a
+        // ficha mostra, não é coincidência de já estar certo.
+        mosaico->selecionarItem(foraIds[0]);
+        cw->selecionarItem(foraIds[0]);
+        bombear(100);
+
+        std::set<std::string> pasta(pastaIds.begin(), pastaIds.end());
+        cw->definirSelecaoItens(pasta);
+        esperarAte([&] { return !mosaico->snapshotPendente(); }, 5000);
+        bombear(200);
+
+        checar(mosaico->totalItensVisiveis() == 3,
+               "the folder's content shows only its 3 items in the grid (" + juce::String(mosaico->totalItensVisiveis()) + ")");
+
+        auto contagemPorChaveF = [&](const std::string& chave) {
+            for (const auto& c : cw->categorias_) if (c.chave == chave) return c.contagem;
+            return -1;
+        };
+        checar(contagemPorChaveF("audio") == 2,
+               "MEDIA TYPE counts are scoped to the folder, not the whole catalog: audio (" + juce::String(contagemPorChaveF("audio")) + "/2)");
+        checar(contagemPorChaveF("video") == 1, "... video (" + juce::String(contagemPorChaveF("video")) + "/1)");
+        checar(contagemPorChaveF("images") == 0,
+               "... images excluded even though the catalog has 3 of them outside the folder (" + juce::String(contagemPorChaveF("images")) + "/0)");
+
+        auto* cbContent = dynamic_cast<juce::ComboBox*>(cw->fichaPanel_->editorDoCampoLoteParaTeste("collection"));
+        checar(cbContent != nullptr && cbContent->getText() == "Music",
+               "CONTENT reflects the folder's real value, not the item selected before (\"" +
+                   (cbContent ? cbContent->getText() : juce::String()) + "\")");
+
+        janela.reset();
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder selection selftest: ") + e.what());
+    }
+    raizFolderSel.deleteRecursively();
 
     // ------------------------- METADATA: GEO LOCATION em lote (item 2, 2026-09-28)
     // Valor comum só quando 100% dos selecionados concordam; divergente fica
