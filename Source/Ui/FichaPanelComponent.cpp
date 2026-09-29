@@ -4049,14 +4049,20 @@ public:
     // Envolvem cada loop por item: a grade só refiltra/reordena uma vez no fim.
     std::function<void()> aoIniciarLoteAtualizacao;
     std::function<void()> aoFinalizarLoteAtualizacao;
+    // Guarda a função de fechamento POR CÓPIA: aoAplicarEmLote() (e o que vem depois
+    // do loop) pode destruir este componente; o destrutor do escopo não pode
+    // tocar em `this`. Chamar fechar() logo após o loop/COMMIT.
     struct EscopoLoteAtualizacao {
-        explicit EscopoLoteAtualizacao(FichaLoteConteudo& o) : dono(o) {
-            if (dono.aoIniciarLoteAtualizacao) dono.aoIniciarLoteAtualizacao();
+        explicit EscopoLoteAtualizacao(FichaLoteConteudo& o) : fim(o.aoFinalizarLoteAtualizacao) {
+            if (o.aoIniciarLoteAtualizacao) o.aoIniciarLoteAtualizacao();
         }
-        ~EscopoLoteAtualizacao() {
-            if (dono.aoFinalizarLoteAtualizacao) dono.aoFinalizarLoteAtualizacao();
+        ~EscopoLoteAtualizacao() { fechar(); }
+        void fechar() {
+            auto f = std::move(fim);
+            fim = nullptr;
+            if (f) f();
         }
-        FichaLoteConteudo& dono;
+        std::function<void()> fim;
     };
 
     // Correção realtime (Bug 1), modo lote: mesmo papel do
