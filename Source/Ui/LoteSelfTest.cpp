@@ -5,6 +5,7 @@
 #include <functional>
 #include <future>
 #include <map>
+#include <optional>
 #include <iostream>
 
 #include "../Model/Project.h"
@@ -26,6 +27,8 @@
 #include "../Model/NotasEstruturadas.h"
 #include "../Model/NomesCanonicos.h"
 #include "../Model/ProjectLog.h"
+#include "../Consolidacao/PacoteCollection.h"
+#include "../Ingest/Checksum.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
@@ -257,6 +260,203 @@ void rodarTestesNomesCanonicos(const Checar& checar) {
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("names selftest (migration): ") + e.what());
+    }
+    raiz.deleteRecursively();
+}
+
+// ---------------------------------------------------------------------------
+// Pacote de collection — Fase 2 (EXPORT) e Fase 3 (INTAKE).
+// ---------------------------------------------------------------------------
+void escreverWavTeste(const juce::File& destino, int semente) {
+    juce::MemoryOutputStream out;
+    const int amostras = 800, taxa = 8000;
+    out.write("RIFF", 4);
+    out.writeInt(36 + amostras * 2);
+    out.write("WAVE", 4);
+    out.write("fmt ", 4);
+    out.writeInt(16);
+    out.writeShort(1);
+    out.writeShort(1);
+    out.writeInt(taxa);
+    out.writeInt(taxa * 2);
+    out.writeShort(2);
+    out.writeShort(16);
+    out.write("data", 4);
+    out.writeInt(amostras * 2);
+    for (int i = 0; i < amostras; ++i) out.writeShort(static_cast<short>((i * (semente + 7)) % 4000 - 2000));
+    destino.getParentDirectory().createDirectory();
+    destino.replaceWithData(out.getData(), out.getDataSize());
+}
+
+// Item de B com o arquivo na SOURCE (caminho absoluto), como a ingestão grava.
+std::string inserirItemComArquivo(matriz::db::Database& reg, const std::string& projetoId, const std::string& codigo,
+                                  const juce::File& arquivo) {
+    const std::string id = matriz::model::novoUuid(), agora = matriz::model::agoraIso8601();
+    reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+            "VALUES (?, ?, ?, ?, 'digital_audio', 'novo', ?, ?)",
+            {matriz::db::Value::of(id), matriz::db::Value::of(projetoId), matriz::db::Value::of(codigo),
+             matriz::db::Value::of(arquivo.getFileNameWithoutExtension().toStdString()), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+    reg.run("INSERT INTO arquivo (id, item_id, caminho_relativo, caminho_absoluto_origem, papel, eh_master, tamanho_bytes, "
+            "checksum_sha256, criado_em, atualizado_em) VALUES (?, ?, ?, ?, 'preservation_master', 1, ?, ?, ?, ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
+             matriz::db::Value::of(arquivo.getFileName().toStdString()),
+             matriz::db::Value::of(arquivo.getFullPathName().toStdString()),
+             matriz::db::Value::of(static_cast<long long>(arquivo.getSize())),
+             matriz::db::Value::of(matriz::ingest::calcularChecksums(arquivo).sha256), matriz::db::Value::of(agora),
+             matriz::db::Value::of(agora)});
+    return id;
+}
+
+// Retrato textual do registro de B (tudo que o export não pode mudar).
+std::string retratoDoRegistro(matriz::db::Database& reg) {
+    std::string s;
+    for (const char* sql : {"SELECT id || COALESCE(atualizado_em,'') || COALESCE(dc_title,'') || COALESCE(dc_subject,'') "
+                            "|| COALESCE(ano,'') || estado FROM item ORDER BY id",
+                            "SELECT item_id || tag FROM item_tag ORDER BY 1", "SELECT COUNT(*) FROM item_campo",
+                            "SELECT COUNT(*) FROM item_observacao", "SELECT COUNT(*) FROM asset_geolocation",
+                            "SELECT COUNT(*) FROM folder_map", "SELECT COUNT(*) FROM acervo_pasta",
+                            "SELECT COUNT(*) FROM acervo_item_pasta", "SELECT COUNT(*) FROM consolidacao_registro",
+                            "SELECT COUNT(*) FROM collection_person"}) {
+        auto st = reg.prepare(sql);
+        while (st.step()) s += st.columnText(0) + "\n";
+    }
+    return s;
+}
+
+void rodarTestesPacote(const Checar& checar) {
+    namespace pk = matriz::consolidacao::pacote;
+    using matriz::db::Value;
+    std::cout << "\n-- Collection package, phase 2: EXPORT -> package --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_pacote_selftest_" + juce::Uuid().toDashedString());
+    juce::File pacote;
+    std::vector<juce::File> fontes;
+    try {
+        juce::File source = raiz.getChildFile("SOURCE_B");
+        for (int i = 0; i < 5; ++i) {
+            fontes.push_back(source.getChildFile("faixa" + juce::String(i + 1) + ".wav"));
+            escreverWavTeste(fontes.back(), 11 * (i + 1));
+        }
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Collection B";
+        params.prefixoNomenclatura = "CLB";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("B"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pb(std::move(projeto));
+        auto& reg = pb.projeto().registro();
+        std::vector<std::string> ids;
+        for (int i = 0; i < 5; ++i) ids.push_back(inserirItemComArquivo(reg, projetoId, "CLB-" + std::to_string(i + 1), fontes[i]));
+
+        // Folder map: Shows/2015 (itens 1 e 2), Shows (item 3), Vazia (sem itens);
+        // item 4 fica fora do MAIN, item 5 sem pasta.
+        const std::string mapa = pb.criarFolderMap("Mapa B", std::nullopt);
+        const std::string shows = pb.criarPastaAcervo("Shows", std::nullopt, mapa);
+        const std::string ano2015 = pb.criarPastaAcervo("2015", shows, mapa);
+        pb.criarPastaAcervo("Vazia", std::nullopt, mapa);
+        pb.adicionarItensAPasta({ids[0], ids[1]}, ano2015);
+        pb.adicionarItensAPasta({ids[2], ids[3]}, shows);
+
+        // Dados de ficha do item 1 (todos os campos do Passo 0) e 2 (parcial).
+        pb.adicionarPessoa("Maria");
+        pb.salvarMetadado(ids[0], "dc_title", "Show no Rio");
+        pb.salvarMetadado(ids[0], "dc_description", "Primeira noite");
+        pb.salvarMetadado(ids[0], "ano", "12/03/2015");
+        pb.salvarMetadado(ids[0], "collection_type", "Concert");
+        pb.salvarMetadado(ids[0], "dc_subject", "Show, Backstage");
+        pb.definirTags(ids[0], {"Show", "Maria"});
+        pb.adicionarObservacao(ids[0], "entrada da voz", 1500, "selftest");
+        pb.adicionarObservacao(ids[0], "nota sem tempo", std::nullopt, "selftest");
+        reg.run("INSERT INTO asset_geolocation (asset_id, latitude, longitude, city, country, source) "
+                "VALUES (?, -22.9, -43.2, 'Rio de Janeiro', 'Brasil', 'USER_COORDINATES')",
+                {Value::of(ids[0])});
+        pb.salvarMetadado(ids[1], "dc_subject", "show");
+
+        // MAIN: primeiro backup (itens 1, 2, 3; o 4 fica só no SOURCE).
+        const juce::File media = pb.projeto().pastaMedia();
+        auto plano = matriz::consolidacao::planejarConsolidacao(reg, pb.projeto().pasta(), media,
+                                                                {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                false, false, false, mapa);
+        std::vector<matriz::consolidacao::ItemPlanejado> noMain;
+        for (auto& ip : plano.itens)
+            if (ip.itemId == ids[0] || ip.itemId == ids[1] || ip.itemId == ids[2]) noMain.push_back(ip);
+        plano.itens = noMain;
+        auto res = matriz::consolidacao::executarConsolidacao(reg, pb.projeto().pasta(), media, plano);
+        checar(res.consolidados == 3, "setup: 3 files in B's MAIN (" + juce::String(res.consolidados) + ")");
+
+        const std::string antes = retratoDoRegistro(reg);
+        const juce::File destino = raiz.getChildFile("saida");
+        destino.createDirectory();
+        destino.getChildFile("Pacote Teste").createDirectory();  // nome já existe: sufixo numérico
+        int ultimoTotal = 0;
+        auto r = pk::gerarPacote(reg, pb.projeto().pasta(), destino, "Pacote Teste", mapa, "Mapa B", "Collection B",
+                                 {ids.begin(), ids.end()}, [&](int, int total) { ultimoTotal = total; return true; });
+        pacote = r.pasta;
+        checar(r.copiados == 3 && r.falhas.empty(), "3 files went into the package (" + juce::String(r.copiados) + ")");
+        checar(r.foraDoMain == 1, "the file only in SOURCE stays out (nothing leaves before the MAIN)");
+        checar(r.semPasta == 1, "the item without a folder in the chosen map stays out and is counted");
+        checar(pacote.getFileName() == "Pacote Teste (2)", "an existing folder name gets a numeric suffix");
+        checar(retratoDoRegistro(reg) == antes, "project B is not changed by the export");
+        checar(matriz::model::ProjectLog(pb.projeto().pasta()).readContent().contains("Collection Package Exported"),
+               "the export is in B's project log");
+
+        auto leitura = pk::lerPacote(pacote);
+        checar(leitura.status == pk::StatusLeitura::Ok && leitura.pacote.arquivos.size() == 3,
+               "matriz-pacote.json is valid (formato/versao) with one record per file");
+        checar(pacote.getChildFile("Media/Shows/2015/faixa1.wav").existsAsFile() &&
+                   pacote.getChildFile("Media/Shows/faixa3.wav").existsAsFile(),
+               "Media/ follows the chosen folder map");
+        bool shaConfere = true;
+        for (const auto& a : leitura.pacote.arquivos)
+            shaConfere = shaConfere && juce::String(matriz::ingest::calcularChecksums(
+                                                        pacote.getChildFile("Media").getChildFile(a.caminho)).sha256)
+                                               .toLowerCase()
+                                               .toStdString() == a.sha256;
+        checar(shaConfere, "each record's SHA-256 is the delivered file's");
+        const pk::RegistroArquivo* r1 = nullptr;
+        const pk::RegistroArquivo* r3 = nullptr;
+        for (const auto& a : leitura.pacote.arquivos) {
+            if (a.caminho == "Shows/2015/faixa1.wav") r1 = &a;
+            if (a.caminho == "Shows/faixa3.wav") r3 = &a;
+        }
+        checar(r1 && r1->dados.titulo == "Show no Rio" && r1->dados.descricao == "Primeira noite" &&
+                   r1->dados.eventDate == "12/03/2015" && r1->dados.content == "Concert" &&
+                   r1->dados.subjects == std::vector<std::string>{"Show", "Backstage"} &&
+                   r1->dados.tags == std::vector<std::string>{"Show"} &&
+                   r1->dados.pessoas == std::vector<std::string>{"Maria"},
+               "record 1 carries title, description, event date, content, subjects, tags and people");
+        checar(r1 && r1->dados.geo.getProperty("city", {}).toString() == "Rio de Janeiro" &&
+                   std::abs(static_cast<double>(r1->dados.geo.getProperty("latitude", 0.0)) + 22.9) < 1e-6,
+               "record 1 carries GEO LOCATION");
+        checar(r1 && r1->dados.marcadores.size() == 2 && r1->dados.marcadores[0].tempoS &&
+                   std::abs(*r1->dados.marcadores[0].tempoS - 1.5) < 1e-9 && !r1->dados.marcadores[1].tempoS,
+               "markers travel with times in seconds");
+        checar(r1 && r1->pasta == std::vector<juce::String>{"Shows", "2015"}, "record 1 knows its folder in the map");
+        checar(r3 && r3->dados.vazio(), "empty fields are omitted");
+        {
+            const auto json = juce::JSON::parse(pacote.getChildFile(pk::kArquivoJson));
+            const auto* pastas = json.getProperty("pastas", {}).getArray();
+            checar(pastas && pastas->size() == 1 && (*pastas)[0].getProperty("nome", {}).toString() == "Shows",
+                   "the folder tree has only the folders with package items (\"Vazia\" is not there)");
+        }
+
+        // Cancelar no meio: a pasta do pacote não fica.
+        auto rc = pk::gerarPacote(reg, pb.projeto().pasta(), destino, "Cancelado", mapa, "Mapa B", "Collection B",
+                                  {ids.begin(), ids.end()}, [](int feito, int) { return feito < 1; });
+        checar(rc.cancelado && !rc.pasta.exists(), "cancelling removes the half-made package folder");
+
+        // Versão desconhecida / formato errado: recusa com motivo.
+        juce::File v2 = raiz.getChildFile("v2");
+        v2.getChildFile("Media").createDirectory();
+        v2.getChildFile(pk::kArquivoJson).replaceWithText("{\"formato\":\"matriz-pacote\",\"versao\":2,\"arquivos\":[]}");
+        checar(pk::lerPacote(v2).status == pk::StatusLeitura::VersaoDesconhecida, "an unknown package version is refused");
+        v2.getChildFile(pk::kArquivoJson).replaceWithText("{\"formato\":\"outro\",\"versao\":1}");
+        checar(pk::lerPacote(v2).status == pk::StatusLeitura::Invalido, "a JSON that is not a package is refused");
+        checar(pk::lerPacote(raiz.getChildFile("SOURCE_B")).status == pk::StatusLeitura::NaoEPacote,
+               "a normal folder is not a package");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("package selftest (export): ") + e.what());
     }
     raiz.deleteRecursively();
 }
@@ -2498,6 +2698,13 @@ int rodarLoteSelfTest() {
             return true;
         };
         checar(!bw.mainSelado_ && travados(), "no MAIN: PUBLISH / EXPORT / SPREADSHEET / SYNC locked, with the hint");
+        // Pacote de collection (Fase 2): opção nova no dropdown, as de antes seguem lá.
+        auto& combo = *bw.comboExportOrigem_;
+        checar(combo.getNumItems() == 6 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
+                   combo.getItemText(0).startsWith("Selected Files"),
+               "EXPORT dropdown: the 5 options as before + Collection Package");
+        combo.setSelectedId(BackupWorkspaceComponent::kExpPacote, juce::sendNotificationSync);
+        checar(!bw.btnExportUnificado_->isEnabled(), "no MAIN: Collection Package locked too");
         // FAZER BACKUP criou o MAIN (registro de cópia), ainda sem destino destacado.
         pa.projeto().registro().run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
                                     "checksum_sha256, consolidado_em) SELECT ?, item_id, '', id, 'x.wav', 'abc', ? FROM arquivo WHERE item_id = ?",
@@ -2509,6 +2716,10 @@ int rodarLoteSelfTest() {
                         static_cast<juce::Button*>(bw.btnExportJanela_.get()), static_cast<juce::Button*>(bw.btnSyncDestino_.get())})
             liberados = liberados && b->isEnabled() && b->getTooltip() != matriz::i18n::t("backup.saida_sem_main");
         checar(liberados, "MAIN created: the 4 unlock even with no destination selected and no H marks");
+        bw.atualizarExportUnificado();
+        checar(bw.btnExportUnificado_->isEnabled() == (bw.contagemSelecionados_ > 0),
+               "MAIN created: Collection Package follows the selection like Selected Files");
+        combo.setSelectedId(BackupWorkspaceComponent::kExpSelecionados, juce::sendNotificationSync);
     } catch (const std::exception& e) {
         checar(false, juce::String("output lock selftest: ") + e.what());
     }
@@ -2696,6 +2907,7 @@ int rodarLoteSelfTest() {
     raizMig.deleteRecursively();
 
     rodarTestesNomesCanonicos(checar);
+    rodarTestesPacote(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

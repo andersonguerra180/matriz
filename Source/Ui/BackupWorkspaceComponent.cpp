@@ -17,6 +17,7 @@
 #include "../Catalogo/CatalogSiteExport.h"
 #include "../Diag/Watchdog.h"
 #include "../Consolidacao/MetadadoEmbutido.h"
+#include "../Consolidacao/PacoteCollection.h"
 #include "../Vault/Resolucao.h"
 #include "../Vault/Volume.h"
 #include "../Preservation/Preservation.h"
@@ -195,6 +196,110 @@ private:
     std::vector<std::pair<std::string, juce::String>> mapas_;
     juce::TextEditor editPrefixo_;
     juce::ToggleButton toggleEmbutir_, toggleMarca_;
+};
+
+// Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.
+class ConteudoPacote : public juce::Component {
+public:
+    using AoGerar = std::function<void(juce::File destino, juce::String nome, std::string mapaId, juce::String nomeMapa)>;
+    ConteudoPacote(const juce::String& nomePadrao, std::vector<std::pair<std::string, juce::String>> mapas, AoGerar aoGerar)
+        : aoGerar_(std::move(aoGerar)), mapas_(std::move(mapas)) {
+        const auto& tk = tema();
+        auto rotulo = [&](juce::Label& l, const juce::String& t) {
+            l.setText(t, juce::dontSendNotification);
+            l.setColour(juce::Label::textColourId, tk.textoSecundario);
+            l.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+            addAndMakeVisible(l);
+        };
+        rotulo(lblIntro_, matriz::i18n::t("export.pacote_intro"));
+        lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        rotulo(lblNome_, matriz::i18n::t("export.pacote_nome"));
+        editNome_.setText(nomePadrao, juce::dontSendNotification);
+        editNome_.onTextChange = [this] { atualizarBotao(); };
+        addAndMakeVisible(editNome_);
+        rotulo(lblMapa_, matriz::i18n::t("export.pacote_mapa"));
+        for (size_t i = 0; i < mapas_.size(); ++i) comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
+        if (!mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
+        addAndMakeVisible(comboMapa_);
+        rotulo(lblPasta_, matriz::i18n::t("export.pasta"));
+        lblCaminho_.setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblCaminho_.setText(matriz::i18n::t("export.pasta_nenhuma"), juce::dontSendNotification);
+        addAndMakeVisible(lblCaminho_);
+        btnEscolher_.setButtonText(matriz::i18n::t("export.escolher"));
+        btnEscolher_.onClick = [this] { escolherPasta(); };
+        addAndMakeVisible(btnEscolher_);
+        btnGerar_.setButtonText(matriz::i18n::t("export.pacote_btn"));
+        btnGerar_.setEnabled(false);
+        btnGerar_.onClick = [this] { confirmar(); };
+        addAndMakeVisible(btnGerar_);
+        btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
+        btnCancelar_.onClick = [this] { fechar(); };
+        addAndMakeVisible(btnCancelar_);
+        setSize(560, 380);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        lblIntro_.setBounds(r.removeFromTop(64));
+        r.removeFromTop(6);
+        lblNome_.setBounds(r.removeFromTop(20));
+        editNome_.setBounds(r.removeFromTop(28));
+        r.removeFromTop(10);
+        lblMapa_.setBounds(r.removeFromTop(20));
+        comboMapa_.setBounds(r.removeFromTop(28));
+        r.removeFromTop(10);
+        lblPasta_.setBounds(r.removeFromTop(20));
+        auto linha = r.removeFromTop(28);
+        btnEscolher_.setBounds(linha.removeFromRight(110));
+        lblCaminho_.setBounds(linha.withTrimmedRight(8));
+        auto botoes = r.removeFromBottom(32);
+        btnGerar_.setBounds(botoes.removeFromRight(150));
+        botoes.removeFromRight(8);
+        btnCancelar_.setBounds(botoes.removeFromRight(110));
+    }
+
+private:
+    void atualizarBotao() {
+        btnGerar_.setEnabled(destino_ != juce::File() && editNome_.getText().trim().isNotEmpty() && !mapas_.empty());
+    }
+
+    void escolherPasta() {
+        chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("export.pasta"), juce::File(), "");
+        juce::Component::SafePointer<ConteudoPacote> safeThis(this);
+        chooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                              [safeThis](const juce::FileChooser& fc) {
+                                  if (safeThis == nullptr || fc.getResult() == juce::File()) return;
+                                  safeThis->destino_ = fc.getResult();
+                                  safeThis->lblCaminho_.setText(safeThis->destino_.getFullPathName(), juce::dontSendNotification);
+                                  safeThis->atualizarBotao();
+                              });
+    }
+
+    void confirmar() {
+        const int idx = comboMapa_.getSelectedId() - 1;
+        if (idx < 0 || idx >= static_cast<int>(mapas_.size())) return;
+        auto cb = aoGerar_;
+        auto destino = destino_;
+        auto nome = editNome_.getText().trim();
+        auto mapa = mapas_[static_cast<size_t>(idx)];
+        fechar();
+        if (cb) cb(destino, nome, mapa.first, mapa.second);
+    }
+
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    }
+
+    AoGerar aoGerar_;
+    juce::File destino_;
+    std::unique_ptr<juce::FileChooser> chooser_;
+    juce::Label lblIntro_, lblNome_, lblMapa_, lblPasta_, lblCaminho_;
+    juce::TextEditor editNome_;
+    juce::ComboBox comboMapa_;
+    juce::TextButton btnEscolher_, btnGerar_, btnCancelar_;
+    std::vector<std::pair<std::string, juce::String>> mapas_;
 };
 
 class GoogleDriveIconButton : public juce::Button {
@@ -1862,14 +1967,17 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
-        for (int id = kExpSelecionados; id <= kExpPlanilha; ++id) comboExportOrigem_->addItem("-", id);
-        // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá).
+        for (int id = kExpSelecionados; id <= kExpPacote; ++id) comboExportOrigem_->addItem("-", id);
+        // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá);
+        // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
+        comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
         if (arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
-            if (lembrado >= kExpSelecionados && lembrado <= kExpPlanilha && !(catalogo && lembrado == kExpSelecionados))
+            if (lembrado >= kExpSelecionados && lembrado <= kExpPacote &&
+                !(catalogo && (lembrado == kExpSelecionados || lembrado == kExpPacote)))
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -2262,6 +2370,7 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     opcao(kExpPrint, "export.op_print", nPrint);
     opcao(kExpWatermark, "export.op_watermark", nWm);
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
+    opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
 
     const int id = comboExportOrigem_->getSelectedId();
     bool habilitado = false;
@@ -2272,10 +2381,11 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
         case kExpWatermark: habilitado = nWm > 0; break;
         case kExpPlanilha: habilitado = catalogo ? !plano_.itens.empty() || projeto_.listarColecoesLinkadas().size() > 0
                                                  : mainSelado_; break;
+        case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
-    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha)
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote)
                                         ? matriz::i18n::t("backup.saida_sem_main")
                                         : matriz::i18n::t("export.unificado_dica"));
 
@@ -2295,6 +2405,7 @@ void BackupWorkspaceComponent::executarExportUnificado() {
         case kExpPrint: alvo = btnSendToPrint_.get(); break;
         case kExpWatermark: alvo = btnExportWatermark_.get(); break;
         case kExpPlanilha: alvo = btnExportJanela_.get(); break;
+        case kExpPacote: abrirPacote(); return;
         default: break;
     }
     // Exatamente a ação e o diálogo do botão antigo correspondente.
@@ -3598,6 +3709,90 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
             if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
             juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},
                                                    nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
+}
+
+void BackupWorkspaceComponent::abrirPacote() {
+    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
+    if (exportando_) return;
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps())
+        if (!m.original) mapas.emplace_back(m.id, m.nome);
+    if (mapas.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_titulo"),
+                                               matriz::i18n::t("export.pacote_sem_mapa"), {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+    const juce::String nomePadrao = juce::String::fromUTF8(projeto_.projeto().nome().c_str()) + " - " +
+                                    juce::Time::getCurrentTime().formatted("%Y-%m-%d");
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto* conteudo = new ConteudoPacote(nomePadrao, std::move(mapas),
+                                        [safeThis](juce::File destino, juce::String nome, std::string mapaId, juce::String nomeMapa) {
+                                            if (safeThis != nullptr) safeThis->iniciarPacote(destino, nome, mapaId, nomeMapa);
+                                        });
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(conteudo);
+    opts.dialogTitle = matriz::i18n::t("export.pacote_titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    opts.launchAsync();
+}
+
+void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const juce::String& nome, const std::string& mapaId,
+                                             const juce::String& nomeMapa) {
+    if (exportando_ || !destino.isDirectory() || mapaId.empty()) return;
+    exportando_ = true;
+    resized();
+    cancelarExport_->store(false);
+    auto cancelado = cancelarExport_;
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.pacote_titulo"), 0,
+                                                    [cancelado] { cancelado->store(true); });
+    const std::set<std::string> itens = obterItensSelecionadosPeloCriterio();
+    const juce::String nomeColecao = juce::String::fromUTF8(projeto_.projeto().nome().c_str());
+    auto* projeto = &projeto_.projeto();
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    // Tudo que toca banco/disco roda fora da message thread; o projeto só é lido.
+    poolExport_.addJob([safeThis, projeto, destino, nome, mapaId, nomeMapa, nomeColecao, itens, cancelado] {
+        matriz::consolidacao::pacote::ResultadoPacote r;
+        try {
+            r = matriz::consolidacao::pacote::gerarPacote(
+                projeto->registro(), projeto->pasta(), destino, nome, mapaId, nomeMapa, nomeColecao, itens,
+                [cancelado](int feito, int total) {
+                    juce::MessageManager::callAsync([feito, total] {
+                        ProgressoGlobal::obterInstancia().atualizarFracao(
+                            "export", static_cast<double>(feito) / std::max(1, total),
+                            juce::String(feito) + " / " + juce::String(total));
+                    });
+                    return !cancelado->load();
+                });
+        } catch (const std::exception& e) {
+            r.falhas.push_back(e.what());
+        }
+        juce::MessageManager::callAsync([safeThis, r] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("export");
+            if (safeThis == nullptr) return;
+            safeThis->exportando_ = false;
+            safeThis->resized();
+            juce::String msg = r.cancelado ? matriz::i18n::t("export.cancelado")
+                             : r.copiados == 0 ? matriz::i18n::t("export.pacote_vazio")
+                                               : matriz::i18n::t("export.pacote_fim")
+                                                     .replace("{n}", juce::String(r.copiados))
+                                                     .replace("{pasta}", r.pasta.getFullPathName());
+            if (r.semPasta > 0)
+                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(r.semPasta));
+            if (r.foraDoMain > 0)
+                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
+            if (!r.falhas.empty()) {
+                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
+                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
+            }
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_titulo"), msg,
+                                                   {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
         });
     });
 }

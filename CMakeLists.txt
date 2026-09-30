@@ -177,6 +177,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
     Source/Ficha/CatalogoDeFichas.cpp
@@ -390,6 +391,7 @@ target_sources(matriz PRIVATE
     Source/Consolidacao/MainEdit.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Catalogo/CatalogSiteExport.cpp
     Source/Ficha/FichaDefinition.cpp

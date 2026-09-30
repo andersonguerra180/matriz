@@ -138,6 +138,11 @@ private:
     std::unique_ptr<juce::TextButton> btnAtualizarSidecars_;
     void atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar = {});
     void abrirExport();
+    // Pacote de collection (EXPORT -> INTAKE de outra collection): seleção +
+    // folder map + matriz-pacote.json, sempre do MAIN, em background.
+    void abrirPacote();
+    void iniciarPacote(const juce::File& destino, const juce::String& nome, const std::string& mapaId,
+                       const juce::String& nomeMapa);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
                        bool marcaDagua, const std::string& mapaId = {});
@@ -293,7 +298,7 @@ private:
     // EXPORT unificado (Fase 6): um botão + dropdown de origem no lugar dos 4 botões de saída.
     // Os botões antigos continuam existindo (escondidos): cada opção dispara o onClick do antigo,
     // então a ação e o diálogo são exatamente os de antes.
-    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha };
+    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote };
     std::unique_ptr<juce::ComboBox> comboExportOrigem_;
     std::unique_ptr<juce::TextButton> btnExportUnificado_;
     int contagemSelecionados_ = 0;
