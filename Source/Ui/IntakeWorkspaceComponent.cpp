@@ -4,6 +4,7 @@
 // ==============================================================================
 
 #include "IntakeWorkspaceComponent.h"
+#include "GeoFavoritosGerenciar.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
 #include "../Ficha/AutocompleteHistorico.h"
@@ -768,8 +769,10 @@ private:
                 label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
             menu.addItem(i + 1, label);
         }
+        geofav::adicionarGerenciamento(menu, favs);
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFavoritos_.get()),
             [this, favs](int result) {
+                if (geofav::tratarResultado(result, favs, registro_)) return;
                 if (result < 1 || result > static_cast<int>(favs.size())) return;
                 const auto& fav = favs[static_cast<size_t>(result - 1)];
                 if (edCoords_ && fav.latitude && fav.longitude) {

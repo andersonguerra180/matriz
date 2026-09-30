@@ -1734,6 +1734,21 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"intake.duplicate_action_replace", "REPLACE"},
         {"intake.duplicate_action_new", "CREATE NEW INSTANCE"},
         {"intake.duplicate_match_info", "Matches existing item: {codigo} · {titulo}"},
+        {"geofav.menu_editar", "Edit favorite"},
+        {"geofav.menu_apagar", "Delete favorite"},
+        {"geofav.editar_titulo", "Edit Favorite Place"},
+        {"geofav.editar_msg", "Change the saved place. Empty fields stay empty."},
+        {"geofav.campo_nome", "Name"},
+        {"geofav.campo_coords", "Coordinates (lat, lon)"},
+        {"geofav.campo_endereco", "Address"},
+        {"geofav.campo_cidade", "City"},
+        {"geofav.campo_estado", "State"},
+        {"geofav.campo_pais", "Country"},
+        {"geofav.salvar", "Save"},
+        {"geofav.nome_vazio", "The name cannot be empty. Nothing was changed."},
+        {"geofav.apagar_titulo", "Delete Favorite"},
+        {"geofav.apagar_msg", "Delete \"{nome}\" from the favorites list?\n\nItems already using this place are not changed."},
+        {"geofav.apagar_btn", "Delete"},
     };
     return strings;
 }

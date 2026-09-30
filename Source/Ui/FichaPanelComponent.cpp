@@ -1,6 +1,7 @@
 #include "FichaPanelComponent.h"
 
 #include "AutoCompleteTextEditor.h"
+#include "GeoFavoritosGerenciar.h"
 #include "MetadadosOriginaisComponent.h"
 #include "OriginalSourceMedium.h"
 #include "TagChipsEditor.h"
@@ -1689,9 +1690,11 @@ public:
                     label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
                 menu.addItem(i + 1, label);
             }
+            geofav::adicionarGerenciamento(menu, favs);
 
             menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(geolocalizacao_.btnCarregarFavorito.get()),
                 [this, favs, commitGeo](int result) {
+                    if (geofav::tratarResultado(result, favs, projeto_.projeto().registro())) return;
                     if (result < 1 || result > static_cast<int>(favs.size())) return;
                     const auto& fav = favs[static_cast<size_t>(result - 1)];
 
@@ -4862,8 +4865,10 @@ private:
                         label += juce::String::fromUTF8(" \xe2\x80\x93 ") + juce::String(*favs[static_cast<size_t>(i)].city);
                     menu.addItem(i + 1, label);
                 }
+                geofav::adicionarGerenciamento(menu, favs);
                 menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(geoLote_.botaoFavoritos.get()),
                     [this, favs](int result) {
+                        if (geofav::tratarResultado(result, favs, projeto_.projeto().registro())) return;
                         if (result < 1 || result > static_cast<int>(favs.size())) return;
                         const auto& fav = favs[static_cast<size_t>(result - 1)];
                         if (geoLote_.editorCoords && fav.latitude && fav.longitude) {

@@ -1744,6 +1744,21 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"intake.duplicate_action_replace", "SUBSTITUIR"},
         {"intake.duplicate_action_new", "CRIAR NOVA INSTÂNCIA"},
         {"intake.duplicate_match_info", "Coincide com item existente: {codigo} · {titulo}"},
+        {"geofav.menu_editar", "Editar favorito"},
+        {"geofav.menu_apagar", "Apagar favorito"},
+        {"geofav.editar_titulo", "Editar Lugar Favorito"},
+        {"geofav.editar_msg", "Altere o lugar salvo. Campos vazios ficam vazios."},
+        {"geofav.campo_nome", "Nome"},
+        {"geofav.campo_coords", "Coordenadas (lat, lon)"},
+        {"geofav.campo_endereco", "Endereço"},
+        {"geofav.campo_cidade", "Cidade"},
+        {"geofav.campo_estado", "Estado"},
+        {"geofav.campo_pais", "País"},
+        {"geofav.salvar", "Salvar"},
+        {"geofav.nome_vazio", "O nome não pode ficar vazio. Nada foi alterado."},
+        {"geofav.apagar_titulo", "Apagar Favorito"},
+        {"geofav.apagar_msg", "Apagar \"{nome}\" da lista de favoritos?\n\nOs itens que já usam este lugar não mudam."},
+        {"geofav.apagar_btn", "Apagar"},
     };
     return strings;
 }
