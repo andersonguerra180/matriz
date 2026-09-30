@@ -3677,6 +3677,29 @@ int rodarLoteSelfTest() {
         iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
         checar(iw->marcadosR_.empty(), "INTAKE: R again unmarks it");
 
+        // O R vale onde a seta está, mesmo com OUTROS cards marcados (tique) e o card em foco sem tique.
+        {
+            iw->selecionarTodos(false);
+            const int p0 = iw->posicaoDoFoco();
+            iw->todosItens_[(size_t) iw->indicesFiltrados_[(size_t) p0]].selecionado = true;  // tique só neste
+            iw->atualizarContagens();
+            teclaI(juce::KeyPress::rightKey);  // o foco anda para um card SEM tique
+            const std::string idFoco = iw->focoId_;
+            iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            checar(iw->marcadosR_.size() == 1 && iw->marcadosR_.count(idFoco) == 1,
+                   "INTAKE: R marks the card where the arrow is, not the ticked one");
+            iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            // Foco dentro da seleção (Shift+seta): o R vale para a seleção inteira.
+            iw->selecionarTodos(false);
+            teclaI(juce::KeyPress::rightKey, true);
+            teclaI(juce::KeyPress::rightKey, true);
+            const size_t nSel = iw->itensSelecionados().size();
+            iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            checar(nSel >= 2 && iw->marcadosR_.size() == nSel, "INTAKE: with the focus inside a Shift+arrow selection, R marks the whole selection");
+            iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            iw->selecionarTodos(false);
+        }
+
         const auto ti0 = juce::Time::getMillisecondCounterHiRes();
         for (int i = 0; i < 2000; ++i) teclaI(juce::KeyPress::downKey);
         const double msI = juce::Time::getMillisecondCounterHiRes() - ti0;

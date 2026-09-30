@@ -2691,14 +2691,19 @@ void IntakeWorkspaceComponent::atualizarBotaoRejeitar() {
 }
 
 void IntakeWorkspaceComponent::alternarMarcaRDosSelecionados() {
-    // Seleção atual e visível (mesma regra dos outros botões de lote).
+    // O R vale ONDE A SETA ESTÁ: o item em foco, marcado ou não (não precisa estar com o tique). Só quando o
+    // foco está dentro de uma seleção (ex.: Shift+seta) o R vale para a seleção inteira; sem navegação pelo
+    // teclado, vale a seleção de sempre (tiques/laço).
     auto selecionados = itensSelecionados();
-    if (selecionados.empty()) {  // sem seleção, o R vale para o item em foco (seta + R = triagem só no teclado)
-        const int pos = posicaoDoFoco();
-        if (pos < 0) return;
-        selecionados.insert(todosItens_[static_cast<size_t>(indicesFiltrados_[static_cast<size_t>(pos)])].id);
-    }
-    projeto_.alternarMarcaR(std::vector<std::string>(selecionados.begin(), selecionados.end()));
+    std::string idFoco;
+    if (const int pos = posicaoDoFoco(); pos >= 0)
+        idFoco = todosItens_[static_cast<size_t>(indicesFiltrados_[static_cast<size_t>(pos)])].id;
+    std::set<std::string> alvo;
+    if (focoVisivel_ && !idFoco.empty() && selecionados.count(idFoco) == 0) alvo.insert(idFoco);
+    else if (!selecionados.empty()) alvo = selecionados;
+    else if (!idFoco.empty()) alvo.insert(idFoco);
+    if (alvo.empty()) return;
+    projeto_.alternarMarcaR(std::vector<std::string>(alvo.begin(), alvo.end()));
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();
     if (tabela_) tabela_->repaint();
@@ -3167,6 +3172,7 @@ void IntakeWorkspaceComponent::sortOrderChanged(int newSortColumnId, bool isForw
 }
 
 void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) {
+    focoVisivel_ = false;  // clique na lista: o R volta a valer para a seleção
     if (rowNumber < 0 || rowNumber >= static_cast<int>(indicesFiltrados_.size())) return;
     int realIndex = indicesFiltrados_[static_cast<size_t>(rowNumber)];
     if (realIndex < 0 || realIndex >= static_cast<int>(todosItens_.size())) return;
