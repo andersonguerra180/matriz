@@ -335,6 +335,7 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoAbrirRecente = [this](juce::File pasta) { abrirPasta(pasta); };
     conteudo_->aoPedirIngerirArquivos = [this] { pedirIngerirArquivos(); };
     conteudo_->aoSalvarComo = [this] { pedirSalvarProjetoComo(); };
+    conteudo_->aoMudouUndo = [this] { menuItemsChanged(); };
     conteudo_->aoPedirBackup = [this] { pedirConsolidar(); };
     conteudo_->aoMudarEstadoProjeto = [this] {
         menuItemsChanged();

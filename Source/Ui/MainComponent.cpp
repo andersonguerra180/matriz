@@ -1546,6 +1546,13 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
         projetoAberto_->aoTerminarEdicaoPastaMain = [safeThis] {
             if (safeThis && safeThis->treeWorkspace_) safeThis->treeWorkspace_->recarregar();
         };
+        // A pilha de Undo mudou -> a barra de menus reavalia o item Edit > Undo (antes ficava cinza até
+        // o menu ser reconstruído por outro motivo). callAsync: registrarUndo pode vir de background.
+        projetoAberto_->aoMudarUndo = [safeThis] {
+            juce::MessageManager::callAsync([safeThis] {
+                if (safeThis && safeThis->aoMudouUndo) safeThis->aoMudouUndo();
+            });
+        };
         projetoAberto_->recuperarOperacoesDoMain();
     }
 

@@ -538,6 +538,7 @@ public:
     // ingerirArquivos() por quem instancia a janela.
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void()> aoSalvarComo;
+    std::function<void()> aoMudouUndo;  // a pilha de Undo mudou: a barra de menus precisa reavaliar o "Undo"
 
     // "Fazer backup" da barra de ferramentas — mesma ação do menu
     // Projeto > Fazer backup organizado, agora também visível na tela.

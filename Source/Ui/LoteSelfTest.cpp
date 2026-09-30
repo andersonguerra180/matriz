@@ -1495,8 +1495,12 @@ int rodarLoteSelfTest() {
                 iw->selecionarTodos(false);
                 for (int i = 5; i < 7; ++i) iw->todosItens_[(size_t) i].selecionado = true;  // seleção DIFERENTE das marcas
                 iw->atualizarFiltragem();
+                int mudouUndo = 0;
+                janela.aoMudouUndo = [&] { ++mudouUndo; };
                 iw->rejeitarMarcados();
                 bombear(300);
+                checar(mudouUndo >= 1, "the menu bar is told when the Undo stack changes (Edit > Undo stops being greyed out)");
+                janela.aoMudouUndo = nullptr;
                 int restam = contar(true, "estado", "novo");
                 auto ainda = [&](const std::string& id) {
                     auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
