@@ -565,3 +565,36 @@ entender a causa:
 
 Pendência conhecida: sidecar `.xmp` de arquivo deletado/substituído no MAIN não
 vai junto pra quarentena (só o rename leva o sidecar).
+
+## Pacote de collection — Fases 1 a 4 (branch `feat/pacote-collection`, 2026-09-30)
+
+Uma fase por commit (`87a492d`, `989791b`, `7f483ba`, `cee513f`). Decisões:
+
+- **Nomes case-insensitive** (`Source/Model/NomesCanonicos.*`): chave = trim +
+  minúsculas Unicode via **CoreFoundation** (`juce::String::toLowerCase` usa
+  towlower, que depende do locale — no app "É" não virava "é") + NFC. Grafia
+  canônica = primeira gravada (lista PEOPLE antes das tags). Unifica NA
+  GRAVAÇÃO (toda escrita de tag/pessoa/dc_subject passa por lá) — leitura
+  continua simples. PEOPLE = tags (`item_tag`); `entidade`/`item_entidade` e
+  `assunto`/`item_assunto` não são usados pela UI. Migração: pergunta a cada
+  abertura até aceitar; backup `registro.antes-unificacao-<data>.sqlite`.
+  TagChipsEditor agora grava como digitado (antes gravava minúsculas).
+- **Pacote** (`Source/Consolidacao/PacoteCollection.*`, mapa dos campos no
+  topo): cópia byte a byte do MAIN (sem embed/marca — decisão do usuário),
+  verificada por tamanho E SHA-256. INTAKE de pacote pula o diálogo
+  SKIP/REPLACE/NEW (decisão do usuário). `processarLoteEmBackground(...,
+  aoConcluir)` + `EstadoLote::aoConcluir` (um por chamada, filtrado pelos
+  itens dela). Itens de pacote ganham `item_campo 'pacote_origem'`.
+  Marcadores = `item_observacao` (a UI não tem trecho).
+- **Merge de duplicatas** (`Source/Model/MergeFichas.*`): conflito vai pro
+  `item_historico` com `modelo_origem='merge'`, `confianca_origem` NULL =
+  pendente (filtro "Merge conflicts"), 1 = revisado; notas só ganham uma linha
+  curta (decisão do usuário). Resolução roda no `ProjetoAberto::poolMerge_`
+  (declarado depois de `projeto_`), uma transação, Undo por retrato das
+  fichas. O Undo restaura na message thread (síncrono).
+- Verificado: `--selftest-lote` verde em Debug, ASan (sem erros) e TSan (0
+  races); `--selftest-ingerir-arquivos` e `matriz_ingest_selftest` só com as
+  falhas de baseline.
+- Pendências: `--selftest-uitest` não rodado nesta branch; a tela de
+  conflitos no par manual da aba Duplicates só tem teste do componente, não
+  do clique no card.
