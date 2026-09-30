@@ -148,6 +148,11 @@ public:
     // quanto por arrastar arquivos do Finder na janela inteira.
     void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas);
     void iniciarRescanBackupSources();
+    // MAIN EDIT MODE (menu Tools): entrar (barreira do nome do projeto) / sair e abrir o MAIN EDITOR.
+    bool podeEditarMain() const;
+    bool editandoMain() const;
+    void alternarModoEdicaoMain();
+    void abrirEditorDoMain();
     void importarCatalogoLightroom();
 
     // Abre o navegador estilo Finder embutido (item 3) — segunda porta de

@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "MainEditPanel.h"
 #include "BackupVersionsComponent.h"
 
 #include "../App/Cancelamento.h"
@@ -4542,6 +4543,32 @@ void MainComponent::paintOverChildren(juce::Graphics& g) {
         g.setColour(juce::Colour(0xffdc2626));
         g.drawRect(getLocalBounds(), 4);
     }
+}
+
+bool MainComponent::podeEditarMain() const { return projetoAberto_ && projetoAberto_->podeEditarMain(); }
+bool MainComponent::editandoMain() const { return projetoAberto_ && projetoAberto_->editandoMain(); }
+
+void MainComponent::abrirEditorDoMain() {
+    if (!projetoAberto_ || !projetoAberto_->editandoMain()) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    MainEditPanel::abrir(*projetoAberto_, [safeThis] {
+        if (safeThis && safeThis->backupWorkspace_) safeThis->backupWorkspace_->recarregar();
+    });
+}
+
+void MainComponent::alternarModoEdicaoMain() {
+    if (!projetoAberto_ || !projetoAberto_->podeEditarMain()) return;
+    if (projetoAberto_->editandoMain()) {
+        projetoAberto_->sairModoEdicaoMain("user left");
+        return;
+    }
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    MainEditPanel::pedirNomeDoProjeto(*projetoAberto_, i18n::t("main_edit.titulo"), i18n::t("main_edit.barreira_msg"),
+                                      i18n::t("main_edit.barreira_confirmar"), [safeThis](const juce::String& digitado) {
+                                          if (!safeThis || !safeThis->projetoAberto_) return;
+                                          if (!safeThis->projetoAberto_->entrarModoEdicaoMain(digitado)) return;
+                                          safeThis->abrirEditorDoMain();
+                                      });
 }
 
 void MainComponent::atualizarFaixaAviso() {

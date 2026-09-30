@@ -292,11 +292,6 @@ private:
     // === BUTTONS ===
     std::unique_ptr<juce::TextButton> btnStartBackup_;
     std::unique_ptr<juce::TextButton> btnSyncDestino_;
-    // MAIN EDIT MODE (Fase 4): entrar/sair (barreira do nome do projeto) e abrir o MAIN EDITOR.
-    std::unique_ptr<juce::TextButton> btnMainEdit_;
-    std::unique_ptr<juce::TextButton> btnMainEditor_;
-    void atualizarBotoesMainEdit();
-    void alternarModoEdicaoMain();
     std::unique_ptr<juce::TextButton> btnPublishHtml_;
     std::unique_ptr<juce::TextButton> btnExportZip_;
     std::unique_ptr<juce::TextButton> btnLimparZip_;

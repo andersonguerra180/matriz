@@ -42,6 +42,8 @@ enum ComandoMenu {
     kCmdBatchRename,
     kCmdProjectLog,
     kCmdRescanBackupSources,
+    kCmdMainEditModo,
+    kCmdMainEditor,
     kCmdLangPt,
     kCmdLangEn,
     kCmdThemeDark,
@@ -221,6 +223,13 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
+        // MAIN EDIT MODE mora aqui (e não como botão no BACKUP) pra não ser acionado sem querer.
+        menu.addSeparator();
+        const bool podeEditarMain = temColecao && conteudo_->podeEditarMain();
+        const bool editandoMain = podeEditarMain && conteudo_->editandoMain();
+        menu.addItem(kCmdMainEditModo, matriz::i18n::t(editandoMain ? "main_edit.botao_sair" : "main_edit.botao_entrar"),
+                     podeEditarMain, editandoMain);
+        menu.addItem(kCmdMainEditor, matriz::i18n::t("main_edit.botao_editor"), editandoMain);
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         // Language Submenu
         juce::PopupMenu langMenu;
@@ -266,6 +275,8 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdRescanBackupSources:
             if (conteudo_) conteudo_->iniciarRescanBackupSources();
             break;
+        case kCmdMainEditModo: if (conteudo_) conteudo_->alternarModoEdicaoMain(); break;
+        case kCmdMainEditor: if (conteudo_) conteudo_->abrirEditorDoMain(); break;
         case kCmdBatchWatermark: mostrarBatchWatermarkDialogo(); break;
         case kCmdBatchRename:
             if (conteudo_) conteudo_->renomearEmLoteSelecionados();
