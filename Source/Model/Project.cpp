@@ -741,6 +741,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // hex (ex.: "ffcc3333") — NULL/vazio = sem cor customizada, mantém a
     // aparência padrão do bloco.
     garantirColuna(registro, "acervo_pasta", "cor_customizada", "TEXT");
+    // Auto-organização por pasta (Folder Map): CSV de níveis (hierarquiaParaCsv)
+    // na pasta com regra; "@auto" na subpasta criada pela regra; NULL/vazio = pasta comum.
+    garantirColuna(registro, "acervo_pasta", "regra_organizacao", "TEXT");
     // Folder Maps múltiplos (Fase 1): qual folder_map cada pasta pertence.
     // NULL até a migração abaixo rodar (bancos antigos têm um único mapa
     // implícito hoje). acervo_item_pasta.mapa_id é redundante com o da

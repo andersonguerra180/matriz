@@ -41,6 +41,7 @@ struct NoBuilder {
     int posicaoY = 0;
     bool ativo = true;
     juce::String corCustomizadaHex;
+    juce::String regraOrganizacao;
     std::vector<std::unique_ptr<NoBuilder>> filhos;
     std::map<juce::String, NoBuilder*> indiceFilhosPorNome; // dono é `filhos`; só busca
     std::set<std::string> itemIdsDiretos;
@@ -79,6 +80,7 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     n.posicaoY = b.posicaoY;
     n.ativo = b.ativo;
     n.corCustomizadaHex = b.corCustomizadaHex;
+    n.regraOrganizacao = b.regraOrganizacao;
     n.itemIds = b.itemIdsDiretos;
     n.itemIdsDiretos = b.itemIdsDiretos;
 
@@ -2393,7 +2395,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = projeto_->registro().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada FROM acervo_pasta "
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao FROM acervo_pasta "
         "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -2411,6 +2413,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
         no->posicaoY = stmt.columnInt(4);
         no->ativo = (stmt.columnInt(5) != 0);
         if (!stmt.columnIsNull(6)) no->corCustomizadaHex = juce::String(stmt.columnText(6));
+        if (!stmt.columnIsNull(7)) no->regraOrganizacao = juce::String(stmt.columnText(7));
         ptrPorId[r.id] = no.get();
         porId[r.id] = std::move(no);
     }
@@ -2554,6 +2557,456 @@ bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
     } catch (...) {
         return false;
     }
+}
+
+// ── Auto-organização por pasta (Folder Map) ─────────────────────────────
+
+namespace {
+
+// Ano de um texto de data: primeira sequência de 4 dígitos entre 1800 e 2099.
+juce::String anoDeTextoDeData(const juce::String& texto) {
+    for (int i = 0; i + 3 < texto.length(); ++i) {
+        if (juce::CharacterFunctions::isDigit(texto[i]) && juce::CharacterFunctions::isDigit(texto[i + 1]) &&
+            juce::CharacterFunctions::isDigit(texto[i + 2]) && juce::CharacterFunctions::isDigit(texto[i + 3])) {
+            const int ano = texto.substring(i, i + 4).getIntValue();
+            if (ano >= 1800 && ano <= 2099) return juce::String(ano);
+        }
+    }
+    return {};
+}
+
+// Mesma limpeza de nome de pasta do backup (Consolidacao.cpp: segmentoSeguro).
+juce::String segmentoDePastaAuto(const juce::String& bruto, const juce::String& vazio) {
+    juce::String s = bruto.trim();
+    for (auto c : juce::String("/\\:*?\"<>|")) s = s.replaceCharacter(c, '-');
+    s = s.trimCharactersAtEnd(". ");
+    return s.isEmpty() ? vazio : s;
+}
+
+bool nivelPermitidoNaAutoOrganizacao(matriz::consolidacao::NivelHierarquia n) {
+    using N = matriz::consolidacao::NivelHierarquia;
+    return n == N::Ano || n == N::TipoMidia || n == N::TipoArquivo || n == N::Origem || n == N::Artista ||
+           n == N::ContentType || n == N::Subject;
+}
+
+// Só as chaves de fato usadas por desfazer/refazer de uma organização.
+struct LinhaPasta {
+    std::string id, projetoId, paiId, nome, mapaId, cor, regra, criadoEm, atualizadoEm;
+    bool paiNulo = true, corNula = true, regraNula = true;
+    long long ordem = 0, x = 0, y = 0, ativo = 1;
+};
+
+} // namespace
+
+std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrganizacao(
+    const std::set<std::string>& itemIds, const matriz::consolidacao::HierarquiaBackup& niveis) const {
+    using N = matriz::consolidacao::NivelHierarquia;
+    std::map<std::string, std::vector<juce::String>> out;
+    if (!projeto_ || itemIds.empty() || niveis.empty()) return out;
+
+    const std::vector<std::string> ids(itemIds.begin(), itemIds.end());
+    constexpr size_t kLote = 500;
+    for (size_t inicio = 0; inicio < ids.size(); inicio += kLote) {
+        const size_t fim = std::min(ids.size(), inicio + kLote);
+        std::string marcas;
+        for (size_t i = inicio; i < fim; ++i) marcas += (i > inicio ? ",?" : "?");
+        auto stmt = projeto_->registro().prepare(
+            "SELECT i.id, i.tipo_midia, i.dc_creator, i.collection_type, i.dc_subject, i.source_media, "
+            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ano'), "
+            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
+            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
+            "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END, "
+            "a.caminho_relativo "
+            "FROM item i "
+            "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
+            "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
+            "WHERE i.id IN (" + marcas + ")");
+        for (size_t i = inicio; i < fim; ++i) stmt.bind(static_cast<int>(i - inicio) + 1, matriz::db::Value::of(ids[i]));
+
+        auto texto = [&](int col) { return stmt.columnIsNull(col) ? juce::String() : juce::String::fromUTF8(stmt.columnText(col).c_str()); };
+        while (stmt.step()) {
+            std::vector<juce::String> segs;
+            segs.reserve(niveis.size());
+            for (auto nivel : niveis) {
+                switch (nivel) {
+                    case N::Ano: {
+                        // EVENT DATE; senão dc_created/data_criacao; senão o EXIF. A data do
+                        // arquivo no disco NÃO conta (mesma regra do Unknown do METADATA).
+                        juce::String ano = anoDeTextoDeData(texto(6));
+                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(7));
+                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(8));
+                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(9));
+                        segs.push_back(segmentoDePastaAuto(ano, "No year"));
+                        break;
+                    }
+                    case N::TipoMidia: segs.push_back(segmentoDePastaAuto(texto(1), "Unclassified")); break;
+                    case N::TipoArquivo: {
+                        const auto caminho = texto(10);
+                        const int ponto = caminho.lastIndexOfChar('.');
+                        const int barra = juce::jmax(caminho.lastIndexOfChar('/'), caminho.lastIndexOfChar('\\'));
+                        const juce::String ext = ponto > barra ? caminho.substring(ponto + 1).toUpperCase() : juce::String();
+                        segs.push_back(segmentoDePastaAuto(ext, "No extension"));
+                        break;
+                    }
+                    case N::Origem: {
+                        // source_media é um JSON com a chave "medium"; valor legado não-JSON vale direto.
+                        const auto bruto = texto(5);
+                        juce::String medium;
+                        if (bruto.isNotEmpty()) {
+                            juce::var parsed = juce::JSON::parse(bruto);
+                            if (auto* obj = parsed.getDynamicObject()) {
+                                if (obj->hasProperty("medium")) medium = obj->getProperty("medium").toString();
+                            } else {
+                                medium = bruto;
+                            }
+                        }
+                        segs.push_back(segmentoDePastaAuto(medium, "No source medium"));
+                        break;
+                    }
+                    case N::Artista: segs.push_back(segmentoDePastaAuto(texto(2), "No creator")); break;
+                    case N::ContentType: segs.push_back(segmentoDePastaAuto(texto(3), "No content")); break;
+                    case N::Subject: segs.push_back(segmentoDePastaAuto(texto(4), "No subject")); break;
+                    default: break;
+                }
+            }
+            out[stmt.columnText(0)] = std::move(segs);
+        }
+    }
+    return out;
+}
+
+ProjetoAberto::ResultadoAutoOrg ProjetoAberto::aplicarAutoOrganizacao(const std::string& pastaId, const std::string& regraCsv,
+                                                                      bool automatico) {
+    ResultadoAutoOrg res;
+    if (somenteLeitura_) { res.status = StatusAutoOrg::SomenteLeitura; return res; }
+    if (!projeto_ || pastaId.empty()) { res.status = StatusAutoOrg::PastaInvalida; return res; }
+    const std::string mapaId = mapaIdDaPasta(pastaId);
+    if (mapaId.empty()) { res.status = StatusAutoOrg::PastaInvalida; return res; }
+    if (mapaId == kMapaOriginal) { res.status = StatusAutoOrg::MapaOriginal; return res; }
+
+    matriz::consolidacao::HierarquiaBackup niveis;
+    for (auto n : matriz::consolidacao::hierarquiaDeCsv(regraCsv))
+        if (nivelPermitidoNaAutoOrganizacao(n)) niveis.push_back(n);
+    if (niveis.empty() || regraCsv.empty()) { res.status = StatusAutoOrg::SemNiveis; return res; }
+    const std::string csv = matriz::consolidacao::hierarquiaParaCsv(niveis);
+
+    auto& db = projeto_->registro();
+
+    // 1. A pasta e as subpastas AUTO dela (à mão ficam de fora), com os itens de cada uma.
+    std::vector<LinhaPasta> linhas;
+    {
+        auto st = db.prepare(
+            "SELECT id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, posicao_y, ativo, cor_customizada, "
+            "regra_organizacao, criado_em, atualizado_em FROM acervo_pasta WHERE projeto_id = ? AND mapa_id = ? "
+            "ORDER BY ordem, criado_em");
+        st.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        st.bind(2, matriz::db::Value::of(mapaId));
+        while (st.step()) {
+            LinhaPasta l;
+            l.id = st.columnText(0);
+            l.projetoId = st.columnText(1);
+            l.paiNulo = st.columnIsNull(2);
+            if (!l.paiNulo) l.paiId = st.columnText(2);
+            l.nome = st.columnText(3);
+            l.ordem = st.columnInt(4);
+            l.mapaId = st.columnText(5);
+            l.x = st.columnInt(6);
+            l.y = st.columnInt(7);
+            l.ativo = st.columnInt(8);
+            l.corNula = st.columnIsNull(9);
+            if (!l.corNula) l.cor = st.columnText(9);
+            l.regraNula = st.columnIsNull(10) || st.columnText(10).empty();
+            if (!l.regraNula) l.regra = st.columnText(10);
+            l.criadoEm = st.columnText(11);
+            l.atualizadoEm = st.columnText(12);
+            linhas.push_back(std::move(l));
+        }
+    }
+    std::map<std::string, size_t> indice;
+    for (size_t i = 0; i < linhas.size(); ++i) indice[linhas[i].id] = i;
+    auto alvoIt = indice.find(pastaId);
+    if (alvoIt == indice.end()) { res.status = StatusAutoOrg::PastaInvalida; return res; }
+    if (regraEhAuto(juce::String(linhas[alvoIt->second].regra))) { res.status = StatusAutoOrg::SubpastaAuto; return res; }
+    if (pastaTemArquivosNoMain(pastaId)) { res.status = StatusAutoOrg::TemArquivosNoMain; return res; }
+    const std::string regraAnterior = linhas[alvoIt->second].regra;
+    const bool regraAnteriorNula = linhas[alvoIt->second].regraNula;
+
+    std::map<std::string, std::vector<std::string>> filhosPorPai;
+    for (const auto& l : linhas)
+        if (!l.paiNulo) filhosPorPai[l.paiId].push_back(l.id);
+    // Subpastas AUTO alcançáveis a partir da pasta por pastas AUTO (uma pasta manual barra o caminho).
+    std::vector<std::string> autoDescendentes;
+    {
+        std::vector<std::string> pilha{pastaId};
+        while (!pilha.empty()) {
+            const auto atual = pilha.back();
+            pilha.pop_back();
+            for (const auto& f : filhosPorPai[atual]) {
+                if (regraEhAuto(juce::String(linhas[indice[f]].regra))) {
+                    autoDescendentes.push_back(f);
+                    pilha.push_back(f);
+                }
+            }
+        }
+    }
+    std::set<std::string> pastasDeOrigem(autoDescendentes.begin(), autoDescendentes.end());
+    pastasDeOrigem.insert(pastaId);
+
+    std::map<std::string, std::vector<std::string>> pastasAtuaisDoItem;  // item -> pastas DESTE mapa
+    std::set<std::string> itensAOrganizar;
+    {
+        auto st = db.prepare("SELECT item_id, pasta_id FROM acervo_item_pasta WHERE mapa_id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        std::vector<std::pair<std::string, std::string>> todas;
+        while (st.step()) todas.emplace_back(st.columnText(0), st.columnText(1));
+        for (const auto& [item, pasta] : todas)
+            if (pastasDeOrigem.count(pasta)) itensAOrganizar.insert(item);
+        for (const auto& [item, pasta] : todas)
+            if (itensAOrganizar.count(item)) pastasAtuaisDoItem[item].push_back(pasta);
+    }
+
+    // 2. Segmentos de cada item, numa consulta por lote.
+    const auto segmentos = segmentosDeOrganizacao(itensAOrganizar, niveis);
+
+    // 3. Caminhos distintos, em ordem alfabética, pra as pastas nascerem já ordenadas.
+    auto chave = [](const std::vector<juce::String>& segs) {
+        std::vector<std::string> k;
+        for (const auto& s : segs) k.push_back(s.toLowerCase().toStdString());
+        return k;
+    };
+    std::map<std::vector<std::string>, std::vector<juce::String>> caminhos;
+    for (const auto& [item, segs] : segmentos) caminhos.emplace(chave(segs), segs);
+
+    // Desfazer: uma organização = um grupo. A passada automática não registra nada (senão o
+    // Cmd+Z seria desfeito de novo no próximo recarregamento do mapa).
+    const bool registrarDesfazer = !automatico && !desfazendo_;
+    const bool eraDesfazendo = desfazendo_;
+    if (automatico) desfazendo_ = true;  // criarPastaAcervo/apagar não registram nada nesta passada
+    struct RestauraFlag {
+        bool& flag; bool valor;
+        ~RestauraFlag() { flag = valor; }
+    } restaura{desfazendo_, eraDesfazendo};
+    if (registrarDesfazer) iniciarGrupoUndo("Auto-organize folder");
+
+    std::unique_lock<std::recursive_mutex> trava(writeMutex());
+    bool emTransacao = false;
+    try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+    const std::string agora = matriz::model::agoraIso8601();
+    std::vector<std::string> criadas;
+    std::vector<LinhaPasta> apagadas;
+    std::vector<std::pair<std::string, std::string>> associacoesAntes;  // (item, pasta) dos itens movidos
+    std::map<std::string, std::string> destinoDoItem;
+    bool falhou = false;
+    try {
+        // Regra da pasta.
+        db.run("UPDATE acervo_pasta SET regra_organizacao = ?, atualizado_em = ? WHERE id = ?",
+               {matriz::db::Value::of(csv), matriz::db::Value::of(agora), matriz::db::Value::of(pastaId)});
+
+        // Subpastas: reaproveita as AUTO pelo nome, cria as que faltam.
+        std::map<std::string, std::map<std::string, std::string>> autoFilhoPorNome;  // pai -> nome minúsculo -> id
+        for (const auto& id : autoDescendentes) {
+            const auto& l = linhas[indice[id]];
+            autoFilhoPorNome[l.paiId][juce::String(l.nome).toLowerCase().toStdString()] = id;
+        }
+        std::map<std::vector<std::string>, std::string> pastaDoCaminho;
+        for (const auto& [k, segs] : caminhos) {
+            std::string atual = pastaId;
+            for (const auto& seg : segs) {
+                const auto nomeMin = seg.toLowerCase().toStdString();
+                auto& mapaFilhos = autoFilhoPorNome[atual];
+                auto it = mapaFilhos.find(nomeMin);
+                if (it == mapaFilhos.end()) {
+                    const std::string novo = criarPastaAcervo(seg.toStdString(), atual, mapaId);
+                    if (novo.empty()) throw std::runtime_error("criarPastaAcervo falhou");
+                    db.run("UPDATE acervo_pasta SET regra_organizacao = '@auto' WHERE id = ?", {matriz::db::Value::of(novo)});
+                    criadas.push_back(novo);
+                    it = mapaFilhos.emplace(nomeMin, novo).first;
+                }
+                atual = it->second;
+            }
+            pastaDoCaminho[k] = atual;
+        }
+
+        // Itens: cada um vai pra pasta do caminho dele (mesma transação, sem N transações).
+        for (const auto& [item, segs] : segmentos) {
+            const std::string& destino = pastaDoCaminho[chave(segs)];
+            const auto& atuais = pastasAtuaisDoItem[item];
+            if (atuais.size() == 1 && atuais.front() == destino) continue;
+            for (const auto& p : atuais) associacoesAntes.emplace_back(item, p);
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(item), matriz::db::Value::of(mapaId)});
+            db.run("INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item),
+                    matriz::db::Value::of(destino), matriz::db::Value::of(mapaId), matriz::db::Value::of(agora)});
+            destinoDoItem[item] = destino;
+            ++res.itensMovidos;
+        }
+
+        // Subpastas AUTO que ficaram vazias (sem itens e sem filhas), da mais funda pra mais rasa.
+        // Nunca apaga pasta manual, nem AUTO que abriga pasta manual.
+        std::set<std::string> comItens;
+        {
+            auto st = db.prepare("SELECT DISTINCT pasta_id FROM acervo_item_pasta WHERE mapa_id = ?");
+            st.bind(1, matriz::db::Value::of(mapaId));
+            while (st.step()) comItens.insert(st.columnText(0));
+        }
+        std::map<std::string, int> filhasRestantes;
+        for (const auto& l : linhas)
+            if (!l.paiNulo) ++filhasRestantes[l.paiId];
+        const std::set<std::string> criadasSet(criadas.begin(), criadas.end());
+        for (const auto& [pai, filhos] : autoFilhoPorNome)
+            for (const auto& [nome, id] : filhos)
+                if (criadasSet.count(id)) ++filhasRestantes[pai];
+        std::vector<std::string> candidatas = autoDescendentes;
+        // Da mais funda pra mais rasa: profundidade pelo número de ancestrais AUTO.
+        auto profundidade = [&](const std::string& id) {
+            int p = 0;
+            std::string cur = id;
+            while (cur != pastaId && indice.count(cur) && !linhas[indice[cur]].paiNulo) { cur = linhas[indice[cur]].paiId; ++p; }
+            return p;
+        };
+        std::sort(candidatas.begin(), candidatas.end(),
+                  [&](const std::string& a, const std::string& b) { return profundidade(a) > profundidade(b); });
+        for (const auto& id : candidatas) {
+            if (comItens.count(id) || filhasRestantes[id] > 0) continue;
+            LinhaPasta copia = linhas[indice[id]];
+            db.run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(id)});
+            apagadas.push_back(copia);
+            --filhasRestantes[copia.paiId];
+            ++res.pastasApagadas;
+        }
+        res.pastasCriadas = static_cast<int>(criadas.size());
+    } catch (...) {
+        falhou = true;
+    }
+    if (emTransacao) {
+        try { db.exec(falhou ? "ROLLBACK" : "COMMIT"); } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} falhou = true; }
+    }
+    if (falhou) {
+        if (registrarDesfazer) grupoAberto_.reset();
+        res = ResultadoAutoOrg{};
+        res.status = StatusAutoOrg::PastaInvalida;
+        return res;
+    }
+
+    // Reversões, na ordem em que foram registradas (o desfazer as executa de trás pra frente):
+    // regra -> pastas criadas -> itens movidos -> pastas apagadas.
+    // Reorganizar sem nada a mudar não deixa entrada de desfazer.
+    const bool mudouAlgo = !criadas.empty() || !destinoDoItem.empty() || !apagadas.empty() || regraAnteriorNula || regraAnterior != csv;
+    if (registrarDesfazer && !mudouAlgo) grupoAberto_.reset();
+    if (registrarDesfazer && mudouAlgo) {
+        registrarUndo("Auto-organize folder", [this, pastaId, regraAnterior, regraAnteriorNula]() {
+            projeto_->registro().run("UPDATE acervo_pasta SET regra_organizacao = ? WHERE id = ?",
+                                     {regraAnteriorNula ? matriz::db::Value::null() : matriz::db::Value::of(regraAnterior),
+                                      matriz::db::Value::of(pastaId)});
+        });
+        if (!criadas.empty())
+            registrarUndo("Auto-organize folder", [this, criadas]() {
+                for (auto it = criadas.rbegin(); it != criadas.rend(); ++it)
+                    projeto_->registro().run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(*it)});
+            });
+        if (!associacoesAntes.empty() || !destinoDoItem.empty()) {
+            std::set<std::string> movidos;
+            for (const auto& [item, d] : destinoDoItem) movidos.insert(item);
+            registrarUndo("Auto-organize folder", [this, mapaId, associacoesAntes, movidos]() {
+                auto& reg = projeto_->registro();
+                const std::string quando = matriz::model::agoraIso8601();
+                reg.run("BEGIN TRANSACTION", {});
+                try {
+                    for (const auto& item : movidos)
+                        reg.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                                {matriz::db::Value::of(item), matriz::db::Value::of(mapaId)});
+                    for (const auto& [item, pasta] : associacoesAntes)
+                        reg.run("INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+                                {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item),
+                                 matriz::db::Value::of(pasta), matriz::db::Value::of(mapaId), matriz::db::Value::of(quando)});
+                    reg.run("COMMIT", {});
+                } catch (...) {
+                    reg.run("ROLLBACK", {});
+                }
+            });
+        }
+        if (!apagadas.empty())
+            registrarUndo("Auto-organize folder", [this, apagadas]() {
+                // Pais antes dos filhos (foram apagadas da mais funda pra mais rasa).
+                for (auto it = apagadas.rbegin(); it != apagadas.rend(); ++it) {
+                    projeto_->registro().run(
+                        "INSERT OR IGNORE INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, posicao_y, "
+                        "ativo, cor_customizada, regra_organizacao, criado_em, atualizado_em) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        {matriz::db::Value::of(it->id), matriz::db::Value::of(it->projetoId),
+                         it->paiNulo ? matriz::db::Value::null() : matriz::db::Value::of(it->paiId),
+                         matriz::db::Value::of(it->nome), matriz::db::Value::of(it->ordem), matriz::db::Value::of(it->mapaId),
+                         matriz::db::Value::of(it->x), matriz::db::Value::of(it->y), matriz::db::Value::of(it->ativo),
+                         it->corNula ? matriz::db::Value::null() : matriz::db::Value::of(it->cor),
+                         it->regraNula ? matriz::db::Value::null() : matriz::db::Value::of(it->regra),
+                         matriz::db::Value::of(it->criadoEm), matriz::db::Value::of(it->atualizadoEm)});
+                }
+            });
+        finalizarGrupoUndo();
+    }
+    return res;
+}
+
+void ProjetoAberto::desligarAutoOrganizacao(const std::string& pastaId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || pastaId.empty()) return;
+    const std::string mapaId = mapaIdDaPasta(pastaId);
+    if (mapaId.empty() || mapaId == kMapaOriginal) return;
+    auto& db = projeto_->registro();
+
+    // A pasta e as subpastas AUTO dela ficam como estão: só perdem a regra e a marcação.
+    std::map<std::string, std::string> regraAntes;  // id -> regra (só as que tinham)
+    {
+        auto st = db.prepare(
+            "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL SELECT p.id FROM acervo_pasta p JOIN sub ON p.pasta_pai_id = sub.id "
+            "WHERE p.regra_organizacao = '@auto') "
+            "SELECT p.id, COALESCE(p.regra_organizacao, '') FROM acervo_pasta p WHERE p.id IN (SELECT id FROM sub)");
+        st.bind(1, matriz::db::Value::of(pastaId));
+        while (st.step())
+            if (!st.columnText(1).empty()) regraAntes[st.columnText(0)] = st.columnText(1);
+    }
+    if (regraAntes.empty()) return;
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& [id, regra] : regraAntes)
+            db.run("UPDATE acervo_pasta SET regra_organizacao = NULL, atualizado_em = ? WHERE id = ?",
+                   {matriz::db::Value::of(agora), matriz::db::Value::of(id)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        return;
+    }
+    registrarUndo("Turn off auto-organize", [this, regraAntes]() {
+        for (const auto& [id, regra] : regraAntes)
+            projeto_->registro().run("UPDATE acervo_pasta SET regra_organizacao = ? WHERE id = ?",
+                                     {matriz::db::Value::of(regra), matriz::db::Value::of(id)});
+    });
+}
+
+int ProjetoAberto::organizarItensSoltosDasPastasComRegra(const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal || organizandoAuto_) return 0;
+    // Checagem barata: uma consulta só, e só pastas com regra E com itens diretos.
+    std::vector<std::pair<std::string, std::string>> alvos;
+    try {
+        auto st = projeto_->registro().prepare(
+            "SELECT p.id, p.regra_organizacao FROM acervo_pasta p WHERE p.projeto_id = ? AND p.mapa_id = ? "
+            "AND p.regra_organizacao IS NOT NULL AND p.regra_organizacao <> '' AND p.regra_organizacao <> '@auto' "
+            "AND EXISTS (SELECT 1 FROM acervo_item_pasta aip WHERE aip.pasta_id = p.id)");
+        st.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+        st.bind(2, matriz::db::Value::of(mapaId));
+        while (st.step()) alvos.emplace_back(st.columnText(0), st.columnText(1));
+    } catch (...) { return 0; }
+    if (alvos.empty()) return 0;
+
+    organizandoAuto_ = true;  // guarda contra recursão
+    int organizadas = 0;
+    for (const auto& [id, regra] : alvos) {
+        const auto r = aplicarAutoOrganizacao(id, regra, true);
+        if (r.status == StatusAutoOrg::Ok && (r.itensMovidos > 0 || r.pastasApagadas > 0)) ++organizadas;
+    }
+    organizandoAuto_ = false;
+    return organizadas;
 }
 
 void ProjetoAberto::avisarMapaTravado(const juce::String& mensagem) {

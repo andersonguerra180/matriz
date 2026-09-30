@@ -63,7 +63,8 @@ juce::String exemploDoNivel(matriz::consolidacao::NivelHierarquia n) {
 
 } // namespace
 
-HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual) {
+HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
+                                                     const HierarquiaEditorOpcoes& opcoes) {
     using N = matriz::consolidacao::NivelHierarquia;
     // MANUAL FOLDERS saiu da paleta de blocos disponíveis, substituído por
     // SUBJECT (4ª correção de UI) — mas o case dele em rotuloDoNivel/
@@ -72,6 +73,8 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     // hierarquiaAtual, não desta lista) continua funcionando exatamente
     // como antes, só não aparece mais pra quem for adicionar um bloco novo.
     std::vector<N> todos = {N::Projeto, N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject};
+    if (!opcoes.paleta.empty()) todos = opcoes.paleta;
+    if (opcoes.raizPreview.isNotEmpty()) raizPreview_ = opcoes.raizPreview;
 
     std::set<N> ativos(hierarquiaAtual.begin(), hierarquiaAtual.end());
 
@@ -84,7 +87,7 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     }
 
     labelTitulo_ = std::make_unique<juce::Label>();
-    labelTitulo_->setText("Backup Folder Hierarchy", juce::dontSendNotification);
+    labelTitulo_->setText(opcoes.titulo.isNotEmpty() ? opcoes.titulo : juce::String("Backup Folder Hierarchy"), juce::dontSendNotification);
     labelTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
     labelTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
     labelTitulo_->setJustificationType(juce::Justification::centred);
@@ -135,7 +138,7 @@ matriz::consolidacao::HierarquiaBackup HierarquiaEditorComponent::hierarquiaResu
 }
 
 juce::String HierarquiaEditorComponent::previewCaminho() const {
-    juce::String path = "/Backup Drive";
+    juce::String path = raizPreview_;
     for (const auto& b : blocos_) {
         if (b.ativo)
             path += "/" + exemploDoNivel(b.nivel);
@@ -395,12 +398,13 @@ void HierarquiaEditorComponent::mouseUp(const juce::MouseEvent& e) {
 
 HierarquiaEditorWindow::HierarquiaEditorWindow(
     const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
-    std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar)
-    : juce::DocumentWindow("Backup Folder Hierarchy",
+    std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar,
+    const HierarquiaEditorOpcoes& opcoes)
+    : juce::DocumentWindow(opcoes.titulo.isNotEmpty() ? opcoes.titulo : juce::String("Backup Folder Hierarchy"),
                             tema().fundo,
                             juce::DocumentWindow::closeButton)
 {
-    auto* editor = new HierarquiaEditorComponent(hierarquiaAtual);
+    auto* editor = new HierarquiaEditorComponent(hierarquiaAtual, opcoes);
     editor->aoConfirmar = [this, aoConfirmar](const matriz::consolidacao::HierarquiaBackup& h) {
         if (aoConfirmar) aoConfirmar(h);
         delete this;

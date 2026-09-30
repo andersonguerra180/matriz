@@ -16,9 +16,18 @@ namespace matriz::ui {
 juce::Colour corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n);
 juce::String rotuloDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n);
 
+// Personalização opcional do editor (o BACKUP usa o padrão): título da janela, blocos disponíveis
+// e a raiz do exemplo de caminho. `paleta` vazia = todos os blocos de sempre.
+struct HierarquiaEditorOpcoes {
+    juce::String titulo;
+    std::vector<matriz::consolidacao::NivelHierarquia> paleta;
+    juce::String raizPreview;
+};
+
 class HierarquiaEditorComponent : public juce::Component {
 public:
-    explicit HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual);
+    explicit HierarquiaEditorComponent(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
+                                        const HierarquiaEditorOpcoes& opcoes = {});
 
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -58,6 +67,8 @@ private:
     std::unique_ptr<juce::Label> labelAtivos_;
     std::unique_ptr<juce::Label> labelDisponiveis_;
 
+    juce::String raizPreview_ = "/Backup Drive";
+
     static constexpr float kBlocoLargura = 180.0f;
     static constexpr float kBlocoAltura = 44.0f;
     static constexpr float kEspaco = 12.0f;
@@ -70,7 +81,8 @@ private:
 class HierarquiaEditorWindow : public juce::DocumentWindow {
 public:
     HierarquiaEditorWindow(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
-                            std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar);
+                            std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar,
+                            const HierarquiaEditorOpcoes& opcoes = {});
 
     void closeButtonPressed() override { delete this; }
 

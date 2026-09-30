@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "../Consolidacao/Consolidacao.h"
 #include "../Consolidacao/MainEdit.h"
 #include "../Ficha/FichaDefinition.h"
 #include "../Model/Project.h"
@@ -466,6 +467,8 @@ public:
         int posicaoY = 0;
         bool ativo = true;
         juce::String corCustomizadaHex; // FOLDER COLOR (item 12) — "" = sem cor
+        // Auto-organização: CSV de níveis (pasta com regra), "@auto" (subpasta gerada) ou "".
+        juce::String regraOrganizacao;
         std::vector<NoArvore> filhos;
         std::set<std::string> itemIds;
         std::set<std::string> itemIdsDiretos;
@@ -556,6 +559,38 @@ public:
     bool moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId);
     bool mainExiste() const;
     bool pastaTemArquivosNoMain(const std::string& pastaId) const;
+
+    // ------------------------------------------------------------------
+    // AUTO-ORGANIZAÇÃO por pasta (Folder Map). A pasta guarda uma regra (CSV de
+    // blocos YEAR, MEDIA TYPE, FILE TYPE, SOURCE MEDIUM, CREATOR, CONTENT,
+    // SUBJECT) e distribui os itens soltos nela — e os das subpastas AUTO dela —
+    // em subpastas criadas pela regra, na ordem dos blocos (YEAR › CONTENT gera
+    // "2019/Photo"). Subpastas criadas à mão ficam intocadas; subpastas AUTO
+    // ficam marcadas ("@auto"), são reaproveitadas pelo nome e apagadas quando
+    // esvaziam. Só no mapa do usuário (nunca no ORIGINAL) e só em pasta sem
+    // arquivo no MAIN.
+    // ------------------------------------------------------------------
+    static bool regraEhAuto(const juce::String& regra) { return regra == "@auto"; }
+    enum class StatusAutoOrg { Ok, SomenteLeitura, MapaOriginal, TemArquivosNoMain, PastaInvalida, SubpastaAuto, SemNiveis };
+    struct ResultadoAutoOrg {
+        StatusAutoOrg status = StatusAutoOrg::Ok;
+        int itensMovidos = 0;
+        int pastasCriadas = 0;
+        int pastasApagadas = 0;
+    };
+    // Um segmento de pasta por nível pedido, por item (mesmas fontes do backup, ver
+    // Consolidacao.cpp); lê tudo em lotes de consultas, nunca uma consulta por item.
+    std::map<std::string, std::vector<juce::String>> segmentosDeOrganizacao(
+        const std::set<std::string>& itemIds, const matriz::consolidacao::HierarquiaBackup& niveis) const;
+    // Aplica a regra (CSV) na pasta e a grava. `automatico`: passada silenciosa ao
+    // recarregar o Folder Map — sem entrada de desfazer e sem tocar em pasta travada.
+    // Uma organização inteira = um grupo de desfazer.
+    ResultadoAutoOrg aplicarAutoOrganizacao(const std::string& pastaId, const std::string& regraCsv, bool automatico = false);
+    // Mantém as pastas como estão; só remove a regra e a marcação AUTO.
+    void desligarAutoOrganizacao(const std::string& pastaId);
+    // Passada automática: pastas com regra e itens diretos (checagem barata). Devolve
+    // quantas pastas foram organizadas.
+    int organizarItensSoltosDasPastasComRegra(const std::string& mapaId);
     // Fase 2 — ID do folder map gravado em projeto.backup_config_main.mapa_id
     // ("" = MAIN ainda não existe, ou foi criado por regra/estrutura original).
     // Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado.
@@ -1019,6 +1054,7 @@ private:
     // (o job em curso ainda usa o banco) — não reordenar.
     bool editandoMain_ = false;
     bool somenteLeitura_ = false;
+    bool organizandoAuto_ = false;  // guarda contra recursão da passada automática de auto-organização
     juce::int64 ultimaAtividadeMainMs_ = 0;
     std::atomic<bool> operacaoMainEmCurso_{false};
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
