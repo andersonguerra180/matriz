@@ -582,9 +582,14 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
 
     auto leg = std::make_unique<ShortcutLegendComponent>();
     leg->aoClicarAtalho = [this](char k) {
+        // Limpa a marca só dos arquivos SELECIONADOS — nunca do grid inteiro. Sem seleção, não faz nada.
+        if (!mosaico_) return;
+        const auto& selecionados = mosaico_->itensSelecionados();
+        if (selecionados.empty()) return;
+        const std::vector<std::string> ids(selecionados.begin(), selecionados.end());
         if (k == 'E') {
-            projeto_.limparTodosMarcadosRevisado();
-            if (mosaico_) mosaico_->recarregar();
+            projeto_.limparMarcadoRevisadoDe(ids);
+            mosaico_->recarregar();
             return;
         }
         ProjetoAberto::TipoMarcacao tipo;
@@ -595,8 +600,8 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
             default: return;
         }
-        projeto_.limparMarcacoes(tipo);
-        if (mosaico_) mosaico_->recarregar();
+        projeto_.definirMarcacao(tipo, ids, false);
+        mosaico_->recarregar();
     };
     legendaAtalhos_ = std::move(leg);
     addAndMakeVisible(*legendaAtalhos_);

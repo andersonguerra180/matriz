@@ -2638,7 +2638,7 @@ void IntakeWorkspaceComponent::confirmarSelecaoParaGrid() {
     // Item 1 (lista nova de hoje): idem — só o que está selecionado E
     // visível sob o filtro atual.
     auto selecionados = itensSelecionados();
-    std::vector<std::string> ids(selecionados.begin(), selecionados.end());
+    std::vector<std::string> ids = projeto_.semMarcadosR(std::vector<std::string>(selecionados.begin(), selecionados.end()));
     if (ids.empty()) return;
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(
@@ -2664,6 +2664,7 @@ void IntakeWorkspaceComponent::confirmarTodosParaGrid() {
         if (idx >= 0 && idx < static_cast<int>(todosItens_.size()))
             ids.push_back(todosItens_[static_cast<size_t>(idx)].id);
     }
+    ids = projeto_.semMarcadosR(ids);  // os marcados com R ficam no INTAKE
     if (ids.empty()) return;
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(

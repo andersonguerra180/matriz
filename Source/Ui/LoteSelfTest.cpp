@@ -975,6 +975,28 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.alternarMarcaR({rd});
             checar(pa.idsMarcadosR().count(rd) == 0, "an item that is no longer in the INTAKE is never listed as marked");
 
+            // Marcado com R não entra no grid de jeito nenhum (nem em lote, nem pelo "+" de um item só).
+            auto emQuarentena = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COALESCE(em_quarentena, 0) FROM item WHERE id = ?");
+                st.bind(1, Value::of(id));
+                st.step();
+                return static_cast<int>(st.columnInt(0));
+            };
+            pa.confirmarLoteGrid({ra, rb, rc});
+            checar(emQuarentena(ra) == 1 && emQuarentena(rb) == 1 && emQuarentena(rc) == 0,
+                   "Send to GRID skips the files marked R (they stay in the INTAKE) and sends the rest");
+            pa.confirmarItemGrid(ra);
+            checar(emQuarentena(ra) == 1, "sending a single file marked R to the GRID does nothing");
+            pa.desfazer();  // desfaz o envio do rc; a pilha volta ao que o teste espera
+            checar(emQuarentena(rc) == 1, "undo of Send to GRID brings the unmarked file back");
+
+            // Legenda de atalhos: limpar a marca E só dos selecionados.
+            pa.alternarMarcadoRevisado({ra, rb});
+            pa.limparMarcadoRevisadoDe({ra});
+            auto revisado = [&](const std::string& id) { return pa.itemMarcadoRevisado(id); };
+            checar(!revisado(ra) && revisado(rb), "clearing a shortcut mark touches only the files given, not every marked file");
+            pa.limparMarcadoRevisadoDe({rb});
+
             auto contarItens = [&](const std::string& id) {
                 auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
                 st.bind(1, Value::of(id));

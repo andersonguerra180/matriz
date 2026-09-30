@@ -754,6 +754,8 @@ public:
     // Rejeita os itens com R: guarda o SHA-256 de cada um na lista de rejeitados e os tira do projeto
     // (removerItensDoProjeto, com Undo). Devolve quantos saíram.
     int rejeitarMarcadosR();
+    // Itens marcados com R nunca vão para o grid: tira-os de uma lista de ids a promover.
+    std::vector<std::string> semMarcadosR(const std::vector<std::string>& itemIds) const;
 
     // Renomeia (item.titulo) — é o que alimenta o token {titulo} da máscara
     // de nomenclatura, ou seja, o nome que o arquivo terá no backup.
@@ -763,6 +765,7 @@ public:
     // metadados_editados (que é automática). Começa sempre desmarcada.
     void alternarMarcadoRevisado(const std::vector<std::string>& itemIds);
     void limparTodosMarcadosRevisado();
+    void limparMarcadoRevisadoDe(const std::vector<std::string>& itemIds);  // só estes (legenda de atalhos)
     // Flag E (marcado_revisado) de um item: uma query, sem disco.
     bool itemMarcadoRevisado(const std::string& itemId) const;
 

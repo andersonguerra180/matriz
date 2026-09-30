@@ -1043,8 +1043,19 @@ void ProjetoAberto::registrarUndoEnvioAoGrid(const std::vector<std::string>& ite
     });
 }
 
+std::vector<std::string> ProjetoAberto::semMarcadosR(const std::vector<std::string>& itemIds) const {
+    const auto marcados = idsMarcadosR();
+    if (marcados.empty()) return itemIds;
+    std::vector<std::string> out;
+    out.reserve(itemIds.size());
+    for (const auto& id : itemIds)
+        if (marcados.count(id) == 0) out.push_back(id);
+    return out;
+}
+
 void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     if (!projeto_ || itemId.empty()) return;
+    if (idsMarcadosR().count(itemId) > 0) return;  // marcado com R: não entra no grid de jeito nenhum
     registrarUndoEnvioAoGrid({itemId});
     std::string agora = matriz::model::agoraIso8601();
     projeto_->registro().run(
@@ -1053,8 +1064,10 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     EventBus::obterInstancia().dispararItemAlterado(itemId, "quarentena");
 }
 
-void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& itemIds) {
-    if (!projeto_ || itemIds.empty()) return;
+void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& todosOsIds) {
+    if (!projeto_ || todosOsIds.empty()) return;
+    const auto itemIds = semMarcadosR(todosOsIds);  // marcado com R: não entra no grid de jeito nenhum
+    if (itemIds.empty()) return;
     registrarUndoEnvioAoGrid(itemIds);
     std::string agora = matriz::model::agoraIso8601();
     // Id da leva: ms desde a época (zero-padded, ordena como texto) + uuid
@@ -3598,6 +3611,22 @@ bool ProjetoAberto::itemMarcadoRevisado(const std::string& itemId) const {
         if (stmt.step()) return stmt.columnInt(0) != 0;
     } catch (...) {}
     return false;
+}
+
+void ProjetoAberto::limparMarcadoRevisadoDe(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds)
+            db.run("UPDATE item SET marcado_revisado = 0 WHERE id = ? AND marcado_revisado != 0", {matriz::db::Value::of(id)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    for (const auto& id : itemIds) EventBus::obterInstancia().dispararItemAlterado(id, "marcado_revisado");
 }
 
 void ProjetoAberto::limparTodosMarcadosRevisado() {
