@@ -806,6 +806,12 @@ void testarHierarquiaBackup(const juce::File& dirTemp) {
         std::string semAno = criarItem("HIE-002", "Sem Ano", "fita_rolo", std::nullopt);
         for (auto& id : {comAno, semAno}) {
             matriz::ingest::ingerirArquivo(projeto->registro(), pastaProjeto, id, masterOrigem, "preservation_master", true);
+            // O ingest chuta item.ano pela data do arquivo. Aqui o EVENT DATE é o que o usuário
+            // digitou (salvarMetadado grava coluna e item_campo) ou nada.
+            if (id == comAno)
+                projeto->registro().run("UPDATE item SET ano = '1978' WHERE id = ?", {matriz::db::Value::of(id)});
+            else
+                projeto->registro().run("UPDATE item SET ano = NULL WHERE id = ?", {matriz::db::Value::of(id)});
             projeto->registro().run(
                 "INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
                 {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
@@ -825,6 +831,20 @@ void testarHierarquiaBackup(const juce::File& dirTemp) {
         check(caminhoDe(planoPadrao, "HIE-002").contains("/No year/"),
               "material with no year goes to \"No year\", never disappears (got: \"" +
                   caminhoDe(planoPadrao, "HIE-002").toStdString() + "\")");
+
+        // EVENT DATE é a coluna item.ano (o que a ficha mostra; o ingest só preenche ela, sem item_campo):
+        // só nela, o ano vale; "0" é sem ano.
+        {
+            auto planejarComAnoDaColuna = [&](const char* valor) {
+                projeto->registro().run("UPDATE item SET ano = ? WHERE id = ?",
+                                        {matriz::db::Value::of(std::string(valor)), matriz::db::Value::of(semAno)});
+                return caminhoDe(planejarConsolidacao(projeto->registro(), pastaProjeto, destino, hierarquiaPadrao()), "HIE-002");
+            };
+            check(planejarComAnoDaColuna("2011").contains("/2011/"),
+                  "a year only in the item.ano column (as the ingest writes it) is the folder's year, not \"No year\"");
+            check(planejarComAnoDaColuna("0").contains("/No year/"), "EVENT DATE 0 goes to \"No year\"");
+            projeto->registro().run("UPDATE item SET ano = NULL WHERE id = ?", {matriz::db::Value::of(semAno)});
+        }
 
         // Reordenar os níveis muda a árvore resultante NA HORA, sem copiar
         // nada — é o que a prévia do diálogo mostra (§5.2, item 12).
@@ -2401,6 +2421,9 @@ void testarAdicionarAoMain(const juce::File& dirTemp) {
             gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
                              "sine=frequency=" + std::to_string(freq) + ":duration=1", f.getFullPathName()});
             auto ing = matriz::ingest::ingerirArquivo(reg, projeto->pasta(), id, f, "preservation_master", true);
+            // Como salvarMetadado: o EVENT DATE digitado vai também pra coluna item.ano (o ingest chuta
+            // ali a data do arquivo em disco).
+            reg.run("UPDATE item SET ano = ? WHERE id = ?", {matriz::db::Value::of(ano), matriz::db::Value::of(id)});
             arquivoDoItem[id] = ing.arquivoId;
             reg.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
                     {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),

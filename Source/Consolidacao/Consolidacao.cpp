@@ -90,6 +90,15 @@ std::map<std::string, std::string> camposFichaDoItem(matriz::db::Database& regis
     stmt.bind(1, Value::of(itemId));
     while (stmt.step())
         if (!stmt.columnIsNull(1)) out[stmt.columnText(0)] = stmt.columnText(1);
+    // EVENT DATE = coluna item.ano (é o que a ficha mostra e o ingest preenche; item_campo só tem o
+    // "ano" de quem foi editado à mão). Vazio ou "0" = sem EVENT DATE -> nível YEAR cai em "No year".
+    auto stAno = registro.prepare("SELECT ano FROM item WHERE id = ?");
+    stAno.bind(1, Value::of(itemId));
+    if (stAno.step()) {
+        const std::string ano = stAno.columnIsNull(0) ? std::string() : stAno.columnText(0);
+        if (ano.empty() || ano == "0") out.erase("ano");
+        else out["ano"] = ano;
+    }
     return out;
 }
 
