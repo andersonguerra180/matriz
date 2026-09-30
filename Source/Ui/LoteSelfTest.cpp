@@ -949,6 +949,53 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         checar(pa.aplicarAutoOrganizacao(bloqueada, "ano").status == ProjetoAberto::StatusAutoOrg::TemArquivosNoMain,
                "a folder that already has files in the MAIN is blocked");
         checar(pa.aplicarAutoOrganizacao(inbox, "").status == ProjetoAberto::StatusAutoOrg::SemNiveis, "no blocks: nothing to apply");
+
+        // ----- INTAKE: R (Reject)
+        std::cout << "\n-- INTAKE: R (Reject) --\n";
+        {
+            auto novoRej = [&](const char* codigo, const char* conteudo, bool quarentena) {
+                auto f = raizAj.getChildFile(juce::String(codigo) + ".bin");
+                f.replaceWithText(conteudo);
+                const auto id = inserirItemComArquivo(reg, projetoId, codigo, f);
+                reg.run("UPDATE item SET em_quarentena = ? WHERE id = ?", {Value::of(quarentena ? 1 : 0), Value::of(id)});
+                return std::make_pair(id, f);
+            };
+            const auto [ra, fa] = novoRej("REJ-A", "conteudo A", true);
+            const auto [rb, fb] = novoRej("REJ-B", "conteudo B", true);
+            const auto [rc, fc] = novoRej("REJ-C", "conteudo C", true);
+            const auto [rd, fd] = novoRej("REJ-D", "conteudo D", false);  // já no grid: fora do INTAKE
+
+            pa.alternarMarcaR({ra, rb, rc});
+            checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb, rc}), "R marks the items and the marks persist in the project");
+            pa.alternarMarcaR({ra, rb, rc});
+            checar(pa.idsMarcadosR().empty(), "R again unmarks them");
+            pa.alternarMarcaR({ra});
+            pa.alternarMarcaR({ra, rb});
+            checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}), "R on a mixed selection marks all of it (same rule as P/W/K)");
+            pa.alternarMarcaR({rd});
+            checar(pa.idsMarcadosR().count(rd) == 0, "an item that is no longer in the INTAKE is never listed as marked");
+
+            auto contarItens = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
+                st.bind(1, Value::of(id));
+                st.step();
+                return static_cast<int>(st.columnInt(0));
+            };
+            auto contarRejeitados = [&] {
+                auto st = reg.prepare("SELECT COUNT(*) FROM intake_rejeitados");
+                st.step();
+                return static_cast<int>(st.columnInt(0));
+            };
+            checar(pa.rejeitarMarcadosR() == 2, "REJECT MARKED takes out exactly the 2 marked items");
+            checar(contarItens(ra) == 0 && contarItens(rb) == 0, "the marked items left the project");
+            checar(contarItens(rc) == 1 && contarItens(rd) == 1, "the unmarked ones (even if they were selected) stay");
+            checar(contarRejeitados() == 2, "the project keeps the SHA-256 of each rejected file");
+            checar(fa.existsAsFile() && fb.existsAsFile() && fa.loadFileAsString() == "conteudo A",
+                   "the original files are untouched");
+            pa.desfazer();
+            checar(contarItens(ra) == 1 && contarItens(rb) == 1, "one Undo brings the rejected items back");
+            checar(contarRejeitados() == 0, "and takes their hashes out of the rejected list");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("lote de ajustes selftest: ") + e.what());
     }
@@ -1407,6 +1454,69 @@ int rodarLoteSelfTest() {
             checar(c == 0, "undo of the last Intake batch (CONTENT) reverts every item (" + juce::String(c) + " left)");
             c = contar(true, "dc_creator", "Creator Intake");
             checar(c == kItensPorLado, "undo reverted ONLY the last batch, earlier batches stay" + n(c));
+
+            // ---- R (Reject): tecla, botão e a regra "a seleção é ignorada"
+            {
+                iw->selecionarTodos(false);
+                const auto R = juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r');
+                for (int i = 0; i < 3; ++i) iw->todosItens_[(size_t) i].selecionado = true;
+                iw->atualizarFiltragem();
+                checar(iw->keyPressed(R), "R key is handled in the INTAKE");
+                checar(iw->marcadosR_.size() == 3, "R marks every selected file (" + juce::String((int) iw->marcadosR_.size()) + ")");
+                iw->keyPressed(R);
+                checar(iw->marcadosR_.empty(), "R again unmarks them");
+                checar(!iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys::commandModifier, (juce::juce_wchar) 'r')),
+                       "Cmd+R is not the R mark");
+
+                iw->keyPressed(R);  // marca 0,1,2
+                const auto marcadosIds = iw->marcadosR_;
+                if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                    // Altura de uma janela real (a de teste corta o fim da coluna esquerda).
+                    const auto tamanhoOriginal = iw->getBounds();
+                    iw->setBounds(tamanhoOriginal.withHeight(1000));
+                    bombear(200);
+                    juce::PNGImageFormat png;
+                    auto arq = dir.getChildFile("intake_reject.png");
+                    arq.deleteFile();
+                    if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                        png.writeImageToStream(iw->createComponentSnapshot(iw->getLocalBounds()), *out);
+                    iw->definirModoVisao(IntakeWorkspaceComponent::ModoVisao::Icones);
+                    bombear(300);
+                    auto arqGrade = dir.getChildFile("intake_reject_grade.png");
+                    arqGrade.deleteFile();
+                    if (auto out = std::unique_ptr<juce::FileOutputStream>(arqGrade.createOutputStream()))
+                        png.writeImageToStream(iw->createComponentSnapshot(iw->getLocalBounds()), *out);
+                    iw->definirModoVisao(IntakeWorkspaceComponent::ModoVisao::Lista);
+                    iw->setBounds(tamanhoOriginal);
+                    bombear(100);
+                }
+                checar(iw->btnRemoverSelecao_->getButtonText().contains("(3)") && iw->btnRemoverSelecao_->isEnabled(),
+                       "the button shows how many files will be rejected");
+                iw->selecionarTodos(false);
+                for (int i = 5; i < 7; ++i) iw->todosItens_[(size_t) i].selecionado = true;  // seleção DIFERENTE das marcas
+                iw->atualizarFiltragem();
+                iw->rejeitarMarcados();
+                bombear(300);
+                int restam = contar(true, "estado", "novo");
+                auto ainda = [&](const std::string& id) {
+                    auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
+                    st.bind(1, matriz::db::Value::of(id));
+                    st.step();
+                    return st.columnInt(0) == 1;
+                };
+                bool algumMarcadoFicou = false;
+                for (const auto& id : marcadosIds) algumMarcadoFicou = algumMarcadoFicou || ainda(id);
+                (void) restam;
+                checar(!algumMarcadoFicou, "REJECT MARKED removed every file marked R");
+                checar(static_cast<int>(iw->todosItens_.size()) == kItensPorLado - 3,
+                       "and only those: the selection was ignored (" + juce::String((int) iw->todosItens_.size()) + " left)");
+                checar(iw->marcadosR_.empty() && !iw->btnRemoverSelecao_->isEnabled(), "no marks left: the button is disabled");
+                pa->desfazer();
+                bombear(300);
+                iw->recarregar();
+                esperarAte([&] { return !iw->snapshotPendente() && static_cast<int>(iw->todosItens_.size()) >= kItensPorLado; });
+                checar(static_cast<int>(iw->todosItens_.size()) == kItensPorLado, "Undo brings the rejected files back");
+            }
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("batch selftest: ") + e.what());

@@ -818,6 +818,26 @@ void testarHierarquiaBackup(const juce::File& dirTemp) {
                  matriz::db::Value::of(pasta), matriz::db::Value::of(agora)});
         }
 
+        // INTAKE/R: arquivo cujo SHA-256 já foi rejeitado entra marcado com R — só o que entra DEPOIS.
+        {
+            auto& reg = projeto->registro();
+            const auto sha = matriz::ingest::calcularChecksums(masterOrigem).sha256;
+            reg.run("INSERT INTO intake_rejeitados (sha256, nome_original, rejeitado_em) VALUES (?, 'hierarquia_master.wav', ?)",
+                    {matriz::db::Value::of(sha), matriz::db::Value::of(agora)});
+            std::string novo = criarItem("HIE-REJ", "Ja rejeitado", "fita_rolo", std::nullopt);
+            matriz::ingest::ingerirArquivo(reg, pastaProjeto, novo, masterOrigem, "preservation_master", true);
+            auto marcado = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE item_id = ? AND origem = 'hash'");
+                st.bind(1, matriz::db::Value::of(id));
+                st.step();
+                return st.columnInt(0) == 1;
+            };
+            check(marcado(novo), "a file whose SHA-256 was rejected before enters the INTAKE already marked R");
+            check(!marcado(comAno) && !marcado(semAno), "files that entered before the rejection are not marked");
+            reg.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(novo)});
+            reg.run("DELETE FROM intake_rejeitados", {});
+        }
+
         auto caminhoDe = [](const PlanoConsolidacao& p, const std::string& codigo) -> juce::String {
             for (auto& i : p.itens)
                 if (i.codigoAcervo == codigo) return i.caminhoRelativoDestino;

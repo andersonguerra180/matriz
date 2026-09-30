@@ -3403,6 +3403,105 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
     });
 }
 
+std::set<std::string> ProjetoAberto::idsMarcadosR() const {
+    std::set<std::string> out;
+    if (!projeto_) return out;
+    try {
+        auto st = projeto_->registro().prepare(
+            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE COALESCE(i.em_quarentena, 0) = 1");
+        while (st.step()) out.insert(st.columnText(0));
+    } catch (...) {}
+    return out;
+}
+
+void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
+    if (itemIds.empty() || !projeto_) return;
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    auto& db = projeto_->registro();
+    const auto marcados = idsMarcadosR();
+    bool todosMarcados = true;
+    for (const auto& id : itemIds)
+        if (marcados.count(id) == 0) { todosMarcados = false; break; }
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds) {
+            if (todosMarcados)
+                db.run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
+            else
+                db.run("INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+                       {matriz::db::Value::of(id), matriz::db::Value::of(agora)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+}
+
+int ProjetoAberto::rejeitarMarcadosR() {
+    if (!projeto_) return 0;
+    if (somenteLeitura_) { avisarSomenteLeitura(); return 0; }
+    const auto marcados = idsMarcadosR();
+    if (marcados.empty()) return 0;
+    const std::vector<std::string> ids(marcados.begin(), marcados.end());
+    auto& db = projeto_->registro();
+
+    // SHA-256 (e nome) de cada um, lidos ANTES de o item sair — depois não há mais de onde ler.
+    std::vector<std::pair<std::string, std::string>> hashes;
+    {
+        auto st = db.prepare("SELECT checksum_sha256, caminho_relativo FROM arquivo "
+                             "WHERE item_id = ? AND checksum_sha256 IS NOT NULL AND checksum_sha256 != ''");
+        for (const auto& id : ids) {
+            st.reset();
+            st.bind(1, matriz::db::Value::of(id));
+            while (st.step())
+                hashes.push_back({st.columnText(0), juce::File(juce::String(st.columnText(1))).getFileName().toStdString()});
+        }
+    }
+
+    // Um Cmd+Z desfaz tudo junto: os itens voltam e os hashes novos saem da lista.
+    iniciarGrupoUndo(ids.size() == 1 ? "Reject Marked File" : "Reject " + std::to_string(ids.size()) + " Marked Files");
+    try {
+        removerItensDoProjeto(ids);
+    } catch (...) {
+        finalizarGrupoUndo();
+        throw;
+    }
+
+    std::vector<std::string> novos;
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        auto existe = db.prepare("SELECT 1 FROM intake_rejeitados WHERE sha256 = ?");
+        for (const auto& [sha, nome] : hashes) {
+            existe.reset();
+            existe.bind(1, matriz::db::Value::of(sha));
+            if (existe.step()) continue;
+            db.run("INSERT INTO intake_rejeitados (sha256, nome_original, rejeitado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(sha), matriz::db::Value::of(nome), matriz::db::Value::of(agora)});
+            novos.push_back(sha);
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        novos.clear();
+    }
+    if (!novos.empty()) {
+        registrarUndo("Reject Marked Files", [this, novos]() {
+            auto& d = projeto_->registro();
+            d.run("BEGIN TRANSACTION", {});
+            try {
+                for (const auto& sha : novos)
+                    d.run("DELETE FROM intake_rejeitados WHERE sha256 = ?", {matriz::db::Value::of(sha)});
+                d.run("COMMIT", {});
+            } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} }
+        });
+    }
+    finalizarGrupoUndo();
+    return static_cast<int>(ids.size());
+}
+
 void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;

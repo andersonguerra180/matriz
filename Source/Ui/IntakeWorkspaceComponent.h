@@ -62,6 +62,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
+    bool keyPressed(const juce::KeyPress& k) override;
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
@@ -153,8 +154,12 @@ private:
     std::vector<juce::String> valoresExistentesParaColuna(const std::string& coluna) const;
     void confirmarSelecaoParaGrid();
     void confirmarTodosParaGrid();
-    void removerSelecionadosDoIntake();
-    void rejeitarItemDoIntake(int itemIndex);
+    // R (Reject): marca/desmarca a seleção (ou o item do menu); REJEITAR MARCADOS age só nos marcados.
+    void alternarMarcaRDosSelecionados();
+    void alternarMarcaRDeItem(int itemIndex);
+    void rejeitarMarcados();
+    void atualizarBotaoRejeitar();
+    bool itemMarcadoR(const std::string& itemId) const { return marcadosR_.count(itemId) > 0; }
     void mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos);
     void mostrarDialogoGetInfo(int itemIndex);
     void selecionarTodos(bool selecionar);
@@ -177,6 +182,7 @@ private:
     juce::ThreadPool poolSnapshot_{1};
     std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
+    std::set<std::string> marcadosR_;  // espelho de intake_marca_r (só message thread)
     std::vector<int> indicesFiltrados_; // indices into todosItens_
     // item (shift-click seleciona intervalo): âncora do último clique
     // simples (não-shift), em índice de indicesFiltrados_ (posição visível,
@@ -208,6 +214,8 @@ private:
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
     std::unique_ptr<juce::TextButton> btnConfirmarTodos_;
     std::unique_ptr<juce::TextButton> btnRemoverSelecao_;
+    std::unique_ptr<juce::Component> legendaAtalhos_;  // card ACTIONS: [R] Reject (?)
+    std::unique_ptr<juce::Label> lblNotaReject_;
 
     // Batch Assignment Bar
     std::unique_ptr<juce::Label> lblLoteTitulo_;

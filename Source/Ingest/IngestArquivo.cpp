@@ -176,6 +176,17 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
          analise.ehPlaceholderNuvem ? Value::null() : Value::of(agora),
          Value::of(caracteristicasJson), Value::of(estadoPresenca), Value::of(agora), Value::of(agora)});
 
+    // INTAKE/R: arquivo cujo conteúdo (SHA-256) o usuário já rejeitou antes entra marcado com R.
+    // Só aqui, na entrada: depois o usuário manda (desmarcar com R não volta a marcar).
+    if (ehMaster && !analise.ehPlaceholderNuvem && !analise.checksums.sha256.empty()) {
+        try {
+            registro.run(
+                "INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) "
+                "SELECT ?, 'hash', ? WHERE EXISTS (SELECT 1 FROM intake_rejeitados WHERE sha256 = ?)",
+                {Value::of(itemId), Value::of(agora), Value::of(analise.checksums.sha256)});
+        } catch (...) {}
+    }
+
     // -----------------------------------------------------------------------
     // Preservation events — PREMIS hooks pós-ingest.
     // Erros são silenciados: falha aqui nunca deve bloquear o ingest.

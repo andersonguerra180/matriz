@@ -1023,3 +1023,20 @@ CREATE TABLE IF NOT EXISTS asset_geolocation (
 CREATE INDEX IF NOT EXISTS idx_geo_lat_lng ON asset_geolocation(latitude, longitude);
 CREATE INDEX IF NOT EXISTS idx_geo_country_state_city ON asset_geolocation(country, state_province, city);
 
+
+-- ---------------------------------------------------------------------------
+-- INTAKE — R (Reject). As marcas R ficam no projeto (sobrevivem a fechar o app) e
+-- a lista de rejeitados é por conteúdo (SHA-256): numa nova INTAKE do mesmo arquivo
+-- o item já entra marcado com R (ver gravarArquivoAnalisado). Nada aqui altera arquivos.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS intake_rejeitados (
+    sha256        TEXT PRIMARY KEY,
+    nome_original TEXT,
+    rejeitado_em  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS intake_marca_r (
+    item_id    TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
+    origem     TEXT NOT NULL DEFAULT 'usuario',  -- 'usuario' | 'hash' (pré-marcado pela lista de rejeitados)
+    marcado_em TEXT NOT NULL
+);

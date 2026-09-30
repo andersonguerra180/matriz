@@ -745,6 +745,16 @@ public:
     // método deliberadamente não apaga.
     void removerItensDoProjeto(const std::vector<std::string>& itemIds);
 
+    // INTAKE — R (Reject). Marcas R persistidas no projeto (intake_marca_r) e lista de rejeitados por
+    // SHA-256 (intake_rejeitados). Só itens em quarentena contam. Nada aqui toca em arquivo algum.
+    // Os itens com R (todos os da quarentena, visíveis ou não sob o filtro atual).
+    std::set<std::string> idsMarcadosR() const;
+    // Como P/W/K: se todos já têm R, tira o R de todos; senão marca todos. Uma transação só.
+    void alternarMarcaR(const std::vector<std::string>& itemIds);
+    // Rejeita os itens com R: guarda o SHA-256 de cada um na lista de rejeitados e os tira do projeto
+    // (removerItensDoProjeto, com Undo). Devolve quantos saíram.
+    int rejeitarMarcadosR();
+
     // Renomeia (item.titulo) — é o que alimenta o token {titulo} da máscara
     // de nomenclatura, ou seja, o nome que o arquivo terá no backup.
     void renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo);

@@ -928,6 +928,51 @@ private:
 
 } // namespace
 
+namespace {
+// Legenda de atalhos do card ACTIONS, no estilo da de METADATA: "Shortcuts  [R] Reject (?)".
+class LegendaAtalhosIntake : public juce::Component, public juce::SettableTooltipClient {
+public:
+    LegendaAtalhosIntake() { setTooltip(i18n::t("intake.legenda_r_dica")); }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        const float cy = r.getCentreY();
+        juce::Font fontInst(juce::FontOptions(tk.tamanhoFonteCorpo - 1.0f, juce::Font::bold));
+        juce::Font fontLabel(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold));
+        float x = 2.0f;
+
+        const auto instrucao = i18n::t("intake.legenda_atalhos");
+        g.setFont(fontInst);
+        g.setColour(tk.textoSecundario);
+        const float instW = juce::GlyphArrangement::getStringWidth(fontInst, instrucao);
+        g.drawText(instrucao, juce::roundToInt(x), 0, juce::roundToInt(std::ceil(instW)), getHeight(), juce::Justification::centredLeft, false);
+        x += instW + 10.0f;
+
+        juce::Rectangle<float> badge(x, cy - 10.0f, 20.0f, 20.0f);
+        g.setColour(tk.perigo);
+        g.fillRoundedRectangle(badge, 4.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText("R", badge, juce::Justification::centred, false);
+        x += 26.0f;
+
+        const auto rotulo = i18n::t("intake.legenda_r");
+        g.setFont(fontLabel);
+        g.setColour(tk.textoPrimario);
+        const float labelW = juce::GlyphArrangement::getStringWidth(fontLabel, rotulo);
+        g.drawText(rotulo, juce::roundToInt(x), 0, juce::roundToInt(std::ceil(labelW)), getHeight(), juce::Justification::centredLeft, false);
+        x += labelW + 10.0f;
+
+        juce::Rectangle<float> ajuda(x, cy - 8.0f, 16.0f, 16.0f);
+        g.setColour(tk.textoSecundario.withAlpha(0.6f));
+        g.drawEllipse(ajuda.reduced(1.0f), 1.0f);
+        g.setFont(juce::Font(juce::FontOptions(10.4f, juce::Font::bold)));
+        g.drawText("?", ajuda, juce::Justification::centred, false);
+    }
+};
+} // namespace
+
 class IntakeWorkspaceComponent::ThumbnailsGridComponent : public juce::Component {
 public:
     explicit ThumbnailsGridComponent(IntakeWorkspaceComponent& owner) : owner_(owner) {
@@ -1170,6 +1215,20 @@ public:
                 g.drawText("OFFLINE", offBadge, juce::Justification::centred);
             }
 
+            // R (Reject): véu vermelho na miniatura, selo "R" e moldura vermelha no card.
+            if (owner_.itemMarcadoR(item.id)) {
+                g.setColour(tk.perigo.withAlpha(0.22f));
+                g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                juce::Rectangle<int> rBadge(thumbArea.getRight() - 26, thumbArea.getBottom() - 26, 22, 22);
+                g.setColour(tk.perigo);
+                g.fillRoundedRectangle(rBadge.toFloat(), 4.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.drawText("R", rBadge, juce::Justification::centred);
+                g.setColour(tk.perigo);
+                g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
+            }
+
             // Text Info Section below thumbnail
             auto infoArea = bounds.reduced(8, 0).withTop(thumbArea.getBottom() + 6);
 
@@ -1225,6 +1284,8 @@ public:
         matriz::diag::WatchdogLogger::getInstance().log(
             "[IntakeGrid] mouseDown pos=" + e.getPosition().toString() + " idx=" + juce::String(idx) +
             " colunas_=" + juce::String(colunas_) + " cardW_=" + juce::String(cardW_) + " cardH_=" + juce::String(cardH_));
+
+        owner_.grabKeyboardFocus();  // a tecla R (e as próximas) vale também no modo miniaturas
 
         if (e.mods.isPopupMenu()) {
             if (idx >= 0 && idx < static_cast<int>(owner_.indicesFiltrados_.size())) {
@@ -1824,12 +1885,22 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnRemover->corFundoCustom = tk.perigo;
     btnRemover->corTextoCustom = juce::Colours::white;
     btnRemover->corBordaCustom = tk.perigo.darker(0.2f);
-    btnRemover->onClick = [this] { removerSelecionadosDoIntake(); };
-    btnRemover->setTooltip("Remove selected items from intake");
+    btnRemover->onClick = [this] { rejeitarMarcados(); };
     btnRemover->setAlpha(1.0f);
     btnRemover->setEnabled(true);
     btnRemoverSelecao_ = std::move(btnRemover);
     addAndMakeVisible(*btnRemoverSelecao_);
+
+    legendaAtalhos_ = std::make_unique<LegendaAtalhosIntake>();
+    addAndMakeVisible(*legendaAtalhos_);
+    lblNotaReject_ = std::make_unique<juce::Label>("", i18n::t("intake.nota_reject"));
+    lblNotaReject_->setFont(juce::Font(juce::FontOptions(10.5f)));
+    lblNotaReject_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    lblNotaReject_->setMinimumHorizontalScale(1.0f);  // quebra em 2 linhas, nunca "..."
+    lblNotaReject_->setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(*lblNotaReject_);
+    setWantsKeyboardFocus(true);
+    atualizarBotaoRejeitar();
 
     // 4. Main Table List
     tabela_ = std::make_unique<juce::TableListBox>("IntakeTable", this);
@@ -1976,6 +2047,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
     }
 
     todosItens_ = std::move(novosItens);
+    marcadosR_ = projeto_.idsMarcadosR();
 
     atualizarComboAno();
     if (ultimoSortColumnId_ > 0) {
@@ -2147,10 +2219,7 @@ void IntakeWorkspaceComponent::atualizarContagens() {
         btnConfirmarTodos_->setAlpha(!indicesFiltrados_.empty() ? 1.0f : 0.4f);
     }
 
-    if (btnRemoverSelecao_) {
-        btnRemoverSelecao_->setEnabled(true);
-        btnRemoverSelecao_->setAlpha(1.0f);
-    }
+    atualizarBotaoRejeitar();
 
     if (chkSelectAllHeader_) {
         bool allSel = !indicesFiltrados_.empty();
@@ -2591,15 +2660,61 @@ void IntakeWorkspaceComponent::confirmarTodosParaGrid() {
     if (aoConfirmarParaGrid) aoConfirmarParaGrid();
 }
 
-void IntakeWorkspaceComponent::removerSelecionadosDoIntake() {
-    // Item 1 (lista nova de hoje): REJECT SELECTED só atinge o que está
-    // selecionado E visível sob o filtro ativo.
-    auto selecionados = itensSelecionados();
-    std::vector<std::string> ids(selecionados.begin(), selecionados.end());
-    if (ids.empty()) return;
+void IntakeWorkspaceComponent::atualizarBotaoRejeitar() {
+    if (!btnRemoverSelecao_) return;
+    const int n = static_cast<int>(marcadosR_.size());
+    juce::String texto = i18n::t("intake.btn_rejeitar_selecionados");
+    if (n > 0) texto << " (" << n << ")";
+    btnRemoverSelecao_->setButtonText(texto);
+    btnRemoverSelecao_->setTooltip(i18n::t("intake.reject_dica").replace("{n}", juce::String(n)));
+    btnRemoverSelecao_->setEnabled(n > 0);
+    btnRemoverSelecao_->setAlpha(n > 0 ? 1.0f : 0.4f);
+}
 
-    projeto_.removerItensDoProjeto(ids);
+void IntakeWorkspaceComponent::alternarMarcaRDosSelecionados() {
+    // Seleção atual e visível (mesma regra dos outros botões de lote).
+    auto selecionados = itensSelecionados();
+    if (selecionados.empty()) return;
+    projeto_.alternarMarcaR(std::vector<std::string>(selecionados.begin(), selecionados.end()));
+    marcadosR_ = projeto_.idsMarcadosR();
+    atualizarBotaoRejeitar();
+    if (tabela_) tabela_->repaint();
+    if (gridComponent_) gridComponent_->repaint();
+}
+
+void IntakeWorkspaceComponent::alternarMarcaRDeItem(int itemIndex) {
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(todosItens_.size())) return;
+    const std::string itemId = todosItens_[static_cast<size_t>(itemIndex)].id;
+    // Menu de contexto sobre um item dentro de uma seleção múltipla vale pra seleção inteira.
+    auto selecionados = itensSelecionados();
+    std::vector<std::string> ids;
+    if (selecionados.count(itemId) > 0 && selecionados.size() > 1) ids.assign(selecionados.begin(), selecionados.end());
+    else ids.push_back(itemId);
+    projeto_.alternarMarcaR(ids);
+    marcadosR_ = projeto_.idsMarcadosR();
+    atualizarBotaoRejeitar();
+    if (tabela_) tabela_->repaint();
+    if (gridComponent_) gridComponent_->repaint();
+}
+
+void IntakeWorkspaceComponent::rejeitarMarcados() {
+    // Só o que tem R. A seleção atual é ignorada, sempre (camada de segurança contra seleção mal feita).
+    if (marcadosR_.empty()) return;
+    projeto_.rejeitarMarcadosR();
     recarregar();
+}
+
+bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
+    // Campo de texto em foco: a tecla é dele (R digita a letra).
+    if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr) return false;
+    const auto mods = k.getModifiers();
+    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown()) return false;
+    const auto c = k.getTextCharacter();
+    if (c == 'r' || c == 'R') {
+        alternarMarcaRDosSelecionados();
+        return true;
+    }
+    return false;
 }
 
 void IntakeWorkspaceComponent::mostrarMenuColecaoParaItem(int itemIndex, juce::Rectangle<int> screenBounds) {
@@ -2675,6 +2790,11 @@ void IntakeWorkspaceComponent::paintRowBackground(juce::Graphics& g, int rowNumb
     } else {
         g.fillAll(rowNumber % 2 == 1 ? tk.painelAlt.withAlpha(0.35f) : tk.painel);
     }
+    if (rowNumber >= 0 && rowNumber < static_cast<int>(indicesFiltrados_.size())) {
+        const int real = indicesFiltrados_[static_cast<size_t>(rowNumber)];
+        if (real >= 0 && real < static_cast<int>(todosItens_.size()) && itemMarcadoR(todosItens_[static_cast<size_t>(real)].id))
+            g.fillAll(tk.perigo.withAlpha(0.16f));  // R (Reject)
+    }
 }
 
 void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool) {
@@ -2696,7 +2816,29 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
     } else if (columnId == kColName) {
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(12.5f)));
-        if (item.offline) {
+        int recuoR = 0;
+        if (itemMarcadoR(item.id)) {  // selo R (Reject) antes do nome
+            juce::Rectangle<int> rBadge(4, (height - 16) / 2, 16, 16);
+            g.setColour(tk.perigo);
+            g.fillRoundedRectangle(rBadge.toFloat(), 3.0f);
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.drawText("R", rBadge, juce::Justification::centred);
+            g.setColour(tk.textoPrimario);
+            g.setFont(juce::Font(juce::FontOptions(12.5f)));
+            recuoR = 20;
+        }
+        if (recuoR > 0) {
+            g.drawText(item.nomeArquivo, 6 + recuoR, 0, width - 12 - recuoR - (item.offline ? 64 : 0), height, juce::Justification::centredLeft, true);
+            if (item.offline) {
+                juce::Rectangle<int> offBadge(width - 58 - 6, (height - 18) / 2, 58, 18);
+                g.setColour(juce::Colour(0xffef4444));
+                g.fillRoundedRectangle(offBadge.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+                g.drawText("OFFLINE", offBadge, juce::Justification::centred);
+            }
+        } else if (item.offline) {
             int offBadgeW = 58;
             auto offBadge = juce::Rectangle<int>(width - offBadgeW - 6, (height - 18) / 2, offBadgeW, 18);
             g.drawText(item.nomeArquivo, 6, 0, width - offBadgeW - 16, height, juce::Justification::centredLeft, true);
@@ -2910,25 +3052,13 @@ void IntakeWorkspaceComponent::cellDoubleClicked(int rowNumber, int, const juce:
     abrirArquivoOrigem(rowNumber);
 }
 
-void IntakeWorkspaceComponent::rejeitarItemDoIntake(int itemIndex) {
-    if (itemIndex < 0 || itemIndex >= static_cast<int>(todosItens_.size())) return;
-    std::string itemId = todosItens_[static_cast<size_t>(itemIndex)].id;
-    auto selecionados = itensSelecionados();
-    if (selecionados.count(itemId) > 0 && selecionados.size() > 1) {
-        std::vector<std::string> ids(selecionados.begin(), selecionados.end());
-        projeto_.removerItensDoProjeto(ids);
-    } else {
-        projeto_.removerItensDoProjeto({itemId});
-    }
-    recarregar();
-}
-
 void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos) {
     if (itemIndex < 0 || itemIndex >= static_cast<int>(todosItens_.size())) return;
 
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     juce::PopupMenu m;
-    m.addItem(1, isPt ? juce::String::fromUTF8("Rejeitar") : "Reject");
+    m.addItem(1, itemMarcadoR(todosItens_[static_cast<size_t>(itemIndex)].id) ? i18n::t("intake.menu_desmarcar_r")
+                                                                              : i18n::t("intake.menu_marcar_r"));
     m.addItem(2, isPt ? juce::String::fromUTF8("Mostrar Origem") : "Show at Source");
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
@@ -2938,7 +3068,7 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
         [safeThis, itemIndex](int result) {
             if (!safeThis) return;
             if (result == 1) {
-                safeThis->rejeitarItemDoIntake(itemIndex);
+                safeThis->alternarMarcaRDeItem(itemIndex);
             } else if (result == 2) {
                 safeThis->abrirArquivoOrigem(itemIndex);
             } else if (result == 3) {
@@ -3321,6 +3451,9 @@ void IntakeWorkspaceComponent::resized() {
     btnConfirmarTodos_->setBounds(sidebar.removeFromTop(28));
     sidebar.removeFromTop(4);
     btnRemoverSelecao_->setBounds(sidebar.removeFromTop(28));
+    sidebar.removeFromTop(6);
+    if (legendaAtalhos_) legendaAtalhos_->setBounds(sidebar.removeFromTop(22));
+    if (lblNotaReject_) lblNotaReject_->setBounds(sidebar.removeFromTop(28));
     finalizarCard();
 
     // Right Area fills the remaining workspace (x = 230 to width, full height)
@@ -3398,8 +3531,17 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         updatePill(btnConfirmarTodos_.get(), juce::Colours::white, juce::Colour(0xff22c55e));
     }
     if (btnRemoverSelecao_) {
-        btnRemoverSelecao_->setButtonText(i18n::t("intake.btn_rejeitar_selecionados"));
         updatePill(btnRemoverSelecao_.get(), juce::Colours::white, tk.perigo);
+        atualizarBotaoRejeitar();
+    }
+    if (legendaAtalhos_) {
+        if (auto* dica = dynamic_cast<juce::SettableTooltipClient*>(legendaAtalhos_.get()))
+            dica->setTooltip(i18n::t("intake.legenda_r_dica"));
+        legendaAtalhos_->repaint();
+    }
+    if (lblNotaReject_) {
+        lblNotaReject_->setText(i18n::t("intake.nota_reject"), juce::dontSendNotification);
+        lblNotaReject_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (btnAjuda_) {
         btnAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
