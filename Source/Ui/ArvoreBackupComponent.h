@@ -142,6 +142,7 @@ private:
     // INTAKE. O canvas ocupa o resto; tudo aqui é em coordenadas de TELA (do componente).
     ColunaCardsLayout coluna_;
     juce::Rectangle<int> semPastaBounds_;
+    juce::Rectangle<int> detalheBounds_;  // lista da pasta selecionada, no espaço livre da coluna
     juce::Rectangle<int> zoomIndicadorBounds_;
     // Canvas (pan/zoom): à direita da coluna, abaixo da barra de abas. screenToCanvas /
     // canvasToScreen já descontam a origem dele.

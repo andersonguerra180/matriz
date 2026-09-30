@@ -187,8 +187,6 @@ public:
 
     void paint(juce::Graphics& g) override {
         g.fillAll(tema().painel);
-        g.setColour(tema().borda);
-        g.drawLine(0.0f, 0.0f, 0.0f, static_cast<float>(getHeight()), 1.0f);
 
         auto area = getLocalBounds().reduced(12, 8);
 
@@ -1259,6 +1257,11 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 }
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
+    // (também desenha a moldura da lista da pasta selecionada, que fica logo abaixo dos cards)
+    if (!detalheBounds_.isEmpty()) {
+        g.setColour(tema().borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
+    }
     g.setColour(tema().textoTerciario);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText("Zoom " + juce::String(static_cast<int>(zoom_ * 100)) + "%", zoomIndicadorBounds_, juce::Justification::centredLeft);
@@ -1347,10 +1350,20 @@ void ArvoreBackupComponent::resized() {
 
     tentarEnquadrar();
 
+    // Pasta selecionada: nome, subpastas e a lista de arquivos ocupam o espaço que sobra na coluna
+    // esquerda (antes era um painel por cima do canvas, à direita).
+    detalheBounds_ = {};
     if (detailViewport_ && detailViewport_->isVisible()) {
-        auto panelArea = areaCanvas().removeFromRight(kDetailPanelWidth);
-        detailViewport_->setBounds(panelArea);
-        detailContent_->setSize(panelArea.getWidth() - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
+        auto area = corpo.withTrimmedBottom(0);
+        area.setX(area.getX() - 4);
+        area.setWidth(area.getWidth() + 8);
+        if (area.getHeight() >= 80) {
+            detalheBounds_ = area;
+            detailViewport_->setBounds(area.reduced(1));
+            detailContent_->setSize(area.getWidth() - 2 - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
+        } else {
+            detailViewport_->setBounds({});
+        }
     }
 }
 
