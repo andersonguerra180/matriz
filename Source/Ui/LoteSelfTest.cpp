@@ -33,6 +33,7 @@
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
 #include "DuplicatesWorkspaceComponent.h"
+#include "LayoutArvoreFolderMap.h"
 #include "ConflitosMergeDialog.h"
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
@@ -721,6 +722,223 @@ void rodarTestesMerge(const Checar& checar) {
         bombear(100);
         checar(trocadas && *trocadas == std::set<std::string>{"k2"}, "only the rows switched to the other value come back");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Lote de ajustes (8 itens): Unknown do METADATA, layout do Folder Map e auto-organização.
+// ---------------------------------------------------------------------------
+void definirCampoRaiz(matriz::db::Database& reg, const std::string& itemId, const std::string& campo, const std::string& valor) {
+    reg.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+            "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+            "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(campo),
+             matriz::db::Value::of(valor), matriz::db::Value::of(matriz::model::agoraIso8601())});
+}
+
+void rodarTestesLoteAjustes(const Checar& checar) {
+    using matriz::db::Value;
+    std::cout << "\n-- Folder Map: tree layout (item H) --\n";
+    {
+        namespace la = matriz::ui::layoutarvore;
+        std::vector<la::No> nos = {{"a", "", false, 0, 0}, {"b", "a", false, 0, 0}, {"c", "a", false, 0, 0},
+                                   {"d", "b", false, 0, 0}, {"e", "", false, 0, 0}};
+        const auto pos = la::calcular(nos, {});
+        checar(pos.size() == 5, "every free node gets a position");
+        bool sobrepoe = false;
+        for (const auto& [i1, p1] : pos)
+            for (const auto& [i2, p2] : pos)
+                if (i1 < i2 && std::abs(p1.x - p2.x) < 190 && std::abs(p1.y - p2.y) < 84) sobrepoe = true;
+        checar(!sobrepoe, "the default layout never overlaps two folders");
+        checar(pos.at("a").y == (pos.at("b").y + pos.at("c").y) / 2, "the parent is centered vertically over its children");
+        checar(pos.at("b").x == pos.at("c").x && pos.at("b").x > pos.at("a").x && pos.at("d").x > pos.at("b").x,
+               "one column per depth level");
+        // Filhas de pais diferentes (o bug do defaultY por índice entre irmãos) não colidem.
+        checar(pos.at("e").y >= pos.at("d").y + 84 || pos.at("e").y + 84 <= pos.at("a").y, "a second root does not land on the first tree");
+
+        std::vector<la::No> mistos = {{"p", "", true, 500, 300}, {"f", "p", false, 0, 0}, {"g", "p", false, 0, 0},
+                                      {"solto", "", false, 0, 0}};
+        const auto pos2 = la::calcular(mistos, {});
+        checar(pos2.count("p") == 0, "a folder with a saved position is never moved");
+        checar(pos2.at("f").x == 500 + 190 + 50 && pos2.at("g").x == pos2.at("f").x,
+               "unsaved children of a saved parent sit to its right");
+        checar(pos2.at("f").y + 84 + 26 == pos2.at("g").y, "the children stack with uniform spacing");
+        checar((pos2.at("f").y + pos2.at("g").y + 84) / 2 == 300 + 42, "the children block is centered on the saved parent");
+        checar(pos2.at("solto").y >= 300 + 84, "a new root goes below the saved folders instead of on top of them");
+    }
+
+    std::cout << "\n-- METADATA: Unknown year ignores the file date on disk (item A) + auto-organize (item F) --\n";
+    juce::File raizAj = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getChildFile("matriz_lote_ajustes_" + juce::Uuid().toDashedString());
+    try {
+        raizAj.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Ajustes";
+        params.prefixoNomenclatura = "AJU";
+        auto projeto = matriz::model::Project::criar(raizAj.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string mapa = pa.mapaAtivoPadrao();
+
+        auto arquivoReal = [&](const juce::String& nome) {
+            auto f = raizAj.getChildFile(nome);
+            f.replaceWithText("x");
+            return f;
+        };
+        const auto i1 = inserirItemComArquivo(reg, projetoId, "AJU-1", arquivoReal("um.wav"));      // só data do disco
+        const auto i2 = inserirItemComArquivo(reg, projetoId, "AJU-2", arquivoReal("dois.wav"));    // EVENT DATE 2019
+        const auto i3 = inserirItemComArquivo(reg, projetoId, "AJU-3", arquivoReal("tres.jpg"));    // EXIF 2011
+        const auto i4 = inserirItemComArquivo(reg, projetoId, "AJU-4", arquivoReal("quatro.wav"));  // dc_created 2020
+        const auto i5 = inserirItemComArquivo(reg, projetoId, "AJU-5", arquivoReal("cinco.wav"));   // ficará na subpasta manual
+        definirCampoRaiz(reg, i2, "ano", "2019");
+        definirCampoRaiz(reg, i4, "dc_created", "2020-03-04");
+        reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                {Value::of("{\"exifDataOriginal\":\"2011:05:01 10:00:00\"}"), Value::of(i3)});
+        reg.run("UPDATE item SET collection_type = 'Photo' WHERE id IN (?, ?)", {Value::of(i2), Value::of(i3)});
+        reg.run("UPDATE item SET collection_type = 'Video' WHERE id = ?", {Value::of(i4)});
+
+        // ----- A: Unknown
+        auto itens = ProjetoAberto::listarItensDeProjeto(reg, pa.projeto().indice(), pa.projeto().pasta());
+        auto achar = [&](const std::string& id) -> const ItemResumo* {
+            for (const auto& r : itens) if (r.id == id) return &r;
+            return nullptr;
+        };
+        const auto* r1 = achar(i1);
+        const auto* r2 = achar(i2);
+        const auto* r3 = achar(i3);
+        checar(r1 && r1->anoDesconhecido() && (!r1->ano.has_value() || r1->anoSoDoSistemaDeArquivos),
+               "a year guessed only from the file on disk still counts as Unknown");
+        checar(r2 && r2->ano == 2019 && !r2->anoSoDoSistemaDeArquivos && !r2->anoDesconhecido(),
+               "an EVENT DATE year is not Unknown");
+        checar(r3 && !r3->anoDesconhecido(), "a year from the file metadata (EXIF) is not Unknown");
+
+        // ----- F: segmentos de pasta (uma consulta por lote)
+        using N = matriz::consolidacao::NivelHierarquia;
+        const auto segs = pa.segmentosDeOrganizacao({i1, i2, i3, i4},
+                                                     {N::Ano, N::ContentType, N::TipoArquivo, N::Origem, N::Artista, N::Subject, N::TipoMidia});
+        auto junta = [&](const std::string& id) {
+            juce::StringArray a;
+            for (auto& x : segs.at(id)) a.add(x);
+            return a.joinIntoString("/");
+        };
+        checar(junta(i1) == "No year/No content/WAV/No source medium/No creator/No subject/digital_audio",
+               "empty values fall back to the backup's labels; the file date on disk is NOT a year (" + junta(i1) + ")");
+        checar(junta(i2).startsWith("2019/Photo/WAV/"), "YEAR comes from EVENT DATE, CONTENT from collection_type, FILE TYPE from the extension");
+        checar(junta(i3).startsWith("2011/Photo/JPG/"), "YEAR falls back to the EXIF year");
+        checar(junta(i4).startsWith("2020/Video/"), "YEAR falls back to dc_created");
+
+        // ----- F: organizar
+        const std::string inbox = pa.criarPastaAcervo("Inbox", std::nullopt, mapa);
+        const std::string manual = pa.criarPastaAcervo("Manual", inbox, mapa);
+        pa.adicionarItensAPasta({i1, i2, i3, i4}, inbox);
+        pa.adicionarItensAPasta({i5}, manual);
+        auto pastaDoItem = [&](const std::string& item) {
+            auto st = reg.prepare("SELECT p.id, p.nome, COALESCE(p.pasta_pai_id, ''), COALESCE(p.regra_organizacao, '') "
+                                  "FROM acervo_item_pasta aip JOIN acervo_pasta p ON p.id = aip.pasta_id WHERE aip.item_id = ? AND aip.mapa_id = ?");
+            st.bind(1, Value::of(item));
+            st.bind(2, Value::of(mapa));
+            struct R { std::string id, nome, pai, regra; };
+            std::vector<R> out;
+            while (st.step()) out.push_back({st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3)});
+            return out;
+        };
+        auto caminhoDaPasta = [&](std::string id) {
+            juce::StringArray a;
+            while (!id.empty()) {
+                auto st = reg.prepare("SELECT nome, COALESCE(pasta_pai_id, '') FROM acervo_pasta WHERE id = ?");
+                st.bind(1, Value::of(id));
+                if (!st.step()) break;
+                a.insert(0, juce::String::fromUTF8(st.columnText(0).c_str()));
+                id = st.columnText(1);
+            }
+            return a.joinIntoString("/");
+        };
+        auto contarPastas = [&] {
+            auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE mapa_id = ?");
+            st.bind(1, Value::of(mapa));
+            return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
+        };
+        auto regraDe = [&](const std::string& id) {
+            auto st = reg.prepare("SELECT COALESCE(regra_organizacao, '') FROM acervo_pasta WHERE id = ?");
+            st.bind(1, Value::of(id));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        const int pastasAntes = contarPastas();
+        checar(!pa.pastaTemArquivosNoMain(inbox), "setup: Inbox has nothing in the MAIN");
+
+        const auto r = pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
+        checar(r.status == ProjetoAberto::StatusAutoOrg::Ok && r.itensMovidos == 4, "YEAR > CONTENT moved the 4 loose items");
+        checar(caminhoDaPasta(pastaDoItem(i2).front().id) == "Inbox/2019/Photo", "EVENT DATE 2019 + Photo -> Inbox/2019/Photo");
+        checar(caminhoDaPasta(pastaDoItem(i3).front().id) == "Inbox/2011/Photo", "EXIF 2011 + Photo -> Inbox/2011/Photo");
+        checar(caminhoDaPasta(pastaDoItem(i4).front().id) == "Inbox/2020/Video", "dc_created 2020 + Video -> Inbox/2020/Video");
+        checar(caminhoDaPasta(pastaDoItem(i1).front().id) == "Inbox/No year/No content", "empty values go to No year/No content");
+        checar(pastaDoItem(i2).front().regra == "@auto", "generated subfolders are marked AUTO");
+        checar(regraDe(inbox) == "ano,content_type", "the folder keeps the rule");
+        checar(pastaDoItem(i5).size() == 1 && pastaDoItem(i5).front().id == manual, "the hand-made subfolder is left untouched");
+
+        // Reorganizar sem mudança: nada mexe, nem cria pasta.
+        const int pastasDepois = contarPastas();
+        const auto r2again = pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
+        checar(r2again.itensMovidos == 0 && r2again.pastasCriadas == 0 && contarPastas() == pastasDepois,
+               "reorganizing with nothing changed is a no-op (folders are reused by name)");
+
+        // Metadado mudou: reorganizar mexe só no item e apaga a AUTO que esvaziou.
+        definirCampoRaiz(reg, i3, "ano", "2020");
+        const auto rMudou = pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
+        checar(rMudou.itensMovidos == 1 && rMudou.pastasApagadas >= 2, "after the metadata changed, only that item moves and the emptied AUTO folders are deleted");
+        checar(caminhoDaPasta(pastaDoItem(i3).front().id) == "Inbox/2020/Photo", "the item lands in the reused/created 2020/Photo");
+        {
+            auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE id = ?");
+            st.bind(1, Value::of(manual));
+            st.step();
+            checar(st.columnInt(0) == 1, "a manual folder is never deleted");
+        }
+
+        // Desfazer: uma organização = um Cmd+Z.
+        pa.desfazer();  // desfaz r3
+        checar(caminhoDaPasta(pastaDoItem(i3).front().id) == "Inbox/2011/Photo", "one Undo reverts the whole re-organization (item and folders back)");
+        pa.desfazer();  // desfaz a 1ª organização
+        checar(pastaDoItem(i2).size() == 1 && pastaDoItem(i2).front().id == inbox && regraDe(inbox).empty() && contarPastas() == pastasAntes,
+               "one Undo reverts the whole first organization: items back in Inbox, AUTO folders gone, rule cleared");
+
+        // Passada automática: item solto na pasta com regra é organizado sem entrada de desfazer.
+        pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
+        const auto descricaoAntes = pa.descricaoUndoAtual();
+        const auto i6 = inserirItemComArquivo(reg, projetoId, "AJU-6", arquivoReal("seis.wav"));
+        definirCampoRaiz(reg, i6, "ano", "2019");
+        reg.run("UPDATE item SET collection_type = 'Photo' WHERE id = ?", {Value::of(i6)});
+        pa.adicionarItensAPasta({i6}, inbox);
+        const auto descricaoComMove = pa.descricaoUndoAtual();
+        checar(pa.organizarItensSoltosDasPastasComRegra(mapa) == 1, "the automatic pass organizes the folder that received a loose item");
+        checar(caminhoDaPasta(pastaDoItem(i6).front().id) == "Inbox/2019/Photo", "the loose item went to the AUTO subfolder");
+        checar(pa.descricaoUndoAtual() == descricaoComMove, "the automatic pass registers no undo entry of its own");
+        checar(pa.organizarItensSoltosDasPastasComRegra(mapa) == 0, "nothing loose left: the check is a no-op");
+        juce::ignoreUnused(descricaoAntes);
+
+        // Desligar: mantém as pastas, tira só a regra e a marcação AUTO.
+        const int pastasComRegra = contarPastas();
+        pa.desligarAutoOrganizacao(inbox);
+        checar(regraDe(inbox).empty() && pastaDoItem(i6).front().regra.empty() && contarPastas() == pastasComRegra,
+               "turning it off keeps every folder and only removes the rule and the AUTO mark");
+        pa.desfazer();
+        checar(regraDe(inbox) == "ano,content_type" && pastaDoItem(i6).front().regra == "@auto", "undo of turning it off restores rule and AUTO marks");
+
+        // Bloqueios: pasta com arquivo no MAIN, subpasta AUTO, mapa ORIGINAL.
+        checar(pa.aplicarAutoOrganizacao(pastaDoItem(i6).front().pai, "ano").status == ProjetoAberto::StatusAutoOrg::SubpastaAuto,
+               "an AUTO subfolder does not accept its own rule");
+        reg.run("INSERT INTO consolidacao_registro (id, item_id, pasta_id, arquivo_id, caminho_relativo_destino, "
+                "checksum_sha256, consolidado_em) SELECT ?, item_id, ?, id, 'x.wav', 'abc', ? FROM arquivo WHERE item_id = ?",
+                {Value::of(matriz::model::novoUuid()), Value::of(manual), Value::of(matriz::model::agoraIso8601()), Value::of(i5)});
+        const std::string bloqueada = pa.criarPastaAcervo("Bloqueada", std::nullopt, mapa);
+        const std::string dentro = pa.criarPastaAcervo("Dentro", bloqueada, mapa);
+        pa.adicionarItensAPasta({i5}, dentro);
+        checar(pa.aplicarAutoOrganizacao(bloqueada, "ano").status == ProjetoAberto::StatusAutoOrg::TemArquivosNoMain,
+               "a folder that already has files in the MAIN is blocked");
+        checar(pa.aplicarAutoOrganizacao(inbox, "").status == ProjetoAberto::StatusAutoOrg::SemNiveis, "no blocks: nothing to apply");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("lote de ajustes selftest: ") + e.what());
+    }
+    raizAj.deleteRecursively();
 }
 
 } // namespace
@@ -3180,6 +3398,7 @@ int rodarLoteSelfTest() {
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarTestesMerge(checar);
+    rodarTestesLoteAjustes(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
