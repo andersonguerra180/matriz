@@ -20,6 +20,7 @@
 #include "HomePanelComponent.h"
 #include "IngestWizardComponent.h"
 #include "BarraNavegacaoComponent.h"
+#include "SubAbasEstruturaComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "PreservationWorkspaceComponent.h"
 #include "CatalogWorkspaceComponent.h"
@@ -504,8 +505,7 @@ private:
     std::unique_ptr<EstatisticasComponent> analyticsWorkspace_;   // STRUCTURE > SPACE MAP (ex-ANALYTICS/Storage)
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
     // Item 4 (nova lista): sub-abas FOLDER MAP/SPACE MAP da aba "Structure".
-    std::unique_ptr<juce::TextButton> btnEstruturaFolderMap_;
-    std::unique_ptr<juce::TextButton> btnEstruturaSpaceMap_;
+    std::unique_ptr<SubAbasEstruturaComponent> subAbasEstrutura_;
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).
     std::unique_ptr<FaixaAvisoComponent> faixaAviso_;

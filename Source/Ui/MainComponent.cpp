@@ -1855,37 +1855,18 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
 
     bool folderAtivo = (subTab == SubTabEstrutura::FolderMap);
 
-    if (!btnEstruturaFolderMap_) {
-        btnEstruturaFolderMap_ = std::make_unique<juce::TextButton>("FOLDER MAP");
-        btnEstruturaFolderMap_->onClick = [this] { mostrarStructure(SubTabEstrutura::FolderMap); };
-        addAndMakeVisible(*btnEstruturaFolderMap_);
-
-        btnEstruturaSpaceMap_ = std::make_unique<juce::TextButton>("SPACE MAP");
-        btnEstruturaSpaceMap_->onClick = [this] { mostrarStructure(SubTabEstrutura::SpaceMap); };
-        addAndMakeVisible(*btnEstruturaSpaceMap_);
+    if (!subAbasEstrutura_) {
+        // Cores de identidade de cada sub-aba (índigo e teal do estilo pill do batch assignment).
+        subAbasEstrutura_ = std::make_unique<SubAbasEstruturaComponent>();
+        subAbasEstrutura_->definirAbas({{"FOLDER MAP", juce::Colour(0xff6366f1)},
+                                        {"SPACE MAP", juce::Colour(0xff14b8a6)}});
+        subAbasEstrutura_->aoTrocar = [this](int indice) {
+            mostrarStructure(indice == 0 ? SubTabEstrutura::FolderMap : SubTabEstrutura::SpaceMap);
+        };
+        addAndMakeVisible(*subAbasEstrutura_);
     }
-    btnEstruturaFolderMap_->setVisible(true);
-    btnEstruturaSpaceMap_->setVisible(true);
-    // Item 1 (lista nova de hoje): a versão anterior usava acento (fundo)
-    // + textoPrimario (texto) na aba ativa — no tema claro, acento é um
-    // cinza bem escuro e textoPrimario também é escuro (pensado pra ficar
-    // sobre superfícies claras, não sobre acento), então a aba "ativa"
-    // saía escura com texto escuro, ilegível. painel/painelAlt sempre
-    // vêm pareados com textoPrimario/textoSecundario nos dois temas, e a
-    // ativa passa a ter o mesmo fundo do conteúdo logo abaixo — visual de
-    // aba de navegador: a corrente "gruda" no conteúdo, a outra fica um
-    // tom mais escura mas sempre legível e claramente clicável.
-    static const juce::Colour corFolderMap(0xff6366f1); // índigo vivo, estilo pill do batch assignment
-    static const juce::Colour corSpaceMap(0xff14b8a6);  // teal vivo, estilo pill do batch assignment
-    auto aplicarEstadoSubTab = [](juce::TextButton& b, juce::Colour cor, bool ativo) {
-        // Só o botão ativo leva cor; o inativo funde com o fundo da
-        // aba/janela (tema().painel), sem nenhum tom da cor — evita o efeito
-        // "os dois estão coloridos" e deixa só um se destacar.
-        b.setColour(juce::TextButton::buttonColourId, ativo ? cor : tema().painel);
-        b.setColour(juce::TextButton::textColourOffId, ativo ? juce::Colours::white : tema().textoSecundario);
-    };
-    aplicarEstadoSubTab(*btnEstruturaFolderMap_, corFolderMap, folderAtivo);
-    aplicarEstadoSubTab(*btnEstruturaSpaceMap_, corSpaceMap, !folderAtivo);
+    subAbasEstrutura_->setVisible(true);
+    subAbasEstrutura_->selecionar(folderAtivo ? 0 : 1);
 
     if (folderAtivo) {
         if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
@@ -4631,8 +4612,7 @@ void MainComponent::resized() {
     // (bug: ela ficava grudada por cima de Grid/Duplicates/etc).
     bool estruturaVisivel = (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) ||
                              (treeWorkspace_ && treeWorkspace_->isVisible());
-    if (btnEstruturaFolderMap_) btnEstruturaFolderMap_->setVisible(estruturaVisivel);
-    if (btnEstruturaSpaceMap_) btnEstruturaSpaceMap_->setVisible(estruturaVisivel);
+    if (subAbasEstrutura_) subAbasEstrutura_->setVisible(estruturaVisivel);
 
     if (catalogo_) {
         auto cabecalho = area.removeFromTop(BarraFerramentasComponent::kAltura).reduced(tema().espacoMedio, 8);
@@ -4703,11 +4683,7 @@ void MainComponent::resized() {
     // numa faixa fixa acima de qual dos dois workspaces estiver visível
     // (a visibilidade delas já foi decidida lá no topo desta função).
     if (estruturaVisivel) {
-        auto subTabArea = area.removeFromTop(32).reduced(8, 4);
-        int metade = (subTabArea.getWidth() - 6) / 2;
-        if (btnEstruturaFolderMap_) btnEstruturaFolderMap_->setBounds(subTabArea.removeFromLeft(metade));
-        subTabArea.removeFromLeft(6);
-        if (btnEstruturaSpaceMap_) btnEstruturaSpaceMap_->setBounds(subTabArea);
+        if (subAbasEstrutura_) subAbasEstrutura_->setBounds(area.removeFromTop(SubAbasEstruturaComponent::kAltura));
 
         if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) {
             analyticsWorkspace_->setBounds(area);
