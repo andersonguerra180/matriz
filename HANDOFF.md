@@ -598,3 +598,39 @@ Uma fase por commit (`87a492d`, `989791b`, `7f483ba`, `cee513f`). Decisões:
 - Pendências: `--selftest-uitest` não rodado nesta branch; a tela de
   conflitos no par manual da aba Duplicates só tem teste do componente, não
   do clique no card.
+
+## Lote de 8 ajustes (branch `feat/lote-ajustes-8`, a partir de `feat/pacote-collection`, 2026-09-30)
+
+Um commit por item (A `07da593`, B `983a6c8`, C `9796ab7`, D `c1d356d`, E `e577867`, F `8843187`
++ UI junto do G/H em `2a2c252`, G-Duplicates `7d2b64b`/`2ca48bb`, testes `41b90b3`). Decisões:
+
+- **Unknown (A)**: `ItemResumo::anoDesconhecido()` = sem ano OU `anoSoDoSistemaDeArquivos` (último
+  recurso da data do disco). O item com ano só do disco conta no ano chutado E em Unknown. O BACKUP
+  ("No year", só EVENT DATE) é outra regra — não unificar.
+- **Rascunho do BACKUP (B)**: `projeto.backup_config_rascunho` (mesmo JSON de `backup_config_main`)
+  é gravado a cada mudança da seção ESTRUTURA DE PASTAS e reaplicado no construtor e em
+  `recarregar()`; depois do 1º backup vale só `backup_config_main`. `mostrarPreservation()` e o
+  rebuild de idioma destroem o `backupWorkspace_` — por isso a persistência.
+- **Auto-organização (F)**: `acervo_pasta.regra_organizacao` (CSV na pasta com regra, `"@auto"` na
+  subpasta gerada). Só no mapa do usuário e em pasta sem arquivo no MAIN; subpasta manual nunca é
+  tocada; AUTO vazia é apagada. Uma organização = um grupo de desfazer (regra, pastas criadas, itens
+  movidos por retrato, pastas apagadas recriadas com o mesmo id); reorganizar sem mudança não deixa
+  entrada. **A passada automática ao recarregar o Folder Map (`organizarItensSoltosDasPastasComRegra`)
+  NÃO registra desfazer** de propósito: senão o Cmd+Z seria refeito no recarregamento seguinte. Item
+  solto que cai numa subpasta AUTO só é reorganizado por "Reorganizar agora". Cópia de mapa
+  (`replicarSubarvoreNoAcervo`) não leva a regra.
+- **Layout do Folder Map (H)**: `Ui/LayoutArvoreFolderMap.h` (puro, testado). Posição (0,0) = "sem
+  posição salva" (nunca gravar exatamente 0,0). Layout padrão só em memória; persiste no arrasto e no
+  AJUSTAR (transação única). Filha sem posição de pai com posição fica à direita dele. Enquadramento
+  inicial: 1ª vez que o mapa é lido, zoom ≤ 100%, na área do canvas (sem a coluna esquerda).
+- **Coluna de cards (G)**: `Ui/ColunaCardsLayout.h` (230px, mesmos números do INTAKE) usado por
+  Duplicates e Folder Map. Folder Map: `areaCanvas()` é a origem de pan/zoom; `screenToCanvas`/
+  `canvasToScreen` já descontam. O card SEM PASTA é o último card da coluna (`boundsSemPasta()` =
+  `coluna_.ultimoCard()`).
+- Verificado: build Debug ok; `--selftest-lote` verde (418 checagens, inclui layout, Unknown e
+  auto-organização); `matriz_selftest` e `matriz_analytics_selftest` verdes; `matriz_ingest_selftest`
+  só com a falha de baseline. `--selftest-uitest`: 42 FAIL vs 41 do baseline — as 2 de "within parent
+  bounds" só mudaram de índice; a nova é "TagChipsEditor received tag 'jorge'" (espera minúscula, vem da
+  Fase 1 dos nomes canônicos, anterior a esta branch). ASan/TSan NÃO rodados nesta branch (não mexe em
+  `inMemoryRelinkedPaths_`, sets de marcação nem callbacks com `this`; callbacks novos capturam
+  SafePointer ou só o ponteiro do banco). Telas conferidas por PNG (`createComponentSnapshot`).
