@@ -54,6 +54,10 @@ struct ItemResumo {
     // acima — nullopt = ainda não preenchido.
     std::optional<std::string> origem; // "Digital" | "Analógico" (valor bruto gravado no banco, não traduzido)
     std::optional<int> ano;
+    // true quando `ano` veio só do último recurso (data do arquivo no disco) —
+    // um palpite, não um ano definido pelo usuário nem lido do metadado.
+    bool anoSoDoSistemaDeArquivos = false;
+    bool anoDesconhecido() const { return !ano.has_value() || anoSoDoSistemaDeArquivos; }
     std::optional<std::string> contentType;
     std::optional<std::string> collectionType;
     std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)

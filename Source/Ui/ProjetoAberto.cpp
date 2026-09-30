@@ -427,7 +427,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                     if (fileObj.existsAsFile()) {
                         int yVal = fileObj.getCreationTime().getYear();
                         if (yVal <= 1970 || yVal > 2025) yVal = fileObj.getLastModificationTime().getYear();
-                        if (yVal > 1800 && yVal <= 2025) r.ano = yVal;
+                        if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; r.anoSoDoSistemaDeArquivos = true; }
                     }
                 } catch (...) {}
             }

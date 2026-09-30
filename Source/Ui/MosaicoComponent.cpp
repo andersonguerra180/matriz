@@ -220,6 +220,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
         if (!tit->empty()) it->nomeOriginalArquivo = *tit;
     }
     auto anoStr = projeto_.lerMetadado(itemId, "ano");
+    it->anoSoDoSistemaDeArquivos = false;  // relido da ficha: não é mais palpite do disco
     if (anoStr.has_value() && !anoStr->empty()) {
         juce::String s(*anoStr);
         if (s.containsOnly("0123456789")) it->ano = s.getIntValue();

@@ -1064,7 +1064,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             // se bater com QUALQUER um deles (união, não interseção) — é o
             // que torna "marcar vários anos" equivalente a um range.
             bool anoBate = false;
-            if (anosSelecionados_.count(-1) && !item.ano.has_value()) anoBate = true;
+            if (anosSelecionados_.count(-1) && item.anoDesconhecido()) anoBate = true;
             if (!anoBate && item.ano.has_value() && anosSelecionados_.count(*item.ano)) anoBate = true;
             if (!anoBate) continue;
         }
@@ -1252,7 +1252,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 // filtro de ano nenhum, continuam mostrando o total global
                 // (mesmo comportamento de sempre).
                 bool passaFiltroAnoParaTipo = anosParaTipo.empty() ||
-                    anosParaTipo.count(item.ano.value_or(-1)) > 0;
+                    (item.ano.has_value() && anosParaTipo.count(*item.ano) > 0) ||
+                    (item.anoDesconhecido() && anosParaTipo.count(-1) > 0);
 
                 if (passaFiltroAnoParaTipo) {
                     switch (cat) {
@@ -1280,8 +1281,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 }
 
                 if (passaFiltroTipoParaAno) {
+                    // Unknown = sem EVENT DATE e sem ano no metadado; o palpite
+                    // pela data do disco conta no ano chutado E em Unknown.
                     if (item.ano.has_value()) contagemPorAno[*item.ano]++;
-                    else semAno++;
+                    if (item.anoDesconhecido()) semAno++;
                 }
 
                 if (item.collectionType.has_value() && !item.collectionType->empty())
@@ -1304,7 +1307,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
                 res.anos.push_back({it->first, it->second});
-            if (semAno > 0) res.anos.push_back({-1, semAno});
+            res.anos.push_back({-1, semAno});  // Unknown sempre no fim, mesmo com 0
 
             for (const auto& pair : contagemPorCollection)
                 res.collections.push_back(pair);
