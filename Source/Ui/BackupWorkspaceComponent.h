@@ -126,6 +126,11 @@ private:
     void atualizarBotoesDependentesDoMain();
     bool saidaBloqueadaSemMain() const;
     void gravarConfigDoMain();
+    // Escolhas da seção ESTRUTURA DE PASTAS gravadas na hora (projeto.backup_config_rascunho)
+    // e reaplicadas ao recriar a janela; só valem antes do 1º backup (!configTravada_).
+    void gravarRascunhoOrganizacao();
+    void aplicarRascunhoOrganizacao();
+    bool aplicandoRascunho_ = false;
     void perguntarSincronizarClones();
     std::string destinoIdDoMain();
     juce::ThreadPool poolSyncClones_{1};

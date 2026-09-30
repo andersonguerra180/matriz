@@ -724,6 +724,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "projeto", "hierarquia_backup", "TEXT");
     // Etapa 5 (MAIN): escolhas de estrutura/nomes do primeiro backup, JSON.
     garantirColuna(registro, "projeto", "backup_config_main", "TEXT");
+    // Rascunho da seção ESTRUTURA DE PASTAS do BACKUP antes do 1º backup (mesmo
+    // JSON de backup_config_main, só as escolhas de organização); vale só
+    // enquanto o MAIN não tem config gravada.
+    garantirColuna(registro, "projeto", "backup_config_rascunho", "TEXT");
     garantirColuna(registro, "projeto", "destino_backup_ativo_path", "TEXT NOT NULL DEFAULT ''");
     // Fase 3 (Folder Color): histórico de até 10 cores usadas, JSON, por
     // projeto — compartilhado entre todas as pastas do Treemap/árvore.

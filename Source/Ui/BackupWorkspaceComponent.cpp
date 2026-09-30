@@ -1603,6 +1603,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
             btnEditarHierarquia_->setEnabled(isCustom && !usaOriginal);
         }
         resized();
+        gravarRascunhoOrganizacao();
         atualizarResumo();
     };
 
@@ -1633,7 +1634,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     comboMapaMain_->setColour(juce::ComboBox::outlineColourId, tk.borda);
     comboMapaMain_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     comboMapaMain_->setTooltip(matriz::i18n::t("backup.mapa_main_dica"));
-    comboMapaMain_->onChange = [this] { atualizarResumo(); };
+    comboMapaMain_->onChange = [this] { gravarRascunhoOrganizacao(); atualizarResumo(); };
     configContainer_->addAndMakeVisible(*comboMapaMain_);
     recarregarComboMapaMain();
 
@@ -1670,6 +1671,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     btnEditarHierarquia_->onClick = [this] {
         new HierarquiaEditorWindow(hierarquiaCustom_, [this](const matriz::consolidacao::HierarquiaBackup& h) {
             hierarquiaCustom_ = h;
+            gravarRascunhoOrganizacao();
             atualizarResumo();
         });
     };
@@ -2001,6 +2003,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addChildComponent(overlay_);
 
     EventBus::obterInstancia().registrarListener(this);
+    aplicarRascunhoOrganizacao();  // última escolha da seção ESTRUTURA DE PASTAS (antes do 1º backup)
     carregarDestinoAtivoInicial();
     atualizarResumo();
     atualizarBotoesListas();
@@ -3176,6 +3179,66 @@ void BackupWorkspaceComponent::gravarConfigDoMain() {
         projeto_.projeto().registro().run("UPDATE projeto SET backup_config_main = ?",
                                           {matriz::db::Value::of(juce::JSON::toString(juce::var(o.get()), true).toStdString())});
     } catch (...) {}
+}
+
+void BackupWorkspaceComponent::gravarRascunhoOrganizacao() {
+    if (configTravada_ || aplicandoRascunho_) return;
+    juce::DynamicObject::Ptr o = new juce::DynamicObject();
+    o->setProperty("preservar", togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState());
+    o->setProperty("mapa", toggleUsarEstruturaMapa_ && toggleUsarEstruturaMapa_->getToggleState());
+    o->setProperty("org", comboOrg_ ? comboOrg_->getSelectedId() : 1);
+    o->setProperty("hierarquia", juce::String(matriz::consolidacao::hierarquiaParaCsv(hierarquiaCustom_)));
+    // Guarda o mapa escolhido mesmo com a hierarquia atual não usando mapa
+    // (o usuário pode voltar a ela); mapaParaBackup() devolveria vazio.
+    {
+        const int idx = comboMapaMain_ ? comboMapaMain_->getSelectedId() - 1 : -1;
+        const bool valido = idx >= 0 && idx < static_cast<int>(idsComboMapaMain_.size());
+        o->setProperty("mapa_id", juce::String(valido ? idsComboMapaMain_[static_cast<size_t>(idx)] : std::string()));
+    }
+    try {
+        projeto_.projeto().registro().run("UPDATE projeto SET backup_config_rascunho = ?",
+                                          {matriz::db::Value::of(juce::JSON::toString(juce::var(o.get()), true).toStdString())});
+    } catch (...) {}
+}
+
+void BackupWorkspaceComponent::aplicarRascunhoOrganizacao() {
+    if (configTravada_) return;  // depois do 1º backup vale backup_config_main
+    if (projeto_.projeto().modo() == matriz::model::Modo::Catalogo) return;  // sem seção de estrutura
+    juce::var cfg;
+    try {
+        auto st = projeto_.projeto().registro().prepare("SELECT COALESCE(backup_config_rascunho, '') FROM projeto LIMIT 1");
+        if (st.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    if (!cfg.isObject()) return;
+
+    const bool preservar = cfg.getProperty("preservar", false);
+    const bool mapa = cfg.getProperty("mapa", false);
+    const int org = juce::jlimit(1, 5, static_cast<int>(cfg.getProperty("org", 1)));
+    const auto hierarquia = cfg.getProperty("hierarquia", "").toString().toStdString();
+    const std::string mapaId = cfg.getProperty("mapa_id", "").toString().toStdString();
+
+    aplicandoRascunho_ = true;
+    if (togglePreservarEstrutura_) togglePreservarEstrutura_->setToggleState(preservar, juce::dontSendNotification);
+    if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(mapa, juce::dontSendNotification);
+    if (comboOrg_) comboOrg_->setSelectedId(org, juce::dontSendNotification);
+    if (org == 5 && !hierarquia.empty()) hierarquiaCustom_ = matriz::consolidacao::hierarquiaDeCsv(hierarquia);
+    if (comboMapaMain_ && !mapaId.empty()) {
+        for (size_t i = 0; i < idsComboMapaMain_.size(); ++i)
+            if (idsComboMapaMain_[i] == mapaId) comboMapaMain_->setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+    }
+    aplicandoRascunho_ = false;
+
+    // Mesmo efeito visual do atualizarEstadoOrganizacao: combo/botão do editor visual.
+    const bool usaOriginal = preservar;
+    if (comboOrg_) comboOrg_->setEnabled(!usaOriginal);
+    if (comboMapaMain_) comboMapaMain_->setEnabled(mapa);
+    if (btnEditarHierarquia_) {
+        const bool isCustom = org == 5;
+        btnEditarHierarquia_->setVisible(isCustom && !usaOriginal);
+        btnEditarHierarquia_->setEnabled(isCustom && !usaOriginal);
+    }
+    if (configContainer_) configContainer_->resized();
+    resized();
 }
 
 void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
@@ -4934,6 +4997,7 @@ void BackupWorkspaceComponent::resized() {
 }
 
 void BackupWorkspaceComponent::recarregar() {
+    aplicarRascunhoOrganizacao();
     carregarOpcoesContent();
     carregarColecoesBackupCatalogo();
     carregarDestinosBackup();
