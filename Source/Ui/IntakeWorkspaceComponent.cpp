@@ -3135,7 +3135,7 @@ void IntakeWorkspaceComponent::paint(juce::Graphics& g) {
     g.setColour(tk.borda);
     g.fillRect(229, 0, 1, getHeight());
 
-    // Cards da coluna esquerda (FILTER / SELECTION / BATCH ASSIGNMENT /
+    // Cards da coluna esquerda (IMPORT / FILTER / BATCH ASSIGNMENT /
     // ACTIONS) — mesmo tratamento visual da aba METADATA.
     for (const auto& cardBounds : secaoCardBounds_) {
         g.setColour(tk.painelAlt.withAlpha(0.25f));
@@ -3250,6 +3250,17 @@ void IntakeWorkspaceComponent::resized() {
         btnVisaoIcones_->setBounds(viewRow);
         sidebar.removeFromTop(6);
     }
+    // Select All / Clear Selection (antes num card SELECTION próprio) + a contagem de selecionados.
+    {
+        auto selRow = sidebar.removeFromTop(24);
+        int half = (selRow.getWidth() - 6) / 2;
+        btnSelecionarTodos_->setBounds(selRow.removeFromLeft(half));
+        selRow.removeFromLeft(6);
+        btnLimparSelecao_->setBounds(selRow);
+        sidebar.removeFromTop(2);
+        lblSubtitulo_->setBounds(sidebar.removeFromTop(16));
+        sidebar.removeFromTop(6);
+    }
     btnFiltroAll_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroAudio_->setBounds(sidebar.removeFromTop(24));
@@ -3270,22 +3281,6 @@ void IntakeWorkspaceComponent::resized() {
         comboMes_->setBounds(linhaData.removeFromLeft(meio));
         linhaData.removeFromLeft(6);
         comboDia_->setBounds(linhaData);
-    }
-    finalizarCard();
-    sidebar.removeFromTop(8);
-
-    // 2. SELECTION
-    iniciarCard();
-    secaoHeaderBounds_.push_back({i18n::t("intake.secao_selection"), sidebar.removeFromTop(kHeaderH)});
-    sidebar.removeFromTop(4);
-    lblSubtitulo_->setBounds(sidebar.removeFromTop(18));
-    sidebar.removeFromTop(4);
-    {
-        auto selRow = sidebar.removeFromTop(24);
-        int half = (selRow.getWidth() - 6) / 2;
-        btnSelecionarTodos_->setBounds(selRow.removeFromLeft(half));
-        selRow.removeFromLeft(6);
-        btnLimparSelecao_->setBounds(selRow);
     }
     finalizarCard();
     sidebar.removeFromTop(8);
