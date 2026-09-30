@@ -5,6 +5,7 @@
 
 #include "IntakeWorkspaceComponent.h"
 #include "GeoFavoritosGerenciar.h"
+#include "FloatingPreviewWindow.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
 #include "../Ficha/AutocompleteHistorico.h"
@@ -1012,6 +1013,8 @@ public:
         repaint();
     }
 
+    int colunas() const { return colunas_; }
+
     juce::Rectangle<int> boundsDoCard(int indice) const {
         if (colunas_ <= 0) return {};
         int col = indice % colunas_;
@@ -1229,6 +1232,14 @@ public:
                 g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
             }
 
+            // Anel do FOCO do teclado (diferente do destaque de seleção).
+            if (owner_.focoVisivel_ && item.id == owner_.focoId_) {
+                g.setColour(juce::Colour(0xff0a84ff));  // azul vivo: a seleção é cinza escuro
+                g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), tk.raioMedio, 4.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.9f));
+                g.drawRoundedRectangle(bounds.toFloat().reduced(3.5f), tk.raioMedio, 1.2f);
+            }
+
             // Text Info Section below thumbnail
             auto infoArea = bounds.reduced(8, 0).withTop(thumbArea.getBottom() + 6);
 
@@ -1308,6 +1319,13 @@ public:
         lacoAtual_ = {};
         lacoAtivo_ = false;
         clickedCardIdx_ = idx;
+        if (idx >= 0 && idx < static_cast<int>(owner_.indicesFiltrados_.size())) {  // o teclado continua daqui
+            const int real = owner_.indicesFiltrados_[static_cast<size_t>(idx)];
+            if (real >= 0 && real < static_cast<int>(owner_.todosItens_.size())) {
+                owner_.focoId_ = owner_.todosItens_[static_cast<size_t>(real)].id;
+                owner_.focoVisivel_ = false;
+            }
+        }
 
         selecaoAntesDoLaco_.resize(owner_.todosItens_.size());
         for (size_t k = 0; k < owner_.todosItens_.size(); ++k) {
@@ -1950,6 +1968,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 }
 
 IntakeWorkspaceComponent::~IntakeWorkspaceComponent() {
+    janelaPreview_.reset();
     poolSnapshot_.removeAllJobs(true, 2000);
 }
 
@@ -2674,7 +2693,11 @@ void IntakeWorkspaceComponent::atualizarBotaoRejeitar() {
 void IntakeWorkspaceComponent::alternarMarcaRDosSelecionados() {
     // Seleção atual e visível (mesma regra dos outros botões de lote).
     auto selecionados = itensSelecionados();
-    if (selecionados.empty()) return;
+    if (selecionados.empty()) {  // sem seleção, o R vale para o item em foco (seta + R = triagem só no teclado)
+        const int pos = posicaoDoFoco();
+        if (pos < 0) return;
+        selecionados.insert(todosItens_[static_cast<size_t>(indicesFiltrados_[static_cast<size_t>(pos)])].id);
+    }
     projeto_.alternarMarcaR(std::vector<std::string>(selecionados.begin(), selecionados.end()));
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();
@@ -2704,11 +2727,157 @@ void IntakeWorkspaceComponent::rejeitarMarcados() {
     recarregar();
 }
 
+int IntakeWorkspaceComponent::posicaoDoFoco() const {
+    if (focoId_.empty()) return -1;
+    auto idNaPosicao = [this](int p) -> const std::string* {
+        if (p < 0 || p >= static_cast<int>(indicesFiltrados_.size())) return nullptr;
+        const int real = indicesFiltrados_[static_cast<size_t>(p)];
+        return (real >= 0 && real < static_cast<int>(todosItens_.size())) ? &todosItens_[static_cast<size_t>(real)].id : nullptr;
+    };
+    if (const auto* id = idNaPosicao(posicaoFocoCache_); id && *id == focoId_) return posicaoFocoCache_;
+    for (int p = 0; p < static_cast<int>(indicesFiltrados_.size()); ++p) {
+        const int real = indicesFiltrados_[static_cast<size_t>(p)];
+        if (real >= 0 && real < static_cast<int>(todosItens_.size()) && todosItens_[static_cast<size_t>(real)].id == focoId_)
+            return posicaoFocoCache_ = p;
+    }
+    return -1;
+}
+
+void IntakeWorkspaceComponent::garantirCardVisivel(int posicao) {
+    if (!gridViewport_ || !gridComponent_) return;
+    const auto card = gridComponent_->boundsDoCard(posicao);
+    if (card.isEmpty()) return;
+    const auto vista = gridViewport_->getViewArea();
+    const int folga = 14;
+    int y = vista.getY();
+    if (card.getY() - folga < vista.getY()) y = card.getY() - folga;
+    else if (card.getBottom() + folga > vista.getBottom()) y = card.getBottom() + folga - vista.getHeight();
+    if (y != vista.getY()) gridViewport_->setViewPosition(vista.getX(), juce::jmax(0, y));
+}
+
+void IntakeWorkspaceComponent::moverFocoGrade(int dx, int dy, bool estender) {
+    const int total = static_cast<int>(indicesFiltrados_.size());
+    const int colunas = gridComponent_ ? gridComponent_->colunas() : 0;
+    if (total == 0 || colunas <= 0) return;
+
+    int atual = posicaoDoFoco();
+    int novo;
+    if (atual < 0) {  // primeira seta: parte do primeiro selecionado (ou do primeiro card), sem andar ainda
+        novo = 0;
+        for (int p = 0; p < total; ++p) {
+            const int real = indicesFiltrados_[static_cast<size_t>(p)];
+            if (real >= 0 && real < static_cast<int>(todosItens_.size()) && todosItens_[static_cast<size_t>(real)].selecionado) {
+                novo = p;
+                break;
+            }
+        }
+        atual = novo;
+    } else if (dx != 0) {
+        novo = juce::jlimit(0, total - 1, atual + dx);  // fim da linha -> começo da seguinte, e o inverso
+    } else if (dy > 0) {
+        novo = (atual + colunas < total) ? atual + colunas
+             : (atual / colunas < (total - 1) / colunas ? total - 1 : atual);  // última linha, mais curta
+    } else {
+        novo = (atual - colunas >= 0) ? atual - colunas : atual;
+    }
+    focoVisivel_ = true;
+
+    auto doItem = [this](int pos) -> ItemIntake* {
+        const int real = indicesFiltrados_[static_cast<size_t>(pos)];
+        return (real >= 0 && real < static_cast<int>(todosItens_.size())) ? &todosItens_[static_cast<size_t>(real)] : nullptr;
+    };
+
+    bool selecaoMudou = false;
+    if (estender) {
+        // Âncora = a do último clique/seta; o que sai do intervalo é desmarcado, o que entra é marcado.
+        int ancora = ultimaPosicaoClicadaParaSelecao_;
+        if (ancora < 0 || ancora >= total) ancora = atual;
+        const int antesDe = std::min(ancora, atual), antesAte = std::max(ancora, atual);
+        const int depoisDe = std::min(ancora, novo), depoisAte = std::max(ancora, novo);
+        for (int p = antesDe; p <= antesAte; ++p)
+            if (p < depoisDe || p > depoisAte)
+                if (auto* it = doItem(p)) it->selecionado = false;
+        for (int p = depoisDe; p <= depoisAte; ++p)
+            if (auto* it = doItem(p)) it->selecionado = true;
+        ultimaPosicaoClicadaParaSelecao_ = ancora;
+        selecaoMudou = true;
+    } else {
+        ultimaPosicaoClicadaParaSelecao_ = novo;  // a próxima Shift+seta parte daqui
+    }
+
+    if (auto* it = doItem(novo)) focoId_ = it->id;
+    posicaoFocoCache_ = novo;
+    garantirCardVisivel(novo);
+    if (selecaoMudou) {
+        atualizarContagens();
+        if (tabela_) tabela_->repaint();
+    }
+    if (gridComponent_) gridComponent_->repaint();
+}
+
+void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
+    if (janelaPreview_) {  // Espaço de novo fecha
+        janelaPreview_.reset();
+        return;
+    }
+    int pos = posicaoDoFoco();
+    if (pos < 0) return;
+    const int real = indicesFiltrados_[static_cast<size_t>(pos)];
+    if (real < 0 || real >= static_cast<int>(todosItens_.size())) return;
+    const std::string itemId = todosItens_[static_cast<size_t>(real)].id;
+
+    juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
+    auto aoFechar = [safe] {
+        juce::MessageManager::callAsync([safe] {
+            if (safe) safe->janelaPreview_.reset();
+        });
+    };
+    auto aoNavegar = [safe](const std::string& atualId, int direcao) -> std::optional<std::string> {
+        if (!safe) return std::nullopt;
+        const int p = [&] {
+            for (int i = 0; i < static_cast<int>(safe->indicesFiltrados_.size()); ++i) {
+                const int r = safe->indicesFiltrados_[static_cast<size_t>(i)];
+                if (r >= 0 && r < static_cast<int>(safe->todosItens_.size()) && safe->todosItens_[static_cast<size_t>(r)].id == atualId) return i;
+            }
+            return -1;
+        }();
+        const int alvo = p + direcao;
+        if (p < 0 || alvo < 0 || alvo >= static_cast<int>(safe->indicesFiltrados_.size())) return std::nullopt;
+        const int r = safe->indicesFiltrados_[static_cast<size_t>(alvo)];
+        if (r < 0 || r >= static_cast<int>(safe->todosItens_.size())) return std::nullopt;
+        return safe->todosItens_[static_cast<size_t>(r)].id;
+    };
+    auto aoItemMudou = [safe](const std::string& novoId) {
+        if (!safe) return;
+        safe->focoId_ = novoId;  // o foco acompanha o que o preview mostra
+        const int p = safe->posicaoDoFoco();
+        if (p >= 0) safe->garantirCardVisivel(p);
+        if (safe->gridComponent_) safe->gridComponent_->repaint();
+    };
+    janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou);
+}
+
 bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
     // Campo de texto em foco: a tecla é dele (R digita a letra).
     if (dynamic_cast<juce::TextEditor*>(juce::Component::getCurrentlyFocusedComponent()) != nullptr) return false;
     const auto mods = k.getModifiers();
     if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown()) return false;
+    if (modoVisao_ == ModoVisao::Icones && !indicesFiltrados_.empty()) {
+        const int codigo = k.getKeyCode();
+        int dx = 0, dy = 0;
+        if (codigo == juce::KeyPress::leftKey) dx = -1;
+        else if (codigo == juce::KeyPress::rightKey) dx = 1;
+        else if (codigo == juce::KeyPress::upKey) dy = -1;
+        else if (codigo == juce::KeyPress::downKey) dy = 1;
+        if (dx != 0 || dy != 0) {
+            moverFocoGrade(dx, dy, mods.isShiftDown());
+            return true;
+        }
+        if (codigo == juce::KeyPress::spaceKey && !mods.isShiftDown()) {
+            alternarPreviewDoFoco();
+            return true;
+        }
+    }
     const auto c = k.getTextCharacter();
     if (c == 'r' || c == 'R') {
         alternarMarcaRDosSelecionados();

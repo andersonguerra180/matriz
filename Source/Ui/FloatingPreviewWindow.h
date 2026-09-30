@@ -148,7 +148,7 @@ public:
             navegarItem(1);
             return true;
         }
-        if (key == juce::KeyPress::escapeKey) {
+        if (key == juce::KeyPress::escapeKey || key == juce::KeyPress::spaceKey) {  // Espaço abre/fecha, como Esc
             closeButtonPressed();
             return true;
         }
@@ -454,7 +454,7 @@ private:
             if (key == juce::KeyPress::rightKey || key == juce::KeyPress::pageDownKey) {
                 if (aoNavegar_) { aoNavegar_(1); return true; }
             }
-            if (key == juce::KeyPress::escapeKey) {
+            if (key == juce::KeyPress::escapeKey || key == juce::KeyPress::spaceKey) {
                 if (aoFechar_) { aoFechar_(); return true; }
             }
 

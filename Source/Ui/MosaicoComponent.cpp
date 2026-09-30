@@ -18,6 +18,10 @@ namespace matriz::ui {
 
 MosaicoComponent::MosaicoComponent(ProjetoAberto& projeto) : projeto_(projeto) {
     setWantsKeyboardFocus(true);
+    notificadorSelecao_.aoDisparar = [this] {
+        if (aoMudarSelecao) aoMudarSelecao();
+        if (aoSelecionar && !selecionadoId_.empty()) aoSelecionar(selecionadoId_);
+    };
     EventBus::obterInstancia().registrarListener(this);
 }
 
@@ -934,6 +938,8 @@ std::optional<std::string> MosaicoComponent::itemAdjacente(const std::string& it
 void MosaicoComponent::selecionarItem(const std::string& itemId) {
     selecionadoId_ = itemId;
     selecionados_ = {itemId};
+    focoId_ = itemId;  // (o preview navega por aqui: o foco acompanha)
+    indiceFoco_ = -1;
     repaint();
     if (aoMudarSelecao) aoMudarSelecao();
 }
@@ -1230,6 +1236,9 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     }
 
     selecionadoId_ = id;
+    focoId_ = id;
+    indiceFoco_ = indice;
+    focoVisivel_ = false;  // o anel só aparece quando o teclado é usado
     repaint();
     if (aoMudarSelecao) aoMudarSelecao();
     if (aoSelecionar) aoSelecionar(selecionadoId_);
@@ -1323,7 +1332,137 @@ void MosaicoComponent::mouseUp(const juce::MouseEvent&) {
     }
 }
 
+int MosaicoComponent::indiceDoFoco() const {
+    if (focoId_.empty()) return -1;
+    const int total = static_cast<int>(itensFiltrados_.size());
+    if (indiceFoco_ >= 0 && indiceFoco_ < total && itensFiltrados_[static_cast<size_t>(indiceFoco_)].id == focoId_)
+        return indiceFoco_;
+    for (int i = 0; i < total; ++i)
+        if (itensFiltrados_[static_cast<size_t>(i)].id == focoId_) return i;
+    return -1;
+}
+
+// Vizinho de uma célula. Esquerda/direita seguem a ordem dos itens (fim da linha -> começo da
+// seguinte, e o inverso); cima/baixo andam uma linha na mesma coluna, atravessando os grupos.
+int MosaicoComponent::indiceVizinho(int indice, int dx, int dy) const {
+    const int total = static_cast<int>(itensFiltrados_.size());
+    if (dx != 0) return juce::jlimit(0, juce::jmax(0, total - 1), indice + dx);
+    if (dy == 0 || colunas_ <= 0) return indice;
+
+    const GrupoMosaico* atual = nullptr;
+    const GrupoMosaico* anterior = nullptr;
+    const GrupoMosaico* proximo = nullptr;
+    for (size_t k = 0; k < grupos_.size(); ++k) {
+        const auto& g = grupos_[k];
+        if (indice >= g.indiceInicio && indice < g.indiceInicio + g.quantidade) {
+            atual = &g;
+            if (k > 0) anterior = &grupos_[k - 1];
+            if (k + 1 < grupos_.size()) proximo = &grupos_[k + 1];
+            break;
+        }
+    }
+    if (!atual) return indice;
+
+    const int local = indice - atual->indiceInicio;
+    const int coluna = local % colunas_;
+    const int linha = local / colunas_;
+    if (dy > 0) {
+        if (local + colunas_ < atual->quantidade) return indice + colunas_;
+        if (linha < atual->linhas - 1) return atual->indiceInicio + atual->quantidade - 1;  // última linha, mais curta
+        if (proximo && proximo->quantidade > 0) return proximo->indiceInicio + juce::jmin(coluna, proximo->quantidade - 1);
+        return indice;
+    }
+    if (linha > 0) return indice - colunas_;
+    if (anterior && anterior->quantidade > 0) {
+        const int ultimaLinha = anterior->linhas - 1;
+        const int naUltima = anterior->quantidade - ultimaLinha * colunas_;
+        return anterior->indiceInicio + ultimaLinha * colunas_ + juce::jmin(coluna, naUltima - 1);
+    }
+    return indice;
+}
+
+void MosaicoComponent::garantirCelulaVisivel(int indice) {
+    auto* vp = findParentComponentOfClass<juce::Viewport>();
+    if (!vp) return;
+    const auto celula = boundsDaCelula(indice);
+    if (celula.isEmpty()) return;
+    int topo = celula.getY();
+    for (const auto& g : grupos_)  // primeira linha do grupo: mostra o cabeçalho junto
+        if (indice >= g.indiceInicio && indice < g.indiceInicio + juce::jmin(colunas_, g.quantidade)) {
+            topo = g.yTopo;
+            break;
+        }
+    const auto vista = vp->getViewArea();
+    int y = vista.getY();
+    if (topo < vista.getY()) y = topo;
+    else if (celula.getBottom() > vista.getBottom()) y = celula.getBottom() - vista.getHeight();
+    if (y != vista.getY()) vp->setViewPosition(vista.getX(), juce::jmax(0, y));
+}
+
+void MosaicoComponent::moverFoco(int dx, int dy, bool estender) {
+    const int total = static_cast<int>(itensFiltrados_.size());
+    if (total == 0) return;
+
+    int atual = indiceDoFoco();
+    int novo;
+    if (atual < 0) {  // primeira seta: parte do item selecionado (ou do primeiro), sem andar ainda
+        novo = 0;
+        for (int i = 0; i < total && !selecionadoId_.empty(); ++i)
+            if (itensFiltrados_[static_cast<size_t>(i)].id == selecionadoId_) { novo = i; break; }
+        atual = novo;
+    } else {
+        novo = indiceVizinho(atual, dx, dy);
+    }
+    focoVisivel_ = true;
+
+    const std::string& id = itensFiltrados_[static_cast<size_t>(novo)].id;
+    if (estender) {
+        const int ancora = (indiceAncoraShift_ >= 0 && indiceAncoraShift_ < total) ? indiceAncoraShift_ : atual;
+        const int antesDe = juce::jmin(ancora, atual), antesAte = juce::jmax(ancora, atual);
+        const int depoisDe = juce::jmin(ancora, novo), depoisAte = juce::jmax(ancora, novo);
+        for (int i = antesDe; i <= antesAte; ++i)  // saiu do intervalo: desmarca; o resto da seleção fica
+            if (i < depoisDe || i > depoisAte) selecionados_.erase(itensFiltrados_[static_cast<size_t>(i)].id);
+        for (int i = depoisDe; i <= depoisAte; ++i) selecionados_.insert(itensFiltrados_[static_cast<size_t>(i)].id);
+        indiceAncoraShift_ = ancora;
+    } else {
+        selecionados_ = {id};
+        indiceAncoraShift_ = novo;
+    }
+    selecionadoId_ = id;
+    focoId_ = id;
+    indiceFoco_ = novo;
+    garantirCelulaVisivel(novo);
+    repaint();
+    notificadorSelecao_.startTimer(90);
+}
+
 bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
+    {
+        const auto mods = tecla.getModifiers();
+        if (!editorInline_ && !mods.isCommandDown() && !mods.isCtrlDown() && !mods.isAltDown()) {
+            const int codigo = tecla.getKeyCode();
+            int dx = 0, dy = 0;
+            if (codigo == juce::KeyPress::leftKey) dx = -1;
+            else if (codigo == juce::KeyPress::rightKey) dx = 1;
+            else if (codigo == juce::KeyPress::upKey) dy = -1;
+            else if (codigo == juce::KeyPress::downKey) dy = 1;
+            if (dx != 0 || dy != 0) {
+                moverFoco(dx, dy, mods.isShiftDown());
+                return true;  // sempre consome: a seta nunca deve rolar o Viewport por conta própria
+            }
+            if (codigo == juce::KeyPress::spaceKey && !mods.isShiftDown()) {
+                int i = indiceDoFoco();
+                if (i < 0 && !selecionadoId_.empty())
+                    for (int k = 0; k < static_cast<int>(itensFiltrados_.size()); ++k)
+                        if (itensFiltrados_[static_cast<size_t>(k)].id == selecionadoId_) { i = k; break; }
+                if (i >= 0) {
+                    const auto& item = itensFiltrados_[static_cast<size_t>(i)];
+                    if (!item.offline && aoAbrirPreview) aoAbrirPreview(item.id);
+                }
+                return true;
+            }
+        }
+    }
     if (tecla == juce::KeyPress::escapeKey && !selecionados_.empty()) {
         selecionados_.clear();
         repaint();
@@ -2328,6 +2467,21 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
             g.setFont(font95Normal);
             g.drawText(info2, areaTexto, juce::Justification::centredLeft, true);
+        }
+    }
+
+    // Anel do FOCO do teclado (diferente do destaque de seleção).
+    if (focoVisivel_) {
+        const int i = indiceDoFoco();
+        if (i >= 0) {
+            const auto celula = boundsDaCelula(i).reduced(modoVisao_ == ModoVisao::Lista ? 1 : 3);
+            if (celula.intersects(g.getClipBounds())) {
+                // Azul vivo + fio branco: nenhum outro estado usa essa cor (a seleção é cinza escuro).
+                g.setColour(juce::Colour(0xff0a84ff));
+                g.drawRoundedRectangle(celula.toFloat(), 5.0f, 4.0f);
+                g.setColour(juce::Colours::white.withAlpha(0.9f));
+                g.drawRoundedRectangle(celula.toFloat().reduced(2.5f), 3.5f, 1.2f);
+            }
         }
     }
 

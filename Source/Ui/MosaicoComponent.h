@@ -177,6 +177,9 @@ public:
 
     void selecionarItem(const std::string& itemId);
     const std::string& itemSelecionado() const { return selecionadoId_; }
+    // Item com o foco do teclado (setas) e quantas colunas a grade tem agora — usados pelo selftest.
+    const std::string& itemEmFoco() const { return focoId_; }
+    int colunasParaTeste() const { return colunas_; }
 
     // Seleção múltipla (Reorientação completa §3.3 — clique, Shift,
     // Cmd/Ctrl). selecionadoId_ continua sendo a âncora/último clicado —
@@ -390,6 +393,22 @@ private:
     std::set<std::string> selecionados_; // seleção múltipla completa (§3.3 — clique/Shift/Cmd)
     int indiceAncoraShift_ = -1;          // início do intervalo pra Shift+clique
     int indiceHover_ = -1;                // célula sob o cursor, -1 = nenhuma
+
+    // Navegação por setas. O FOCO é a célula que o teclado move (anel próprio, diferente do destaque
+    // da seleção; só aparece depois que o teclado é usado). Seta simples = foco + seleciona só ela
+    // (como clicar); Shift+seta estende a seleção a partir da âncora; Espaço abre o preview.
+    std::string focoId_;
+    int indiceFoco_ = -1;
+    bool focoVisivel_ = false;
+    int indiceDoFoco() const;
+    int indiceVizinho(int indice, int dx, int dy) const;
+    void moverFoco(int dx, int dy, bool estender);
+    void garantirCelulaVisivel(int indice);
+    // A ficha e os contadores (pesados) só se atualizam quando a tecla para de repetir.
+    struct NotificadorAdiado : juce::Timer {
+        std::function<void()> aoDisparar;
+        void timerCallback() override { stopTimer(); if (aoDisparar) aoDisparar(); }
+    } notificadorSelecao_;
     bool arrastandoArquivo_ = false;
 
     // Laço de seleção (retângulo com o mouse a partir de área vazia).

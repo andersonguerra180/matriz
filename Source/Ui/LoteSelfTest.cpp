@@ -3519,6 +3519,171 @@ int rodarLoteSelfTest() {
     }
     raizMig.deleteRecursively();
 
+    // ------------------------------------------------ Setas: grade do METADATA e miniaturas do INTAKE
+    std::cout << "\n-- Arrow navigation: METADATA grid + INTAKE thumbnails --\n";
+    juce::File raizSetas = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("matriz_setas_selftest_" + juce::Uuid().toDashedString());
+    try {
+        raizSetas.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Setas";
+        params.prefixoNomenclatura = "SET";
+        auto projeto = matriz::model::Project::criar(raizSetas.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        constexpr int kGrande = 15000, kIntake = 3000;
+        {
+            auto& r0 = projeto->registro();
+            r0.run("BEGIN TRANSACTION", {});
+            for (int i = 0; i < kGrande; ++i) inserirItem(r0, projetoId, juce::String::formatted("CAT-%05d", i).toStdString(), false);
+            for (int i = 0; i < kIntake; ++i) inserirItem(r0, projetoId, juce::String::formatted("INT-%05d", i).toStdString(), true);
+            r0.run("COMMIT", {});
+        }
+        MainComponent janela;
+        janela.setBounds(0, 0, 1400, 900);
+        janela.abrirProjeto(std::move(projeto));
+        bombear(200);
+
+        // ---- METADATA (MosaicoComponent)
+        janela.mostrarGrid();
+        auto* cw = janela.catalogWorkspace_.get();
+        auto* mo = cw->mosaico_.get();
+        esperarAte([&] { return !mo->snapshotPendente() && mo->totalItensCarregados() >= kGrande; }, 120000);
+        bombear(300);
+        checar(mo->totalItensCarregados() == kGrande, "METADATA grid loaded " + juce::String(kGrande) + " items (" + juce::String(mo->totalItensCarregados()) + ")");
+
+        std::map<std::string, int> posicaoDoItem;  // id -> posição na ordem em que a grade os mostra
+        {
+            int pos = 0;
+            for (const auto& id : mo->idsVisiveisEmOrdem()) posicaoDoItem[id] = pos++;
+        }
+        auto foco = [&] { auto f = posicaoDoItem.find(mo->itemEmFoco()); return f == posicaoDoItem.end() ? -1 : f->second; };
+        auto tecla = [&](int codigo, bool shift = false) {
+            return mo->keyPressed(juce::KeyPress(codigo, shift ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys(), 0));
+        };
+        const int cols = mo->colunasParaTeste();
+        checar(cols >= 2, "the grid has several columns (" + juce::String(cols) + ")");
+
+        checar(tecla(juce::KeyPress::rightKey) && foco() == 0 && mo->itensSelecionados().size() == 1,
+               "first arrow lands on the first item and selects it");
+        tecla(juce::KeyPress::rightKey);
+        checar(foco() == 1, "Right moves to the next item in the row");
+        tecla(juce::KeyPress::downKey);
+        checar(foco() == 1 + cols, "Down moves to the same column, next row (" + juce::String(foco()) + ")");
+        tecla(juce::KeyPress::upKey);
+        checar(foco() == 1, "Up goes back");
+        for (int i = 0; i < cols - 2; ++i) tecla(juce::KeyPress::rightKey);  // fim da linha
+        checar(foco() == cols - 1, "Right walks to the end of the row");
+        tecla(juce::KeyPress::rightKey);
+        checar(foco() == cols, "Right at the end of a row goes to the first item of the next row");
+        tecla(juce::KeyPress::leftKey);
+        checar(foco() == cols - 1, "Left at the start of a row goes to the last item of the previous row");
+        tecla(juce::KeyPress::upKey);
+        tecla(juce::KeyPress::upKey);
+        checar(foco() == cols - 1, "Up at the first row stays put");
+        checar(mo->itensSelecionados().size() == 1, "plain arrows keep a single selected item");
+
+        tecla(juce::KeyPress::rightKey, true);
+        tecla(juce::KeyPress::rightKey, true);
+        checar(mo->itensSelecionados().size() == 3, "Shift+Right x2 extends the selection to 3 items (" + juce::String((int) mo->itensSelecionados().size()) + ")");
+        tecla(juce::KeyPress::leftKey, true);
+        checar(mo->itensSelecionados().size() == 2, "Shift+Left shrinks it again");
+        tecla(juce::KeyPress::downKey, true);
+        checar(mo->itensSelecionados().size() == static_cast<size_t>(cols + 2),
+               "Shift+Down extends by a full row (2 + " + juce::String(cols) + " = " + juce::String((int) mo->itensSelecionados().size()) + ")");
+        if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+            bombear(300);
+            juce::PNGImageFormat png;
+            auto arq = dir.getChildFile("metadata_foco.png");
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(cw->createComponentSnapshot(cw->getLocalBounds()), *out);
+        }
+
+        std::string abriu;
+        auto abrirOriginal = mo->aoAbrirPreview;
+        mo->aoAbrirPreview = [&](const std::string& id) { abriu = id; };
+        tecla(juce::KeyPress::spaceKey);
+        checar(abriu == mo->itemEmFoco() && !abriu.empty(), "Space opens the preview of the focused item");
+        mo->aoAbrirPreview = abrirOriginal;
+        bombear(150);
+
+        // Desempenho: segurar a seta para baixo numa coleção de 15.000 itens.
+        int chamadasFicha = 0;
+        auto fichaOriginal = mo->aoSelecionar;
+        mo->aoSelecionar = [&](const std::string&) { ++chamadasFicha; };
+        const int focoAntes = foco();
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < 600; ++i) tecla(juce::KeyPress::downKey);
+        const double ms = juce::Time::getMillisecondCounterHiRes() - t0;
+        checar(ms < 2000.0, "600 held Down presses on 15,000 items take " + juce::String(ms, 0) + " ms (limit 2000)");
+        checar(chamadasFicha == 0, "while the key repeats, the record panel is not reloaded (" + juce::String(chamadasFicha) + " reloads)");
+        bombear(300);
+        checar(chamadasFicha == 1, "it reloads once, after the key stops (" + juce::String(chamadasFicha) + ")");
+        checar(foco() == focoAntes + 600 * cols, "600 Down presses moved exactly 600 rows (" + juce::String(focoAntes) + " -> " + juce::String(foco()) + ")");
+        mo->aoSelecionar = fichaOriginal;
+
+        // Até o fim da lista e de volta: sem travar, sem sair do intervalo.
+        for (int i = 0; i < kGrande / cols + 10; ++i) tecla(juce::KeyPress::downKey);
+        checar(foco() / cols == (kGrande - 1) / cols, "Down past the end stops in the last row (" + juce::String(foco()) + ")");
+        for (int i = 0; i < kGrande / cols + 10; ++i) tecla(juce::KeyPress::upKey);
+        checar(foco() >= 0 && foco() < cols, "Up past the start stops in the first row (" + juce::String(foco()) + ")");
+        bombear(300);
+
+        // ---- INTAKE (miniaturas)
+        janela.mostrarIntake();
+        auto* iw = janela.intakeWorkspace_.get();
+        iw->recarregar();
+        esperarAte([&] { return !iw->snapshotPendente() && static_cast<int>(iw->todosItens_.size()) >= kIntake; }, 120000);
+        checar(static_cast<int>(iw->todosItens_.size()) == kIntake, "INTAKE loaded " + juce::String(kIntake) + " items");
+        iw->definirModoVisao(IntakeWorkspaceComponent::ModoVisao::Icones);
+        bombear(300);
+        auto teclaI = [&](int codigo, bool shift = false) {
+            return iw->keyPressed(juce::KeyPress(codigo, shift ? juce::ModifierKeys::shiftModifier : juce::ModifierKeys(), 0));
+        };
+        checar(teclaI(juce::KeyPress::rightKey) && iw->posicaoDoFoco() == 0, "INTAKE: first arrow focuses the first card");
+        teclaI(juce::KeyPress::rightKey);
+        checar(iw->posicaoDoFoco() == 1, "INTAKE: Right moves to the next card");
+        teclaI(juce::KeyPress::downKey);
+        const int colsI = iw->posicaoDoFoco() - 1;
+        checar(colsI >= 2, "INTAKE: Down moves one row (" + juce::String(colsI) + " columns)");
+        for (int i = 0; i < colsI; ++i) teclaI(juce::KeyPress::upKey);
+        checar(iw->itensSelecionados().empty(), "INTAKE: plain arrows move the focus without touching the selection");
+        const int base = iw->posicaoDoFoco();
+        teclaI(juce::KeyPress::rightKey, true);
+        teclaI(juce::KeyPress::rightKey, true);
+        checar(iw->itensSelecionados().size() == 3, "INTAKE: Shift+Right x2 selects 3 cards from the anchor (" + juce::String((int) iw->itensSelecionados().size()) + ")");
+        teclaI(juce::KeyPress::leftKey, true);
+        checar(iw->itensSelecionados().size() == 2, "INTAKE: Shift+Left shrinks the selection");
+        if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+            bombear(300);
+            juce::PNGImageFormat png;
+            auto arq = dir.getChildFile("intake_foco.png");
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(iw->createComponentSnapshot(iw->getLocalBounds()), *out);
+        }
+        iw->selecionarTodos(false);
+        iw->marcadosR_.clear();
+        teclaI(juce::KeyPress::rightKey);
+        const int focoR = iw->posicaoDoFoco();
+        checar(focoR >= 0 && focoR != base - 1, "INTAKE: arrow after clearing still moves the focus");
+        iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+        checar(iw->marcadosR_.size() == 1 && iw->marcadosR_.count(iw->focoId_) == 1,
+               "INTAKE: with nothing selected, R marks the focused card (arrow + R = triage from the keyboard)");
+        iw->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+        checar(iw->marcadosR_.empty(), "INTAKE: R again unmarks it");
+
+        const auto ti0 = juce::Time::getMillisecondCounterHiRes();
+        for (int i = 0; i < 2000; ++i) teclaI(juce::KeyPress::downKey);
+        const double msI = juce::Time::getMillisecondCounterHiRes() - ti0;
+        checar(msI < 3000.0, "INTAKE: 2000 held Down presses on 3,000 cards take " + juce::String(msI, 0) + " ms (limit 3000)");
+        checar(iw->posicaoDoFoco() / colsI == (kIntake - 1) / colsI, "INTAKE: Down past the end stops in the last row (" + juce::String(iw->posicaoDoFoco()) + ")");
+        bombear(300);
+    } catch (const std::exception& e) {
+        checar(false, juce::String("arrow navigation selftest: ") + e.what());
+    }
+    raizSetas.deleteRecursively();
+
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
     rodarTestesMerge(checar);

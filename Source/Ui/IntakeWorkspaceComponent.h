@@ -17,6 +17,8 @@
 
 namespace matriz::ui {
 
+class FloatingPreviewWindow;
+
 class IntakeWorkspaceComponent : public juce::Component,
                                  public juce::TableListBoxModel,
                                  public juce::FileDragAndDropTarget {
@@ -160,6 +162,13 @@ private:
     void rejeitarMarcados();
     void atualizarBotaoRejeitar();
     bool itemMarcadoR(const std::string& itemId) const { return marcadosR_.count(itemId) > 0; }
+
+    // Navegação por setas nas miniaturas. O FOCO (anel) é separado da seleção: seta simples só move o
+    // foco; Shift+seta estende a seleção a partir da âncora; Espaço abre/fecha o preview do foco.
+    int posicaoDoFoco() const;  // posição em indicesFiltrados_, -1 = nenhum
+    void moverFocoGrade(int dx, int dy, bool estender);
+    void garantirCardVisivel(int posicao);
+    void alternarPreviewDoFoco();
     void mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos);
     void mostrarDialogoGetInfo(int itemIndex);
     void selecionarTodos(bool selecionar);
@@ -183,6 +192,10 @@ private:
     std::map<std::string, RescanOrigem> badgesRescanSessao_;
     std::vector<ItemIntake> todosItens_;
     std::set<std::string> marcadosR_;  // espelho de intake_marca_r (só message thread)
+    std::string focoId_;
+    mutable int posicaoFocoCache_ = -1;  // palpite de posicaoDoFoco(); sempre validado pelo id
+    bool focoVisivel_ = false;  // o anel só aparece depois que o teclado é usado
+    std::unique_ptr<FloatingPreviewWindow> janelaPreview_;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
     // item (shift-click seleciona intervalo): âncora do último clique
     // simples (não-shift), em índice de indicesFiltrados_ (posição visível,
