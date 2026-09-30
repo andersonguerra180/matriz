@@ -115,13 +115,21 @@ public:
             janela->setContentOwned(painel.release(), true);
             janela->centreWithSize(420, 180);
             janela->setVisible(true);
-            if (ed) {
-                ed->grabKeyboardFocus();
-                ed->setHighlightedRegion(juce::Range<int>(0, valorInicial.length()));
-            }
             janela->enterModalState(true, juce::ModalCallbackFunction::create([janela](int) {
                 janela->setVisible(false);
             }));
+            // O foco vai direto pra caixa de texto: só depois de enterModalState (que dá o foco à
+            // própria janela) e, por garantia, de novo quando a janela já está ativa.
+            if (ed) {
+                juce::Component::SafePointer<juce::TextEditor> edSeguro(ed);
+                auto focar = [edSeguro, tamanho = valorInicial.length()] {
+                    if (edSeguro == nullptr) return;
+                    edSeguro->grabKeyboardFocus();
+                    edSeguro->setHighlightedRegion(juce::Range<int>(0, tamanho));
+                };
+                focar();
+                juce::Timer::callAfterDelay(120, focar);
+            }
         });
     }
 
