@@ -1755,6 +1755,18 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.vazio_titulo", "No scan yet"},
         {"duplicatas.vazio_dica", "Choose the filters on the left and press SCAN FOR DUPLICATES. Nothing changes in your files."},
         {"duplicatas.resumo", "{n} duplicate pair(s) to review"},
+        {"arvore_backup.card_mapa", "MAP"},
+        {"arvore_backup.card_pastas", "FOLDERS"},
+        {"arvore_backup.card_visualizacao", "VIEW"},
+        {"arvore_backup.auto_marca", "AUTO"},
+        {"arvore_backup.auto_sub_marca", "auto"},
+        {"arvore_backup.auto_organizar", "Auto-organize..."},
+        {"arvore_backup.auto_editar", "Edit rules..."},
+        {"arvore_backup.auto_reorganizar", "Reorganize now"},
+        {"arvore_backup.auto_desligar", "Turn off auto-organize"},
+        {"arvore_backup.auto_titulo_janela", "Auto-organize: {nome}"},
+        {"arvore_backup.auto_falha", "This folder could not be auto-organized. Nothing was changed."},
+        {"arvore_backup.auto_no_main", "This folder already has files in the MAIN, so it cannot be auto-organized: that would move them. Use a folder that only has files not yet backed up."},
     };
     return strings;
 }

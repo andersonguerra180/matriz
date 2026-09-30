@@ -1765,6 +1765,18 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.vazio_titulo", "Nenhuma varredura ainda"},
         {"duplicatas.vazio_dica", "Escolha os filtros à esquerda e clique em LOCALIZAR DUPLICATAS. Nada muda nos seus arquivos."},
         {"duplicatas.resumo", "{n} par(es) de duplicatas para revisar"},
+        {"arvore_backup.card_mapa", "MAPA"},
+        {"arvore_backup.card_pastas", "PASTAS"},
+        {"arvore_backup.card_visualizacao", "VISUALIZAÇÃO"},
+        {"arvore_backup.auto_marca", "AUTO"},
+        {"arvore_backup.auto_sub_marca", "auto"},
+        {"arvore_backup.auto_organizar", "Auto-organizar..."},
+        {"arvore_backup.auto_editar", "Editar regras..."},
+        {"arvore_backup.auto_reorganizar", "Reorganizar agora"},
+        {"arvore_backup.auto_desligar", "Desligar auto-organização"},
+        {"arvore_backup.auto_titulo_janela", "Auto-organizar: {nome}"},
+        {"arvore_backup.auto_falha", "Não foi possível auto-organizar esta pasta. Nada foi alterado."},
+        {"arvore_backup.auto_no_main", "Esta pasta já tem arquivos no MAIN e não pode ser auto-organizada: isso os moveria. Use uma pasta que só tenha arquivos ainda sem backup."},
     };
     return strings;
 }

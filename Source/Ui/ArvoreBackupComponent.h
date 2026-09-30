@@ -1,8 +1,9 @@
 #pragma once
 
 #include <JuceHeader.h>
-#include "ProjetoAberto.h"
+#include "ColunaCardsLayout.h"
 #include "EventBus.h"
+#include "ProjetoAberto.h"
 
 namespace matriz::ui {
 
@@ -86,6 +87,10 @@ private:
         // acervo_pasta.cor_customizada; hasCorCustomizada=false = sem marcação.
         juce::Colour corCustomizada;
         bool hasCorCustomizada = false;
+        // Auto-organização: regra (CSV) da pasta e blocos já lidos; autoSub = subpasta criada pela regra.
+        juce::String regra;
+        matriz::consolidacao::HierarquiaBackup niveisRegra;
+        bool autoSub = false;
     };
 
     ProjetoAberto& projeto_;
@@ -133,9 +138,28 @@ private:
     // (não apagado, só marcado, pra não reimportar no próximo load).
     void migrarPresetsAntigosSeNecessario();
 
-    // SEM PASTA (NO FOLDER) — painel fixo em espaço de TELA (não pan/zoom
-    // com o canvas), canto inferior-esquerdo; nunca aparece com o ORIGINAL
-    // ativo (S4/13: "Não aparece no ORIGINAL").
+    // Coluna esquerda em cards (MAPA / PASTAS / VISUALIZAÇÃO / SEM PASTA), padrão do
+    // INTAKE. O canvas ocupa o resto; tudo aqui é em coordenadas de TELA (do componente).
+    ColunaCardsLayout coluna_;
+    juce::Rectangle<int> semPastaBounds_;
+    juce::Rectangle<int> zoomIndicadorBounds_;
+    // Canvas (pan/zoom): à direita da coluna, abaixo da barra de abas. screenToCanvas /
+    // canvasToScreen já descontam a origem dele.
+    juce::Rectangle<int> areaCanvas() const;
+    // Primeira abertura de um mapa: nós visíveis e centralizados na área útil do canvas.
+    bool enquadrarPendente_ = true;
+    std::string mapaEnquadradoId_;
+    void tentarEnquadrar();
+
+    // Auto-organização por pasta (menu de contexto da pasta).
+    bool pastaPodeAutoOrganizar(const std::string& pastaId);
+    void mostrarEditorAutoOrganizar(const std::string& pastaId, const juce::String& nomePasta, const juce::String& regraAtual);
+    void aplicarAutoOrganizacaoNaPasta(const std::string& pastaId, const std::string& regraCsv);
+    void desenharIndicadorZoom(juce::Graphics& g) const;
+    void desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const;
+
+    // SEM PASTA (NO FOLDER) — card fixo na coluna esquerda (fora do canvas); nunca
+    // aparece com o ORIGINAL ativo (S4/13: "Não aparece no ORIGINAL").
     juce::Rectangle<int> boundsSemPasta() const;
     void desenharSemPasta(juce::Graphics& g) const;
     bool semPastaHover_ = false;
@@ -192,13 +216,9 @@ private:
     juce::Point<int> canvasToScreen(juce::Point<float> canvas) const;
     void iniciarEdicaoInline(int nodeIndex);
     void finalizarEdicaoInline();
-    void desenharMinimap(juce::Graphics& g) const;
-    juce::Rectangle<int> minimapBounds() const;
 
     std::string socketDragParentId_;
     juce::Point<float> socketDragPos_;
-
-    bool minimapDragging_ = false;
 
     bool marqueeSelecting_ = false;
     juce::Point<float> marqueeStartCanvas_;

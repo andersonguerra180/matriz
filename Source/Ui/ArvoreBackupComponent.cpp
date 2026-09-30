@@ -3,6 +3,8 @@
 #include "../Ingest/FluxoLote.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../Vault/Resolucao.h"
+#include "HierarquiaEditorComponent.h"
+#include "LayoutArvoreFolderMap.h"
 #include "ModalMitigacao.h"
 #include "Tokens.h"
 #include <algorithm>
@@ -306,11 +308,11 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnAutoArranjar_);
 
     btnZoomIn_ = std::make_unique<juce::TextButton>("+");
-    btnZoomIn_->onClick = [this] { aplicarZoom(zoom_ * 1.2f, {getWidth() / 2.0f, getHeight() / 2.0f}); };
+    btnZoomIn_->onClick = [this] { aplicarZoom(zoom_ * 1.2f, areaCanvas().withZeroOrigin().getCentre().toFloat()); };
     addAndMakeVisible(*btnZoomIn_);
 
     btnZoomOut_ = std::make_unique<juce::TextButton>("-");
-    btnZoomOut_->onClick = [this] { aplicarZoom(zoom_ / 1.2f, {getWidth() / 2.0f, getHeight() / 2.0f}); };
+    btnZoomOut_->onClick = [this] { aplicarZoom(zoom_ / 1.2f, areaCanvas().withZeroOrigin().getCentre().toFloat()); };
     addAndMakeVisible(*btnZoomOut_);
 
     btnZoomFit_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_fit"));
@@ -318,6 +320,11 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnZoomFit_);
 
     comboMapas_ = std::make_unique<juce::ComboBox>();
+    // Mesmo tratamento de combo das outras abas.
+    comboMapas_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+    comboMapas_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+    comboMapas_->setColour(juce::ComboBox::outlineColourId, tema().borda);
+    comboMapas_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     comboMapas_->onChange = [this] {
         int idx = comboMapas_->getSelectedItemIndex();
         if (idx >= 0 && idx < static_cast<int>(mapasCache_.size())) selecionarMapaPorId(mapasCache_[static_cast<size_t>(idx)].id);
@@ -386,7 +393,15 @@ void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
 }
 
 void ArvoreBackupComponent::recarregar() {
+    // Itens que chegaram soltos numa pasta com regra (arrastados, SEND TO FOLDER...) são
+    // organizados aqui. Uma consulta só quando não há nada a fazer.
+    if (!mapaAtivoEhOriginal()) projeto_.organizarItensSoltosDasPastasComRegra(mapaAtivoId_);
     recalcularNodes();
+    if (mapaEnquadradoId_ != mapaAtivoId_) {  // primeira abertura deste mapa
+        mapaEnquadradoId_ = mapaAtivoId_;
+        enquadrarPendente_ = true;
+    }
+    tentarEnquadrar();
     repaint();
 }
 
@@ -394,35 +409,35 @@ void ArvoreBackupComponent::recalcularNodes() {
     nodes_.clear();
     auto arvore = projeto_.arvoreAcervo(mapaAtivoId_);
 
-    std::function<void(const ProjetoAberto::NoArvore&, int, int)> adicionarNo =
-        [&](const ProjetoAberto::NoArvore& no, int nivel, int index) {
-            if (!no.id.empty()) {
-                FolderNode node;
-                node.id = no.id;
-                node.nome = no.nome;
-                node.pastaPaiId = no.pastaPaiId;
-                node.contagemItens = static_cast<int>(no.itemIds.size());
-                node.ativo = no.ativo;
-                node.itemIdsDiretos = no.itemIdsDiretos;
-                if (no.corCustomizadaHex.isNotEmpty()) {
-                    node.corCustomizada = juce::Colour::fromString(no.corCustomizadaHex);
-                    node.hasCorCustomizada = true;
-                }
+    // Posição salva vale sempre; pasta sem posição recebe a do layout em árvore (calculado
+    // em memória, nunca gravado aqui: só persiste quando o usuário arrasta ou usa AJUSTAR).
+    std::vector<layoutarvore::No> paraLayout;
 
-                int defaultX = 40 + nivel * 240;
-                int defaultY = 80 + index * 110;
-                int x = (no.posicaoX != 0 || no.posicaoY != 0) ? no.posicaoX : defaultX;
-                int y = (no.posicaoX != 0 || no.posicaoY != 0) ? no.posicaoY : defaultY;
-
-                node.bounds = juce::Rectangle<int>(x, y, 190, 84);
-                node.boundsOriginal = node.bounds;
-                nodes_.push_back(node);
+    std::function<void(const ProjetoAberto::NoArvore&)> adicionarNo = [&](const ProjetoAberto::NoArvore& no) {
+        if (!no.id.empty()) {
+            FolderNode node;
+            node.id = no.id;
+            node.nome = no.nome;
+            node.pastaPaiId = no.pastaPaiId;
+            node.contagemItens = static_cast<int>(no.itemIds.size());
+            node.ativo = no.ativo;
+            node.itemIdsDiretos = no.itemIdsDiretos;
+            if (no.corCustomizadaHex.isNotEmpty()) {
+                node.corCustomizada = juce::Colour::fromString(no.corCustomizadaHex);
+                node.hasCorCustomizada = true;
             }
+            node.regra = no.regraOrganizacao;
+            node.autoSub = ProjetoAberto::regraEhAuto(node.regra);
+            if (node.regra.isNotEmpty() && !node.autoSub) node.niveisRegra = matriz::consolidacao::hierarquiaDeCsv(node.regra.toStdString());
 
-            for (size_t i = 0; i < no.filhos.size(); ++i) {
-                adicionarNo(no.filhos[i], nivel + 1, static_cast<int>(i));
-            }
-        };
+            const bool posicaoSalva = no.posicaoX != 0 || no.posicaoY != 0;
+            node.bounds = juce::Rectangle<int>(no.posicaoX, no.posicaoY, 190, 84);
+            node.boundsOriginal = node.bounds;
+            nodes_.push_back(node);
+            paraLayout.push_back({no.id, no.pastaPaiId, posicaoSalva, no.posicaoX, no.posicaoY});
+        }
+        for (const auto& filho : no.filhos) adicionarNo(filho);
+    };
 
     // Abas: se a aba ativa isola uma pasta, desenha só ela + descendentes —
     // acha o nó na árvore completa (que já veio com pastaPaiId/filhos
@@ -442,18 +457,45 @@ void ArvoreBackupComponent::recalcularNodes() {
     }
 
     if (raizFiltro) {
-        adicionarNo(*raizFiltro, 0, 0);
+        adicionarNo(*raizFiltro);
     } else {
-        for (size_t i = 0; i < arvore.filhos.size(); ++i) {
-            adicionarNo(arvore.filhos[i], 0, static_cast<int>(i));
-        }
+        for (const auto& filho : arvore.filhos) adicionarNo(filho);
+    }
+
+    const auto posicoes = layoutarvore::calcular(paraLayout, {});
+    for (auto& node : nodes_) {
+        auto it = posicoes.find(node.id);
+        if (it == posicoes.end()) continue;
+        node.bounds.setPosition(it->second.x, it->second.y);
+        node.boundsOriginal = node.bounds;
     }
 
     aplicarEscalaTamanho(escalaTamanho_); // S4/14 — reaplica o tamanho escolhido ao layout recém-lido
 }
 
+void ArvoreBackupComponent::tentarEnquadrar() {
+    if (!enquadrarPendente_ || nodes_.empty()) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo
+
+    juce::Rectangle<int> uniao = nodes_.front().bounds;
+    for (const auto& n : nodes_) uniao = uniao.getUnion(n.bounds);
+    constexpr float kMargem = 40.0f;
+    const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(uniao.getWidth());
+    const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(uniao.getHeight());
+    zoom_ = juce::jlimit(0.15f, 1.0f, std::min(zx, zy));  // nunca amplia além de 100%
+    const auto centro = uniao.getCentre().toFloat();
+    panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                  static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+    enquadrarPendente_ = false;
+}
+
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
-    return getLocalBounds().withTrimmedTop(44).removeFromTop(kAlturaBarraAbas);
+    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).removeFromTop(kAlturaBarraAbas);
+}
+
+juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
+    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::boundsDaAba(int indice) const {
@@ -819,27 +861,22 @@ void ArvoreBackupComponent::autoArranjar() {
     static constexpr int kBaseNodeW = 190;
     static constexpr int kBaseNodeH = 84;
     static constexpr int kMargin = 40;
-    static constexpr int kToolbarH = 50;
     static constexpr int kMinGap = 20;
 
+    std::set<std::string> idsPresentes;
+    for (auto& n : nodes_) idsPresentes.insert(n.id);
     std::map<std::string, std::vector<std::string>> filhosDe;
-    std::set<std::string> temPai;
+    std::vector<layoutarvore::No> nos;
+    std::vector<std::string> raizes;
     for (auto& n : nodes_) {
-        if (!n.pastaPaiId.empty()) {
-            filhosDe[n.pastaPaiId].push_back(n.id);
-            temPai.insert(n.id);
-        }
+        nos.push_back({n.id, n.pastaPaiId, false, 0, 0});
+        if (!n.pastaPaiId.empty() && idsPresentes.count(n.pastaPaiId)) filhosDe[n.pastaPaiId].push_back(n.id);
+        else raizes.push_back(n.id);  // pai ausente (aba isolada) também é raiz
     }
 
-    std::vector<std::string> raizes;
-    for (auto& n : nodes_)
-        if (!temPai.count(n.id)) raizes.push_back(n.id);
-
     int maxDepth = 0;
-    std::map<std::string, int> profundidade;
     std::function<void(const std::string&, int)> calcularProfundidade =
         [&](const std::string& id, int nivel) {
-            profundidade[id] = nivel;
             maxDepth = std::max(maxDepth, nivel);
             for (auto& f : filhosDe[id]) calcularProfundidade(f, nivel + 1);
         };
@@ -857,8 +894,9 @@ void ArvoreBackupComponent::autoArranjar() {
     for (auto& r : raizes) totalLeaves += contarFolhas(r);
     totalLeaves = std::max(1, totalLeaves);
 
-    float viewW = static_cast<float>(std::max(400, getWidth())) / zoom_;
-    float viewH = static_cast<float>(std::max(300, getHeight() - kToolbarH)) / zoom_;
+    const auto canvas = areaCanvas();
+    float viewW = static_cast<float>(std::max(400, canvas.getWidth())) / zoom_;
+    float viewH = static_cast<float>(std::max(300, canvas.getHeight())) / zoom_;
 
     int cols = maxDepth + 1;
     float widthBudget = viewW - kMargin * 2.0f;
@@ -889,57 +927,25 @@ void ArvoreBackupComponent::autoArranjar() {
     float remainH = heightBudget - totalNodeH;
     gapY = (totalLeaves > 1) ? std::max(kMinGap, static_cast<int>(remainH / (totalLeaves - 1))) : kMinGap;
 
-    std::map<std::string, int> subtreeHeight;
-    std::function<int(const std::string&)> calcularAltura =
-        [&](const std::string& id) -> int {
-            auto& filhos = filhosDe[id];
-            if (filhos.empty()) {
-                subtreeHeight[id] = nodeH;
-                return nodeH;
-            }
-            int total = 0;
-            for (size_t i = 0; i < filhos.size(); ++i) {
-                if (i > 0) total += gapY;
-                total += calcularAltura(filhos[i]);
-            }
-            subtreeHeight[id] = std::max(total, nodeH);
-            return subtreeHeight[id];
-        };
-    for (auto& r : raizes) calcularAltura(r);
+    // Mesmo layout em árvore do layout padrão (ver recalcularNodes), aqui com todos os nós livres.
+    layoutarvore::Parametros parametros;
+    parametros.larguraNo = nodeW;
+    parametros.alturaNo = nodeH;
+    parametros.gapX = gapX;
+    parametros.gapY = gapY;
+    parametros.origemX = kMargin;
+    parametros.origemY = kMargin;
+    const auto posicoes = layoutarvore::calcular(nos, parametros);
 
-    std::map<std::string, juce::Point<int>> posicoes;
-    std::function<void(const std::string&, int, int)> posicionar =
-        [&](const std::string& id, int x, int yTop) {
-            auto& filhos = filhosDe[id];
-            if (filhos.empty()) {
-                posicoes[id] = {x, yTop};
-                return;
-            }
-            int cursorY = yTop;
-            for (size_t i = 0; i < filhos.size(); ++i) {
-                posicionar(filhos[i], x + nodeW + gapX, cursorY);
-                cursorY += subtreeHeight[filhos[i]] + gapY;
-            }
-            int firstChildY = posicoes[filhos.front()].y;
-            int lastChildY = posicoes[filhos.back()].y;
-            int centeredY = (firstChildY + lastChildY) / 2;
-            posicoes[id] = {x, centeredY};
-        };
-
-    int cursorY = kToolbarH + kMargin;
-    for (auto& r : raizes) {
-        posicionar(r, kMargin, cursorY);
-        cursorY += subtreeHeight[r] + gapY;
+    std::vector<int> indices;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        auto it = posicoes.find(nodes_[i].id);
+        if (it == posicoes.end()) continue;
+        nodes_[i].bounds = juce::Rectangle<int>(it->second.x, it->second.y, nodeW, nodeH);
+        nodes_[i].boundsOriginal = nodes_[i].bounds;
+        indices.push_back(static_cast<int>(i));
     }
-
-    for (auto& n : nodes_) {
-        auto it = posicoes.find(n.id);
-        if (it != posicoes.end()) {
-            n.bounds = juce::Rectangle<int>(it->second.x, it->second.y, nodeW, nodeH);
-            n.boundsOriginal = n.bounds;
-            projeto_.atualizarPosicaoPastaAcervo(n.id, it->second.x, it->second.y);
-        }
-    }
+    persistirPosicoesEmLote(indices);  // uma transação só
 
     panOffset_ = {0.0f, 0.0f};
     aplicarEscalaTamanho(escalaTamanho_); // S4/14 — reaplica o tamanho escolhido (também repinta)
@@ -969,13 +975,18 @@ void ArvoreBackupComponent::desenharLinhaConexaoN8n(juce::Graphics& g, juce::Poi
 }
 
 juce::Point<float> ArvoreBackupComponent::screenToCanvas(juce::Point<int> screen) const {
-    return {(screen.x - panOffset_.x) / zoom_, (screen.y - panOffset_.y) / zoom_};
+    const auto origem = areaCanvas().getPosition();
+    return {(static_cast<float>(screen.x - origem.x) - panOffset_.x) / zoom_,
+            (static_cast<float>(screen.y - origem.y) - panOffset_.y) / zoom_};
 }
 
 juce::Point<int> ArvoreBackupComponent::canvasToScreen(juce::Point<float> canvas) const {
-    return {static_cast<int>(canvas.x * zoom_ + panOffset_.x), static_cast<int>(canvas.y * zoom_ + panOffset_.y)};
+    const auto origem = areaCanvas().getPosition();
+    return {static_cast<int>(canvas.x * zoom_ + panOffset_.x) + origem.x,
+            static_cast<int>(canvas.y * zoom_ + panOffset_.y) + origem.y};
 }
 
+// centro em coordenadas locais do canvas (origem no canto do canvas, não do componente).
 void ArvoreBackupComponent::aplicarZoom(float novoZoom, juce::Point<float> centro) {
     novoZoom = juce::jlimit(0.15f, 3.0f, novoZoom);
     float ratio = novoZoom / zoom_;
@@ -985,38 +996,28 @@ void ArvoreBackupComponent::aplicarZoom(float novoZoom, juce::Point<float> centr
     repaint();
 }
 
-juce::Rectangle<int> ArvoreBackupComponent::minimapBounds() const {
-    constexpr int kMinimapW = 160, kMinimapH = 100, kMargin = 8;
-    return {getWidth() - kMinimapW - kMargin, getHeight() - kMinimapH - kMargin, kMinimapW, kMinimapH};
-}
-
-// Fase 1 — SEM PASTA (NO FOLDER): canto inferior-esquerdo, espaço de TELA
-// (fixo, não acompanha pan/zoom do canvas — S4/13: "visualmente separado
-// da árvore e sem ligação com as outras pastas"). Nunca aparece no
-// ORIGINAL: lá não existe conceito de "sem pasta".
+// Fase 1 — SEM PASTA (NO FOLDER): card na coluna esquerda (espaço de TELA, fora do
+// canvas; S4/13: "visualmente separado da árvore e sem ligação com as outras
+// pastas"). Nunca aparece no ORIGINAL: lá não existe conceito de "sem pasta".
 juce::Rectangle<int> ArvoreBackupComponent::boundsSemPasta() const {
-    constexpr int kW = 172, kH = 46, kMargin = 8;
-    return {kMargin, getHeight() - kH - kMargin, kW, kH};
+    return mapaAtivoEhOriginal() ? juce::Rectangle<int>() : coluna_.ultimoCard();
 }
 
 void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
-    if (mapaAtivoEhOriginal()) return;
-    auto b = boundsSemPasta().toFloat();
+    if (mapaAtivoEhOriginal() || semPastaBounds_.isEmpty()) return;
     const auto& tk = tema();
+    auto card = boundsSemPasta().toFloat();
 
-    g.setColour(semPastaHover_ ? tk.acento.withAlpha(0.22f) : tk.painel);
-    g.fillRoundedRectangle(b, 8.0f);
-    g.setColour(semPastaHover_ ? tk.acento : tk.borda);
-    g.drawRoundedRectangle(b.reduced(0.5f), 8.0f, semPastaHover_ ? 2.0f : 1.2f);
-
+    if (semPastaHover_) {
+        g.setColour(tk.acento.withAlpha(0.22f));
+        g.fillRoundedRectangle(card, tk.raioPequeno);
+        g.setColour(tk.acento);
+        g.drawRoundedRectangle(card.reduced(0.5f), tk.raioPequeno, 2.0f);
+    }
     int n = projeto_.contarItensSemPasta(mapaAtivoId_);
-    auto content = boundsSemPasta().reduced(10, 6);
-    g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-    g.drawText(i18n::t("arvore_backup.sem_pasta_titulo"), content.removeFromTop(18), juce::Justification::centredLeft, true);
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), content, juce::Justification::centredLeft, true);
+    g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
 }
 
 // Fase 1 — arrastar itens (MosaicoComponent::startDragging, descrição =
@@ -1069,8 +1070,9 @@ void ArvoreBackupComponent::iniciarEdicaoInline(int nodeIndex) {
     editingNodeId_ = node.id;
 
     auto screenBounds = node.bounds.toFloat();
-    screenBounds.setX(screenBounds.getX() * zoom_ + panOffset_.x);
-    screenBounds.setY(screenBounds.getY() * zoom_ + panOffset_.y);
+    const auto origemCanvas = areaCanvas().getPosition().toFloat();
+    screenBounds.setX(screenBounds.getX() * zoom_ + panOffset_.x + origemCanvas.x);
+    screenBounds.setY(screenBounds.getY() * zoom_ + panOffset_.y + origemCanvas.y);
     screenBounds.setWidth(screenBounds.getWidth() * zoom_);
     screenBounds.setHeight(screenBounds.getHeight() * zoom_);
 
@@ -1103,52 +1105,15 @@ void ArvoreBackupComponent::finalizarEdicaoInline() {
     }
 }
 
-void ArvoreBackupComponent::desenharMinimap(juce::Graphics& g) const {
-    if (nodes_.empty()) return;
-    auto mmBounds = minimapBounds().toFloat();
-
-    g.setColour(tema().fundo.withAlpha(0.85f));
-    g.fillRoundedRectangle(mmBounds, 4.0f);
-    g.setColour(tema().borda);
-    g.drawRoundedRectangle(mmBounds, 4.0f, 1.0f);
-
-    float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-    for (const auto& n : nodes_) {
-        minX = std::min(minX, static_cast<float>(n.bounds.getX()));
-        minY = std::min(minY, static_cast<float>(n.bounds.getY()));
-        maxX = std::max(maxX, static_cast<float>(n.bounds.getRight()));
-        maxY = std::max(maxY, static_cast<float>(n.bounds.getBottom()));
-    }
-    float canvasW = std::max(1.0f, maxX - minX + 40.0f);
-    float canvasH = std::max(1.0f, maxY - minY + 40.0f);
-    float mmInner = mmBounds.getWidth() - 8.0f;
-    float mmInnerH = mmBounds.getHeight() - 8.0f;
-    float scaleM = std::min(mmInner / canvasW, mmInnerH / canvasH);
-
-    for (const auto& n : nodes_) {
-        float nx = mmBounds.getX() + 4.0f + (n.bounds.getX() - minX) * scaleM;
-        float ny = mmBounds.getY() + 4.0f + (n.bounds.getY() - minY) * scaleM;
-        float nw = n.bounds.getWidth() * scaleM;
-        float nh = n.bounds.getHeight() * scaleM;
-        g.setColour(n.selecionado ? tema().acento : tema().painel);
-        g.fillRect(nx, ny, std::max(2.0f, nw), std::max(1.0f, nh));
-    }
-
-    float vpLeft = (-panOffset_.x / zoom_ - minX) * scaleM + mmBounds.getX() + 4.0f;
-    float vpTop = (-panOffset_.y / zoom_ - minY) * scaleM + mmBounds.getY() + 4.0f;
-    float vpW = (getWidth() / zoom_) * scaleM;
-    float vpH = (getHeight() / zoom_) * scaleM;
-    g.setColour(tema().acento.withAlpha(0.3f));
-    g.fillRect(vpLeft, vpTop, vpW, vpH);
-    g.setColour(tema().acento);
-    g.drawRect(vpLeft, vpTop, vpW, vpH, 1.0f);
-}
-
 void ArvoreBackupComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
+    const auto canvas = areaCanvas();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
     juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
     g.fillAll(bg);
+
+    g.saveState();
+    g.reduceClipRegion(canvas);
 
     // Canvas background grid pattern (n8n style dots) — in screen space
     g.setColour(tema().painelAlt.withAlpha(0.4f));
@@ -1158,44 +1123,26 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         float startY = std::fmod(panOffset_.y, dotStep);
         if (startX < 0) startX += dotStep;
         if (startY < 0) startY += dotStep;
-        for (float x = startX; x < getWidth(); x += dotStep)
-            for (float y = startY; y < getHeight(); y += dotStep)
+        for (float x = static_cast<float>(canvas.getX()) + startX; x < static_cast<float>(canvas.getRight()); x += dotStep)
+            for (float y = static_cast<float>(canvas.getY()) + startY; y < static_cast<float>(canvas.getBottom()); y += dotStep)
                 g.fillEllipse(x, y, 2.0f, 2.0f);
     }
-
-    // Header title
-    g.setColour(tema().textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
-    g.drawText(i18n::t("arvore_backup.titulo"), getLocalBounds().reduced(20, 16).removeFromTop(28), juce::Justification::centredLeft);
-
-    // Zoom indicator
-    g.setColour(tema().textoTerciario);
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
-    g.drawText(juce::String(static_cast<int>(zoom_ * 100)) + "%", getLocalBounds().reduced(20, 16).removeFromTop(24), juce::Justification::centredRight);
 
     if (nodes_.empty()) {
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
-        g.drawText(i18n::t("arvore_backup.vazio"),
-                   getLocalBounds(), juce::Justification::centred, true);
+        g.drawText(i18n::t("arvore_backup.vazio"), canvas, juce::Justification::centred, true);
+        g.restoreState();
+        coluna_.paint(g);
         desenharSemPasta(g);
+        desenharIndicadorZoom(g);
         desenharBarraDeAbas(g);
         return;
     }
 
-    g.saveState();
-    g.addTransform(juce::AffineTransform::translation(panOffset_.x, panOffset_.y).scaled(zoom_, zoom_, panOffset_.x, panOffset_.y));
-
-    // Correct: apply translation then scale around the translate origin
-    // Actually let me reconsider. We want: screen = canvas * zoom + panOffset
-    // So the transform is: scale(zoom) then translate(panOffset/zoom... no.
-    // Let's use: translate(panOffset) then scale(zoom, zoom, 0, 0) isn't right either.
-    // The correct transform: first translate by panOffset, but scale around origin...
-    // Actually: screen_x = canvas_x * zoom + panOffset_x
-    // So the affine transform is: scale(zoom) followed by translate(panOffset)
-    g.restoreState();
-    g.saveState();
-    auto transform = juce::AffineTransform::scale(zoom_).translated(panOffset_.x, panOffset_.y);
+    // screen = canvas * zoom + panOffset + origem do canvas
+    auto transform = juce::AffineTransform::scale(zoom_).translated(panOffset_.x + static_cast<float>(canvas.getX()),
+                                                                     panOffset_.y + static_cast<float>(canvas.getY()));
     g.addTransform(transform);
 
     // Connection lines
@@ -1259,9 +1206,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         g.fillRoundedRectangle(header, 8.0f);
         g.fillRect(header.withTrimmedTop(16));
 
-        g.setColour(node.ativo ? tema().acento : tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.drawText(node.ativo ? i18n::t("arvore_backup.no_ativo") : i18n::t("arvore_backup.no_desativado"), header.reduced(10, 0), juce::Justification::centredLeft);
+        desenharCabecalhoNo(g, node, header);
 
         auto content = b.reduced(10, 6);
         g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
@@ -1307,41 +1252,103 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     g.restoreState();
 
-    // Minimap (drawn in screen space)
-    desenharMinimap(g);
-
+    coluna_.paint(g);
     desenharSemPasta(g);
+    desenharIndicadorZoom(g);
     desenharBarraDeAbas(g);
 }
 
+void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
+    g.setColour(tema().textoTerciario);
+    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.drawText("Zoom " + juce::String(static_cast<int>(zoom_ * 100)) + "%", zoomIndicadorBounds_, juce::Justification::centredLeft);
+}
+
+// Cabeçalho do card. Pasta com regra: "AUTO" + um pontinho por bloco, na cor de cada bloco e
+// na ordem da regra; subpasta gerada pela regra: marca discreta "auto" à direita.
+void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const {
+    const auto& tk = tema();
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    if (node.ativo && !node.niveisRegra.empty()) {
+        g.setColour(tk.acento);
+        const juce::String rotulo = i18n::t("arvore_backup.auto_marca");
+        const float largura = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), rotulo));
+        auto area = header.reduced(10, 0);
+        g.drawText(rotulo, area.removeFromLeft(largura + 2.0f), juce::Justification::centredLeft);
+        area.removeFromLeft(8.0f);
+        constexpr float d = 8.0f, passo = 12.0f;
+        float x = area.getX();
+        for (auto nivel : node.niveisRegra) {
+            g.setColour(corDoNivelHierarquia(nivel));
+            g.fillEllipse(x, area.getCentreY() - d * 0.5f, d, d);
+            x += passo;
+        }
+        return;
+    }
+    g.setColour(node.ativo ? tk.acento : tk.textoTerciario);
+    g.drawText(node.ativo ? i18n::t("arvore_backup.no_ativo") : i18n::t("arvore_backup.no_desativado"),
+               header.reduced(10, 0), juce::Justification::centredLeft);
+    if (node.autoSub) {
+        g.setColour(tk.textoTerciario);
+        g.setFont(juce::Font(juce::FontOptions(9.0f)));
+        g.drawText(i18n::t("arvore_backup.auto_sub_marca"), header.reduced(10, 0), juce::Justification::centredRight);
+    }
+}
+
 void ArvoreBackupComponent::resized() {
-    auto area = getLocalBounds().removeFromTop(44).reduced(16, 6);
+    coluna_.comecar(getLocalBounds().removeFromLeft(ColunaCardsLayout::kLargura));
+    auto& corpo = coluna_.corpo();
+    const bool original = mapaAtivoEhOriginal();
 
-    if (comboMapas_) comboMapas_->setBounds(area.removeFromLeft(190));
-    area.removeFromLeft(4);
-    if (btnMenuMapa_) btnMenuMapa_->setBounds(area.removeFromLeft(28));
-    area.removeFromLeft(10);
-    if (btnNovoMapa_) btnNovoMapa_->setBounds(area.removeFromLeft(150));
-    area.removeFromLeft(16);
+    // MAPA — dropdown de mapas, "⋯" e NOVO FOLDER MAP.
+    coluna_.iniciarCard(i18n::t("arvore_backup.card_mapa"));
+    if (comboMapas_) comboMapas_->setBounds(corpo.removeFromTop(26));
+    corpo.removeFromTop(4);
+    {
+        auto linha = corpo.removeFromTop(26);
+        if (btnMenuMapa_) btnMenuMapa_->setBounds(linha.removeFromLeft(30));
+        linha.removeFromLeft(4);
+        if (btnNovoMapa_) btnNovoMapa_->setBounds(linha);
+    }
+    coluna_.finalizarCard();
 
-    if (btnCriarPasta_) btnCriarPasta_->setBounds(area.removeFromLeft(110));
-    area.removeFromLeft(8);
-    if (btnRenomearPasta_) btnRenomearPasta_->setBounds(area.removeFromLeft(90));
-    area.removeFromLeft(8);
-    if (btnApagarPasta_) btnApagarPasta_->setBounds(area.removeFromLeft(90));
-    area.removeFromLeft(16);
-    if (btnAutoArranjar_) btnAutoArranjar_->setBounds(area.removeFromLeft(120));
-    area.removeFromLeft(16);
-    if (btnZoomOut_) btnZoomOut_->setBounds(area.removeFromLeft(30));
-    area.removeFromLeft(2);
-    if (btnZoomFit_) btnZoomFit_->setBounds(area.removeFromLeft(36));
-    area.removeFromLeft(2);
-    if (btnZoomIn_) btnZoomIn_->setBounds(area.removeFromLeft(30));
-    area.removeFromLeft(16);
-    if (sliderTamanho_) sliderTamanho_->setBounds(area.removeFromLeft(180));
+    // PASTAS — Nova pasta, Renomear, Delete e Ajustar.
+    coluna_.iniciarCard(i18n::t("arvore_backup.card_pastas"));
+    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnApagarPasta_.get(), btnAutoArranjar_.get()}) {
+        if (b) b->setBounds(corpo.removeFromTop(26));
+        corpo.removeFromTop(4);
+    }
+    coluna_.finalizarCard();
+
+    // VISUALIZAÇÃO — zoom, tamanho dos cartões e indicador de zoom.
+    coluna_.iniciarCard(i18n::t("arvore_backup.card_visualizacao"));
+    {
+        auto linha = corpo.removeFromTop(26);
+        const int w = (linha.getWidth() - 8) / 3;
+        if (btnZoomOut_) btnZoomOut_->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (btnZoomFit_) btnZoomFit_->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (btnZoomIn_) btnZoomIn_->setBounds(linha);
+    }
+    corpo.removeFromTop(4);
+    if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
+    corpo.removeFromTop(2);
+    zoomIndicadorBounds_ = corpo.removeFromTop(14);
+    coluna_.finalizarCard();
+
+    // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
+    semPastaBounds_ = {};
+    if (!original) {
+        coluna_.iniciarCard(i18n::t("arvore_backup.sem_pasta_titulo"));
+        semPastaBounds_ = corpo.removeFromTop(16);
+        coluna_.finalizarCard();
+    }
+
+    tentarEnquadrar();
 
     if (detailViewport_ && detailViewport_->isVisible()) {
-        auto panelArea = getLocalBounds().withTrimmedTop(44 + kAlturaBarraAbas).removeFromRight(kDetailPanelWidth);
+        auto panelArea = areaCanvas().removeFromRight(kDetailPanelWidth);
         detailViewport_->setBounds(panelArea);
         detailContent_->setSize(panelArea.getWidth() - detailViewport_->getScrollBarThickness(), detailContent_->getHeight());
     }
@@ -1374,17 +1381,14 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
-    // Minimap drag
-    if (minimapBounds().contains(e.getPosition())) {
-        minimapDragging_ = true;
-        return;
-    }
-
-    // SEM PASTA (Fase 1) — painel fixo, nunca aparece no ORIGINAL.
+    // SEM PASTA (Fase 1) — card fixo na coluna esquerda, nunca aparece no ORIGINAL.
     if (!mapaAtivoEhOriginal() && boundsSemPasta().contains(e.getPosition())) {
         if (aoMostrarConteudoNaGrade) aoMostrarConteudoNaGrade(projeto_.itensSemPasta(mapaAtivoId_));
         return;
     }
+
+    // Clique no fundo da coluna esquerda (fora dos controles): nada a fazer.
+    if (!areaCanvas().contains(e.getPosition())) return;
 
     auto canvasClick = screenToCanvas(e.getPosition());
 
@@ -1514,6 +1518,35 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addSeparator();
             }
 
+            // Auto-organização: só no mapa do usuário, uma pasta por vez; subpasta AUTO não aceita regra própria.
+            if (!batch && !mapaAtivoEhOriginal() && !hitNodeRef.autoSub) {
+                juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+                const juce::String nomeNo = hitNodeRef.nome;
+                const juce::String regraNo = hitNodeRef.regra;
+                const bool editavel = !projeto_.somenteLeitura();
+                if (regraNo.isEmpty()) {
+                    menu.addItem(i18n::t("arvore_backup.auto_organizar"), editavel, false, [safeThis, pId, nomeNo] {
+                        if (safeThis && safeThis->pastaPodeAutoOrganizar(pId))
+                            safeThis->mostrarEditorAutoOrganizar(pId, nomeNo, {});
+                    });
+                } else {
+                    menu.addItem(i18n::t("arvore_backup.auto_editar"), editavel, false, [safeThis, pId, nomeNo, regraNo] {
+                        if (safeThis && safeThis->pastaPodeAutoOrganizar(pId))
+                            safeThis->mostrarEditorAutoOrganizar(pId, nomeNo, regraNo);
+                    });
+                    menu.addItem(i18n::t("arvore_backup.auto_reorganizar"), editavel, false, [safeThis, pId, regraNo] {
+                        if (safeThis && safeThis->pastaPodeAutoOrganizar(pId))
+                            safeThis->aplicarAutoOrganizacaoNaPasta(pId, regraNo.toStdString());
+                    });
+                    menu.addItem(i18n::t("arvore_backup.auto_desligar"), editavel, false, [safeThis, pId] {
+                        if (!safeThis) return;
+                        safeThis->projeto_.desligarAutoOrganizacao(pId);
+                        safeThis->recarregar();
+                    });
+                }
+                menu.addSeparator();
+            }
+
             // Disconnect from Parent (item 7): agora funciona em lote também
             // — D é o atalho equivalente (ver keyPressed). Habilitado se
             // ALGUMA selecionada tem pai (as sem pai são puladas em silêncio
@@ -1613,30 +1646,6 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
         return;
     }
 
-    if (minimapDragging_) {
-        if (nodes_.empty()) return;
-        auto mmRect = minimapBounds().toFloat();
-        float minX = 1e9f, minY = 1e9f, maxX = -1e9f, maxY = -1e9f;
-        for (const auto& n : nodes_) {
-            minX = std::min(minX, static_cast<float>(n.bounds.getX()));
-            minY = std::min(minY, static_cast<float>(n.bounds.getY()));
-            maxX = std::max(maxX, static_cast<float>(n.bounds.getRight()));
-            maxY = std::max(maxY, static_cast<float>(n.bounds.getBottom()));
-        }
-        float canvasW = std::max(1.0f, maxX - minX + 40.0f);
-        float canvasH = std::max(1.0f, maxY - minY + 40.0f);
-        float mmInner = mmRect.getWidth() - 8.0f;
-        float mmInnerH = mmRect.getHeight() - 8.0f;
-        float scaleM = std::min(mmInner / canvasW, mmInnerH / canvasH);
-
-        float relX = (e.getPosition().x - mmRect.getX() - 4.0f) / scaleM + minX;
-        float relY = (e.getPosition().y - mmRect.getY() - 4.0f) / scaleM + minY;
-        panOffset_.x = -(relX * zoom_ - getWidth() / 2.0f);
-        panOffset_.y = -(relY * zoom_ - getHeight() / 2.0f);
-        repaint();
-        return;
-    }
-
     if (panning_) {
         auto delta = e.getPosition() - panStart_;
         panOffset_.x += delta.x;
@@ -1673,7 +1682,6 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
 }
 
 void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
-    minimapDragging_ = false;
     panning_ = false;
 
     if (marqueeSelecting_) {
@@ -1733,6 +1741,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
 }
 
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
+    if (!areaCanvas().contains(e.getPosition())) return;
     auto canvasClick = screenToCanvas(e.getPosition());
     for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
         if (nodes_[static_cast<size_t>(i)].bounds.toFloat().contains(canvasClick)) {
@@ -1743,9 +1752,10 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
 }
 
 void ArvoreBackupComponent::mouseWheelMove(const juce::MouseEvent& e, const juce::MouseWheelDetails& wheel) {
-    if (minimapBounds().contains(e.getPosition())) return;
+    const auto canvas = areaCanvas();
+    if (!canvas.contains(e.getPosition())) return;
     float delta = (wheel.deltaY > 0) ? 1.15f : (1.0f / 1.15f);
-    aplicarZoom(zoom_ * delta, e.getPosition().toFloat());
+    aplicarZoom(zoom_ * delta, (e.getPosition() - canvas.getPosition()).toFloat());
 }
 
 bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
@@ -1759,16 +1769,18 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
         return true;
     }
     if (key == juce::KeyPress('+') || key == juce::KeyPress('=') || key == juce::KeyPress(juce::KeyPress::numberPadAdd)) {
-        auto centro = juce::Point<float>(getWidth() / 2.0f, getHeight() / 2.0f);
+        const auto canvas = areaCanvas();
+        auto centro = canvas.withZeroOrigin().getCentre().toFloat();
         for (const auto& n : nodes_)
-            if (n.selecionado) { centro = canvasToScreen(n.bounds.getCentre().toFloat()).toFloat(); break; }
+            if (n.selecionado) { centro = (canvasToScreen(n.bounds.getCentre().toFloat()) - canvas.getPosition()).toFloat(); break; }
         aplicarZoom(zoom_ * 1.2f, centro);
         return true;
     }
     if (key == juce::KeyPress('-') || key == juce::KeyPress(juce::KeyPress::numberPadSubtract)) {
-        auto centro = juce::Point<float>(getWidth() / 2.0f, getHeight() / 2.0f);
+        const auto canvas = areaCanvas();
+        auto centro = canvas.withZeroOrigin().getCentre().toFloat();
         for (const auto& n : nodes_)
-            if (n.selecionado) { centro = canvasToScreen(n.bounds.getCentre().toFloat()).toFloat(); break; }
+            if (n.selecionado) { centro = (canvasToScreen(n.bounds.getCentre().toFloat()) - canvas.getPosition()).toFloat(); break; }
         aplicarZoom(zoom_ / 1.2f, centro);
         return true;
     }
@@ -1817,6 +1829,47 @@ bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
     }
 
     return false;
+}
+
+// Bloqueios da auto-organização (o mapa ORIGINAL nem oferece o menu): somente leitura e
+// pasta que já tem arquivos no MAIN avisam e não abrem o editor.
+bool ArvoreBackupComponent::pastaPodeAutoOrganizar(const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return false;
+    if (projeto_.somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return false; }
+    if (projeto_.pastaTemArquivosNoMain(pastaId)) {
+        ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_no_main"));
+        return false;
+    }
+    return true;
+}
+
+void ArvoreBackupComponent::mostrarEditorAutoOrganizar(const std::string& pastaId, const juce::String& nomePasta,
+                                                        const juce::String& regraAtual) {
+    using N = matriz::consolidacao::NivelHierarquia;
+    matriz::consolidacao::HierarquiaBackup atual;
+    if (regraAtual.isNotEmpty()) atual = matriz::consolidacao::hierarquiaDeCsv(regraAtual.toStdString());
+
+    HierarquiaEditorOpcoes opcoes;
+    opcoes.titulo = i18n::t("arvore_backup.auto_titulo_janela").replace("{nome}", nomePasta);
+    opcoes.paleta = {N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject};
+    opcoes.raizPreview = "/" + nomePasta;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    new HierarquiaEditorWindow(atual, [safeThis, pastaId](const matriz::consolidacao::HierarquiaBackup& h) {
+        if (!safeThis || h.empty()) return;
+        safeThis->aplicarAutoOrganizacaoNaPasta(pastaId, matriz::consolidacao::hierarquiaParaCsv(h));
+    }, opcoes);
+}
+
+void ArvoreBackupComponent::aplicarAutoOrganizacaoNaPasta(const std::string& pastaId, const std::string& regraCsv) {
+    const auto r = projeto_.aplicarAutoOrganizacao(pastaId, regraCsv, false);
+    using S = ProjetoAberto::StatusAutoOrg;
+    switch (r.status) {
+        case S::Ok: break;
+        case S::SomenteLeitura: ProjetoAberto::avisarSomenteLeitura(); break;
+        case S::TemArquivosNoMain: ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_no_main")); break;
+        default: ProjetoAberto::avisarMapaTravado(i18n::t("arvore_backup.auto_falha")); break;
+    }
+    recarregar();
 }
 
 void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId, bool forcar) {
@@ -1893,6 +1946,7 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     if (btnNovoMapa_) btnNovoMapa_->setButtonText(i18n::t("arvore_backup.btn_novo_mapa"));
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
+    resized();
     repaint();
 }
 
@@ -1915,8 +1969,9 @@ void ArvoreBackupComponent::aplicarEscalaTamanho(float escala) {
 // ── S4/15 — posição livre pra pasta nova ─────────────────────────────
 
 juce::Point<int> ArvoreBackupComponent::posicaoLivrePertoDoCentro(int nodeW, int nodeH) const {
-    auto topLeft = screenToCanvas({0, 0});
-    auto bottomRight = screenToCanvas({juce::jmax(1, getWidth()), juce::jmax(1, getHeight())});
+    const auto canvas = areaCanvas();
+    auto topLeft = screenToCanvas(canvas.getTopLeft());
+    auto bottomRight = screenToCanvas(canvas.getBottomRight());
     juce::Point<float> centro((topLeft.x + bottomRight.x) * 0.5f, (topLeft.y + bottomRight.y) * 0.5f);
 
     auto sobrepoe = [&](juce::Point<float> c) {
@@ -2200,6 +2255,7 @@ void ArvoreBackupComponent::selecionarMapaPorId(const std::string& mapaId) {
 
 void ArvoreBackupComponent::atualizarEstadoBotoesParaMapa() {
     bool original = mapaAtivoEhOriginal();
+    resized();  // o card SEM PASTA some/volta conforme o mapa
     juce::String dica = original ? i18n::t("arvore_backup.original_somente_leitura") : juce::String();
     if (btnCriarPasta_) { btnCriarPasta_->setEnabled(!original); btnCriarPasta_->setTooltip(dica); }
     if (btnRenomearPasta_) { btnRenomearPasta_->setEnabled(!original); btnRenomearPasta_->setTooltip(dica); }
