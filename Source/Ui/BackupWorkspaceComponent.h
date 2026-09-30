@@ -25,7 +25,13 @@ class ComboAbrePraCimaLookAndFeel : public MatrizLookAndFeel {
 public:
     ComboAbrePraCimaLookAndFeel() { configurarLookAndFeel(*this); }
     juce::PopupMenu::Options getOptionsForComboBoxPopupMenu(juce::ComboBox& box, juce::Label& label) override {
-        return MatrizLookAndFeel::getOptionsForComboBoxPopupMenu(box, label)
+        // Sem withInitiallySelectedItem/withItemThatMustBeVisible (o padrão do JUCE): eles alinham o
+        // item marcado em cima do combo e o menu descia a partir dele, cortado na base da tela.
+        return juce::PopupMenu::Options()
+            .withTargetComponent(&box)
+            .withMinimumWidth(box.getWidth())
+            .withMaximumNumColumns(1)
+            .withStandardItemHeight(label.getHeight())
             .withPreferredPopupDirection(juce::PopupMenu::Options::PopupDirection::upwards);
     }
 };
