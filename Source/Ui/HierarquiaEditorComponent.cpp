@@ -91,6 +91,7 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     labelTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
     labelTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
     labelTitulo_->setJustificationType(juce::Justification::centred);
+    labelTitulo_->setMinimumHorizontalScale(0.6f);  // nome de pasta comprido encolhe em vez de "..."
     addAndMakeVisible(*labelTitulo_);
 
     labelAtivos_ = std::make_unique<juce::Label>();
@@ -109,6 +110,7 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     labelPreview_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     labelPreview_->setColour(juce::Label::textColourId, tema().acento);
     labelPreview_->setJustificationType(juce::Justification::centred);
+    labelPreview_->setMinimumHorizontalScale(1.0f);  // caminho longo quebra em 2 linhas em vez de truncar
     addAndMakeVisible(*labelPreview_);
 
     btnOk_ = std::make_unique<juce::TextButton>("APPLY");
@@ -127,7 +129,11 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     };
     addAndMakeVisible(*btnCancelar_);
 
-    setSize(560, 520);
+    // Altura pelo número de blocos (com todos disponíveis, a coluna passa de 500px e os últimos
+    // ficavam escondidos atrás do caminho de exemplo e dos botões).
+    const int blocosNaColuna = static_cast<int>(blocos_.size());
+    const int alturaColuna = kTopoArea + blocosNaColuna * static_cast<int>(kBlocoAltura + kEspaco);
+    setSize(560, std::max(520, alturaColuna + 130));
 }
 
 matriz::consolidacao::HierarquiaBackup HierarquiaEditorComponent::hierarquiaResultante() const {
@@ -197,7 +203,10 @@ void HierarquiaEditorComponent::paint(juce::Graphics& g) {
 
     auto divider = getWidth() / 2;
     g.setColour(tema().borda);
-    g.fillRect(divider - 1, kTopoArea - 10, 2, getHeight() - kTopoArea - 60);
+    // A linha para acima do caminho de exemplo (margem 16 + botões 40 + caminho 44 + respiro 8): antes ia
+    // até perto da base e passava por cima do texto centralizado.
+    const int fimDivisor = getHeight() - 16 - 40 - 44 - 8;
+    g.fillRect(divider - 1, kTopoArea - 10, 2, fimDivisor - (kTopoArea - 10));
 
     // Connection lines between active blocks
     juce::Point<float> prevBottom;
@@ -309,7 +318,7 @@ void HierarquiaEditorComponent::resized() {
     btnCancelar_->setBounds(bottom.removeFromRight(100).reduced(4));
     btnOk_->setBounds(bottom.removeFromRight(100).reduced(4));
 
-    auto previewArea = area.removeFromBottom(28);
+    auto previewArea = area.removeFromBottom(44);
     labelPreview_->setBounds(previewArea);
     area.removeFromBottom(8);
 
@@ -412,7 +421,7 @@ HierarquiaEditorWindow::HierarquiaEditorWindow(
     editor->aoCancelar = [this] { delete this; };
     setContentOwned(editor, true);
     setResizable(false, false);
-    centreWithSize(560, 520);
+    centreWithSize(editor->getWidth(), editor->getHeight());
     setVisible(true);
     toFront(true);
 }
