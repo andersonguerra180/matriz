@@ -409,8 +409,18 @@ void ArvoreBackupComponent::recarregar() {
 
 void ArvoreBackupComponent::recalcularNodes() {
     nodes_.clear();
-    auto arvore = projeto_.arvoreAcervo(mapaAtivoId_);
     const bool original = mapaAtivoEhOriginal();
+    // Um AJUSTAR de uma versão anterior encolhia os cartões abaixo do tamanho legível (fator < 1) e gravou
+    // posições compactas para isso. Esse arranjo não serve mais: descarta e deixa o mapa abrir arranjado de novo.
+    if (!original) {
+        const double gravado = projeto_.fatorCardsDoMapa(mapaAtivoId_);
+        if (gravado > 0.0 && gravado < 0.999) {
+            projeto_.projeto().registro().run("UPDATE acervo_pasta SET posicao_x = 0, posicao_y = 0 WHERE mapa_id = ?",
+                                              {matriz::db::Value::of(mapaAtivoId_)});
+            projeto_.definirFatorCardsDoMapa(mapaAtivoId_, 0.0);
+        }
+    }
+    auto arvore = projeto_.arvoreAcervo(mapaAtivoId_);
 
     // Posição salva vale sempre; pasta sem posição recebe a do layout (calculado em memória, nunca
     // gravado aqui: só persiste quando o usuário arrasta ou usa AJUSTAR).
@@ -1021,7 +1031,7 @@ juce::Point<int> ArvoreBackupComponent::canvasToScreen(juce::Point<float> canvas
 
 // centro em coordenadas locais do canvas (origem no canto do canvas, não do componente).
 void ArvoreBackupComponent::aplicarZoom(float novoZoom, juce::Point<float> centro) {
-    novoZoom = juce::jlimit(0.15f, 3.0f, novoZoom);
+    novoZoom = juce::jlimit(0.03f, 3.0f, novoZoom);  // (o FIT pode ir abaixo de 15% num mapa grande)
     float ratio = novoZoom / zoom_;
     panOffset_.x = centro.x - (centro.x - panOffset_.x) * ratio;
     panOffset_.y = centro.y - (centro.y - panOffset_.y) * ratio;
@@ -2211,7 +2221,7 @@ void ArvoreBackupComponent::enquadrarTudo() {
     constexpr float kMargem = 30.0f;
     const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
     const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
-    zoom_ = juce::jlimit(0.15f, 3.0f, std::min(zx, zy));
+    zoom_ = juce::jlimit(0.03f, 3.0f, std::min(zx, zy));  // FIT mostra tudo, mesmo de longe
     const auto centro = uniao.getCentre().toFloat();
     panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
                   static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};

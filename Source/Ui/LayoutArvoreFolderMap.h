@@ -150,8 +150,11 @@ struct ParametrosAuto {
     int margem = 40;
     int larguraBase = 190, alturaBase = 84;  // nível 0, fator 1, escala 1
     int gapXBase = 50, gapYBase = 26;
-    double decaimentoPorNivel = 0.88, pisoNivel = 0.55;
-    double fatorMin = 0.3, fatorMax = 2.5;
+    // Piso de legibilidade: nenhum cartão fica menor que pisoNivel x fatorMin x (190x84) (= 142x63 px), o
+    // bastante para o nome, o contador e as bolinhas de conexão (que não encolhem com o cartão). Mapa grande
+    // que não cabe na área NÃO encolhe os cartões: passa da área e o FIT/zoom mostram o conjunto.
+    double decaimentoPorNivel = 0.92, pisoNivel = 0.75;
+    double fatorMin = 1.0, fatorMax = 2.5;
 };
 
 struct ResultadoAuto {

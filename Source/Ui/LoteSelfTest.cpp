@@ -3737,6 +3737,65 @@ int rodarLoteSelfTest() {
             checar(reaberta.fatorCards_ > 0.0 && pa.fatorCardsDoMapa(mapa) > 0.0, "and so does the map's card factor");
         }
 
+        // Mapa GRANDE (centenas de pastas): o cartão nunca encolhe abaixo do legível — o mapa passa da área e
+        // o FIT mostra o conjunto — e continua sem sobreposição. (Antes encolhia a 30% e ficava ilegível.)
+        {
+            const std::string grande = pa.criarFolderMap("Grande", std::nullopt);
+            for (int a = 0; a < 12; ++a) {
+                const std::string pai = pa.criarPastaAcervo("N" + std::to_string(a), std::nullopt, grande);
+                for (int b = 0; b < 10; ++b) {
+                    const std::string filho = pa.criarPastaAcervo("F" + std::to_string(b), pai, grande);
+                    if (b % 3 == 0) pa.criarPastaAcervo("Sub", filho, grande);
+                }
+            }
+            pa.definirMapaAtivo(grande);
+            ArvoreBackupComponent vasto(pa);
+            vasto.setBounds(0, 0, 1400, 900);
+            bombear(150);
+            vasto.selecionarMapaPorId(grande);
+            bombear(100);
+            int menorW = 100000, menorH = 100000;
+            bool sobra = false;
+            for (size_t i = 0; i < vasto.nodes_.size(); ++i) {
+                menorW = std::min(menorW, vasto.nodes_[i].boundsOriginal.getWidth());
+                menorH = std::min(menorH, vasto.nodes_[i].boundsOriginal.getHeight());
+                for (size_t j = i + 1; j < vasto.nodes_.size() && !sobra; ++j)
+                    if (vasto.nodes_[i].boundsOriginal.intersects(vasto.nodes_[j].boundsOriginal)) sobra = true;
+            }
+            checar(vasto.nodes_.size() > 150, "a big map with " + juce::String((int) vasto.nodes_.size()) + " folders");
+            checar(menorW >= 140 && menorH >= 60, "even the smallest card stays legible: " + juce::String(menorW) + "x" + juce::String(menorH) + " (min 140x60)");
+            checar(!sobra, "and the big map still has no overlap");
+            vasto.enquadrarTudo();
+            juce::Rectangle<float> vista;
+            bool primeiro = true;
+            for (const auto& n : vasto.nodes_) {
+                const auto r2 = n.bounds.toFloat() * vasto.zoom_ + vasto.panOffset_;
+                vista = primeiro ? r2 : vista.getUnion(r2);
+                primeiro = false;
+            }
+            checar(vasto.areaCanvas().withZeroOrigin().toFloat().expanded(1.0f).contains(vista), "FIT shows the whole big map (zoom " + juce::String(vasto.zoom_, 2) + ")");
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                juce::PNGImageFormat png;
+                for (const char* nome : {"foldermap_grande_fit.png", "foldermap_grande_100.png"}) {
+                    if (juce::String(nome).contains("100")) { vasto.zoom_ = 1.0f; vasto.panOffset_ = {20.0f, -200.0f}; }
+                    bombear(150);
+                    auto arq = dir.getChildFile(nome);
+                    arq.deleteFile();
+                    if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                        png.writeImageToStream(vasto.createComponentSnapshot(vasto.getLocalBounds()), *out);
+                }
+                vasto.enquadrarTudo();
+            }
+            // Um AJUSTAR de versão anterior (fator < 1, posições compactas) é descartado ao abrir.
+            pa.definirFatorCardsDoMapa(grande, 0.3);
+            pa.atualizarPosicaoPastaAcervo(vasto.nodes_.front().id, 12, 12);
+            ArvoreBackupComponent antigo(pa);
+            antigo.setBounds(0, 0, 1400, 900);
+            bombear(150);
+            checar(pa.fatorCardsDoMapa(grande) == 0.0 && antigo.fatorCards_ >= 1.0, "an old arrangement with cards shrunk below 100% is discarded and re-arranged");
+            pa.definirMapaAtivo(mapa);
+        }
+
         // ORIGINAL: estrutura vinda do disco, já com auto-arranjo, sem precisar montar nada
         for (const char* rel : {"A/B/um.wav", "A/B/dois.wav", "A/C/tres.wav", "D/quatro.wav"}) {
             auto f = raizFM.getChildFile("fontes").getChildFile(rel);
