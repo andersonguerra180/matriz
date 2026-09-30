@@ -735,6 +735,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "arquivo", "tamanho_bytes", "INTEGER");
 
     garantirColuna(registro, "acervo_pasta", "posicao_x", "INTEGER NOT NULL DEFAULT 0");
+    // Folder Map: multiplicador de tamanho de cada pasta (slider; NULL = 1) e fator dos cartões do
+    // mapa (definido pelo AJUSTAR para caber na área; NULL = mapa antigo, cartões de tamanho único).
+    garantirColuna(registro, "acervo_pasta", "escala_no", "REAL");
+    garantirColuna(registro, "folder_map", "fator_cards", "REAL");
     garantirColuna(registro, "acervo_pasta", "posicao_y", "INTEGER NOT NULL DEFAULT 0");
     garantirColuna(registro, "acervo_pasta", "ativo", "INTEGER NOT NULL DEFAULT 1");
     // FOLDER COLOR (item 12, Treemap/backup): overlay visual por pasta, ARGB

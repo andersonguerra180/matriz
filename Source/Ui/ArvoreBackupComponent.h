@@ -79,7 +79,12 @@ private:
         int contagemItens = 0;
         juce::int64 tamanhoBytes = 0;
         juce::Rectangle<int> bounds;
-        juce::Rectangle<int> boundsOriginal; // bounds a 100% do slider de tamanho (S4/14)
+        juce::Rectangle<int> boundsOriginal; // bounds a 100% da escala global do slider (posição e tamanho)
+        // Tamanho do folder: calculado pelo nível na hierarquia e pelo fator do mapa (autoW/autoH), vezes o
+        // multiplicador do usuário (escalaManual, o slider com o folder selecionado). Persistido por pasta.
+        float escalaManual = 1.0f;
+        int autoW = 190, autoH = 84;
+        int nivel = 0;
         bool ativo = true;
         bool selecionado = false;
         std::set<std::string> itemIdsDiretos;
@@ -115,6 +120,7 @@ private:
     std::unique_ptr<juce::TextButton> btnZoomIn_;
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
+    std::unique_ptr<juce::TextButton> btnResetTamanhos_;
 
     // Fase 1 — dropdown com todos os folder maps do projeto (ORIGINAL +
     // mapas do usuário), botão "⋯" (rename/duplicate/delete/export/import)
@@ -165,9 +171,24 @@ private:
     void desenharSemPasta(juce::Graphics& g) const;
     bool semPastaHover_ = false;
 
-    // S4/14 — slider de tamanho dos retângulos (independente do zoom)
+    // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);
+    // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
     std::unique_ptr<juce::Slider> sliderTamanho_;
-    float escalaTamanho_ = 1.0f;
+    float escalaTamanho_ = 1.0f;  // escala global (visual; não é persistida)
+    juce::Point<float> pivotEscala_{0.0f, 0.0f};
+    double fatorCards_ = 0.0;  // fator do mapa escolhido pelo AJUSTAR; 0 = mapa antigo (tamanho único)
+    std::map<std::string, float> escalasOriginal_;  // ORIGINAL é virtual: multiplicadores só em memória
+    bool autoLayoutPendente_ = false;  // canvas ainda sem tamanho quando o mapa abriu: resized() refaz
+    bool escalasSujas_ = false;
+    std::string assinaturaSelecaoSlider_;
+    void recalcularPivot();
+    bool calcularEAplicarAutoArranjo();
+    void sincronizarSlider();
+    void aplicarSlider();
+    void redefinirTamanhos();
+    void persistirEscalas();
+    void enquadrarTudo();
+    std::vector<int> indicesSelecionados() const;
     // S4/15 — pasta recém-criada, com destaque pulsante até o próximo clique
     std::string destaqueNovaPastaId_;
 

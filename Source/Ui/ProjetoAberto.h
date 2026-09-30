@@ -463,6 +463,7 @@ public:
         std::string pastaPaiId;
         int posicaoX = 0;
         int posicaoY = 0;
+        double escalaNo = 1.0;  // multiplicador de tamanho da pasta no Folder Map (slider); 1 = tamanho calculado
         bool ativo = true;
         juce::String corCustomizadaHex; // FOLDER COLOR (item 12) — "" = sem cor
         // Auto-organização: CSV de níveis (pasta com regra), "@auto" (subpasta gerada) ou "".
@@ -473,6 +474,12 @@ public:
     };
 
     NoArvore arvoreOrigem(bool incluirTodos = false) const;
+
+    // Folder Map — tamanho dos cartões. Só mapas do usuário (o ORIGINAL é virtual: fica em memória no
+    // componente). fatorCardsDoMapa: 0 = mapa ainda sem AJUSTAR (cartões de tamanho único, como antes).
+    void atualizarEscalasPastasAcervo(const std::vector<std::pair<std::string, double>>& escalasPorPasta);
+    double fatorCardsDoMapa(const std::string& mapaId) const;
+    void definirFatorCardsDoMapa(const std::string& mapaId, double fator);
 
     // Folder Maps múltiplos (Fase 1). kMapaOriginal é o único valor
     // especial: nunca é uma linha de folder_map, é computado ao vivo a

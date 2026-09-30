@@ -39,6 +39,7 @@ struct NoBuilder {
     std::string pastaPaiId;
     int posicaoX = 0;
     int posicaoY = 0;
+    double escalaNo = 1.0;
     bool ativo = true;
     juce::String corCustomizadaHex;
     juce::String regraOrganizacao;
@@ -78,6 +79,7 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     n.pastaPaiId = b.pastaPaiId;
     n.posicaoX = b.posicaoX;
     n.posicaoY = b.posicaoY;
+    n.escalaNo = b.escalaNo;
     n.ativo = b.ativo;
     n.corCustomizadaHex = b.corCustomizadaHex;
     n.regraOrganizacao = b.regraOrganizacao;
@@ -2368,7 +2370,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = projeto_->registro().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao FROM acervo_pasta "
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no FROM acervo_pasta "
         "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -2387,6 +2389,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
         no->ativo = (stmt.columnInt(5) != 0);
         if (!stmt.columnIsNull(6)) no->corCustomizadaHex = juce::String(stmt.columnText(6));
         if (!stmt.columnIsNull(7)) no->regraOrganizacao = juce::String(stmt.columnText(7));
+        if (!stmt.columnIsNull(8)) no->escalaNo = stmt.columnReal(8);
         ptrPorId[r.id] = no.get();
         porId[r.id] = std::move(no);
     }
@@ -3121,6 +3124,37 @@ bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::opti
         {novaPastaPaiId ? matriz::db::Value::of(*novaPastaPaiId) : matriz::db::Value::null(),
          matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(pastaId)});
     return true;
+}
+
+void ProjetoAberto::atualizarEscalasPastasAcervo(const std::vector<std::pair<std::string, double>>& escalasPorPasta) {
+    if (somenteLeitura_ || !projeto_ || escalasPorPasta.empty()) return;
+    auto& db = projeto_->registro();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& [id, escala] : escalasPorPasta)
+            db.run("UPDATE acervo_pasta SET escala_no = ? WHERE id = ?",
+                   {escala == 1.0 ? matriz::db::Value::null() : matriz::db::Value::of(escala), matriz::db::Value::of(id)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+}
+
+double ProjetoAberto::fatorCardsDoMapa(const std::string& mapaId) const {
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return 0.0;
+    try {
+        auto st = projeto_->registro().prepare("SELECT fator_cards FROM folder_map WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnReal(0);
+    } catch (...) {}
+    return 0.0;
+}
+
+void ProjetoAberto::definirFatorCardsDoMapa(const std::string& mapaId, double fator) {
+    if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    projeto_->registro().run("UPDATE folder_map SET fator_cards = ? WHERE id = ?",
+                             {matriz::db::Value::of(fator), matriz::db::Value::of(mapaId)});
 }
 
 void ProjetoAberto::atualizarPosicaoPastaAcervo(const std::string& pastaId, int x, int y) {

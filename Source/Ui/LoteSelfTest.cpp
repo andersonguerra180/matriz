@@ -3545,6 +3545,222 @@ int rodarLoteSelfTest() {
     }
     raizMig.deleteRecursively();
 
+    // ------------------------------------------------ Folder Map: auto-arranjo, tamanhos, slider, RESET, FIT
+    std::cout << "\n-- Folder Map: auto-arrange, sizes by level, slider, RESET SIZES, FIT --\n";
+    {
+        namespace la = matriz::ui::layoutarvore;
+        // O slider PARA ao encostar: alvo no centro (100,100), 100x50, pedindo 3x; um vizinho fixo à direita.
+        la::AlvoEscala a;
+        a.cx = 100; a.cy = 100; a.autoW = 100; a.autoH = 50; a.de = 1.0; a.para = 3.0;
+        const la::CaixaAuto vizinho{200, 60, 80, 80};  // o alvo a 300% iria de -50 a 250: passaria por cima
+        const double t = la::fracaoPermitidaDoCrescimento({a}, {vizinho});
+        const auto parou = la::caixaDoAlvo(a, t);
+        checar(t > 0.0 && t < 1.0, "growth stops before the requested size when a neighbor is in the way (" + juce::String(t, 2) + ")");
+        checar(!la::caixasSeSobrepoem(parou, vizinho, 0), "and the grown card does not touch the neighbor");
+        checar(la::fracaoPermitidaDoCrescimento({a}, {}) == 1.0, "with free space the requested size is reached");
+        la::AlvoEscala encolhe = a;
+        encolhe.de = 1.0; encolhe.para = 0.5;
+        checar(la::fracaoPermitidaDoCrescimento({encolhe}, {vizinho}) == 1.0, "shrinking is never blocked");
+    }
+    juce::File raizFM = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                            .getChildFile("matriz_foldermap_tamanhos_" + juce::Uuid().toDashedString());
+    try {
+        raizFM.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "TamanhosFM";
+        params.prefixoNomenclatura = "TFM";
+        auto projeto = matriz::model::Project::criar(raizFM.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        const std::string mapa = pa.mapaAtivoPadrao();
+
+        const std::string g = pa.criarPastaAcervo("G", std::nullopt, mapa);
+        const std::string p = pa.criarPastaAcervo("P", g, mapa);
+        const std::string c1 = pa.criarPastaAcervo("C1", p, mapa);
+        const std::string c2 = pa.criarPastaAcervo("C2", p, mapa);
+        const std::string sFolha = pa.criarPastaAcervo("S", g, mapa);
+        const std::string r = pa.criarPastaAcervo("R", std::nullopt, mapa);
+        const std::string x = pa.criarPastaAcervo("X", r, mapa);
+        pa.definirMapaAtivo(mapa);
+
+        {
+            ArvoreBackupComponent arvore(pa);
+            arvore.setBounds(0, 0, 1400, 900);
+            bombear(100);
+            auto idx = [&](const std::string& id) { for (size_t i = 0; i < arvore.nodes_.size(); ++i) if (arvore.nodes_[i].id == id) return (int) i; return -1; };
+            auto caixa = [&](const std::string& id) { return arvore.nodes_[(size_t) idx(id)].bounds; };
+            auto semSobreposicao = [&] {
+                for (size_t i = 0; i < arvore.nodes_.size(); ++i)
+                    for (size_t j = i + 1; j < arvore.nodes_.size(); ++j)
+                        if (arvore.nodes_[i].bounds.intersects(arvore.nodes_[j].bounds)) return false;
+                return true;
+            };
+            auto semCruzamento = [&] {
+                struct Seg { float x1, y1, x2, y2; std::string pai; };
+                std::vector<Seg> segs;
+                for (const auto& n : arvore.nodes_) {
+                    if (n.pastaPaiId.empty() || idx(n.pastaPaiId) < 0) continue;
+                    const auto a = caixa(n.pastaPaiId);
+                    const auto b = n.bounds;
+                    segs.push_back({(float) a.getRight(), (float) a.getCentreY(), (float) b.getX(), (float) b.getCentreY(), n.pastaPaiId});
+                }
+                auto o = [](float px, float py, float qx, float qy, float rx, float ry) { return (qx - px) * (ry - py) - (qy - py) * (rx - px); };
+                for (size_t i = 0; i < segs.size(); ++i)
+                    for (size_t j = i + 1; j < segs.size(); ++j) {
+                        if (segs[i].pai == segs[j].pai) continue;
+                        const auto& A = segs[i]; const auto& B = segs[j];
+                        const float d1 = o(B.x1, B.y1, B.x2, B.y2, A.x1, A.y1), d2 = o(B.x1, B.y1, B.x2, B.y2, A.x2, A.y2);
+                        const float d3 = o(A.x1, A.y1, A.x2, A.y2, B.x1, B.y1), d4 = o(A.x1, A.y1, A.x2, A.y2, B.x2, B.y2);
+                        if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return false;
+                    }
+                return true;
+            };
+
+            // --- abre já arranjado, por nível, dentro da área, sem sobreposição e sem linhas cruzadas
+            checar(arvore.nodes_.size() == 7, "the map shows its 7 folders");
+            checar(arvore.fatorCards_ > 0.0, "a map with no saved positions opens already arranged (card factor " + juce::String(arvore.fatorCards_, 2) + ")");
+            checar(semSobreposicao(), "auto-arrange: no card overlaps another");
+            checar(semCruzamento(), "auto-arrange: no connection line crosses another");
+            checar(caixa(g).getWidth() > caixa(p).getWidth() && caixa(p).getWidth() > caixa(c1).getWidth(),
+                   "higher levels are bigger: G " + juce::String(caixa(g).getWidth()) + " > P " + juce::String(caixa(p).getWidth()) +
+                       " > C1 " + juce::String(caixa(c1).getWidth()));
+            juce::Rectangle<int> uniao = arvore.nodes_.front().bounds;
+            for (const auto& n : arvore.nodes_) uniao = uniao.getUnion(n.bounds);
+            const auto area = arvore.areaCanvas().withZeroOrigin();
+            checar(area.contains(uniao), "all the cards are inside the map area");
+            checar(uniao.getWidth() > area.getWidth() * 0.8 || uniao.getHeight() > area.getHeight() * 0.8,
+                   "and they use the available space (" + juce::String(uniao.getWidth()) + "x" + juce::String(uniao.getHeight()) + " of " +
+                       juce::String(area.getWidth()) + "x" + juce::String(area.getHeight()) + ")");
+
+            // --- vários selecionados: só esse conjunto
+            {
+                std::map<std::string, juce::Rectangle<int>> antesM;
+                for (const auto& n : arvore.nodes_) antesM[n.id] = n.bounds;
+                arvore.nodes_[(size_t) idx(r)].selecionado = true;
+                arvore.nodes_[(size_t) idx(x)].selecionado = true;
+                arvore.sliderTamanho_->setValue(150.0, juce::sendNotificationSync);
+                checar(arvore.nodes_[(size_t) idx(r)].escalaManual > 1.0f && arvore.nodes_[(size_t) idx(x)].escalaManual > 1.0f,
+                       "slider with several folders selected acts on that set");
+                bool restoIgual = true;
+                for (const auto& n : arvore.nodes_)
+                    if (n.id != r && n.id != x && n.bounds != antesM[n.id]) restoIgual = false;
+                checar(restoIgual && semSobreposicao(), "and only on it, with no overlap");
+                arvore.nodes_[(size_t) idx(r)].selecionado = false;
+                arvore.nodes_[(size_t) idx(x)].selecionado = false;
+            }
+
+            // --- slider com UMA pasta selecionada: só ela muda, e para ao encostar
+            std::map<std::string, juce::Rectangle<int>> antes;
+            for (const auto& n : arvore.nodes_) antes[n.id] = n.bounds;
+            arvore.nodes_[(size_t) idx(p)].selecionado = true;
+            arvore.sliderTamanho_->setValue(200.0, juce::sendNotificationSync);
+            const float mP = arvore.nodes_[(size_t) idx(p)].escalaManual;
+            checar(mP > 1.0f, "slider with a folder selected enlarges it (" + juce::String(mP, 2) + "x)");
+            checar(semSobreposicao(), "and it never overlaps a neighbor, even asking for 200%");
+            bool outrosIguais = true;
+            for (const auto& n : arvore.nodes_)
+                if (n.id != p && n.bounds != antes[n.id]) outrosIguais = false;
+            checar(outrosIguais, "the other folders were not moved or resized by the slider");
+            checar(std::abs(arvore.sliderTamanho_->getValue() - std::round(mP * 100.0)) < 1.5,
+                   "the slider shows where the folder really stopped (" + juce::String(arvore.sliderTamanho_->getValue(), 0) + "%)");
+
+            // --- auto-arranjo mantém o tamanho ajustado; só reorganiza posições
+            arvore.nodes_[(size_t) idx(c1)].selecionado = false;
+            arvore.nodes_[(size_t) idx(c2)].selecionado = false;
+            const float mC1 = arvore.nodes_[(size_t) idx(x)].escalaManual;
+            arvore.autoArranjar();
+            checar(std::abs(arvore.nodes_[(size_t) idx(x)].escalaManual - mC1) < 0.001f && std::abs(arvore.nodes_[(size_t) idx(p)].escalaManual - mP) < 0.001f,
+                   "auto-arrange again keeps the sizes the user adjusted");
+            checar(semSobreposicao() && semCruzamento(), "and still has no overlap and no crossing");
+
+            // --- escala global: todos, proporcional, mantendo a diferença entre níveis
+            const float razaoAntes = (float) caixa(g).getWidth() / (float) caixa(c1).getWidth();
+            arvore.sliderTamanho_->setValue(150.0, juce::sendNotificationSync);
+            const float razaoDepois = (float) caixa(g).getWidth() / (float) caixa(c1).getWidth();
+            checar(std::abs(razaoAntes - razaoDepois) < 0.05f, "global slider keeps the size difference between levels (" +
+                                                                   juce::String(razaoAntes, 2) + " -> " + juce::String(razaoDepois, 2) + ")");
+            checar(semSobreposicao(), "global slider at 150%: cards and gaps grow together, nothing overlaps");
+
+            // --- persistência do mapa do usuário
+            arvore.persistirEscalas();
+            arvore.escalasSujas_ = true;
+            arvore.persistirEscalas();
+
+            // --- RESET SIZES
+            arvore.redefinirTamanhos();
+            bool todosUm = true, tamanhoCalculado = true;
+            for (const auto& n : arvore.nodes_) {
+                todosUm = todosUm && std::abs(n.escalaManual - 1.0f) < 0.001f;
+                tamanhoCalculado = tamanhoCalculado && std::abs(n.boundsOriginal.getWidth() - n.autoW) <= 1;
+            }
+            checar(todosUm && tamanhoCalculado, "RESET SIZES returns every folder to the size calculated by auto-arrange");
+            checar(std::abs(arvore.escalaTamanho_ - 1.0f) < 0.001f && arvore.sliderTamanho_->getValue() == 100.0, "and the global scale to 100%");
+            checar(semSobreposicao() && caixa(g).getWidth() > caixa(p).getWidth() && caixa(p).getWidth() > caixa(c1).getWidth(),
+                   "with the level hierarchy kept and no overlap");
+
+            // --- FIT
+            arvore.zoom_ = 0.2f;
+            arvore.panOffset_ = {900.0f, 700.0f};
+            arvore.enquadrarTudo();
+            juce::Rectangle<float> vista;
+            bool primeiro = true;
+            for (const auto& n : arvore.nodes_) {
+                const auto r2 = n.bounds.toFloat() * arvore.zoom_ + arvore.panOffset_;
+                vista = primeiro ? r2 : vista.getUnion(r2);
+                primeiro = false;
+            }
+            checar(arvore.areaCanvas().withZeroOrigin().toFloat().contains(vista), "FIT shows the whole Folder Map inside the visible area");
+
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                arvore.nodes_[(size_t) idx(p)].selecionado = true;
+                arvore.repaint();
+                bombear(200);
+                juce::PNGImageFormat png;
+                auto arq = dir.getChildFile("foldermap_tamanhos.png");
+                arq.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                    png.writeImageToStream(arvore.createComponentSnapshot(arvore.getLocalBounds()), *out);
+                arvore.nodes_[(size_t) idx(p)].selecionado = false;
+            }
+            arvore.nodes_[(size_t) idx(g)].selecionado = true;
+            arvore.sliderTamanho_->setValue(130.0, juce::sendNotificationSync);
+            arvore.nodes_[(size_t) idx(g)].selecionado = false;
+        }   // o destrutor grava os tamanhos ajustados
+
+        {   // reabrir: multiplicador de cada pasta e fator do mapa voltam do projeto
+            ArvoreBackupComponent reaberta(pa);
+            reaberta.setBounds(0, 0, 1400, 900);
+            bombear(100);
+            float mG = 0.0f;
+            for (const auto& n : reaberta.nodes_) if (n.id == g) mG = n.escalaManual;
+            checar(mG > 1.0f, "a folder's size survives closing and reopening the map (" + juce::String(mG, 2) + "x)");
+            checar(reaberta.fatorCards_ > 0.0 && pa.fatorCardsDoMapa(mapa) > 0.0, "and so does the map's card factor");
+        }
+
+        // ORIGINAL: estrutura vinda do disco, já com auto-arranjo, sem precisar montar nada
+        for (const char* rel : {"A/B/um.wav", "A/B/dois.wav", "A/C/tres.wav", "D/quatro.wav"}) {
+            auto f = raizFM.getChildFile("fontes").getChildFile(rel);
+            f.getParentDirectory().createDirectory();
+            f.replaceWithText(rel);
+            inserirItemComArquivo(pa.projeto().registro(), projetoId, std::string("ORG-") + rel, f);
+        }
+        pa.definirMapaAtivo(ProjetoAberto::kMapaOriginal);
+        ArvoreBackupComponent original(pa);
+        original.setBounds(0, 0, 1400, 900);
+        bombear(100);
+        original.selecionarMapaPorId(ProjetoAberto::kMapaOriginal);
+        bombear(100);
+        checar(original.mapaAtivoEhOriginal() && original.nodes_.size() >= 4, "ORIGINAL shows the imported folder structure (" + juce::String((int) original.nodes_.size()) + " folders)");
+        bool sobra = false;
+        for (size_t i = 0; i < original.nodes_.size(); ++i)
+            for (size_t j = i + 1; j < original.nodes_.size(); ++j)
+                if (original.nodes_[i].bounds.intersects(original.nodes_[j].bounds)) sobra = true;
+        checar(original.fatorCards_ > 0.0 && !sobra, "ORIGINAL opens already auto-arranged, with no overlap");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("folder map sizes selftest: ") + e.what());
+    }
+    raizFM.deleteRecursively();
+
     // ------------------------------------------------ Setas: grade do METADATA e miniaturas do INTAKE
     std::cout << "\n-- Arrow navigation: METADATA grid + INTAKE thumbnails --\n";
     juce::File raizSetas = juce::File::getSpecialLocation(juce::File::tempDirectory)

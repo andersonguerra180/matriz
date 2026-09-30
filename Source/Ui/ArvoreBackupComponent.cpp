@@ -314,8 +314,13 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnZoomOut_);
 
     btnZoomFit_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_fit"));
-    btnZoomFit_->onClick = [this] { zoom_ = 1.0f; panOffset_ = {0.0f, 0.0f}; repaint(); };
+    btnZoomFit_->onClick = [this] { enquadrarTudo(); };
     addAndMakeVisible(*btnZoomFit_);
+
+    btnResetTamanhos_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_reset_tamanhos"));
+    btnResetTamanhos_->setTooltip(i18n::t("arvore_backup.reset_tamanhos_dica"));
+    btnResetTamanhos_->onClick = [this] { redefinirTamanhos(); };
+    addAndMakeVisible(*btnResetTamanhos_);
 
     comboMapas_ = std::make_unique<juce::ComboBox>();
     // Mesmo tratamento de combo das outras abas.
@@ -343,10 +348,8 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_->setTextValueSuffix("%");
     sliderTamanho_->setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
     sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
-    sliderTamanho_->onValueChange = [this] {
-        escalaTamanho_ = static_cast<float>(sliderTamanho_->getValue()) / 100.0f;
-        aplicarEscalaTamanho(escalaTamanho_);
-    };
+    sliderTamanho_->onValueChange = [this] { aplicarSlider(); };
+    sliderTamanho_->onDragEnd = [this] { persistirEscalas(); };
     addAndMakeVisible(*sliderTamanho_);
 
     detailContent_ = std::make_unique<TreeDetailContent>();
@@ -369,6 +372,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 }
 
 ArvoreBackupComponent::~ArvoreBackupComponent() {
+    try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
 }
@@ -406,10 +410,12 @@ void ArvoreBackupComponent::recarregar() {
 void ArvoreBackupComponent::recalcularNodes() {
     nodes_.clear();
     auto arvore = projeto_.arvoreAcervo(mapaAtivoId_);
+    const bool original = mapaAtivoEhOriginal();
 
-    // Posição salva vale sempre; pasta sem posição recebe a do layout em árvore (calculado
-    // em memória, nunca gravado aqui: só persiste quando o usuário arrasta ou usa AJUSTAR).
+    // Posição salva vale sempre; pasta sem posição recebe a do layout (calculado em memória, nunca
+    // gravado aqui: só persiste quando o usuário arrasta ou usa AJUSTAR).
     std::vector<layoutarvore::No> paraLayout;
+    bool algumaPosicaoSalva = false;
 
     std::function<void(const ProjetoAberto::NoArvore&)> adicionarNo = [&](const ProjetoAberto::NoArvore& no) {
         if (!no.id.empty()) {
@@ -428,7 +434,15 @@ void ArvoreBackupComponent::recalcularNodes() {
             node.autoSub = ProjetoAberto::regraEhAuto(node.regra);
             if (node.regra.isNotEmpty() && !node.autoSub) node.niveisRegra = matriz::consolidacao::hierarquiaDeCsv(node.regra.toStdString());
 
+            float escala = static_cast<float>(no.escalaNo);
+            if (original) {
+                auto it = escalasOriginal_.find(no.id);
+                escala = it != escalasOriginal_.end() ? it->second : 1.0f;
+            }
+            node.escalaManual = juce::jlimit(0.5f, 2.0f, escala > 0.0f ? escala : 1.0f);
+
             const bool posicaoSalva = no.posicaoX != 0 || no.posicaoY != 0;
+            algumaPosicaoSalva = algumaPosicaoSalva || posicaoSalva;
             node.bounds = juce::Rectangle<int>(no.posicaoX, no.posicaoY, 190, 84);
             node.boundsOriginal = node.bounds;
             nodes_.push_back(node);
@@ -460,7 +474,60 @@ void ArvoreBackupComponent::recalcularNodes() {
         for (const auto& filho : arvore.filhos) adicionarNo(filho);
     }
 
-    const auto posicoes = layoutarvore::calcular(paraLayout, {});
+    // Nível de cada pasta na hierarquia mostrada (raiz = 0; pai ausente, como numa aba isolada, = raiz).
+    {
+        std::map<std::string, int> indicePorId;
+        for (size_t i = 0; i < nodes_.size(); ++i) indicePorId[nodes_[i].id] = static_cast<int>(i);
+        for (auto& n : nodes_) {
+            int d = 0;
+            std::string cursor = n.pastaPaiId;
+            while (!cursor.empty() && d < 200) {
+                auto it = indicePorId.find(cursor);
+                if (it == indicePorId.end()) break;
+                ++d;
+                cursor = nodes_[static_cast<size_t>(it->second)].pastaPaiId;
+            }
+            n.nivel = d;
+        }
+    }
+
+    fatorCards_ = original ? 0.0 : projeto_.fatorCardsDoMapa(mapaAtivoId_);
+    autoLayoutPendente_ = false;
+    const auto canvas = areaCanvas();
+    const bool canvasPronto = canvas.getWidth() >= 200 && canvas.getHeight() >= 150;
+
+    // Mapa sem nada salvo (o ORIGINAL sempre, ou um mapa que nunca foi arranjado): já abre arranjado —
+    // maior tamanho de cartão que cabe na área, sem sobreposição nem linhas cruzadas.
+    if ((original || !algumaPosicaoSalva) && canvasPronto && calcularEAplicarAutoArranjo()) {
+        recalcularPivot();
+        aplicarEscalaTamanho(escalaTamanho_);
+        return;
+    }
+    if (original || !algumaPosicaoSalva) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
+
+    // Mapa com posições salvas: tamanho vem do fator do mapa (ou o tamanho único antigo) x multiplicador.
+    layoutarvore::ParametrosAuto pa;
+    int larguraMax = 190, alturaMax = 84;
+    for (auto& n : nodes_) {
+        if (fatorCards_ > 0.0) {
+            const auto t = layoutarvore::tamanhoDoNivel(pa, n.nivel, fatorCards_);
+            n.autoW = t.w;
+            n.autoH = t.h;
+        } else {
+            n.autoW = 190;
+            n.autoH = 84;
+        }
+        const int w = juce::roundToInt(n.autoW * n.escalaManual), h = juce::roundToInt(n.autoH * n.escalaManual);
+        larguraMax = std::max(larguraMax, w);
+        alturaMax = std::max(alturaMax, h);
+        n.bounds.setSize(w, h);
+        n.boundsOriginal = n.bounds;
+    }
+
+    layoutarvore::Parametros parametros;
+    parametros.larguraNo = larguraMax;
+    parametros.alturaNo = alturaMax;
+    const auto posicoes = layoutarvore::calcular(paraLayout, parametros);
     for (auto& node : nodes_) {
         auto it = posicoes.find(node.id);
         if (it == posicoes.end()) continue;
@@ -468,7 +535,46 @@ void ArvoreBackupComponent::recalcularNodes() {
         node.boundsOriginal = node.bounds;
     }
 
-    aplicarEscalaTamanho(escalaTamanho_); // S4/14 — reaplica o tamanho escolhido ao layout recém-lido
+    recalcularPivot();
+    aplicarEscalaTamanho(escalaTamanho_); // reaplica a escala global ao layout recém-lido
+}
+
+// Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
+// manual de cada pasta. Não persiste nada. false = nada a fazer / canvas sem tamanho.
+bool ArvoreBackupComponent::calcularEAplicarAutoArranjo() {
+    if (nodes_.empty()) return false;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 200 || canvas.getHeight() < 150) return false;
+
+    std::vector<layoutarvore::NoTam> nos;
+    nos.reserve(nodes_.size());
+    for (const auto& n : nodes_) nos.push_back({n.id, n.pastaPaiId, static_cast<double>(n.escalaManual)});
+
+    layoutarvore::ParametrosAuto parametros;
+    parametros.areaLargura = canvas.getWidth();
+    parametros.areaAltura = canvas.getHeight();
+    const auto r = layoutarvore::calcularAutoArranjo(nos, parametros);
+    if (r.caixas.empty()) return false;
+
+    fatorCards_ = r.fator;
+    for (auto& n : nodes_) {
+        auto it = r.caixas.find(n.id);
+        if (it == r.caixas.end()) continue;
+        const auto t = layoutarvore::tamanhoDoNivel(parametros, r.nivel.at(n.id), r.fator);
+        n.autoW = t.w;
+        n.autoH = t.h;
+        n.nivel = r.nivel.at(n.id);
+        n.boundsOriginal = juce::Rectangle<int>(it->second.x, it->second.y, it->second.w, it->second.h);
+        n.bounds = n.boundsOriginal;
+    }
+    return true;
+}
+
+void ArvoreBackupComponent::recalcularPivot() {
+    if (nodes_.empty()) { pivotEscala_ = {0.0f, 0.0f}; return; }
+    juce::Rectangle<int> uniao = nodes_.front().boundsOriginal;
+    for (const auto& n : nodes_) uniao = uniao.getUnion(n.boundsOriginal);
+    pivotEscala_ = uniao.getCentre().toFloat();
 }
 
 void ArvoreBackupComponent::tentarEnquadrar() {
@@ -845,8 +951,13 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
     try { db.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
     for (int idx : indices) {
         if (idx < 0 || idx >= static_cast<int>(nodes_.size())) continue;
-        const auto& node = nodes_[static_cast<size_t>(idx)];
-        projeto_.atualizarPosicaoPastaAcervo(node.id, node.bounds.getX(), node.bounds.getY());
+        auto& node = nodes_[static_cast<size_t>(idx)];
+        // `bounds` está na escala global do slider; o que se grava é a posição a 100% (boundsOriginal).
+        const float g = std::max(0.05f, escalaTamanho_);
+        const auto c = node.bounds.getCentre().toFloat();
+        node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / g,
+                                                          pivotEscala_.y + (c.y - pivotEscala_.y) / g).toInt());
+        projeto_.atualizarPosicaoPastaAcervo(node.id, node.boundsOriginal.getX(), node.boundsOriginal.getY());
     }
     if (emTransacao) {
         try { db.exec("COMMIT"); } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} }
@@ -856,97 +967,21 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
 void ArvoreBackupComponent::autoArranjar() {
     if (nodes_.empty()) return;
 
-    static constexpr int kBaseNodeW = 190;
-    static constexpr int kBaseNodeH = 84;
-    static constexpr int kMargin = 40;
-    static constexpr int kMinGap = 20;
-
-    std::set<std::string> idsPresentes;
-    for (auto& n : nodes_) idsPresentes.insert(n.id);
-    std::map<std::string, std::vector<std::string>> filhosDe;
-    std::vector<layoutarvore::No> nos;
-    std::vector<std::string> raizes;
-    for (auto& n : nodes_) {
-        nos.push_back({n.id, n.pastaPaiId, false, 0, 0});
-        if (!n.pastaPaiId.empty() && idsPresentes.count(n.pastaPaiId)) filhosDe[n.pastaPaiId].push_back(n.id);
-        else raizes.push_back(n.id);  // pai ausente (aba isolada) também é raiz
-    }
-
-    int maxDepth = 0;
-    std::function<void(const std::string&, int)> calcularProfundidade =
-        [&](const std::string& id, int nivel) {
-            maxDepth = std::max(maxDepth, nivel);
-            for (auto& f : filhosDe[id]) calcularProfundidade(f, nivel + 1);
-        };
-    for (auto& r : raizes) calcularProfundidade(r, 0);
-
-    int totalLeaves = 0;
-    std::function<int(const std::string&)> contarFolhas =
-        [&](const std::string& id) -> int {
-            auto& filhos = filhosDe[id];
-            if (filhos.empty()) return 1;
-            int s = 0;
-            for (auto& f : filhos) s += contarFolhas(f);
-            return s;
-        };
-    for (auto& r : raizes) totalLeaves += contarFolhas(r);
-    totalLeaves = std::max(1, totalLeaves);
-
-    const auto canvas = areaCanvas();
-    float viewW = static_cast<float>(std::max(400, canvas.getWidth())) / zoom_;
-    float viewH = static_cast<float>(std::max(300, canvas.getHeight())) / zoom_;
-
-    int cols = maxDepth + 1;
-    float widthBudget = viewW - kMargin * 2.0f;
-    float heightBudget = viewH - kMargin;
-
-    float nodeScale = 1.0f;
-    int nodeW = kBaseNodeW;
-    int nodeH = kBaseNodeH;
-    int gapX = kMinGap;
-    int gapY = kMinGap;
-
-    float neededW = cols * kBaseNodeW + std::max(0, cols - 1) * kMinGap;
-    float neededH = totalLeaves * kBaseNodeH + std::max(0, totalLeaves - 1) * kMinGap;
-
-    if (neededW > widthBudget || neededH > heightBudget) {
-        float scX = widthBudget / neededW;
-        float scY = heightBudget / neededH;
-        nodeScale = std::max(0.7f, std::min({scX, scY, 1.0f}));
-        nodeW = static_cast<int>(kBaseNodeW * nodeScale);
-        nodeH = static_cast<int>(kBaseNodeH * nodeScale);
-    }
-
-    float totalNodeW = cols * nodeW;
-    float remainW = widthBudget - totalNodeW;
-    gapX = (cols > 1) ? std::max(kMinGap, static_cast<int>(remainW / (cols - 1))) : kMinGap;
-
-    float totalNodeH = totalLeaves * nodeH;
-    float remainH = heightBudget - totalNodeH;
-    gapY = (totalLeaves > 1) ? std::max(kMinGap, static_cast<int>(remainH / (totalLeaves - 1))) : kMinGap;
-
-    // Mesmo layout em árvore do layout padrão (ver recalcularNodes), aqui com todos os nós livres.
-    layoutarvore::Parametros parametros;
-    parametros.larguraNo = nodeW;
-    parametros.alturaNo = nodeH;
-    parametros.gapX = gapX;
-    parametros.gapY = gapY;
-    parametros.origemX = kMargin;
-    parametros.origemY = kMargin;
-    const auto posicoes = layoutarvore::calcular(nos, parametros);
+    // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
+    // ajustou em cada pasta é mantido; a escala global volta a 100%.
+    escalaTamanho_ = 1.0f;
+    if (!calcularEAplicarAutoArranjo()) return;
 
     std::vector<int> indices;
-    for (size_t i = 0; i < nodes_.size(); ++i) {
-        auto it = posicoes.find(nodes_[i].id);
-        if (it == posicoes.end()) continue;
-        nodes_[i].bounds = juce::Rectangle<int>(it->second.x, it->second.y, nodeW, nodeH);
-        nodes_[i].boundsOriginal = nodes_[i].bounds;
-        indices.push_back(static_cast<int>(i));
-    }
+    for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
+    recalcularPivot();
     persistirPosicoesEmLote(indices);  // uma transação só
+    if (!mapaAtivoEhOriginal()) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
 
+    zoom_ = 1.0f;
     panOffset_ = {0.0f, 0.0f};
-    aplicarEscalaTamanho(escalaTamanho_); // S4/14 — reaplica o tamanho escolhido (também repinta)
+    aplicarEscalaTamanho(escalaTamanho_);
+    sincronizarSlider();
 }
 
 void ArvoreBackupComponent::desenharLinhaConexaoN8n(juce::Graphics& g, juce::Point<float> p1, juce::Point<float> p2, bool ativo, bool rascunho) const {
@@ -1104,6 +1139,14 @@ void ArvoreBackupComponent::finalizarEdicaoInline() {
 }
 
 void ArvoreBackupComponent::paint(juce::Graphics& g) {
+    {   // o slider passa a mostrar a escala da seleção (ou a global) sempre que a seleção muda
+        std::string assinatura;
+        for (const auto& n : nodes_) if (n.selecionado) assinatura += n.id + ";";
+        if (assinatura != assinaturaSelecaoSlider_) {
+            assinaturaSelecaoSlider_ = std::move(assinatura);
+            sincronizarSlider();
+        }
+    }
     const auto& tk = tema();
     const auto canvas = areaCanvas();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
@@ -1334,10 +1377,15 @@ void ArvoreBackupComponent::resized() {
         linha.removeFromLeft(4);
         if (btnZoomIn_) btnZoomIn_->setBounds(linha);
     }
-    corpo.removeFromTop(4);
-    if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
     corpo.removeFromTop(2);
     zoomIndicadorBounds_ = corpo.removeFromTop(14);
+    coluna_.finalizarCard();
+
+    // FOLDER SIZE — slider de tamanho (seleção ou todos) e RESET SIZES.
+    coluna_.iniciarCard(i18n::t("arvore_backup.card_tamanho"));
+    if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
+    corpo.removeFromTop(4);
+    if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
 
     // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
@@ -1348,6 +1396,14 @@ void ArvoreBackupComponent::resized() {
         coluna_.finalizarCard();
     }
 
+    // O mapa abriu antes de o canvas ter tamanho: agora dá pra arranjar (maior cartão que cabe).
+    if (autoLayoutPendente_) {
+        const auto canvas = areaCanvas();
+        if (canvas.getWidth() >= 200 && canvas.getHeight() >= 150) {
+            recalcularNodes();
+            enquadrarPendente_ = true;
+        }
+    }
     tentarEnquadrar();
 
     // Pasta selecionada: nome, subpastas e a lista de arquivos ocupam o espaço que sobra na coluna
@@ -1737,6 +1793,31 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     }
 
     if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size()) && !arrastoGrupoPosicoesIniciais_.empty()) {
+        // Um folder nunca fica em cima de outro: se o bloco arrastado soltou sobrepondo alguém, volta à
+        // posição que tinha quando o arrasto começou.
+        {
+            std::set<int> movidos;
+            for (auto& [idx, posInicial] : arrastoGrupoPosicoesIniciais_) { juce::ignoreUnused(posInicial); movidos.insert(idx); }
+            bool sobrepoe = false;
+            for (int m : movidos) {
+                if (m < 0 || m >= static_cast<int>(nodes_.size())) continue;
+                const auto& b = nodes_[static_cast<size_t>(m)].bounds;
+                for (size_t k = 0; k < nodes_.size() && !sobrepoe; ++k) {
+                    if (movidos.count(static_cast<int>(k))) continue;
+                    if (b.intersects(nodes_[k].bounds)) sobrepoe = true;
+                }
+                if (sobrepoe) break;
+            }
+            if (sobrepoe) {
+                for (auto& [idx, posInicial] : arrastoGrupoPosicoesIniciais_)
+                    if (idx >= 0 && idx < static_cast<int>(nodes_.size()))
+                        nodes_[static_cast<size_t>(idx)].bounds.setPosition(static_cast<int>(posInicial.x), static_cast<int>(posInicial.y));
+                nodeDragIndice_ = -1;
+                arrastoGrupoPosicoesIniciais_.clear();
+                repaint();
+                return;
+            }
+        }
         // Item 8/10: persiste a posição do bloco inteiro (pasta + descendentes
         // arrastadas junto) numa única transação ao soltar o mouse — com
         // centenas de pastas, N UPDATEs isolados seriam N transações
@@ -1956,6 +2037,10 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     if (btnApagarPasta_) btnApagarPasta_->setButtonText(i18n::t("arvore_backup.btn_apagar"));
     if (btnAutoArranjar_) btnAutoArranjar_->setButtonText(i18n::t("arvore_backup.btn_auto_arranjar"));
     if (btnZoomFit_) btnZoomFit_->setButtonText(i18n::t("arvore_backup.btn_fit"));
+    if (btnResetTamanhos_) {
+        btnResetTamanhos_->setButtonText(i18n::t("arvore_backup.btn_reset_tamanhos"));
+        btnResetTamanhos_->setTooltip(i18n::t("arvore_backup.reset_tamanhos_dica"));
+    }
     if (btnNovoMapa_) btnNovoMapa_->setButtonText(i18n::t("arvore_backup.btn_novo_mapa"));
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
@@ -1969,13 +2054,168 @@ void ArvoreBackupComponent::timerCallback() {
 
 // ── S4/14 — slider de tamanho ────────────────────────────────────────
 
+// Escala GLOBAL (slider sem pasta selecionada): tamanhos e distâncias entre os cartões crescem juntos em
+// torno do centro do mapa, então a diferença entre os níveis da hierarquia e a ausência de sobreposição
+// são preservadas por construção.
 void ArvoreBackupComponent::aplicarEscalaTamanho(float escala) {
     for (auto& n : nodes_) {
-        auto centro = n.boundsOriginal.getCentre();
-        int w = juce::jmax(20, juce::roundToInt(n.boundsOriginal.getWidth() * escala));
-        int h = juce::jmax(20, juce::roundToInt(n.boundsOriginal.getHeight() * escala));
-        n.bounds = juce::Rectangle<int>(w, h).withCentre(centro);
+        const auto c = n.boundsOriginal.getCentre().toFloat();
+        const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala,
+                                            pivotEscala_.y + (c.y - pivotEscala_.y) * escala);
+        const int w = juce::jmax(6, juce::roundToInt(n.boundsOriginal.getWidth() * escala));
+        const int h = juce::jmax(4, juce::roundToInt(n.boundsOriginal.getHeight() * escala));
+        n.bounds = juce::Rectangle<int>(w, h).withCentre(novoCentro.toInt());
     }
+    repaint();
+}
+
+std::vector<int> ArvoreBackupComponent::indicesSelecionados() const {
+    std::vector<int> out;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].selecionado) out.push_back(static_cast<int>(i));
+    return out;
+}
+
+// O valor do slider mostra a escala da seleção (média) ou, sem seleção, a global.
+void ArvoreBackupComponent::sincronizarSlider() {
+    if (!sliderTamanho_) return;
+    const auto sel = indicesSelecionados();
+    double v = escalaTamanho_;
+    if (!sel.empty()) {
+        double soma = 0.0;
+        for (int i : sel) soma += nodes_[static_cast<size_t>(i)].escalaManual;
+        v = soma / static_cast<double>(sel.size());
+    }
+    sliderTamanho_->setValue(std::round(v * 100.0), juce::dontSendNotification);
+}
+
+void ArvoreBackupComponent::aplicarSlider() {
+    if (!sliderTamanho_) return;
+    const double pedido = sliderTamanho_->getValue() / 100.0;
+    const auto sel = indicesSelecionados();
+    if (sel.empty()) {
+        escalaTamanho_ = static_cast<float>(pedido);
+        aplicarEscalaTamanho(escalaTamanho_);
+        return;
+    }
+
+    // Só as pastas selecionadas. O que encostar num vizinho para ali: o slider não empurra nem
+    // reorganiza ninguém.
+    std::vector<layoutarvore::AlvoEscala> alvos;
+    std::vector<layoutarvore::CaixaAuto> fixos;
+    std::set<int> ehAlvo(sel.begin(), sel.end());
+    for (int i : sel) {
+        const auto& n = nodes_[static_cast<size_t>(i)];
+        layoutarvore::AlvoEscala a;
+        a.cx = n.boundsOriginal.getCentreX();
+        a.cy = n.boundsOriginal.getCentreY();
+        a.autoW = n.autoW;
+        a.autoH = n.autoH;
+        a.de = n.escalaManual;
+        a.para = pedido;
+        alvos.push_back(a);
+    }
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        if (ehAlvo.count(static_cast<int>(i))) continue;
+        const auto& b = nodes_[i].boundsOriginal;
+        fixos.push_back({b.getX(), b.getY(), b.getWidth(), b.getHeight()});
+    }
+    const double t = layoutarvore::fracaoPermitidaDoCrescimento(alvos, fixos);
+    for (size_t k = 0; k < sel.size(); ++k) {
+        auto& n = nodes_[static_cast<size_t>(sel[k])];
+        n.escalaManual = static_cast<float>(alvos[k].de + (alvos[k].para - alvos[k].de) * t);
+        const auto c = layoutarvore::caixaDoAlvo(alvos[k], t);
+        n.boundsOriginal = juce::Rectangle<int>(c.x, c.y, c.w, c.h);
+        if (mapaAtivoEhOriginal()) escalasOriginal_[n.id] = n.escalaManual;
+    }
+    escalasSujas_ = true;
+    aplicarEscalaTamanho(escalaTamanho_);
+    if (t < 1.0) sincronizarSlider();  // o slider mostra onde o folder realmente parou
+}
+
+void ArvoreBackupComponent::persistirEscalas() {
+    if (!escalasSujas_) return;
+    escalasSujas_ = false;
+    if (mapaAtivoEhOriginal()) return;  // virtual: só em memória
+    std::vector<std::pair<std::string, double>> escalas;
+    escalas.reserve(nodes_.size());
+    for (const auto& n : nodes_) escalas.push_back({n.id, static_cast<double>(n.escalaManual)});
+    projeto_.atualizarEscalasPastasAcervo(escalas);
+    if (fatorCards_ > 0.0) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
+    // Posições/tamanhos a 100% ficam consistentes com o que foi gravado.
+    std::vector<int> todos;
+    for (size_t i = 0; i < nodes_.size(); ++i) todos.push_back(static_cast<int>(i));
+    persistirPosicoesEmLote(todos);
+}
+
+// RESET SIZES: volta cada pasta ao tamanho calculado pelo auto-arranjo (multiplicador 1) e a escala
+// global a 100%, mantendo a diferença entre os níveis. As que encolhem vão primeiro; as que precisam
+// crescer de volta param se encostarem em alguma vizinha.
+void ArvoreBackupComponent::redefinirTamanhos() {
+    if (nodes_.empty()) return;
+    escalaTamanho_ = 1.0f;
+    for (auto& n : nodes_) {
+        if (n.escalaManual > 1.0f) {
+            const auto c = n.boundsOriginal.getCentre();
+            n.escalaManual = 1.0f;
+            n.boundsOriginal = juce::Rectangle<int>(n.autoW, n.autoH).withCentre(c);
+        }
+    }
+    std::vector<layoutarvore::AlvoEscala> alvos;
+    std::vector<int> indicesAlvo;
+    std::vector<layoutarvore::CaixaAuto> fixos;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        const auto& n = nodes_[i];
+        if (n.escalaManual < 1.0f) {
+            layoutarvore::AlvoEscala a;
+            a.cx = n.boundsOriginal.getCentreX();
+            a.cy = n.boundsOriginal.getCentreY();
+            a.autoW = n.autoW;
+            a.autoH = n.autoH;
+            a.de = n.escalaManual;
+            a.para = 1.0;
+            alvos.push_back(a);
+            indicesAlvo.push_back(static_cast<int>(i));
+        } else {
+            const auto& b = n.boundsOriginal;
+            fixos.push_back({b.getX(), b.getY(), b.getWidth(), b.getHeight()});
+        }
+    }
+    if (!alvos.empty()) {
+        const double t = layoutarvore::fracaoPermitidaDoCrescimento(alvos, fixos);
+        for (size_t k = 0; k < indicesAlvo.size(); ++k) {
+            auto& n = nodes_[static_cast<size_t>(indicesAlvo[k])];
+            n.escalaManual = static_cast<float>(alvos[k].de + (alvos[k].para - alvos[k].de) * t);
+            const auto c = layoutarvore::caixaDoAlvo(alvos[k], t);
+            n.boundsOriginal = juce::Rectangle<int>(c.x, c.y, c.w, c.h);
+        }
+    }
+    if (mapaAtivoEhOriginal()) {
+        escalasOriginal_.clear();
+        for (const auto& n : nodes_)
+            if (std::abs(n.escalaManual - 1.0f) > 0.001f) escalasOriginal_[n.id] = n.escalaManual;
+    }
+    escalasSujas_ = true;
+    aplicarEscalaTamanho(escalaTamanho_);
+    persistirEscalas();
+    sincronizarSlider();
+}
+
+// FIT: enquadra o mapa inteiro na área visível (também amplia, se o mapa for pequeno).
+void ArvoreBackupComponent::enquadrarTudo() {
+    if (nodes_.empty()) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;
+    juce::Rectangle<int> uniao = nodes_.front().bounds;
+    for (const auto& n : nodes_) uniao = uniao.getUnion(n.bounds);
+    constexpr float kMargem = 30.0f;
+    const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+    const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+    zoom_ = juce::jlimit(0.15f, 3.0f, std::min(zx, zy));
+    const auto centro = uniao.getCentre().toFloat();
+    panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                  static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+    enquadrarPendente_ = false;
     repaint();
 }
 
@@ -2258,6 +2498,7 @@ void ArvoreBackupComponent::recarregarComboMapas() {
 
 void ArvoreBackupComponent::selecionarMapaPorId(const std::string& mapaId) {
     if (mapaId == mapaAtivoId_) return;
+    persistirEscalas();  // tamanhos ajustados no mapa que está saindo
     mapaAtivoId_ = mapaId;
     projeto_.definirMapaAtivo(mapaId);
     editingNodeId_.clear();
