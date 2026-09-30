@@ -401,4 +401,85 @@ ResultadoLeitura lerPacote(const juce::File& pasta) {
     return r;
 }
 
+void gravarDadosFicha(matriz::db::Database& registro, const std::string& itemId, const DadosFicha& d,
+                      matriz::model::nomes::Vocabulario& vocabTags, matriz::model::nomes::Vocabulario& vocabSubjects,
+                      const std::string& autor) {
+    const std::string agora = matriz::model::agoraIso8601();
+    // Mesmo par de escritas de ProjetoAberto::salvarMetadado: coluna do item
+    // + espelho em item_campo.
+    auto gravar = [&](const char* coluna, const std::string& valor) {
+        if (valor.empty()) return;
+        registro.run(std::string("UPDATE item SET ") + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                     {Value::of(valor), Value::of(agora), Value::of(itemId)});
+        registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                     "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+                     "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, "
+                     "fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(std::string(coluna)),
+                      Value::of(valor), Value::of(agora)});
+    };
+    gravar("dc_title", d.titulo);
+    gravar("dc_description", d.descricao);
+    gravar("ano", d.eventDate);
+    gravar("collection_type", d.content);
+    if (!d.subjects.empty()) {
+        std::string lista;
+        for (const auto& s : d.subjects) lista += (lista.empty() ? "" : ", ") + s;
+        gravar("dc_subject", vocabSubjects.listaSubjects(lista));
+    }
+
+    auto tag = [&](const std::string& t) {
+        const std::string canon = vocabTags.canonico(t);
+        if (canon.empty()) return std::string();
+        registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(canon)});
+        return canon;
+    };
+    for (const auto& t : d.tags) tag(t);
+    if (!d.pessoas.empty()) {
+        registro.exec("CREATE TABLE IF NOT EXISTS collection_person (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, "
+                      "criado_em TEXT NOT NULL)");
+        for (const auto& p : d.pessoas) {
+            const std::string canon = tag(p);
+            if (canon.empty()) continue;
+            registro.run("INSERT OR IGNORE INTO collection_person (id, nome, criado_em) VALUES (?, ?, ?)",
+                         {Value::of(matriz::model::novoUuid()), Value::of(canon), Value::of(agora)});
+        }
+    }
+
+    // Geo: os campos do pacote valem por cima de uma leitura automática (GPS
+    // do EXIF) do item recém-ingerido; o que o pacote não traz fica.
+    if (auto* g = d.geo.getDynamicObject()) {
+        std::string cols = "asset_id", marcas = "?", atualiza;
+        std::vector<Value> vals{Value::of(itemId)};
+        for (auto* c : kColunasGeo) {
+            if (!g->hasProperty(c)) continue;
+            const auto v = g->getProperty(c);
+            cols += std::string(", ") + c;
+            marcas += ", ?";
+            atualiza += std::string(atualiza.empty() ? "" : ", ") + c + " = excluded." + c;
+            if (v.isDouble() || v.isInt() || v.isInt64()) vals.push_back(Value::of(static_cast<double>(v)));
+            else vals.push_back(Value::of(v.toString().toStdString()));
+        }
+        if (!atualiza.empty()) {
+            cols += ", created_at, updated_at";
+            marcas += ", ?, ?";
+            vals.push_back(Value::of(agora));
+            vals.push_back(Value::of(agora));
+            registro.run("INSERT INTO asset_geolocation (" + cols + ") VALUES (" + marcas + ") "
+                         "ON CONFLICT(asset_id) DO UPDATE SET " + atualiza + ", updated_at = excluded.updated_at",
+                         vals);
+        }
+    }
+
+    for (const auto& m : d.marcadores) {
+        registro.run("INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms, titulo) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(m.texto), Value::of(autor),
+                      Value::of(agora),
+                      m.tempoS ? Value::of(static_cast<long long>(std::llround(*m.tempoS * 1000.0))) : Value::null(),
+                      m.titulo.empty() ? Value::null() : Value::of(m.titulo)});
+    }
+}
+
 }  // namespace matriz::consolidacao::pacote

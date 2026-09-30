@@ -401,6 +401,9 @@ struct EstadoLote {
     std::vector<std::string> todosItemIds;
     bool cancelado = false;
     bool manterArquivosCarregados = true;
+    // Avisos de "lote concluído" (ex.: pacote de collection), um por chamada
+    // de processarLoteEmBackground que pediu — cada um filtra os seus itens.
+    std::vector<std::function<void(const std::vector<std::string>&)>> aoConcluir;
 };
 
 namespace {
@@ -2760,6 +2763,12 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     if (!projetoAberto_) return;
     if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
 
+    // Pacote de collection: a pasta traz matriz-pacote.json.
+    if (arquivosOuPastas.size() == 1 && matriz::consolidacao::pacote::pareceUmPacote(arquivosOuPastas[0])) {
+        ingerirPacote(arquivosOuPastas[0]);
+        return;
+    }
+
     bool temDiretorio = false;
     for (const auto& entrada : arquivosOuPastas) {
         if (entrada.isDirectory()) {
@@ -2780,6 +2789,93 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
     resolverDuplicatasIntakeEEnfileirar(std::move(arquivos));
+}
+
+void MainComponent::ingerirPacote(const juce::File& pasta) {
+    if (!projetoAberto_) return;
+    namespace pk = matriz::consolidacao::pacote;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    ProgressoGlobal::obterInstancia().iniciarTarefa("pacote_intake", matriz::i18n::t("intake.pacote_lendo"), 0);
+    // Leitura do JSON em background (pool de Vaults: esperarJobsDeVaults()
+    // segura o projeto vivo até o job terminar).
+    poolVaults_.addJob([safeThis, proj, pasta] {
+        auto leitura = std::make_shared<pk::ResultadoLeitura>(pk::lerPacote(pasta));
+        juce::MessageManager::callAsync([safeThis, proj, leitura] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("pacote_intake");
+            if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+            auto avisar = [](const juce::String& msg) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("intake.pacote_titulo"),
+                                                       msg, {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+            };
+            if (leitura->status == pk::StatusLeitura::VersaoDesconhecida) {
+                avisar(matriz::i18n::t("intake.pacote_versao").replace("{v}", leitura->erro));
+                return;
+            }
+            if (leitura->status != pk::StatusLeitura::Ok) {
+                avisar(matriz::i18n::t("intake.pacote_invalido").replace("{e}", leitura->erro));
+                return;
+            }
+            auto pacote = std::make_shared<pk::Pacote>(std::move(leitura->pacote));
+            // Só Media/ entra (o JSON não é arquivo do acervo). Sem o diálogo
+            // SKIP/REPLACE/NEW: o que já existe entra como duplicata normal e
+            // é resolvido depois na aba Duplicates.
+            safeThis->expandirArquivosAsync({pacote->media()}, [safeThis, proj, pacote](std::vector<juce::File> arquivos, int) {
+                if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+                if (arquivos.empty()) {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("intake.pacote_titulo"),
+                                                           matriz::i18n::t("intake.pacote_vazio"), {}, nullptr,
+                                                           juce::ModalCallbackFunction::create([](int) {}));
+                    return;
+                }
+                safeThis->processarLoteEmBackground(std::move(arquivos), "", "",
+                                                    [safeThis, proj, pacote](const std::vector<std::string>& ingeridos) {
+                                                        if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+                                                        safeThis->aplicarPacoteIngerido(pacote, ingeridos);
+                                                    });
+            });
+        });
+    });
+}
+
+void MainComponent::aplicarPacoteIngerido(std::shared_ptr<matriz::consolidacao::pacote::Pacote> pacote,
+                                          const std::vector<std::string>& itensIngeridos) {
+    if (!projetoAberto_ || !pacote) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    ProgressoGlobal::obterInstancia().iniciarTarefa("pacote_intake", matriz::i18n::t("intake.pacote_aplicando"), 0);
+    poolVaults_.addJob([safeThis, proj, pacote, itensIngeridos] {
+        ProjetoAberto::ResultadoIntakePacote r;
+        try {
+            r = proj->aplicarPacoteIngerido(*pacote, itensIngeridos);
+        } catch (const std::exception& e) {
+            r.erro = e.what();
+        }
+        juce::MessageManager::callAsync([safeThis, proj, r, nome = pacote->nome()] {
+            ProgressoGlobal::obterInstancia().concluirTarefa("pacote_intake");
+            if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+            if (safeThis->aoAplicarPacoteParaTeste) safeThis->aoAplicarPacoteParaTeste(r);
+            juce::String msg;
+            if (!r.ok) {
+                msg = matriz::i18n::t("intake.pacote_erro").replace("{e}", r.erro);
+            } else {
+                EventBus::obterInstancia().dispararItemAlterado("", "metadado");  // mesmo evento amplo do lote
+                if (safeThis->treeWorkspace_) safeThis->treeWorkspace_->recarregar();
+                if (safeThis->arvoreAcervo_) safeThis->arvoreAcervo_->recarregar();
+                msg = matriz::i18n::t("intake.pacote_relatorio")
+                          .replace("{nome}", nome)
+                          .replace("{entraram}", juce::String(r.entraram))
+                          .replace("{comDados}", juce::String(r.comDados))
+                          .replace("{sem}", juce::String(r.semCorrespondencia))
+                          .replace("{dup}", juce::String(r.jaExistiam))
+                          .replace("{orfaos}", juce::String(r.registrosSemArquivo))
+                          .replace("{mapa}", r.folderMap);
+            }
+            juce::AlertWindow::showMessageBoxAsync(r.ok ? juce::AlertWindow::InfoIcon : juce::AlertWindow::WarningIcon,
+                                                   matriz::i18n::t("intake.pacote_titulo"), msg, {}, nullptr,
+                                                   juce::ModalCallbackFunction::create([](int) {}));
+        });
+    });
 }
 
 namespace {
@@ -3442,7 +3538,8 @@ void MainComponent::expandirArquivosAsync(
 
 void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                                 const std::string& sourceMedia,
-                                                const std::string& collection) {
+                                                const std::string& collection,
+                                                std::function<void(const std::vector<std::string>&)> aoConcluir) {
     if (!projetoAberto_) return;
 
     // Ponteiro, não referência: a referência local morreria ao sair desta
@@ -3587,6 +3684,16 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     } else {
         estadoLote = std::make_shared<EstadoLote>();
         estadoLote->todosItemIds = itemIds;
+    }
+    if (aoConcluir) {
+        const std::set<std::string> meus(itemIds.begin(), itemIds.end());
+        const juce::ScopedLock sl(estadoLote->lock);
+        estadoLote->aoConcluir.push_back([meus, aoConcluir](const std::vector<std::string>& processados) {
+            std::vector<std::string> doChamador;
+            for (const auto& id : processados)
+                if (meus.count(id)) doChamador.push_back(id);
+            aoConcluir(doChamador);
+        });
     }
     estadoLoteAtual_ = estadoLote;
     loteEmCurso_ = true;
@@ -3944,9 +4051,11 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
     std::vector<std::string> naoProcessados;
     std::vector<std::string> processadosComSucesso;
     std::vector<std::string> todosItemIds;
+    std::vector<std::function<void(const std::vector<std::string>&)>> aoConcluirLote;
     juce::StringArray erros;
     {
         const juce::ScopedLock sl(estadoLote->lock);
+        aoConcluirLote = estadoLote->aoConcluir;
         sucessos = estadoLote->sucessos;
         duplicatas = estadoLote->duplicatas;
         totalErros = static_cast<int>(estadoLote->erros.size());
@@ -4010,8 +4119,12 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
 
         int totalDoLote = static_cast<int>(todosItemIds.size());
         int mantidos = manterArquivos ? sucessos : 0;
+        const std::vector<std::string> mantidosIds = manterArquivos ? processadosComSucesso : std::vector<std::string>{};
         auto aoTerminar = std::make_shared<std::function<void()>>(
-            [this, mantidos, totalDoLote] { mostrarResumoCancelado(mantidos, totalDoLote); });
+            [this, mantidos, totalDoLote, aoConcluirLote, mantidosIds] {
+                mostrarResumoCancelado(mantidos, totalDoLote);
+                for (const auto& f : aoConcluirLote) if (f) f(mantidosIds);
+            });
 
         if (ingestModalDialog_) ingestModalDialog_->beginFinalizing(static_cast<int>(passos->size()));
         executarPassosFinalizacao(passos, 0, aoTerminar);
@@ -4098,10 +4211,11 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
         nullptr});
 
     auto aoTerminar = std::make_shared<std::function<void()>>(
-        [this, sucessos, duplicatas, totalErros, tInicioFinalizacao] {
+        [this, sucessos, duplicatas, totalErros, tInicioFinalizacao, aoConcluirLote, processadosComSucesso] {
             juce::Logger::writeToLog("[ingest-finalize] total "
                 + juce::String(juce::Time::getMillisecondCounterHiRes() - tInicioFinalizacao, 1) + " ms");
             mostrarResumoLote(sucessos - duplicatas, duplicatas, totalErros);
+            for (const auto& f : aoConcluirLote) if (f) f(processadosComSucesso);
         });
 
     if (ingestModalDialog_) ingestModalDialog_->beginFinalizing(static_cast<int>(passos->size()));

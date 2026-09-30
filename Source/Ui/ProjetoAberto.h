@@ -25,6 +25,8 @@ namespace matriz::vault { class ResolvedorEmLote; }
 // fichas/*.yaml), e as consultas que Mosaico/Ficha precisam. Um único ponto
 // de acesso ao banco a partir da UI — nenhum Component fala SQL direto.
 
+namespace matriz::consolidacao::pacote { struct Pacote; }
+
 namespace matriz::ui {
 
 struct ItemResumo {
@@ -378,6 +380,23 @@ public:
     // do registro; o índice é só rastro de auditoria descartável (P2).
     void confirmarSugestao(const SugestaoCampo& sugestao, const std::string& itemId, const std::string& nivel,
                             int nivelIndice, const std::string& campoId, const std::string& autor);
+
+    // --- Pacote de collection (Fase 3) ---
+    // Depois que os arquivos de Media/ do pacote entraram pelo INTAKE:
+    // casa cada item pelo SHA-256 com o registro do matriz-pacote.json, grava
+    // os dados de ficha, cria o folder map com o nome do pacote (sufixo
+    // numérico se o nome já existe; nenhum outro mapa muda) e registra no
+    // log. Uma transação só, sem Undo/EventBus — roda em background, quem
+    // chama avisa a UI. Desfazer = o mesmo da ingestão (Reject no Intake).
+    struct ResultadoIntakePacote {
+        bool ok = false;
+        juce::String erro;
+        int entraram = 0, comDados = 0, semCorrespondencia = 0, jaExistiam = 0, registrosSemArquivo = 0;
+        juce::String folderMap;
+        juce::StringArray semCorrespondenciaNomes, registrosSemArquivoCaminhos;
+    };
+    ResultadoIntakePacote aplicarPacoteIngerido(const matriz::consolidacao::pacote::Pacote& pacote,
+                                                const std::vector<std::string>& itensIngeridos);
 
     // --- Observações/Notes (item 9) — item_observacao, várias por item ---
     struct ItemObservacao {

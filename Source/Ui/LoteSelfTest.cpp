@@ -458,6 +458,119 @@ void rodarTestesPacote(const Checar& checar) {
     } catch (const std::exception& e) {
         checar(false, juce::String("package selftest (export): ") + e.what());
     }
+    std::cout << "\n-- Collection package, phase 3: INTAKE of a package --\n";
+    try {
+        if (!pacote.isDirectory()) throw std::runtime_error("no package from phase 2");
+        // Um arquivo em Media/ sem registro e um registro sem arquivo.
+        escreverWavTeste(pacote.getChildFile("Media/extra.wav"), 999);
+        {
+            auto json = juce::JSON::parse(pacote.getChildFile(pk::kArquivoJson));
+            auto* orfao = new juce::DynamicObject();
+            orfao->setProperty("sha256", "00deadbeef");
+            orfao->setProperty("caminho", "sumiu.wav");
+            orfao->setProperty("titulo", "nunca chega");
+            json.getProperty("arquivos", {}).getArray()->add(juce::var(orfao));
+            pacote.getChildFile(pk::kArquivoJson).replaceWithText(juce::JSON::toString(json));
+        }
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Collection A";
+        params.prefixoNomenclatura = "CLA";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("A"), params);
+        const std::string projetoId = projeto->projetoId();
+        std::string existente;
+        {
+            auto& reg = projeto->registro();
+            // A já tem o mesmo conteúdo da faixa2 (outra cópia) e suas grafias.
+            juce::File copiaA = raiz.getChildFile("SOURCE_A/faixa2-copia.wav");
+            copiaA.getParentDirectory().createDirectory();
+            fontes[1].copyFileTo(copiaA);
+            existente = inserirItemComArquivo(reg, projetoId, "CLA-00001", copiaA);
+            reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'show')",
+                    {Value::of(matriz::model::novoUuid()), Value::of(existente)});
+            reg.run("UPDATE item SET dc_subject = 'SHOW' WHERE id = ?", {Value::of(existente)});
+            reg.run("INSERT INTO folder_map (id, projeto_id, nome, ordem, criado_em, atualizado_em) "
+                    "VALUES (?, ?, 'Pacote Teste (2)', 9, ?, ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(projetoId), Value::of(matriz::model::agoraIso8601()),
+                     Value::of(matriz::model::agoraIso8601())});
+        }
+
+        MainComponent janela;
+        janela.setBounds(0, 0, 1200, 800);
+        std::optional<ProjetoAberto::ResultadoIntakePacote> resultado;
+        janela.aoAplicarPacoteParaTeste = [&](const ProjetoAberto::ResultadoIntakePacote& r) { resultado = r; };
+        janela.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
+        janela.abrirProjeto(std::move(projeto));
+        bombear(300);
+        auto* pa = janela.projetoAberto();
+        const auto mapasAntes = pa->listarFolderMaps().size();
+        janela.ingerirArquivos({pacote});
+        esperarAte([&] { return resultado.has_value(); }, 120000);
+        checar(resultado.has_value() && resultado->ok, "the package went through INTAKE and its catalog was applied");
+        juce::AlertWindow* relatorio = nullptr;
+        esperarAte([&] { return (relatorio = alertaModalComTitulo(matriz::i18n::t("intake.pacote_titulo"))) != nullptr; }, 5000);
+        checar(relatorio != nullptr, "a final report is shown");
+        if (relatorio) relatorio->exitModalState(0);
+        bombear(100);
+        if (resultado) {
+            checar(resultado->entraram == 4, "report: 4 files in (" + juce::String(resultado->entraram) + ")");
+            checar(resultado->comDados == 2, "report: 2 with catalog data (" + juce::String(resultado->comDados) + ")");
+            checar(resultado->semCorrespondencia == 1, "report: 1 file without a catalog record (extra.wav)");
+            checar(resultado->registrosSemArquivo == 1, "report: 1 catalog record without a file");
+            checar(resultado->jaExistiam == 1, "report: 1 file was already in A (a normal duplicate now)");
+            checar(resultado->folderMap == "Pacote Teste (2) (2)", "a new folder map named after the package, with a suffix");
+        }
+        auto& reg = pa->projeto().registro();
+        auto itemDoArquivo = [&](const juce::String& fim) {
+            auto st = reg.prepare("SELECT a.item_id FROM arquivo a WHERE a.caminho_absoluto_origem LIKE ?");
+            st.bind(1, Value::of(("%" + fim).toStdString()));
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        const std::string novo1 = itemDoArquivo("/Media/Shows/2015/faixa1.wav");
+        const std::string novo2 = itemDoArquivo("/Media/Shows/2015/faixa2.wav");
+        checar(!novo1.empty() && !novo2.empty(), "the package files are items in A");
+        checar(colunaDoItem(reg, "dc_title", novo1) == "Show no Rio" &&
+                   colunaDoItem(reg, "dc_description", novo1) == "Primeira noite" &&
+                   colunaDoItem(reg, "ano", novo1) == "12/03/2015" && colunaDoItem(reg, "collection_type", novo1) == "Concert",
+               "title, description, EVENT DATE and CONTENT arrive in the record");
+        checar(colunaDoItem(reg, "dc_subject", novo1) == "SHOW, Backstage",
+               "SUBJECT arrives unified with A's spelling (\"Show\" -> \"SHOW\")");
+        checar(tagsDoItem(reg, novo1) == (std::vector<std::string>{"Maria", "show"}),
+               "TAGS/PEOPLE arrive unified with A's spelling (\"Show\" -> \"show\")");
+        {
+            auto pessoas = pa->listarPessoas();
+            checar(std::find(pessoas.begin(), pessoas.end(), std::string("Maria")) != pessoas.end(),
+                   "people also enter A's PEOPLE list");
+        }
+        {
+            auto geo = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, novo1);
+            checar(geo && geo->city == "Rio de Janeiro" && geo->latitude && std::abs(*geo->latitude + 22.9) < 1e-6,
+                   "GEO LOCATION arrives");
+        }
+        {
+            auto obs = pa->observacoesDoItem(novo1);
+            checar(obs.size() == 2 && obs[0].minutagemMs && *obs[0].minutagemMs == 1500 && obs[0].texto == "entrada da voz",
+                   "markers arrive at the same time");
+        }
+        {
+            std::string mapaNovo;
+            for (auto& m : pa->listarFolderMaps())
+                if (m.nome == juce::String("Pacote Teste (2) (2)")) mapaNovo = m.id;
+            checar(pa->listarFolderMaps().size() == mapasAntes + 1, "only one folder map was added; the others are untouched");
+            auto arvore = pa->arvoreAcervo(mapaNovo);
+            const ProjetoAberto::NoArvore* no2015 = nullptr;
+            for (auto& f : arvore.filhos)
+                if (f.nome == juce::String("Shows"))
+                    for (auto& g : f.filhos)
+                        if (g.nome == juce::String("2015")) no2015 = &g;
+            checar(no2015 && no2015->itemIdsDiretos.count(novo1) && no2015->itemIdsDiretos.count(novo2),
+                   "the new folder map reproduces Shows/2015 with each item in its folder");
+        }
+        checar(tagsDoItem(reg, existente) == std::vector<std::string>{"show"} &&
+                   colunaDoItem(reg, "dc_title", existente).empty(),
+               "the item already in A is not touched (nothing is merged at INTAKE)");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("package selftest (intake): ") + e.what());
+    }
     raiz.deleteRecursively();
 }
 

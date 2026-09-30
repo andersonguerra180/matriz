@@ -11,6 +11,7 @@
 #include "../Consolidacao/Consolidacao.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/NomesCanonicos.h"
+#include "../Consolidacao/PacoteCollection.h"
 
 #include "../I18n/Strings.h"
 
@@ -698,6 +699,161 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
                     ", differing values appended to notes: " + juce::String(divergentes.size()));
     if (r.descartadoJaNoMain)
         r.linhasLog.add("The discarded item already had a copy in MAIN — left untouched (nothing is deleted).");
+    return r;
+}
+
+ProjetoAberto::ResultadoIntakePacote ProjetoAberto::aplicarPacoteIngerido(
+    const matriz::consolidacao::pacote::Pacote& pacote, const std::vector<std::string>& itensIngeridos) {
+    namespace pk = matriz::consolidacao::pacote;
+    namespace nomes = matriz::model::nomes;
+    using matriz::db::Value;
+    ResultadoIntakePacote r;
+    if (!projeto_) return r;
+    if (somenteLeitura_) { r.erro = "read-only project"; return r; }
+    auto& db = projeto_->registro();
+    const std::string agora = matriz::model::agoraIso8601();
+    const std::string projetoId = projeto_->projetoId();
+    const std::set<std::string> doPacote(itensIngeridos.begin(), itensIngeridos.end());
+    r.entraram = static_cast<int>(itensIngeridos.size());
+
+    std::multimap<std::string, size_t> porSha;
+    for (size_t i = 0; i < pacote.arquivos.size(); ++i) porSha.emplace(pacote.arquivos[i].sha256, i);
+    std::vector<bool> usado(pacote.arquivos.size(), false);
+    const juce::String sep = juce::String::charToString(0x1f);  // nomes de pasta podem ter '/'
+
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        auto vocabTags = nomes::Vocabulario::carregar(db, nomes::Vocabulario::Tipo::Tags);
+        auto vocabSubjects = nomes::Vocabulario::carregar(db, nomes::Vocabulario::Tipo::Subjects);
+        db.exec("BEGIN IMMEDIATE");
+
+        // 1. Folder map novo com o nome do pacote.
+        {
+            std::set<juce::String> existentes;
+            auto st = db.prepare("SELECT nome FROM folder_map WHERE projeto_id = ?");
+            st.bind(1, Value::of(projetoId));
+            while (st.step()) existentes.insert(juce::String::fromUTF8(st.columnText(0).c_str()).trim());
+            const juce::String base = pacote.nome().trim().isEmpty() ? juce::String("Package") : pacote.nome().trim();
+            r.folderMap = base;
+            for (int n = 2; existentes.count(r.folderMap); ++n) r.folderMap = base + " (" + juce::String(n) + ")";
+        }
+        const std::string mapaId = matriz::model::novoUuid();
+        {
+            int ordem = 0;
+            auto st = db.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM folder_map WHERE projeto_id = ?");
+            st.bind(1, Value::of(projetoId));
+            if (st.step()) ordem = static_cast<int>(st.columnInt(0));
+            db.run("INSERT INTO folder_map (id, projeto_id, nome, ordem, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?)",
+                   {Value::of(mapaId), Value::of(projetoId), Value::of(r.folderMap.toStdString()), Value::of(ordem),
+                    Value::of(agora), Value::of(agora)});
+        }
+        std::map<juce::String, std::string> pastaPorCaminho;
+        std::function<void(const juce::var&, const std::string&, const juce::String&)> criarPastas =
+            [&](const juce::var& lista, const std::string& paiId, const juce::String& prefixo) {
+                auto* arr = lista.getArray();
+                if (!arr) return;
+                int ordem = 0;
+                for (const auto& no : *arr) {
+                    const juce::String nome = no.getProperty("nome", {}).toString().trim();
+                    if (nome.isEmpty()) continue;
+                    const juce::String chave = prefixo.isEmpty() ? nome : prefixo + sep + nome;
+                    std::string id;
+                    if (auto it = pastaPorCaminho.find(chave); it != pastaPorCaminho.end()) {
+                        id = it->second;  // irmãs com o mesmo nome viram uma pasta só
+                    } else {
+                        id = matriz::model::novoUuid();
+                        db.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, "
+                               "posicao_y, ativo, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?)",
+                               {Value::of(id), Value::of(projetoId), paiId.empty() ? Value::null() : Value::of(paiId),
+                                Value::of(nome.toStdString()), Value::of(ordem++), Value::of(mapaId), Value::of(agora),
+                                Value::of(agora)});
+                        pastaPorCaminho[chave] = id;
+                    }
+                    criarPastas(no.getProperty("pastas", {}), id, chave);
+                }
+            };
+        criarPastas(pacote.pastas, {}, {});
+
+        // 2. Cada item novo: casa pelo SHA-256, grava a ficha, põe na pasta.
+        const std::string autor = "Package: " + pacote.nome().toStdString();
+        for (const auto& itemId : itensIngeridos) {
+            std::string sha, abs;
+            {
+                auto st = db.prepare("SELECT COALESCE(checksum_sha256, ''), COALESCE(caminho_absoluto_origem, '') "
+                                     "FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC LIMIT 1");
+                st.bind(1, Value::of(itemId));
+                if (st.step()) {
+                    sha = juce::String(st.columnText(0)).toLowerCase().toStdString();
+                    abs = st.columnText(1);
+                }
+            }
+            // De onde veio (Fase 4: origem do valor perdedor num merge de duplicata).
+            db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'pacote_origem', ?, 'leitura_tecnica', ?) "
+                   "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor",
+                   {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(pacote.nome().toStdString()),
+                    Value::of(agora)});
+            const juce::File arq(juce::String::fromUTF8(abs.c_str()));
+            const std::string rel = arq.getRelativePathFrom(pacote.media()).replaceCharacter('\\', '/').toStdString();
+            if (!sha.empty()) {
+                auto st = db.prepare("SELECT item_id FROM arquivo WHERE checksum_sha256 = ? AND item_id <> ?");
+                st.bind(1, Value::of(sha));
+                st.bind(2, Value::of(itemId));
+                bool existia = false;
+                while (!existia && st.step()) existia = doPacote.count(st.columnText(0)) == 0;
+                if (existia) ++r.jaExistiam;
+            }
+            std::optional<size_t> escolhido;
+            auto faixa = porSha.equal_range(sha);
+            for (auto it = faixa.first; it != faixa.second; ++it) {
+                if (usado[it->second]) continue;
+                if (!escolhido || pacote.arquivos[it->second].caminho == rel) escolhido = it->second;
+                if (pacote.arquivos[it->second].caminho == rel) break;
+            }
+            if (sha.empty() || !escolhido) {
+                ++r.semCorrespondencia;
+                r.semCorrespondenciaNomes.add(arq.getFileName());
+                continue;
+            }
+            usado[*escolhido] = true;
+            const auto& reg = pacote.arquivos[*escolhido];
+            if (!reg.dados.vazio()) {
+                pk::gravarDadosFicha(db, itemId, reg.dados, vocabTags, vocabSubjects, autor);
+                ++r.comDados;
+            }
+            if (!reg.pasta.empty()) {
+                juce::StringArray partes;
+                for (const auto& n : reg.pasta) partes.add(n);
+                if (auto it = pastaPorCaminho.find(partes.joinIntoString(sep)); it != pastaPorCaminho.end())
+                    inserirItemPastaInterno(itemId, it->second, agora);
+            }
+        }
+        for (size_t i = 0; i < pacote.arquivos.size(); ++i)
+            if (!usado[i]) {
+                ++r.registrosSemArquivo;
+                r.registrosSemArquivoCaminhos.add(juce::String::fromUTF8(pacote.arquivos[i].caminho.c_str()));
+            }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        r.erro = e.what();
+        return r;
+    }
+    r.ok = true;
+    try {
+        juce::StringArray linhas;
+        linhas.add("Package: " + pacote.pasta.getFullPathName() + " (from \"" + pacote.colecao + "\", folder map \"" +
+                   pacote.folderMap + "\", exported " + pacote.exportadoEm + ")");
+        linhas.add("Files in: " + juce::String(r.entraram) + ", with catalog data: " + juce::String(r.comDados) +
+                   ", without a match: " + juce::String(r.semCorrespondencia) + ", already in this collection: " +
+                   juce::String(r.jaExistiam) + ", catalog records without a file: " + juce::String(r.registrosSemArquivo));
+        linhas.add("Folder map created: " + r.folderMap);
+        for (int i = 0; i < r.semCorrespondenciaNomes.size() && i < 50; ++i)
+            linhas.add("No catalog match: " + r.semCorrespondenciaNomes[i]);
+        for (int i = 0; i < r.registrosSemArquivoCaminhos.size() && i < 50; ++i)
+            linhas.add("Catalog record without file: " + r.registrosSemArquivoCaminhos[i]);
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Collection Package Ingested", linhas);
+    } catch (...) {}
     return r;
 }
 

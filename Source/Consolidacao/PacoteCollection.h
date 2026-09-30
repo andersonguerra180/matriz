@@ -119,4 +119,11 @@ bool pareceUmPacote(const juce::File& pasta);
 // message thread.
 ResultadoLeitura lerPacote(const juce::File& pasta);
 
+// Grava os dados de ficha no item (item novo do INTAKE). Nomes pela
+// unificação da Fase 1 ("Show" do pacote vira o "Show" que já existe);
+// pessoas entram também na lista PEOPLE. Quem chama segura a transação.
+void gravarDadosFicha(matriz::db::Database& registro, const std::string& itemId, const DadosFicha& dados,
+                      matriz::model::nomes::Vocabulario& vocabTags, matriz::model::nomes::Vocabulario& vocabSubjects,
+                      const std::string& autor);
+
 }  // namespace matriz::consolidacao::pacote

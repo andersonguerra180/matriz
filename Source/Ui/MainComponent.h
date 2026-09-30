@@ -14,6 +14,7 @@
 #include "FaixaAvisoComponent.h"
 #include "ProjetoAberto.h"
 #include "../Model/NomesCanonicos.h"
+#include "../Consolidacao/PacoteCollection.h"
 
 // Workflow layer (Phase 1+2)
 #include "HomePanelComponent.h"
@@ -215,9 +216,17 @@ private:
 private:
     std::vector<juce::File> expandirArquivos(const juce::Array<juce::File>& arquivosOuPastas) const;
     void expandirArquivosAsync(const juce::Array<juce::File>& arquivosOuPastas, std::function<void(std::vector<juce::File>, int)> aoConcluir);
+    // aoConcluir (opcional): na message thread, depois da finalização do lote,
+    // com os itens DESTE chamado que entraram (lotes sobrepostos dividem o
+    // mesmo EstadoLote; cada um recebe só os seus). Cancelado sem manter: vazio.
     void processarLoteEmBackground(std::vector<juce::File> arquivos,
                                     const std::string& sourceMedia = {},
-                                    const std::string& collection = {});
+                                    const std::string& collection = {},
+                                    std::function<void(const std::vector<std::string>&)> aoConcluir = nullptr);
+    // Pacote de collection (Fase 3): pasta com matriz-pacote.json.
+    void ingerirPacote(const juce::File& pasta);
+    void aplicarPacoteIngerido(std::shared_ptr<matriz::consolidacao::pacote::Pacote> pacote,
+                               const std::vector<std::string>& itensIngeridos);
     // Checagem de duplicata exata na entrada do INTAKE (nome + data do arquivo + tamanho + formato
     // contra os itens já cadastrados no projeto). Único ponto de entrada de arquivos soltos/pastas
     // (ingerirArquivos), antes de processarLoteEmBackground criar os itens.
@@ -544,6 +553,8 @@ public:
     // síncrono nesta versão do JUCE, e travaria o self-test pra sempre).
     // Em produção fica vazio; o alerta normal continua aparecendo.
     std::function<void(int sucessos, juce::StringArray erros)> aoConcluirLoteIngestParaTeste;
+    // Self-test: resultado da aplicação de um pacote de collection (Fase 3).
+    std::function<void(const ProjetoAberto::ResultadoIntakePacote&)> aoAplicarPacoteParaTeste;
 };
 
 } // namespace matriz::ui
