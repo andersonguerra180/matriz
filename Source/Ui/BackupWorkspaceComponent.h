@@ -15,8 +15,20 @@
 #include "OverlayComponent.h"
 #include "BackupScanProgressDialog.h"
 #include "EventBus.h"
+#include "MatrizLookAndFeel.h"
+#include "Tokens.h"
 
 namespace matriz::ui {
+
+// O dropdown do EXPORT fica no rodapé: o menu tem que abrir sempre pra cima.
+class ComboAbrePraCimaLookAndFeel : public MatrizLookAndFeel {
+public:
+    ComboAbrePraCimaLookAndFeel() { configurarLookAndFeel(*this); }
+    juce::PopupMenu::Options getOptionsForComboBoxPopupMenu(juce::ComboBox& box, juce::Label& label) override {
+        return MatrizLookAndFeel::getOptionsForComboBoxPopupMenu(box, label)
+            .withPreferredPopupDirection(juce::PopupMenu::Options::PopupDirection::upwards);
+    }
+};
 
 class BackupWorkspaceComponent : public juce::Component,
                                  public EventBusListener,
@@ -304,6 +316,7 @@ private:
     // Os botões antigos continuam existindo (escondidos): cada opção dispara o onClick do antigo,
     // então a ação e o diálogo são exatamente os de antes.
     enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote };
+    ComboAbrePraCimaLookAndFeel comboExportLf_;  // antes do combo: o combo o usa até ser destruído
     std::unique_ptr<juce::ComboBox> comboExportOrigem_;
     std::unique_ptr<juce::TextButton> btnExportUnificado_;
     int contagemSelecionados_ = 0;

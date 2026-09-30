@@ -1964,6 +1964,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     {
         const bool catalogo = projeto_.projeto().modo() == matriz::model::Modo::Catalogo;
         comboExportOrigem_ = std::make_unique<juce::ComboBox>();
+        comboExportOrigem_->setLookAndFeel(&comboExportLf_);
         comboExportOrigem_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         comboExportOrigem_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
@@ -1974,12 +1975,14 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
+        // Coleção sempre abre em SELECTED FILES; só o Catálogo (sem essa opção)
+        // lembra a última escolha.
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
-        if (arq.existsAsFile()) {
+        if (catalogo && arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
             if (lembrado >= kExpSelecionados && lembrado <= kExpPacote &&
-                !(catalogo && (lembrado == kExpSelecionados || lembrado == kExpPacote)))
+                lembrado != kExpSelecionados && lembrado != kExpPacote)
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -2010,6 +2013,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 }
 
 BackupWorkspaceComponent::~BackupWorkspaceComponent() {
+    if (comboExportOrigem_) comboExportOrigem_->setLookAndFeel(nullptr);
     EventBus::obterInstancia().removerListener(this);
     poolCatalogoBackup_.removeAllJobs(true, 2000);
     // O job de EXPORT usa o Project: cancela entre arquivos e espera o
@@ -2020,6 +2024,7 @@ BackupWorkspaceComponent::~BackupWorkspaceComponent() {
 
 void BackupWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
+    configurarLookAndFeel(comboExportLf_);
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
@@ -2375,6 +2380,13 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
     opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
 
+    // changeItemText() não atualiza o texto já exibido no combo (ficava "-"):
+    // reselecionar o mesmo id força o rótulo a acompanhar o item.
+    {
+        const int atual = comboExportOrigem_->getSelectedId();
+        comboExportOrigem_->setSelectedId(atual != 0 ? atual : (catalogo ? kExpZip : kExpSelecionados),
+                                          juce::dontSendNotification);
+    }
     const int id = comboExportOrigem_->getSelectedId();
     bool habilitado = false;
     switch (id) {
