@@ -1749,6 +1749,12 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"geofav.apagar_titulo", "Delete Favorite"},
         {"geofav.apagar_msg", "Delete \"{nome}\" from the favorites list?\n\nItems already using this place are not changed."},
         {"geofav.apagar_btn", "Delete"},
+        {"duplicatas.card_scan", "SCAN"},
+        {"duplicatas.card_filtros", "FILTERS"},
+        {"duplicatas.card_acoes", "ACTIONS"},
+        {"duplicatas.vazio_titulo", "No scan yet"},
+        {"duplicatas.vazio_dica", "Choose the filters on the left and press SCAN FOR DUPLICATES. Nothing changes in your files."},
+        {"duplicatas.resumo", "{n} duplicate pair(s) to review"},
     };
     return strings;
 }

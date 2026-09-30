@@ -1759,6 +1759,12 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"geofav.apagar_titulo", "Apagar Favorito"},
         {"geofav.apagar_msg", "Apagar \"{nome}\" da lista de favoritos?\n\nOs itens que já usam este lugar não mudam."},
         {"geofav.apagar_btn", "Apagar"},
+        {"duplicatas.card_scan", "VARREDURA"},
+        {"duplicatas.card_filtros", "FILTROS"},
+        {"duplicatas.card_acoes", "AÇÕES"},
+        {"duplicatas.vazio_titulo", "Nenhuma varredura ainda"},
+        {"duplicatas.vazio_dica", "Escolha os filtros à esquerda e clique em LOCALIZAR DUPLICATAS. Nada muda nos seus arquivos."},
+        {"duplicatas.resumo", "{n} par(es) de duplicatas para revisar"},
     };
     return strings;
 }

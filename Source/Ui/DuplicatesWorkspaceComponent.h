@@ -5,6 +5,8 @@
 #include <string>
 #include <optional>
 
+#include "ColunaCardsLayout.h"
+
 namespace matriz::ui {
 
 class ProjetoAberto;
@@ -25,6 +27,7 @@ public:
     void iniciarScan();
 
 private:
+    static constexpr int kAlturaResumo = 28;
     // Thread method for background scanning
     void run() override;
 
@@ -103,6 +106,9 @@ private:
     void aplicarEscolhaGlobal(int escolha);
     void atualizarBotoesSelecionados();
     void atualizarListaEStatusAposResolucao();
+
+    // Coluna esquerda em cards (SCAN / FILTROS / AÇÕES), padrão do INTAKE.
+    ColunaCardsLayout coluna_;
 
     // UI Elements
     std::unique_ptr<juce::TextButton> btnScan_;

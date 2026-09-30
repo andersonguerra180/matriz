@@ -803,7 +803,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     addAndMakeVisible(*btnScan_);
 
     lblScope_ = std::make_unique<juce::Label>("lblScope", matriz::i18n::t("duplicatas.lbl_scope"));
-    lblScope_->setJustificationType(juce::Justification::centredRight);
+    lblScope_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblScope_);
 
     cbScope_ = std::make_unique<juce::ComboBox>("cbScope");
@@ -814,7 +814,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     addAndMakeVisible(*cbScope_);
 
     lblFileType_ = std::make_unique<juce::Label>("lblFileType", matriz::i18n::t("duplicatas.lbl_type"));
-    lblFileType_->setJustificationType(juce::Justification::centredRight);
+    lblFileType_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblFileType_);
 
     cbFileType_ = std::make_unique<juce::ComboBox>("cbFileType");
@@ -830,7 +830,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     addAndMakeVisible(*cbFileType_);
 
     lblFileSize_ = std::make_unique<juce::Label>("lblFileSize", matriz::i18n::t("duplicatas.lbl_size"));
-    lblFileSize_->setJustificationType(juce::Justification::centredRight);
+    lblFileSize_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblFileSize_);
 
     cbSizeFilter_ = std::make_unique<juce::ComboBox>("cbSizeFilter");
@@ -868,7 +868,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     // item: filtro por ano — De/Até, mesmo padrão de campo numérico do
     // size filter. Vazio de qualquer lado = sem limite naquela ponta.
     lblAno_ = std::make_unique<juce::Label>("lblAno", "Year");
-    lblAno_->setJustificationType(juce::Justification::centredRight);
+    lblAno_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblAno_);
 
     txtAnoDe_ = std::make_unique<juce::TextEditor>("txtAnoDe");
@@ -889,6 +889,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
 
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
+    lblStatus_->setMinimumHorizontalScale(1.0f);  // o status quebra em linhas na coluna estreita
     addAndMakeVisible(*lblStatus_);
 
     btnValidateAll_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate_all"));
@@ -946,10 +947,11 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblStatus_) {
         lblStatus_->setColour(juce::Label::textColourId, tk.textoSecundario);
+        lblStatus_->setFont(juce::Font(juce::FontOptions(11.0f)));
     }
     if (lblScope_) {
-        lblScope_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        lblScope_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblScope_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblScope_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblScope_->setText(matriz::i18n::t("duplicatas.lbl_scope"), juce::dontSendNotification);
     }
     if (cbScope_) {
@@ -964,8 +966,8 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileType_) {
-        lblFileType_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        lblFileType_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblFileType_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileType_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileType_->setText(matriz::i18n::t("duplicatas.lbl_type"), juce::dontSendNotification);
     }
     if (cbFileType_) {
@@ -985,8 +987,8 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbFileType_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileSize_) {
-        lblFileSize_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        lblFileSize_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblFileSize_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileSize_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileSize_->setText(matriz::i18n::t("duplicatas.lbl_size"), juce::dontSendNotification);
     }
     if (cbSizeFilter_) {
@@ -1014,8 +1016,8 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblAno_) {
-        lblAno_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        lblAno_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        lblAno_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblAno_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (lblAnoAte_) {
         lblAnoAte_->setColour(juce::Label::textColourId, tk.textoSecundario);
@@ -1462,6 +1464,7 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             repaint();
         } else {
             lblStatus_->setText("Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
+            repaint();  // barra de progresso da área direita
             ProgressoGlobal::obterInstancia().atualizarFracao(
                 "duplicates_scan", progressoScan_,
                 "Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
@@ -1896,105 +1899,128 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
 
 void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    bool isLight = (tk.fundo.getBrightness() > 0.5f);
-    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
-    g.fillAll(bg);
+    g.fillAll(tk.fundo);
+    coluna_.paint(g);
 
-    if (estado_ == State::Idle) {
-        g.setColour(tk.borda.withAlpha(0.3f));
-        auto r = getLocalBounds().reduced(20).withTrimmedTop(60).withHeight(getHeight() - 120);
-        g.drawRoundedRectangle(r.toFloat(), tk.raioMedio, 1.5f);
+    // Área da direita: o estado vazio/varredura vira card centralizado; com
+    // resultados, a linha de resumo e a lista (o viewport pinta a lista).
+    auto direita = getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).reduced(20);
+    auto desenharCardCentral = [&](const juce::String& titulo, const juce::String& dica, float progresso) {
+        auto card = direita.withSizeKeepingCentre(juce::jmin(440, direita.getWidth()), progresso >= 0.0f ? 110 : 120);
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(card.toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(card.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        auto interno = card.reduced(20, 16);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.drawText(titulo, interno.removeFromTop(24), juce::Justification::centred, true);
+        interno.removeFromTop(6);
+        if (progresso >= 0.0f) {
+            auto barra = interno.removeFromTop(8).toFloat();
+            g.setColour(tk.borda.withAlpha(0.5f));
+            g.fillRoundedRectangle(barra, 4.0f);
+            g.setColour(tk.acento);
+            g.fillRoundedRectangle(barra.withWidth(barra.getWidth() * juce::jlimit(0.0f, 1.0f, progresso)), 4.0f);
+            interno.removeFromTop(6);
+            g.setColour(tk.textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.drawText(juce::String(static_cast<int>(progresso * 100)) + "%", interno, juce::Justification::centred);
+        } else {
+            g.setColour(tk.textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.drawFittedText(dica, interno, juce::Justification::centredTop, 3);
+        }
+    };
+
+    switch (estado_) {
+        case State::Idle:
+            desenharCardCentral(matriz::i18n::t("duplicatas.vazio_titulo"), matriz::i18n::t("duplicatas.vazio_dica"), -1.0f);
+            break;
+        case State::Scanning:
+            desenharCardCentral(matriz::i18n::t("duplicatas.scanning"), {}, static_cast<float>(progressoScan_));
+            break;
+        case State::Clean:
+            desenharCardCentral(lblStatus_ ? lblStatus_->getText() : juce::String(), matriz::i18n::t("duplicatas.vazio_dica"), -1.0f);
+            break;
+        case State::Results:
+            g.setColour(tk.textoPrimario);
+            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
+                       direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
+            break;
     }
 }
 
 void DuplicatesWorkspaceComponent::resized() {
-    const auto& tk = tema();
-    auto area = getLocalBounds().reduced(20);
+    auto area = getLocalBounds();
+    coluna_.comecar(area.removeFromLeft(ColunaCardsLayout::kLargura));
+    auto& corpo = coluna_.corpo();
+    const bool emResultados = estado_ == State::Results;
+    const bool isPt = matriz::i18n::localeAtivo() == "pt_BR";
 
-    // Filter toolbar at the top
-    auto areaFilter = area.removeFromTop(32);
-    
-    bool isPt = lblScope_->getText().containsIgnoreCase("Varredura");
-    int wScopeLbl = isPt ? 75 : 50;
-    int wScopeCb  = isPt ? 180 : 130;
-    int wTypeLbl  = isPt ? 45 : 40;
-    int wTypeCb   = isPt ? 165 : 125;
-    int wSizeLbl  = isPt ? 70 : 45;
-    int wSizeCb   = isPt ? 185 : 160;
+    // SCAN — botão em largura total e o status.
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_scan"));
+    btnScan_->setVisible(true);
+    btnScan_->setButtonText(emResultados ? (isPt ? "NOVA VARREDURA" : "RE-SCAN")
+                                         : (estado_ == State::Scanning ? matriz::i18n::t("duplicatas.scanning")
+                                                                        : matriz::i18n::t("duplicatas.btn_scan")));
+    btnScan_->setBounds(corpo.removeFromTop(30));
+    corpo.removeFromTop(4);
+    lblStatus_->setJustificationType(juce::Justification::centredLeft);
+    lblStatus_->setBounds(corpo.removeFromTop(44));
+    coluna_.finalizarCard();
 
-    lblScope_->setBounds(areaFilter.removeFromLeft(wScopeLbl));
-    areaFilter.removeFromLeft(4);
-    cbScope_->setBounds(areaFilter.removeFromLeft(wScopeCb));
-    areaFilter.removeFromLeft(16);
-    
-    lblFileType_->setBounds(areaFilter.removeFromLeft(wTypeLbl));
-    areaFilter.removeFromLeft(4);
-    cbFileType_->setBounds(areaFilter.removeFromLeft(wTypeCb));
-    areaFilter.removeFromLeft(16);
-    
-    lblFileSize_->setBounds(areaFilter.removeFromLeft(wSizeLbl));
-    areaFilter.removeFromLeft(4);
-    cbSizeFilter_->setBounds(areaFilter.removeFromLeft(wSizeCb));
-    
+    // FILTROS — rótulo pequeno acima de cada controle.
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_filtros"));
+    auto linhaRotulo = [&](juce::Label& rotulo, juce::Component& controle) {
+        rotulo.setBounds(corpo.removeFromTop(14));
+        controle.setBounds(corpo.removeFromTop(26));
+        corpo.removeFromTop(6);
+    };
+    linhaRotulo(*lblScope_, *cbScope_);
+    linhaRotulo(*lblFileType_, *cbFileType_);
+    linhaRotulo(*lblFileSize_, *cbSizeFilter_);
     if (txtSizeValue_->isVisible()) {
-        areaFilter.removeFromLeft(8);
-        txtSizeValue_->setBounds(areaFilter.removeFromLeft(60));
-        areaFilter.removeFromLeft(8);
-        cbSizeUnit_->setBounds(areaFilter.removeFromLeft(70));
+        auto linha = corpo.removeFromTop(26);
+        txtSizeValue_->setBounds(linha.removeFromLeft(linha.getWidth() / 2 - 3));
+        linha.removeFromLeft(6);
+        cbSizeUnit_->setBounds(linha);
+        corpo.removeFromTop(6);
+    }
+    lblAno_->setBounds(corpo.removeFromTop(14));
+    {
+        auto linha = corpo.removeFromTop(26);
+        const int campo = (linha.getWidth() - 16) / 2;
+        txtAnoDe_->setBounds(linha.removeFromLeft(campo));
+        lblAnoAte_->setBounds(linha.removeFromLeft(16));
+        txtAnoAte_->setBounds(linha);
+    }
+    coluna_.finalizarCard();
+
+    // AÇÕES — só com resultados.
+    for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()})
+        b->setVisible(emResultados);
+    if (emResultados) {
+        coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_acoes"));
+        for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()}) {
+            b->setBounds(corpo.removeFromTop(28));
+            corpo.removeFromTop(4);
+        }
+        coluna_.finalizarCard();
     }
 
-    areaFilter.removeFromLeft(16);
-    lblAno_->setBounds(areaFilter.removeFromLeft(isPt ? 40 : 35));
-    areaFilter.removeFromLeft(4);
-    txtAnoDe_->setBounds(areaFilter.removeFromLeft(50));
-    areaFilter.removeFromLeft(4);
-    lblAnoAte_->setBounds(areaFilter.removeFromLeft(12));
-    areaFilter.removeFromLeft(4);
-    txtAnoAte_->setBounds(areaFilter.removeFromLeft(50));
-
-    area.removeFromTop(10); // Spacing below filter bar
-
-    if (estado_ == State::Results) {
-        btnScan_->setVisible(true);
-        btnScan_->setButtonText(isPt ? "NOVA VARREDURA" : "RE-SCAN");
-        btnValidateAll_->setVisible(true);
-        btnDismissAll_->setVisible(true);
-        btnValidateSelected_->setVisible(true);
-        btnDismissSelected_->setVisible(true);
-
-        auto areaControle = area.removeFromTop(40);
-        int btnW = isPt ? 160 : 180;
-        int btnSelW = isPt ? 150 : 170;
-        int scanW = isPt ? 140 : 120;
-        btnValidateAll_->setBounds(areaControle.removeFromRight(btnW));
-        areaControle.removeFromRight(6);
-        btnValidateSelected_->setBounds(areaControle.removeFromRight(btnSelW));
-        areaControle.removeFromRight(10);
-        btnDismissAll_->setBounds(areaControle.removeFromRight(btnW));
-        areaControle.removeFromRight(6);
-        btnDismissSelected_->setBounds(areaControle.removeFromRight(btnSelW));
-        areaControle.removeFromRight(10);
-        btnScan_->setBounds(areaControle.removeFromRight(scanW));
-        areaControle.removeFromRight(16);
-        
-        lblStatus_->setJustificationType(juce::Justification::centredLeft);
-        lblStatus_->setBounds(areaControle);
-        
-        viewport_->setBounds(area);
+    // Área da direita.
+    auto direita = area.reduced(20);
+    if (emResultados) {
+        direita.removeFromTop(kAlturaResumo);
+        viewport_->setBounds(direita);
         viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
     } else {
-        btnScan_->setVisible(true);
-        btnScan_->setButtonText(matriz::i18n::t("duplicatas.btn_scan"));
-        btnValidateAll_->setVisible(false);
-        btnDismissAll_->setVisible(false);
-        btnValidateSelected_->setVisible(false);
-        btnDismissSelected_->setVisible(false);
-        lblStatus_->setJustificationType(juce::Justification::centred);
-        lblStatus_->setBounds(area.removeFromTop(40));
         viewport_->setVisible(false);
-        btnScan_->setBounds(getLocalBounds().withSizeKeepingCentre(240, 48));
     }
+    repaint();
 }
 
 } // namespace matriz::ui
