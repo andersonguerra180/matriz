@@ -1105,6 +1105,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     gruposDetectados_.clear();
     btnScan_->setEnabled(false);
     btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
+    lblStatus_->setText(matriz::i18n::t("duplicatas.scanning"), juce::dontSendNotification);  // dá altura ao status antes do resized()
     viewport_->setVisible(false);
 
     ProgressoGlobal::obterInstancia().iniciarTarefa(
@@ -1968,7 +1969,7 @@ void DuplicatesWorkspaceComponent::resized() {
     btnScan_->setBounds(corpo.removeFromTop(30));
     corpo.removeFromTop(4);
     lblStatus_->setJustificationType(juce::Justification::centredLeft);
-    lblStatus_->setBounds(corpo.removeFromTop(44));
+    lblStatus_->setBounds(corpo.removeFromTop(lblStatus_->getText().isEmpty() ? 0 : 44));
     coluna_.finalizarCard();
 
     // FILTROS — rótulo pequeno acima de cada controle.
