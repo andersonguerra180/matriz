@@ -35,6 +35,7 @@
 #include "PreviewComponent.h"
 #include "BarraProgressoGlobalComponent.h"
 #include "ProgressoGlobal.h"
+#include "EventBus.h"
 #include "InitialRelinkDialog.h"
 #include "OfflineAssetRelinkDialog.h"
 #include "HelpDialog.h"
@@ -1592,6 +1593,7 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     verificarVaultsConectados();
     verificarPresencaInicialAssets();
     verificarPapelMain();
+    verificarUnificacaoDeNomes();
     if (aoMudarEstadoProjeto) aoMudarEstadoProjeto();
     startTimer(5000);
 }
@@ -2480,6 +2482,84 @@ void MainComponent::verificarPapelMain() {
             safeThis->perguntarQualEOMain(sit);
         });
     });
+}
+
+void MainComponent::verificarUnificacaoDeNomes() {
+    if (!projetoAberto_ || projetoAberto_->somenteLeitura()) return;
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    // Levantamento em background (pool de Vaults: esperarJobsDeVaults()
+    // segura o projeto vivo até o job terminar).
+    poolVaults_.addJob([safeThis, proj]() {
+        std::vector<matriz::model::nomes::GrupoUnificacao> grupos;
+        try { grupos = matriz::model::nomes::levantarUnificacao(proj->projeto().registro()); } catch (...) {}
+        if (grupos.empty()) return;
+        juce::MessageManager::callAsync([safeThis, proj, grupos]() {
+            if (!safeThis || safeThis->projetoAberto_.get() != proj) return;  // projeto trocou
+            safeThis->perguntarUnificacaoDeNomes(grupos);
+        });
+    });
+}
+
+void MainComponent::perguntarUnificacaoDeNomes(const std::vector<matriz::model::nomes::GrupoUnificacao>& grupos) {
+    using matriz::model::nomes::GrupoUnificacao;
+    constexpr size_t kMaxLinhas = 60;
+    juce::StringArray linhas;
+    for (size_t i = 0; i < grupos.size() && i < kMaxLinhas; ++i) {
+        const auto& g = grupos[i];
+        juce::StringArray todas;
+        todas.add("\"" + juce::String::fromUTF8(g.canonico.c_str()) + "\"");
+        for (const auto& v : g.variantes) todas.add("\"" + juce::String::fromUTF8(v.c_str()) + "\"");
+        linhas.add(matriz::i18n::t("nomes.unificar_linha")
+                       .replace("{tipo}", matriz::i18n::t(g.tipo == GrupoUnificacao::Tipo::Tags ? "nomes.tipo_tag"
+                                                                                               : "nomes.tipo_subject"))
+                       .replace("{variantes}", todas.joinIntoString(" + "))
+                       .replace("{canonico}", juce::String::fromUTF8(g.canonico.c_str()))
+                       .replace("{n}", juce::String(g.itens)));
+    }
+    if (grupos.size() > kMaxLinhas)
+        linhas.add(matriz::i18n::t("nomes.unificar_mais").replace("{n}", juce::String((int) (grupos.size() - kMaxLinhas))));
+
+    auto* dlg = new juce::AlertWindow(matriz::i18n::t("nomes.unificar_titulo"), matriz::i18n::t("nomes.unificar_intro"),
+                                      juce::MessageBoxIconType::QuestionIcon);
+    dlg->addTextEditor("lista", {});
+    if (auto* ed = dlg->getTextEditor("lista")) {
+        ed->setMultiLine(true);
+        ed->setText(linhas.joinIntoString("\n"), false);
+        ed->setReadOnly(true);
+        ed->setScrollbarsShown(true);
+        ed->setSize(560, 220);
+    }
+    dlg->addButton(matriz::i18n::t("nomes.unificar_btn"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    dlg->addButton(matriz::i18n::t("nomes.unificar_depois"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    dlg->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, proj](int resultado) {
+        if (resultado != 1 || !safeThis || safeThis->projetoAberto_.get() != proj) return;
+        ProgressoGlobal::obterInstancia().iniciarTarefa("unificar_nomes", matriz::i18n::t("nomes.unificando"), 0);
+        safeThis->poolVaults_.addJob([safeThis, proj]() {
+            matriz::model::nomes::ResultadoUnificacao r;
+            try {
+                std::unique_lock<std::recursive_mutex> escrita(proj->projeto().writeMutex());
+                r = matriz::model::nomes::aplicarUnificacao(proj->projeto().registro(), proj->projeto().pasta());
+            } catch (const std::exception& e) {
+                r.erro = e.what();
+            }
+            juce::MessageManager::callAsync([safeThis, proj, r]() {
+                ProgressoGlobal::obterInstancia().concluirTarefa("unificar_nomes");
+                if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+                juce::String msg = r.ok ? matriz::i18n::t("nomes.unificado_fim")
+                                              .replace("{g}", juce::String(r.grupos))
+                                              .replace("{n}", juce::String(r.itensAlterados))
+                                              .replace("{arq}", r.backup.getFileName())
+                                        : matriz::i18n::t("nomes.unificado_erro").replace("{e}", r.erro);
+                if (r.ok) EventBus::obterInstancia().dispararItemAlterado("", "metadado");  // mesmo evento amplo do lote
+                juce::AlertWindow::showMessageBoxAsync(r.ok ? juce::AlertWindow::InfoIcon : juce::AlertWindow::WarningIcon,
+                                                       matriz::i18n::t("nomes.unificar_titulo"), msg, {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+            });
+        });
+    }), true);
 }
 
 void MainComponent::perguntarQualEOMain(const ProjetoAberto::SituacaoMain& situacao) {

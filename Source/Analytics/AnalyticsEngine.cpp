@@ -56,7 +56,7 @@ std::string AnalyticsEngine::buildDimensionExpression(DimensionType dim, TimeGra
         case DimensionType::Folder:
             return "COALESCE(ap.nome, 'Unorganized')";
         case DimensionType::Tag:
-            return "COALESCE(it_sub.tag, 'No Tag')";
+            return "COALESCE(it_sub.tag, 'No Tag') COLLATE NOCASE";
         case DimensionType::AssetState:
             return tableAlias + ".estado";
         case DimensionType::HasError:
@@ -159,7 +159,7 @@ std::string AnalyticsEngine::buildWhereClause(const AnalyticsFilter& filter, std
         clauses.push_back("EXISTS (SELECT 1 FROM arquivo a_err WHERE a_err.item_id = i.id AND a_err.estado_presenca = 'corrompido')");
     }
     if (filter.tag.has_value() && !filter.tag->empty()) {
-        clauses.push_back("EXISTS (SELECT 1 FROM item_tag it_f WHERE it_f.item_id = i.id AND it_f.tag = ?)");
+        clauses.push_back("EXISTS (SELECT 1 FROM item_tag it_f WHERE it_f.item_id = i.id AND it_f.tag = ? COLLATE NOCASE)");
         params.push_back(matriz::db::Value::of(*filter.tag));
     }
 
@@ -197,7 +197,7 @@ AnalyticsResult AnalyticsEngine::executarQuery(matriz::db::Database& db, const A
     fromClause += " LEFT JOIN asset_preservation_status aps ON aps.item_id = i.id ";
 
     if (query.dimensionA == DimensionType::Tag || (hasDimB && *query.dimensionB == DimensionType::Tag)) {
-        fromClause += " LEFT JOIN (SELECT item_id, MIN(tag) as tag FROM item_tag GROUP BY item_id) it_sub ON it_sub.item_id = i.id ";
+        fromClause += " LEFT JOIN (SELECT item_id, MIN(tag COLLATE NOCASE) as tag FROM item_tag GROUP BY item_id) it_sub ON it_sub.item_id = i.id ";
     }
 
     std::vector<matriz::db::Value> params;

@@ -186,6 +186,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/I18n/Strings.cpp
     Source/Model/ProjectLog.cpp
     Source/Model/NotasEstruturadas.cpp
+    Source/Model/NomesCanonicos.cpp
     Source/Model/Project.cpp)
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -360,6 +361,7 @@ target_sources(matriz PRIVATE
     Source/Ingest/LeituraTecnica.cpp
     Source/Model/NotasEstruturadas.cpp
     Source/Model/CompactacaoRegistro.cpp
+    Source/Model/NomesCanonicos.cpp
     Source/Ui/NotesEstruturadasComponent.cpp
     Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp

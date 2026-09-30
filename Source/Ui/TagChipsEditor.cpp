@@ -106,8 +106,11 @@ void TagChipsEditor::addTag(const juce::String& text) {
         }
     }
 
+    // Grava como digitado (aparado): a grafia final é a que o projeto já usa,
+    // decidida por ProjetoAberto::definirTags (nomes case-insensitive). A
+    // forma minúscula só serve pra não repetir o chip aqui.
     Chip c;
-    c.tag = canonical.toStdString();
+    c.tag = clean.toStdString();
     c.display = clean;
     chips_.push_back(std::move(c));
     layoutChips();

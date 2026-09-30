@@ -2,7 +2,9 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
 #include <future>
+#include <map>
 #include <iostream>
 
 #include "../Model/Project.h"
@@ -22,6 +24,8 @@
 #include "../Audio/FormatoAudioQuickTime.h"
 #include "../Model/CompactacaoRegistro.h"
 #include "../Model/NotasEstruturadas.h"
+#include "../Model/NomesCanonicos.h"
+#include "../Model/ProjectLog.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
@@ -65,6 +69,196 @@ std::string inserirItem(matriz::db::Database& reg, const std::string& projetoId,
              matriz::db::Value::of("originais/" + codigo + extensao), matriz::db::Value::of(agora),
              matriz::db::Value::of(agora)});
     return id;
+}
+
+// ---------------------------------------------------------------------------
+// Pacote de collection — Fase 1: tags, pessoas e subjects case-insensitive.
+// ---------------------------------------------------------------------------
+using Checar = std::function<void(bool, const juce::String&)>;
+
+std::vector<std::string> tagsDoItem(matriz::db::Database& reg, const std::string& itemId) {
+    std::vector<std::string> out;
+    auto st = reg.prepare("SELECT tag FROM item_tag WHERE item_id = ? ORDER BY tag");
+    st.bind(1, matriz::db::Value::of(itemId));
+    while (st.step()) out.push_back(st.columnText(0));
+    return out;
+}
+
+std::string colunaDoItem(matriz::db::Database& reg, const std::string& coluna, const std::string& itemId) {
+    auto st = reg.prepare("SELECT COALESCE(" + coluna + ", '') FROM item WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(itemId));
+    return st.step() ? st.columnText(0) : std::string();
+}
+
+juce::AlertWindow* alertaModalComTitulo(const juce::String& titulo) {
+    auto* mcm = juce::ModalComponentManager::getInstance();
+    for (int i = 0; i < mcm->getNumModalComponents(); ++i)
+        if (auto* aw = dynamic_cast<juce::AlertWindow*>(mcm->getModalComponent(i)))
+            if (aw->getName() == titulo) return aw;
+    return nullptr;
+}
+
+void rodarTestesNomesCanonicos(const Checar& checar) {
+    namespace nomes = matriz::model::nomes;
+    using matriz::db::Value;
+    std::cout << "\n-- Collection package, phase 1: case-insensitive tags/people/subjects --\n";
+
+    checar(nomes::chave("  SHOW ") == "show", "the key ignores case and spaces at the ends");
+    checar(nomes::chave("S\xc3\xa3o") != nomes::chave("Sao"), juce::String::fromUTF8("accents still count (\"S\xc3\xa3o\" != \"Sao\")"));
+    checar(nomes::chave("\xc3\x89POCA") == nomes::chave("\xc3\xa9poca"), "upper/lower case of accented letters is the same name");
+    {
+        std::map<std::string, std::string> vocab = {{"show", "Show"}, {"tour", "Tour"}};
+        auto canon = [&](const std::string& t) {
+            auto it = vocab.find(nomes::chave(t));
+            return it != vocab.end() ? it->second : t;
+        };
+        checar(nomes::canonizarListaSubjects("show; BACKSTAGE, TOUR", canon) == "Show; BACKSTAGE, Tour",
+               "a subject list keeps its separators and takes the existing spellings");
+        checar(nomes::canonizarListaSubjects("Show, show", canon) == "Show", "the same subject twice in one item becomes one");
+        checar(nomes::canonizarListaSubjects("Show, Tour", canon) == "Show, Tour", "an already canonical list is left untouched");
+    }
+
+    // --- Gravação pela ficha/lote (ProjetoAberto) -----------------------------
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_nomes_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Nomes";
+        params.prefixoNomenclatura = "NOM";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("A"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string i1 = inserirItem(reg, projetoId, "NOM-1", false);
+        const std::string i2 = inserirItem(reg, projetoId, "NOM-2", false);
+
+        pa.adicionarTag(i1, "Show");
+        pa.adicionarTag(i2, " show ");
+        checar(tagsDoItem(reg, i2) == std::vector<std::string>{"Show"}, "a new \" show \" tag takes the existing \"Show\"");
+        pa.definirTags(i2, {"SHOW", "Tour", "tour"});
+        checar(tagsDoItem(reg, i2) == (std::vector<std::string>{"Show", "Tour"}),
+               "setting tags with variations keeps one entry per name");
+        pa.adicionarTag(i1, "show");
+        checar(tagsDoItem(reg, i1) == std::vector<std::string>{"Show"}, "adding \"show\" to an item with \"Show\" adds nothing");
+        pa.removerTag(i1, "SHOW");
+        checar(tagsDoItem(reg, i1).empty(), "removing \"SHOW\" removes the item's \"Show\"");
+        pa.adicionarTag(i1, "\xc3\x89poca");
+        pa.adicionarTag(i2, "\xc3\x89POCA");
+        pa.adicionarTag(i2, "Epoca");
+        auto t2 = tagsDoItem(reg, i2);
+        checar(std::count(t2.begin(), t2.end(), std::string("\xc3\x89poca")) == 1 &&
+                   std::count(t2.begin(), t2.end(), std::string("Epoca")) == 1 && t2.size() == 4,
+               juce::String::fromUTF8("\"\xc3\x89POCA\" becomes \"\xc3\x89poca\"; \"Epoca\" (no accent) stays a different tag"));
+
+        pa.adicionarPessoa("Jo\xc3\xa3o Silva");
+        pa.adicionarPessoa("jo\xc3\xa3o silva");
+        checar(pa.listarPessoas().size() == 1, juce::String::fromUTF8("the PEOPLE list gets one entry for \"Jo\xc3\xa3o Silva\"/\"jo\xc3\xa3o silva\""));
+        pa.adicionarTag(i1, "JO\xc3\x83O SILVA");
+        auto t1 = tagsDoItem(reg, i1);
+        checar(std::find(t1.begin(), t1.end(), std::string("Jo\xc3\xa3o Silva")) != t1.end(),
+               "a person added as a tag takes the PEOPLE list spelling");
+
+        pa.salvarMetadado(i1, "dc_subject", "Show, Backstage");
+        pa.salvarMetadado(i2, "dc_subject", "show; BACKSTAGE; Tour");
+        checar(colunaDoItem(reg, "dc_subject", i2) == "Show; Backstage; Tour",
+               "SUBJECT typed in another case takes the existing spellings");
+        pa.salvarMetadadoEmLote({i1, i2}, {{"dc_subject", "SHOW"}});
+        checar(colunaDoItem(reg, "dc_subject", i1) == "Show" && colunaDoItem(reg, "dc_subject", i2) == "Show",
+               "batch SUBJECT \"SHOW\" is recorded as \"Show\"");
+        checar(nomes::levantarUnificacao(reg).empty(), "data written through the app never needs unifying");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("names selftest (writes): ") + e.what());
+    }
+
+    // --- Migração de projeto existente ------------------------------------------
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Nomes antigos";
+        params.prefixoNomenclatura = "OLD";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("B"), params);
+        const std::string projetoId = projeto->projetoId();
+        const juce::File pastaProjeto = projeto->pasta();
+        std::string a, b, c;
+        {
+            auto& reg = projeto->registro();
+            a = inserirItem(reg, projetoId, "OLD-A", false);
+            b = inserirItem(reg, projetoId, "OLD-B", false);
+            c = inserirItem(reg, projetoId, "OLD-C", false);
+            // Banco de antes da Fase 1: variações gravadas direto.
+            auto tag = [&](const std::string& item, const std::string& t) {
+                reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                        {Value::of(matriz::model::novoUuid()), Value::of(item), Value::of(t)});
+            };
+            tag(a, "Show");
+            tag(b, "show");
+            tag(c, " SHOW ");
+            tag(c, "Show");
+            tag(c, "Maria");
+            reg.run("INSERT INTO collection_person (id, nome, criado_em) VALUES (?, 'maria', ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(matriz::model::agoraIso8601())});
+            reg.run("UPDATE item SET dc_subject = 'Show, Tour' WHERE id = ?", {Value::of(a)});
+            reg.run("UPDATE item SET dc_subject = 'show; tour' WHERE id = ?", {Value::of(b)});
+            reg.run("INSERT INTO item_campo (id, item_id, campo_id, valor, fonte, atualizado_em) "
+                    "VALUES (?, ?, 'dc_subject', 'show; tour', 'humano', ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(b), Value::of(matriz::model::agoraIso8601())});
+        }
+
+        auto grupos = nomes::levantarUnificacao(projeto->registro());
+        bool achouShow = false;
+        for (auto& g : grupos)
+            if (g.tipo == nomes::GrupoUnificacao::Tipo::Tags && g.canonico == "Show" && g.variantes.size() == 2 &&
+                g.itens == 2)
+                achouShow = true;
+        checar(achouShow, "the preview lists \"Show\" + \"show\" + \" SHOW \" -> \"Show\" (2 items)");
+
+        MainComponent janela;
+        janela.setBounds(0, 0, 1200, 800);
+        janela.abrirProjeto(std::move(projeto));
+        const juce::String titulo = matriz::i18n::t("nomes.unificar_titulo");
+        juce::AlertWindow* dlg = nullptr;
+        esperarAte([&] { return (dlg = alertaModalComTitulo(titulo)) != nullptr; }, 20000);
+        checar(dlg != nullptr, "opening an older project asks before unifying names");
+        auto* pa = janela.projetoAberto();
+        if (dlg && pa) {
+            auto& reg = pa->projeto().registro();
+            checar(tagsDoItem(reg, b) == std::vector<std::string>{"show"}, "nothing changes before the operator confirms");
+            dlg->exitModalState(1);  // Unify
+            // A caixa de resultado tem o mesmo título, mas sem a lista.
+            juce::AlertWindow* fim = nullptr;
+            esperarAte([&] {
+                fim = alertaModalComTitulo(titulo);
+                return fim != nullptr && fim->getTextEditor("lista") == nullptr;
+            }, 30000);
+            if (fim) fim->exitModalState(0);
+            bombear(100);
+
+            checar(tagsDoItem(reg, b) == std::vector<std::string>{"Show"}, "after unifying, \"show\" became \"Show\"");
+            checar(tagsDoItem(reg, c) == (std::vector<std::string>{"Show", "maria"}),
+                   "an item that had two variations keeps a single entry");
+            checar(colunaDoItem(reg, "dc_subject", b) == "Show; Tour", "subjects were unified in item.dc_subject");
+            {
+                auto st = reg.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = 'dc_subject'");
+                st.bind(1, Value::of(b));
+                checar(st.step() && st.columnText(0) == "Show; Tour", "...and in the item_campo mirror");
+            }
+            {
+                auto st = reg.prepare("SELECT COUNT(*) FROM busca_fts_map WHERE item_id = ? AND conteudo = 'show'");
+                st.bind(1, Value::of(b));
+                checar(st.step() && st.columnInt(0) == 0, "search index no longer has the old spelling");
+            }
+            checar(pa->listarPessoas() == std::vector<std::string>{"maria"}, "the PEOPLE list keeps one \"maria\"");
+            bool temBackup = false;
+            for (auto& f : pastaProjeto.findChildFiles(juce::File::findFiles, false, "registro.antes-unificacao-*.sqlite"))
+                temBackup = temBackup || f.getSize() > 0;
+            checar(temBackup, "a backup of the registry was saved in the project folder first");
+            checar(matriz::model::ProjectLog(pastaProjeto).readContent().contains("Names Unified"),
+                   "the unification is in the project log");
+            checar(nomes::levantarUnificacao(reg).empty(), "nothing left to unify afterwards");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("names selftest (migration): ") + e.what());
+    }
+    raiz.deleteRecursively();
 }
 
 } // namespace
@@ -2500,6 +2694,8 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("folder maps migration selftest: ") + e.what());
     }
     raizMig.deleteRecursively();
+
+    rodarTestesNomesCanonicos(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

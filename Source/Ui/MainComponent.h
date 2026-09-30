@@ -13,6 +13,7 @@
 #include "OverlayComponent.h"
 #include "FaixaAvisoComponent.h"
 #include "ProjetoAberto.h"
+#include "../Model/NomesCanonicos.h"
 
 // Workflow layer (Phase 1+2)
 #include "HomePanelComponent.h"
@@ -284,6 +285,10 @@ private:
     // Modelo SOURCE/MAIN/CLONE: garante um MAIN ao abrir (projetos antigos);
     // se ambíguo, pergunta uma vez qual versão é o MAIN.
     void verificarPapelMain();
+    // Nomes case-insensitive (Fase 1): projeto com "Show"/"show" separados
+    // pergunta se unifica — a cada abertura, até aceitar. Nunca em clone.
+    void verificarUnificacaoDeNomes();
+    void perguntarUnificacaoDeNomes(const std::vector<matriz::model::nomes::GrupoUnificacao>& grupos);
     void perguntarQualEOMain(const ProjetoAberto::SituacaoMain& situacao);
     void verificarPresencaInicialAssets();
     void mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report);

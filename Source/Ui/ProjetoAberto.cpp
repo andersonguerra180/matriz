@@ -10,6 +10,7 @@
 #include "../Vault/Resolucao.h"
 #include "../Consolidacao/Consolidacao.h"
 #include "../Model/ProjectLog.h"
+#include "../Model/NomesCanonicos.h"
 
 #include "../I18n/Strings.h"
 
@@ -609,14 +610,22 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         }
     }
 
-    // 3. Tags e assuntos: união.
+    // 3. Tags e assuntos: união ("show" do descartado = "Show" do mantido).
     {
+        std::set<std::string> chavesMantido;
+        {
+            auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ?");
+            st.bind(1, Value::of(manterId));
+            while (st.step()) chavesMantido.insert(matriz::model::nomes::chave(st.columnText(0)));
+        }
         std::vector<std::string> tags;
-        auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ? AND tag NOT IN "
-                                   "(SELECT tag FROM item_tag WHERE item_id = ?)");
+        auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ? ORDER BY rowid");
         st.bind(1, Value::of(descartarId));
-        st.bind(2, Value::of(manterId));
-        while (st.step()) tags.push_back(st.columnText(0));
+        while (st.step()) {
+            std::string t = st.columnText(0);
+            if (chavesMantido.insert(matriz::model::nomes::chave(t)).second)
+                tags.push_back(matriz::model::nomes::tagCanonica(registro, t));
+        }
         for (const auto& t : tags) {
             registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
                          {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(t)});
@@ -1219,9 +1228,13 @@ std::string ProjetoAberto::descricaoUndoAtual() const {
     return pilhaUndo_.back().descricao;
 }
 
-void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valor) {
+void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string& coluna, const std::string& valorDigitado) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    // Nomes case-insensitive: "show" digitado vira o "Show" que o projeto já usa.
+    const std::string valor = coluna == "dc_subject"
+                                  ? matriz::model::nomes::subjectsCanonicos(projeto_->registro(), valorDigitado)
+                                  : valorDigitado;
 
     if (!desfazendo_) {
         auto old = lerMetadado(itemId, coluna);
@@ -1268,10 +1281,14 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
 }
 
 void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
-                                          const std::vector<std::pair<std::string, std::string>>& camposEValores,
+                                          const std::vector<std::pair<std::string, std::string>>& camposEValoresDigitados,
                                           const std::set<std::pair<std::string, std::string>>& pular) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    if (!projeto_ || itemIds.empty() || camposEValores.empty()) return;
+    if (!projeto_ || itemIds.empty() || camposEValoresDigitados.empty()) return;
+    // Nomes case-insensitive: SUBJECT entra na grafia que o projeto já usa.
+    auto camposEValores = camposEValoresDigitados;
+    for (auto& [coluna, valor] : camposEValores)
+        if (coluna == "dc_subject") valor = matriz::model::nomes::subjectsCanonicos(projeto_->registro(), valor);
 
     // Uma entrada de Undo só pro lote inteiro (não uma por item x campo):
     // captura o valor antigo de cada combinação antes de escrever. Desfazer
@@ -1443,7 +1460,7 @@ std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const
     return out;
 }
 
-void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std::string>& tags) {
+void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std::string>& tagsDigitadas) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
@@ -1453,6 +1470,16 @@ void ProjetoAberto::definirTags(const std::string& itemId, const std::vector<std
         });
     }
     auto& db = projeto_->registro();
+    // Nomes case-insensitive: cada tag na grafia que o projeto já usa, sem
+    // repetir ("Show" e "show" no mesmo item viram uma só).
+    std::vector<std::string> tags;
+    {
+        std::set<std::string> chaves;
+        for (const auto& t : tagsDigitadas) {
+            std::string canon = matriz::model::nomes::tagCanonica(db, t);
+            if (!canon.empty() && chaves.insert(matriz::model::nomes::chave(canon)).second) tags.push_back(canon);
+        }
+    }
     db.run("BEGIN TRANSACTION", {});
     try {
         db.run("DELETE FROM item_tag WHERE item_id = ?", {matriz::db::Value::of(itemId)});
@@ -1498,7 +1525,16 @@ void ProjetoAberto::adicionarTag(const std::string& itemId, const std::string& t
     if (!projeto_ || tag.empty()) return;
     juce::String clean = juce::String(tag).trimCharactersAtStart("#").trim();
     if (clean.isEmpty()) return;
-    std::string cleanStr = clean.toStdString();
+    // Nomes case-insensitive: grafia que o projeto já usa.
+    std::string cleanStr = matriz::model::nomes::tagCanonica(projeto_->registro(), clean.toStdString());
+    bool jaTinha = false;
+    {
+        auto st = projeto_->registro().prepare("SELECT 1 FROM item_tag WHERE item_id = ? AND tag = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        st.bind(2, matriz::db::Value::of(cleanStr));
+        jaTinha = st.step();
+    }
+    if (jaTinha) return;  // "show" num item que já tem "Show": nada muda (e o Undo não apagaria a dele)
     if (!desfazendo_) {
         registrarUndo("Add Tag", [this, itemId, cleanStr]() {
             removerTag(itemId, cleanStr);
@@ -1535,6 +1571,18 @@ void ProjetoAberto::removerTag(const std::string& itemId, const std::string& tag
         registrarUndo("Remove Tag", [this, itemId, cleanStr]() {
             adicionarTag(itemId, cleanStr);
         });
+    }
+    // Nomes case-insensitive: "SHOW" remove o "Show" do item.
+    {
+        const std::string k = matriz::model::nomes::chave(cleanStr);
+        std::vector<std::string> doItem;
+        auto st = projeto_->registro().prepare("SELECT tag FROM item_tag WHERE item_id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        while (st.step()) doItem.push_back(st.columnText(0));
+        for (const auto& t : doItem)
+            if (t != tag && t != cleanStr && matriz::model::nomes::chave(t) == k)
+                projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ? AND tag = ?",
+                                          {matriz::db::Value::of(itemId), matriz::db::Value::of(t)});
     }
     projeto_->registro().run("DELETE FROM item_tag WHERE item_id = ? AND (tag = ? OR tag = ?)",
                               {matriz::db::Value::of(itemId), matriz::db::Value::of(tag), matriz::db::Value::of(cleanStr)});
@@ -1581,7 +1629,8 @@ bool ProjetoAberto::adicionarPessoa(const std::string& nome) {
             "INSERT OR IGNORE INTO collection_person (id, nome, criado_em) VALUES (?, ?, ?)"
         );
         stmt.bind(1, matriz::db::Value::of(matriz::model::novoUuid()));
-        stmt.bind(2, matriz::db::Value::of(clean.toStdString()));
+        // Nomes case-insensitive: "joão" não cria uma 2ª entrada ao lado de "João".
+        stmt.bind(2, matriz::db::Value::of(matriz::model::nomes::tagCanonica(projeto_->registro(), clean.toStdString())));
         stmt.bind(3, matriz::db::Value::of(matriz::model::agoraIso8601()));
         stmt.step();
         return true;

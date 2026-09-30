@@ -9,6 +9,7 @@
 #include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Model/NomesCanonicos.h"
 
 #include "ArvoreBackupComponent.h"
 #include "EstatisticasComponent.h"
@@ -1075,8 +1076,13 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         if (subjectSelecionado_.has_value()) {
             anyFilter = true;
             if (!item.subject.has_value()) continue;
+            // Nomes case-insensitive: "show" passa no filtro "Show".
+            const auto chaveSel = matriz::model::nomes::chave(*subjectSelecionado_);
             auto subs = dividirSubjects(*item.subject);
-            if (std::find(subs.begin(), subs.end(), *subjectSelecionado_) == subs.end()) continue;
+            if (std::none_of(subs.begin(), subs.end(), [&](const std::string& s) {
+                    return matriz::model::nomes::chave(s) == chaveSel;
+                }))
+                continue;
         }
 
         filteredIds.insert(item.id);
@@ -1230,6 +1236,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             std::map<std::string, int> contagemPorCollection;
             int semCollection = 0;
             std::map<std::string, int> contagemPorSubject;
+            std::map<std::string, std::string> grafiaPorChaveSubject;
 
             for (const auto& item : itens) {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
@@ -1278,9 +1285,15 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     semCollection++;
 
                 if (item.subject.has_value()) {
-                    std::set<std::string> distintos;  // "A, A" conta uma vez só
-                    for (auto& sub : dividirSubjects(*item.subject)) distintos.insert(sub);
-                    for (const auto& sub : distintos) contagemPorSubject[sub]++;
+                    // "A, a" conta uma vez só; variações de maiúsculas são o
+                    // mesmo subject, mostrado na primeira grafia vista.
+                    std::set<std::string> distintos;
+                    for (auto& sub : dividirSubjects(*item.subject)) {
+                        auto chave = matriz::model::nomes::chave(sub);
+                        grafiaPorChaveSubject.emplace(chave, sub);
+                        distintos.insert(chave);
+                    }
+                    for (const auto& chave : distintos) contagemPorSubject[grafiaPorChaveSubject[chave]]++;
                 }
             }
 

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
+#include "../Model/NomesCanonicos.h"
 #include "../Vault/AssetRelinkEngine.h"
 #include "../Vault/Volume.h"
 #include "../Analytics/AssetGeolocation.h"
@@ -493,6 +494,12 @@ LightroomImportResultado LightroomImporter::importarCatalogo(
         if (stmtMax.step()) proximoNumeroAcervo = static_cast<int>(stmtMax.columnInt(0));
     }
 
+    // Fase 1 (nomes case-insensitive): palavras-chave entram na grafia que o
+    // projeto já usa — vocabulário carregado uma vez, não uma consulta por tag.
+    auto vocabTags = matriz::model::nomes::Vocabulario::carregar(registro, matriz::model::nomes::Vocabulario::Tipo::Tags);
+    auto vocabSubjects =
+        matriz::model::nomes::Vocabulario::carregar(registro, matriz::model::nomes::Vocabulario::Tipo::Subjects);
+
     // 2. Ingerir Fotos
     for (auto* fotoPtr : fotosParaIngerir) {
         if (cancelamento && cancelamento->pedido()) break;
@@ -568,10 +575,13 @@ LightroomImportResultado LightroomImporter::importarCatalogo(
             }
             if (foto.direitosAutorais.isNotEmpty()) gravarCampoSeVazio("dc_rights", foto.direitosAutorais);
             if (foto.palavrasChave.size() > 0) {
-                gravarCampoSeVazio("dc_subject", foto.palavrasChave.joinIntoString("; "));
+                gravarCampoSeVazio("dc_subject", juce::String::fromUTF8(vocabSubjects.listaSubjects(
+                                                     foto.palavrasChave.joinIntoString("; ").toStdString()).c_str()));
                 for (const auto& tag : foto.palavrasChave) {
+                    const std::string canon = vocabTags.canonico(tag.toStdString());
+                    if (canon.empty()) continue;
                     registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
-                                 {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(tag.toStdString())});
+                                 {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(canon)});
                 }
             }
 

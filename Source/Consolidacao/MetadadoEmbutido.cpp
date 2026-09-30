@@ -6,6 +6,7 @@
 #include <map>
 #include <exiv2/exiv2.hpp>
 #include "../Model/Project.h"
+#include "../Model/NomesCanonicos.h"
 #include "../Vault/Resolucao.h"
 #include "../Ingest/LeituraTecnica.h"
 
@@ -565,6 +566,7 @@ int importarSidecarsEditados(matriz::db::Database& registro, const juce::File& m
     std::map<std::string, ArquivoNoMain> porSidecar;
     for (const auto& a : arquivosNoMain(registro, destinoIdMain)) porSidecar[a.relativo + ".xmp"] = a;
     const std::string agora = matriz::model::agoraIso8601();
+    auto vocabTags = matriz::model::nomes::Vocabulario::carregar(registro, matriz::model::nomes::Vocabulario::Tipo::Tags);
     for (const auto& rel : caminhosRelativos) {
         auto it = porSidecar.find(rel.toStdString());
         if (it == porSidecar.end()) continue;
@@ -580,9 +582,12 @@ int importarSidecarsEditados(matriz::db::Database& registro, const juce::File& m
             registro.run("UPDATE item SET dc_creator = ? WHERE id = ?", {Value::of(d->autor), Value::of(itemId)});
         if (!d->direitos.empty())
             registro.run("UPDATE item SET dc_rights = ? WHERE id = ?", {Value::of(d->direitos), Value::of(itemId)});
-        for (const auto& t : d->tags)
+        for (const auto& t : d->tags) {
+            const std::string canon = vocabTags.canonico(t);
+            if (canon.empty()) continue;
             registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
-                         {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(t)});
+                         {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(canon)});
+        }
         registro.run("UPDATE item SET metadados_editados = 1, atualizado_em = ?, notas_livres = "
                      "CASE WHEN TRIM(COALESCE(notas_livres, '')) = '' THEN ? ELSE notas_livres || char(10) || ? END "
                      "WHERE id = ?",

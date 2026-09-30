@@ -27,7 +27,9 @@
 #include <algorithm>
 #include <iterator>
 #include <regex>
+#include <map>
 #include <set>
+#include "../Model/NomesCanonicos.h"
 
 namespace matriz::ui {
 
@@ -2743,6 +2745,13 @@ private:
             chips->setTags(tagsList);
             chips->aoMudar = [this, itemId, raw = chips.get()] {
                 projeto_.definirTags(itemId, raw->getTags());
+                // "show" digitado num projeto que já tem "Show": o chip passa a
+                // mostrar a grafia gravada.
+                auto gravadas = projeto_.lerTags(itemId);
+                auto naTela = raw->getTags();
+                if (std::set<std::string>(gravadas.begin(), gravadas.end()) !=
+                    std::set<std::string>(naTela.begin(), naTela.end()))
+                    raw->setTags(gravadas);
                 if (aoAplicarSucesso) aoAplicarSucesso(itemId);
                 if (aoMudar) aoMudar();
             };
@@ -4520,24 +4529,24 @@ private:
             // dizer o quê), o commit compara contra o snapshot anterior pra
             // saber o que adicionar/remover em cada item. Quem já tem a tag
             // adicionada é ignorado (adicionarTag é idempotente).
-            std::set<std::string> comuns;
+            // Interseção pela chave case-insensitive ("Show" num item e
+            // "show" no outro é a mesma tag), mostrada na grafia do 1º item.
+            std::map<std::string, std::string> comuns;  // chave -> grafia
             bool primeiroItem = true;
             for (const auto& id : itemIds_) {
-                auto doItem = projeto_.lerTags(id);
-                std::set<std::string> setItem(doItem.begin(), doItem.end());
-                if (primeiroItem) {
-                    comuns = std::move(setItem);
-                    primeiroItem = false;
-                } else {
-                    std::set<std::string> interseccao;
-                    std::set_intersection(comuns.begin(), comuns.end(),
-                                          setItem.begin(), setItem.end(),
-                                          std::inserter(interseccao, interseccao.end()));
-                    comuns = std::move(interseccao);
+                std::set<std::string> chavesItem;
+                for (const auto& t : projeto_.lerTags(id)) {
+                    chavesItem.insert(matriz::model::nomes::chave(t));
+                    if (primeiroItem) comuns.emplace(matriz::model::nomes::chave(t), t);
                 }
+                if (!primeiroItem)
+                    for (auto it = comuns.begin(); it != comuns.end();)
+                        it = chavesItem.count(it->first) ? std::next(it) : comuns.erase(it);
+                primeiroItem = false;
                 if (comuns.empty()) break;
             }
-            std::vector<std::string> tagsIniciais(comuns.begin(), comuns.end());
+            std::vector<std::string> tagsIniciais;
+            for (const auto& [k, grafia] : comuns) tagsIniciais.push_back(grafia);
 
             auto chips = std::make_unique<TagChipsEditor>();
             chips->setTags(tagsIniciais);
@@ -4552,6 +4561,8 @@ private:
                 *anterior = novos;
                 if (adicionadas.empty() && removidas.empty()) return;
 
+                // Grafia do projeto resolvida uma vez, não uma vez por item.
+                for (auto& t : adicionadas) t = matriz::model::nomes::tagCanonica(projeto_.projeto().registro(), t);
                 projeto_.iniciarGrupoUndo("Batch edit: tags");
                 {
                 EscopoLoteAtualizacao escopoLote(*this);
@@ -5085,6 +5096,7 @@ private:
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacao = false;
         try { dbLote.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+        std::map<std::string, std::string> tagCanonica;  // grafia do projeto, resolvida uma vez por tag
         for (const auto& id : itemIds_) {
             try {
                 if (linha->ehTags) {
@@ -5092,7 +5104,10 @@ private:
                     tagsNovas.addTokens(val, " ,;", "\"");
                     for (int t = 0; t < tagsNovas.size(); ++t) {
                         juce::String tg = tagsNovas[t].trimCharactersAtStart("#").trim();
-                        if (tg.isNotEmpty()) projeto_.adicionarTag(id, tg.toStdString());
+                        if (tg.isEmpty()) continue;
+                        auto& canon = tagCanonica[tg.toStdString()];
+                        if (canon.empty()) canon = matriz::model::nomes::tagCanonica(dbLote, tg.toStdString());
+                        projeto_.adicionarTag(id, canon);
                     }
                 } else if (linha->ehNotes) {
                     std::string txt = val.toStdString();

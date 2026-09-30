@@ -12,6 +12,7 @@
 #include "LeituraTecnica.h"
 #include "../Ui/OriginalSourceMedium.h"
 #include "../Model/NotasEstruturadas.h"
+#include "../Model/NomesCanonicos.h"
 
 namespace matriz::ingest {
 
@@ -357,7 +358,8 @@ ResultadoIngestArquivo gravarArquivoAnalisado(matriz::db::Database& registro, co
 
         // Assunto / Tags nativas
         if (analise.leitura.metaSubject && !analise.leitura.metaSubject->empty()) {
-            gravarCampoNativo("dc_subject", *analise.leitura.metaSubject);
+            // Fase 1 (nomes case-insensitive): "show" do arquivo vira o "Show" do projeto.
+            gravarCampoNativo("dc_subject", matriz::model::nomes::subjectsCanonicos(registro, *analise.leitura.metaSubject));
         }
 
         // Outros campos Dublin Core nativos
