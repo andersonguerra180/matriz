@@ -62,6 +62,7 @@ private:
         int sessao = 0;
         int revisao = 0;
         int vulneraveis = 0;
+        int mergeConflitos = 0;
         int single_copy = 0;
         int ausentes = 0;
         std::vector<std::pair<int, int>> anos;

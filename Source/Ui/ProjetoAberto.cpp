@@ -514,10 +514,12 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
 
 ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db::Database& registro,
                                                                       const std::string& manterId,
-                                                                      const std::string& descartarId) {
+                                                                      const std::string& descartarId,
+                                                                      const std::set<std::string>& usarDescartado) {
     using matriz::db::Value;
     ResultadoSanitizacao r;
     if (manterId.empty() || descartarId.empty() || manterId == descartarId) return r;
+    r.idMantido = manterId;
     const std::string agora = matriz::model::agoraIso8601();
 
     // Colunas de metadado do próprio `item` que entram na soma.
@@ -563,97 +565,14 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         r.descartadoJaNoMain = st.step();
     }
 
-    // 1. Colunas do item: vazio no mantido é preenchido; divergente vai pras notas.
-    juce::StringArray divergentes;
-    for (size_t i = 0; i < std::size(kColunas); ++i) {
-        const std::string& vk = k[3 + i];
-        const std::string& vd = d[3 + i];
-        if (vd.empty() || vd == vk) continue;
-        if (vk.empty()) {
-            registro.run(std::string("UPDATE item SET ") + kColunas[i] + " = ? WHERE id = ?",
-                         {Value::of(vd), Value::of(manterId)});
-            ++r.camposSomados;
-        } else {
-            divergentes.add(juce::String(kColunas[i]) + ": " + juce::String::fromUTF8(vd.c_str()));
-        }
-    }
-
-    // 2. Campos da ficha (item_campo): mesma regra, por (nivel, indice, campo).
-    {
-        auto st = registro.prepare(
-            "SELECT d.nivel, d.nivel_indice, d.campo_id, d.valor, d.fonte, k.id, COALESCE(k.valor, '') "
-            "FROM item_campo d LEFT JOIN item_campo k ON k.item_id = ? AND k.nivel = d.nivel "
-            " AND k.nivel_indice = d.nivel_indice AND k.campo_id = d.campo_id "
-            "WHERE d.item_id = ? AND COALESCE(d.valor, '') <> ''");
-        st.bind(1, Value::of(manterId));
-        st.bind(2, Value::of(descartarId));
-        struct Campo { std::string nivel; long long idx; std::string campo, valor, fonte, idK, valorK; };
-        std::vector<Campo> campos;
-        while (st.step())
-            campos.push_back({st.columnText(0), st.columnInt(1), st.columnText(2), st.columnText(3),
-                              st.columnText(4), st.columnText(5), st.columnText(6)});
-        for (const auto& c : campos) {
-            if (c.valor == c.valorK) continue;
-            if (c.idK.empty()) {
-                registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, "
-                             "atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                             {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(c.nivel),
-                              Value::of(c.idx), Value::of(c.campo), Value::of(c.valor), Value::of(c.fonte),
-                              Value::of(agora)});
-                ++r.camposSomados;
-            } else if (c.valorK.empty()) {
-                registro.run("UPDATE item_campo SET valor = ?, atualizado_em = ? WHERE id = ?",
-                             {Value::of(c.valor), Value::of(agora), Value::of(c.idK)});
-                ++r.camposSomados;
-            } else {
-                divergentes.add(juce::String(c.campo) + ": " + juce::String::fromUTF8(c.valor.c_str()));
-            }
-        }
-    }
-
-    // 3. Tags e assuntos: união ("show" do descartado = "Show" do mantido).
-    {
-        std::set<std::string> chavesMantido;
-        {
-            auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ?");
-            st.bind(1, Value::of(manterId));
-            while (st.step()) chavesMantido.insert(matriz::model::nomes::chave(st.columnText(0)));
-        }
-        std::vector<std::string> tags;
-        auto st = registro.prepare("SELECT tag FROM item_tag WHERE item_id = ? ORDER BY rowid");
-        st.bind(1, Value::of(descartarId));
-        while (st.step()) {
-            std::string t = st.columnText(0);
-            if (chavesMantido.insert(matriz::model::nomes::chave(t)).second)
-                tags.push_back(matriz::model::nomes::tagCanonica(registro, t));
-        }
-        for (const auto& t : tags) {
-            registro.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
-                         {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(t)});
-            ++r.camposSomados;
-        }
-    }
-    registro.run("INSERT OR IGNORE INTO item_assunto (item_id, assunto_id, autor, criado_em) "
-                 "SELECT ?, assunto_id, autor, criado_em FROM item_assunto WHERE item_id = ?",
-                 {Value::of(manterId), Value::of(descartarId)});
-
-    // 4. Observações: copiadas (o marcador é do outro item, não vem junto).
-    {
-        struct Obs { std::string texto, autor, criadoEm; bool temMin; long long min; };
-        std::vector<Obs> obs;
-        auto st = registro.prepare("SELECT texto, autor, criado_em, minutagem_ms FROM item_observacao o "
-                                   "WHERE item_id = ? AND NOT EXISTS (SELECT 1 FROM item_observacao k "
-                                   " WHERE k.item_id = ? AND k.texto = o.texto)");
-        st.bind(1, Value::of(descartarId));
-        st.bind(2, Value::of(manterId));
-        while (st.step())
-            obs.push_back({st.columnText(0), st.columnText(1), st.columnText(2), !st.columnIsNull(3), st.columnInt(3)});
-        for (const auto& o : obs)
-            registro.run("INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms) "
-                         "VALUES (?, ?, ?, ?, ?, ?)",
-                         {Value::of(matriz::model::novoUuid()), Value::of(manterId), Value::of(o.texto),
-                          Value::of(o.autor), Value::of(o.criadoEm), o.temMin ? Value::of(o.min) : Value::null()});
-    }
+    // 1-4. Fase 4 (MergeFichas): listas somam (tags/pessoas, subjects,
+    // marcadores, assuntos); valor único: vazio preenche, datas compatíveis
+    // ficam na mais precisa, diferente de verdade vale o do mantido (ou o
+    // escolhido na tela) e o perdedor vai pro item_historico.
+    const auto juncao = matriz::model::merge::juntarFichas(
+        registro, manterId, descartarId, usarDescartado, matriz::model::merge::origemDoDescartado(registro, descartarId));
+    r.camposSomados = juncao.camposSomados;
+    r.conflitos = static_cast<int>(juncao.conflitos.size());
 
     // 5. Notas — sempre append, nunca sobrescreve.
     auto acrescentar = [](const std::string& atual, const juce::String& bloco) {
@@ -664,8 +583,10 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
                                 juce::String::fromUTF8(r.codigoDescartado.c_str()) + " (\"" +
                                 juce::String::fromUTF8(d[1].c_str()) + "\") discarded; its file stays in SOURCE at " +
                                 juce::String::fromUTF8(localDescartado.c_str()) + " and is not copied to backup.";
-    if (!divergentes.isEmpty())
-        blocoMantido << "\nDiffering values from the duplicate:\n" << divergentes.joinIntoString("\n");
+    if (r.conflitos > 0)
+        blocoMantido << "\n" << juce::String(r.conflitos)
+                     << " merge conflict(s): this item's values stayed; the duplicate's are in the item history "
+                        "(filter \"Merge conflicts\").";
     if (!d[2].empty())
         blocoMantido << "\nNotes from the duplicate:\n" << juce::String::fromUTF8(d[2].c_str());
     registro.run("UPDATE item SET notas_livres = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
@@ -696,7 +617,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
                     juce::String::fromUTF8(d[1].c_str()) + "\") — stays in SOURCE, excluded from backup");
     r.linhasLog.add("Discarded file location: " + juce::String::fromUTF8(localDescartado.c_str()));
     r.linhasLog.add("Fields merged into kept item: " + juce::String(r.camposSomados) +
-                    ", differing values appended to notes: " + juce::String(divergentes.size()));
+                    ", merge conflicts (kept in the item history): " + juce::String(r.conflitos));
     if (r.descartadoJaNoMain)
         r.linhasLog.add("The discarded item already had a copy in MAIN — left untouched (nothing is deleted).");
     return r;
@@ -855,6 +776,101 @@ ProjetoAberto::ResultadoIntakePacote ProjetoAberto::aplicarPacoteIngerido(
         matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Collection Package Ingested", linhas);
     } catch (...) {}
     return r;
+}
+
+void ProjetoAberto::resolverDuplicatasEmSegundoPlano(std::vector<std::string> itensAfetados, CorpoResolucao corpo,
+                                                     std::function<void(bool, std::vector<ResultadoSanitizacao>)> aoConcluir,
+                                                     const std::string& descricaoUndo) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || !corpo) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMerge_.addJob([this, vivo, itensAfetados, corpo, aoConcluir, descricaoUndo] {
+        bool ok = false;
+        std::vector<ResultadoSanitizacao> resultados;
+        std::shared_ptr<matriz::model::merge::Retrato> retrato;
+        {
+            std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+            auto& db = projeto_->registro();
+            try {
+                db.exec("BEGIN IMMEDIATE");
+                retrato = matriz::model::merge::retratar(db, itensAfetados);
+                resultados = corpo(db);
+                db.exec("COMMIT");
+                ok = true;
+            } catch (const std::exception& e) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                juce::Logger::writeToLog("[merge] resolucao desfeita: " + juce::String(e.what()));
+            }
+        }
+        juce::MessageManager::callAsync([this, vivo, ok, resultados, retrato, aoConcluir, descricaoUndo] {
+            if (!vivo.lock()) return;
+            if (ok && retrato)
+                registrarUndo(descricaoUndo, [this, retrato] { restaurarRetratoMerge(*retrato); });
+            if (aoConcluir) aoConcluir(ok, resultados);
+        });
+    });
+}
+
+void ProjetoAberto::restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato) {
+    if (!projeto_) return;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    auto& db = projeto_->registro();
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        matriz::model::merge::restaurar(db, retrato);
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return;
+    }
+    EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+}
+
+void ProjetoAberto::simularJuncaoEmSegundoPlano(const std::string& manterId, const std::string& descartarId,
+                                                std::function<void(std::vector<matriz::model::merge::Conflito>)> aoConcluir) {
+    if (!projeto_) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMerge_.addJob([this, vivo, manterId, descartarId, aoConcluir] {
+        std::vector<matriz::model::merge::Conflito> conflitos;
+        try {
+            conflitos = matriz::model::merge::juntarFichas(projeto_->registro(), manterId, descartarId, {}, {}, /*simular*/ true)
+                            .conflitos;
+        } catch (...) {}
+        juce::MessageManager::callAsync([vivo, conflitos, aoConcluir] {
+            if (vivo.lock() && aoConcluir) aoConcluir(conflitos);
+        });
+    });
+}
+
+bool ProjetoAberto::temConflitoMergePendente(const std::string& itemId) const {
+    if (!projeto_) return false;
+    try {
+        return !matriz::model::merge::conflitosPendentes(projeto_->registro(), itemId).empty();
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<matriz::model::merge::ConflitoPendente> ProjetoAberto::conflitosMergePendentes(const std::string& itemId) const {
+    if (!projeto_) return {};
+    try {
+        return matriz::model::merge::conflitosPendentes(projeto_->registro(), itemId);
+    } catch (...) {
+        return {};
+    }
+}
+
+void ProjetoAberto::revisarConflitosMerge(const std::string& itemId, std::set<std::string> trocarHistoricoIds) {
+    resolverDuplicatasEmSegundoPlano(
+        {itemId},
+        [itemId, trocarHistoricoIds](matriz::db::Database& db) {
+            matriz::model::merge::revisarConflitos(db, itemId, trocarHistoricoIds);
+            return std::vector<ResultadoSanitizacao>{};
+        },
+        [itemId](bool ok, std::vector<ResultadoSanitizacao>) {
+            if (ok) EventBus::obterInstancia().dispararItemAlterado(itemId, "metadado");
+        },
+        "Review Merge Conflicts");
 }
 
 std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pastaColecao) const {
@@ -4508,6 +4524,9 @@ std::vector<ProjetoAberto::ColecaoEmbutida> ProjetoAberto::listarColecoesEmbutid
 std::set<std::string> ProjetoAberto::itensDaColecaoEmbutida(const std::string& chave) const {
     std::set<std::string> out;
     if (!projeto_) return out;
+    // Fase 4: não é view do schema (bancos antigos não a teriam) — vem direto
+    // do histórico de merge.
+    if (chave == "merge_conflitos") return matriz::model::merge::itensComConflitoPendente(projeto_->registro());
     try {
         auto stmt = projeto_->registro().prepare("SELECT DISTINCT item_id FROM colecao_embutida WHERE colecao = ?");
         stmt.bind(1, matriz::db::Value::of(chave));

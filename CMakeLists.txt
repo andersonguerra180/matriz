@@ -363,6 +363,8 @@ target_sources(matriz PRIVATE
     Source/Model/NotasEstruturadas.cpp
     Source/Model/CompactacaoRegistro.cpp
     Source/Model/NomesCanonicos.cpp
+    Source/Model/MergeFichas.cpp
+    Source/Ui/ConflitosMergeDialog.cpp
     Source/Ui/NotesEstruturadasComponent.cpp
     Source/Ingest/LightroomImporter.cpp
     Source/Ingest/Loudness.cpp

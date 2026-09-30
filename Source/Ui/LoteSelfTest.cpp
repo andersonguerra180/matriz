@@ -33,6 +33,7 @@
 #include "../Ficha/AutocompleteHistorico.h"
 #include "InitialRelinkDialog.h"
 #include "DuplicatesWorkspaceComponent.h"
+#include "ConflitosMergeDialog.h"
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
@@ -572,6 +573,154 @@ void rodarTestesPacote(const Checar& checar) {
         checar(false, juce::String("package selftest (intake): ") + e.what());
     }
     raiz.deleteRecursively();
+}
+
+// ---------------------------------------------------------------------------
+// Pacote de collection — Fase 4: resolver duplicata junta as fichas.
+// ---------------------------------------------------------------------------
+void rodarTestesMerge(const Checar& checar) {
+    namespace mg = matriz::model::merge;
+    using matriz::db::Value;
+    std::cout << "\n-- Collection package, phase 4: resolving a duplicate merges the records --\n";
+    checar(mg::datasCompativeis("2015", "12/03/2015") && mg::datasCompativeis("03/2015", "12/03/2015") &&
+               mg::datasCompativeis("2015-03-12", "12/03/2015") && !mg::datasCompativeis("2015", "2016") &&
+               !mg::datasCompativeis("04/2015", "12/03/2015"),
+           "compatible dates: \"2015\" x \"12/03/2015\", \"03/2015\" x \"12/03/2015\"; different years/months are not");
+    {
+        std::string maisPrecisa;
+        mg::datasCompativeis("2015", "2015-03-12", &maisPrecisa);
+        checar(maisPrecisa == "2015-03-12", "the more precise of two compatible dates is kept");
+    }
+
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_merge_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Merge";
+        params.prefixoNomenclatura = "MRG";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("A"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const std::string a = inserirItem(reg, projetoId, "MRG-1", false);  // mantido
+        const std::string b = inserirItem(reg, projetoId, "MRG-2", false);  // descartado
+        pa.definirTags(a, {"Show"});
+        pa.salvarMetadado(a, "ano", "2015");
+        pa.salvarMetadado(a, "dc_title", "Titulo A");
+        pa.salvarMetadado(a, "dc_subject", "Show");
+        pa.adicionarObservacao(a, "entrada", 1000, "t");
+        reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'show')",
+                {Value::of(matriz::model::novoUuid()), Value::of(b)});
+        pa.adicionarTag(b, "Tour");
+        pa.salvarMetadado(b, "ano", "12/03/2015");
+        pa.salvarMetadado(b, "dc_title", "Titulo B");
+        pa.salvarMetadado(b, "collection_type", "Concert");
+        pa.salvarMetadado(b, "dc_subject", "Backstage");
+        pa.adicionarObservacao(b, "entrada", 1000, "t");
+        pa.adicionarObservacao(b, "saida", 2000, "t");
+        reg.run("INSERT INTO asset_geolocation (asset_id, latitude, longitude, city, source) "
+                "VALUES (?, -22.9, -43.2, 'Rio de Janeiro', 'USER_COORDINATES')",
+                {Value::of(b)});
+
+        std::optional<std::vector<mg::Conflito>> simulados;
+        pa.simularJuncaoEmSegundoPlano(a, b, [&](std::vector<mg::Conflito> c) { simulados = std::move(c); });
+        esperarAte([&] { return simulados.has_value(); }, 20000);
+        checar(simulados && simulados->size() == 1 && (*simulados)[0].campo == "dc_title" &&
+                   colunaDoItem(reg, "ano", a) == "2015",
+               "preview (nothing written): only the title is a real conflict; the event date is compatible");
+
+        auto resolver = [&](std::set<std::string> usarDescartado) {
+            std::optional<bool> ok;
+            pa.resolverDuplicatasEmSegundoPlano(
+                {a, b},
+                [a, b, usarDescartado](matriz::db::Database& db) {
+                    return std::vector<ProjetoAberto::ResultadoSanitizacao>{
+                        ProjetoAberto::sanitizarDuplicata(db, a, b, usarDescartado)};
+                },
+                [&](bool r, std::vector<ProjetoAberto::ResultadoSanitizacao>) { ok = r; });
+            esperarAte([&] { return ok.has_value(); }, 20000);
+            return ok.value_or(false);
+        };
+        checar(resolver({}), "KEEP FILE 1 runs in the background, in one transaction");
+        checar(tagsDoItem(reg, a) == (std::vector<std::string>{"Show", "Tour"}),
+               "lists add up: tags \"Show\" + \"show\"/\"Tour\" -> Show, Tour");
+        checar(colunaDoItem(reg, "dc_subject", a) == "Show, Backstage", "subjects add up");
+        checar(pa.observacoesDoItem(a).size() == 2, "markers add up; the identical one (same time, same text) is not duplicated");
+        checar(colunaDoItem(reg, "collection_type", a) == "Concert", "empty CONTENT on the kept item is filled");
+        {
+            auto geo = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, a);
+            checar(geo && geo->city == "Rio de Janeiro", "empty GEO LOCATION on the kept item is filled");
+        }
+        checar(colunaDoItem(reg, "ano", a) == "12/03/2015", "compatible dates: the more precise one stays");
+        checar(colunaDoItem(reg, "dc_title", a) == "Titulo A", "real conflict: the kept item's value stays");
+        auto pend = pa.conflitosMergePendentes(a);
+        checar(pend.size() == 1 && pend[0].campo == "dc_title" && pend[0].valorAlternativo == "Titulo B" &&
+                   pend[0].origem == "duplicate resolved",
+               "the losing value is in the item history, with its origin");
+        checar(pa.itensDaColecaoEmbutida("merge_conflitos").count(a) == 1, "the kept item shows up in \"Merge conflicts\"");
+        checar(colunaDoItem(reg, "estado", b) == "duplicata" && juce::String(colunaDoItem(reg, "notas_livres", a)).contains("merge conflict"),
+               "the discarded side is handled as before (state duplicata) and the notes get one short line");
+
+        checar(pa.desfazer(), "Undo is available");
+        checar(tagsDoItem(reg, a) == std::vector<std::string>{"Show"} && colunaDoItem(reg, "ano", a) == "2015" &&
+                   colunaDoItem(reg, "collection_type", a).empty() && pa.observacoesDoItem(a).size() == 1 &&
+                   !matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg, a) &&
+                   colunaDoItem(reg, "estado", b) == "capturado" && pa.conflitosMergePendentes(a).empty(),
+               "Undo puts both records back exactly as they were");
+
+        checar(resolver({"dc_title"}) && colunaDoItem(reg, "dc_title", a) == "Titulo B",
+               "the operator can pick the other value in the conflict screen");
+        pend = pa.conflitosMergePendentes(a);
+        checar(pend.size() == 1 && pend[0].valorAlternativo == "Titulo A", "...and then the kept item's old value is in the history");
+        pa.revisarConflitosMerge(a, {pend[0].historicoId});
+        esperarAte([&] { return pa.conflitosMergePendentes(a).empty(); }, 20000);
+        checar(colunaDoItem(reg, "dc_title", a) == "Titulo A" && pa.itensDaColecaoEmbutida("merge_conflitos").count(a) == 0,
+               "review: the value is recoverable from the history, and the item leaves \"Merge conflicts\"");
+
+        // Origem "pacote" no histórico.
+        const std::string c = inserirItem(reg, projetoId, "MRG-3", false);
+        const std::string d = inserirItem(reg, projetoId, "MRG-4", false);
+        pa.salvarMetadado(c, "dc_description", "daqui");
+        pa.salvarMetadado(d, "dc_description", "do pacote");
+        reg.run("INSERT INTO item_campo (id, item_id, campo_id, valor, fonte, atualizado_em) "
+                "VALUES (?, ?, 'pacote_origem', 'Pacote X', 'leitura_tecnica', ?)",
+                {Value::of(matriz::model::novoUuid()), Value::of(d), Value::of(matriz::model::agoraIso8601())});
+        std::optional<bool> ok;
+        pa.resolverDuplicatasEmSegundoPlano(
+            {c, d}, [c, d](matriz::db::Database& db) {
+                return std::vector<ProjetoAberto::ResultadoSanitizacao>{ProjetoAberto::sanitizarDuplicata(db, c, d)};
+            },
+            [&](bool r, std::vector<ProjetoAberto::ResultadoSanitizacao>) { ok = r; });
+        esperarAte([&] { return ok.has_value(); }, 20000);
+        pend = pa.conflitosMergePendentes(c);
+        checar(pend.size() == 1 && pend[0].origem == "package Pacote X", "a value from a package names the package as origin");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("merge selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
+
+    // Tela de conflitos lado a lado: o do mantido vem marcado; trocar devolve a chave.
+    {
+        std::optional<std::set<std::string>> trocadas;
+        ConflitosMergeDialog::mostrar("t", "i", "kept", "other",
+                                      {{"k1", "dc_title", "A", "B"}, {"k2", "ano", "2015", "2016"}},
+                                      [&](bool confirmado, std::set<std::string> t) { if (confirmado) trocadas = t; });
+        ConflitosMergeDialog* dlg = nullptr;
+        esperarAte([&] {
+            auto* mcm = juce::ModalComponentManager::getInstance();
+            for (int i = 0; i < mcm->getNumModalComponents(); ++i)
+                if (auto* dw = dynamic_cast<juce::DialogWindow*>(mcm->getModalComponent(i)))
+                    if ((dlg = dynamic_cast<ConflitosMergeDialog*>(dw->getContentComponent())) != nullptr) return true;
+            return false;
+        }, 5000);
+        checar(dlg != nullptr, "the conflict screen opens");
+        if (dlg) {
+            dlg->escolherOutroParaTeste(1);
+            dlg->confirmarParaTeste();
+        }
+        bombear(100);
+        checar(trocadas && *trocadas == std::set<std::string>{"k2"}, "only the rows switched to the other value come back");
+    }
 }
 
 } // namespace
@@ -2188,10 +2337,15 @@ int rodarLoteSelfTest() {
         checar(texto("SELECT dc_creator FROM item WHERE id = ?", manter) == "Creator Keep", "a filled field of the kept item is not overwritten");
         checar(texto("SELECT COUNT(*) FROM item_tag WHERE item_id = ?", manter) == "2", "tags are merged (union)");
         const std::string notasK = texto("SELECT notas_livres FROM item WHERE id = ?", manter);
-        checar(juce::String(notasK).startsWith("nota do mantido") && juce::String(notasK).contains("Creator Drop")
+        // Fase 4 (pacote de collection): o valor divergente vai pro item_historico
+        // (recuperável); nas notas fica só uma linha curta apontando pra ele.
+        checar(juce::String(notasK).startsWith("nota do mantido") && juce::String(notasK).contains("1 merge conflict")
                    && juce::String(notasK).contains("nota do descartado") && juce::String(notasK).contains("DUP-DROP")
                    && juce::String(notasK).contains("originais/DUP-DROP.wav"),
-               "kept notes: appended (not overwritten) with differing value, duplicate notes, name and location");
+               "kept notes: appended (not overwritten) with a conflict line, duplicate notes, name and location");
+        checar(texto("SELECT valor_anterior FROM item_historico WHERE item_id = ? AND campo_id = 'dc_creator'", manter) ==
+                   "Creator Drop",
+               "the differing value (Creator Drop) is in the kept item's history");
         checar(juce::String(texto("SELECT notas_livres FROM item WHERE id = ?", descartar)).startsWith("nota do descartado"),
                "discarded notes appended, not overwritten");
         checar(texto("SELECT COUNT(*) FROM preservation_event WHERE item_id = ? AND event_type = 'VALIDATION'", descartar) == "1",
@@ -2494,6 +2648,8 @@ int rodarLoteSelfTest() {
                 dwLote.gruposDetectados_.push_back(par(x, y));
             }
             dwLote.aplicarEscolhaGlobal(1);
+            // Fase 4: a resolução roda em background; espera o fim.
+            esperarAte([&] { return dwLote.gruposDetectados_.empty(); });
         }
         EventBus::obterInstancia().removerListener(&contador);
         checar(contador.recarga == 1 && contador.porItem == 0,
@@ -2528,11 +2684,13 @@ int rodarLoteSelfTest() {
                 png.writeImageToStream(dw.createComponentSnapshot(dw.getLocalBounds()), *out);
         }
         dw.aplicarEscolhaGlobal(5);  // manter a primeira no backup
+        esperarAte([&] { return dw.gruposDetectados_.size() == 1; });
         checar(estado(a2) == "duplicata" && estado(a1) != "duplicata", "first in backup: pair A keeps file 1");
         checar(dw.gruposDetectados_.size() == 1 && dw.gruposDetectados_.front().original.itemId == b1 &&
                    estado(b1) != "duplicata" && estado(b2) != "duplicata",
                "no backup on either side: pair B stays for a manual decision (flagged)");
         dw.aplicarEscolhaGlobal(4);  // manter a ingestão mais recente
+        esperarAte([&] { return dw.gruposDetectados_.empty(); });
         checar(estado(b2) == "duplicata" && estado(b1) != "duplicata" && dw.gruposDetectados_.empty(),
                "most recent ingest: pair B keeps the newer file");
     } catch (const std::exception& e) {
@@ -3021,6 +3179,7 @@ int rodarLoteSelfTest() {
 
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
+    rodarTestesMerge(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

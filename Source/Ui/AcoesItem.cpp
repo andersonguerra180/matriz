@@ -1,3 +1,4 @@
+#include "ConflitosMergeDialog.h"
 #include "AcoesItem.h"
 
 #include "../Consolidacao/Mascara.h"
@@ -33,6 +34,7 @@ enum Comando {
     kRecarregarArquivo,
     kSubstituirArquivo,
     kObterExif,
+    kRevisarConflitosMerge,
     // Ids das pastas de destino ("Enviar para pasta") começam aqui, pra
     // nunca colidirem com os comandos fixos acima por mais que a lista de
     // pastas cresça.
@@ -409,6 +411,9 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kMostrarNaOrigem, matriz::i18n::t("acoes.mostrar_na_origem"), umSo);
     menu.addItem(kCopiarCaminho, matriz::i18n::t("acoes.copiar_caminho"), umSo);
     menu.addItem(kVerDuplicatas, matriz::i18n::t("acoes.ver_duplicatas"), umSo);
+    // Fase 4: valores que perderam ao juntar duplicatas.
+    if (umSo && projeto.temConflitoMergePendente(itemIds.front()))
+        menu.addItem(kRevisarConflitosMerge, matriz::i18n::t("acoes.revisar_conflitos"));
     return menu;
 }
 
@@ -547,6 +552,24 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
                 break;
             }
             if (ganchos.aoFiltrarItens) ganchos.aoFiltrarItens(std::move(duplicatas));
+            break;
+        }
+
+        case kRevisarConflitosMerge: {
+            const std::string id = itemIds.front();
+            std::vector<ConflitosMergeDialog::Linha> linhas;
+            for (const auto& c : projeto.conflitosMergePendentes(id))
+                linhas.push_back({c.historicoId, c.campo, matriz::model::merge::resumoDoValor(c.campo, c.valorAtual),
+                                  matriz::model::merge::resumoDoValor(c.campo, c.valorAlternativo) + "  (" +
+                                      juce::String::fromUTF8(c.origem.c_str()) + ")"});
+            if (linhas.empty()) break;
+            ProjetoAberto* p = &projeto;
+            std::weak_ptr<bool> vivo = projeto.tokenVida();
+            ConflitosMergeDialog::mostrar(matriz::i18n::t("merge.revisar_titulo"), matriz::i18n::t("merge.revisar_intro"),
+                                          matriz::i18n::t("merge.col_atual"), matriz::i18n::t("merge.col_outro"),
+                                          std::move(linhas), [p, vivo, id](bool ok, std::set<std::string> trocar) {
+                                              if (ok && vivo.lock()) p->revisarConflitosMerge(id, std::move(trocar));
+                                          });
             break;
         }
 

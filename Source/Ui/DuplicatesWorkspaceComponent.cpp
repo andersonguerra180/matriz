@@ -11,6 +11,7 @@
 #include "DuplicateResolutionDialog.h"
 #include "../Model/ProjectLog.h"
 #include "EventBus.h"
+#include "ConflitosMergeDialog.h"
 
 namespace matriz::ui {
 
@@ -48,6 +49,14 @@ namespace {
         // ~2.000 itens) fazia a grade rodar atualizarItemEmMemoria ~2.000 vezes
         // na message thread (43 s travada) e cada chamada invalidava o
         // snapshot em andamento — a grade ficava vazia.
+        // Fase 4: quantos itens mantidos ficaram com conflito (valor perdedor
+        // no histórico) — revisão no filtro "Merge conflicts" do METADATA.
+        int comConflito = 0;
+        for (const auto& r : resultados) if (r.conflitos > 0) ++comConflito;
+        if (comConflito > 0)
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("merge.resolver_titulo"),
+                                                   matriz::i18n::t("duplicatas.conflitos_lote").replace("{n}", juce::String(comConflito)),
+                                                   {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
         constexpr size_t kLimiteItemAItem = 20;
         if (idsAlterados.size() > kLimiteItemAItem) {
             EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
@@ -1529,36 +1538,21 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
             buttonResult = lado;  // 1 = manter arquivo 1, 2 = manter arquivo 2
         }
 
-        auto& db = safeThis->projeto_.projeto().registro();
-        std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
-        try {
-            db.run("BEGIN TRANSACTION", {});
-            
-            // Sanitizar: o lado não escolhido fica no SOURCE e no catálogo
-            // (estado 'duplicata'), só não entra no MAIN — nada é apagado.
-            if (buttonResult == 1) {
-                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
-            }
-            else if (buttonResult == 2) {
-                resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
-            }
-            else if (buttonResult == 3) { // Keep Both — os dois continuam entrando no backup
-                acrescentarNota(db, group.duplicata.itemId,
-                                "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
-                                " by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
-            }
-            
-            db.run("COMMIT", {});
-            publicarSanitizacoes(safeThis->projeto_, resultados, {group.original.itemId, group.duplicata.itemId});
-        } catch (...) {
-            try { db.run("ROLLBACK", {}); } catch (...) {}
-        }
-
-        // Run UI update on MessageThread context
-        juce::MessageManager::callAsync([safeThis, grupoIdx, isPt]() {
-            if (!safeThis) return;
-            if (grupoIdx >= 0 && grupoIdx < static_cast<int>(safeThis->gruposDetectados_.size())) {
-                safeThis->gruposDetectados_.erase(safeThis->gruposDetectados_.begin() + grupoIdx);
+        // Fase 4: tudo em background, numa transação, com Undo. Sanitizar: o
+        // lado não escolhido fica no SOURCE e no catálogo (estado
+        // 'duplicata'), só não entra no MAIN — nada é apagado; a ficha dele é
+        // somada à do mantido.
+        const std::string idOriginal = group.original.itemId, idDuplicata = group.duplicata.itemId;
+        auto aoResolver = [safeThis, idOriginal, idDuplicata, isPt](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+            if (!safeThis || !ok) return;
+            publicarSanitizacoes(safeThis->projeto_, resultados, {idOriginal, idDuplicata});
+            // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
+            auto& grupos = safeThis->gruposDetectados_;
+            auto it = std::find_if(grupos.begin(), grupos.end(), [&](const DuplicateGroup& g) {
+                return g.original.itemId == idOriginal && g.duplicata.itemId == idDuplicata;
+            });
+            if (it != grupos.end()) {
+                grupos.erase(it);
 
                 if (safeThis->gruposDetectados_.empty()) {
                     safeThis->estado_ = State::Clean;
@@ -1573,7 +1567,56 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                 safeThis->resized();
                 safeThis->repaint();
             }
-        });
+        };
+        if (buttonResult == 3) {  // Keep Both — os dois continuam entrando no backup, nada é juntado
+            const juce::String codigoOriginal(group.original.codigoAcervo);
+            safeThis->projeto_.resolverDuplicatasEmSegundoPlano(
+                {idDuplicata},
+                [idDuplicata, codigoOriginal](matriz::db::Database& db) {
+                    acrescentarNota(db, idDuplicata,
+                                    "Validated as a known duplicate pair of " + codigoOriginal +
+                                    " by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                    return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
+                },
+                aoResolver);
+            return;
+        }
+        const bool manterOriginal = buttonResult == 1;
+        const std::string manter = manterOriginal ? idOriginal : idDuplicata;
+        const std::string descartar = manterOriginal ? idDuplicata : idOriginal;
+        const juce::String codigoManter(manterOriginal ? group.original.codigoAcervo : group.duplicata.codigoAcervo);
+        const juce::String codigoDescartar(manterOriginal ? group.duplicata.codigoAcervo : group.original.codigoAcervo);
+        auto juntar = [safeThis, manter, descartar, aoResolver](std::set<std::string> usarDescartado) {
+            if (!safeThis) return;
+            safeThis->projeto_.resolverDuplicatasEmSegundoPlano(
+                {manter, descartar},
+                [manter, descartar, usarDescartado](matriz::db::Database& db) {
+                    return std::vector<ProjetoAberto::ResultadoSanitizacao>{
+                        ProjetoAberto::sanitizarDuplicata(db, manter, descartar, usarDescartado)};
+                },
+                aoResolver);
+        };
+        // Conflito de verdade: mostra os dois valores lado a lado, o do
+        // mantido marcado; sem conflito, junta direto.
+        safeThis->projeto_.simularJuncaoEmSegundoPlano(
+            manter, descartar,
+            [juntar, codigoManter, codigoDescartar](std::vector<matriz::model::merge::Conflito> conflitos) {
+                if (conflitos.empty()) {
+                    juntar({});
+                    return;
+                }
+                std::vector<ConflitosMergeDialog::Linha> linhas;
+                for (const auto& c : conflitos)
+                    linhas.push_back({c.campo, c.campo, matriz::model::merge::resumoDoValor(c.campo, c.valorMantido),
+                                      matriz::model::merge::resumoDoValor(c.campo, c.valorDescartado)});
+                ConflitosMergeDialog::mostrar(
+                    matriz::i18n::t("merge.resolver_titulo"), matriz::i18n::t("merge.resolver_intro"),
+                    matriz::i18n::t("merge.col_mantido").replace("{codigo}", codigoManter),
+                    matriz::i18n::t("merge.col_descartado").replace("{codigo}", codigoDescartar), std::move(linhas),
+                    [juntar](bool confirmado, std::set<std::string> trocados) {
+                        if (confirmado) juntar(std::move(trocados));
+                    });
+            });
     }));
 }
 
@@ -1649,20 +1692,26 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
 void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     if (gruposDetectados_.empty()) return;
 
-    auto& db = projeto_.projeto().registro();
-    std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+    // Fase 4: em background, numa transação, com Undo; as regras de junção
+    // valem sem perguntar (conflitos no histórico + filtro "Merge conflicts").
+    const auto grupos = gruposDetectados_;
     std::vector<std::string> ids;
-    std::vector<DuplicateGroup> paraDecisaoManual;  // critério não se aplica / empate (etapa 9)
-    try {
-        db.run("BEGIN TRANSACTION", {});
-        for (const auto& grupo : gruposDetectados_) {
+    for (const auto& g : grupos) {
+        ids.push_back(g.original.itemId);
+        ids.push_back(g.duplicata.itemId);
+    }
+    auto paraDecisaoManual = std::make_shared<std::vector<DuplicateGroup>>();  // critério não se aplica / empate (etapa 9)
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
+    projeto_.resolverDuplicatasEmSegundoPlano(ids, [grupos, escolha, paraDecisaoManual](matriz::db::Database& db) {
+        std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+        for (const auto& grupo : grupos) {
             const auto& group = grupo;
             int escolhaDoGrupo = escolha;
             if (escolha == 4 || escolha == 5) {
                 const auto c = criteriosDoPar(db, group.original.itemId, group.duplicata.itemId);
                 escolhaDoGrupo = escolha == 4 ? c.maisRecente : c.backupPrimeiro;
                 if (escolhaDoGrupo == 0) {
-                    paraDecisaoManual.push_back(group);
+                    paraDecisaoManual->push_back(group);
                     continue;
                 }
             }
@@ -1675,30 +1724,28 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
                                 "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
                                 "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
             }
-            ids.push_back(group.original.itemId);
-            ids.push_back(group.duplicata.itemId);
         }
-        db.run("COMMIT", {});
-        publicarSanitizacoes(projeto_, resultados, ids);
-    } catch (...) {
-        try { db.run("ROLLBACK", {}); } catch (...) {}
-    }
-
-    gruposDetectados_ = std::move(paraDecisaoManual);
-    if (!gruposDetectados_.empty()) {
-        // Sinalizados no resultado: continuam na lista pra decisão manual.
-        lblStatus_->setText(matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String((int) gruposDetectados_.size())),
-                            juce::dontSendNotification);
-        listaComponent_->updateList(gruposDetectados_);
-        resized();
-        repaint();
-        return;
-    }
-    estado_ = State::Clean;
-    lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
-    viewport_->setVisible(false);
-    resized();
-    repaint();
+        return resultados;
+    }, [safeThis, ids, paraDecisaoManual](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+        if (!safeThis || !ok) return;
+        publicarSanitizacoes(safeThis->projeto_, resultados, ids);
+        safeThis->gruposDetectados_ = *paraDecisaoManual;
+        if (!safeThis->gruposDetectados_.empty()) {
+            // Sinalizados no resultado: continuam na lista pra decisão manual.
+            safeThis->lblStatus_->setText(matriz::i18n::t("duplicatas.manuais")
+                                              .replace("{n}", juce::String((int) safeThis->gruposDetectados_.size())),
+                                          juce::dontSendNotification);
+            safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
+            safeThis->resized();
+            safeThis->repaint();
+            return;
+        }
+        safeThis->estado_ = State::Clean;
+        safeThis->lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
+        safeThis->viewport_->setVisible(false);
+        safeThis->resized();
+        safeThis->repaint();
+    });
 }
 
 void DuplicatesWorkspaceComponent::atualizarBotoesSelecionados() {
@@ -1803,16 +1850,20 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
         [safeThis, indices](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) {
             if (!safeThis || !confirmado) return;
 
-            auto& db = safeThis->projeto_.projeto().registro();
-            std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+            // Fase 4: em background, numa transação, com Undo.
+            std::vector<std::pair<DuplicateGroup, int>> escolhas;
             std::vector<std::string> ids;
-            try {
-                db.run("BEGIN TRANSACTION", {});
-                for (size_t i = 0; i < indices.size(); ++i) {
-                    int idx = indices[i];
-                    if (idx < 0 || idx >= static_cast<int>(safeThis->gruposDetectados_.size())) continue;
-                    const auto& group = safeThis->gruposDetectados_[static_cast<size_t>(idx)];
-                    int action = resultado[i].action;
+            for (size_t i = 0; i < indices.size() && i < resultado.size(); ++i) {
+                int idx = indices[i];
+                if (idx < 0 || idx >= static_cast<int>(safeThis->gruposDetectados_.size())) continue;
+                const auto& group = safeThis->gruposDetectados_[static_cast<size_t>(idx)];
+                escolhas.push_back({group, resultado[i].action});
+                ids.push_back(group.original.itemId);
+                ids.push_back(group.duplicata.itemId);
+            }
+            safeThis->projeto_.resolverDuplicatasEmSegundoPlano(ids, [escolhas](matriz::db::Database& db) {
+                std::vector<ProjetoAberto::ResultadoSanitizacao> resultados;
+                for (const auto& [group, action] : escolhas) {
 
                     if (action == 0) { // Keep File 1 — o outro fica só no SOURCE, fora do backup
                         resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.original.itemId, group.duplicata.itemId));
@@ -1823,20 +1874,20 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                                         "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
                                         " by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
                     }
-                    ids.push_back(group.original.itemId);
-                    ids.push_back(group.duplicata.itemId);
                 }
-                db.run("COMMIT", {});
+                return resultados;
+            }, [safeThis, ids, escolhas](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+                if (!safeThis || !ok) return;
                 publicarSanitizacoes(safeThis->projeto_, resultados, ids);
-            } catch (...) {
-                try { db.run("ROLLBACK", {}); } catch (...) {}
-            }
-
-            juce::MessageManager::callAsync([safeThis, indices]() {
-                if (!safeThis) return;
-                for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
-                    if (*it >= 0 && *it < static_cast<int>(safeThis->gruposDetectados_.size()))
-                        safeThis->gruposDetectados_.erase(safeThis->gruposDetectados_.begin() + *it);
+                // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
+                auto& grupos = safeThis->gruposDetectados_;
+                for (const auto& escolha : escolhas) {
+                    const DuplicateGroup& group = escolha.first;
+                    grupos.erase(std::remove_if(grupos.begin(), grupos.end(), [&](const DuplicateGroup& g) {
+                                     return g.original.itemId == group.original.itemId &&
+                                            g.duplicata.itemId == group.duplicata.itemId;
+                                 }),
+                                 grupos.end());
                 }
                 safeThis->atualizarListaEStatusAposResolucao();
             });

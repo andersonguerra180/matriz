@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include "../Model/MergeFichas.h"
 #include <string>
 #include <vector>
 
@@ -135,12 +136,33 @@ public:
     // log.md fora da message thread.
     struct ResultadoSanitizacao {
         std::string codigoMantido, codigoDescartado;
+        std::string idMantido;
         int camposSomados = 0;
+        int conflitos = 0;  // Fase 4: valores diferentes de verdade, perdedor no item_historico
         bool descartadoJaNoMain = false;
         juce::StringArray linhasLog;
     };
+    // usarDescartado: campos de conflito em que o operador escolheu o valor do
+    // descartado na tela de conflitos (vazio = vale o do mantido).
     static ResultadoSanitizacao sanitizarDuplicata(matriz::db::Database& registro, const std::string& manterId,
-                                                   const std::string& descartarId);
+                                                   const std::string& descartarId,
+                                                   const std::set<std::string>& usarDescartado = {});
+
+    // Resolução de duplicatas em background (Fase 4): `corpo` roda numa
+    // transação só (writeMutex + BEGIN IMMEDIATE), depois de um retrato das
+    // fichas de `itensAfetados` pro Undo (desfazer devolve os dois lados como
+    // estavam). aoConcluir na message thread, só se o projeto ainda existir.
+    using CorpoResolucao = std::function<std::vector<ResultadoSanitizacao>(matriz::db::Database&)>;
+    void resolverDuplicatasEmSegundoPlano(std::vector<std::string> itensAfetados, CorpoResolucao corpo,
+                                          std::function<void(bool ok, std::vector<ResultadoSanitizacao>)> aoConcluir,
+                                          const std::string& descricaoUndo = "Resolve Duplicates");
+    // O que juntar os dois daria (conflitos), sem gravar — em background.
+    void simularJuncaoEmSegundoPlano(const std::string& manterId, const std::string& descartarId,
+                                     std::function<void(std::vector<matriz::model::merge::Conflito>)> aoConcluir);
+    // Filtro "Merge conflicts" e revisão (valores perdedores no histórico).
+    bool temConflitoMergePendente(const std::string& itemId) const;
+    std::vector<matriz::model::merge::ConflitoPendente> conflitosMergePendentes(const std::string& itemId) const;
+    void revisarConflitosMerge(const std::string& itemId, std::set<std::string> trocarHistoricoIds);
 
     // Move o Project pra fora — usado só ao trocar de idioma (Preferences),
     // que reconstrói a árvore de Component inteira do zero (é o jeito mais
@@ -998,6 +1020,9 @@ private:
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
                             AoConcluirEdicaoMain aoConcluir);
     juce::ThreadPool poolMainEdit_{1};
+    // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
+    juce::ThreadPool poolMerge_{1};
+    void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
     bool dirty_ = false;

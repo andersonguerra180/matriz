@@ -822,6 +822,11 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.documents"), "documents", 0});
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
 
+    // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
+    // duplicatas (valor perdedor no histórico), pra revisão.
+    secoesSidebar_.push_back({static_cast<int>(categorias_.size()), matriz::i18n::t("catwork.secao_revisao")});
+    categorias_.push_back({matriz::i18n::t("catwork.merge_conflitos"), "merge_conflitos", 0});
+
     for (size_t i = 0; i < categorias_.size(); ++i) {
         auto btn = std::make_unique<juce::TextButton>(categorias_[i].rotulo);
         btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&homeButtonLf_)
@@ -990,9 +995,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
     }
 
     std::set<std::string> vulneraveisIds;
-    if (libChave == "vulneraveis") {
+    if (libChave == "vulneraveis" || libChave == "merge_conflitos") {
         anyFilter = true;
-        auto ids = projeto_.itensDaColecaoEmbutida("vulneraveis");
+        auto ids = projeto_.itensDaColecaoEmbutida(libChave);
         vulneraveisIds.insert(ids.begin(), ids.end());
     }
 
@@ -1032,7 +1037,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             if (selectedIds.find(item.id) == selectedIds.end()) continue;
         }
 
-        if (libChave == "vulneraveis") {
+        if (libChave == "vulneraveis" || libChave == "merge_conflitos") {
             if (vulneraveisIds.find(item.id) == vulneraveisIds.end()) continue;
         }
 
@@ -1309,6 +1314,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             for (const auto& pair : contagemPorSubject)
                 res.subjects.push_back(pair);
 
+            res.mergeConflitos = static_cast<int>(proj->itensDaColecaoEmbutida("merge_conflitos").size());
             auto colecoes = proj->listarColecoesEmbutidas();
             for (const auto& c : colecoes) {
                 if (c.chave == "revisao") res.revisao = c.contagem;
@@ -1350,6 +1356,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("selected", selCount);
     definirContagem("folders", res.total);
     definirContagem("vulneraveis", res.vulneraveis);
+    definirContagem("merge_conflitos", res.mergeConflitos);
     definirContagem("audio", res.audio);
     definirContagem("video", res.video);
     definirContagem("images", res.img);
