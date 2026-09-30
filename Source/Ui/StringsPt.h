@@ -1777,6 +1777,10 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.auto_titulo_janela", "Auto-organizar: {nome}"},
         {"arvore_backup.auto_falha", "Não foi possível auto-organizar esta pasta. Nada foi alterado."},
         {"arvore_backup.auto_no_main", "Esta pasta já tem arquivos no MAIN e não pode ser auto-organizada: isso os moveria. Use uma pasta que só tenha arquivos ainda sem backup."},
+        {"backup.main_nao_criado", "AINDA NÃO CRIADO"},
+        {"backup.main_criado", "MAIN CRIADO"},
+        {"backup.main_nao_criado_info", "- o MAIN ainda não existe: FAZER BACKUP o cria"},
+        {"backup.main_criado_info", "- o MAIN já existe: novos backups só acrescentam arquivos novos"},
     };
     return strings;
 }

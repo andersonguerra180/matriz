@@ -4461,13 +4461,23 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
     curX += tagW + 10;
 
     // Online/Offline status badge on the far right
-    int statusW = 68;
+    // No MAIN (só modo Coleção) o selo diz também se o MAIN já foi criado: até o 1º backup a pasta
+    // existe, mas está vazia — "ONLINE" sozinho dava a entender que já havia backup.
+    const bool mostrarSeloMain = isOriginal && projeto_.projeto().modo() != matriz::model::Modo::Catalogo;
+    const bool mainAindaNaoCriado = mostrarSeloMain && !mainSelado_;
+    int statusW = mostrarSeloMain ? 118 : 68;
     juce::Rectangle<int> statusArea(width - statusW - 8, (height - 18) / 2, statusW, 18);
-    g.setColour(dest.online ? tk.estadoQcOk.withAlpha(0.85f) : tk.textoTerciario.withAlpha(0.5f));
+    juce::String textoStatus = dest.online ? "ONLINE" : "OFFLINE";
+    juce::Colour corStatus = dest.online ? tk.estadoQcOk.withAlpha(0.85f) : tk.textoTerciario.withAlpha(0.5f);
+    if (mostrarSeloMain && dest.online) {
+        textoStatus = matriz::i18n::t(mainAindaNaoCriado ? "backup.main_nao_criado" : "backup.main_criado");
+        corStatus = mainAindaNaoCriado ? tk.alerta : tk.estadoQcOk.withAlpha(0.85f);
+    }
+    g.setColour(corStatus);
     g.fillRoundedRectangle(statusArea.toFloat(), 4.0f);
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
-    g.drawText(dest.online ? "ONLINE" : "OFFLINE", statusArea, juce::Justification::centred, true);
+    g.drawText(textoStatus, statusArea, juce::Justification::centred, true);
 
     // Cloud icon on right side before status area, if cloud destination
     bool ehNuvem = ehDestinoNuvem(dest.caminho, dest.rotulo, dest.papel);
@@ -4500,6 +4510,8 @@ void BackupWorkspaceComponent::listBoxItemClicked(int rowNumber, const juce::Mou
         juce::String tipoStr = (dest.papel == "ORIGINAL")
             ? (isPt ? juce::String::fromUTF8("[MAIN - Versão Oficial]") : "[MAIN - Official Version]")
             : (isPt ? juce::String::fromUTF8("[CLONE - Cópia de Backup]") : "[CLONE - Backup Copy]");
+        if (dest.papel == "ORIGINAL" && projeto_.projeto().modo() != matriz::model::Modo::Catalogo)
+            tipoStr += "  " + matriz::i18n::t(mainSelado_ ? "backup.main_criado_info" : "backup.main_nao_criado_info");
         juce::String textoInfo = (isPt ? juce::String::fromUTF8("Selecionado: ") : "Selected: ") + loc + "  " + tipoStr;
         labelDestInfo_->setText(textoInfo, juce::dontSendNotification);
         labelDestInfo_->setTooltip(textoInfo);

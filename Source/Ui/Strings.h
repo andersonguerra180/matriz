@@ -1767,6 +1767,10 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"arvore_backup.auto_titulo_janela", "Auto-organize: {nome}"},
         {"arvore_backup.auto_falha", "This folder could not be auto-organized. Nothing was changed."},
         {"arvore_backup.auto_no_main", "This folder already has files in the MAIN, so it cannot be auto-organized: that would move them. Use a folder that only has files not yet backed up."},
+        {"backup.main_nao_criado", "NOT CREATED YET"},
+        {"backup.main_criado", "MAIN CREATED"},
+        {"backup.main_nao_criado_info", "- the MAIN does not exist yet: MAKE BACKUP creates it"},
+        {"backup.main_criado_info", "- the MAIN already exists: new backups only add new files"},
     };
     return strings;
 }
