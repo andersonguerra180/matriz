@@ -219,14 +219,8 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
         it->titulo = *tit;
         if (!tit->empty()) it->nomeOriginalArquivo = *tit;
     }
-    auto anoStr = projeto_.lerMetadado(itemId, "ano");
-    it->anoSoDoSistemaDeArquivos = false;  // relido da ficha: não é mais palpite do disco
-    if (anoStr.has_value() && !anoStr->empty()) {
-        juce::String s(*anoStr);
-        if (s.containsOnly("0123456789")) it->ano = s.getIntValue();
-    } else {
-        it->ano.reset();
-    }
+    // Só o EVENT DATE (item.ano, o que a ficha mostra).
+    it->ano = projeto_.anoDoEventDate(itemId);
     auto ct = projeto_.lerMetadado(itemId, "content_type");
     it->contentType = ct.has_value() && !ct->empty() ? ct : std::nullopt;
     auto col = projeto_.lerMetadado(itemId, "collection_type");

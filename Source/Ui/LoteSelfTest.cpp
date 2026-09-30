@@ -733,6 +733,8 @@ void definirCampoRaiz(matriz::db::Database& reg, const std::string& itemId, cons
             "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor",
             {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(campo),
              matriz::db::Value::of(valor), matriz::db::Value::of(matriz::model::agoraIso8601())});
+    // EVENT DATE é a coluna item.ano (é o que a ficha mostra e o que o METADATA/auto-organização leem).
+    if (campo == "ano") reg.run("UPDATE item SET ano = ? WHERE id = ?", {matriz::db::Value::of(valor), matriz::db::Value::of(itemId)});
 }
 
 void rodarTestesLoteAjustes(const Checar& checar) {
@@ -766,7 +768,7 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         checar(pos2.at("solto").y >= 300 + 84, "a new root goes below the saved folders instead of on top of them");
     }
 
-    std::cout << "\n-- METADATA: Unknown year ignores the file date on disk (item A) + auto-organize (item F) --\n";
+    std::cout << "\n-- METADATA: Unknown = no EVENT DATE (item A) + auto-organize (item F) --\n";
     juce::File raizAj = juce::File::getSpecialLocation(juce::File::tempDirectory)
                             .getChildFile("matriz_lote_ajustes_" + juce::Uuid().toDashedString());
     try {
@@ -790,10 +792,16 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         const auto i3 = inserirItemComArquivo(reg, projetoId, "AJU-3", arquivoReal("tres.jpg"));    // EXIF 2011
         const auto i4 = inserirItemComArquivo(reg, projetoId, "AJU-4", arquivoReal("quatro.wav"));  // dc_created 2020
         const auto i5 = inserirItemComArquivo(reg, projetoId, "AJU-5", arquivoReal("cinco.wav"));   // ficará na subpasta manual
-        definirCampoRaiz(reg, i2, "ano", "2019");
-        definirCampoRaiz(reg, i4, "dc_created", "2020-03-04");
+        definirCampoRaiz(reg, i2, "ano", "12/03/2019");  // EVENT DATE em data completa, não só o ano
+        definirCampoRaiz(reg, i3, "ano", "2011");
+        definirCampoRaiz(reg, i4, "ano", "2020");
+        // Só EXIF / dc_created / data do disco, sem EVENT DATE: Unknown.
+        const auto i7 = inserirItemComArquivo(reg, projetoId, "AJU-7", arquivoReal("sete.jpg"));
+        const auto i8 = inserirItemComArquivo(reg, projetoId, "AJU-8", arquivoReal("oito.wav"));
         reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
-                {Value::of("{\"exifDataOriginal\":\"2011:05:01 10:00:00\"}"), Value::of(i3)});
+                {Value::of("{\"exifDataOriginal\":\"2011:05:01 10:00:00\"}"), Value::of(i7)});
+        definirCampoRaiz(reg, i7, "dc_created", "2020-03-04");
+        definirCampoRaiz(reg, i8, "ano", "0");
         reg.run("UPDATE item SET collection_type = 'Photo' WHERE id IN (?, ?)", {Value::of(i2), Value::of(i3)});
         reg.run("UPDATE item SET collection_type = 'Video' WHERE id = ?", {Value::of(i4)});
 
@@ -806,15 +814,19 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         const auto* r1 = achar(i1);
         const auto* r2 = achar(i2);
         const auto* r3 = achar(i3);
-        checar(r1 && r1->anoDesconhecido() && (!r1->ano.has_value() || r1->anoSoDoSistemaDeArquivos),
-               "a year guessed only from the file on disk still counts as Unknown");
-        checar(r2 && r2->ano == 2019 && !r2->anoSoDoSistemaDeArquivos && !r2->anoDesconhecido(),
-               "an EVENT DATE year is not Unknown");
-        checar(r3 && !r3->anoDesconhecido(), "a year from the file metadata (EXIF) is not Unknown");
+        checar(r1 && r1->anoDesconhecido() && !r1->ano.has_value(),
+               "no EVENT DATE (the file date on disk does not count) is Unknown");
+        checar(r2 && r2->ano == 2019 && !r2->anoDesconhecido(),
+               "an EVENT DATE (full date 12/03/2019) is not Unknown and gives its year");
+        checar(r3 && r3->ano == 2011 && !r3->anoDesconhecido(), "a filled EVENT DATE is not Unknown");
+        const auto* r7 = achar(i7);
+        const auto* r8 = achar(i8);
+        checar(r7 && r7->anoDesconhecido(), "EXIF / dc_created without an EVENT DATE is still Unknown");
+        checar(r8 && r8->anoDesconhecido(), "EVENT DATE = 0 is Unknown");
 
         // ----- F: segmentos de pasta (uma consulta por lote)
         using N = matriz::consolidacao::NivelHierarquia;
-        const auto segs = pa.segmentosDeOrganizacao({i1, i2, i3, i4},
+        const auto segs = pa.segmentosDeOrganizacao({i1, i2, i3, i4, i7, i8},
                                                      {N::Ano, N::ContentType, N::TipoArquivo, N::Origem, N::Artista, N::Subject, N::TipoMidia});
         auto junta = [&](const std::string& id) {
             juce::StringArray a;
@@ -824,8 +836,10 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         checar(junta(i1) == "No year/No content/WAV/No source medium/No creator/No subject/digital_audio",
                "empty values fall back to the backup's labels; the file date on disk is NOT a year (" + junta(i1) + ")");
         checar(junta(i2).startsWith("2019/Photo/WAV/"), "YEAR comes from EVENT DATE, CONTENT from collection_type, FILE TYPE from the extension");
-        checar(junta(i3).startsWith("2011/Photo/JPG/"), "YEAR falls back to the EXIF year");
-        checar(junta(i4).startsWith("2020/Video/"), "YEAR falls back to dc_created");
+        checar(junta(i3).startsWith("2011/Photo/JPG/"), "YEAR comes from EVENT DATE");
+        checar(junta(i4).startsWith("2020/Video/"), "YEAR comes from EVENT DATE (2020)");
+        checar(junta(i7).startsWith("No year/") && junta(i8).startsWith("No year/"),
+               "EXIF / dc_created without EVENT DATE, and EVENT DATE 0, go to No year");
 
         // ----- F: organizar
         const std::string inbox = pa.criarPastaAcervo("Inbox", std::nullopt, mapa);
@@ -869,7 +883,7 @@ void rodarTestesLoteAjustes(const Checar& checar) {
         const auto r = pa.aplicarAutoOrganizacao(inbox, "ano,content_type");
         checar(r.status == ProjetoAberto::StatusAutoOrg::Ok && r.itensMovidos == 4, "YEAR > CONTENT moved the 4 loose items");
         checar(caminhoDaPasta(pastaDoItem(i2).front().id) == "Inbox/2019/Photo", "EVENT DATE 2019 + Photo -> Inbox/2019/Photo");
-        checar(caminhoDaPasta(pastaDoItem(i3).front().id) == "Inbox/2011/Photo", "EXIF 2011 + Photo -> Inbox/2011/Photo");
+        checar(caminhoDaPasta(pastaDoItem(i3).front().id) == "Inbox/2011/Photo", "EVENT DATE 2011 + Photo -> Inbox/2011/Photo");
         checar(caminhoDaPasta(pastaDoItem(i4).front().id) == "Inbox/2020/Video", "dc_created 2020 + Video -> Inbox/2020/Video");
         checar(caminhoDaPasta(pastaDoItem(i1).front().id) == "Inbox/No year/No content", "empty values go to No year/No content");
         checar(pastaDoItem(i2).front().regra == "@auto", "generated subfolders are marked AUTO");

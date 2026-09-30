@@ -295,8 +295,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "a.caminho_relativo, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
         " AND c.campo_id = 'origem'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
-        " AND c.campo_id = 'ano'), "
+        "i.ano, "
         "a.caminho_absoluto_origem, "
         "(SELECT ap.nome FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id WHERE aip.item_id = i.id LIMIT 1), "
         "a.tamanho_bytes, "
@@ -326,8 +325,6 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "LEFT JOIN vault v ON v.id = a.vault_id "
         "WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
 
-    auto yrStmt = registro.prepare(
-        "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('dc_created', 'ano', 'data_criacao') AND valor IS NOT NULL AND valor != '' LIMIT 1");
     auto minStmt = indice.prepare(
         "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
     auto tagStmt = registro.prepare(
@@ -352,8 +349,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         }
         if (!stmt.columnIsNull(10)) r.origem = stmt.columnText(10);
         if (!stmt.columnIsNull(11)) {
-            juce::String anoTexto = stmt.columnText(11);
-            if (anoTexto.containsOnly("0123456789") && anoTexto.isNotEmpty()) r.ano = anoTexto.getIntValue();
+            // EVENT DATE (item.ano, o mesmo que a ficha mostra) em qualquer formato ("2019",
+            // "2019-05-04", "04/05/2019"): vale o ano dele. Vazio ou "0" = sem ano (Unknown).
+            r.ano = extrairAnoDeData(juce::String::fromUTF8(stmt.columnText(11).c_str()));
         }
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
@@ -394,46 +392,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         if (!stmt.columnIsNull(25)) {
             r.duracaoSegundos = stmt.columnReal(25);
         }
-        if (!r.ano.has_value() && !stmt.columnIsNull(26)) {
-            juce::String exifDt = stmt.columnText(26);
-            for (int i = 0; i + 3 < exifDt.length(); ++i) {
-                if (std::isdigit(exifDt[i]) && std::isdigit(exifDt[i+1]) &&
-                    std::isdigit(exifDt[i+2]) && std::isdigit(exifDt[i+3])) {
-                    int yVal = exifDt.substring(i, i + 4).getIntValue();
-                    if (yVal > 1800 && yVal <= juce::Time::getCurrentTime().getYear() + 1) { r.ano = yVal; break; }
-                }
-            }
-        }
-
-        // Fallback: extração de ano de criação de item_campo (statement preparado uma vez)
-        if (!r.ano.has_value()) {
-            try {
-                yrStmt.reset();
-                yrStmt.bind(1, matriz::db::Value::of(r.id));
-                if (yrStmt.step()) {
-                    juce::String val = yrStmt.columnText(0);
-                    for (int i = 0; i + 3 < val.length(); ++i) {
-                        if (std::isdigit(val[i]) && std::isdigit(val[i+1]) &&
-                            std::isdigit(val[i+2]) && std::isdigit(val[i+3])) {
-                            int yVal = val.substring(i, i + 4).getIntValue();
-                            if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; break; }
-                        }
-                    }
-                }
-            } catch (...) {}
-
-            // Último recurso (como antes de 759dbd2): data do arquivo de origem.
-            if (!r.ano.has_value() && !r.offline && !camAbs.empty()) {
-                try {
-                    juce::File fileObj(camAbs);
-                    if (fileObj.existsAsFile()) {
-                        int yVal = fileObj.getCreationTime().getYear();
-                        if (yVal <= 1970 || yVal > 2025) yVal = fileObj.getLastModificationTime().getYear();
-                        if (yVal > 1800 && yVal <= 2025) { r.ano = yVal; r.anoSoDoSistemaDeArquivos = true; }
-                    }
-                } catch (...) {}
-            }
-        }
+        // Sem EVENT DATE = Unknown: nem EXIF, nem dc_created, nem a data do arquivo no disco entram
+        // aqui (o ingest já copia o que achou para item.ano; o que sobra vazio é Unknown de verdade).
 
         // Check thumbnail from indice database (statement preparado uma vez)
         try {
@@ -2598,6 +2558,23 @@ struct LinhaPasta {
 
 } // namespace
 
+std::optional<int> ProjetoAberto::extrairAnoDeData(const juce::String& texto) {
+    const auto ano = anoDeTextoDeData(texto);
+    if (ano.isEmpty()) return std::nullopt;
+    return ano.getIntValue();
+}
+
+std::optional<int> ProjetoAberto::anoDoEventDate(const std::string& itemId) const {
+    if (!projeto_) return std::nullopt;
+    try {
+        auto st = projeto_->registro().prepare(
+            "SELECT ano FROM item WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (st.step() && !st.columnIsNull(0)) return extrairAnoDeData(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    return std::nullopt;
+}
+
 std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrganizacao(
     const std::set<std::string>& itemIds, const matriz::consolidacao::HierarquiaBackup& niveis) const {
     using N = matriz::consolidacao::NivelHierarquia;
@@ -2612,10 +2589,7 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
         for (size_t i = inicio; i < fim; ++i) marcas += (i > inicio ? ",?" : "?");
         auto stmt = projeto_->registro().prepare(
             "SELECT i.id, i.tipo_midia, i.dc_creator, i.collection_type, i.dc_subject, i.source_media, "
-            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'ano'), "
-            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
-            "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
-            "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END, "
+            "i.ano, "
             "a.caminho_relativo "
             "FROM item i "
             "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
@@ -2630,18 +2604,14 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
             for (auto nivel : niveis) {
                 switch (nivel) {
                     case N::Ano: {
-                        // EVENT DATE; senão dc_created/data_criacao; senão o EXIF. A data do
-                        // arquivo no disco NÃO conta (mesma regra do Unknown do METADATA).
-                        juce::String ano = anoDeTextoDeData(texto(6));
-                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(7));
-                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(8));
-                        if (ano.isEmpty()) ano = anoDeTextoDeData(texto(9));
-                        segs.push_back(segmentoDePastaAuto(ano, "No year"));
+                        // Só o EVENT DATE (item.ano, o que a ficha mostra): vazio ou "0" = "No year"
+                        // (mesma regra do Unknown do METADATA).
+                        segs.push_back(segmentoDePastaAuto(anoDeTextoDeData(texto(6)), "No year"));
                         break;
                     }
                     case N::TipoMidia: segs.push_back(segmentoDePastaAuto(texto(1), "Unclassified")); break;
                     case N::TipoArquivo: {
-                        const auto caminho = texto(10);
+                        const auto caminho = texto(7);
                         const int ponto = caminho.lastIndexOfChar('.');
                         const int barra = juce::jmax(caminho.lastIndexOfChar('/'), caminho.lastIndexOfChar('\\'));
                         const juce::String ext = ponto > barra ? caminho.substring(ponto + 1).toUpperCase() : juce::String();

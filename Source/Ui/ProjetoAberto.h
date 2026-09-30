@@ -55,10 +55,8 @@ struct ItemResumo {
     // acima — nullopt = ainda não preenchido.
     std::optional<std::string> origem; // "Digital" | "Analógico" (valor bruto gravado no banco, não traduzido)
     std::optional<int> ano;
-    // true quando `ano` veio só do último recurso (data do arquivo no disco) —
-    // um palpite, não um ano definido pelo usuário nem lido do metadado.
-    bool anoSoDoSistemaDeArquivos = false;
-    bool anoDesconhecido() const { return !ano.has_value() || anoSoDoSistemaDeArquivos; }
+    // `ano` = ano do EVENT DATE (item.ano). Sem ele o item é Unknown; EXIF/data do disco não contam.
+    bool anoDesconhecido() const { return !ano.has_value(); }  // sem EVENT DATE (vazio ou 0)
     std::optional<std::string> contentType;
     std::optional<std::string> collectionType;
     std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)
@@ -570,6 +568,11 @@ public:
     // esvaziam. Só no mapa do usuário (nunca no ORIGINAL) e só em pasta sem
     // arquivo no MAIN.
     // ------------------------------------------------------------------
+    // Ano de um texto de data em qualquer formato ("2019", "2019-05-04", "04/05/2019"): a primeira
+    // sequência de 4 dígitos entre 1800 e 2099. nullopt se não houver.
+    static std::optional<int> extrairAnoDeData(const juce::String& texto);
+    // Ano do EVENT DATE (coluna item.ano, a mesma que a ficha mostra). nullopt = vazio ou "0" = Unknown.
+    std::optional<int> anoDoEventDate(const std::string& itemId) const;
     static bool regraEhAuto(const juce::String& regra) { return regra == "@auto"; }
     enum class StatusAutoOrg { Ok, SomenteLeitura, MapaOriginal, TemArquivosNoMain, PastaInvalida, SubpastaAuto, SemNiveis };
     struct ResultadoAutoOrg {
