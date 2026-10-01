@@ -13,6 +13,10 @@
 #include "Ficha/FichaDefinition.h"
 #include "I18n/Strings.h"
 #include "Model/Project.h"
+#include "Model/CaminhosBanco.h"
+#include "Model/NomesCanonicos.h"
+#include "Model/NomesSeguros.h"
+#include "Ingest/Checksum.h"
 #include "Vault/SmartHealth.h"
 
 namespace {
@@ -373,6 +377,59 @@ void testarSmartHealth() {
     check(repEmpty.state == HealthState::Unavailable, "empty input triggers UNAVAILABLE state");
 }
 
+void testarCaminhosBanco() {
+    std::cout << "== Cross-platform database path normalisation ==\n";
+    check(matriz::caminhos::paraBanco("pasta\\subpasta\\arquivo.txt") == "pasta/subpasta/arquivo.txt",
+          "backslashes are converted to forward slashes");
+    check(matriz::caminhos::paraBanco("/pasta//subpasta/arquivo.txt/") == "pasta/subpasta/arquivo.txt",
+          "leading/trailing and duplicate slashes are stripped");
+    check(matriz::caminhos::doBanco("pasta/subpasta/arquivo.txt") == "pasta/subpasta/arquivo.txt",
+          "doBanco correctly reads relative path");
+}
+
+void testarChecksums() {
+    std::cout << "== Checksums (SHA-256 and MD5 known vectors) ==\n";
+    juce::File tempDir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("ck_test_" + juce::Uuid().toString());
+    tempDir.createDirectory();
+    
+    juce::File f = tempDir.getChildFile("test.txt");
+    f.replaceWithText("The quick brown fox jumps over the lazy dog", false, false, nullptr);
+    
+    auto ck = matriz::ingest::calcularChecksums(f);
+    check(ck.sha256 == "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
+          "SHA-256 matches NIST standard test vector");
+    check(ck.md5 == "9e107d9d372bb6826bd81d3542a419d6",
+          "MD5 matches standard test vector");
+    
+    tempDir.deleteRecursively();
+}
+
+void testarNomesCanonicos() {
+    std::cout << "== Unicode canonical name comparison (NFC & Case Invariant) ==\n";
+    check(matriz::model::nomes::chave("Éxito") == matriz::model::nomes::chave("éxito"),
+          "casing comparison matches accented É/é");
+    check(matriz::model::nomes::chave("AÇÃO") == matriz::model::nomes::chave("ação"),
+          "casing comparison matches Ç/ç and Ã/ã");
+    check(matriz::model::nomes::chave("MÜLLER") == matriz::model::nomes::chave("müller"),
+          "casing comparison matches umlaut Ü/ü");
+    check(matriz::model::nomes::chave("São Paulo") == matriz::model::nomes::chave("são paulo"),
+          "multi-word comparison matches");
+}
+
+void testarNomesSeguros() {
+    std::cout << "== Safe cross-platform file and folder names ==\n";
+    check(matriz::nomes_seguros::sanitizarComponente("Arquivo:Teste<1>?*.txt") == "Arquivo_Teste_1___.txt",
+          "invalid characters < > : \" / \\ | ? * are deterministically replaced with _");
+    check(matriz::nomes_seguros::sanitizarComponente("CON.txt") == "_CON_.txt",
+          "reserved device name CON is safely escaped");
+    check(matriz::nomes_seguros::sanitizarComponente("AUX") == "_AUX_",
+          "reserved device name AUX is safely escaped");
+    check(matriz::nomes_seguros::sanitizarComponente("Pasta. . ") == "Pasta",
+          "trailing spaces and dots are stripped");
+    check(matriz::nomes_seguros::sanitizarCaminhoRelativo("Shows:2026/Foto<1>/CON.jpg") == "Shows_2026/Foto_1_/_CON_.jpg",
+          "relative path components are safely sanitized");
+}
+
 } // namespace
 
 int main() {
@@ -382,6 +439,10 @@ int main() {
     testarI18n();
     testarRecentes();
     testarSmartHealth();
+    testarCaminhosBanco();
+    testarChecksums();
+    testarNomesCanonicos();
+    testarNomesSeguros();
 
     std::cout << "\n" << (failures == 0 ? "ALL TESTS PASSED" : std::to_string(failures) + " FAILURE(S)") << "\n";
     return failures == 0 ? 0 : 1;

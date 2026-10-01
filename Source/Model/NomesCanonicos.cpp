@@ -1,6 +1,8 @@
-// CoreFoundation antes do JuceHeader (senão MacTypes::Point colide com juce::Point).
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#endif
+#if defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
 #endif
 
 #include "NomesCanonicos.h"
@@ -88,6 +90,24 @@ std::string chave(const std::string& nome) {
         CFRelease(m);
         CFRelease(cf);
         return r.toStdString();
+    }
+#elif JUCE_WINDOWS
+    if (!limpo.containsOnly("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_.,&'()/")) {
+        std::wstring wstr = limpo.toWideCharPointer();
+        // 1. Normalizar para NFC
+        int nfcLen = NormalizeString(NormalizationC, wstr.c_str(), static_cast<int>(wstr.length()), nullptr, 0);
+        if (nfcLen > 0) {
+            std::wstring nfcBuf(static_cast<size_t>(nfcLen), L'\0');
+            NormalizeString(NormalizationC, wstr.c_str(), static_cast<int>(wstr.length()), nfcBuf.data(), nfcLen);
+            // 2. Lowercase invariante de locale
+            int lowerLen = LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, nfcBuf.c_str(), nfcLen, nullptr, 0, nullptr, nullptr, 0);
+            if (lowerLen > 0) {
+                std::wstring lowerBuf(static_cast<size_t>(lowerLen), L'\0');
+                LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE, nfcBuf.c_str(), nfcLen, lowerBuf.data(), lowerLen, nullptr, nullptr, 0);
+                return juce::String(lowerBuf.c_str()).toStdString();
+            }
+            return juce::String(nfcBuf.c_str()).toStdString();
+        }
     }
 #endif
     return limpo.toLowerCase().toStdString();

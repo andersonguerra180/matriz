@@ -1,10 +1,11 @@
 #include "Checksum.h"
 
-#ifdef __APPLE__
-#include <CommonCrypto/CommonDigest.h>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+
+#if defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
 
 namespace matriz::ingest {
 
@@ -51,6 +52,87 @@ Checksums calcularChecksums(const juce::File& arquivo) {
 
 } // namespace matriz::ingest
 
+#elif defined(_WIN32)
+#include <windows.h>
+#include <bcrypt.h>
+#include <vector>
+
+#pragma comment(lib, "bcrypt.lib")
+
+namespace matriz::ingest {
+
+namespace {
+
+std::string toHex(const unsigned char* data, size_t length) {
+    std::stringstream ss;
+    for (size_t i = 0; i < length; ++i) {
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i]);
+    }
+    return ss.str();
+}
+
+} // namespace
+
+Checksums calcularChecksums(const juce::File& arquivo) {
+    Checksums c;
+    
+    // Suporte a caminhos longos no Windows
+    std::wstring wpath = arquivo.getFullPathName().toWideCharPointer();
+    std::ifstream file(arquivo.getFullPathName().toStdString(), std::ios::binary);
+    if (!file.is_open()) {
+        return c;
+    }
+
+    BCRYPT_ALG_HANDLE hSha256Alg = nullptr;
+    BCRYPT_ALG_HANDLE hMd5Alg = nullptr;
+    BCRYPT_HASH_HANDLE hSha256Hash = nullptr;
+    BCRYPT_HASH_HANDLE hMd5Hash = nullptr;
+
+    if (BCryptOpenAlgorithmProvider(&hSha256Alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) != 0) {
+        return c;
+    }
+    if (BCryptOpenAlgorithmProvider(&hMd5Alg, BCRYPT_MD5_ALGORITHM, nullptr, 0) != 0) {
+        BCryptCloseAlgorithmProvider(hSha256Alg, 0);
+        return c;
+    }
+
+    if (BCryptCreateHash(hSha256Alg, &hSha256Hash, nullptr, 0, nullptr, 0, 0) != 0 ||
+        BCryptCreateHash(hMd5Alg, &hMd5Hash, nullptr, 0, nullptr, 0, 0) != 0) {
+        if (hSha256Hash) BCryptDestroyHash(hSha256Hash);
+        if (hMd5Hash) BCryptDestroyHash(hMd5Hash);
+        BCryptCloseAlgorithmProvider(hSha256Alg, 0);
+        BCryptCloseAlgorithmProvider(hMd5Alg, 0);
+        return c;
+    }
+
+    constexpr size_t bufferSize = 65536;
+    char buffer[bufferSize];
+
+    while (file.read(buffer, bufferSize) || file.gcount() > 0) {
+        ULONG bytesRead = static_cast<ULONG>(file.gcount());
+        BCryptHashData(hSha256Hash, reinterpret_cast<PUCHAR>(buffer), bytesRead, 0);
+        BCryptHashData(hMd5Hash, reinterpret_cast<PUCHAR>(buffer), bytesRead, 0);
+    }
+
+    unsigned char sha256Digest[32] = {0};
+    unsigned char md5Digest[16] = {0};
+
+    BCryptFinishHash(hSha256Hash, sha256Digest, sizeof(sha256Digest), 0);
+    BCryptFinishHash(hMd5Hash, md5Digest, sizeof(md5Digest), 0);
+
+    BCryptDestroyHash(hSha256Hash);
+    BCryptDestroyHash(hMd5Hash);
+    BCryptCloseAlgorithmProvider(hSha256Alg, 0);
+    BCryptCloseAlgorithmProvider(hMd5Alg, 0);
+
+    c.sha256 = toHex(sha256Digest, sizeof(sha256Digest));
+    c.md5 = toHex(md5Digest, sizeof(md5Digest));
+
+    return c;
+}
+
+} // namespace matriz::ingest
+
 #else
 
 namespace matriz::ingest {
@@ -64,4 +146,3 @@ Checksums calcularChecksums(const juce::File& arquivo) {
 
 } // namespace matriz::ingest
 #endif
-

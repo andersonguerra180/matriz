@@ -45,6 +45,11 @@ inline void registrarLogOperacao(const juce::File& pastaProjeto,
     if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &infoCount) == KERN_SUCCESS) {
         ramBytes = info.resident_size;
     }
+#elif defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS pmc;
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        ramBytes = pmc.WorkingSetSize;
+    }
 #endif
 
     juce::DynamicObject::Ptr obj = new juce::DynamicObject();
