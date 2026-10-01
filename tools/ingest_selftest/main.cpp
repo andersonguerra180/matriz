@@ -876,8 +876,8 @@ void testarHierarquiaBackup(const juce::File& dirTemp) {
                   caminhoDe(planoInvertido, "HIE-001").toStdString() + "\")");
 
         auto planoOrigem = planejarConsolidacao(projeto->registro(), pastaProjeto, destino, {NivelHierarquia::Origem});
-        check(caminhoDe(planoOrigem, "HIE-001").startsWith("No origin/"),
-              "an origin level with no value becomes \"No origin\" (got: \"" +
+        check(caminhoDe(planoOrigem, "HIE-001").startsWith("No source medium/"),
+              "an origin level with no value becomes \"No source medium\" (got: \"" +
                   caminhoDe(planoOrigem, "HIE-001").toStdString() + "\")");
 
         // A hierarquia é do projeto, não da sessão do diálogo.
