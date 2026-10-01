@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <memory>
+#include <chrono>
 
 #include "../App/Cancelamento.h"
 #include "AcoesItem.h"

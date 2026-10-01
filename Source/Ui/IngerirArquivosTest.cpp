@@ -15,6 +15,12 @@
 
 #ifdef __APPLE__
 #include <mach/mach.h>
+#elif defined(_WIN32) || defined(_MSC_VER)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
 #endif
 #include <iostream>
 
@@ -789,10 +795,16 @@ int rodarTestIngerirArquivos() {
 
             juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
             if ((voltas % 50) == 0) {
+#ifdef __APPLE__
                 struct task_basic_info info;
                 mach_msg_type_number_t contagem = TASK_BASIC_INFO_COUNT;
                 if (task_info(mach_task_self(), TASK_BASIC_INFO, (task_info_t)&info, &contagem) == KERN_SUCCESS)
                     picoRamBytes = juce::jmax(picoRamBytes, (size_t)info.resident_size);
+#elif defined(_WIN32)
+                PROCESS_MEMORY_COUNTERS pmc;
+                if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+                    picoRamBytes = juce::jmax(picoRamBytes, (size_t)pmc.WorkingSetSize);
+#endif
             }
             ++voltas;
         }

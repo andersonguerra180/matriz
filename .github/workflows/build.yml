@@ -7,6 +7,12 @@ on:
   pull_request:
     branches: [ main, windows-port ]
   workflow_dispatch:
+    inputs:
+      somente_windows:
+        description: 'Compilar e testar somente no Windows (pular macOS, TSan e interop)'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,6 +21,7 @@ concurrency:
 jobs:
   build-mac:
     name: Build & Test (macOS)
+    if: ${{ !inputs.somente_windows }}
     runs-on: macos-14
     steps:
       - name: Checkout repository
@@ -84,7 +91,6 @@ jobs:
 
   build-windows:
     name: Build & Test (Windows x64)
-    needs: build-mac
     runs-on: windows-2022
     steps:
       - name: Checkout repository
@@ -142,16 +148,6 @@ jobs:
           cmake --build build-asan-win --target matriz_selftest -j $env:NUMBER_OF_PROCESSORS
           .\build-asan-win\matriz_selftest_artefacts\Debug\matriz_selftest.exe
 
-      - name: Download macOS Interop Fixture
-        uses: actions/download-artifact@v4
-        with:
-          name: fixture-mac
-          path: fixture-mac
-
-      - name: Verify macOS Fixture on Windows (Interoperability Mac -> Win)
-        run: |
-          .\build-win\matriz_interop_selftest_artefacts\Release\matriz_interop_selftest.exe --verificar fixture-mac
-
       - name: Generate Windows Fixture for macOS Verification (Win -> Mac)
         run: |
           .\build-win\matriz_interop_selftest_artefacts\Release\matriz_interop_selftest.exe --gerar fixture-win
@@ -164,8 +160,38 @@ jobs:
           path: fixture-win
           retention-days: 7
 
+      - name: Upload Windows Binaries (matriz_interop_selftest for verification)
+        uses: actions/upload-artifact@v4
+        with:
+          name: matriz-interop-selftest-win
+          path: build-win/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest.exe
+          retention-days: 7
+
+  interop-win:
+    name: Verify macOS Fixture on Windows (Interoperability Mac -> Win)
+    if: ${{ !inputs.somente_windows }}
+    needs: [build-mac, build-windows]
+    runs-on: windows-2022
+    steps:
+      - name: Download Windows binary
+        uses: actions/download-artifact@v4
+        with:
+          name: matriz-interop-selftest-win
+          path: bin-win
+
+      - name: Download macOS Interop Fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: fixture-mac
+          path: fixture-mac
+
+      - name: Verify macOS Fixture on Windows (Interoperability Mac -> Win)
+        run: |
+          .\bin-win\matriz_interop_selftest.exe --verificar fixture-mac
+
   interop-verify-mac:
     name: Verify Windows Fixture on macOS (Two-Way Interop)
+    if: ${{ !inputs.somente_windows }}
     needs: [build-mac, build-windows]
     runs-on: macos-14
     steps:
@@ -190,7 +216,7 @@ jobs:
 
   package-windows:
     name: Package Release & Trial (Windows x64)
-    needs: [build-mac, build-windows, interop-verify-mac]
+    needs: [build-windows]
     runs-on: windows-2022
     steps:
       - name: Checkout repository
