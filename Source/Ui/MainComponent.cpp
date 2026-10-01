@@ -1160,6 +1160,16 @@ void MainComponent::reconstruirLayoutProjeto() {
         atualizarPainelDeApoio();
         if (mosaico_ && filtroSalvo) mosaico_->definirFiltroItens(std::move(filtroSalvo));
     };
+    fichaPanel_->aoAplicarGeoEmLote = [this] {
+        bool temFiltroAtivo = mosaico_ && mosaico_->buscaAtual().isNotEmpty();
+        if (temFiltroAtivo) {
+            auto filtroSalvo = mosaico_ ? mosaico_->filtroItensAtual() : std::optional<std::set<std::string>>{};
+            if (mosaico_) mosaico_->recarregar();
+            if (mosaico_ && filtroSalvo) mosaico_->definirFiltroItens(std::move(filtroSalvo));
+        }
+        if (filtros_) filtros_->recarregar();
+        atualizarPainelDeApoio();
+    };
     // item 4 (correção METADATA — trava frequente/spinning wheel): as duas
     // linhas abaixo disparavam, JUNTAS, até 10 recarregar() completos
     // (mosaico_, árvores, filtros, catalogWorkspace_, backupWorkspace_,

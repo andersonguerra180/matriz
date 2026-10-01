@@ -323,6 +323,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     fichaPanel_->aoAplicarEmLote = [this] {
         atualizarContagens();
     };
+    fichaPanel_->aoAplicarGeoEmLote = [this] {
+        atualizarContagens();
+    };
     fichaPanel_->aoAplicarSucesso = [this](const std::string& itemId) {
         if (mosaico_) mosaico_->atualizarItemEmMemoria(itemId);
         if (aoItemAlterado) aoItemAlterado(itemId);

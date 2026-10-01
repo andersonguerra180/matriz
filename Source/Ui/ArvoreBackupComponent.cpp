@@ -870,9 +870,8 @@ void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
 }
 
 void ArvoreBackupComponent::mostrarSeletorDeCorPasta(std::vector<std::string> pastaIds, juce::Rectangle<int> screenBounds) {
-    // Trava de ORIGINAL que faltava aqui (item 9) — os outros mutadores
-    // (criarNovaPasta, renomear, conectar, alternarAtivo) já checam isto.
     if (mapaAtivoEhOriginal() || pastaIds.empty()) return;
+    if (screenBounds.isEmpty()) screenBounds = juce::Rectangle<int>(100, 100, 20, 20);
 
     // Parte da cor já atribuída à primeira pasta selecionada, se houver —
     // reabrir o picker pra ajustar mostra o estado atual, não sempre vermelho.

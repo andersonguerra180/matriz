@@ -44,6 +44,7 @@ public:
     // (tipo de mídia muda contagens/agrupamento em todo lugar — grade,
     // árvore, chips de filtro). MainComponent usa isto pra recarregar tudo.
     std::function<void()> aoAplicarEmLote;
+    std::function<void()> aoAplicarGeoEmLote;
     std::function<void()> aoMudar;
     std::function<void(const std::string& itemId)> aoAplicarSucesso;
     // Item 3 (correção METADATA 2026-09-28): disparado só quando um campo em

@@ -4053,6 +4053,7 @@ public:
 
     std::function<void()> aoRelayoutNecessario;
     std::function<void()> aoAplicarEmLote;
+    std::function<void()> aoAplicarGeoEmLote;
     // Item 3 (correção METADATA 2026-09-28): só Enter conta como "terminei
     // de editar este campo" — devolve o foco à grade pra o atalho E
     // funcionar sem reselecionar. onFocusLost (Tab/clique noutro campo)
@@ -5329,7 +5330,8 @@ private:
         if (cityMudou)    geoLote_.seedCity    = geoLote_.editorCity->getText();
         if (stateMudou)   geoLote_.seedState   = geoLote_.editorState->getText();
         if (countryMudou) geoLote_.seedCountry = geoLote_.editorCountry->getText();
-        if (aoAplicarEmLote) aoAplicarEmLote();
+        if (aoAplicarGeoEmLote) aoAplicarGeoEmLote();
+        else if (aoAplicarEmLote) aoAplicarEmLote();
     }
 
     void desfazer() {
@@ -5545,6 +5547,7 @@ void FichaPanelComponent::mostrarSelecao(const std::vector<std::string>& itemIds
             conteudoLote_->relayout(viewport_->getWidth() - viewport_->getScrollBarThickness(), viewport_->getHeight());
         };
         conteudoLote_->aoAplicarEmLote = [this] { if (aoAplicarEmLote) aoAplicarEmLote(); };
+        conteudoLote_->aoAplicarGeoEmLote = [this] { if (aoAplicarGeoEmLote) aoAplicarGeoEmLote(); else if (aoAplicarEmLote) aoAplicarEmLote(); };
         conteudoLote_->aoAplicarSucessoItem = [this](const std::string& itemId) {
             if (aoAplicarSucesso) aoAplicarSucesso(itemId);
         };

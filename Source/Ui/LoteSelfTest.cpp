@@ -2301,7 +2301,6 @@ int rodarLoteSelfTest() {
         checar(arvore.corCallout_ == nullptr, "setup: no color picker open yet");
         checar(arvore.keyPressed(juce::KeyPress('C', juce::ModifierKeys(), (juce::juce_wchar) 'c')),
                "C is handled (returns true) with a folder selected");
-        bombear(100);
         checar(arvore.corCallout_ != nullptr, "C opened the folder color picker");
         checar(arvore.keyPressed(juce::KeyPress('C', juce::ModifierKeys(), (juce::juce_wchar) 'c')),
                "C again is handled (returns true) while the picker is open");
