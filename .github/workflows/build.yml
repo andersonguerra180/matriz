@@ -24,17 +24,17 @@ jobs:
       - name: Setup Ninja
         uses: asepticvoid/setup-ninja@v1.0.3
 
-      - name: Cache JUCE / CPM dependencies
+      - name: Cache JUCE / Dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/.cache/CPM
             build-ci/_deps
-          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/*.cmake') }}
           restore-keys: |
             ${{ runner.os }}-cpm-
 
-      - name: Configure CMake
+      - name: Configure CMake (macOS Release)
         run: |
           cmake -B build-ci -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
@@ -49,6 +49,15 @@ jobs:
         run: |
           ./build-ci/matriz_selftest_artefacts/Release/matriz_selftest
           ./build-ci/matriz_ingest_selftest_artefacts/Release/matriz_ingest_selftest
+
+      - name: Configure and Run TSan (macOS ThreadSanitizer)
+        run: |
+          cmake -B build-tsan-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DMATRIZ_TSAN=ON \
+            -DMATRIZ_ASAN=OFF
+          cmake --build build-tsan-ci --target matriz_selftest -j $(sysctl -n hw.ncpu)
+          ./build-tsan-ci/matriz_selftest_artefacts/Debug/matriz_selftest
 
       - name: Generate Interoperability Fixture (macOS -> Windows)
         run: |
@@ -87,25 +96,24 @@ jobs:
       - name: Setup Ninja
         uses: asepticvoid/setup-ninja@v1.0.3
 
-      - name: Setup Inno Setup
-        uses: LuisEnMarroquin/setup-inno-setup@v1
-
-      - name: Cache JUCE / CPM dependencies
+      - name: Cache JUCE / Dependencies
         uses: actions/cache@v4
         with:
           path: |
             ~/AppData/Local/CPM
             build-win/_deps
-          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt') }}
+          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt', 'cmake/*.cmake') }}
           restore-keys: |
             ${{ runner.os }}-cpm-
 
-      - name: Configure CMake (Windows MSVC)
+      - name: Configure CMake (Windows MSVC Release)
         run: |
           cmake -B build-win -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER=cl.exe `
-            -DCMAKE_CXX_COMPILER=cl.exe
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DMATRIZ_ASAN=OFF `
+            -DMATRIZ_TSAN=OFF
 
       - name: Build Windows targets
         run: |
@@ -115,6 +123,17 @@ jobs:
         run: |
           .\build-win\matriz_selftest_artefacts\Release\matriz_selftest.exe
           .\build-win\matriz_ingest_selftest_artefacts\Release\matriz_ingest_selftest.exe
+
+      - name: Build & Run AddressSanitizer (Windows ASan)
+        run: |
+          cmake -B build-asan-win -G Ninja `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DMATRIZ_ASAN=ON `
+            -DMATRIZ_TSAN=OFF
+          cmake --build build-asan-win --target matriz_selftest -j $env:NUMBER_OF_PROCESSORS
+          .\build-asan-win\matriz_selftest_artefacts\Debug\matriz_selftest.exe
 
       - name: Download macOS Interop Fixture
         uses: actions/download-artifact@v4
@@ -137,32 +156,6 @@ jobs:
           name: fixture-win
           path: fixture-win
           retention-days: 7
-
-      - name: Stage Release Artifacts
-        run: |
-          mkdir staging\bin\Release
-          mkdir staging\bin\tools
-          mkdir staging\installer
-          Copy-Item "build-win\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\Release\BKR Matriz.exe"
-          Copy-Item "installer\installer.iss" "staging\installer\installer.iss"
-
-      - name: Build Inno Setup Installer
-        run: |
-          cd staging\installer
-          iscc installer.iss
-
-      - name: Create Portable Zip
-        run: |
-          Compress-Archive -Path "staging\bin\Release\*" -DestinationPath "staging\installer\BKR_Matriz_Portable_v1.5.0_win64.zip"
-
-      - name: Upload Windows Installer & Portable Zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: BKR-Matriz-Windows-Release
-          path: |
-            staging/installer/Output/*.exe
-            staging/installer/*.zip
-          retention-days: 14
 
   interop-verify-mac:
     name: Verify Windows Fixture on macOS (Two-Way Interop)
@@ -187,3 +180,120 @@ jobs:
       - name: Verify Windows-generated project on macOS (Win -> Mac Interop)
         run: |
           ./bin-mac/matriz_interop_selftest --verificar fixture-win
+
+  package-windows:
+    name: Package Release & Trial (Windows x64)
+    needs: [build-mac, build-windows, interop-verify-mac]
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        uses: asepticvoid/setup-ninja@v1.0.3
+
+      - name: Setup Inno Setup
+        uses: LuisEnMarroquin/setup-inno-setup@v1
+
+      - name: Download and Verify FFmpeg / FFprobe
+        shell: pwsh
+        run: |
+          $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          $destZip = "ffmpeg.zip"
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile $destZip -UserAgent "NativeHost"
+          Expand-Archive -Path $destZip -DestinationPath "ffmpeg_extracted"
+          $extractedDir = Get-ChildItem -Path "ffmpeg_extracted" -Directory | Select-Object -First 1
+          mkdir -p staging\bin\tools
+          Copy-Item "$($extractedDir.FullName)\bin\ffmpeg.exe" "staging\bin\tools\ffmpeg.exe"
+          Copy-Item "$($extractedDir.FullName)\bin\ffprobe.exe" "staging\bin\tools\ffprobe.exe"
+          if (Test-Path "$($extractedDir.FullName)\LICENSE.txt") {
+              Copy-Item "$($extractedDir.FullName)\LICENSE.txt" "staging\bin\tools\FFMPEG_LICENSE.txt"
+          }
+          Write-Host "FFmpeg and FFprobe packaged successfully."
+
+      - name: Build Full Windows Release (MATRIZ_TRIAL=OFF)
+        run: |
+          cmake -B build-pkg-full -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DMATRIZ_TRIAL=OFF
+          cmake --build build-pkg-full --target matriz -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Build Trial Windows Release (MATRIZ_TRIAL=ON)
+        run: |
+          cmake -B build-pkg-trial -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe `
+            -DMATRIZ_TRIAL=ON
+          cmake --build build-pkg-trial --target matriz -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Stage Full & Trial Builds
+        shell: pwsh
+        run: |
+          mkdir -p staging\bin\Release
+          mkdir -p staging\bin\ReleaseTrial
+          mkdir -p staging\installer
+          mkdir -p staging\installerTrial
+          Copy-Item "build-pkg-full\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\Release\BKR Matriz.exe"
+          Copy-Item "build-pkg-trial\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\ReleaseTrial\BKR Matriz Trial.exe"
+          Copy-Item "installer\installer.iss" "staging\installer\installer.iss"
+          Copy-Item "installer\installer.iss" "staging\installerTrial\installer.iss"
+          (Get-Content "staging\installerTrial\installer.iss") -replace 'MyAppName "BKR Matriz"', 'MyAppName "BKR Matriz Trial"' -replace 'MyAppExeName "BKR Matriz.exe"', 'MyAppExeName "BKR Matriz Trial.exe"' -replace 'OutputBaseFilename=BKR_Matriz_Setup', 'OutputBaseFilename=BKR_Matriz_Trial_Setup' | Set-Content "staging\installerTrial\installer.iss"
+
+      - name: Optional Code Signing
+        shell: pwsh
+        run: |
+          if ("${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}" -ne "") {
+              Write-Host "Signing certificate detected. Proceeding with signtool..."
+              $certBytes = [Convert]::FromBase64String("${{ secrets.WINDOWS_SIGNING_CERT_BASE64 }}")
+              [IO.File]::WriteAllBytes("cert.pfx", $certBytes)
+              signtool sign /f cert.pfx /p "${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}" /tr http://timestamp.digicert.com /td sha256 /fd sha256 "staging\bin\Release\BKR Matriz.exe"
+              signtool sign /f cert.pfx /p "${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}" /tr http://timestamp.digicert.com /td sha256 /fd sha256 "staging\bin\ReleaseTrial\BKR Matriz Trial.exe"
+              Remove-Item "cert.pfx"
+          } else {
+              Write-Host "No signing certificate secret provided. Skipping binary signing."
+          }
+
+      - name: Build Inno Setup Installers
+        run: |
+          cd staging\installer
+          iscc installer.iss
+          cd ..\installerTrial
+          iscc installer.iss
+
+      - name: Create Portable Zip Archives
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "staging\bin\Release\*", "staging\bin\tools" -DestinationPath "staging\installer\Output\BKR_Matriz_Portable_v1.5.0_win64.zip"
+          Compress-Archive -Path "staging\bin\ReleaseTrial\*", "staging\bin\tools" -DestinationPath "staging\installerTrial\Output\BKR_Matriz_Trial_Portable_v1.5.0_win64.zip"
+
+      - name: Upload Windows Distribution Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: BKR-Matriz-Windows-Release-Packages
+          path: |
+            staging/installer/Output/*.exe
+            staging/installer/Output/*.zip
+            staging/installerTrial/Output/*.exe
+            staging/installerTrial/Output/*.zip
+          retention-days: 14
+
+      - name: Create GitHub Release (Draft on tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: |
+            staging/installer/Output/*.exe
+            staging/installer/Output/*.zip
+            staging/installerTrial/Output/*.exe
+            staging/installerTrial/Output/*.zip

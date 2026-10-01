@@ -17,10 +17,18 @@ endif()
 # Locate JUCE
 set(JUCE_DIR "$ENV{HOME}/JUCE" CACHE PATH "Path to JUCE")
 if(NOT EXISTS "${JUCE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "JUCE not found at '${JUCE_DIR}'. Pass -DJUCE_DIR=/path/to/JUCE.")
+    message(STATUS "JUCE not found locally at '${JUCE_DIR}', fetching via FetchContent (v8.0.14)...")
+    include(FetchContent)
+    FetchContent_Declare(
+        juce
+        GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+        GIT_TAG 8.0.14
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(juce)
+else()
+    add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
 endif()
-
-add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
 
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dependencies.cmake")
 
