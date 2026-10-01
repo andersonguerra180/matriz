@@ -108,6 +108,15 @@ std::string obterOuCriarVaultParaArquivo(matriz::db::Database& registro, const j
 }
 
 bool verificarSePlaceholderNuvem(const juce::File& f) {
+#if defined(_WIN32) || defined(_MSC_VER)
+    DWORD attrs = GetFileAttributesW(f.getFullPathName().toWideCharPointer());
+    if (attrs != INVALID_FILE_ATTRIBUTES) {
+        if ((attrs & FILE_ATTRIBUTE_OFFLINE) != 0 || (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            return true;
+        }
+    }
+    return false;
+#else
     struct stat st;
     if (::stat(f.getFullPathName().toRawUTF8(), &st) == 0) {
         if (st.st_blocks == 0 && st.st_size > 0) {
@@ -115,6 +124,7 @@ bool verificarSePlaceholderNuvem(const juce::File& f) {
         }
     }
     return false;
+#endif
 }
 
 AnaliseDeArquivo analisarArquivo(const juce::File& arquivoOrigem) {
