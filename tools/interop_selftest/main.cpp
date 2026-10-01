@@ -134,6 +134,22 @@ int executarGeracao(const juce::File& baseDir) {
            "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdP), Value::of(idP), Value::of(matriz::caminhos::relativoParaBanco(arqProfundo, pastaOrigens)), Value::of(arqProfundo.getFullPathName().toStdString()), Value::of(ckP.sha256), Value::of(ckP.md5), Value::of(static_cast<juce::int64>(arqProfundo.getSize())), Value::of(agora), Value::of(agora)});
 
+    // Adiciona entidade de pessoa e lugar
+    std::string entPessoaId = matriz::model::novoUuid();
+    std::string entLugarId = matriz::model::novoUuid();
+    db.run("INSERT INTO entidade (id, projeto_id, tipo, nome, criado_em) VALUES (?, ?, 'pessoa', 'Gilberto Gil', ?)",
+           {Value::of(entPessoaId), Value::of(proj->projetoId()), Value::of(agora)});
+    db.run("INSERT INTO entidade (id, projeto_id, tipo, nome, criado_em) VALUES (?, ?, 'lugar', 'Teatro Municipal', ?)",
+           {Value::of(entLugarId), Value::of(proj->projetoId()), Value::of(agora)});
+    db.run("INSERT INTO item_entidade (item_id, entidade_id, papel) VALUES (?, ?, 'artista')",
+           {Value::of(id1), Value::of(entPessoaId)});
+    db.run("INSERT INTO item_entidade (item_id, entidade_id, papel) VALUES (?, ?, 'local_gravacao')",
+           {Value::of(id1), Value::of(entLugarId)});
+
+    // Marcação R (Reject) no Intake
+    db.run("INSERT INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+           {Value::of(idH), Value::of(agora)});
+
     // 4. Cria folder map
     std::string mapaId = matriz::model::novoUuid();
     std::string pastaMapId = matriz::model::novoUuid();
@@ -144,17 +160,32 @@ int executarGeracao(const juce::File& baseDir) {
     db.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
            {Value::of(matriz::model::novoUuid()), Value::of(id1), Value::of(pastaMapId), Value::of(agora)});
 
-    // 5. Simula cópias no MAIN
+    // 5. Cria destination.json na raiz do MAIN
+    matriz::model::DestinationInfo destInfo;
+    destInfo.formato = 1;
+    destInfo.destinationId = matriz::model::novoUuid();
+    destInfo.projetoId = proj->projetoId();
+    destInfo.papel = "MAIN";
+    destInfo.rotulo = "Backup Principal Interop";
+    destInfo.revisao = 1;
+    destInfo.criadoEm = agora;
+    destInfo.ultimaEdicaoUtc = agora;
+    destInfo.gravarEmArquivo(pastaMain.getChildFile("destination.json"));
+
+    // Simula cópias no MAIN
     juce::File mainArq1 = pastaMain.getChildFile("Media/Áudio e Música/Gravação_2026_SãoPaulo_Éxito.txt");
     arq1.copyFileTo(mainArq1);
     juce::File mainArq2 = pastaMain.getChildFile("Media/Fotos & Vídeos/Apresentação/Foto_Ção_Ão.txt");
     arq2.copyFileTo(mainArq2);
 
-    // 6. Simula pacote de EXPORT
+    // 6. Simula pacote de EXPORT com manifesto sha256sum
     juce::File exportMedia = pastaExport.getChildFile("Media");
     exportMedia.createDirectory();
     mainArq1.copyFileTo(exportMedia.getChildFile(mainArq1.getFileName()));
     mainArq2.copyFileTo(exportMedia.getChildFile(mainArq2.getFileName()));
+    juce::File manifestExport = pastaExport.getChildFile("manifest.sha256");
+    manifestExport.replaceWithText(juce::String(ck1.sha256) + " *Media/" + mainArq1.getFileName() + "\n" +
+                                   juce::String(ck2.sha256) + " *Media/" + mainArq2.getFileName() + "\n", false, false, "\n");
 
     // 7. Checkpoint WAL
     try {
@@ -173,6 +204,8 @@ int executarGeracao(const juce::File& baseDir) {
     manifest->setProperty("sha256_2", juce::String(ck2.sha256));
     manifest->setProperty("sha256_hidden", juce::String(ckH.sha256));
     manifest->setProperty("sha256_profundo", juce::String(ckP.sha256));
+    manifest->setProperty("pessoa_nome", juce::String("Gilberto Gil"));
+    manifest->setProperty("lugar_nome", juce::String("Teatro Municipal"));
 
     juce::File manifestFile = baseDir.getChildFile("manifesto_interop.json");
     manifestFile.replaceWithText(juce::JSON::toString(juce::var(manifest.get()), true));
@@ -227,7 +260,7 @@ int executarVerificacao(const juce::File& baseDir) {
     }
     check(achouHidden, "Hidden item preserved and correctly classified");
 
-    // 4. Verifica campos e tags
+    // 4. Verifica campos, tags e entidades
     auto stmtArtist = db.prepare("SELECT c.valor FROM item_campo c JOIN item i ON c.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso' AND c.campo_id = 'artista_principal';");
     bool achouArtista = false;
     if (stmtArtist.step()) {
@@ -235,12 +268,27 @@ int executarVerificacao(const juce::File& baseDir) {
     }
     check(achouArtista, "Field 'artista_principal' preserved");
 
-    // 5. Verifica normalização canônica de nomes (NFC)
+    auto stmtEnt = db.prepare("SELECT e.nome FROM entidade e JOIN item_entidade ie ON e.id = ie.entidade_id WHERE ie.papel = 'artista';");
+    bool achouEntidade = false;
+    if (stmtEnt.step()) {
+        achouEntidade = (stmtEnt.columnText(0) == varManifest["pessoa_nome"].toString().toStdString());
+    }
+    check(achouEntidade, "Entity 'Gilberto Gil' associated with asset");
+
+    // 5. Verifica marcação R (Reject)
+    auto stmtR = db.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE origem = 'usuario';");
+    bool achouR = false;
+    if (stmtR.step()) {
+        achouR = (stmtR.columnInt(0) == 1);
+    }
+    check(achouR, "INTAKE Reject mark (R) preserved");
+
+    // 6. Verifica normalização canônica de nomes (NFC)
     std::string chave1 = matriz::model::nomes::chave("São Paulo");
     std::string chave2 = matriz::model::nomes::chave("são paulo");
     check(chave1 == chave2, "Canonical Unicode key comparison matches ('São Paulo' == 'são paulo')");
 
-    // 6. Verifica integridade de checksums
+    // 7. Verifica integridade de checksums
     std::string expSha1 = varManifest["sha256_1"].toString().toStdString();
     auto stmtSha = db.prepare("SELECT a.checksum_sha256 FROM arquivo a JOIN item i ON a.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso';");
     if (stmtSha.step()) {
@@ -248,13 +296,23 @@ int executarVerificacao(const juce::File& baseDir) {
         check(dbSha == expSha1, "SHA-256 matches exact hash: " + dbSha);
     }
 
-    // 7. Verifica folder map
+    // 8. Verifica folder map
     auto stmtMap = db.prepare("SELECT nome FROM folder_map WHERE nome = 'Mapa Shows 2026';");
     bool mapaOk = false;
     if (stmtMap.step()) {
         if (stmtMap.columnText(0) == "Mapa Shows 2026") mapaOk = true;
     }
     check(mapaOk, "Folder Map structure preserved and matched exactly");
+
+    // 9. Verifica MAIN destination.json
+    juce::File destJson = baseDir.getChildFile("backup_main/destination.json");
+    check(destJson.existsAsFile(), "destination.json exists in MAIN backup root");
+    auto dInfo = matriz::model::DestinationInfo::lerDeArquivo(destJson);
+    check(dInfo.has_value() && dInfo->papel == "MAIN", "MAIN destination parsed and identified cleanly");
+
+    // 10. Verifica ausência de arquivos WAL pendentes (.sqlite-wal)
+    juce::File walFile = pastaProj.getChildFile("registro.sqlite-wal");
+    check(!walFile.existsAsFile(), "SQLite database is fully checkpointed (no pending -wal file)");
 
     std::cout << "\nRESULTADO DA VERIFICAÇÃO INTEROP: " << failures << " FALHAS\n";
     return failures == 0 ? 0 : 1;
