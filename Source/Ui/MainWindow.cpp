@@ -651,7 +651,7 @@ void MainWindow::mostrarPreferenciasDialogo() {
             btnSave_->setColour(juce::TextButton::buttonColourId, tk.acento);
             btnSave_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
             btnSave_->onClick = [this] {
-                auto novoLocale = comboIdioma_->getSelectedId() == 2 ? "pt_BR" : "en";
+                juce::String novoLocale = comboIdioma_->getSelectedId() == 2 ? "pt_BR" : "en";
                 bool idiomaMudou = (novoLocale != matriz::i18n::localeAtivo());
                 matriz::app::gravarLocale(novoLocale);
                 matriz::app::gravarTema(comboTema_->getSelectedId() == 2 ? "light" : "dark");

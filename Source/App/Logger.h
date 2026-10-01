@@ -7,6 +7,12 @@
 
 #ifdef __APPLE__
 #include <mach/mach.h>
+#elif defined(_WIN32) || defined(_MSC_VER)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <psapi.h>
 #endif
 
 namespace matriz::app {

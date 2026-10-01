@@ -203,6 +203,8 @@ private:
     void aplicarRascunhoOrganizacao();
     bool aplicandoRascunho_ = false;
     void perguntarSincronizarClones();
+    // DONE: sai da tela de conclusão e volta à configuração (estado_ nunca voltava de Done).
+    void voltarParaConfiguracao();
     std::string destinoIdDoMain();
     juce::ThreadPool poolSyncClones_{1};
     // EXPORT (etapa 6)
