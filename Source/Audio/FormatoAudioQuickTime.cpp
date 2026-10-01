@@ -267,9 +267,6 @@ juce::AudioFormatReader* FormatoAudioQuickTime::createReaderFor(juce::InputStrea
 void registrarFormatosDeAudio(juce::AudioFormatManager& gerenciador) {
     gerenciador.registerBasicFormats();
     gerenciador.registerFormat(new FormatoAudioQuickTime(), false);
-#if JUCE_WINDOWS
-    gerenciador.registerFormat(new juce::WindowsMediaFormat(), false);
-#endif
 }
 
 } // namespace matriz::audio
