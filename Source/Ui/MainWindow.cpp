@@ -213,7 +213,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         bool podeUndo = conteudo_->temProjetoAberto() && conteudo_->podeDesfazer();
         menu.addItem(kCmdUndo, isPt ? juce::String::fromUTF8("Desfazer (Cmd+Z)") : "Undo (Cmd+Z)", podeUndo, false, nullptr);
         menu.addSeparator();
-        menu.addItem(kCmdRenomearItem, isPt ? juce::String::fromUTF8("Renomear Item(ns)... (R)") : "Rename Item(s)... (R)", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdRenomearItem, isPt ? juce::String::fromUTF8("Renomear Item(ns)... (N)") : "Rename Item(s)... (N)", conteudo_->temProjetoAberto());
         menu.addItem(kCmdRemoverDoBackup, isPt ? juce::String::fromUTF8("Remover Selecionado do Backup (C)") : "Remove Selected from Backup (C)", conteudo_->temProjetoAberto());
     } else if (topLevelMenuIndex == kMenuFerramentas) {
         bool isCatalog = (conteudo_->projetoAberto() && conteudo_->projetoAberto()->projeto().modo() == matriz::model::Modo::Catalogo);

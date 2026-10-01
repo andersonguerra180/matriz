@@ -3906,6 +3906,8 @@ int rodarLoteSelfTest() {
         tecla(juce::KeyPress::spaceKey);
         checar(abriu == mo->itemEmFoco() && !abriu.empty(), "Space opens the preview of the focused item");
         mo->aoAbrirPreview = abrirOriginal;
+        checar(!mo->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r')),
+               "in the grid, R no longer renames (it is the INTAKE's Reject key); rename is N");
         bombear(150);
 
         // Desempenho: segurar a seta para baixo numa coleção de 15.000 itens.

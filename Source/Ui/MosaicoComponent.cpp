@@ -1497,7 +1497,8 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         return true;
     }
 
-    if ((tecla.getKeyCode() == 'R' || c == 'r' || c == 'R') &&
+    // N = renomear (era R; o R agora é o Reject do INTAKE e não deve se confundir com ele).
+    if ((tecla.getKeyCode() == 'N' || c == 'n' || c == 'N') &&
         !tecla.getModifiers().isCommandDown() && !tecla.getModifiers().isCtrlDown()) {
         renomearSelecao();
         return true;
