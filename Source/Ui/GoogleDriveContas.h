@@ -1,13 +1,12 @@
 #pragma once
 
-// Contas do Google Drive para Desktop montadas neste Mac (uma pasta
-// ~/Library/CloudStorage/GoogleDrive-<email> por conta). Os botões GOOGLE
-// DRIVE pegavam a PRIMEIRA pasta encontrada — com várias contas, abriam a
-// conta errada. Agora: uma conta vai direto; várias, pergunta qual.
+// Contas do Google Drive para Desktop montadas no Mac (CloudStorage) ou Windows (Drive virtual).
+// Uma conta vai direto; várias, pergunta qual.
 
 #include <JuceHeader.h>
 #include <functional>
 #include <vector>
+#include <algorithm>
 
 #include "../App/Preferencias.h"
 #include "../I18n/Strings.h"
@@ -15,13 +14,15 @@
 namespace matriz::ui {
 
 struct ContaGoogleDrive {
-    juce::String rotulo;   // e-mail da conta
+    juce::String rotulo;   // e-mail ou nome da conta
     juce::File pasta;      // "My Drive"/"Meu Drive" da conta (ou a raiz dela)
-    bool copiaAntiga = false;  // "GoogleDrive-x (03-07-25 19:26)": sobra de reinstalação
+    bool copiaAntiga = false;  // sobra de reinstalação
 };
 
 inline std::vector<ContaGoogleDrive> contasGoogleDrive() {
     std::vector<ContaGoogleDrive> contas;
+
+#if JUCE_MAC
     const juce::File base = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Library/CloudStorage");
     if (base.isDirectory()) {
         auto pastas = base.findChildFiles(juce::File::findDirectories, false, "GoogleDrive-*");
@@ -43,6 +44,31 @@ inline std::vector<ContaGoogleDrive> contasGoogleDrive() {
         const juce::File legado = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Google Drive");
         if (legado.isDirectory()) contas.push_back({"Google Drive", legado, false});
     }
+#elif JUCE_WINDOWS
+    // Procura por drives virtuais mapeados pelo Google Drive (geralmente G:\ ou volume com nome Google Drive)
+    for (char letter = 'D'; letter <= 'Z'; ++letter) {
+        juce::File root(juce::String(juce::CharPointer_UTF8(&letter, 1)) + ":\\");
+        if (root.isDirectory()) {
+            juce::String label = root.getVolumeLabel();
+            if (label.containsIgnoreCase("Google Drive") || label.containsIgnoreCase("Meu Drive") || label.containsIgnoreCase("My Drive")) {
+                ContaGoogleDrive c;
+                c.rotulo = label.isNotEmpty() ? label : ("Google Drive (" + root.getFullPathName() + ")");
+                c.pasta = root;
+                for (const char* nome : {"My Drive", "Meu Drive", "Outros computadores", "Other computers"}) {
+                    if (root.getChildFile(nome).isDirectory()) { c.pasta = root.getChildFile(nome); break; }
+                }
+                contas.push_back(c);
+            }
+        }
+    }
+    if (contas.empty()) {
+        juce::File userGdrive = juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Google Drive");
+        if (userGdrive.isDirectory()) {
+            contas.push_back({"Google Drive", userGdrive, false});
+        }
+    }
+#endif
+
     return contas;
 }
 

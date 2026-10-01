@@ -31,7 +31,13 @@ private:
     void timerCallback() override;
 
     void* bridge_ = nullptr;
+#if JUCE_MAC
     std::unique_ptr<juce::NSViewComponent> viewComponent_;
+#elif JUCE_WINDOWS
+    std::unique_ptr<juce::HWNDComponent> viewComponent_;
+#else
+    std::unique_ptr<juce::Component> viewComponent_;
+#endif
     bool carregado_ = false;
 };
 

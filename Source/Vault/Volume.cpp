@@ -1,14 +1,13 @@
-// Os headers de sistema vêm ANTES de Volume.h de propósito: JuceHeader.h faz
-// `using namespace juce`, e MacTypes.h (puxado por DiskArbitration ->
-// CoreFoundation) declara um `Point` que fica ambíguo com juce::Point se
-// entrar depois.
+#if defined(__APPLE__)
 #include <limits.h>
 #include <stdlib.h>
 #include <sys/mount.h>
 #include <sys/param.h>
-
-#if defined(__APPLE__)
 #include <DiskArbitration/DiskArbitration.h>
+#elif defined(_WIN32) || defined(_WIN64)
+#include <windows.h>
+#include <sstream>
+#include <iomanip>
 #endif
 
 #include "Volume.h"
@@ -19,14 +18,17 @@ namespace matriz::vault {
 
 namespace {
 
+#if defined(__APPLE__)
 bool statfsDe(const juce::File& caminho, struct statfs& out) {
     if (caminho.getFullPathName().isEmpty()) return false;
     return ::statfs(caminho.getFullPathName().toRawUTF8(), &out) == 0;
 }
+#endif
 
 } // namespace
 
 juce::File pontoDeMontagem(const juce::File& caminho) {
+#if defined(__APPLE__)
     juce::String pathStr = caminho.getFullPathName();
     if (pathStr.startsWith("/Volumes/")) {
         juce::String volName = pathStr.substring(9).upToFirstOccurrenceOf("/", false, false);
@@ -38,10 +40,21 @@ juce::File pontoDeMontagem(const juce::File& caminho) {
     struct statfs sfs;
     if (!statfsDe(caminho, sfs)) return juce::File("/");
     return juce::File(juce::String::fromUTF8(sfs.f_mntonname));
+#elif defined(_WIN32) || defined(_WIN64)
+    if (caminho == juce::File()) return juce::File("C:\\");
+    std::wstring fullPath = caminho.getFullPathName().toWideCharPointer();
+    WCHAR volumePath[MAX_PATH] = {0};
+    if (GetVolumePathNameW(fullPath.c_str(), volumePath, MAX_PATH)) {
+        return juce::File(juce::String(volumePath));
+    }
+    return juce::File("C:\\");
+#else
+    return juce::File("/");
+#endif
 }
 
 std::string uuidDoVolume(const juce::File& caminho) {
-#if JUCE_MAC
+#if defined(__APPLE__)
     struct statfs sfs;
     if (!statfsDe(caminho, sfs)) return {};
 
@@ -65,6 +78,9 @@ std::string uuidDoVolume(const juce::File& caminho) {
     }
     CFRelease(sessao);
     return resultado;
+#elif defined(_WIN32) || defined(_WIN64)
+    auto ident = obterIdentidadeHardwareVolume(caminho);
+    return ident.volumeUuid;
 #else
     juce::ignoreUnused(caminho);
     return {};
@@ -72,6 +88,7 @@ std::string uuidDoVolume(const juce::File& caminho) {
 }
 
 juce::File raizDoVault(const juce::File& caminho) {
+#if defined(__APPLE__)
     juce::String pathStr = caminho.getFullPathName();
     if (pathStr.startsWith("/Volumes/")) {
         juce::String volName = pathStr.substring(9).upToFirstOccurrenceOf("/", false, false);
@@ -98,17 +115,19 @@ juce::File raizDoVault(const juce::File& caminho) {
     }
 
     return montagem;
+#elif defined(_WIN32) || defined(_WIN64)
+    return pontoDeMontagem(caminho);
+#else
+    return pontoDeMontagem(caminho);
+#endif
 }
 
 std::string caminhoRelativoAoVolume(const juce::File& arquivo) {
-    // Canoniza os dois lados ANTES de comparar: statfs resolve links
-    // simbólicos (devolve o ponto de montagem real), e o caminho do arquivo
-    // pode ter chegado pela forma com link. Sem isso, a subtração de prefixo
-    // falha e caímos no caminho absoluto sem necessidade.
     juce::File raiz = raizDoVault(arquivo);
     juce::String caminhoRaiz = raiz.getFullPathName();
-
     juce::String caminhoArquivo = arquivo.getFullPathName();
+
+#if defined(__APPLE__)
     char resolvido[PATH_MAX];
     if (::realpath(arquivo.getFullPathName().toRawUTF8(), resolvido) != nullptr)
         caminhoArquivo = juce::String::fromUTF8(resolvido);
@@ -116,9 +135,14 @@ std::string caminhoRelativoAoVolume(const juce::File& arquivo) {
     if (!caminhoRaiz.endsWithChar('/')) caminhoRaiz << '/';
     if (caminhoArquivo.startsWith(caminhoRaiz))
         return caminhoArquivo.substring(caminhoRaiz.length()).toStdString();
+#elif defined(_WIN32) || defined(_WIN64)
+    if (!caminhoRaiz.endsWithChar('\\') && !caminhoRaiz.endsWithChar('/')) caminhoRaiz << '\\';
+    if (caminhoArquivo.startsWithIgnoreCase(caminhoRaiz)) {
+        juce::String rel = caminhoArquivo.substring(caminhoRaiz.length());
+        return rel.replaceCharacter('\\', '/').toStdString();
+    }
+#endif
 
-    // Fora da raiz: devolve o absoluto em vez de inventar um relativo que
-    // sobe de nível.
     return caminhoArquivo.toStdString();
 }
 
@@ -128,9 +152,15 @@ InfoVolume descreverVolume(const juce::File& caminho) {
     info.uuid = uuidDoVolume(caminho);
 
     juce::String nome = info.pontoMontagem.getFileName();
+#if defined(__APPLE__)
     if (nome.isEmpty() || info.pontoMontagem.getFullPathName() == "/") {
         nome = "Macintosh HD";
     }
+#elif defined(_WIN32) || defined(_WIN64)
+    if (nome.isEmpty()) {
+        nome = info.pontoMontagem.getFullPathName();
+    }
+#endif
     info.nome = nome.toStdString();
     info.hardware = obterIdentidadeHardwareVolume(caminho);
     if (!info.hardware.volumeUuid.empty() && info.uuid.empty()) {
@@ -157,7 +187,7 @@ std::string inferirCategoriaDispositivo(const InfoVolume& volume) {
     }
 
     // 2. Disco interno
-    if (hw.isInternal || volume.pontoMontagem.getFullPathName() == "/") {
+    if (hw.isInternal || volume.pontoMontagem.getFullPathName() == "/" || volume.pontoMontagem.getFullPathName().startsWithIgnoreCase("C:")) {
         return "hd_interno";
     }
 
@@ -284,11 +314,17 @@ void sincronizarDrivesDoProjeto(matriz::db::Database& registro, const std::strin
         if (stmt.step()) pid = stmt.columnText(0);
     }
 
-    // 1. Auto-discover and register all mounted storage devices in /Volumes/
+    // 1. Auto-discover and register all mounted storage devices
     auto mountedVolumes = listarVolumesMontados();
     for (const auto& vol : mountedVolumes) {
-        if (!vol.mountPoint.empty() && juce::String(vol.mountPoint).startsWith("/Volumes/")) {
+        if (!vol.mountPoint.empty()) {
+#if defined(__APPLE__)
+            if (juce::String(vol.mountPoint).startsWith("/Volumes/")) {
+                obterOuCriarVaultParaDestino(registro, juce::File(vol.mountPoint), pid);
+            }
+#elif defined(_WIN32) || defined(_WIN64)
             obterOuCriarVaultParaDestino(registro, juce::File(vol.mountPoint), pid);
+#endif
         }
     }
 

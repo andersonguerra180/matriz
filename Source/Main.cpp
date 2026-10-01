@@ -17,10 +17,12 @@
 #include "Ui/UiSelfTest.h"
 
 #include <csignal>
+#if !JUCE_WINDOWS
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <sys/ucontext.h>
 #include <unistd.h>
+#endif
 
 // ASan/TSan instalam seus próprios handlers de SIGSEGV/SIGBUS/SIGABRT pra
 // produzir os relatórios deles — instalar o crashHandler abaixo por cima
@@ -36,7 +38,7 @@
 
 namespace {
 
-#if !MATRIZ_SANITIZER_BUILD
+#if !MATRIZ_SANITIZER_BUILD && !JUCE_WINDOWS
 static char g_altstack[SIGSTKSZ];
 
 void crashHandler(int sig, siginfo_t* info, void* ctx) {
@@ -190,7 +192,7 @@ public:
         matriz::app::inicializarPreferencias();
         matriz::diag::inicializarWatchdog();
 
-#if !MATRIZ_SANITIZER_BUILD
+#if !MATRIZ_SANITIZER_BUILD && !JUCE_WINDOWS
         stack_t ss;
         ss.ss_sp = g_altstack;
         ss.ss_size = SIGSTKSZ;

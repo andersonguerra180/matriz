@@ -88,18 +88,27 @@ bool DocumentPreviewComponent::carregar(const juce::File& arquivo) {
     auto ext = arquivo.getFileExtension().toLowerCase().replace(".", "");
 
     if (bridge_ && docLoad(static_cast<DocHandle>(bridge_), arquivo.getFullPathName().toRawUTF8())) {
-        void* nsView = docGetNSView(static_cast<DocHandle>(bridge_));
-        if (nsView) {
-            viewComponent_ = std::make_unique<juce::NSViewComponent>();
-            viewComponent_->setView(nsView);
-            addAndMakeVisible(*viewComponent_);
-            carregadoNativo_ = true;
-            totalPaginas_ = docGetTotalPages(static_cast<DocHandle>(bridge_));
-            paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
-            startTimerHz(10);
-            resized();
-            atualizarBarraNavegacao();
-            return true;
+        void* nativeView = docGetNSView(static_cast<DocHandle>(bridge_));
+        if (nativeView) {
+#if JUCE_MAC
+            auto v = std::make_unique<juce::NSViewComponent>();
+            v->setView(nativeView);
+            viewComponent_ = std::move(v);
+#elif JUCE_WINDOWS
+            auto v = std::make_unique<juce::HWNDComponent>();
+            v->setHWND(nativeView);
+            viewComponent_ = std::move(v);
+#endif
+            if (viewComponent_) {
+                addAndMakeVisible(*viewComponent_);
+                carregadoNativo_ = true;
+                totalPaginas_ = docGetTotalPages(static_cast<DocHandle>(bridge_));
+                paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
+                startTimerHz(10);
+                resized();
+                atualizarBarraNavegacao();
+                return true;
+            }
         }
     }
 

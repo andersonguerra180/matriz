@@ -23,17 +23,27 @@ bool VideoPlayerComponent::carregar(const juce::File& arquivo) {
     if (!vpLoad(static_cast<VPHandle>(bridge_), arquivo.getFullPathName().toRawUTF8()))
         return false;
 
-    void* nsView = vpGetNSView(static_cast<VPHandle>(bridge_));
-    if (!nsView) return false;
+    void* nativeView = vpGetNSView(static_cast<VPHandle>(bridge_));
+    if (!nativeView) return false;
 
-    viewComponent_ = std::make_unique<juce::NSViewComponent>();
-    viewComponent_->setView(nsView);
-    addAndMakeVisible(*viewComponent_);
+#if JUCE_MAC
+    auto v = std::make_unique<juce::NSViewComponent>();
+    v->setView(nativeView);
+    viewComponent_ = std::move(v);
+#elif JUCE_WINDOWS
+    auto v = std::make_unique<juce::HWNDComponent>();
+    v->setHWND(nativeView);
+    viewComponent_ = std::move(v);
+#endif
 
-    carregado_ = true;
-    startTimerHz(15);
-    resized();
-    return true;
+    if (viewComponent_) {
+        addAndMakeVisible(*viewComponent_);
+        carregado_ = true;
+        startTimerHz(15);
+        resized();
+        return true;
+    }
+    return false;
 }
 
 void VideoPlayerComponent::tocar() { vpPlay(static_cast<VPHandle>(bridge_)); }
