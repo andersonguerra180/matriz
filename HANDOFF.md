@@ -6,13 +6,43 @@ não devem ser revertidas.
 
 ## Branch atual e último commit
 
-- Branch de trabalho: `fix/crash-freeze` (criada a partir de
-  `feature/send-to-print` no commit `d3b74d8`).
-- **Integrada na `main` em 2026-09-26 por fast-forward** (a `main` estava em
-  `c43ce67`, ancestral direto — sem merge commit). Inclui também os commits
-  `WIP(...)` herdados da `feature/send-to-print`. Novas correções: continuar na
-  `fix/crash-freeze` (ou branch nova a partir da `main`) e integrar do mesmo jeito.
-- Último commit: ver `git log -1 --oneline`.
+- **Versão principal desde 2026-10-01**: a `main` aponta para o último commit de
+  `feat/lote-ajustes-8` (integrada por fast-forward; `main` anterior = `806a259`).
+  Contém tudo de `fix/crash-freeze`, Folder Maps, pacote de collection, lote de 8 ajustes,
+  Nest, e os commits abaixo. Novas correções: branch nova a partir da `main`.
+- Últimos commits: `WIP(Perf/UI)` (conexões de leitura por thread, eventos de lote, rotação
+  do perf.log) e `Feat(Content)` (CONTENT = Hidden). Ver `git log -3 --oneline`.
+- Build release desta versão: `build-release/` (CMake em **x86_64 apenas**, i7 desta máquina;
+  universal exige reconfigurar com `-DCMAKE_OSX_ARCHITECTURES="x86_64;arm64"` — ver README).
+  Compilou sem erros em 17 min. NÃO rodados após estes dois commits: `--selftest-lote`,
+  `matriz_selftest`, ASan/TSan.
+
+## Versão principal (2026-10-01) — o que entrou por último
+
+- **CONTENT = Hidden (Invisível)**: última opção do dropdown CONTENT da ficha (todas as
+  categorias e edição em lote; valor gravado sempre `"Hidden"`, `traduzirContent` mapeia o PT).
+  `ItemResumo::oculto()`; `MosaicoComponent::definirMostrarOcultos` (padrão `true` — só o
+  Catalog esconde); `CatalogWorkspaceComponent::aplicarFiltrosAdicionais` mostra os Hidden só
+  com "Hidden" selecionado em CONTENT TYPE, que é sempre listado (mesmo com 0). Contagens da
+  sidebar (total/media type/ano/subject/content type) **não** incluem os Hidden — de propósito,
+  pra bater com a grade; escolher Hidden não muda esses números. Outros usos do Mosaico
+  (ex.: seletor de arquivos do BACKUP) continuam vendo os Hidden. **Não testado no app ainda.**
+- **WIP(Perf/UI)** (já estava no working tree): `ProjetoAberto::registroLeitura()/
+  indiceLeitura()` — conexão SOMENTE-LEITURA por thread (cai na de escrita se a thread tem
+  transação aberta ou passou do teto); `EventBus::dispararItensAlterados()` = UM evento de lote
+  com `itemIds`; `perf.log` rotaciona em 20 MB (`perf.1.log`), stack trace do Watchdog só
+  acima de 500 ms; `reavaliarVaults(..., bool* algumMudou)`.
+
+### Medição da consolidação (backup de teste de 201 GB, 5.839 arquivos, 2026-10-01)
+
+Build release, destino `BACKUP NOVO/2022 a 2026`: sem crash; ~43 MB/s instantâneo (média desde
+o início ~12,6 MB/s, incluindo planejamento) — disco externo é o gargalo (processo em estado `U`,
+1–5% CPU). Por arquivo: ~55% cópia (`copyfile`) + ~45% verificação (MD5+SHA-256 relendo). A
+**message thread fica bloqueada durante a consolidação**: `BackupWorkspaceComponent::iniciarBackup`
+→ `callAsync` → `executarConsolidacao` roda na message thread; Watchdog registrou bloqueios de
+até 59 s (beachball). É o `runDispatchLoopUntil` deliberado do AGENTS.md; o fix correto (mover
+para thread de fundo) é mudança maior, **pendente, candidata a branch própria**. Não forçar o
+encerramento do app durante a consolidação (efeito no destino não verificado).
 
 ## Baseline dos self-tests (não confundir com regressão)
 

@@ -150,7 +150,8 @@ cmake --build build -j 8
 open "build/matriz_artefacts/BKR Matriz.app"
 ```
 
-Release universal (x86_64 + arm64):
+Release (o `build-release/` desta máquina está configurado só para x86_64; a versão principal
+de 2026-10-01 foi compilada assim). Para universal (x86_64 + arm64):
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=x86_64;arm64"
@@ -317,6 +318,18 @@ devem ser revertidas e pendências em [`HANDOFF.md`](HANDOFF.md); regras permane
   filtro SUBJECT; Show Recently Ingested persistido.
 - **Diagnóstico** — builds `MATRIZ_ASAN`/`MATRIZ_TSAN`; selftests desligam App Nap
   (o macOS rebaixava o processo headless e ele parecia travado).
+
+## Versão principal (1 de outubro de 2026)
+
+A `main` contém o estado consolidado: estabilização crash/freeze, Folder Maps, pacote de
+collection, lote de ajustes (Nest, Intake com R/setas/Espaço, Backup/MAIN), conexões de
+leitura por thread no SQLite, eventos de lote no `EventBus`, rotação do `perf.log` e o novo
+**CONTENT = Hidden** (Invisível): classifique um arquivo como Hidden no campo CONTENT da ficha
+e ele some da grade do Catalog; escolha "Hidden" em CONTENT TYPE (coluna esquerda) para vê-los.
+
+Limitação conhecida: a consolidação de backup roda na message thread — a janela fica sem
+responder (beachball) enquanto copia/verifica arquivos grandes (medido: ~43 MB/s num HD
+externo, bloqueios de até 59 s). Detalhes e pendências em [`HANDOFF.md`](HANDOFF.md).
 
 ## Como se usa (fluxo real)
 
