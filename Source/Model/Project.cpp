@@ -87,7 +87,11 @@ Modo modoFromString(const std::string& s) {
 std::string agoraIso8601() {
     std::time_t t = std::time(nullptr);
     std::tm utc{};
+#if defined(_WIN32) || defined(_MSC_VER)
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
     char buffer[32];
     std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return std::string(buffer);

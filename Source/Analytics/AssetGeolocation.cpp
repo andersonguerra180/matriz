@@ -42,7 +42,11 @@ GeoSource geoSourceFromString(const std::string& str) {
 static std::string agoraIso() {
     std::time_t t = std::time(nullptr);
     std::tm utc{};
+#if defined(_WIN32) || defined(_MSC_VER)
+    gmtime_s(&utc, &t);
+#else
     gmtime_r(&t, &utc);
+#endif
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &utc);
     return std::string(buf);
