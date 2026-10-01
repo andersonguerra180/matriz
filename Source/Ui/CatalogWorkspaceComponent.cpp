@@ -207,6 +207,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
 {
     EventBus::obterInstancia().registrarListener(&escutaEventos_);
     mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
+    mosaico_->definirMostrarOcultos(false);  // CONTENT = Hidden só aparece escolhendo Hidden em CONTENT TYPE
     // Item 9: METADATA não tem Vault/pasta pra soltar arquivo arrastado —
     // clicar numa miniatura e arrastar deve criar seleção em laço, não
     // tentar um arrasto de arquivo sem destino nenhum.
@@ -989,6 +990,8 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
     if (!mosaico_) return;
 
+    mosaico_->definirMostrarOcultos(collectionSelecionado_.has_value() && *collectionSelecionado_ == "Hidden");
+
     const auto& libChave = (categoriaSelecionada_ >= 0 && categoriaSelecionada_ < static_cast<int>(categorias_.size()))
         ? categorias_[static_cast<size_t>(categoriaSelecionada_)].chave : std::string();
     if (libChave == "folders") return;
@@ -1250,6 +1253,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                                            [&](const ItemResumo& r) { return !filtroHerdado->count(r.id); }),
                             itens.end());
             }
+            // CONTENT = Hidden: fora das contagens (a grade também não os mostra);
+            // só entram na entrada "Hidden" do CONTENT TYPE.
+            const int totalOcultos = static_cast<int>(std::count_if(itens.begin(), itens.end(),
+                                                                    [](const ItemResumo& r) { return r.oculto(); }));
+            itens.erase(std::remove_if(itens.begin(), itens.end(), [](const ItemResumo& r) { return r.oculto(); }),
+                        itens.end());
             res.total = static_cast<int>(itens.size());  // total real de arquivos (All Assets)
             // NEST: nas demais contagens um nest vale 1 (a capa), igual ao que a grade mostra.
             itens.erase(std::remove_if(itens.begin(), itens.end(),
@@ -1333,6 +1342,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 res.collections.push_back(pair);
             if (semCollection > 0)
                 res.collections.push_back({"Unknown", semCollection});
+            res.collections.push_back({"Hidden", totalOcultos});  // sempre listado, mesmo com 0
 
             for (const auto& pair : contagemPorSubject)
                 res.subjects.push_back(pair);

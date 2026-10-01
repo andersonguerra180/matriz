@@ -366,7 +366,8 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
         {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
         {"Spreadsheet", "Planilha"},
-        {"Planilha", "Planilha"}
+        {"Planilha", "Planilha"},
+        {"Hidden", juce::String::fromUTF8("Invisível")}
     };
     return mapa;
 }
@@ -405,8 +406,13 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
             auto sub = opcoesContentPorCategoria(c, isPt);
             res.insert(res.end(), sub.begin(), sub.end());
         }
+        // "Hidden" já veio no fim de cada categoria: mantém uma só, no fim.
+        const auto oculto = traduzirContent("Hidden", isPt);
+        res.erase(std::remove(res.begin(), res.end(), oculto), res.end());
+        res.push_back(oculto);
         return res;
     }
+    keys.push_back("Hidden");  // esconde o arquivo da grade do Catalog (ver ItemResumo::oculto)
     if (!isPt) return keys;
     std::vector<juce::String> res;
     for (const auto& k : keys) res.push_back(traduzirContent(k, true));

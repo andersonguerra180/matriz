@@ -64,6 +64,8 @@ struct ItemResumo {
     bool anoDesconhecido() const { return !ano.has_value(); }  // sem EVENT DATE (vazio ou 0)
     std::optional<std::string> contentType;
     std::optional<std::string> collectionType;
+    // CONTENT = "Hidden": fora da grade do Catalog, salvo se CONTENT TYPE = Hidden estiver selecionado.
+    bool oculto() const { return collectionType.has_value() && *collectionType == "Hidden"; }
     std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)
 
     // Extensão (sem ponto, minúscula) do arquivo principal — usada pro

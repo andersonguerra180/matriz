@@ -1028,6 +1028,7 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         const ItemResumo& item = itensTodos_[pos];
         if (!item.pastaAtiva) continue;
         if (ocultarEditados_ && item.marcadoRevisado) continue;
+        if (!mostrarOcultos_ && item.oculto()) continue;
         if (ocultarNaoSelecionados_ && !selecionados_.count(item.id)) continue;
 
         // Eixos combinados com E: pasta da árvore, busca de texto, cada

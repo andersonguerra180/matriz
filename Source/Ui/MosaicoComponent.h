@@ -126,6 +126,15 @@ public:
     }
     bool ocultarEditados() const { return ocultarEditados_; }
 
+    // Itens com CONTENT = Hidden. Padrão: visíveis (só o Catalog os esconde).
+    void definirMostrarOcultos(bool mostrar) {
+        if (mostrarOcultos_ != mostrar) {
+            mostrarOcultos_ = mostrar;
+            aplicarFiltrosEOrdenacao();
+            repaint();
+        }
+    }
+
     void definirOcultarNaoSelecionados(bool ocultar) {
         if (ocultarNaoSelecionados_ != ocultar) {
             ocultarNaoSelecionados_ = ocultar;
@@ -538,6 +547,7 @@ private:
     TamanhoCelula tamanhoCelula_ = TamanhoCelula::Medio;
     bool destacarEditados_ = false;
     bool ocultarEditados_ = false;
+    bool mostrarOcultos_ = true;
     bool ocultarNaoSelecionados_ = false;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;
