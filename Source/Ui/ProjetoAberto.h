@@ -39,6 +39,11 @@ struct ItemResumo {
     std::string estado; // nao_digitalizado | capturado | qc_ok | alerta | publicado
     std::string atualizadoEm;
     std::string criadoEm;
+    // NEST: nestId vazio = fora de nest. nestTotal = quantos arquivos o nest tem; nestCapa = este é a capa.
+    std::string nestId;
+    std::string nestCapaId;
+    int nestTotal = 0;
+    bool nestCapa = false;
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -751,6 +756,31 @@ public:
     // dentro da pasta do projeto também — vira uma cópia órfã, que este
     // método deliberadamente não apaga.
     void removerItensDoProjeto(const std::vector<std::string>& itemIds);
+
+    // NEST (grid): grupos de arquivos de uma mesma sequência. Na grade o nest é UM item (a capa); os outros
+    // membros seguem sendo itens normais no banco. Tudo aqui tem Undo e nunca toca em arquivo.
+    struct NestInfo {
+        std::string nestId, capaId;
+        int total = 0;
+    };
+    // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.
+    static std::map<std::string, NestInfo> mapaDeNests(matriz::db::Database& registro);
+    // Cria um nest com os itens (junta num só os nests que eles já integram). Capa: a do nest mais antigo,
+    // se estiver entre eles; senão o primeiro por data. Devolve o id ("" se nada a fazer).
+    std::string criarNest(const std::vector<std::string>& itemIds);
+    // Un-nest: desfaz os nests que os itens integram (todos os arquivos voltam ao grid como itens normais).
+    void desfazerNest(const std::vector<std::string>& itemIds);
+    // A capa passa a ser `itemId`; as marcas P/K/H/W da capa antiga acompanham (EXPORT leva só a capa).
+    void definirCapaDoNest(const std::string& nestId, const std::string& itemId);
+    std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)
+    std::vector<std::string> ordenarPorDataDeCriacao(const std::vector<std::string>& itemIds) const;
+    std::optional<NestInfo> nestDoItem(const std::string& itemId) const;
+    // EXPORT / ZIP / HTML / Print / Watermark: de cada nest sai só a capa. Tira dos ids os membros que não são capa.
+    std::vector<std::string> semMembrosNaoCapaDeNest(const std::vector<std::string>& itemIds) const;
+    // Todos os itens do catálogo (fora do INTAKE) sem os membros não-capa; nullopt = não há nests (usar "todos").
+    std::optional<std::vector<std::string>> idsDoCatalogoSemNaoCapas() const;
+    // `itemIds` + os demais membros dos nests a que eles pertencem (mover para pasta / remover valem p/ o nest inteiro).
+    std::vector<std::string> expandirMembrosDeNest(const std::vector<std::string>& itemIds) const;
 
     // INTAKE — R (Reject). Marcas R persistidas no projeto (intake_marca_r) e lista de rejeitados por
     // SHA-256 (intake_rejeitados). Só itens em quarentena contam. Nada aqui toca em arquivo algum.

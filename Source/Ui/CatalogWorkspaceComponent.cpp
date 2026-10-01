@@ -1239,7 +1239,11 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                                            [&](const ItemResumo& r) { return !filtroHerdado->count(r.id); }),
                             itens.end());
             }
-            res.total = static_cast<int>(itens.size());
+            res.total = static_cast<int>(itens.size());  // total real de arquivos (All Assets)
+            // NEST: nas demais contagens um nest vale 1 (a capa), igual ao que a grade mostra.
+            itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                       [](const ItemResumo& r) { return r.nestTotal > 1 && !r.nestCapa; }),
+                        itens.end());
 
             std::map<int, int> contagemPorAno;
             int semAno = 0;
@@ -1759,6 +1763,14 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
         menu.addItem(500, matriz::i18n::t("menu.agrupar_pasta"));
     }
 
+    // NEST: agrupa dois ou mais arquivos numa sequência (um item só na grade); Un-nest devolve todos.
+    bool algumEmNest = false;
+    for (const auto& id : itemIds)
+        if (projeto_.nestDoItem(id).has_value()) { algumEmNest = true; break; }
+    if (itemIds.size() > 1 || algumEmNest) menu.addSeparator();
+    if (itemIds.size() > 1) menu.addItem(600, matriz::i18n::t("menu.nest"));
+    if (algumEmNest) menu.addItem(601, matriz::i18n::t("menu.un_nest"));
+
     juce::PopupMenu subMenuPastas;
     auto arvore = projeto_.arvoreAcervo();
     std::vector<std::pair<std::string, juce::String>> pastas;
@@ -1783,6 +1795,14 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     ProjetoAberto* p = &projeto_;
     menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, p, itemIds, ganchos, pastas](int resultado) {
         if (!safeThis) return;
+        if (resultado == 600) {
+            p->criarNest(itemIds);
+            return;
+        }
+        if (resultado == 601) {
+            p->desfazerNest(itemIds);
+            return;
+        }
         if (resultado == 500) {
             std::string newFolderId = p->agruparItensEmNovaPasta(itemIds);
             if (safeThis->aoAgruparEIrParaTree && !newFolderId.empty()) {

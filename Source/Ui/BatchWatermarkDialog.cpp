@@ -465,7 +465,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     lblItensMarcados_ = std::make_unique<juce::Label>();
     lblItensMarcados_->setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     lblItensMarcados_->setColour(juce::Label::textColourId, juce::Colour(0xffffcc00));
-    auto idsMarcados = projeto_ ? projeto_->idsMarcados(ProjetoAberto::TipoMarcacao::Watermark) : std::vector<std::string>();
+    auto idsMarcados = projeto_ ? projeto_->semMembrosNaoCapaDeNest(projeto_->idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) : std::vector<std::string>();
     lblItensMarcados_->setText(isPt ? (juce::String((int)idsMarcados.size()) + " foto(s) marcada(s) com 'W'")
                                     : (juce::String((int)idsMarcados.size()) + " photo(s) marked with 'W'"),
                                juce::dontSendNotification);
@@ -569,7 +569,7 @@ void BatchWatermarkDialog::iniciarExportacao() {
     if (!projeto_) return;
     salvarConfiguracaoAtual();
 
-    auto ids = projeto_->idsMarcados(ProjetoAberto::TipoMarcacao::Watermark);
+    auto ids = projeto_->semMembrosNaoCapaDeNest(projeto_->idsMarcados(ProjetoAberto::TipoMarcacao::Watermark));  // NEST: só a capa
     if (ids.empty()) {
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::WarningIcon,

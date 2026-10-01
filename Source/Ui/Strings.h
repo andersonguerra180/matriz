@@ -1114,6 +1114,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"menu.fechar", "Close"},
         {"menu.editar", "Edit"},
         {"menu.desfazer", "Undo (Cmd+Z)"},
+        {"menu.nest", "Nest"},
+        {"menu.un_nest", "Un-nest"},
         {"menu.renomear_item", "Rename Item(s)... (N)"},
         {"menu.remover_backup", "Remove Selected from Backup (C)"},
         {"menu.log_projeto", "Project Log (log.md)..."},

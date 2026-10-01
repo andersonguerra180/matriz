@@ -240,7 +240,7 @@ void PublishHtmlDialog::iniciarPublicacao() {
 
     std::vector<std::string> itemIdsFiltro;
     if (apenasMarcadosH) {
-        itemIdsFiltro = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Html);
+        itemIdsFiltro = projeto_.semMembrosNaoCapaDeNest(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Html));  // NEST: só a capa
         if (itemIdsFiltro.empty()) {
             juce::AlertWindow::showMessageBoxAsync(
                 juce::MessageBoxIconType::WarningIcon,
@@ -249,6 +249,11 @@ void PublishHtmlDialog::iniciarPublicacao() {
                      : "No assets are marked for publication with [H].\n\nMark assets in the grid using [H] or select 'All assets in project'.");
             return;
         }
+    }
+
+    // "Todos os arquivos": havendo nests, de cada um sai só a capa (para publicar todos, faça Un-nest antes).
+    if (!apenasMarcadosH) {
+        if (auto semNaoCapas = projeto_.idsDoCatalogoSemNaoCapas()) itemIdsFiltro = std::move(*semNaoCapas);
     }
 
     matriz::catalogo::ParamsExportSite params;

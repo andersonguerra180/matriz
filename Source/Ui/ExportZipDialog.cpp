@@ -135,7 +135,7 @@ public:
         }
         juce::File arquivoPart = params_.pastaDestino.getChildFile(arquivoFinal.getFileName() + ".part");
 
-        auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Zip);
+        auto ids = projeto_.semMembrosNaoCapaDeNest(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Zip));  // NEST: só a capa
         if (ids.empty()) {
             notificarFim(false, matriz::i18n::t("zip.erro_sem_itens"), juce::File(), 0, 0, {});
             return;

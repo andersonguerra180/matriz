@@ -43,6 +43,24 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
             safeThis->recarregar();
             return;
         }
+        // NEST criado / desfeito / capa trocada: relê só o mapa de nests (uma consulta) e refiltra.
+        if (e.tipoAlteracao == "nest") {
+            auto* self = safeThis.getComponent();
+            const auto nests = ProjetoAberto::mapaDeNests(self->projeto_.projeto().registro());
+            auto aplicar = [&](std::vector<ItemResumo>& lista) {
+                for (auto& item : lista) {
+                    auto it = nests.find(item.id);
+                    if (it == nests.end()) { item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false; continue; }
+                    item.nestId = it->second.nestId;
+                    item.nestCapaId = it->second.capaId;
+                    item.nestTotal = it->second.total;
+                    item.nestCapa = (item.id == it->second.capaId);
+                }
+            };
+            aplicar(self->itensTodos_);
+            self->aplicarFiltrosEOrdenacao();
+            return;
+        }
         if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
             bool marcadoH = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, e.itemId);
             bool marcadoK = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, e.itemId);
@@ -815,6 +833,25 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
             }
         }
         itensFiltrados_.push_back(item);
+    }
+
+    // NEST: cada nest vira UMA célula — a capa. Se a busca/filtro só achou outro arquivo do nest, a célula é
+    // esse arquivo (o nest "aberto" nele): o arquivo nunca some da busca. Os demais membros ficam escondidos.
+    {
+        std::map<std::string, size_t> representante;  // nestId -> posição em `saida`
+        std::vector<ItemResumo> saida;
+        saida.reserve(itensFiltrados_.size());
+        for (auto& item : itensFiltrados_) {
+            if (item.nestId.empty()) { saida.push_back(std::move(item)); continue; }
+            auto it = representante.find(item.nestId);
+            if (it == representante.end()) {
+                representante[item.nestId] = saida.size();
+                saida.push_back(std::move(item));
+            } else if (item.nestCapa) {
+                saida[it->second] = std::move(item);  // a capa vale mais que um membro que só casou com a busca
+            }
+        }
+        itensFiltrados_ = std::move(saida);
     }
 
     auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
@@ -2166,6 +2203,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                                             : juce::String::fromUTF8(item.titulo.c_str());
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(12.5f)));
+                    if (item.nestTotal > 1) {  // NEST: o nome ganha o número de arquivos do grupo
+                        const juce::String tag = "  [NEST " + juce::String(item.nestTotal) + "]";
+                        nome += tag;
+                    }
                     if (item.offline) {
                         auto off = juce::Rectangle<int>(r.getRight() - 64, r.getCentreY() - 9, 58, 18);
                         g.drawText(nome, r.withRight(off.getX() - 4).reduced(6, 0), juce::Justification::centredLeft, true);
@@ -2291,6 +2332,27 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawRoundedRectangle(offBadge.toFloat(), 4.0f, 1.2f);
                 g.setFont(font9Bold);
                 g.drawText("OFFLINE", offBadge, juce::Justification::centred);
+            }
+
+            // NEST: duas linhas "empilhadas" saindo do cartão (direita/baixo) e o selo com o número de arquivos.
+            if (item.nestTotal > 1) {
+                g.setColour(tk.borda.withAlpha(0.9f));
+                for (int off : {3, 6}) {
+                    g.drawLine((float) bounds.getRight() + off, (float) bounds.getY() + off + 2,
+                               (float) bounds.getRight() + off, (float) bounds.getBottom() + off - 2, 1.5f);
+                    g.drawLine((float) bounds.getX() + off + 2, (float) bounds.getBottom() + off,
+                               (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 1.5f);
+                }
+                const juce::String txt = "NEST " + juce::String(item.nestTotal);
+                const int w = juce::GlyphArrangement::getStringWidthInt(font9Bold, txt) + 12;
+                juce::Rectangle<int> pilula(areaImagem.getRight() - w - 4, areaImagem.getBottom() - 20, w, 16);
+                g.setColour(juce::Colour(0xe6111827));
+                g.fillRoundedRectangle(pilula.toFloat(), 8.0f);
+                g.setColour(juce::Colour(0xff38bdf8));
+                g.drawRoundedRectangle(pilula.toFloat(), 8.0f, 1.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText(txt, pilula, juce::Justification::centred);
             }
 
             // Extension badge (top-left)

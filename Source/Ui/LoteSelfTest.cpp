@@ -1,3 +1,4 @@
+#include "FloatingPreviewWindow.h"
 #include "LoteSelfTest.h"
 
 #include <JuceHeader.h>
@@ -1017,6 +1018,73 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.desfazer();
             checar(contarItens(ra) == 1 && contarItens(rb) == 1, "one Undo brings the rejected items back");
             checar(contarRejeitados() == 0, "and takes their hashes out of the rejected list");
+        }
+
+        // ----- NEST (camada de dados)
+        std::cout << "\n-- NEST: create, merge, cover, outputs, folders, undo --\n";
+        {
+            auto novoNest = [&](const char* codigo, const char* data) {
+                auto f = raizAj.getChildFile(juce::String(codigo) + ".nst");
+                f.replaceWithText(codigo);
+                const auto id = inserirItemComArquivo(reg, projetoId, codigo, f);
+                definirCampoRaiz(reg, id, "data_criacao", data);
+                return id;
+            };
+            const auto n1 = novoNest("NST-1", "2011-05-01 10:00:03");
+            const auto n2 = novoNest("NST-2", "2011-05-01 10:00:02");
+            const auto n3 = novoNest("NST-3", "2011-05-01 10:00:01");  // o mais antigo
+            const auto n4 = novoNest("NST-4", "2011-05-01 10:00:04");
+            const auto n5 = novoNest("NST-5", "2011-05-02 09:00:00");  // fora do nest
+
+            checar(pa.criarNest({n1}).empty(), "a nest needs at least 2 files");
+            const auto nestId = pa.criarNest({n1, n2, n3});
+            auto info = pa.nestDoItem(n1);
+            checar(!nestId.empty() && info && info->total == 3, "Nest groups the 3 selected files");
+            checar(info && info->capaId == n3, "before the user chooses, the cover is the first file by date");
+            checar(!pa.nestDoItem(n5).has_value(), "files outside the nest stay normal");
+
+            // Nest sobre nest junta tudo num só, mantendo a capa do mais antigo
+            const auto nestId2 = pa.criarNest({n4, n1});
+            info = pa.nestDoItem(n2);
+            checar(nestId2 == nestId && info && info->total == 4 && info->capaId == n3, "Nest on a file already nested merges everything into ONE nest, keeping its cover");
+
+            // Capa: a marca de EXPORT (K) acompanha
+            pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Zip, {n3}, true);
+            pa.definirCapaDoNest(nestId, n2);
+            checar(pa.nestDoItem(n1) && pa.nestDoItem(n1)->capaId == n2, "clicking a file in the preview column makes it the new cover");
+            checar(pa.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, n2) && !pa.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, n3),
+                   "the export mark follows the cover");
+            checar(pa.membrosDoNest(nestId).size() == 4, "the files that were not chosen stay in the nest (a nest is not a rejection)");
+
+            // Saídas: de cada nest sai só a capa
+            const auto saida = pa.semMembrosNaoCapaDeNest({n1, n2, n3, n4, n5});
+            checar(saida == std::vector<std::string>({n2, n5}), "EXPORT/HTML/ZIP/Print/Watermark take only the cover of each nest (" + juce::String((int) saida.size()) + " ids)");
+            const auto todos = pa.idsDoCatalogoSemNaoCapas();
+            bool temNaoCapa = false;
+            if (todos) for (const auto& id : *todos) if (id == n1 || id == n3 || id == n4) temNaoCapa = true;
+            checar(todos.has_value() && !temNaoCapa, "'all assets' also leaves the non-cover files out");
+
+            // Mover o nest para uma pasta move todos os arquivos juntos
+            const std::string pastaNest = pa.criarPastaAcervo("Para o nest", std::nullopt, mapa);
+            pa.adicionarItensAPasta({n2}, pastaNest);
+            auto naPasta = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE item_id = ? AND pasta_id = ?");
+                st.bind(1, Value::of(id));
+                st.bind(2, Value::of(pastaNest));
+                st.step();
+                return st.columnInt(0) == 1;
+            };
+            checar(naPasta(n1) && naPasta(n2) && naPasta(n3) && naPasta(n4) && !naPasta(n5), "moving a nest to a folder moves all its files together");
+            pa.desfazer();
+            checar(!naPasta(n1) && !naPasta(n4), "one Undo takes them all back");
+
+            // Un-nest e Undo
+            pa.desfazerNest({n2});
+            checar(!pa.nestDoItem(n1) && !pa.nestDoItem(n3) && pa.semMembrosNaoCapaDeNest({n1, n3}).size() == 2,
+                   "Un-nest returns every file to the grid as a normal item");
+            pa.desfazer();
+            checar(pa.nestDoItem(n1) && pa.nestDoItem(n1)->total == 4 && pa.nestDoItem(n1)->capaId == n2, "Undo of Un-nest brings the nest back with its cover");
+            pa.desfazerNest({n1});  // deixa o projeto sem nests para o resto dos testes
         }
     } catch (const std::exception& e) {
         checar(false, juce::String("lote de ajustes selftest: ") + e.what());
@@ -3931,6 +3999,61 @@ int rodarLoteSelfTest() {
         for (int i = 0; i < kGrande / cols + 10; ++i) tecla(juce::KeyPress::upKey);
         checar(foco() >= 0 && foco() < cols, "Up past the start stops in the first row (" + juce::String(foco()) + ")");
         bombear(300);
+
+        // ---- NEST na grade: uma célula, contagens, busca
+        {
+            auto* pa = janela.projetoAberto();
+            const auto ordem = mo->idsVisiveisEmOrdem();
+            const std::vector<std::string> grupo(ordem.begin(), ordem.begin() + 5);
+            std::string codigoDoEscondido;
+            const int visiveisAntes = mo->totalItensVisiveis();
+            pa->criarNest(grupo);
+            esperarAte([&] { return mo->totalItensVisiveis() == visiveisAntes - 4; }, 10000);
+            bombear(200);
+            checar(mo->totalItensVisiveis() == visiveisAntes - 4, "a nest of 5 files is ONE cell in the grid (" + juce::String(mo->totalItensVisiveis()) + " of " + juce::String(visiveisAntes) + ")");
+            const auto capaId = pa->nestDoItem(grupo[0])->capaId;
+            std::string escondido;
+            for (const auto& id : grupo) if (id != capaId) { escondido = id; break; }
+            bool capaVisivel = false, escondidoVisivel = false;
+            for (const auto& id : mo->idsVisiveisEmOrdem()) { capaVisivel = capaVisivel || id == capaId; escondidoVisivel = escondidoVisivel || id == escondido; }
+            checar(capaVisivel && !escondidoVisivel, "the cell is the cover; the other files are hidden");
+
+            // contagens: "All Assets" segue o total real; o resto conta o nest como 1
+            cw->atualizarContagens();
+            auto contagem = [&](const char* chave) { for (const auto& c : cw->categorias_) if (c.chave == chave) return c.contagem; return -1; };
+            esperarAte([&] { return contagem("audio") == kGrande - 4; }, 10000);
+            checar(contagem("audio") == kGrande - 4, "media type counts see the nest as 1 item (" + juce::String(contagem("audio")) + ")");
+            checar(contagem("all") == kGrande, "while All Assets keeps the real total of files (" + juce::String(contagem("all")) + ")");
+
+            if (auto dir = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("test-output"); dir.isDirectory()) {
+                juce::PNGImageFormat png;
+                bombear(300);
+                auto arq = dir.getChildFile("nest_grade.png");
+                arq.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                    png.writeImageToStream(cw->createComponentSnapshot(cw->getLocalBounds()), *out);
+                // Preview do nest: coluna com todos os arquivos do grupo.
+                FloatingPreviewWindow janelaPreview(*pa, capaId, [] {}, nullptr, nullptr);
+                bombear(500);
+                auto arq2 = dir.getChildFile("nest_preview.png");
+                arq2.deleteFile();
+                if (auto out = std::unique_ptr<juce::FileOutputStream>(arq2.createOutputStream()))
+                    png.writeImageToStream(janelaPreview.createComponentSnapshot(janelaPreview.getLocalBounds()), *out);
+            }
+
+            // busca: um arquivo escondido dentro do nest NUNCA some — a célula passa a ser ele
+            for (const auto& it : mo->todosItensEmMemoria()) if (it.id == escondido) codigoDoEscondido = it.codigoAcervo;
+            mo->definirBusca(juce::String(codigoDoEscondido));
+            esperarAte([&] { for (const auto& id : mo->idsVisiveisEmOrdem()) if (id == escondido) return true; return false; }, 10000);
+            bool achado = false;
+            for (const auto& id : mo->idsVisiveisEmOrdem()) achado = achado || id == escondido;
+            checar(achado, "searching for a file inside a nest shows the nest, opened on that file");
+            mo->definirBusca({});
+            bombear(300);
+            pa->desfazerNest(grupo);
+            esperarAte([&] { return mo->totalItensVisiveis() == visiveisAntes; }, 10000);
+            checar(mo->totalItensVisiveis() == visiveisAntes, "Un-nest gives the 5 cells back");
+        }
 
         // ---- INTAKE (miniaturas)
         janela.mostrarIntake();

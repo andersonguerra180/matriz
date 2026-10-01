@@ -1040,3 +1040,25 @@ CREATE TABLE IF NOT EXISTS intake_marca_r (
     origem     TEXT NOT NULL DEFAULT 'usuario',  -- 'usuario' | 'hash' (pré-marcado pela lista de rejeitados)
     marcado_em TEXT NOT NULL
 );
+
+-- ---------------------------------------------------------------------------
+-- NEST — agrupamento de arquivos de uma mesma sequência (rajada, takes, versões) no grid.
+-- Na grade o nest aparece como UM item (a capa). Os outros membros continuam sendo itens normais
+-- no banco (MAKE BACKUP leva todos); EXPORT/HTML/ZIP/Print/Watermark saem só com a capa.
+-- Nada aqui toca em arquivo algum.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS nest (
+    id            TEXT PRIMARY KEY,
+    projeto_id    TEXT NOT NULL,
+    capa_item_id  TEXT REFERENCES item(id) ON DELETE SET NULL,
+    criado_em     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS nest_item (
+    item_id       TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
+    nest_id       TEXT NOT NULL REFERENCES nest(id) ON DELETE CASCADE,
+    adicionado_em TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_nest_item_nest ON nest_item(nest_id);
+CREATE INDEX IF NOT EXISTS idx_nest_capa ON nest(capa_item_id);

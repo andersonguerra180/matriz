@@ -327,6 +327,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "LEFT JOIN vault v ON v.id = a.vault_id "
         "WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
 
+    const auto nests = mapaDeNests(registro);  // uma consulta: item -> nest
     auto minStmt = indice.prepare(
         "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
     auto tagStmt = registro.prepare(
@@ -358,6 +359,12 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         if (!stmt.columnIsNull(15)) r.contentType = stmt.columnText(15);
         if (!stmt.columnIsNull(16)) r.collectionType = stmt.columnText(16);
         r.criadoEm = stmt.columnText(17);
+        if (auto nit = nests.find(r.id); nit != nests.end()) {
+            r.nestId = nit->second.nestId;
+            r.nestCapaId = nit->second.capaId;
+            r.nestTotal = nit->second.total;
+            r.nestCapa = (r.id == nit->second.capaId);
+        }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
         std::string vaultLoc = stmt.columnIsNull(19) ? "" : stmt.columnText(19);
@@ -3224,9 +3231,10 @@ void ProjetoAberto::definirHistoricoCoresPasta(const std::vector<juce::String>& 
     } catch (...) {}
 }
 
-void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& itemIds, const std::string& pastaId) {
+void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& idsPedidos, const std::string& pastaId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);  // mover um nest move todos os arquivos dele juntos
     std::string mapaId = mapaIdDaPasta(pastaId);
     if (mapaId.empty()) return;
     if (!desfazendo_) {
@@ -3283,10 +3291,11 @@ std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::stri
     return std::nullopt;
 }
 
-std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& itemIds,
+std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string>& idsPedidos,
                                                     const std::string& mapaId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return {};
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
 
     std::string newFolderId = criarPastaAcervo("New Folder", std::nullopt, mapaId);
 
@@ -3310,9 +3319,10 @@ std::string ProjetoAberto::agruparItensEmNovaPasta(const std::vector<std::string
     return newFolderId;
 }
 
-void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& itemIds, const std::string& mapaId) {
+void ProjetoAberto::removerItensDoBackup(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);  // tirar um nest da lista tira todos os arquivos dele
     if (!desfazendo_) {
         std::vector<std::pair<std::string, std::string>> anteriores;
         for (const auto& itemId : itemIds) {
@@ -3448,6 +3458,294 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
         }
         for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
     });
+}
+
+// ── NEST ─────────────────────────────────────────────────────────────────
+
+namespace {
+struct EstadoNest {
+    std::string id, projetoId, capa, criadoEm;
+    std::vector<std::string> membros;
+};
+
+// Os nests a que os itens pertencem, com todos os membros — o retrato que o Undo restaura.
+std::vector<EstadoNest> capturarNests(matriz::db::Database& db, const std::set<std::string>& itemIds) {
+    std::set<std::string> idsDeNest;
+    {
+        auto st = db.prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+        for (const auto& id : itemIds) {
+            st.reset();
+            st.bind(1, matriz::db::Value::of(id));
+            while (st.step()) idsDeNest.insert(st.columnText(0));
+        }
+    }
+    std::vector<EstadoNest> out;
+    for (const auto& nid : idsDeNest) {
+        EstadoNest e;
+        e.id = nid;
+        auto st = db.prepare("SELECT projeto_id, COALESCE(capa_item_id, ''), criado_em FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nid));
+        if (!st.step()) continue;
+        e.projetoId = st.columnText(0);
+        e.capa = st.columnText(1);
+        e.criadoEm = st.columnText(2);
+        auto sm = db.prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+        sm.bind(1, matriz::db::Value::of(nid));
+        while (sm.step()) e.membros.push_back(sm.columnText(0));
+        out.push_back(std::move(e));
+    }
+    return out;
+}
+
+void removerNestsDosItens(matriz::db::Database& db, const std::set<std::string>& itemIds) {
+    for (const auto& id : itemIds)
+        db.run("DELETE FROM nest WHERE id IN (SELECT nest_id FROM nest_item WHERE item_id = ?)", {matriz::db::Value::of(id)});
+}
+
+void restaurarNests(matriz::db::Database& db, const std::vector<EstadoNest>& estados) {
+    for (const auto& e : estados) {
+        db.run("INSERT OR REPLACE INTO nest (id, projeto_id, capa_item_id, criado_em) VALUES (?, ?, ?, ?)",
+               {matriz::db::Value::of(e.id), matriz::db::Value::of(e.projetoId),
+                e.capa.empty() ? matriz::db::Value::null() : matriz::db::Value::of(e.capa), matriz::db::Value::of(e.criadoEm)});
+        for (const auto& m : e.membros)
+            db.run("INSERT OR REPLACE INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(m), matriz::db::Value::of(e.id), matriz::db::Value::of(e.criadoEm)});
+    }
+}
+} // namespace
+
+std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz::db::Database& registro) {
+    std::map<std::string, NestInfo> out;
+    try {
+        std::map<std::string, std::vector<std::string>> membros;  // nest -> itens
+        std::map<std::string, std::string> capaDe;
+        auto st = registro.prepare(
+            "SELECT ni.item_id, ni.nest_id, "
+            "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
+            "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)) "
+            "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
+        while (st.step()) {
+            membros[st.columnText(1)].push_back(st.columnText(0));
+            capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
+        }
+        for (const auto& [nid, itens] : membros) {
+            if (itens.size() < 2) continue;  // nest de um arquivo só não existe
+            NestInfo info;
+            info.nestId = nid;
+            info.capaId = capaDe[nid];
+            info.total = static_cast<int>(itens.size());
+            for (const auto& id : itens) out[id] = info;
+        }
+    } catch (...) {}
+    return out;
+}
+
+std::string ProjetoAberto::criarNest(const std::vector<std::string>& itemIdsPedidos) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return {}; }
+    if (!projeto_ || itemIdsPedidos.size() < 2) return {};
+    auto& db = projeto_->registro();
+
+    std::set<std::string> conjunto(itemIdsPedidos.begin(), itemIdsPedidos.end());
+    const auto antes = capturarNests(db, conjunto);
+    for (const auto& e : antes) conjunto.insert(e.membros.begin(), e.membros.end());  // nest sobre nest: junta tudo
+    if (conjunto.size() < 2) return {};
+
+    std::string nestId = matriz::model::novoUuid();
+    std::string capa, criadoEm = matriz::model::agoraIso8601();
+    if (!antes.empty()) {  // reaproveita o nest mais antigo (e a capa dele, se continuar entre os arquivos)
+        const auto maisAntigo = std::min_element(antes.begin(), antes.end(),
+                                                 [](const EstadoNest& a, const EstadoNest& b) { return a.criadoEm < b.criadoEm; });
+        nestId = maisAntigo->id;
+        criadoEm = maisAntigo->criadoEm;
+        capa = maisAntigo->capa;
+    }
+    if (capa.empty() || conjunto.count(capa) == 0)
+        capa = ordenarPorDataDeCriacao(std::vector<std::string>(conjunto.begin(), conjunto.end())).front();  // 1º por data
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        removerNestsDosItens(db, conjunto);
+        EstadoNest novo;
+        novo.id = nestId;
+        novo.projetoId = projeto_->projetoId();
+        novo.capa = capa;
+        novo.criadoEm = criadoEm;
+        novo.membros.assign(conjunto.begin(), conjunto.end());
+        restaurarNests(db, {novo});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    if (!desfazendo_) {
+        registrarUndo("Nest " + std::to_string(conjunto.size()) + " Files", [this, antes, conjunto]() {
+            auto& d = projeto_->registro();
+            d.run("BEGIN TRANSACTION", {});
+            try {
+                removerNestsDosItens(d, conjunto);
+                restaurarNests(d, antes);
+                d.run("COMMIT", {});
+            } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} return; }
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        });
+    }
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
+    return nestId;
+}
+
+void ProjetoAberto::desfazerNest(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    const std::set<std::string> pedidos(itemIds.begin(), itemIds.end());
+    const auto antes = capturarNests(db, pedidos);
+    if (antes.empty()) return;
+    std::set<std::string> todos = pedidos;
+    for (const auto& e : antes) todos.insert(e.membros.begin(), e.membros.end());
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        removerNestsDosItens(db, todos);
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    if (!desfazendo_) {
+        registrarUndo("Un-nest", [this, antes]() {
+            auto& d = projeto_->registro();
+            d.run("BEGIN TRANSACTION", {});
+            try {
+                restaurarNests(d, antes);
+                d.run("COMMIT", {});
+            } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} return; }
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        });
+    }
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+void ProjetoAberto::definirCapaDoNest(const std::string& nestId, const std::string& itemId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || nestId.empty() || itemId.empty()) return;
+    auto& db = projeto_->registro();
+    std::string capaAntiga;
+    {
+        auto st = db.prepare("SELECT COALESCE(n.capa_item_id, '') FROM nest n "
+                             "WHERE n.id = ? AND EXISTS (SELECT 1 FROM nest_item WHERE nest_id = n.id AND item_id = ?)");
+        st.bind(1, matriz::db::Value::of(nestId));
+        st.bind(2, matriz::db::Value::of(itemId));
+        if (!st.step()) return;  // o arquivo não é deste nest
+        capaAntiga = st.columnText(0);
+    }
+    if (capaAntiga == itemId) return;
+    db.run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(itemId), matriz::db::Value::of(nestId)});
+    if (!capaAntiga.empty()) transferirMarcacoes(capaAntiga, itemId);  // o EXPORT segue o que está marcado
+    if (!desfazendo_) {
+        registrarUndo("Change Nest Cover", [this, nestId, capaAntiga, itemId]() {
+            projeto_->registro().run("UPDATE nest SET capa_item_id = ? WHERE id = ?",
+                                     {capaAntiga.empty() ? matriz::db::Value::null() : matriz::db::Value::of(capaAntiga),
+                                      matriz::db::Value::of(nestId)});
+            if (!capaAntiga.empty()) transferirMarcacoes(itemId, capaAntiga);
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        });
+    }
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+std::vector<std::string> ProjetoAberto::ordenarPorDataDeCriacao(const std::vector<std::string>& ids) const {
+    if (!projeto_ || ids.size() < 2) return ids;
+    std::vector<std::pair<std::pair<std::string, std::string>, std::string>> chaves;  // ((data, código), id)
+    auto st = projeto_->registro().prepare(
+        "SELECT COALESCE((SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
+        "                (SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
+        "                i.criado_em), i.codigo_acervo FROM item i WHERE i.id = ?");
+    for (const auto& id : ids) {
+        st.reset();
+        st.bind(1, matriz::db::Value::of(id));
+        std::string data, codigo;
+        if (st.step()) {
+            data = st.columnIsNull(0) ? std::string() : st.columnText(0);
+            codigo = st.columnIsNull(1) ? std::string() : st.columnText(1);
+        }
+        chaves.push_back({{data, codigo}, id});
+    }
+    std::sort(chaves.begin(), chaves.end());
+    std::vector<std::string> out;
+    out.reserve(chaves.size());
+    for (auto& c : chaves) out.push_back(c.second);
+    return out;
+}
+
+std::vector<std::string> ProjetoAberto::membrosDoNest(const std::string& nestId) const {
+    std::vector<std::string> ids;
+    if (!projeto_ || nestId.empty()) return ids;
+    auto st = projeto_->registro().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+    st.bind(1, matriz::db::Value::of(nestId));
+    while (st.step()) ids.push_back(st.columnText(0));
+    return ordenarPorDataDeCriacao(ids);
+}
+
+std::optional<ProjetoAberto::NestInfo> ProjetoAberto::nestDoItem(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return std::nullopt;
+    auto st = projeto_->registro().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+    st.bind(1, matriz::db::Value::of(itemId));
+    if (!st.step()) return std::nullopt;
+    const std::string nid = st.columnText(0);
+    const auto mapa = mapaDeNests(projeto_->registro());
+    auto it = mapa.find(itemId);
+    if (it == mapa.end() || it->second.nestId != nid) return std::nullopt;
+    return it->second;
+}
+
+std::vector<std::string> ProjetoAberto::semMembrosNaoCapaDeNest(const std::vector<std::string>& itemIds) const {
+    if (!projeto_ || itemIds.empty()) return itemIds;
+    const auto nests = mapaDeNests(projeto_->registro());
+    if (nests.empty()) return itemIds;
+    std::vector<std::string> out;
+    out.reserve(itemIds.size());
+    for (const auto& id : itemIds) {
+        auto it = nests.find(id);
+        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+    }
+    return out;
+}
+
+std::optional<std::vector<std::string>> ProjetoAberto::idsDoCatalogoSemNaoCapas() const {
+    if (!projeto_) return std::nullopt;
+    const auto nests = mapaDeNests(projeto_->registro());
+    if (nests.empty()) return std::nullopt;
+    std::vector<std::string> out;
+    auto st = projeto_->registro().prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    while (st.step()) {
+        const std::string id = st.columnText(0);
+        auto it = nests.find(id);
+        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+    }
+    return out;
+}
+
+std::vector<std::string> ProjetoAberto::expandirMembrosDeNest(const std::vector<std::string>& itemIds) const {
+    if (!projeto_ || itemIds.empty()) return itemIds;
+    std::vector<std::string> out = itemIds;
+    std::set<std::string> ja(itemIds.begin(), itemIds.end());
+    std::set<std::string> nestsVistos;
+    auto st = projeto_->registro().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+    auto sm = projeto_->registro().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+    for (const auto& id : itemIds) {
+        st.reset();
+        st.bind(1, matriz::db::Value::of(id));
+        if (!st.step()) continue;
+        const std::string nid = st.columnText(0);
+        if (!nestsVistos.insert(nid).second) continue;
+        sm.reset();
+        sm.bind(1, matriz::db::Value::of(nid));
+        while (sm.step()) {
+            const std::string m = sm.columnText(0);
+            if (ja.insert(m).second) out.push_back(m);
+        }
+    }
+    return out;
 }
 
 std::set<std::string> ProjetoAberto::idsMarcadosR() const {

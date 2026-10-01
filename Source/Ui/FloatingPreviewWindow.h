@@ -88,6 +88,11 @@ public:
             [this] { closeButtonPressed(); }
         );
         setContentOwned(contentComp_, true);
+        // NEST: escolher outro arquivo na coluna do grupo troca o que o preview mostra (e a capa).
+        contentComp_->aoMudouDeArquivo = [this](const std::string& novoId) {
+            atualizarTituloJanela(novoId);
+            if (aoItemMudouCallback_) aoItemMudouCallback_(novoId);
+        };
 
         atualizarTituloJanela(itemId);
 
@@ -165,6 +170,67 @@ public:
     }
 
 private:
+    // NEST: coluna com todos os arquivos do grupo. Clicar num arquivo o escolhe como capa do nest.
+    class NestColuna : public juce::Component {
+    public:
+        struct Linha {
+            std::string id;
+            juce::String nome;
+            juce::Image miniatura;
+            bool capa = false, atual = false;
+        };
+        static constexpr int kAlturaLinha = 78;
+        std::function<void(const std::string&)> aoEscolher;
+
+        void definir(std::vector<Linha> linhas) {
+            linhas_ = std::move(linhas);
+            setSize(getWidth(), juce::jmax(kAlturaLinha, static_cast<int>(linhas_.size()) * kAlturaLinha));
+            repaint();
+        }
+        int numeroDeLinhas() const { return static_cast<int>(linhas_.size()); }
+
+        void paint(juce::Graphics& g) override {
+            const auto& tk = tema();
+            g.fillAll(tk.painel);
+            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            for (int i = 0; i < static_cast<int>(linhas_.size()); ++i) {
+                const auto& l = linhas_[static_cast<size_t>(i)];
+                juce::Rectangle<int> r(0, i * kAlturaLinha, getWidth(), kAlturaLinha);
+                if (l.atual) { g.setColour(tk.acento.withAlpha(0.22f)); g.fillRect(r); }
+                g.setColour(tk.borda.withAlpha(0.5f));
+                g.fillRect(r.getX(), r.getBottom() - 1, r.getWidth(), 1);
+                auto miniArea = r.reduced(6).removeFromTop(kAlturaLinha - 24).withWidth(getWidth() - 12);
+                if (l.miniatura.isValid()) {
+                    g.drawImage(l.miniatura, miniArea.toFloat(), juce::RectanglePlacement::centred);
+                } else {
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(miniArea.toFloat(), 3.0f);
+                }
+                if (l.capa) {  // selo da capa
+                    juce::Rectangle<int> selo(miniArea.getX() + 3, miniArea.getY() + 3, 44, 15);
+                    g.setColour(juce::Colour(0xe6111827));
+                    g.fillRoundedRectangle(selo.toFloat(), 7.0f);
+                    g.setColour(juce::Colour(0xff38bdf8));
+                    g.drawRoundedRectangle(selo.toFloat(), 7.0f, 1.0f);
+                    g.setColour(juce::Colours::white);
+                    g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+                    g.drawText("COVER", selo, juce::Justification::centred);
+                    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                }
+                g.setColour(tk.textoPrimario);
+                g.drawText(l.nome, r.withTop(r.getBottom() - 22).reduced(6, 0), juce::Justification::centredLeft, true);
+            }
+        }
+
+        void mouseDown(const juce::MouseEvent& e) override {
+            const int i = e.y / kAlturaLinha;
+            if (i >= 0 && i < static_cast<int>(linhas_.size()) && aoEscolher) aoEscolher(linhas_[static_cast<size_t>(i)].id);
+        }
+
+    private:
+        std::vector<Linha> linhas_;
+    };
+
     class ContentComponent : public juce::Component, private EventBusListener {
     public:
         ContentComponent(ProjetoAberto& projeto,
@@ -233,12 +299,58 @@ private:
             fichaPanel_ = std::make_unique<FichaPanelComponent>(projeto_);
             addAndMakeVisible(*fichaPanel_);
 
+            nestColuna_ = std::make_unique<NestColuna>();
+            nestColuna_->aoEscolher = [this](const std::string& id) { escolherArquivoDoNest(id); };
+            nestViewport_ = std::make_unique<juce::Viewport>();
+            nestViewport_->setViewedComponent(nestColuna_.get(), false);
+            nestViewport_->setScrollBarsShown(true, false);
+            nestViewport_->setVisible(false);
+            addAndMakeVisible(*nestViewport_);
+
             carregarAsset(itemId_);
         }
 
         ~ContentComponent() override {
             EventBus::obterInstancia().removerListener(this);
+            if (nestViewport_) nestViewport_->setViewedComponent(nullptr, false);
             if (escuta_) escuta_->descarregar();
+        }
+
+        std::function<void(const std::string&)> aoMudouDeArquivo;
+
+        // NEST: o arquivo escolhido na coluna vira a capa e passa a ser mostrado no preview.
+        void escolherArquivoDoNest(const std::string& novoId) {
+            if (novoId == itemId_ || nestId_.empty()) return;
+            projeto_.definirCapaDoNest(nestId_, novoId);
+            carregarAsset(novoId);
+            if (aoMudouDeArquivo) aoMudouDeArquivo(novoId);
+        }
+
+        void atualizarColunaNest() {
+            std::vector<NestColuna::Linha> linhas;
+            nestId_.clear();
+            if (auto nest = projeto_.nestDoItem(itemId_)) {
+                nestId_ = nest->nestId;
+                for (const auto& id : projeto_.membrosDoNest(nestId_)) {
+                    NestColuna::Linha l;
+                    l.id = id;
+                    std::string tit, tipo, cod;
+                    projeto_.obterItemInfo(id, tit, tipo, cod);
+                    auto info = projeto_.arquivoPrincipal(id);
+                    l.nome = info ? juce::File(info->caminhoAbsoluto).getFileName() : juce::String::fromUTF8(tit.c_str());
+                    if (auto caminho = projeto_.caminhoMiniaturaPrincipal(id)) l.miniatura = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
+                    l.capa = (id == nest->capaId);
+                    l.atual = (id == itemId_);
+                    linhas.push_back(std::move(l));
+                }
+            }
+            const bool mostrar = linhas.size() > 1;
+            if (nestColuna_) {
+                nestColuna_->setSize(kLarguraNest - nestViewport_->getScrollBarThickness(), nestColuna_->getHeight());
+                nestColuna_->definir(std::move(linhas));
+            }
+            if (nestViewport_) nestViewport_->setVisible(mostrar);
+            if (!mostrar) nestId_.clear();
         }
 
         const std::string& itemIdAtual() const { return itemId_; }
@@ -345,6 +457,7 @@ private:
             if (escuta_) escuta_->aoMudarMarcadores = refreshFicha;
             if (preview_) preview_->aoMudarMarcadores = refreshFicha;
 
+            atualizarColunaNest();
             resized();
             repaint();
         }
@@ -399,6 +512,11 @@ private:
         }
 
         void aoItemAlterado(const EventoItemAlterado& e) override {
+            if (e.tipoAlteracao == "nest") {  // capa trocada / nest desfeito em outro lugar
+                juce::Component::SafePointer<ContentComponent> seguro(this);
+                juce::MessageManager::callAsync([seguro] { if (seguro) { seguro->atualizarColunaNest(); seguro->resized(); } });
+                return;
+            }
             if (e.tipoAlteracao != "marcado_revisado" && e.tipoAlteracao != "marcacao" &&
                 e.tipoAlteracao != "publicacao") return;
             if (!e.itemId.empty() && e.itemId != itemId_) return;
@@ -425,6 +543,13 @@ private:
             }
             if (lblTitulo_) {
                 lblTitulo_->setBounds(topBar);
+            }
+
+            // NEST: coluna com os arquivos do grupo, à esquerda de tudo.
+            if (nestViewport_ && nestViewport_->isVisible()) {
+                auto colunaArea = area.removeFromLeft(kLarguraNest);
+                nestViewport_->setBounds(colunaArea);
+                nestColuna_->setSize(kLarguraNest - nestViewport_->getScrollBarThickness(), nestColuna_->getHeight());
             }
 
             // Main Content Split: Media preview (left) | Resizer Bar | Ficha (right)
@@ -467,6 +592,10 @@ private:
 
     private:
         static constexpr int kAlturaTopBar = 42;
+        static constexpr int kLarguraNest = 176;
+        std::unique_ptr<NestColuna> nestColuna_;
+        std::unique_ptr<juce::Viewport> nestViewport_;
+        std::string nestId_;
         static constexpr int kLarguraFichaMin = 300;
         static constexpr int kLarguraFichaMax = 950;
         int larguraFicha_ = 620; // 620px default enables 2 metadata columns

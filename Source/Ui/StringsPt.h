@@ -744,6 +744,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"menu.salvar", "Salvar (Cmd+S)"},
         {"menu.salvar_como", "Salvar Como... (Cmd+Shift+S)"},
         {"menu.fechar", "Fechar"},
+        {"menu.nest", "Nest (agrupar)"},
+        {"menu.un_nest", "Un-nest (desfazer grupo)"},
         {"menu.renomear_item", "Renomear Item(ns)... (N)"},
         {"metadados.bit_depth", "Profundidade"},
         {"metadados.canais", "Canais"},

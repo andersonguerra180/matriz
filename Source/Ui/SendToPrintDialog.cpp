@@ -1192,7 +1192,7 @@ void SendToPrintDialog::selectedRowsChanged(int lastRowSelected) {
 
 void SendToPrintDialog::carregarFila() {
     fila_.clear();
-    auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Print);
+    auto ids = projeto_.semMembrosNaoCapaDeNest(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Print));  // NEST: só a capa
 
     for (const auto& id : ids) {
         ItemFilaPrint item;
