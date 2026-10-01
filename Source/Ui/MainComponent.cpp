@@ -1311,6 +1311,10 @@ matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     ganchos.aoFiltrarItens = [this](std::set<std::string> ids) {
         if (mosaico_) mosaico_->definirFiltroItens(std::move(ids));
     };
+    // "É foto?" (P/W) pelos dados que a grade já tem, sem obterItemResumo por item.
+    ganchos.itemEmMemoria = [this](const std::string& id) -> const ItemResumo* {
+        return mosaico_ ? mosaico_->itemEmMemoria(id) : nullptr;
+    };
     return ganchos;
 }
 
@@ -1318,7 +1322,7 @@ void MainComponent::abrirMenuContextoItens(std::vector<std::string> itemIds) {
     if (!projetoAberto_ || itemIds.empty()) return;
 
     auto ganchos = ganchosDeAcao();
-    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds);
+    auto menu = matriz::ui::acoes::construirMenu(*projetoAberto_, itemIds, ganchos.itemEmMemoria);
     ProjetoAberto* projeto = projetoAberto_.get();
     menu.showMenuAsync(juce::PopupMenu::Options(), [projeto, itemIds, ganchos](int resultado) {
         matriz::ui::acoes::executar(resultado, *projeto, itemIds, ganchos);
@@ -2027,7 +2031,7 @@ void MainComponent::mostrarBackup() {
         addAndMakeVisible(*backupWorkspace_);
     } else {
         backupWorkspace_->setVisible(true);
-        backupWorkspace_->atualizarSelecaoDoGridSeNecessario();
+        backupWorkspace_->atualizarSelecaoDoGridSeNecessario(/*recalcular*/ false);  // recarregar() já recalcula a prévia
         backupWorkspace_->recarregar();
     }
 
@@ -2290,14 +2294,16 @@ void MainComponent::verificarVaultsConectados() {
 
     poolVaults_.addJob([safeThis, projeto]() {
         std::vector<std::string> reconectados;
+        bool mudou = false;
         try {
             reconectados = projeto->reavaliarVaults();
+            mudou = projeto->consumirMudancaDeVaults();  // também pega mudança vista pela aba Storage
         } catch (const std::exception&) {
         }
 
-        juce::MessageManager::callAsync([safeThis, reconectados]() {
+        juce::MessageManager::callAsync([safeThis, reconectados, mudou]() {
             if (!safeThis) return;
-            safeThis.getComponent()->aoTerminarReavaliacaoDeVaults(reconectados);
+            safeThis.getComponent()->aoTerminarReavaliacaoDeVaults(reconectados, mudou);
         });
     });
 }
@@ -2327,13 +2333,14 @@ void MainComponent::atualizarCacheDeTamanhoTotal() {
     });
 }
 
-void MainComponent::aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados) {
+void MainComponent::aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados, bool algumMudou) {
     if (!projetoAberto_) {
         reconciliacaoEmAndamento_ = false;
         return;
     }
 
-    if (filtros_) filtros_->recarregar();  // bolinha verde/cinza muda na hora
+    // A bolinha verde/cinza só muda se algum vault mudou de estado: sem mudança, nada de reconstruir os filtros.
+    if (algumMudou && filtros_) filtros_->recarregar();
     if (reconectados.empty()) {
         reconciliacaoEmAndamento_ = false;
         return;

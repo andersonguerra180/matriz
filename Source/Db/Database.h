@@ -2,10 +2,14 @@
 
 #include <sqlite3.h>
 
+#include <atomic>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 
 // Wrapper fino sobre sqlite3. Não é um ORM — expõe exatamente o necessário
@@ -33,6 +37,18 @@
 // outras threads esperam. Rede de segurança: ninguém espera mais que
 // kEsperaMaximaTrava; estourou, loga em stderr e segue sem a trava (o
 // comportamento antigo) em vez de travar o app pra sempre.
+//
+// LEITURA SEM ESPERAR ESCRITA: um Database aberto em Modo::SomenteLeitura é
+// uma SEGUNDA conexão ao mesmo arquivo (WAL: lê o último estado já commitado
+// sem bloquear nem ser bloqueada pela transação da conexão de escrita). Quem
+// a escolhe é Project::registroLeitura()/indiceLeitura(), que devolve a
+// conexão de escrita quando a PRÓPRIA thread tem transação aberta nela (ler o
+// que ela mesma acabou de escrever, ainda sem COMMIT).
+//
+// CACHE DE STATEMENTS: prepare() reaproveita statements já preparados (SELECT/
+// INSERT/UPDATE/DELETE) — cada Statement é EMPRESTADO com exclusividade (outra
+// thread pedindo o mesmo SQL no mesmo instante prepara o seu) e volta ao cache
+// zerado (reset + bindings limpos) no destrutor.
 
 namespace matriz::db {
 
@@ -57,6 +73,18 @@ struct Value {
     static Value of(double d) { Value v; v.kind = Kind::Real; v.real = d; return v; }
     static Value of(bool b) { return of(static_cast<long long>(b ? 1 : 0)); }
     static Value ofBlob(std::vector<unsigned char> bytes) { Value v; v.kind = Kind::Blob; v.blob = std::move(bytes); return v; }
+};
+
+// Cache de statements ociosos de UMA conexão. Vive num shared_ptr compartilhado entre o
+// Database e cada Statement emprestado: um Statement pode sobreviver ao Database (thread de
+// fundo que termina depois do fechamento do projeto) e, ao ser destruído, só devolve ao
+// cache se este ainda estiver aberto; senão finaliza, como sempre fez.
+struct CacheStatements {
+    std::mutex mutex;
+    std::unordered_map<std::string, std::vector<sqlite3_stmt*>> ociosos;
+    size_t total = 0;
+    bool fechado = false;
+    static void devolver(const std::shared_ptr<CacheStatements>& cache, const std::string& sql, sqlite3_stmt* stmt);
 };
 
 class Statement {
@@ -87,14 +115,20 @@ public:
 
 private:
     friend class Database;
+    Statement(sqlite3* db, sqlite3_stmt* jaPreparado) : db_(db), stmt_(jaPreparado) {}  // emprestado do cache
+    void liberar();  // devolve ao cache (se cacheável) ou finaliza
     sqlite3* db_ = nullptr;
     sqlite3_stmt* stmt_ = nullptr;
     class Database* dono_ = nullptr;  // trava da conexão (nullptr: sem trava)
+    std::shared_ptr<CacheStatements> cache_;  // não nulo: este statement volta ao cache
+    std::string sqlCache_;
 };
 
 class Database {
 public:
-    explicit Database(const std::string& path);
+    enum class Modo { LeituraEscrita, SomenteLeitura };
+
+    explicit Database(const std::string& path, Modo modo = Modo::LeituraEscrita);
     ~Database();
 
     Database(const Database&) = delete;
@@ -124,6 +158,10 @@ public:
 
     sqlite3* handle() const { return db_; }
 
+    // Esta conexão está em transação aberta POR ESTA thread (a que reteve a
+    // trava)? Quem lê pela conexão de leitura usa isto pra voltar à de escrita.
+    bool emTransacaoNestaThread() const { return donoDaTransacao_.load() == std::this_thread::get_id(); }
+
     // RAII da trava da conexão (ver TRANSAÇÕES acima). Reentrante.
     class Trava {
     public:
@@ -142,11 +180,19 @@ private:
     // entrou em transação, retém uma trava extra; se saiu, solta.
     void sincronizarTravaDeTransacao();
 
+    // Cache de statements preparados (ver cabeçalho do arquivo).
+    friend class Statement;
+    static bool sqlCacheavel(const std::string& sql);
+    sqlite3_stmt* emprestarDoCache(const std::string& sql);
+    void limparCache();
+    std::shared_ptr<CacheStatements> cache_ = std::make_shared<CacheStatements>();
+
     sqlite3* db_ = nullptr;
     bool sujo_ = false;
     bool rastrearSujo_ = true;
     std::recursive_timed_mutex conexaoMutex_;
     bool travaDeTransacao_ = false;  // só lido/escrito com conexaoMutex_ tomado
+    std::atomic<std::thread::id> donoDaTransacao_{std::thread::id()};  // thread que reteve a trava de transação
 };
 
 } // namespace matriz::db

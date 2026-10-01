@@ -251,7 +251,16 @@ public:
     std::vector<ItemDetalhe> obterDetalhesItens(const std::set<std::string>& itemIds) const;
     std::set<int> indicesExistentes(const std::string& itemId, const std::string& nivel) const;
     void atualizarTipoMidia(const std::string& itemId, const std::string& tipoMidia);
-    void aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia);
+    // Mesmo tipo pra N itens: UMA transação, UM Undo, UM evento de lote. O
+    // classificar de UM item (atualizarTipoMidia) leva o item de 'novo' pra
+    // 'catalogado'; o lote só faz isso com promoverEstado (menu/botão Categorizar).
+    void aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia,
+                                bool promoverEstado = false);
+    // Escrita pura do tipo (sem Undo, sem evento) — compartilhada por atualizarTipoMidia,
+    // aplicarTipoMidiaEmLote e pelo desfazer em lote.
+    void gravarTipoMidia(const std::string& itemId, const std::string& tipoMidia, const std::string& agora,
+                         bool promoverEstado);
+    void restaurarTiposMidia(const std::map<std::string, std::string>& tiposPorItem);
     void obterTiposMidiaDosItens(const std::vector<std::string>& itemIds, std::set<std::string>& tiposPresentes, bool& algumNulo) const;
 
     // Carrega (e cacheia) a definição de ficha para `tipoMidia` a partir de
@@ -288,6 +297,9 @@ public:
     void removerCapa(const std::vector<std::string>& itemIds);
 
     bool temCapa(const std::string& itemId) const;
+    // Pelo menos UM dos itens tem capa — uma consulta por bloco de ids (o menu de
+    // contexto não faz uma consulta por item da seleção).
+    bool algumTemCapa(const std::vector<std::string>& itemIds) const;
 
     // Vocabulário do projeto pra um campo `opcao_livre`: os valores que já
     // foram efetivamente usados em algum item deste projeto, em ordem
@@ -797,6 +809,9 @@ public:
     // Renomeia (item.titulo) — é o que alimenta o token {titulo} da máscara
     // de nomenclatura, ou seja, o nome que o arquivo terá no backup.
     void renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo);
+    // Um título por item (renomear em lote: adicionar antes/depois, substituir…): uma
+    // transação só, um Undo só ("Rename Items") e um evento de lote no fim.
+    void renomearItensComTitulos(const std::vector<std::pair<std::string, std::string>>& itemETitulo);
 
     // Atalho "E" (Tag as Edited): marcação manual, independente de
     // metadados_editados (que é automática). Começa sempre desmarcada.
@@ -947,6 +962,10 @@ public:
     // de ficar online — o gatilho da varredura de §8. Barato: só compara
     // caminho e UUID, não percorre volume nenhum.
     std::vector<std::string> reavaliarVaults();
+    // Algum vault mudou de estado (online/offline, novo, removido) em QUALQUER chamada de
+    // reavaliarVaults() desde a última vez que isto foi consultado? Consome o aviso — quem
+    // só redesenha o que depende dos vaults (bolinha verde/cinza) quando algo mudou usa isto.
+    bool consumirMudancaDeVaults() { return vaultsMudaram_.exchange(false); }
     // colecao.id vazio cria uma nova; preenchido atualiza a existente.
     // Devolve o id (novo ou o mesmo).
     std::string salvarColecao(const ColecaoInteligente& colecao);
@@ -1101,6 +1120,12 @@ private:
     std::shared_ptr<bool> vivo_ = std::make_shared<bool>(true);
 
     std::unique_ptr<matriz::model::Project> projeto_;
+    std::atomic<bool> vaultsMudaram_{false};
+    // Leituras puras (message thread, snapshots do grid/filtros) vão pela conexão
+    // somente-leitura do Project (ver Project::registroLeitura()); escritas, e leituras
+    // dentro de uma transação desta thread, ficam em projeto_->registro().
+    matriz::db::Database& leitura() const { return projeto_->registroLeitura(); }
+    matriz::db::Database& leituraIndice() const { return projeto_->indiceLeitura(); }
     std::map<std::string, matriz::ficha::FichaDefinition> definicoesCache_;
 
     // MAIN EDIT MODE. O pool vem DEPOIS de projeto_: é destruído antes dele

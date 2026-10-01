@@ -1375,12 +1375,12 @@ juce::String BackupWorkspaceComponent::rotuloOpcaoSelecionados() const {
            + juce::String(static_cast<int>(selectedItemIds_.size())) + ")";
 }
 
-void BackupWorkspaceComponent::atualizarSelecaoDoGridSeNecessario() {
+void BackupWorkspaceComponent::atualizarSelecaoDoGridSeNecessario(bool recalcular) {
     if (whatOption_ != WhatOption::SelectedAssets || !obterSelecaoAtualDoGrid) return;
     selectedItemIds_ = obterSelecaoAtualDoGrid();
     if (comboSource_) comboSource_->changeItemText(3, rotuloOpcaoSelecionados());
     if (btnEditarSelecao_) btnEditarSelecao_->setVisible(true);
-    atualizarResumo();
+    if (recalcular) atualizarResumo();
 }
 
 void BackupWorkspaceComponent::abrirJanelaSelecionarArquivos() {
@@ -1600,10 +1600,9 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         if (togglePreservarEstrutura_->getToggleState()) {
             if (toggleUsarEstruturaMapa_) toggleUsarEstruturaMapa_->setToggleState(false, juce::dontSendNotification);
         }
+        // O plano novo chega em background: o aviso de conflito espera por ele (concluirPlano()).
+        if (togglePreservarEstrutura_->getToggleState()) popupConflitoAposPlano_ = true;
         atualizarEstadoOrganizacao();
-        if (togglePreservarEstrutura_->getToggleState() && !plano_.podeConsolidar() && !plano_.nomesEmConflito.empty()) {
-            mostrarPopupConflitoPreservacao();
-        }
     };
 
     toggleUsarEstruturaMapa_->onClick = [this, atualizarEstadoOrganizacao] {
@@ -1982,9 +1981,12 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     addChildComponent(overlay_);
 
     EventBus::obterInstancia().registrarListener(this);
-    aplicarRascunhoOrganizacao();  // última escolha da seção ESTRUTURA DE PASTAS (antes do 1º backup)
-    carregarDestinoAtivoInicial();
-    atualizarResumo();
+    {
+        AdiaResumo umaVez(*this);  // prévia calculada uma vez só, não uma por chamada abaixo
+        aplicarRascunhoOrganizacao();  // última escolha da seção ESTRUTURA DE PASTAS (antes do 1º backup)
+        carregarDestinoAtivoInicial();
+        resumoPendente_ = true;
+    }
     atualizarBotoesListas();
 }
 
@@ -1992,6 +1994,10 @@ BackupWorkspaceComponent::~BackupWorkspaceComponent() {
     if (comboExportOrigem_) comboExportOrigem_->setLookAndFeel(nullptr);
     EventBus::obterInstancia().removerListener(this);
     poolCatalogoBackup_.removeAllJobs(true, 2000);
+    ++*geracaoPlano_;  // job de plano ainda na fila nem começa
+    poolPlano_.removeAllJobs(true, 30000);
+    ++geracaoDestinos_;
+    poolDestinos_.removeAllJobs(true, 2000);
     // O job de EXPORT usa o Project: cancela entre arquivos e espera o
     // arquivo em cópia terminar antes de o projeto poder ser fechado.
     cancelarExport_->store(true);
@@ -2324,6 +2330,11 @@ void BackupWorkspaceComponent::aoItemAlterado(const EventoItemAlterado& e) {
     bool tituloMudou = (e.tipoAlteracao == "titulo");
     juce::MessageManager::callAsync([safe = juce::Component::SafePointer<BackupWorkspaceComponent>(this), tituloMudou] {
         if (safe != nullptr) {
+            if (safe->escondido()) {  // outra aba na frente: atualiza quando voltar a aparecer
+                safe->botoesPendentes_ = true;
+                if (tituloMudou) safe->resumoDeTituloPendente_ = true;
+                return;
+            }
             safe->atualizarBotoesListas();
             // O nome final no backup vem da máscara "{codigo}-{seq:03}-{titulo}" —
             // um título novo muda o nome planejado, então a prévia/plano precisa
@@ -2786,6 +2797,11 @@ std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriter
 }
 
 void BackupWorkspaceComponent::atualizarResumo() {
+    // Dentro de recarregar()/construtor: só marca; a prévia sai uma vez no fim.
+    if (resumoAdiado_ > 0) { resumoPendente_ = true; return; }
+    MATRIZ_TRACE("BackupWorkspaceComponent::atualizarResumo");
+    // Cada pedido invalida o cálculo em background anterior ainda em voo.
+    const int geracao = ++*geracaoPlano_;
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
@@ -2817,6 +2833,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
         labelResumo_->setText(summary, juce::dontSendNotification);
         listPrevia_->definirColecoesCatalogo(colecoes, resolvedDestFolder_);
         listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
+        concluirPlano();
         return;
     }
 
@@ -2829,6 +2846,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
         plano_.itens.clear();
         listPrevia_->definirPlano(plano_);
         btnStartBackup_->setEnabled(false);
+        concluirPlano();
         return;
     }
 
@@ -2854,56 +2872,104 @@ void BackupWorkspaceComponent::atualizarResumo() {
     bool autoResolver = toggleAutoResolverConflitos_ ? toggleAutoResolverConflitos_->getToggleState() : true;
     bool forcarRebackup = toggleForcarRebackup_ ? toggleForcarRebackup_->getToggleState() : false;
 
-    juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
-        resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : projeto_.projeto().raiz());
-    juce::File destinoMedia = destinoRaiz.getChildFile("Media");
+    // planejarConsolidacao (SQL por item + existsAsFile no MAIN e na origem,
+    // catálogo inteiro) roda em background; até o resultado chegar a interface
+    // mostra "calculando" e o botão de backup fica desabilitado. Os controles
+    // são lidos aqui, na message thread, e viajam por valor pro job.
+    planoPronto_ = false;
+    labelResumo_->setText(isPt ? juce::String::fromUTF8("Calculando prévia do backup...") : "Calculating backup preview...",
+                          juce::dontSendNotification);
+    btnStartBackup_->setEnabled(false);
 
-    // planejarConsolidacao faz SQL cru contra colunas de metadado (dc_*,
-    // collection_type) — um banco aberto antes de uma migração aditiva
-    // rodar (ou qualquer outro erro de SQL) não pode derrubar o app inteiro
-    // só por abrir a aba BACKUP; melhor mostrar o motivo no resumo.
-    try {
-        plano_ = matriz::consolidacao::planejarConsolidacao(
-            projeto_.projeto().registro(), projeto_.projeto().pasta(), destinoMedia, h, {}, modoPrefixo_, prefixoCustomizado_,
-            autoResolver, forcarRebackup, organizarPorSource_, /*paraExport*/ false, mapaParaBackup());
-    } catch (const std::exception& e) {
+    auto* registro = &projeto_.projeto().registro();
+    const juce::File pastaProjeto = projeto_.projeto().pasta();
+    const juce::File raizProjeto = projeto_.projeto().raiz();
+    const juce::File destinoEscolhido = resolvedDestFolder_;
+    const auto modoPrefixo = modoPrefixo_;
+    const juce::String prefixo = prefixoCustomizado_;
+    const bool organizarPorSource = organizarPorSource_;
+    const std::string mapaId = mapaParaBackup();
+    const bool soPendentes = (whatOption_ == WhatOption::NeedsBackup);
+    auto geracaoAtomica = geracaoPlano_;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+
+    poolPlano_.addJob([safeThis, geracao, geracaoAtomica, registro, pastaProjeto, raizProjeto, destinoEscolhido, h,
+                       modoPrefixo, prefixo, autoResolver, forcarRebackup, organizarPorSource, mapaId, soPendentes,
+                       itemIds = std::move(itemIds)]() {
+        if (geracaoAtomica->load() != geracao) return;  // superado antes de começar
+
+        ResultadoPlano r;
+        // planejarConsolidacao faz SQL cru contra colunas de metadado (dc_*,
+        // collection_type) — um banco aberto antes de uma migração aditiva
+        // rodar (ou qualquer outro erro de SQL) não pode derrubar o app inteiro
+        // só por abrir a aba BACKUP; melhor mostrar o motivo no resumo.
+        try {
+            const juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
+                destinoEscolhido.isDirectory() ? destinoEscolhido : raizProjeto);
+            const juce::File destinoMedia = destinoRaiz.getChildFile("Media");
+            r.plano = matriz::consolidacao::planejarConsolidacao(
+                *registro, pastaProjeto, destinoMedia, h, {}, modoPrefixo, prefixo,
+                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId);
+
+            std::vector<matriz::consolidacao::ItemPlanejado> mv;
+            for (auto& m : r.plano.movimentosSemPasta)
+                if (itemIds.count(m.itemId)) mv.push_back(std::move(m));
+            r.plano.movimentosSemPasta = std::move(mv);
+            std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
+            for (auto& item : r.plano.itens) {
+                if (soPendentes && item.jaConsolidado) continue;
+                if (itemIds.count(item.itemId)) {
+                    filtrados.push_back(item);
+                    if (!item.jaConsolidado) r.espacoACopiar += item.tamanhoBytes;
+                    r.tamanhoTotal += item.tamanhoBytes;
+                }
+            }
+            r.plano.itens = std::move(filtrados);
+            r.plano.espacoNecessarioBytes = r.espacoACopiar;
+            r.totalIdsSelecionados = itemIds.size();
+        } catch (const std::exception& e) {
+            r = {};
+            r.erro = true;
+            r.mensagemErro = juce::String(e.what());
+        } catch (...) {
+            r = {};
+            r.erro = true;
+        }
+
+        juce::MessageManager::callAsync([safeThis, geracao, forcarRebackup, r = std::move(r)]() mutable {
+            if (safeThis == nullptr) return;
+            if (geracao != safeThis->geracaoPlano_->load()) return;  // superado por um cálculo mais novo
+            safeThis->aplicarPlanoCalculado(std::move(r), forcarRebackup);
+        });
+    });
+}
+
+void BackupWorkspaceComponent::aplicarPlanoCalculado(ResultadoPlano r, bool forcarRebackup) {
+    MATRIZ_TRACE("BackupWorkspaceComponent::aplicarPlanoCalculado");
+    const bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
+
+    if (r.erro) {
         plano_ = {};
         labelResumo_->setText(
             (isPt ? juce::String::fromUTF8("Não foi possível calcular a prévia do backup: ")
-                  : juce::String("Could not calculate the backup preview: ")) + juce::String(e.what()),
+                  : juce::String("Could not calculate the backup preview: ")) + r.mensagemErro,
             juce::dontSendNotification);
         listPrevia_->definirPlano(plano_);
         listPreviaViewport_->setViewedComponent(listPrevia_.get(), false);
         btnStartBackup_->setEnabled(false);
+        concluirPlano();
         return;
     }
 
-    {
-        std::vector<matriz::consolidacao::ItemPlanejado> mv;
-        for (auto& m : plano_.movimentosSemPasta)
-            if (itemIds.count(m.itemId)) mv.push_back(std::move(m));
-        plano_.movimentosSemPasta = std::move(mv);
-    }
-    std::vector<matriz::consolidacao::ItemPlanejado> filtrados;
-    juce::int64 sz = 0; // space to copy
-    juce::int64 totalSz = 0; // total backup size
-    for (auto& item : plano_.itens) {
-        if (whatOption_ == WhatOption::NeedsBackup && item.jaConsolidado) {
-            continue;
-        }
-        if (itemIds.count(item.itemId)) {
-            filtrados.push_back(item);
-            if (!item.jaConsolidado) sz += item.tamanhoBytes;
-            totalSz += item.tamanhoBytes;
-        }
-    }
-    plano_.itens = std::move(filtrados);
-    plano_.espacoNecessarioBytes = sz;
+    plano_ = std::move(r.plano);
+    const juce::int64 sz = r.espacoACopiar;       // space to copy
+    const juce::int64 totalSz = r.tamanhoTotal;   // total backup size
+    const size_t totalIds = r.totalIdsSelecionados;
 
     juce::String summary = (isPt ? juce::String::fromUTF8("Itens: ") : "Assets: ") + juce::String(static_cast<int>(plano_.itens.size()));
-    if (itemIds.size() > plano_.itens.size()) {
-        summary += isPt ? (juce::String::fromUTF8(" (de ") + juce::String(static_cast<int>(itemIds.size())) + juce::String::fromUTF8(" no catálogo)"))
-                        : (" (of " + juce::String(static_cast<int>(itemIds.size())) + " in catalog)");
+    if (totalIds > plano_.itens.size()) {
+        summary += isPt ? (juce::String::fromUTF8(" (de ") + juce::String(static_cast<int>(totalIds)) + juce::String::fromUTF8(" no catálogo)"))
+                        : (" (of " + juce::String(static_cast<int>(totalIds)) + " in catalog)");
     }
     summary += (isPt ? juce::String::fromUTF8(" | Espaço: ") : " | Space: ") + juce::File::descriptionOfSizeInBytes(totalSz);
 
@@ -2912,7 +2978,7 @@ void BackupWorkspaceComponent::atualizarResumo() {
                    matriz::i18n::t("backup.conflitos_resolvidos").replace("{n}", juce::String(plano_.conflitosAutoResolvidos));
     }
 
-    int semArquivo = static_cast<int>(itemIds.size() - plano_.itens.size());
+    int semArquivo = static_cast<int>(totalIds - plano_.itens.size());
     if (semArquivo > 0) {
         summary += isPt ? (juce::String::fromUTF8("  -  (") + juce::String(semArquivo) + juce::String::fromUTF8(" itens de metadado não têm arquivos físicos)"))
                         : ("  -  (" + juce::String(semArquivo) + " metadata items have no physical files)");
@@ -2963,6 +3029,49 @@ void BackupWorkspaceComponent::atualizarResumo() {
     // (mainSelado_ calculado em atualizarTravasDoMain).
     btnStartBackup_->setButtonText(matriz::i18n::t(mainSelado_ ? "backup.btn_adicionar_ao_main" : "backup.btn_fazer_backup"));
     btnStartBackup_->setEnabled(pronto && destacadoEhMain() && !projeto_.somenteLeitura());
+    concluirPlano();
+}
+
+void BackupWorkspaceComponent::concluirPlano() {
+    planoPronto_ = true;
+    // Continuações que esperavam o plano (ex.: scan do destino); uma por vez,
+    // porque cada uma pode pedir um plano novo e voltar a deixá-lo pendente.
+    while (planoPronto_ && !aoPlanoPronto_.empty()) {
+        auto fn = std::move(aoPlanoPronto_.front());
+        aoPlanoPronto_.erase(aoPlanoPronto_.begin());
+        fn();
+    }
+    if (planoPronto_ && popupConflitoAposPlano_) {
+        popupConflitoAposPlano_ = false;
+        if (togglePreservarEstrutura_ && togglePreservarEstrutura_->getToggleState() && !plano_.podeConsolidar() &&
+            !plano_.nomesEmConflito.empty())
+            mostrarPopupConflitoPreservacao();
+    }
+}
+
+void BackupWorkspaceComponent::aoPlanoPronto(std::function<void()> fn) {
+    if (planoPronto_) fn();
+    else aoPlanoPronto_.push_back(std::move(fn));
+}
+
+void BackupWorkspaceComponent::visibilityChanged() {
+    if (!escondido()) agendarAplicarPendentes();
+}
+
+void BackupWorkspaceComponent::agendarAplicarPendentes() {
+    if (aplicacaoPendenteAgendada_ || (!botoesPendentes_ && !resumoDeTituloPendente_)) return;
+    aplicacaoPendenteAgendada_ = true;
+    // Adiado um passo: quem torna a tela visível costuma chamar recarregar() logo em
+    // seguida (que já refaz tudo e zera as pendências) — assim não se calcula duas vezes.
+    juce::MessageManager::callAsync([safe = juce::Component::SafePointer<BackupWorkspaceComponent>(this)] {
+        if (safe == nullptr) return;
+        safe->aplicacaoPendenteAgendada_ = false;
+        if (safe->escondido()) return;
+        const bool botoes = std::exchange(safe->botoesPendentes_, false);
+        const bool resumo = std::exchange(safe->resumoDeTituloPendente_, false);
+        if (botoes) safe->atualizarBotoesListas();
+        if (resumo) safe->atualizarResumo();
+    });
 }
 
 void BackupWorkspaceComponent::atualizarTravasDoMain() {
@@ -3239,6 +3348,7 @@ void BackupWorkspaceComponent::mostrarPopupConflitoPreservacao() {
 void BackupWorkspaceComponent::iniciarBackup() {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     if (projeto_.somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: sem backup
+    if (!planoPronto_) return;  // plano ainda calculando em background: nada de backup com plano velho
 
     // Backup só vai pro MAIN (a pasta do projeto) — outros destinos são CLONE
     // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
@@ -3926,8 +4036,15 @@ void BackupWorkspaceComponent::perguntarSincronizarClones() {
 }
 
 void BackupWorkspaceComponent::carregarDestinosBackup() {
+    // ONLINE/OFFLINE vem de isDirectory() — num volume de rede desconectado
+    // isso trava a message thread. Aqui só se reaproveita o que a carga
+    // anterior já sabia (a raiz do projeto aberto conta como online); o
+    // estado real chega do job em background no fim da função.
+    std::map<juce::String, bool> onlineConhecido;
+    for (const auto& d : destinosBackup_) onlineConhecido[d.caminho] = d.online;
     destinosBackup_.clear();
     projeto_.sincronizarBackupDestinoDeHistorico();
+    const juce::File raizAberta = projeto_.projeto().raiz();
 
     auto& db = projeto_.projeto().registro();
     try {
@@ -3938,7 +4055,9 @@ void BackupWorkspaceComponent::carregarDestinosBackup() {
             d.rotulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
             d.caminho = juce::String::fromUTF8(stmt.columnText(2).c_str());
             d.papel = stmt.columnIsNull(3) ? "CLONE" : stmt.columnText(3);
-            d.online = juce::File(d.caminho).isDirectory();
+            const auto conhecido = onlineConhecido.find(d.caminho);
+            d.online = juce::File(d.caminho) == raizAberta ? true
+                       : conhecido != onlineConhecido.end() ? conhecido->second : false;
             d.ativo = (juce::File(d.caminho) == projeto_.projeto().raiz());
             destinosBackup_.push_back(std::move(d));
         }
@@ -3981,16 +4100,32 @@ void BackupWorkspaceComponent::carregarDestinosBackup() {
     std::stable_partition(destinosBackup_.begin(), destinosBackup_.end(),
                           [](const DestinoBackupItem& d) { return d.papel == "ORIGINAL"; });
 
-    for (const auto& d : destinosBackup_) {
-        if (d.online) {
-            matriz::model::sanitizarEstruturaDestino(juce::File(d.caminho));
-        }
-    }
+    // sanitizarEstruturaDestino NÃO roda mais aqui (varria todos os destinos
+    // online a cada visita à aba, com I/O de disco na message thread): fica na
+    // abertura do projeto (Project::abrir) e imediatamente antes de executar
+    // backup/clone (iniciarBackup, criarNovoClone, SyncEngine).
 
     if (listVaults_) {
         listVaults_->updateContent();
         listVaults_->repaint();
     }
+
+    std::vector<juce::String> caminhos;
+    for (const auto& d : destinosBackup_) caminhos.push_back(d.caminho);
+    const int geracao = ++geracaoDestinos_;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    poolDestinos_.addJob([safeThis, geracao, caminhos = std::move(caminhos)]() {
+        std::vector<std::pair<juce::String, bool>> resultados;
+        for (const auto& c : caminhos) resultados.emplace_back(c, juce::File(c).isDirectory());
+        juce::MessageManager::callAsync([safeThis, geracao, resultados = std::move(resultados)]() {
+            if (safeThis == nullptr || geracao != safeThis->geracaoDestinos_) return;  // superado por uma carga mais nova
+            bool mudou = false;
+            for (auto& d : safeThis->destinosBackup_)
+                for (const auto& [caminho, ok] : resultados)
+                    if (d.caminho == caminho && d.online != ok) { d.online = ok; mudou = true; }
+            if (mudou && safeThis->listVaults_) safeThis->listVaults_->repaint();
+        });
+    });
 }
 
 void BackupWorkspaceComponent::adicionarOuAtivarDestino(const juce::File& pasta, const juce::String& rotuloSugerido) {
@@ -4634,9 +4769,21 @@ void BackupWorkspaceComponent::dispararScanDestino(bool forcado) {
     }
 
     // Plano (jaConsolidado por destino_path) do destino RECÉM destacado
-    // antes do scan — sem isto o scan/lista usavam o plano do anterior.
+    // antes do scan — sem isto o scan/lista usavam o plano do anterior. O
+    // plano é calculado em background: o resto roda quando ele chegar. Se já
+    // há um scan agendado, ele pega o destino atual na hora de rodar.
     atualizarResumo();
+    if (scanAposPlano_) return;
+    scanAposPlano_ = true;
+    juce::Component::SafePointer<BackupWorkspaceComponent> aguardaPlano(this);
+    aoPlanoPronto([aguardaPlano] {
+        if (aguardaPlano == nullptr) return;
+        aguardaPlano->scanAposPlano_ = false;
+        aguardaPlano->continuarScanDestino();
+    });
+}
 
+void BackupWorkspaceComponent::continuarScanDestino() {
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(resolvedDestFolder_);
     juce::File targetDir = destinoRaiz.getChildFile("Media");
     if (!targetDir.isDirectory() || plano_.itens.empty()) {
@@ -4763,6 +4910,7 @@ void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
 }
 
 void BackupWorkspaceComponent::paint(juce::Graphics& g) {
+    if (botoesPendentes_ || resumoDeTituloPendente_) agendarAplicarPendentes();  // voltou a aparecer por um ancestral
     const auto& tk = tema();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
     juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
@@ -4967,13 +5115,22 @@ void BackupWorkspaceComponent::resized() {
 }
 
 void BackupWorkspaceComponent::recarregar() {
-    aplicarRascunhoOrganizacao();
-    carregarOpcoesContent();
-    carregarColecoesBackupCatalogo();
-    carregarDestinosBackup();
-    carregarDestinoAtivoInicial();
-    atualizarResumo();
+    MATRIZ_TRACE("BackupWorkspaceComponent::recarregar");
+    {
+        // atualizarResumo() só roda UMA vez, no fim do bloco (carregarDestinoAtivoInicial
+        // e quem mais pedir dentro daqui só marcam pendente).
+        AdiaResumo umaVez(*this);
+        aplicarRascunhoOrganizacao();
+        carregarOpcoesContent();
+        carregarColecoesBackupCatalogo();
+        carregarDestinosBackup();
+        carregarDestinoAtivoInicial();
+        resumoPendente_ = true;
+    }
     atualizarBotoesListas();
+    // recarregar() já refez botões e prévia: nada mais a aplicar do que chegou escondida.
+    botoesPendentes_ = false;
+    resumoDeTituloPendente_ = false;
     repaint();
 }
 

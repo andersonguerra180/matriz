@@ -1,5 +1,6 @@
 #include "ConflitosMergeDialog.h"
 #include "AcoesItem.h"
+#include "../Diag/Watchdog.h"
 
 #include "../Consolidacao/Mascara.h"
 #include "../I18n/Strings.h"
@@ -60,12 +61,21 @@ std::vector<std::pair<std::string, juce::String>> pastasDoBackup(ProjetoAberto& 
     return out;
 }
 
-// P (Send to Print) e W (Watermark) só fazem sentido pra fotos.
-bool ehFoto(ProjetoAberto& projeto, const std::string& id) {
+// categoriaPorExtensao() espera a extensão SEM ponto: o ItemResumo da grade já guarda
+// assim, mas obterItemResumo() devolve com ponto (".jpg") — que nunca casava.
+bool extensaoEhFoto(const std::string& extensao) {
+    return matriz::ingest::categoriaPorExtensao(juce::String(extensao).trimCharactersAtStart(".")) ==
+           matriz::ingest::CategoriaMidia::Imagem;
+}
+
+// P (Send to Print) e W (Watermark) só fazem sentido pra fotos. Com `emMemoria`, usa o
+// item que a grade já tem; sem ele (ou fora da grade), cai no obterItemResumo do banco.
+bool ehFoto(ProjetoAberto& projeto, const std::string& id, const ResolvedorItemEmMemoria& emMemoria = {}) {
+    if (emMemoria)
+        if (const ItemResumo* r = emMemoria(id)) return extensaoEhFoto(r->extensaoArquivo);
     auto resumo = projeto.obterItemResumo(id);
     if (!resumo) return false;
-    return matriz::ingest::categoriaPorExtensao(juce::String(resumo->extensaoArquivo)) ==
-           matriz::ingest::CategoriaMidia::Imagem;
+    return extensaoEhFoto(resumo->extensaoArquivo);
 }
 
 void confirmar(const juce::String& titulo, const juce::String& mensagem, const juce::String& rotuloConfirmar,
@@ -249,6 +259,7 @@ void substituirArquivo(ProjetoAberto& projeto, const std::string& itemId, Gancho
 }
 
 void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    MATRIZ_TRACE("acoes::mudarTipo");
     if (itemIds.empty()) return;
     auto tipos = listarTiposMidiaDisponiveis(projeto);
     if (tipos.empty()) return;
@@ -264,12 +275,9 @@ void mudarTipo(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, 
         const std::string& tipo = tipos[static_cast<size_t>(resultado - 1)].id;
         if (ids.size() > 1) {
             ProgressoGlobal::obterInstancia().iniciarTarefa("batch_type", "Changing Media Type", (int)ids.size(), nullptr, "Updating " + juce::String((int)ids.size()) + " assets...");
-            int proc = 0;
-            for (auto& itemId : ids) {
-                p->atualizarTipoMidia(itemId, tipo);
-                ++proc;
-                ProgressoGlobal::obterInstancia().atualizarProgresso("batch_type", proc, juce::String(proc) + " of " + juce::String((int)ids.size()) + " updated");
-            }
+            // Uma transação, um Undo, um evento de lote — e o mesmo efeito de classificar
+            // item a item (inclui 'novo' -> 'catalogado').
+            p->aplicarTipoMidiaEmLote(ids, tipo, /*promoverEstado*/ true);
             ProgressoGlobal::obterInstancia().concluirTarefa("batch_type", juce::String((int)ids.size()) + " assets updated");
         } else {
             p->atualizarTipoMidia(ids.front(), tipo);
@@ -345,7 +353,8 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
     });
 }
 
-juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds) {
+juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
+                              ResolvedorItemEmMemoria emMemoria) {
     juce::PopupMenu menu;
     bool umSo = itemIds.size() == 1;
 
@@ -357,38 +366,30 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kRecarregarArquivo, matriz::i18n::t("acoes.recarregar_arquivo"), umSo);
     menu.addItem(kSubstituirArquivo, matriz::i18n::t("acoes.substituir_arquivo"), umSo);
 
-    bool todosHtml = true;
-    for (const auto& id : itemIds) {
-        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, id)) { todosHtml = false; break; }
-    }
-    juce::String labelHtml = (todosHtml ? matriz::i18n::t("acoes.remover_html") : matriz::i18n::t("acoes.adicionar_html")) + " (H)";
-    menu.addItem(kAlternarPublicacao, labelHtml);
-
-    bool todosZip = true;
-    for (const auto& id : itemIds) {
-        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, id)) { todosZip = false; break; }
-    }
-    juce::String labelZip = (todosZip ? matriz::i18n::t("acoes.remover_zip") : matriz::i18n::t("acoes.adicionar_zip")) + " (K)";
-    menu.addItem(kAlternarZip, labelZip);
-
+    // Estados da seleção numa passada só (antes: uma volta por rótulo, e um
+    // obterItemResumo — banco + stat do arquivo — por item pra "tem foto").
+    bool todosHtml = true, todosZip = true, todosPrint = true, todosWatermark = true;
     // Só fotos aceitam Print/Watermark — item desabilitado se a seleção não
     // tiver nenhuma (evita um clique que silenciosamente não faz nada).
     bool algumaFoto = false;
     for (const auto& id : itemIds) {
-        if (ehFoto(projeto, id)) { algumaFoto = true; break; }
+        if (todosHtml && !projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, id)) todosHtml = false;
+        if (todosZip && !projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, id)) todosZip = false;
+        if (todosPrint && !projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, id)) todosPrint = false;
+        if (todosWatermark && !projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id)) todosWatermark = false;
+        if (!algumaFoto && ehFoto(projeto, id, emMemoria)) algumaFoto = true;
+        if (!todosHtml && !todosZip && !todosPrint && !todosWatermark && algumaFoto) break;
     }
 
-    bool todosPrint = true;
-    for (const auto& id : itemIds) {
-        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, id)) { todosPrint = false; break; }
-    }
+    juce::String labelHtml = (todosHtml ? matriz::i18n::t("acoes.remover_html") : matriz::i18n::t("acoes.adicionar_html")) + " (H)";
+    menu.addItem(kAlternarPublicacao, labelHtml);
+
+    juce::String labelZip = (todosZip ? matriz::i18n::t("acoes.remover_zip") : matriz::i18n::t("acoes.adicionar_zip")) + " (K)";
+    menu.addItem(kAlternarZip, labelZip);
+
     juce::String labelPrint = (todosPrint ? matriz::i18n::t("acoes.remover_print") : matriz::i18n::t("acoes.adicionar_print")) + " (P)";
     menu.addItem(kAlternarPrint, labelPrint, algumaFoto);
 
-    bool todosWatermark = true;
-    for (const auto& id : itemIds) {
-        if (!projeto.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id)) { todosWatermark = false; break; }
-    }
     juce::String labelWatermark = (todosWatermark ? matriz::i18n::t("acoes.remover_watermark") : matriz::i18n::t("acoes.adicionar_watermark")) + " (W)";
     menu.addItem(kAlternarWatermark, labelWatermark, algumaFoto);
 
@@ -396,9 +397,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
     menu.addItem(kDefinirCapa, matriz::i18n::t("acoes.definir_capa"));
     // Só oferece remover se ALGUM dos selecionados tem capa — item sem capa
     // com "Remover capa" habilitado é uma ação que não faz nada.
-    bool algumComCapa = false;
-    for (auto& id : itemIds)
-        if (projeto.temCapa(id)) { algumComCapa = true; break; }
+    const bool algumComCapa = projeto.algumTemCapa(itemIds);
     menu.addItem(kRemoverCapa, matriz::i18n::t("acoes.remover_capa"), algumComCapa);
 
     menu.addSeparator();
@@ -459,7 +458,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kAlternarPrint: {
             std::vector<std::string> fotos;
-            for (const auto& id : itemIds) if (ehFoto(projeto, id)) fotos.push_back(id);
+            for (const auto& id : itemIds) if (ehFoto(projeto, id, ganchos.itemEmMemoria)) fotos.push_back(id);
             if (!fotos.empty()) projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Print, fotos);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
@@ -467,7 +466,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kAlternarWatermark: {
             std::vector<std::string> fotos;
-            for (const auto& id : itemIds) if (ehFoto(projeto, id)) fotos.push_back(id);
+            for (const auto& id : itemIds) if (ehFoto(projeto, id, ganchos.itemEmMemoria)) fotos.push_back(id);
             if (!fotos.empty()) projeto.alternarMarcacao(ProjetoAberto::TipoMarcacao::Watermark, fotos);
             if (ganchos.aoMudarDados) ganchos.aoMudarDados();
             break;
@@ -578,6 +577,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 }
 
 void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
+    MATRIZ_TRACE("acoes::renomearEmLote");
     if (itemIds.empty()) return;
 
     auto janela = std::make_shared<juce::AlertWindow>(
@@ -622,8 +622,11 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
         ProgressoGlobal::obterInstancia().iniciarTarefa("batch_rename", "Renaming Assets", (int)ids.size(), nullptr, "Renaming " + juce::String((int)ids.size()) + " assets...");
 
         int modo = janela->getComboBoxComponent("modo")->getSelectedItemIndex();
-        int processados = 0;
 
+        // Um título por item, calculado aqui; a gravação é UMA chamada (uma transação, um
+        // Undo, um evento de lote) em vez de renomearItens({id}) por item.
+        std::vector<std::pair<std::string, std::string>> itemETitulo;
+        itemETitulo.reserve(ids.size());
         for (auto& itemId : ids) {
             std::string titulo, tipoMidia, codigo;
             if (!p->obterItemInfo(itemId, titulo, tipoMidia, codigo)) continue;
@@ -660,10 +663,10 @@ void renomearEmLote(ProjetoAberto& projeto, const std::vector<std::string>& item
                     }
                 }
             }
-            p->renomearItens({itemId}, nome.toStdString());
-            ++processados;
-            ProgressoGlobal::obterInstancia().atualizarProgresso("batch_rename", processados, juce::String(processados) + " of " + juce::String((int)ids.size()) + " renamed");
+            itemETitulo.emplace_back(itemId, nome.toStdString());
         }
+        if (!itemETitulo.empty()) p->renomearItensComTitulos(itemETitulo);
+        const int processados = static_cast<int>(itemETitulo.size());
         ProgressoGlobal::obterInstancia().concluirTarefa("batch_rename", juce::String(processados) + " assets renamed");
         if (ganchos.aoMudarDados) ganchos.aoMudarDados();
     }));

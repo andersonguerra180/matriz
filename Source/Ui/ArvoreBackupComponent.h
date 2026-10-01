@@ -223,6 +223,12 @@ private:
     juce::Point<int> posicaoLivrePertoDoCentro(int nodeW, int nodeH) const;
 
     void timerCallback() override; // pulso do destaque de pasta nova
+    // O pulso dura ~2 s e para antes se o componente for escondido (o timer era de 30 ms até o
+    // próximo clique, repintando o mapa inteiro sem parar).
+    void visibilityChanged() override;
+    void pararPulso();
+    juce::uint32 inicioPulsoMs_ = 0;
+    static constexpr juce::uint32 kDuracaoPulsoMs = 2000;
     void desenharLinhaConexaoN8n(juce::Graphics& g, juce::Point<float> p1, juce::Point<float> p2, bool ativo, bool rascunho = false) const;
     bool ehDescendente(const std::string& noPaiId, const std::string& noFilhoId) const;
     // Item 8 — índices (em nodes_) de todas as descendentes de nodeIndex

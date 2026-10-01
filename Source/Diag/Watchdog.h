@@ -14,6 +14,8 @@ inline std::unique_ptr<WatchdogLogger> g_watchdogLogger;
 
 class WatchdogLogger : private juce::Thread {
 public:
+    static constexpr juce::int64 kTamanhoMaxLogBytes = 20 * 1024 * 1024;
+
     WatchdogLogger() : juce::Thread("WatchdogLoggerThread") {
         logFile_ = resolverLogFile();
         habilitado_.store(logFile_ != juce::File());
@@ -68,6 +70,7 @@ private:
                 lock.unlock();
 
                 if (stream_) {
+                    rotacionarSeNecessario();
                     text += "\n";
                     stream_->write(text.toRawUTF8(), text.getNumBytesAsUTF8());
                     stream_->flush();
@@ -76,6 +79,18 @@ private:
                 lock.lock();
             }
         }
+    }
+
+    // perf.log passou de 787 MB sem rotação. Acima de kTamanhoMaxLogBytes,
+    // perf.log vira perf.1.log (o perf.1.log anterior é descartado) e um
+    // perf.log novo começa — no máximo 2 arquivos. Roda só na thread do logger.
+    void rotacionarSeNecessario() {
+        if (stream_ == nullptr || stream_->getPosition() <= kTamanhoMaxLogBytes) return;
+        stream_.reset();
+        auto anterior = logFile_.getSiblingFile("perf.1.log");
+        anterior.deleteFile();
+        logFile_.moveFileTo(anterior);
+        stream_ = logFile_.createOutputStream();
     }
 
     static juce::File resolverLogFile() {
@@ -112,6 +127,8 @@ inline void fecharWatchdog() {
 }
 
 inline constexpr long long kOrcamentoCallbackMs = 16;
+// Acima disto o log inclui stack trace; entre o orçamento e este valor, só a linha com o tempo.
+inline constexpr long long kLimiarStackTraceMs = 500;
 
 class Watchdog {
 public:
@@ -122,6 +139,7 @@ public:
         auto end = std::chrono::steady_clock::now();
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_).count();
         if (ms <= kOrcamentoCallbackMs) return;
+        if (g_watchdogLogger == nullptr) return;  // alvos sem inicializarWatchdog() (ex.: self-tests de console)
 
         static thread_local bool guard = false;
         if (guard) return;
@@ -133,7 +151,8 @@ public:
         juce::String timeStr = juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S.%s");
         juce::String line = juce::String::formatted("[%s] [Watchdog] %s took %lld ms",
                                                      timeStr.toRawUTF8(), name_, ms);
-        line << "\n" << juce::SystemStats::getStackBacktrace();
+        if (ms > kLimiarStackTraceMs)
+            line << "\n" << juce::SystemStats::getStackBacktrace();
         WatchdogLogger::getInstance().log(line);
     }
 

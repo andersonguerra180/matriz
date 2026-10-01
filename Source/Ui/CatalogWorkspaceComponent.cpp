@@ -799,7 +799,18 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
 }
 
 void CatalogWorkspaceComponent::timerCallback() {
+    if (escondido()) {  // aba escondida: nada de recalcular contagens de 60 em 60 s à toa
+        contagensAtrasadas_ = true;
+        return;
+    }
     atualizarContagens();
+}
+
+void CatalogWorkspaceComponent::visibilityChanged() {
+    if (!escondido() && contagensAtrasadas_) {
+        contagensAtrasadas_ = false;
+        atualizarContagens();
+    }
 }
 
 void CatalogWorkspaceComponent::construirSidebar() {
@@ -1755,8 +1766,12 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     ganchos.aoFiltrarItens = [safeThis](std::set<std::string> ids) {
         if (safeThis) safeThis->filtrarPorIds(std::move(ids));
     };
+    // "É foto?" (P/W) pelos dados que a grade já tem, sem obterItemResumo por item.
+    ganchos.itemEmMemoria = [safeThis](const std::string& id) -> const ItemResumo* {
+        return (safeThis != nullptr && safeThis->mosaico_) ? safeThis->mosaico_->itemEmMemoria(id) : nullptr;
+    };
 
-    auto menu = acoes::construirMenu(projeto_, itemIds);
+    auto menu = acoes::construirMenu(projeto_, itemIds, ganchos.itemEmMemoria);
 
     if (itemIds.size() > 1) {
         menu.addSeparator();

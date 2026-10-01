@@ -2,8 +2,11 @@
 
 #include <JuceHeader.h>
 
+#include <atomic>
 #include <memory>
 #include <mutex>
+#include <thread>
+#include <unordered_map>
 #include <stdexcept>
 #include <string>
 
@@ -85,6 +88,22 @@ public:
         return *indice_;
     }
 
+    // Conexão SOMENTE-LEITURA pras leituras da message thread e dos snapshots/filtros: no
+    // WAL ela lê o último estado commitado sem esperar a transação da conexão de escrita
+    // (que a trava de transação do Database faria esperar até o COMMIT). Escritas
+    // continuam em registro()/indice().
+    //
+    // UMA CONEXÃO POR THREAD que lê (aberta na 1ª leitura dela): no SQLite, enquanto
+    // qualquer statement está ativo numa conexão, todos os outros leitores dela
+    // compartilham o mesmo snapshot — uma conexão única deixaria um snapshot de fundo em
+    // andamento fazer a message thread (ou o job seguinte) ler o estado ANTIGO depois de
+    // um COMMIT. Com uma por thread, cada leitura começa no estado commitado mais recente.
+    // Há um teto de conexões por arquivo; acima dele (ou se não abrir), devolve a conexão
+    // de ESCRITA, como sempre foi. Também devolve a de escrita quando a thread que chama
+    // tem transação aberta nela (ler o que acabou de escrever, ainda sem COMMIT).
+    matriz::db::Database& registroLeitura();
+    matriz::db::Database& indiceLeitura();
+
     std::string projetoId() const { return projetoId_; }
     int64_t revisao() const { return destinationInfo_.revisao; }
     std::string destinationId() const { return destinationInfo_.destinationId; }
@@ -126,6 +145,15 @@ private:
     juce::File pastaProjeto_;
     std::unique_ptr<matriz::db::Database> registro_;
     std::unique_ptr<matriz::db::Database> indice_;
+    // Conexões de leitura: declaradas DEPOIS das de escrita, então são fechadas antes
+    // delas (a última a fechar é a que faz o checkpoint do WAL).
+    struct ConexoesLeitura {
+        std::mutex mutex;
+        std::unordered_map<std::thread::id, std::unique_ptr<matriz::db::Database>> porThread;
+        bool falhou = false;
+    };
+    matriz::db::Database& leituraDe(matriz::db::Database& escrita, ConexoesLeitura& conexoes, const char* arquivo);
+    ConexoesLeitura registroLeitura_, indiceLeitura_;
     std::string projetoId_;
     Modo modo_ = Modo::Preservacao;
     DestinationInfo destinationInfo_;

@@ -88,7 +88,20 @@ private:
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
     void cellDoubleClicked(int rowNumber, int columnId, const juce::MouseEvent& mouseEvent) override;
 
+    // Coleta (banco + disco) em background; aplicarDados() na message thread.
+    struct DadosColetados {
+        std::vector<StorageDevice> source;
+        std::vector<StorageDevice> backup;
+        juce::String erro;
+        juce::String erroDetalhes;
+    };
+    static DadosColetados coletarDados(ProjetoAberto& projeto);
+    void aplicarDados(DadosColetados dados);
     void carregarDados();
+    juce::ThreadPool poolDados_{1};
+    int geracaoDados_ = 0;
+    bool coletaEmVoo_ = false;
+    bool coletaPendente_ = false;
     void selecionarDevice(const std::string& vaultId, bool isSourceSelection);
     void atualizarSaudeSmartDoDevice(const std::string& vaultId, bool forcarNovaConsulta = true);
     void selecionarDataCalendario(const juce::String& yyyyMmDd);

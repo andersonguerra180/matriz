@@ -1,4 +1,5 @@
 #include "Consolidacao.h"
+#include "../Diag/Watchdog.h"
 
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
@@ -355,6 +356,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool organizarPorSource,
                                         bool paraExport,
                                         const std::string& mapaId) {
+    MATRIZ_TRACE("consolidacao::planejarConsolidacao");
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
     if (organizarPorSource) codigoPorVault = codigosDeSource(registro);

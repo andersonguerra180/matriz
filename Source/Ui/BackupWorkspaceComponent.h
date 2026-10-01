@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -65,11 +66,16 @@ public:
     bool keyPressed(const juce::KeyPress& tecla) override;
     void recarregar();
     void aoItemAlterado(const EventoItemAlterado& e) override;
+    // Escondida (outra aba na frente): eventos só marcam "precisa atualizar"; a tela
+    // atualiza ao voltar a aparecer (e, se quem apareceu foi um ancestral, no 1º paint).
+    void visibilityChanged() override;
 
     // Chamado pelo MainComponent toda vez que a aba Backup é reaberta, para
     // manter "Selected Files" em dia com o grid sem resetar o restante do
     // setup (item 3 e item 4).
-    void atualizarSelecaoDoGridSeNecessario();
+    // recalcular=false: o chamador vai chamar recarregar() logo em seguida (que
+    // já recalcula a prévia) — evita planejar o catálogo inteiro duas vezes.
+    void atualizarSelecaoDoGridSeNecessario(bool recalcular = true);
 
 private:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp): travas da etapa 5
@@ -81,7 +87,54 @@ private:
     void listBoxItemClicked(int rowNumber, const juce::MouseEvent&) override;
     juce::String getTooltipForRow(int rowNumber) override;
 
+    bool escondido() const { return getPeer() != nullptr && !isShowing(); }
+    bool botoesPendentes_ = false;       // evento chegou escondida: refazer os botões das listas
+    bool resumoDeTituloPendente_ = false;  // título mudou escondida: refazer prévia/plano
+    bool aplicacaoPendenteAgendada_ = false;
+    void agendarAplicarPendentes();
     void atualizarResumo();
+    // Resultado do planejarConsolidacao calculado em background (já filtrado
+    // pela seleção) — aplicado na message thread por aplicarPlanoCalculado().
+    struct ResultadoPlano {
+        matriz::consolidacao::PlanoConsolidacao plano;
+        juce::int64 espacoACopiar = 0;
+        juce::int64 tamanhoTotal = 0;
+        size_t totalIdsSelecionados = 0;
+        bool erro = false;
+        juce::String mensagemErro;
+    };
+    void aplicarPlanoCalculado(ResultadoPlano resultado, bool forcarRebackup);
+    // Plano atual (plano_) válido e botão de backup liberável. Falso entre o
+    // início do cálculo em background e a chegada do resultado.
+    bool planoPronto_ = true;
+    void concluirPlano();
+    // Roda `fn` já se o plano está pronto; senão, quando ele chegar.
+    void aoPlanoPronto(std::function<void()> fn);
+    std::vector<std::function<void()>> aoPlanoPronto_;
+    void continuarScanDestino();
+    // Marcar CONSERVAR ESTRUTURA ORIGINAL precisa do plano novo pra decidir se
+    // mostra o popup de conflito: o aviso espera o resultado chegar.
+    bool popupConflitoAposPlano_ = false;
+    bool scanAposPlano_ = false;  // scan do destino já agendado pra quando o plano chegar
+    // Contador de geração (padrão de carregarColecoesBackupCatalogo): resposta
+    // atrasada de um cálculo já superado é descartada. Atômico + compartilhado
+    // porque o job também lê (cancela antes de começar se já foi superado).
+    juce::ThreadPool poolPlano_{1};
+    std::shared_ptr<std::atomic<int>> geracaoPlano_ = std::make_shared<std::atomic<int>>(0);
+    // Prévia calculada UMA vez por visita: dentro de recarregar() (e do
+    // construtor) as chamadas a atualizarResumo() só marcam pendente.
+    int resumoAdiado_ = 0;
+    bool resumoPendente_ = false;
+    struct AdiaResumo {
+        explicit AdiaResumo(BackupWorkspaceComponent& o) : o_(o) { ++o_.resumoAdiado_; }
+        ~AdiaResumo() {
+            if (--o_.resumoAdiado_ == 0 && o_.resumoPendente_) {
+                o_.resumoPendente_ = false;
+                o_.atualizarResumo();
+            }
+        }
+        BackupWorkspaceComponent& o_;
+    };
     void iniciarBackup();
     void dispararScanDestino(bool forcado = false);
     void executarBackupAcao(bool forcarOverride);
@@ -173,6 +226,10 @@ private:
     juce::File resolvedDestFolder_;
 
     void carregarDestinosBackup();
+    // isDirectory() de cada destino (volume de rede offline trava a message
+    // thread) roda em background; geracaoDestinos_ descarta resposta superada.
+    juce::ThreadPool poolDestinos_{1};
+    int geracaoDestinos_ = 0;
     void adicionarOuAtivarDestino(const juce::File& pasta, const juce::String& rotuloSugerido);
     void criarNovoClone(const juce::File& folder);
     void desvincularDestino(const DestinoBackupItem& dest);

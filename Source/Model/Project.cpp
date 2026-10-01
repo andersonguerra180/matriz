@@ -1147,6 +1147,34 @@ Project::Project(juce::File pastaProjeto, std::unique_ptr<matriz::db::Database> 
     if (stmt.step()) modo_ = modoFromString(stmt.columnText(0));
 }
 
+matriz::db::Database& Project::leituraDe(matriz::db::Database& escrita, ConexoesLeitura& conexoes, const char* arquivo) {
+    if (escrita.emTransacaoNestaThread()) return escrita;  // lê o que ela mesma acabou de escrever
+    constexpr size_t kMaxConexoesPorArquivo = 24;
+    const auto id = std::this_thread::get_id();
+    std::lock_guard<std::mutex> lock(conexoes.mutex);
+    auto it = conexoes.porThread.find(id);
+    if (it != conexoes.porThread.end()) return *it->second;
+    if (conexoes.falhou || conexoes.porThread.size() >= kMaxConexoesPorArquivo) return escrita;
+    try {
+        auto nova = std::make_unique<matriz::db::Database>(pastaProjeto_.getChildFile(arquivo).getFullPathName().toStdString(),
+                                                           matriz::db::Database::Modo::SomenteLeitura);
+        auto& ref = *nova;
+        conexoes.porThread.emplace(id, std::move(nova));
+        return ref;
+    } catch (const std::exception&) {
+        conexoes.falhou = true;  // sem conexão de leitura: tudo segue pela de escrita, como antes
+        return escrita;
+    }
+}
+
+matriz::db::Database& Project::registroLeitura() {
+    return leituraDe(registro(), registroLeitura_, "registro.sqlite");
+}
+
+matriz::db::Database& Project::indiceLeitura() {
+    return leituraDe(indice(), indiceLeitura_, "indice.sqlite");
+}
+
 std::unique_ptr<Project> Project::criar(const juce::File& pastaRaiz, const NovoProjetoParams& params) {
     if (params.nome.empty())
         throw ProjectError("project name is required");

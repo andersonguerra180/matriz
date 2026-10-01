@@ -37,95 +37,214 @@ void MosaicoComponent::aoItemAlterado(const EventoItemAlterado& e) {
     juce::Component::SafePointer<MosaicoComponent> safeThis(this);
     juce::MessageManager::callAsync([safeThis, e]() {
         if (safeThis == nullptr) return;
-        // Mudança em muitos itens de uma vez (ex. Duplicates > Validate All):
-        // uma recarga completa em background, não N atualizações por item.
-        if (e.tipoAlteracao == "recarregar_tudo") {
-            safeThis->recarregar();
+        // Escondida (outra aba na frente): só anota "precisa atualizar"; a grade volta
+        // a aparecer e aplica tudo de uma vez (visibilityChanged / primeiro paint).
+        if (safeThis->escondido()) {
+            safeThis->guardarEventoPendente(e);
             return;
         }
-        // NEST criado / desfeito / capa trocada: relê só o mapa de nests (uma consulta) e refiltra.
-        if (e.tipoAlteracao == "nest") {
-            auto* self = safeThis.getComponent();
-            const auto nests = ProjetoAberto::mapaDeNests(self->projeto_.projeto().registro());
-            auto aplicar = [&](std::vector<ItemResumo>& lista) {
-                for (auto& item : lista) {
-                    auto it = nests.find(item.id);
-                    if (it == nests.end()) { item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false; continue; }
-                    item.nestId = it->second.nestId;
-                    item.nestCapaId = it->second.capaId;
-                    item.nestTotal = it->second.total;
-                    item.nestCapa = (item.id == it->second.capaId);
-                }
-            };
-            aplicar(self->itensTodos_);
-            self->aplicarFiltrosEOrdenacao();
-            return;
-        }
-        if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
-            bool marcadoH = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, e.itemId);
-            bool marcadoK = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, e.itemId);
-            bool marcadoP = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, e.itemId);
+        safeThis->aplicarEventosPendentes();  // anteriores primeiro
+        safeThis->aplicarEvento(e);
+    });
+}
+
+void MosaicoComponent::guardarEventoPendente(const EventoItemAlterado& e) {
+    if (e.itemId.empty() && e.itemIds.empty()) {
+        tiposAmplosPendentes_.insert(e.tipoAlteracao);
+        return;
+    }
+    auto& ids = idsPendentesPorTipo_[e.tipoAlteracao];
+    if (!e.itemIds.empty()) ids.insert(e.itemIds.begin(), e.itemIds.end());
+    else ids.insert(e.itemId);
+    // Escondida por muito tempo com lotes enormes: uma recarga completa sai mais barata
+    // (e mais simples) que dezenas de milhares de atualizações por item.
+    constexpr size_t kMaxIdsPendentes = 20000;
+    size_t total = 0;
+    for (const auto& par : idsPendentesPorTipo_) total += par.second.size();
+    if (total > kMaxIdsPendentes) {
+        tiposAmplosPendentes_.insert("recarregar_tudo");
+        idsPendentesPorTipo_.clear();
+    }
+}
+
+void MosaicoComponent::agendarAplicarPendentes() {
+    if (aplicacaoPendenteAgendada_ || !temEventosPendentes()) return;
+    aplicacaoPendenteAgendada_ = true;
+    juce::Component::SafePointer<MosaicoComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis] {
+        if (safeThis == nullptr) return;
+        safeThis->aplicacaoPendenteAgendada_ = false;
+        if (!safeThis->escondido()) safeThis->aplicarEventosPendentes();
+    });
+}
+
+void MosaicoComponent::visibilityChanged() {
+    if (!escondido()) agendarAplicarPendentes();
+}
+
+void MosaicoComponent::aplicarEventosPendentes() {
+    if (!temEventosPendentes()) return;
+    auto amplos = std::move(tiposAmplosPendentes_);
+    auto porTipo = std::move(idsPendentesPorTipo_);
+    tiposAmplosPendentes_.clear();
+    idsPendentesPorTipo_.clear();
+
+    const bool recargaCompleta = amplos.count("recarregar_tudo") > 0;
+    if (recargaCompleta) {
+        amplos.erase("recarregar_tudo");
+        aplicarEvento({std::string(), "recarregar_tudo", {}});
+    }
+    for (const auto& tipo : amplos) aplicarEvento({std::string(), tipo, {}});
+    for (const auto& [tipo, ids] : porTipo) {
+        // A recarga completa já relê do banco o que os eventos "genéricos" (título, tipo,
+        // metadado...) releriam item a item; marcações/E/nest têm tratamento próprio.
+        const bool generico = tipo != "nest" && tipo != "marcacao" && tipo != "publicacao" && tipo != "marcado_revisado";
+        if (recargaCompleta && generico) continue;
+        if (ids.size() == 1) aplicarEvento({*ids.begin(), tipo, {}});
+        else aplicarEvento({std::string(), tipo, std::vector<std::string>(ids.begin(), ids.end())});
+    }
+}
+
+void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
+    // Evento de LOTE: itemId vazio e os ids em e.itemIds (um evento por operação em lote).
+    const bool lote = !e.itemIds.empty();
+
+    // Mudança em muitos itens de uma vez (ex. Duplicates > Validate All):
+    // uma recarga completa em background, não N atualizações por item.
+    if (e.tipoAlteracao == "recarregar_tudo") {
+        recarregar();
+        return;
+    }
+    // NEST criado / desfeito / capa trocada: relê só o mapa de nests (uma consulta) e refiltra.
+    if (e.tipoAlteracao == "nest") {
+        // Um snapshot completo que começou ANTES deste nest (leu o estado antigo) não pode sobrescrever o
+        // resultado quando chegar: descarta-o e pede um novo logo depois (mesmo padrão de atualizarItemEmMemoria).
+        if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
+        ++geracaoSnapshot_;
+        snapshotPendente_ = false;
+        const auto nests = ProjetoAberto::mapaDeNests(projeto_.projeto().registro());
+        auto aplicar = [&](std::vector<ItemResumo>& lista) {
+            for (auto& item : lista) {
+                auto it = nests.find(item.id);
+                if (it == nests.end()) { item.nestId.clear(); item.nestCapaId.clear(); item.nestTotal = 0; item.nestCapa = false; continue; }
+                item.nestId = it->second.nestId;
+                item.nestCapaId = it->second.capaId;
+                item.nestTotal = it->second.total;
+                item.nestCapa = (item.id == it->second.capaId);
+            }
+        };
+        aplicar(itensTodos_);
+        aplicarFiltrosEOrdenacao();
+        return;
+    }
+    if (e.tipoAlteracao == "marcacao" || e.tipoAlteracao == "publicacao") {
+        auto atualizar = [this](const std::string& id) {
+            if (id.empty()) return;
+            bool marcadoH = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Html, id);
+            bool marcadoK = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Zip, id);
+            bool marcadoP = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Print, id);
             // item 7: watermark (W) dispara o mesmo tipo de evento "marcacao"
             // que H/K/P, então precisa do mesmo tratamento aqui — sem isso
             // ficava sem sync ao vivo entre a janela de Preview e a grade.
-            bool marcadoW = safeThis->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, e.itemId);
-            for (auto& item : safeThis->itensTodos_) {
-                if (item.id == e.itemId) {
-                    item.marcadoPublicacao = marcadoH;
-                    item.marcadoZip = marcadoK;
-                    item.marcadoPrint = marcadoP;
-                    item.marcadoWatermark = marcadoW;
-                    break;
-                }
+            bool marcadoW = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id);
+            for (ItemResumo* item : {itemEmTodos(id), itemEmFiltrados(id)}) {
+                if (item == nullptr) continue;
+                item->marcadoPublicacao = marcadoH;
+                item->marcadoZip = marcadoK;
+                item->marcadoPrint = marcadoP;
+                item->marcadoWatermark = marcadoW;
             }
-            for (auto& item : safeThis->itensFiltrados_) {
-                if (item.id == e.itemId) {
-                    item.marcadoPublicacao = marcadoH;
-                    item.marcadoZip = marcadoK;
-                    item.marcadoPrint = marcadoP;
-                    item.marcadoWatermark = marcadoW;
-                    break;
-                }
-            }
-            safeThis->repaint();
-            return;
-        }
-        // Tecla E: só a flag muda — nada de atualizarItemEmMemoria (que dá
-        // stat no arquivo, marca metadadosEditados e refiltra por item).
-        if (e.tipoAlteracao == "marcado_revisado") {
-            auto* self = safeThis.getComponent();
-            // itemId vazio = limparTodosMarcadosRevisado(): todos desligados.
-            const bool valor = e.itemId.empty() ? false : self->projeto_.itemMarcadoRevisado(e.itemId);
-            auto aplicar = [&](std::vector<ItemResumo>& lista) {
-                for (auto& item : lista) {
-                    if (e.itemId.empty()) item.marcadoRevisado = false;
-                    else if (item.id == e.itemId) { item.marcadoRevisado = valor; break; }
-                }
-            };
-            aplicar(self->itensTodos_);
-            aplicar(self->itensFiltrados_);
-            self->repaint();
-            if (self->ocultarEditados_) self->agendarRefiltroCoalescido();
-            // Snapshot em voo foi lido ANTES do E: ao chegar, traria a flag
-            // antiga por cima. Pede um recarregar logo depois dele.
-            if (self->snapshotPendente_) self->recarregarAoTerminarSnapshot_ = true;
-            return;
-        }
-        // EDIT METADATA != REMOVE FROM THIS LIST (correção METADATA): um
-        // evento de UM item (tags, título, etc.) só precisa atualizar ESSE
-        // item em memória — chamar recarregar() aqui refazia o snapshot
-        // inteiro do catálogo por cima de qualquer edição de campo (cada
-        // ProjetoAberto::definirTags/salvarMetadado dispara este evento),
-        // disputando com o filtro "Selected"/"Hide Unselected" corrente e
-        // arriscando derrubar o item da lista no meio do caminho. Só um
-        // evento sem itemId (mudança ampla, não de um item específico)
-        // ainda pede o recarregar completo.
-        if (e.itemId.empty()) {
-            safeThis->recarregar();
+        };
+        if (lote) for (const auto& id : e.itemIds) atualizar(id);
+        else atualizar(e.itemId);
+        repaint();
+        return;
+    }
+    // Tecla E: só a flag muda — nada de atualizarItemEmMemoria (que dá
+    // stat no arquivo, marca metadadosEditados e refiltra por item).
+    if (e.tipoAlteracao == "marcado_revisado") {
+        // itemId vazio (sem lote) = limparTodosMarcadosRevisado(): todos desligados.
+        if (e.itemId.empty() && !lote) {
+            for (auto& item : itensTodos_) item.marcadoRevisado = false;
+            for (auto& item : itensFiltrados_) item.marcadoRevisado = false;
         } else {
-            safeThis->atualizarItemEmMemoria(e.itemId);
+            auto atualizar = [this](const std::string& id) {
+                const bool valor = projeto_.itemMarcadoRevisado(id);
+                if (auto* item = itemEmTodos(id)) item->marcadoRevisado = valor;
+                if (auto* item = itemEmFiltrados(id)) item->marcadoRevisado = valor;
+            };
+            if (lote) for (const auto& id : e.itemIds) atualizar(id);
+            else atualizar(e.itemId);
         }
-    });
+        repaint();
+        if (ocultarEditados_) agendarRefiltroCoalescido();
+        // Snapshot em voo foi lido ANTES do E: ao chegar, traria a flag
+        // antiga por cima. Pede um recarregar logo depois dele.
+        if (snapshotPendente_) recarregarAoTerminarSnapshot_ = true;
+        return;
+    }
+    // Lote (renomear, tipo...): cada item atualizado em memória como no evento por item,
+    // mas o refiltro/reordenação da lista inteira roda UMA vez no fim.
+    if (lote) {
+        iniciarLoteAtualizacao();
+        for (const auto& id : e.itemIds) atualizarItemEmMemoria(id);
+        finalizarLoteAtualizacao();
+        return;
+    }
+    // EDIT METADATA != REMOVE FROM THIS LIST (correção METADATA): um
+    // evento de UM item (tags, título, etc.) só precisa atualizar ESSE
+    // item em memória — chamar recarregar() aqui refazia o snapshot
+    // inteiro do catálogo por cima de qualquer edição de campo (cada
+    // ProjetoAberto::definirTags/salvarMetadado dispara este evento),
+    // disputando com o filtro "Selected"/"Hide Unselected" corrente e
+    // arriscando derrubar o item da lista no meio do caminho. Só um
+    // evento sem itemId (mudança ampla, não de um item específico)
+    // ainda pede o recarregar completo.
+    if (e.itemId.empty()) {
+        recarregar();
+    } else {
+        atualizarItemEmMemoria(e.itemId);
+    }
+}
+
+ItemResumo* MosaicoComponent::itemEmTodos(const std::string& itemId) {
+    if (itemId.empty()) return nullptr;
+    if (!indiceTodosValido_) {
+        indiceTodos_.clear();
+        indiceTodos_.reserve(itensTodos_.size());
+        for (size_t i = 0; i < itensTodos_.size(); ++i) indiceTodos_.emplace(itensTodos_[i].id, i);  // emplace: o 1º vence, como o find_if
+        indiceTodosValido_ = true;
+    }
+    auto it = indiceTodos_.find(itemId);
+    if (it != indiceTodos_.end()) {
+        if (it->second < itensTodos_.size() && itensTodos_[it->second].id == itemId) return &itensTodos_[it->second];
+        indiceTodosValido_ = false;  // mapa velho (lista mudou sem avisar): refaz na próxima e cai na busca linear
+        auto lin = std::find_if(itensTodos_.begin(), itensTodos_.end(), [&](const ItemResumo& r) { return r.id == itemId; });
+        return lin == itensTodos_.end() ? nullptr : &*lin;
+    }
+    return nullptr;
+}
+
+ItemResumo* MosaicoComponent::itemEmFiltrados(const std::string& itemId) {
+    const int i = indiceFiltradoDe(itemId);
+    return i >= 0 ? &itensFiltrados_[static_cast<size_t>(i)] : nullptr;
+}
+
+int MosaicoComponent::indiceFiltradoDe(const std::string& itemId) {
+    if (itemId.empty()) return -1;
+    if (!indiceFiltradosValido_) {
+        indiceFiltrados_.clear();
+        indiceFiltrados_.reserve(itensFiltrados_.size());
+        for (size_t i = 0; i < itensFiltrados_.size(); ++i) indiceFiltrados_.emplace(itensFiltrados_[i].id, i);
+        indiceFiltradosValido_ = true;
+    }
+    auto it = indiceFiltrados_.find(itemId);
+    if (it == indiceFiltrados_.end()) return -1;
+    if (it->second < itensFiltrados_.size() && itensFiltrados_[it->second].id == itemId) return static_cast<int>(it->second);
+    indiceFiltradosValido_ = false;  // mapa velho (lista mudou sem avisar): refaz na próxima e cai na busca linear
+    for (size_t i = 0; i < itensFiltrados_.size(); ++i)
+        if (itensFiltrados_[i].id == itemId) return static_cast<int>(i);
+    return -1;
 }
 
 void MosaicoComponent::agendarRefiltroCoalescido() {
@@ -175,14 +294,18 @@ void MosaicoComponent::recarregar() {
 
     poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
         std::vector<ItemResumo> itens;
+        std::vector<TextosCelula> textos;
         try {
             itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens();
+            // Textos de exibição aqui, no job (não no paint, por célula, a cada quadro).
+            textos.reserve(itens.size());
+            for (const auto& item : itens) textos.push_back(calcularTextos(item));
         } catch (const std::exception&) {
             ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
             return;  // projeto fechado no meio: nada a entregar
         }
 
-        juce::MessageManager::callAsync([safeThis, geracao, itens = std::move(itens)]() mutable {
+        juce::MessageManager::callAsync([safeThis, geracao, itens = std::move(itens), textos = std::move(textos)]() mutable {
             if (!safeThis) {
                 ProgressoGlobal::obterInstancia().concluirTarefa("catalog_assets", "");
                 return;
@@ -207,7 +330,10 @@ void MosaicoComponent::recarregar() {
             }
             MATRIZ_TRACE("MosaicoComponent::aplicarSnapshot");
             self->snapshotPendente_ = false;
+            self->itensFiltrados_.limpar();  // os índices apontavam pra lista antiga
             self->itensTodos_ = std::move(itens);
+            self->textosTodos_ = std::move(textos);
+            self->invalidarIndiceTodos();
             ++self->versaoSnapshot_;
             self->aplicarFiltrosEOrdenacao();
             if (self->aoMudarConteudoVisivel) self->aoMudarConteudoVisivel();
@@ -232,9 +358,8 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     ++geracaoSnapshot_;
     snapshotPendente_ = false;
 
-    auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
-                           [&](const ItemResumo& r) { return r.id == itemId; });
-    if (it == itensTodos_.end()) return;
+    ItemResumo* it = itemEmTodos(itemId);
+    if (it == nullptr) return;
 
     auto tit = projeto_.lerMetadado(itemId, "titulo");
     if (tit.has_value()) {
@@ -262,6 +387,9 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
         it->marcadoWatermark = resumo->marcadoWatermark;
     }
 
+    // Nome/ano/etc. mudaram: refaz os textos de exibição deste item.
+    textosTodos_[static_cast<size_t>(it - itensTodos_.data())] = calcularTextos(*it);
+
     if (loteAtualizacaoProfundidade_ > 0) refiltroAdiado_ = true;
     else aplicarFiltrosEOrdenacao();
 }
@@ -284,7 +412,12 @@ void MosaicoComponent::recarregarSincrono() {
     }
     ++geracaoSnapshot_;  // invalida qualquer snapshot em voo
     snapshotPendente_ = false;
+    itensFiltrados_.limpar();  // os índices apontavam pra lista antiga
     itensTodos_ = modoQuarentena_ ? projeto_.listarItensEmQuarentena() : projeto_.listarItens();
+    textosTodos_.clear();
+    textosTodos_.reserve(itensTodos_.size());
+    for (const auto& item : itensTodos_) textosTodos_.push_back(calcularTextos(item));
+    invalidarIndiceTodos();
     ++versaoSnapshot_;
     aplicarFiltrosEOrdenacao();
 }
@@ -666,6 +799,118 @@ juce::String MosaicoComponent::formatarBytesDaLista(juce::int64 bytes) {
     return juce::String(bytes / (1024.0 * 1024.0 * 1024.0), 2) + " GB";
 }
 
+// Textos de exibição de UM item. Mesmas regras que o paint() aplicava por célula, a cada quadro.
+MosaicoComponent::TextosCelula MosaicoComponent::calcularTextos(const ItemResumo& item) {
+    TextosCelula t;
+    t.nome = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str())
+                                 : juce::String::fromUTF8(item.titulo.c_str());
+    if (!item.extensaoArquivo.empty()) t.extensao = juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase();
+
+    // DATE CREATED (só o ano): data do metadado; sem ela, a de entrada; sem ela, o ano do EVENT DATE.
+    {
+        juce::String data = juce::String::fromUTF8((item.dataCriacao.empty() ? item.criadoEm : item.dataCriacao).c_str());
+        t.ano = data.length() >= 4 ? data.substring(0, 4) : juce::String();
+        if (t.ano.isEmpty() && item.ano) t.ano = juce::String(*item.ano);
+    }
+
+    if (!item.sourceMedia.empty()) {
+        t.sourceMedium = juce::String::fromUTF8(OriginalSourceMediumInfo::deserialize(item.sourceMedia).toDisplaySummary().c_str());
+        if (t.sourceMedium == "None / Unknown") t.sourceMedium = juce::String();
+    }
+
+    const std::string& caminho = !item.caminhoAbsolutoOrigem.empty() ? item.caminhoAbsolutoOrigem : item.caminhoRelativoArquivo;
+    if (!caminho.empty()) t.caminho = juce::String::fromUTF8(caminho.c_str());
+    t.tamanho = formatarBytesDaLista(item.tamanhoBytes);
+    t.categoria = categoriaDaLista(item.extensaoArquivo);
+    t.categoriaMaiuscula = t.categoria.toUpperCase();
+
+    if (item.duracaoSegundos.has_value() && *item.duracaoSegundos > 0.0) {
+        int total = static_cast<int>(*item.duracaoSegundos + 0.5);
+        int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
+        if (h > 0)
+            t.duracao = juce::String(h) + ":" + juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+        else
+            t.duracao = juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
+    }
+
+    t.subtituloGrade = item.extensaoArquivo.empty() ? juce::String("FILE") : t.extensao;
+    if (!item.pastaNome.empty()) t.subtituloGrade += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
+    return t;
+}
+
+// Zebrado de "editado" (barra da lista / anel da grade): desenhado UMA vez, com a mesma geometria do
+// desenho direto, numa imagem na escala de pixel do paint (Retina) — e reaproveitado por toda célula
+// editada. Margem em volta: o contorno do anel vaza ~0,6 px pra fora do retângulo da célula.
+namespace {
+constexpr int kMargemZebra = 4;
+const juce::Colour kZebraAmarelo{0xffFFEE00};
+const juce::Colour kZebraRisco{0xdd000000};
+}
+
+const juce::Image& MosaicoComponent::imagemZebraBarraLista(juce::Rectangle<float> barRect, float escala) {
+    const juce::Rectangle<int> tamanho(0, 0, static_cast<int>(barRect.getWidth()), static_cast<int>(barRect.getHeight()));
+    if (zebraBarraLista_.isValid() && zebraBarraListaTamanho_ == tamanho && zebraBarraListaEscala_ == escala) return zebraBarraLista_;
+    const int w = tamanho.getWidth() + 2 * kMargemZebra, h = tamanho.getHeight() + 2 * kMargemZebra;
+    juce::Image img(juce::Image::ARGB, juce::jmax(1, juce::roundToInt(w * escala)), juce::jmax(1, juce::roundToInt(h * escala)), true);
+    {
+        juce::Graphics g(img);
+        g.addTransform(juce::AffineTransform::scale(escala));
+        const juce::Rectangle<float> r(static_cast<float>(kMargemZebra), static_cast<float>(kMargemZebra),
+                                       barRect.getWidth(), barRect.getHeight());
+        juce::Path barPath;
+        barPath.addRoundedRectangle(r, 2.0f);
+        g.reduceClipRegion(barPath);
+        g.setColour(kZebraAmarelo);
+        g.fillRect(r);
+        g.setColour(kZebraRisco);
+        for (float y = r.getY() - r.getWidth() * 2; y <= r.getBottom() + r.getWidth() * 2; y += 8.0f)
+            g.drawLine(r.getX() - 3.0f, y, r.getRight() + 3.0f, y + r.getWidth(), 3.5f);
+    }
+    zebraBarraLista_ = img;
+    zebraBarraListaTamanho_ = tamanho;
+    zebraBarraListaEscala_ = escala;
+    return zebraBarraLista_;
+}
+
+const juce::Image& MosaicoComponent::imagemZebraGrade(juce::Rectangle<int> bounds, float escala) {
+    const juce::Rectangle<int> tamanho(0, 0, bounds.getWidth(), bounds.getHeight());
+    if (zebraGrade_.isValid() && zebraGradeTamanho_ == tamanho && zebraGradeEscala_ == escala) return zebraGrade_;
+    const auto& tk = matriz::ui::tema();
+    const int w = tamanho.getWidth() + 2 * kMargemZebra, h = tamanho.getHeight() + 2 * kMargemZebra;
+    juce::Image img(juce::Image::ARGB, juce::jmax(1, juce::roundToInt(w * escala)), juce::jmax(1, juce::roundToInt(h * escala)), true);
+    {
+        juce::Graphics g(img);
+        g.addTransform(juce::AffineTransform::scale(escala));
+        const juce::Rectangle<int> zebraBounds(kMargemZebra, kMargemZebra, tamanho.getWidth(), tamanho.getHeight());
+        const float zebraR = juce::jmax(1.0f, tk.raioMedio);
+        {
+            juce::Graphics::ScopedSaveState saveState(g);
+            juce::Path ringPath;
+            ringPath.addRoundedRectangle(zebraBounds.toFloat(), zebraR);
+            ringPath.addRoundedRectangle(zebraBounds.reduced(5).toFloat(), juce::jmax(1.0f, zebraR - 3.0f));
+            ringPath.setUsingNonZeroWinding(false);  // Even-odd hollow ring
+            g.reduceClipRegion(ringPath);
+
+            g.setColour(kZebraAmarelo);  // base amarela
+            g.fillRect(zebraBounds);
+
+            g.setColour(kZebraRisco);  // riscas escuras transversais
+            const float stripePitch = 12.0f, stripeWidth = 5.0f;
+            const float minCoord = static_cast<float>(zebraBounds.getX() - zebraBounds.getHeight() - 10);
+            const float maxCoord = static_cast<float>(zebraBounds.getRight() + zebraBounds.getHeight() + 10);
+            for (float x = minCoord; x <= maxCoord; x += stripePitch)
+                g.drawLine(x, static_cast<float>(zebraBounds.getY() - 5), x + static_cast<float>(zebraBounds.getHeight() + 10),
+                           static_cast<float>(zebraBounds.getBottom() + 5), stripeWidth);
+        }
+        g.setColour(kZebraAmarelo);  // contorno externo nítido
+        g.drawRoundedRectangle(zebraBounds.toFloat(), zebraR, 1.2f);
+    }
+    zebraGrade_ = img;
+    zebraGradeTamanho_ = tamanho;
+    zebraGradeEscala_ = escala;
+    return zebraGrade_;
+}
+
 void MosaicoComponent::desenharSubpasta(juce::Graphics& g, juce::Rectangle<int> bounds, const SubpastaInfo& sub) const {
     const auto& tk = matriz::ui::tema();
     auto area = bounds.reduced(modoVisao_ == ModoVisao::Lista ? 1 : 4);
@@ -772,9 +1017,15 @@ void MosaicoComponent::ordenarListaPorColuna(int coluna, bool ascendente) {
 }
 
 void MosaicoComponent::aplicarFiltrosEOrdenacao() {
-    itensFiltrados_.clear();
+    MATRIZ_TRACE("MosaicoComponent::aplicarFiltrosEOrdenacao");
+    invalidarIndiceFiltrados();
+    // Trabalha com ÍNDICES em itensTodos_ (antes: copiava cada ItemResumo — com todas as
+    // strings — até 3 vezes por refiltro: no filtro, no agrupamento e na ordenação).
+    auto& indices = itensFiltrados_.indices();
+    indices.clear();
 
-    for (auto& item : itensTodos_) {
+    for (size_t pos = 0; pos < itensTodos_.size(); ++pos) {
+        const ItemResumo& item = itensTodos_[pos];
         if (!item.pastaAtiva) continue;
         if (ocultarEditados_ && item.marcadoRevisado) continue;
         if (ocultarNaoSelecionados_ && !selecionados_.count(item.id)) continue;
@@ -832,26 +1083,27 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
                 }
             }
         }
-        itensFiltrados_.push_back(item);
+        indices.push_back(static_cast<uint32_t>(pos));
     }
 
     // NEST: cada nest vira UMA célula — a capa. Se a busca/filtro só achou outro arquivo do nest, a célula é
     // esse arquivo (o nest "aberto" nele): o arquivo nunca some da busca. Os demais membros ficam escondidos.
     {
         std::map<std::string, size_t> representante;  // nestId -> posição em `saida`
-        std::vector<ItemResumo> saida;
-        saida.reserve(itensFiltrados_.size());
-        for (auto& item : itensFiltrados_) {
-            if (item.nestId.empty()) { saida.push_back(std::move(item)); continue; }
+        std::vector<uint32_t> saida;
+        saida.reserve(indices.size());
+        for (uint32_t pos : indices) {
+            const ItemResumo& item = itensTodos_[pos];
+            if (item.nestId.empty()) { saida.push_back(pos); continue; }
             auto it = representante.find(item.nestId);
             if (it == representante.end()) {
                 representante[item.nestId] = saida.size();
-                saida.push_back(std::move(item));
+                saida.push_back(pos);
             } else if (item.nestCapa) {
-                saida[it->second] = std::move(item);  // a capa vale mais que um membro que só casou com a busca
+                saida[it->second] = pos;  // a capa vale mais que um membro que só casou com a busca
             }
         }
-        itensFiltrados_ = std::move(saida);
+        indices = std::move(saida);
     }
 
     auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
@@ -872,8 +1124,9 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
     };
 
     // Mosaico agrupado por tipo de arquivo.
-    std::map<juce::String, std::vector<ItemResumo>> baldes;
-    for (auto& item : itensFiltrados_) {
+    std::map<juce::String, std::vector<uint32_t>> baldes;
+    for (uint32_t pos : indices) {
+        const ItemResumo& item = itensTodos_[pos];
         juce::String chave;
         if (colunaOrdenacaoLista_ > 0) {
             // Ordenação por coluna vale pra lista INTEIRA (todas as páginas):
@@ -892,26 +1145,27 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         } else {
             chave = "0:" + rotuloGrupoArchive(item);
         }
-        baldes[chave].push_back(item);
+        baldes[chave].push_back(pos);
     }
 
-    itensFiltrados_.clear();
+    indices.clear();
     grupos_.clear();
     // O índice de hover aponta pra uma posição da lista ANTERIOR — depois
     // de refiltrar/reagrupar ele passaria a realçar uma célula qualquer.
     indiceHover_ = -1;
     for (auto& [chave, itensDoGrupo] : baldes) {
-        std::vector<ItemResumo> ordenados = itensDoGrupo;
-        std::sort(ordenados.begin(), ordenados.end(), comparador);
+        std::vector<uint32_t> ordenados = itensDoGrupo;
+        std::sort(ordenados.begin(), ordenados.end(),
+                  [&](uint32_t a, uint32_t b) { return comparador(itensTodos_[a], itensTodos_[b]); });
 
         GrupoMosaico g;
         g.rotulo = chave.fromFirstOccurrenceOf(":", false, false) + " - " +
                    juce::String(static_cast<int>(ordenados.size()));
-        g.indiceInicio = static_cast<int>(itensFiltrados_.size());
+        g.indiceInicio = static_cast<int>(indices.size());
         g.quantidade = static_cast<int>(ordenados.size());
         grupos_.push_back(g);
 
-        for (auto& item : ordenados) itensFiltrados_.push_back(std::move(item));
+        indices.insert(indices.end(), ordenados.begin(), ordenados.end());
     }
 
     std::set<std::string> idsVisiveis;
@@ -941,11 +1195,12 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
             grupo.quantidade = gf - gi;
             gruposDaPagina.push_back(grupo);
         }
-        itensFiltrados_ = std::vector<ItemResumo>(itensFiltrados_.begin() + ini, itensFiltrados_.begin() + fim);
+        indices = std::vector<uint32_t>(indices.begin() + ini, indices.begin() + fim);
         grupos_ = std::move(gruposDaPagina);
     } else {
         paginaLista_ = 0;
     }
+    invalidarIndiceFiltrados();  // a lista foi refeita (agrupada/paginada) acima
     if (aoMudarPaginacao) aoMudarPaginacao();
 
     recalcularLayout();
@@ -1017,14 +1272,23 @@ void MosaicoComponent::definirSelecao(const std::set<std::string>& itemIds) {
 void MosaicoComponent::mouseMove(const juce::MouseEvent& e) {
     int indice = indiceNaPosicao(e.getPosition());
     if (indice == indiceHover_) return;
+    const int anterior = indiceHover_;
     indiceHover_ = indice;
-    repaint();
+    repintarCelula(anterior);  // só as duas células afetadas, não o componente inteiro
+    repintarCelula(indice);
 }
 
 void MosaicoComponent::mouseExit(const juce::MouseEvent&) {
     if (indiceHover_ < 0) return;
+    const int anterior = indiceHover_;
     indiceHover_ = -1;
-    repaint();
+    repintarCelula(anterior);
+}
+
+void MosaicoComponent::repintarCelula(int indice) {
+    if (indice < 0 || indice >= static_cast<int>(itensFiltrados_.size())) return;
+    // Folga pro que vaza da célula: pilha de nest (+6 px), anel de foco e contornos.
+    repaint(boundsDaCelula(indice).expanded(10));
 }
 
 void MosaicoComponent::recalcularLayout() {
@@ -1594,9 +1858,8 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
     // documentos/sessões que estejam junto. Baseado em extensaoArquivo,
     // mesma categoriaPorExtensao já usada pelo filtro MEDIA TYPE.
     auto ehFoto = [this](const std::string& id) {
-        auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
-                                [&id](const ItemResumo& r) { return r.id == id; });
-        if (it == itensTodos_.end()) return false;
+        const ItemResumo* it = itemEmTodos(id);
+        if (it == nullptr) return false;
         return matriz::ingest::categoriaPorExtensao(juce::String(it->extensaoArquivo)) ==
                matriz::ingest::CategoriaMidia::Imagem;
     };
@@ -1652,9 +1915,8 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
         if (!alvos.empty()) {
             bool todosMarcados = std::all_of(alvos.begin(), alvos.end(), [this](const std::string& id) {
-                auto it = std::find_if(itensTodos_.begin(), itensTodos_.end(),
-                                        [&id](const ItemResumo& i) { return i.id == id; });
-                return it != itensTodos_.end() && it->marcadoRevisado;
+                const ItemResumo* it = itemEmTodos(id);
+                return it != nullptr && it->marcadoRevisado;
             });
             bool novoEstado = !todosMarcados;
             projeto_.alternarMarcadoRevisado(alvos);
@@ -1817,6 +2079,18 @@ const juce::Image* MosaicoComponent::miniaturaCache(const std::string& itemId) {
     return nullptr;
 }
 
+namespace {
+// Reduz (nunca amplia) preservando a proporção, pra caber em maxLargura x maxAltura.
+juce::Image reduzirParaCelula(const juce::Image& imagem, int maxLargura, int maxAltura) {
+    if (!imagem.isValid() || maxLargura <= 0 || maxAltura <= 0) return imagem;
+    if (imagem.getWidth() <= maxLargura && imagem.getHeight() <= maxAltura) return imagem;
+    const double fator = juce::jmin(static_cast<double>(maxLargura) / imagem.getWidth(),
+                                    static_cast<double>(maxAltura) / imagem.getHeight());
+    return imagem.rescaled(juce::jmax(1, juce::roundToInt(imagem.getWidth() * fator)),
+                           juce::jmax(1, juce::roundToInt(imagem.getHeight() * fator)), juce::Graphics::highResamplingQuality);
+}
+} // namespace
+
 void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
     {
         const juce::ScopedLock sl(cacheLock_);
@@ -1832,10 +2106,18 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
     juce::Component::SafePointer<MosaicoComponent> ponteiroSeguro(this);
     ProjetoAberto* projeto = &projeto_;
 
-    poolMiniaturas_.addJob([ponteiroSeguro, projeto, itemId]() mutable {
+    // Miniatura reduzida UMA vez, aqui no job, ao tamanho da MAIOR célula (zoom máximo) em pixels físicos
+    // (Retina): o paint desenha a imagem já pequena em vez de reamostrar a original a cada quadro, e o
+    // cache (400 entradas) deixa de guardar bitmaps enormes. Nunca amplia; o zoom nunca invalida o cache.
+    double escalaTela = 1.0;
+    for (const auto& d : juce::Desktop::getInstance().getDisplays().displays) escalaTela = juce::jmax(escalaTela, d.scale);
+    const int maxLargura = juce::roundToInt(kLarguraMaximaMiniatura * escalaTela);
+    const int maxAltura = juce::roundToInt(kAlturaMaximaMiniatura * escalaTela);
+
+    poolMiniaturas_.addJob([ponteiroSeguro, projeto, itemId, maxLargura, maxAltura]() mutable {
         auto caminho = projeto->caminhoMiniaturaPrincipal(itemId);
         juce::Image imagem;
-        if (caminho) imagem = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
+        if (caminho) imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(juce::File(*caminho)), maxLargura, maxAltura);
         bool temCaminho = caminho.has_value();
 
         if (!imagem.isValid()) {
@@ -1849,7 +2131,7 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
                     juce::File assetsFolder = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
                     juce::File logoImgFile = assetsFolder.getChildFile(logoFile);
                     if (logoImgFile.existsAsFile()) {
-                        imagem = juce::ImageFileFormat::loadFrom(logoImgFile);
+                        imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(logoImgFile), maxLargura, maxAltura);
                         if (imagem.isValid()) {
                             temCaminho = true;
                         }
@@ -1873,7 +2155,7 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
             } else if (!temCaminho) {
                 self->semMiniatura_[itemId] = true;
             }
-            self->repaint();
+            self->repintarCelula(self->indiceFiltradoDe(itemId));  // só a célula que ganhou a miniatura
         });
     });
 }
@@ -1949,6 +2231,9 @@ void MosaicoComponent::desenharPlaceholderCategoria(juce::Graphics& g, juce::Rec
 
 void MosaicoComponent::paint(juce::Graphics& g) {
     MATRIZ_TRACE("MosaicoComponent::paint");
+    // Voltou a aparecer por um ANCESTRAL (visibilityChanged não dispara nesse caso):
+    // eventos que chegaram escondida são aplicados logo depois deste quadro.
+    if (temEventosPendentes()) agendarAplicarPendentes();
     const auto& tk = matriz::ui::tema();
     g.fillAll(tk.fundo);
 
@@ -2017,6 +2302,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
     juce::Rectangle<int> clip = g.getClipBounds();
     if (colunas_ <= 0) return;
+    // Escala de pixel deste paint (2 na Retina): o zebrado pré-desenhado precisa estar nela pra ficar nítido.
+    const float escalaPixel = static_cast<float>(g.getInternalContext().getPhysicalPixelScaleFactor());
 
     for (int si = 0; si < static_cast<int>(subpastas_.size()); ++si) {
         auto bounds = boundsSubpasta(si);
@@ -2071,6 +2358,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
         for (int local = primeiroLocal; local < ultimoLocal; ++local) {
             int i = grupo.indiceInicio + local;
             const ItemResumo& item = itensFiltrados_[static_cast<size_t>(i)];
+            const TextosCelula& tx = textosDoFiltrado(static_cast<size_t>(i));  // calculados no snapshot
             juce::Rectangle<int> bounds = boundsDaCelula(i).reduced(modoVisao_ == ModoVisao::Lista ? 1 : 4);
 
             juce::Colour corEstado = corDoEstado(item.estado);
@@ -2131,16 +2419,15 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 juce::Rectangle<float> barRect(static_cast<float>(bounds.getX()), static_cast<float>(bounds.getY() + 2),
                                                barW, static_cast<float>(bounds.getHeight() - 4));
                 if (destacarEditados_ && item.metadadosEditados) {
-                    juce::Graphics::ScopedSaveState saveState(g);
-                    juce::Path barPath;
-                    barPath.addRoundedRectangle(barRect, 2.0f);
-                    g.reduceClipRegion(barPath);
-                    g.setColour(kZebraYellowList);
-                    g.fillRect(barRect);
-                    g.setColour(kZebraStripeList);
-                    for (float y = barRect.getY() - barRect.getWidth() * 2; y <= barRect.getBottom() + barRect.getWidth() * 2; y += 8.0f) {
-                        g.drawLine(barRect.getX() - 3.0f, y, barRect.getRight() + 3.0f, y + barRect.getWidth(), 3.5f);
-                    }
+                    // Zebrado desenhado uma vez numa imagem (imagemZebraBarraLista) e reaproveitado.
+                    // drawImage multiplica pela opacidade da cor corrente: opaco aqui, e o estado volta no fim do bloco.
+                    juce::Graphics::ScopedSaveState estadoZebra(g);
+                    g.setOpacity(1.0f);
+                    g.drawImage(imagemZebraBarraLista(barRect, escalaPixel),
+                                juce::Rectangle<float>(barRect.getX() - static_cast<float>(kMargemZebra),
+                                                       barRect.getY() - static_cast<float>(kMargemZebra),
+                                                       barRect.getWidth() + 2.0f * kMargemZebra,
+                                                       barRect.getHeight() + 2.0f * kMargemZebra));
                 }
                 (void) corCat;  // lista igual à do INTAKE: sem barra de categoria (o TYPE é a etiqueta)
 
@@ -2186,21 +2473,20 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 }
 
                 // TYPE
-                const juce::String categoria = categoriaDaLista(item.extensaoArquivo);
+                const juce::String& categoria = tx.categoria;
                 {
                     auto badge = celulaCol(1).reduced(4, 5);
                     g.setColour(corCategoriaDaLista(categoria));
                     g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                     g.setColour(juce::Colours::white);
                     g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
-                    g.drawText(categoria.toUpperCase(), badge, juce::Justification::centred, true);
+                    g.drawText(tx.categoriaMaiuscula, badge, juce::Justification::centred, true);
                 }
 
                 // ASSET / FILENAME (+ OFFLINE)
                 {
                     auto r = celulaCol(2);
-                    juce::String nome = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str())
-                                                            : juce::String::fromUTF8(item.titulo.c_str());
+                    juce::String nome = tx.nome;
                     g.setColour(tk.textoPrimario);
                     g.setFont(juce::Font(juce::FontOptions(12.5f)));
                     if (item.nestTotal > 1) {  // NEST: o nome ganha o número de arquivos do grupo
@@ -2223,30 +2509,24 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 // EXTENSION
                 g.setColour(tk.textoSecundario);
                 g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
-                g.drawText(item.extensaoArquivo.empty() ? juce::String("-")
-                                                        : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase(),
+                g.drawText(tx.extensao.isEmpty() ? juce::String("-") : tx.extensao,
                            celulaCol(3).reduced(6, 0), juce::Justification::centredLeft, true);
 
                 // DATE CREATED (só o ano, como no INTAKE)
                 {
-                    // Mesma regra do INTAKE: data do metadado; sem ela, a de entrada.
-                    juce::String data = juce::String::fromUTF8((item.dataCriacao.empty() ? item.criadoEm : item.dataCriacao).c_str());
-                    juce::String ano = data.length() >= 4 ? data.substring(0, 4) : juce::String();
-                    if (ano.isEmpty() && item.ano) ano = juce::String(*item.ano);
+                    // Mesma regra do INTAKE: data do metadado; sem ela, a de entrada (calculada em calcularTextos).
                     g.setFont(juce::Font(juce::FontOptions(12.0f)));
-                    g.drawText(ano.isNotEmpty() ? ano : "-", celulaCol(4).reduced(6, 0), juce::Justification::centredLeft, true);
+                    g.drawText(tx.ano.isNotEmpty() ? tx.ano : "-", celulaCol(4).reduced(6, 0), juce::Justification::centredLeft, true);
                 }
 
                 // SIZE
                 g.setColour(tk.textoPrimario);
-                g.drawText(formatarBytesDaLista(item.tamanhoBytes), celulaCol(5).reduced(4, 0),
+                g.drawText(tx.tamanho, celulaCol(5).reduced(4, 0),
                            juce::Justification::centredLeft, true);
 
                 // PATH
                 g.setColour(tk.textoSecundario);
-                const std::string& caminho = !item.caminhoAbsolutoOrigem.empty() ? item.caminhoAbsolutoOrigem
-                                                                                  : item.caminhoRelativoArquivo;
-                g.drawText(caminho.empty() ? juce::String("-") : juce::String::fromUTF8(caminho.c_str()),
+                g.drawText(tx.caminho.isEmpty() ? juce::String("-") : tx.caminho,
                            celulaCol(6).reduced(6, 0), juce::Justification::centredLeft, true);
 
                 // CONTENT
@@ -2264,10 +2544,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
                 // ORIGINAL SOURCE MEDIUM
                 {
-                    juce::String texto;
-                    if (!item.sourceMedia.empty())
-                        texto = juce::String::fromUTF8(OriginalSourceMediumInfo::deserialize(item.sourceMedia).toDisplaySummary().c_str());
-                    if (texto.isEmpty() || texto == "None / Unknown") {
+                    const juce::String& texto = tx.sourceMedium;  // resumo calculado no snapshot (era um parse de JSON por célula)
+                    if (texto.isEmpty()) {
                         semValor(celulaCol(8));
                     } else {
                         auto badge = celulaCol(8).reduced(4, 5);
@@ -2356,7 +2634,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // Extension badge (top-left)
-            juce::String ext = juce::String(item.extensaoArquivo).toUpperCase();
+            const juce::String& ext = tx.extensao;
             if (ext.isNotEmpty()) {
                 int badgeW = juce::jmax(28, static_cast<int>(ext.length()) * 7 + 10);
                 juce::Rectangle<int> badge(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
@@ -2368,15 +2646,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
-            juce::String durText;
-            if (item.duracaoSegundos.has_value() && *item.duracaoSegundos > 0.0) {
-                int total = static_cast<int>(*item.duracaoSegundos + 0.5);
-                int h = total / 3600, m = (total % 3600) / 60, s = total % 60;
-                if (h > 0)
-                    durText = juce::String(h) + ":" + juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
-                else
-                    durText = juce::String(m).paddedLeft('0', 2) + ":" + juce::String(s).paddedLeft('0', 2);
-            }
+            const juce::String& durText = tx.duracao;
             if (durText.isNotEmpty()) {
                 int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
                 int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
@@ -2434,39 +2704,17 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             // "destacar editados" (que é sobre metadadosEditados, automático).
             bool mostrarZebraRevisado = (destacarEditados_ && item.metadadosEditados) || item.marcadoRevisado;
             if (mostrarZebraRevisado) {
-                // Zebrado de editado
-                const juce::Colour kZebraYellow{0xffFFEE00}; // vivid yellow
-                const juce::Colour kZebraStripe{0xdd000000}; // near-black stripe
-                auto zebraBounds = bounds.reduced(static_cast<int>(offsetRing));
-                float zebraR = juce::jmax(1.0f, tk.raioMedio - offsetRing);
+                // Zebrado de editado: anel amarelo com riscas, desenhado uma vez numa imagem
+                // (imagemZebraGrade) e reaproveitado por todas as células.
                 {
-                    juce::Graphics::ScopedSaveState saveState(g);
-                    juce::Path ringPath;
-                    ringPath.addRoundedRectangle(zebraBounds.toFloat(), zebraR);
-                    ringPath.addRoundedRectangle(zebraBounds.reduced(5).toFloat(), juce::jmax(1.0f, zebraR - 3.0f));
-                    ringPath.setUsingNonZeroWinding(false); // Even-odd hollow ring
-                    g.reduceClipRegion(ringPath);
-
-                    // Vivid yellow base background
-                    g.setColour(kZebraYellow);
-                    g.fillRect(zebraBounds);
-
-                    // Transverse dark zebra stripes
-                    g.setColour(kZebraStripe);
-                    float stripePitch = 12.0f;
-                    float stripeWidth = 5.0f;
-                    float minCoord = static_cast<float>(zebraBounds.getX() - zebraBounds.getHeight() - 10);
-                    float maxCoord = static_cast<float>(zebraBounds.getRight() + zebraBounds.getHeight() + 10);
-                    for (float x = minCoord; x <= maxCoord; x += stripePitch) {
-                        g.drawLine(x, static_cast<float>(zebraBounds.getY() - 5),
-                                   x + static_cast<float>(zebraBounds.getHeight() + 10),
-                                   static_cast<float>(zebraBounds.getBottom() + 5),
-                                   stripeWidth);
-                    }
+                    juce::Graphics::ScopedSaveState estadoZebra(g);
+                    g.setOpacity(1.0f);
+                    g.drawImage(imagemZebraGrade(bounds, escalaPixel),
+                                juce::Rectangle<float>(static_cast<float>(bounds.getX() - kMargemZebra),
+                                                       static_cast<float>(bounds.getY() - kMargemZebra),
+                                                       static_cast<float>(bounds.getWidth() + 2 * kMargemZebra),
+                                                       static_cast<float>(bounds.getHeight() + 2 * kMargemZebra)));
                 }
-                // Crisp outer border outline
-                g.setColour(kZebraYellow);
-                g.drawRoundedRectangle(zebraBounds.toFloat(), zebraR, 1.2f);
                 offsetRing += 5.0f;
             }
 
@@ -2516,7 +2764,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText("+", btnMais, juce::Justification::centred);
             }
 
-            juce::String nomeExibicaoGrid = item.titulo.empty() ? juce::String::fromUTF8(item.nomeOriginalArquivo.c_str()) : juce::String::fromUTF8(item.titulo.c_str());
+            const juce::String& nomeExibicaoGrid = tx.nome;
             auto areaTexto = bounds.withTop(areaImagem.getBottom() + 2).reduced(6, 0);
             g.setColour(tk.textoPrimario);
             g.setFont(font11Bold);
@@ -2524,8 +2772,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                        juce::Justification::centredLeft, true);
 
             // Subtitle: file type + folder
-            juce::String info2 = item.extensaoArquivo.empty() ? "FILE" : juce::String::fromUTF8(item.extensaoArquivo.c_str()).toUpperCase();
-            if (!item.pastaNome.empty()) info2 += "  |  " + juce::String::fromUTF8(item.pastaNome.c_str());
+            juce::String info2 = tx.subtituloGrade;
             if (item.offline) info2 += "  |  OFFLINE";
             g.setColour(item.offline ? juce::Colour(0xfff97316) : tk.textoTerciario);
             g.setFont(font95Normal);

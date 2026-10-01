@@ -100,6 +100,11 @@ private:
     void abrirMenuContexto(std::vector<std::string> itemIds);
     void selecionarItem(const std::string& itemId);
     void timerCallback() override;
+    // Aba escondida (outra na frente): o timer de contagens não recalcula; ao voltar a aparecer
+    // recalcula uma vez, se passou algum tick enquanto estava escondida.
+    void visibilityChanged() override;
+    bool escondido() const { return getPeer() != nullptr && !isShowing(); }
+    bool contagensAtrasadas_ = false;
 
     ProjetoAberto& projeto_;
 

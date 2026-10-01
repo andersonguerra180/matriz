@@ -309,7 +309,7 @@ private:
     void mostrarDialogoRelinkInicial(const matriz::vault::AssetPresenceReport& report);
     void abrirDialogoRelinkOffline(const std::string& itemId);
     void atualizarCacheDeTamanhoTotal();
-    void aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados);
+    void aoTerminarReavaliacaoDeVaults(const std::vector<std::string>& reconectados, bool algumMudou);
     void concluirReconciliacao(const matriz::vault::ResumoReconciliacao& resumo);
     // Atualiza contagem da barra de ferramentas e barra de seleção. Só lê
     // estado que o mosaico já tem em memória — barato, pode ser chamado a

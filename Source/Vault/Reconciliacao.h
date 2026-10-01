@@ -51,8 +51,10 @@ struct ResumoReconciliacao {
 bool atualizarPresencaDoVault(matriz::db::Database& registro, const std::string& vaultId);
 
 // Percorre todos os Vaults do projeto atualizando `status`. Devolve os ids
-// dos que acabaram de ficar online — os que merecem varredura.
-std::vector<std::string> reavaliarVaults(matriz::db::Database& registro);
+// dos que acabaram de ficar online — os que merecem varredura. `algumMudou`
+// (opcional) sai true se QUALQUER vault mudou de estado (online/offline, nasceu
+// ou sumiu) — quem só redesenha a UI quando algo mudou usa isto.
+std::vector<std::string> reavaliarVaults(matriz::db::Database& registro, bool* algumMudou = nullptr);
 
 // Varredura rápida de um Vault. NUNCA na message thread: percorre o volume
 // inteiro (I1). `aoProgredir` é chamado da thread de trabalho.

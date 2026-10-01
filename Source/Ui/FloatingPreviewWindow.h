@@ -520,6 +520,8 @@ private:
             if (e.tipoAlteracao != "marcado_revisado" && e.tipoAlteracao != "marcacao" &&
                 e.tipoAlteracao != "publicacao") return;
             if (!e.itemId.empty() && e.itemId != itemId_) return;
+            if (e.itemId.empty() && !e.itemIds.empty() &&
+                std::find(e.itemIds.begin(), e.itemIds.end(), itemId_) == e.itemIds.end()) return;  // lote que não inclui este item
             juce::Component::SafePointer<ContentComponent> safeThis(this);
             juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->repaint(); });
         }

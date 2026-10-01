@@ -15,20 +15,30 @@ Statement::Statement(sqlite3* db, const std::string& sql) : db_(db) {
         throw DatabaseError(std::string("failed to prepare statement: ") + sqlite3_errmsg(db_) + "\nSQL: " + sql);
 }
 
-Statement::~Statement() {
-    if (stmt_) sqlite3_finalize(stmt_);
+Statement::~Statement() { liberar(); }
+
+void Statement::liberar() {
+    if (!stmt_) return;
+    if (cache_) CacheStatements::devolver(cache_, sqlCache_, stmt_);
+    else sqlite3_finalize(stmt_);
+    stmt_ = nullptr;
+    cache_.reset();
 }
 
-Statement::Statement(Statement&& other) noexcept : db_(other.db_), stmt_(other.stmt_), dono_(other.dono_) {
+Statement::Statement(Statement&& other) noexcept
+    : db_(other.db_), stmt_(other.stmt_), dono_(other.dono_), cache_(std::move(other.cache_)),
+      sqlCache_(std::move(other.sqlCache_)) {
     other.stmt_ = nullptr;
 }
 
 Statement& Statement::operator=(Statement&& other) noexcept {
     if (this != &other) {
-        if (stmt_) sqlite3_finalize(stmt_);
+        liberar();
         db_ = other.db_;
         stmt_ = other.stmt_;
         dono_ = other.dono_;
+        cache_ = std::move(other.cache_);
+        sqlCache_ = std::move(other.sqlCache_);
         other.stmt_ = nullptr;
     }
     return *this;
@@ -93,7 +103,19 @@ std::vector<unsigned char> Statement::columnBlob(int index) const {
 // Database
 // ---------------------------------------------------------------------------
 
-Database::Database(const std::string& path) {
+Database::Database(const std::string& path, Modo modo) {
+    if (modo == Modo::SomenteLeitura) {
+        // Segunda conexão só pra leitura (WAL: não espera a transação da conexão de escrita).
+        // Não mexe no journal_mode: quem o define é a conexão de escrita.
+        if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+            std::string msg = db_ ? sqlite3_errmsg(db_) : "unknown error";
+            if (db_) sqlite3_close(db_);
+            db_ = nullptr;
+            throw DatabaseError("failed to open database read-only at \"" + path + "\": " + msg);
+        }
+        sqlite3_busy_timeout(db_, 5000);
+        return;
+    }
     if (sqlite3_open(path.c_str(), &db_) != SQLITE_OK) {
         std::string msg = sqlite3_errmsg(db_);
         sqlite3_close(db_);
@@ -131,14 +153,97 @@ void Database::sincronizarTravaDeTransacao() {
     if (emTransacao && !travaDeTransacao_) {
         conexaoMutex_.lock();  // reentrante: já temos a trava, não bloqueia
         travaDeTransacao_ = true;
+        donoDaTransacao_.store(std::this_thread::get_id());
     } else if (!emTransacao && travaDeTransacao_) {
         travaDeTransacao_ = false;
+        donoDaTransacao_.store(std::thread::id());
         conexaoMutex_.unlock();
     }
 }
 
 Database::~Database() {
+    {
+        // Statements emprestados que ainda vivem (thread de fundo) vão se finalizar sozinhos
+        // ao serem destruídos, em vez de voltar a um cache que deixou de existir.
+        std::lock_guard<std::mutex> lock(cache_->mutex);
+        cache_->fechado = true;
+    }
+    limparCache();  // statements ociosos precisam ser finalizados antes de fechar a conexão
     if (db_) sqlite3_close(db_);
+}
+
+// ---------------------------------------------------------------------------
+// Cache de statements preparados
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr size_t kMaxPorSql = 4;       // cópias ociosas do mesmo SQL (uma por thread concorrente, na prática)
+constexpr size_t kMaxNoCache = 256;    // total de statements ociosos na conexão
+constexpr size_t kMaxTamanhoSql = 2000;  // SQL montado dinamicamente em tamanho absurdo não vale o cache
+
+bool comecaCom(const std::string& sql, const char* palavra) {
+    size_t i = 0;
+    while (i < sql.size() && (sql[i] == ' ' || sql[i] == '\n' || sql[i] == '\t' || sql[i] == '\r')) ++i;
+    for (size_t k = 0; palavra[k] != '\0'; ++k, ++i)
+        if (i >= sql.size() || (sql[i] | 0x20) != (palavra[k] | 0x20)) return false;
+    return true;
+}
+} // namespace
+
+static bool sqlConteemDdl(const std::string& sql) {
+    for (const char* palavra : {"create ", "drop ", "alter "}) {
+        const size_t n = std::char_traits<char>::length(palavra);
+        for (size_t i = 0; i + n <= sql.size(); ++i) {
+            size_t k = 0;
+            while (k < n && (sql[i + k] | 0x20) == (palavra[k] | 0x20)) ++k;
+            if (k == n) return true;
+        }
+    }
+    return false;
+}
+
+bool Database::sqlCacheavel(const std::string& sql) {
+    if (sql.size() > kMaxTamanhoSql) return false;
+    return comecaCom(sql, "select") || comecaCom(sql, "insert") || comecaCom(sql, "update") ||
+           comecaCom(sql, "delete") || comecaCom(sql, "with");
+}
+
+sqlite3_stmt* Database::emprestarDoCache(const std::string& sql) {
+    std::lock_guard<std::mutex> lock(cache_->mutex);
+    auto it = cache_->ociosos.find(sql);
+    if (it == cache_->ociosos.end() || it->second.empty()) return nullptr;
+    sqlite3_stmt* stmt = it->second.back();
+    it->second.pop_back();
+    --cache_->total;
+    return stmt;
+}
+
+void CacheStatements::devolver(const std::shared_ptr<CacheStatements>& cache, const std::string& sql, sqlite3_stmt* stmt) {
+    sqlite3_reset(stmt);
+    sqlite3_clear_bindings(stmt);
+    {
+        std::lock_guard<std::mutex> lock(cache->mutex);
+        if (!cache->fechado && cache->total < kMaxNoCache) {
+            auto& ociosos = cache->ociosos[sql];
+            if (ociosos.size() < kMaxPorSql) {
+                ociosos.push_back(stmt);
+                ++cache->total;
+                return;
+            }
+        }
+    }
+    sqlite3_finalize(stmt);
+}
+
+void Database::limparCache() {
+    std::unordered_map<std::string, std::vector<sqlite3_stmt*>> antigos;
+    {
+        std::lock_guard<std::mutex> lock(cache_->mutex);
+        antigos.swap(cache_->ociosos);
+        cache_->total = 0;
+    }
+    for (auto& [sql, ociosos] : antigos)
+        for (auto* stmt : ociosos) sqlite3_finalize(stmt);
 }
 
 void Database::execScript(const std::string& sqlScript) {
@@ -152,13 +257,28 @@ void Database::execScript(const std::string& sqlScript) {
         throw DatabaseError("failed to run SQL script: " + msg);
     }
     marcarSujo();
+    // Esquema mudou (migração aditiva, CREATE TABLE...): statements ociosos podem apontar
+    // pra objetos que deixaram de existir — recomeça o cache. BEGIN/COMMIT/INSERT em
+    // lote NÃO passam por aqui, então o cache vale dentro das transações.
+    if (sqlConteemDdl(sqlScript)) limparCache();
 }
 
 void Database::exec(const std::string& sql) { execScript(sql); }
 
 Statement Database::prepare(const std::string& sql) {
+    const bool cacheavel = sqlCacheavel(sql);
+    if (cacheavel) {
+        if (sqlite3_stmt* emprestado = emprestarDoCache(sql)) {
+            Statement stmt(db_, emprestado);
+            stmt.dono_ = this;
+            stmt.cache_ = cache_;
+            stmt.sqlCache_ = sql;
+            return stmt;
+        }
+    }
     Statement stmt(db_, sql);
     stmt.dono_ = this;
+    if (cacheavel) { stmt.cache_ = cache_; stmt.sqlCache_ = sql; }
     return stmt;
 }
 
@@ -169,6 +289,8 @@ void Database::run(const std::string& sql, const std::vector<Value>& params) {
         stmt.bind(static_cast<int>(i) + 1, params[i]);
     stmt.step();
     marcarSujo();
+    // DDL via run() (ALTER TABLE de migração): o cache recomeça, como em execScript().
+    if (!sqlCacheavel(sql) && sqlConteemDdl(sql)) limparCache();
 }
 
 void Database::copiarSeguroPara(const std::string& destinoPath) {

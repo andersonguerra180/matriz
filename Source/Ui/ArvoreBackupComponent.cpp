@@ -381,13 +381,14 @@ void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
     if (e.tipoAlteracao != "titulo") return;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     std::string itemId = e.itemId;
-    juce::MessageManager::callAsync([safeThis, itemId] {
+    std::vector<std::string> itemIds = e.itemIds;  // evento de lote (renomear em N itens)
+    juce::MessageManager::callAsync([safeThis, itemId, itemIds] {
         if (!safeThis || safeThis->selectedFolderId_.empty()) return;
         for (const auto& n : safeThis->nodes_) {
             if (n.id == safeThis->selectedFolderId_) {
-                if (n.itemIdsDiretos.count(itemId)) {
-                    safeThis->atualizarPainelDetalhe(safeThis->selectedFolderId_, true);
-                }
+                bool afeta = n.itemIdsDiretos.count(itemId) > 0;
+                for (size_t i = 0; !afeta && i < itemIds.size(); ++i) afeta = n.itemIdsDiretos.count(itemIds[i]) > 0;
+                if (afeta) safeThis->atualizarPainelDetalhe(safeThis->selectedFolderId_, true);
                 break;
             }
         }
@@ -790,6 +791,7 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
     projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
     destaqueNovaPastaId_ = novoId;
+    inicioPulsoMs_ = juce::Time::getMillisecondCounter();
     startTimer(30);
 
     recarregar();
@@ -2059,7 +2061,25 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
 }
 
 void ArvoreBackupComponent::timerCallback() {
-    repaint(); // S4/15 — anima o pulso do destaque da pasta nova
+    // S4/15 — anima o pulso do destaque da pasta nova, por ~2 s ou enquanto estiver visível
+    if (juce::Time::getMillisecondCounter() - inicioPulsoMs_ >= kDuracaoPulsoMs ||
+        (getPeer() != nullptr && !isShowing())) {
+        pararPulso();
+        return;
+    }
+    repaint();
+}
+
+void ArvoreBackupComponent::pararPulso() {
+    stopTimer();
+    if (!destaqueNovaPastaId_.empty()) {
+        destaqueNovaPastaId_.clear();
+        repaint();
+    }
+}
+
+void ArvoreBackupComponent::visibilityChanged() {
+    if (!isVisible()) pararPulso();
 }
 
 // ── S4/14 — slider de tamanho ────────────────────────────────────────

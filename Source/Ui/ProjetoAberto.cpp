@@ -1,5 +1,6 @@
 #include "ProjetoAberto.h"
 #include "TraducaoContent.h"
+#include "../Diag/Watchdog.h"
 
 #include "../Ingest/Miniaturas.h"
 #include "../Ingest/ProcessoExterno.h"
@@ -249,7 +250,7 @@ bool ProjetoAberto::reavaliarSomenteLeitura() {
 
 juce::int64 ProjetoAberto::tamanhoTotalDosMasters() const {
     if (!projeto_) return 0;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT SUM(tamanho_bytes) FROM ("
         "  SELECT COALESCE(tamanho_bytes, 0) as tamanho_bytes, ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY eh_master DESC, id) as rn "
         "  FROM arquivo"
@@ -451,7 +452,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
 int ProjetoAberto::contarItens() const {
     if (!projeto_) return 0;
     // Mesmo filtro de listarItensDeProjeto() (fora da quarentena).
-    auto st = projeto_->registro().prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    auto st = leitura().prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
     return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
 }
 
@@ -473,7 +474,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         watermarkCopia = marcadosWatermark_;
         offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(projeto_->registro(), projeto_->indice(), projeto_->pasta(), relinkCopia, &offlineCopia);
+    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
@@ -816,7 +817,7 @@ void ProjetoAberto::simularJuncaoEmSegundoPlano(const std::string& manterId, con
 bool ProjetoAberto::temConflitoMergePendente(const std::string& itemId) const {
     if (!projeto_) return false;
     try {
-        return !matriz::model::merge::conflitosPendentes(projeto_->registro(), itemId).empty();
+        return !matriz::model::merge::conflitosPendentes(leitura(), itemId).empty();
     } catch (...) {
         return false;
     }
@@ -825,7 +826,7 @@ bool ProjetoAberto::temConflitoMergePendente(const std::string& itemId) const {
 std::vector<matriz::model::merge::ConflitoPendente> ProjetoAberto::conflitosMergePendentes(const std::string& itemId) const {
     if (!projeto_) return {};
     try {
-        return matriz::model::merge::conflitosPendentes(projeto_->registro(), itemId);
+        return matriz::model::merge::conflitosPendentes(leitura(), itemId);
     } catch (...) {
         return {};
     }
@@ -901,7 +902,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     for (int tentativa = 0; tentativa < 3; ++tentativa) {
         try {
             out.clear();
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
                 "EXISTS(SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id), "
                 "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
@@ -970,7 +971,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 if (offlineCopia.count(r.id) > 0)
                 {
                     if (!resolvedor)
-                        resolvedor = std::make_unique<matriz::vault::ResolvedorEmLote>(projeto_->registro(), projeto_->pasta());
+                        resolvedor = std::make_unique<matriz::vault::ResolvedorEmLote>(leitura(), projeto_->pasta());
                     r.offline = !arquivoMasterExiste(*resolvedor, relinkCopia, masterArqId, vaultLoc, camRel, camAbs);
                 }
 
@@ -1111,7 +1112,7 @@ std::vector<ProjetoAberto::ItemDetalhe> ProjetoAberto::obterDetalhesItens(const 
     if (!projeto_ || itemIds.empty()) return out;
     out.reserve(itemIds.size());
 
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT i.id, i.titulo, "
         "(SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), "
         "(SELECT a.tamanho_bytes FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
@@ -1164,7 +1165,7 @@ const matriz::ficha::FichaDefinition& ProjetoAberto::definicaoPara(const std::st
 std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, const std::string& nivel,
                                                        int nivelIndice, const std::string& campoId) const {
     if (!projeto_) return std::nullopt;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT valor FROM item_campo WHERE item_id = ? AND nivel = ? AND nivel_indice = ? AND campo_id = ?");
     stmt.bind(1, matriz::db::Value::of(itemId));
     stmt.bind(2, matriz::db::Value::of(nivel));
@@ -1177,7 +1178,7 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
 std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string& itemId) const {
     std::vector<std::string> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare("SELECT DISTINCT papel FROM arquivo WHERE item_id = ?");
+    auto stmt = leitura().prepare("SELECT DISTINCT papel FROM arquivo WHERE item_id = ?");
     stmt.bind(1, matriz::db::Value::of(itemId));
     while (stmt.step()) out.push_back(stmt.columnText(0));
     return out;
@@ -1273,10 +1274,25 @@ void ProjetoAberto::removerCapa(const std::vector<std::string>& itemIds) {
 
 bool ProjetoAberto::temCapa(const std::string& itemId) const {
     if (!projeto_) return false;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT 1 FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
     stmt.bind(1, matriz::db::Value::of(itemId));
     return stmt.step();
+}
+
+bool ProjetoAberto::algumTemCapa(const std::vector<std::string>& itemIds) const {
+    if (!projeto_) return false;
+    constexpr size_t kBloco = 400;  // abaixo do teto de variáveis do SQLite
+    for (size_t ini = 0; ini < itemIds.size(); ini += kBloco) {
+        const size_t fim = std::min(itemIds.size(), ini + kBloco);
+        std::string sql = "SELECT 1 FROM arquivo WHERE papel = 'capa_frente' AND item_id IN (?";
+        for (size_t k = ini + 1; k < fim; ++k) sql += ",?";
+        sql += ") LIMIT 1";
+        auto stmt = leitura().prepare(sql);
+        for (size_t k = ini; k < fim; ++k) stmt.bind(static_cast<int>(k - ini) + 1, matriz::db::Value::of(itemIds[k]));
+        if (stmt.step()) return true;
+    }
+    return false;
 }
 
 std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& campoId) const {
@@ -1285,7 +1301,7 @@ std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& 
     // Restrito aos itens DESTE projeto: o registro é por projeto, mas a
     // junção deixa isso explícito e resiste a um banco que um dia guarde
     // mais de um. Valor vazio não é vocabulário — é campo não preenchido.
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT DISTINCT ic.valor FROM item_campo ic JOIN item i ON i.id = ic.item_id "
         "WHERE i.projeto_id = ? AND ic.campo_id = ? AND ic.valor IS NOT NULL AND TRIM(ic.valor) <> '' "
         "ORDER BY ic.valor COLLATE NOCASE");
@@ -1315,7 +1331,7 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
     if (kColunasPermitidas.find(coluna) == kColunasPermitidas.end()) return std::nullopt;
 
     try {
-        auto stmt = projeto_->registro().prepare("SELECT " + coluna + " FROM item WHERE id = ?");
+        auto stmt = leitura().prepare("SELECT " + coluna + " FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
         if (stmt.step() && !stmt.columnIsNull(0)) {
             std::string val = stmt.columnText(0);
@@ -1324,7 +1340,7 @@ std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId,
     } catch (...) {}
 
     try {
-        auto stmt = projeto_->registro().prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+        auto stmt = leitura().prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
         stmt.bind(1, matriz::db::Value::of(itemId));
         stmt.bind(2, matriz::db::Value::of(coluna));
         if (stmt.step() && !stmt.columnIsNull(0)) {
@@ -1439,6 +1455,7 @@ void ProjetoAberto::salvarMetadado(const std::string& itemId, const std::string&
 void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds,
                                           const std::vector<std::pair<std::string, std::string>>& camposEValoresDigitados,
                                           const std::set<std::pair<std::string, std::string>>& pular) {
+    MATRIZ_TRACE("ProjetoAberto::salvarMetadadoEmLote");
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemIds.empty() || camposEValoresDigitados.empty()) return;
     // Nomes case-insensitive: SUBJECT entra na grafia que o projeto já usa.
@@ -1609,7 +1626,7 @@ void ProjetoAberto::redefinirMetadadosItens(const std::vector<std::string>& item
 std::vector<std::string> ProjetoAberto::lerTags(const std::string& itemId) const {
     std::vector<std::string> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT tag FROM item_tag WHERE item_id = ? ORDER BY tag COLLATE NOCASE");
     stmt.bind(1, matriz::db::Value::of(itemId));
     while (stmt.step()) out.push_back(stmt.columnText(0));
@@ -1812,7 +1829,7 @@ const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
     if (ultimosItensIngeridosValido_ || !projeto_) return ultimosItensIngeridos_;
     ultimosItensIngeridos_.clear();
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT id FROM item WHERE lote_grid_id = "
             "(SELECT MAX(lote_grid_id) FROM item WHERE lote_grid_id IS NOT NULL) "
             "AND COALESCE(em_quarentena, 0) = 0");
@@ -1897,7 +1914,7 @@ bool ProjetoAberto::recarregarOuSubstituirArquivo(const std::string& itemId, con
 
 std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
-    auto stmt = projeto_->indice().prepare(
+    auto stmt = leituraIndice().prepare(
         "SELECT caminho_relativo FROM miniatura WHERE item_id = ? AND tipo = 'miniatura' ORDER BY gerado_em DESC LIMIT 1");
     stmt.bind(1, matriz::db::Value::of(itemId));
     if (!stmt.step()) return std::nullopt;
@@ -2005,7 +2022,7 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
 
 std::optional<ProjetoAberto::ArquivoInfo> ProjetoAberto::arquivoPrincipal(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         std::string("SELECT a.id, a.papel, a.eh_master, a.caracteristicas_tecnicas_json, ") +
         matriz::vault::colunasDeResolucao() + " FROM arquivo a " + matriz::vault::joinDeResolucao() +
         // Item D.9/10 (Reload File/Replace File): uma derivada de "reload/
@@ -2028,7 +2045,7 @@ std::optional<ProjetoAberto::ArquivoInfo> ProjetoAberto::arquivoPrincipal(const 
     // Quem vai realmente ler os bytes checa existsAsFile().
     // Etapa 2: MAIN/CLONE primeiro — preview, player, miniatura e forma de
     // onda abrem a cópia do backup quando o SOURCE está guardado.
-    info.caminhoAbsoluto = matriz::vault::caminhoEsperadoArquivo(projeto_->registro(), info.id, projeto_->pasta())
+    info.caminhoAbsoluto = matriz::vault::caminhoEsperadoArquivo(leitura(), info.id, projeto_->pasta())
                                .getFullPathName();
     return info;
 }
@@ -2037,7 +2054,7 @@ std::optional<ProjetoAberto::SugestaoCampo> ProjetoAberto::sugestaoPendente(cons
                                                                              const std::string& nivel, int nivelIndice,
                                                                              const std::string& campoId) const {
     if (!projeto_) return std::nullopt;
-    auto stmt = projeto_->indice().prepare(
+    auto stmt = leituraIndice().prepare(
         "SELECT id, valor, confianca, modelo, modelo_versao FROM sugestao_campo "
         "WHERE item_id = ? AND nivel = ? AND nivel_indice = ? AND campo_id = ? AND confirmado = 0 "
         "ORDER BY processado_em DESC LIMIT 1");
@@ -2088,7 +2105,7 @@ void ProjetoAberto::confirmarSugestao(const SugestaoCampo& sugestao, const std::
 std::vector<ProjetoAberto::ItemObservacao> ProjetoAberto::observacoesDoItem(const std::string& itemId) const {
     std::vector<ItemObservacao> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id, texto, autor, criado_em, minutagem_ms FROM item_observacao WHERE item_id = ? ORDER BY criado_em");
     stmt.bind(1, matriz::db::Value::of(itemId));
     while (stmt.step()) {
@@ -2143,7 +2160,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreOrigem(bool incluirTodos) const {
         "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1)";
     if (!incluirTodos)
         sql += " AND a.item_id NOT IN (SELECT item_id FROM acervo_item_pasta)";
-    auto stmt = projeto_->registro().prepare(sql);
+    auto stmt = leitura().prepare(sql);
 
     struct Par { std::string itemId; juce::StringArray segmentos; };
     std::vector<Par> pares;
@@ -2211,12 +2228,12 @@ const std::string ProjetoAberto::kMapaOriginal = "__ORIGINAL__";
 std::string ProjetoAberto::mapaAtivoPadrao() const {
     if (!projeto_) return {};
     if (!mapaAtivoSelecionado_.empty() && mapaAtivoSelecionado_ != kMapaOriginal) {
-        auto stmtSel = projeto_->registro().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
+        auto stmtSel = leitura().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
         stmtSel.bind(1, matriz::db::Value::of(mapaAtivoSelecionado_));
         stmtSel.bind(2, matriz::db::Value::of(projeto_->projetoId()));
         if (stmtSel.step()) return mapaAtivoSelecionado_;
     }
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id FROM folder_map WHERE projeto_id = ? ORDER BY ordem, criado_em LIMIT 1");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     return stmt.step() ? stmt.columnText(0) : std::string();
@@ -2234,7 +2251,7 @@ std::string ProjetoAberto::mapaInicialDoFolderMap() const {
     if (!arq.existsAsFile()) return kMapaOriginal;
     const std::string lembrado = arq.loadFileAsString().trim().toStdString();
     if (lembrado.empty() || lembrado == kMapaOriginal) return kMapaOriginal;
-    auto stmt = projeto_->registro().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
+    auto stmt = leitura().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
     stmt.bind(1, matriz::db::Value::of(lembrado));
     stmt.bind(2, matriz::db::Value::of(projeto_->projetoId()));
     return stmt.step() ? lembrado : kMapaOriginal;
@@ -2253,7 +2270,7 @@ std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() cons
     out.push_back(original);
     if (!projeto_) return out;
 
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id, nome FROM folder_map WHERE projeto_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
@@ -2325,7 +2342,7 @@ bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
 std::set<std::string> ProjetoAberto::itensSemPasta(const std::string& mapaId) const {
     std::set<std::string> out;
     if (!projeto_ || mapaId == kMapaOriginal) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id FROM item WHERE projeto_id = ? AND id NOT IN "
         "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -2336,7 +2353,7 @@ std::set<std::string> ProjetoAberto::itensSemPasta(const std::string& mapaId) co
 
 int ProjetoAberto::contarItensSemPasta(const std::string& mapaId) const {
     if (!projeto_ || mapaId == kMapaOriginal) return 0;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT COUNT(*) FROM item WHERE projeto_id = ? AND id NOT IN "
         "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -2346,7 +2363,7 @@ int ProjetoAberto::contarItensSemPasta(const std::string& mapaId) const {
 
 std::string ProjetoAberto::mapaIdDaPasta(const std::string& pastaId) const {
     if (!projeto_ || pastaId.empty()) return {};
-    auto stmt = projeto_->registro().prepare("SELECT mapa_id FROM acervo_pasta WHERE id = ?");
+    auto stmt = leitura().prepare("SELECT mapa_id FROM acervo_pasta WHERE id = ?");
     stmt.bind(1, matriz::db::Value::of(pastaId));
     if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
     return {};
@@ -2366,7 +2383,7 @@ void ProjetoAberto::inserirItemPastaInterno(const std::string& itemId, const std
 
 ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) const {
     if (!projeto_) return {};
-    if (mapaId == kMapaOriginal) return construirArvoreOriginalVirtual(projeto_->registro());
+    if (mapaId == kMapaOriginal) return construirArvoreOriginalVirtual(leitura());
 
     struct Registro {
         std::string id;
@@ -2376,7 +2393,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
     std::unordered_map<std::string, std::unique_ptr<NoBuilder>> porId;
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no FROM acervo_pasta "
         "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -2407,7 +2424,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
         alvo->filhos.push_back(std::move(porId[r.id]));
     }
 
-    auto stmtItens = projeto_->registro().prepare(
+    auto stmtItens = leitura().prepare(
         "SELECT pasta_id, item_id FROM acervo_item_pasta WHERE mapa_id = ?");
     stmtItens.bind(1, matriz::db::Value::of(mapaId));
     while (stmtItens.step()) {
@@ -2481,7 +2498,7 @@ std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::
 bool ProjetoAberto::mainExiste() const {
     if (!projeto_) return false;
     try {
-        auto st = projeto_->registro().prepare("SELECT 1 FROM consolidacao_registro LIMIT 1");
+        auto st = leitura().prepare("SELECT 1 FROM consolidacao_registro LIMIT 1");
         return st.step();
     } catch (...) {
         return false;
@@ -2491,7 +2508,7 @@ bool ProjetoAberto::mainExiste() const {
 std::string ProjetoAberto::mapaDoMainId() const {
     if (!projeto_) return {};
     try {
-        auto st = projeto_->registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+        auto st = leitura().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
         if (!st.step()) return {};
         juce::var cfg = juce::JSON::parse(juce::String::fromUTF8(st.columnText(0).c_str()));
         if (!cfg.isObject()) return {};
@@ -2505,7 +2522,7 @@ juce::String ProjetoAberto::nomeDoMapaDoMain() const {
     const auto id = mapaDoMainId();
     if (id.empty() || !projeto_) return {};
     try {
-        auto st = projeto_->registro().prepare("SELECT nome FROM folder_map WHERE id = ?");
+        auto st = leitura().prepare("SELECT nome FROM folder_map WHERE id = ?");
         st.bind(1, matriz::db::Value::of(id));
         return st.step() ? juce::String::fromUTF8(st.columnText(0).c_str()) : juce::String();
     } catch (...) {
@@ -2523,13 +2540,13 @@ bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
         const auto mapaMain = mapaDoMainId();
         bool temConfig = false;
         {
-            auto sc = projeto_->registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            auto sc = leitura().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
             if (sc.step()) temConfig = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str())).isObject();
         }
         if (temConfig && mapaIdDaPasta(pastaId) != mapaMain) return false;
         // A pasta e todas as subpastas: algum item dali (hoje ou quando foi
         // copiado) já tem cópia registrada no MAIN.
-        auto st = projeto_->registro().prepare(
+        auto st = leitura().prepare(
             "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL "
             "  SELECT p.id FROM acervo_pasta p JOIN sub ON p.pasta_pai_id = sub.id) "
             "SELECT 1 FROM consolidacao_registro cr WHERE cr.pasta_id IN (SELECT id FROM sub) "
@@ -2590,7 +2607,7 @@ std::optional<int> ProjetoAberto::extrairAnoDeData(const juce::String& texto) {
 std::optional<int> ProjetoAberto::anoDoEventDate(const std::string& itemId) const {
     if (!projeto_) return std::nullopt;
     try {
-        auto st = projeto_->registro().prepare(
+        auto st = leitura().prepare(
             "SELECT ano FROM item WHERE id = ?");
         st.bind(1, matriz::db::Value::of(itemId));
         if (st.step() && !st.columnIsNull(0)) return extrairAnoDeData(juce::String::fromUTF8(st.columnText(0).c_str()));
@@ -2610,7 +2627,7 @@ std::map<std::string, std::vector<juce::String>> ProjetoAberto::segmentosDeOrgan
         const size_t fim = std::min(ids.size(), inicio + kLote);
         std::string marcas;
         for (size_t i = inicio; i < fim; ++i) marcas += (i > inicio ? ",?" : "?");
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT i.id, i.tipo_midia, i.dc_creator, i.collection_type, i.dc_subject, i.source_media, "
             "i.ano, "
             "a.caminho_relativo "
@@ -3151,7 +3168,7 @@ void ProjetoAberto::atualizarEscalasPastasAcervo(const std::vector<std::pair<std
 double ProjetoAberto::fatorCardsDoMapa(const std::string& mapaId) const {
     if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return 0.0;
     try {
-        auto st = projeto_->registro().prepare("SELECT fator_cards FROM folder_map WHERE id = ?");
+        auto st = leitura().prepare("SELECT fator_cards FROM folder_map WHERE id = ?");
         st.bind(1, matriz::db::Value::of(mapaId));
         if (st.step() && !st.columnIsNull(0)) return st.columnReal(0);
     } catch (...) {}
@@ -3194,7 +3211,7 @@ void ProjetoAberto::definirCorPastaAcervo(const std::string& pastaId, const juce
 juce::String ProjetoAberto::lerCorPastaAcervo(const std::string& pastaId) const {
     if (!projeto_) return {};
     try {
-        auto stmt = projeto_->registro().prepare("SELECT cor_customizada FROM acervo_pasta WHERE id = ?");
+        auto stmt = leitura().prepare("SELECT cor_customizada FROM acervo_pasta WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(pastaId));
         if (stmt.step() && !stmt.columnIsNull(0)) return juce::String(stmt.columnText(0));
     } catch (...) {}
@@ -3205,7 +3222,7 @@ std::vector<juce::String> ProjetoAberto::historicoCoresPasta() const {
     std::vector<juce::String> resultado;
     if (!projeto_) return resultado;
     try {
-        auto stmt = projeto_->registro().prepare("SELECT historico_cores_pasta FROM projeto LIMIT 1");
+        auto stmt = leitura().prepare("SELECT historico_cores_pasta FROM projeto LIMIT 1");
         if (stmt.step() && !stmt.columnIsNull(0)) {
             juce::var arr = juce::JSON::parse(juce::String(stmt.columnText(0)));
             if (auto* a = arr.getArray()) {
@@ -3283,7 +3300,7 @@ void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemI
 
 std::optional<std::string> ProjetoAberto::localizarItemPorCodigo(const std::string& codigoAcervo) const {
     if (!projeto_ || codigoAcervo.empty()) return std::nullopt;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id FROM item WHERE projeto_id = ? AND codigo_acervo = ? LIMIT 1");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(codigoAcervo));
@@ -3656,7 +3673,7 @@ void ProjetoAberto::definirCapaDoNest(const std::string& nestId, const std::stri
 std::vector<std::string> ProjetoAberto::ordenarPorDataDeCriacao(const std::vector<std::string>& ids) const {
     if (!projeto_ || ids.size() < 2) return ids;
     std::vector<std::pair<std::pair<std::string, std::string>, std::string>> chaves;  // ((data, código), id)
-    auto st = projeto_->registro().prepare(
+    auto st = leitura().prepare(
         "SELECT COALESCE((SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
         "                (SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
         "                i.criado_em), i.codigo_acervo FROM item i WHERE i.id = ?");
@@ -3680,7 +3697,7 @@ std::vector<std::string> ProjetoAberto::ordenarPorDataDeCriacao(const std::vecto
 std::vector<std::string> ProjetoAberto::membrosDoNest(const std::string& nestId) const {
     std::vector<std::string> ids;
     if (!projeto_ || nestId.empty()) return ids;
-    auto st = projeto_->registro().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+    auto st = leitura().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
     st.bind(1, matriz::db::Value::of(nestId));
     while (st.step()) ids.push_back(st.columnText(0));
     return ordenarPorDataDeCriacao(ids);
@@ -3688,11 +3705,11 @@ std::vector<std::string> ProjetoAberto::membrosDoNest(const std::string& nestId)
 
 std::optional<ProjetoAberto::NestInfo> ProjetoAberto::nestDoItem(const std::string& itemId) const {
     if (!projeto_ || itemId.empty()) return std::nullopt;
-    auto st = projeto_->registro().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+    auto st = leitura().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
     st.bind(1, matriz::db::Value::of(itemId));
     if (!st.step()) return std::nullopt;
     const std::string nid = st.columnText(0);
-    const auto mapa = mapaDeNests(projeto_->registro());
+    const auto mapa = mapaDeNests(leitura());
     auto it = mapa.find(itemId);
     if (it == mapa.end() || it->second.nestId != nid) return std::nullopt;
     return it->second;
@@ -3700,7 +3717,7 @@ std::optional<ProjetoAberto::NestInfo> ProjetoAberto::nestDoItem(const std::stri
 
 std::vector<std::string> ProjetoAberto::semMembrosNaoCapaDeNest(const std::vector<std::string>& itemIds) const {
     if (!projeto_ || itemIds.empty()) return itemIds;
-    const auto nests = mapaDeNests(projeto_->registro());
+    const auto nests = mapaDeNests(leitura());
     if (nests.empty()) return itemIds;
     std::vector<std::string> out;
     out.reserve(itemIds.size());
@@ -3713,10 +3730,10 @@ std::vector<std::string> ProjetoAberto::semMembrosNaoCapaDeNest(const std::vecto
 
 std::optional<std::vector<std::string>> ProjetoAberto::idsDoCatalogoSemNaoCapas() const {
     if (!projeto_) return std::nullopt;
-    const auto nests = mapaDeNests(projeto_->registro());
+    const auto nests = mapaDeNests(leitura());
     if (nests.empty()) return std::nullopt;
     std::vector<std::string> out;
-    auto st = projeto_->registro().prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    auto st = leitura().prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 0");
     while (st.step()) {
         const std::string id = st.columnText(0);
         auto it = nests.find(id);
@@ -3730,8 +3747,8 @@ std::vector<std::string> ProjetoAberto::expandirMembrosDeNest(const std::vector<
     std::vector<std::string> out = itemIds;
     std::set<std::string> ja(itemIds.begin(), itemIds.end());
     std::set<std::string> nestsVistos;
-    auto st = projeto_->registro().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
-    auto sm = projeto_->registro().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
+    auto st = leitura().prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+    auto sm = leitura().prepare("SELECT item_id FROM nest_item WHERE nest_id = ?");
     for (const auto& id : itemIds) {
         st.reset();
         st.bind(1, matriz::db::Value::of(id));
@@ -3752,7 +3769,7 @@ std::set<std::string> ProjetoAberto::idsMarcadosR() const {
     std::set<std::string> out;
     if (!projeto_) return out;
     try {
-        auto st = projeto_->registro().prepare(
+        auto st = leitura().prepare(
             "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE COALESCE(i.em_quarentena, 0) = 1");
         while (st.step()) out.insert(st.columnText(0));
     } catch (...) {}
@@ -3848,27 +3865,33 @@ int ProjetoAberto::rejeitarMarcadosR() {
 }
 
 void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const std::string& novoTitulo) {
+    std::vector<std::pair<std::string, std::string>> itemETitulo;
+    itemETitulo.reserve(itemIds.size());
+    for (const auto& id : itemIds) itemETitulo.emplace_back(id, novoTitulo);
+    renomearItensComTitulos(itemETitulo);
+}
+
+void ProjetoAberto::renomearItensComTitulos(const std::vector<std::pair<std::string, std::string>>& itemETitulo) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    if (!projeto_) return;
+    if (!projeto_ || itemETitulo.empty()) return;
     if (!desfazendo_) {
         std::vector<std::pair<std::string, std::string>> antigosTitulos;
-        for (const auto& id : itemIds) {
+        for (const auto& par : itemETitulo) {
+            const auto& id = par.first;
             auto stmt = projeto_->registro().prepare("SELECT titulo FROM item WHERE id = ?");
             stmt.bind(1, matriz::db::Value::of(id));
             if (stmt.step()) antigosTitulos.push_back({id, stmt.columnText(0)});
         }
         registrarUndo("Rename Items", [this, antigosTitulos]() {
-            for (const auto& [id, tit] : antigosTitulos) {
-                renomearItens({id}, tit);
-            }
+            renomearItensComTitulos(antigosTitulos);
         });
     }
     std::string agora = matriz::model::agoraIso8601();
-    juce::String tituloNovoTrim = juce::String(novoTitulo).trim();
     auto& db = projeto_->registro();
     db.run("BEGIN TRANSACTION", {});
     try {
-        for (auto& itemId : itemIds) {
+        for (const auto& [itemId, novoTitulo] : itemETitulo) {
+            juce::String tituloNovoTrim = juce::String(novoTitulo).trim();
             auto stmtAntigo = db.prepare("SELECT titulo, notas_livres FROM item WHERE id = ?");
             stmtAntigo.bind(1, matriz::db::Value::of(itemId));
             std::string tituloAntigo;
@@ -3895,14 +3918,18 @@ void ProjetoAberto::renomearItens(const std::vector<std::string>& itemIds, const
             // MAIN nunca muda — renomear o item muda só o catálogo (e o nome
             // "Previous Name" nas notas). Antes, sincronizarNomeDeBackupAposRenomear
             // renomeava a cópia no backup a cada edição de título.
-
-            EventBus::obterInstancia().dispararItemAlterado(itemId, "titulo");
         }
         db.run("COMMIT", {});
     } catch (...) {
         db.run("ROLLBACK", {});
         throw;
     }
+
+    // UM evento de lote, depois do COMMIT (antes: um por item, com a transação ainda aberta).
+    std::vector<std::string> ids;
+    ids.reserve(itemETitulo.size());
+    for (const auto& par : itemETitulo) ids.push_back(par.first);
+    EventBus::obterInstancia().dispararItensAlterados(ids, "titulo");
 }
 
 void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& itemIds) {
@@ -3938,7 +3965,7 @@ void ProjetoAberto::alternarMarcadoRevisado(const std::vector<std::string>& item
 bool ProjetoAberto::itemMarcadoRevisado(const std::string& itemId) const {
     if (!projeto_ || itemId.empty()) return false;
     try {
-        auto stmt = projeto_->registro().prepare("SELECT COALESCE(marcado_revisado, 0) != 0 FROM item WHERE id = ?");
+        auto stmt = leitura().prepare("SELECT COALESCE(marcado_revisado, 0) != 0 FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
         if (stmt.step()) return stmt.columnInt(0) != 0;
     } catch (...) {}
@@ -3971,7 +3998,7 @@ void ProjetoAberto::limparTodosMarcadosRevisado() {
 std::vector<ProjetoAberto::AlvoArquivo> ProjetoAberto::alvosArquivoPrincipal(const std::vector<std::string>& itemIds) const {
     std::vector<AlvoArquivo> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         std::string("SELECT a.id, ") + matriz::vault::colunasDeResolucao() + " FROM arquivo a " +
         matriz::vault::joinDeResolucao() + " WHERE a.item_id = ? ORDER BY a.eh_master DESC, a.id LIMIT 1");
     for (const auto& itemId : itemIds) {
@@ -4125,7 +4152,7 @@ std::optional<juce::String> ProjetoAberto::caminhoDeOrigem(const std::string& it
 std::set<std::string> ProjetoAberto::itensComMesmoConteudo(const std::string& itemId) const {
     std::set<std::string> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT DISTINCT a2.item_id FROM arquivo a1 "
         "JOIN arquivo a2 ON a2.checksum_sha256 = a1.checksum_sha256 AND a2.tamanho_bytes = a1.tamanho_bytes "
         "WHERE a1.item_id = ? AND a1.checksum_sha256 IS NOT NULL AND a1.checksum_sha256 <> '' "
@@ -4157,7 +4184,7 @@ std::vector<ProjetoAberto::ParDuplicatas> ProjetoAberto::listarGruposDuplicados(
 
     std::vector<DbInfo> arquivos;
 
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT a.item_id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, "
         "a.caminho_relativo, a.caminho_absoluto_origem, a.tamanho_bytes, a.checksum_sha256 "
         "FROM arquivo a "
@@ -4328,7 +4355,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
         if (cleanToken.isNotEmpty()) {
             juce::String ftsQuery = "\"" + cleanToken + "\"*";
             try {
-                auto stmt = projeto_->registro().prepare(
+                auto stmt = leitura().prepare(
                     "SELECT DISTINCT b.item_id FROM busca_fts b "
                     "JOIN item i ON i.id = b.item_id "
                     "WHERE i.projeto_id = ? AND busca_fts MATCH ?");
@@ -4344,7 +4371,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // a) item table columns
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT id FROM item "
                 "WHERE projeto_id = ? AND ("
                 "   titulo LIKE ? ESCAPE '\\' OR "
@@ -4364,7 +4391,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // b) item_campo (all metadata fields: artist, creator, description, year, custom YAML fields, etc.)
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT c.item_id FROM item_campo c "
                 "JOIN item i ON i.id = c.item_id "
                 "WHERE i.projeto_id = ? AND c.valor LIKE ? ESCAPE '\\'");
@@ -4375,7 +4402,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // c) item_tag (tags)
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT t.item_id FROM item_tag t "
                 "JOIN item i ON i.id = t.item_id "
                 "WHERE i.projeto_id = ? AND t.tag LIKE ? ESCAPE '\\'");
@@ -4386,7 +4413,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // d) item_observacao (notes)
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT o.item_id FROM item_observacao o "
                 "JOIN item i ON i.id = o.item_id "
                 "WHERE i.projeto_id = ? AND o.texto LIKE ? ESCAPE '\\'");
@@ -4397,7 +4424,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // e) arquivo (filename, relative path, origin absolute path)
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT a.item_id FROM arquivo a "
                 "JOIN item i ON i.id = a.item_id "
                 "WHERE i.projeto_id = ? AND ("
@@ -4412,7 +4439,7 @@ std::set<std::string> ProjetoAberto::buscarItens(const juce::String& texto, Esco
 
         // f) item_assunto / assunto
         try {
-            auto stmt = projeto_->registro().prepare(
+            auto stmt = leitura().prepare(
                 "SELECT ia.item_id FROM item_assunto ia "
                 "JOIN assunto s ON s.id = ia.assunto_id "
                 "JOIN item i ON i.id = ia.item_id "
@@ -4526,7 +4553,7 @@ std::set<std::string> ProjetoAberto::buscarItensNoEscopo(const juce::String& ter
                 }
                 const bool expandiu = !binds.empty();
                 if (!expandiu) binds = padroes;
-                auto st = projeto_->registro().prepare(sql);
+                auto st = leitura().prepare(sql);
                 st.bind(1, matriz::db::Value::of(pid));
                 for (size_t k = 0; k < binds.size(); ++k) st.bind(static_cast<int>(k) + 2, matriz::db::Value::of(binds[k]));
                 while (st.step()) achados.insert(st.columnText(0));
@@ -4548,7 +4575,7 @@ std::set<std::string> ProjetoAberto::buscarItensNoEscopo(const juce::String& ter
 std::map<std::string, int> ProjetoAberto::contagensPorTipoMidia() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare("SELECT tipo_midia, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY tipo_midia");
+    auto stmt = leitura().prepare("SELECT tipo_midia, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY tipo_midia");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) out[stmt.columnText(0)] = static_cast<int>(stmt.columnInt(1));
     return out;
@@ -4557,7 +4584,7 @@ std::map<std::string, int> ProjetoAberto::contagensPorTipoMidia() const {
 std::map<std::string, int> ProjetoAberto::contagensPorEstado() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare("SELECT estado, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY estado");
+    auto stmt = leitura().prepare("SELECT estado, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY estado");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) out[stmt.columnText(0)] = static_cast<int>(stmt.columnInt(1));
     return out;
@@ -4566,7 +4593,7 @@ std::map<std::string, int> ProjetoAberto::contagensPorEstado() const {
 std::map<std::string, int> ProjetoAberto::contagensPorExtensao() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT (SELECT a.caminho_relativo FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
         "FROM item i WHERE i.projeto_id = ?");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -4584,7 +4611,7 @@ std::map<std::string, int> ProjetoAberto::contagensPorExtensao() const {
 std::map<std::string, int> ProjetoAberto::contagensPorOrigem() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT (SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 "
         " AND c.campo_id = 'origem') "
         "FROM item i WHERE i.projeto_id = ?");
@@ -4596,7 +4623,7 @@ std::map<std::string, int> ProjetoAberto::contagensPorOrigem() const {
 std::map<std::string, int> ProjetoAberto::contagensPorContentType() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT content_type FROM item WHERE projeto_id = ?");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
@@ -4609,7 +4636,7 @@ std::map<std::string, int> ProjetoAberto::contagensPorContentType() const {
 std::map<std::string, int> ProjetoAberto::contagensPorCollectionType() const {
     std::map<std::string, int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT collection_type FROM item WHERE projeto_id = ?");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
@@ -4626,7 +4653,7 @@ std::vector<ProjetoAberto::ColecaoDisponivel> ProjetoAberto::listarColecoesDispo
     std::map<std::string, int> contagens;
     int semColecao = 0;
 
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT collection_type, COUNT(*) FROM item WHERE projeto_id = ? GROUP BY collection_type");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
@@ -4653,14 +4680,14 @@ std::set<std::string> ProjetoAberto::itensDaColecao(const std::string& chave) co
     if (!projeto_) return out;
 
     if (chave == "Unknown" || chave.empty()) {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT id FROM item WHERE projeto_id = ? AND (collection_type IS NULL OR collection_type = '')");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
         while (stmt.step()) {
             out.insert(stmt.columnText(0));
         }
     } else {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT id FROM item WHERE projeto_id = ? AND collection_type = ?");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
         stmt.bind(2, matriz::db::Value::of(chave));
@@ -4676,7 +4703,7 @@ std::vector<ProjetoAberto::ColecaoLink> ProjetoAberto::listarColecoesLinkadas() 
     if (!projeto_) return out;
 
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT id, caminho_projeto, nome, IFNULL(grupo, ''), criado_em FROM catalog_colecao_link ORDER BY nome ASC");
         while (stmt.step()) {
             ColecaoLink link;
@@ -4793,7 +4820,7 @@ std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) con
 
     // 1. Check user-filled creation fields in item_campo (ano, dc_created, data_criacao)
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT c.item_id, c.valor FROM item_campo c JOIN item i ON i.id = c.item_id "
             "WHERE i.projeto_id = ? AND c.campo_id IN ('ano', 'dc_created', 'data_criacao')");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -4816,7 +4843,7 @@ std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) con
 
     // 2. Direct column ano in item table
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT id FROM item WHERE projeto_id = ? AND ano IS NOT NULL AND ano >= ? AND ano <= ?");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
         stmt.bind(2, matriz::db::Value::of(anoDe));
@@ -4826,7 +4853,7 @@ std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) con
 
     // 3. EXIF creation date in arquivo.caracteristicas_tecnicas_json
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT a.item_id, a.caracteristicas_tecnicas_json FROM arquivo a JOIN item i ON i.id = a.item_id "
             "WHERE i.projeto_id = ? AND a.eh_master = 1 AND a.caracteristicas_tecnicas_json LIKE '%exifDataOriginal%'");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -4852,7 +4879,7 @@ std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) con
 
     // 4. Physical file creation/modification date
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT a.item_id, a.caminho_absoluto_origem FROM arquivo a JOIN item i ON i.id = a.item_id "
             "WHERE i.projeto_id = ? AND a.eh_master = 1 AND a.caminho_absoluto_origem IS NOT NULL AND a.caminho_absoluto_origem != ''");
         stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
@@ -4876,7 +4903,7 @@ std::set<std::string> ProjetoAberto::itensPorFaixaAno(int anoDe, int anoAte) con
 std::vector<ProjetoAberto::ColecaoInteligente> ProjetoAberto::listarColecoes() const {
     std::vector<ColecaoInteligente> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT id, nome, busca_texto, filtros_tipo_midia, filtros_estado, filtros_extensao, filtros_origem, "
         "ano_de, ano_ate, filtros_content_type, filtros_collection_type FROM colecao_inteligente "
         "WHERE projeto_id = ? ORDER BY ordem, criado_em");
@@ -4935,7 +4962,7 @@ void ProjetoAberto::apagarColecao(const std::string& id) {
 
 bool ProjetoAberto::obterItemInfo(const std::string& itemId, std::string& titulo, std::string& tipoMidia, std::string& codigoAcervo) const {
     if (!projeto_) return false;
-    auto stmt = projeto_->registro().prepare("SELECT titulo, tipo_midia, codigo_acervo FROM item WHERE id = ?");
+    auto stmt = leitura().prepare("SELECT titulo, tipo_midia, codigo_acervo FROM item WHERE id = ?");
     stmt.bind(1, matriz::db::Value::of(itemId));
     if (!stmt.step()) return false;
     titulo = stmt.columnText(0);
@@ -4965,7 +4992,7 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
     }
 
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT COALESCE(metadados_editados, 0) != 0 FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(itemId));
         if (stmt.step()) r.metadadosEditados = stmt.columnInt(0) != 0;
@@ -4987,12 +5014,40 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
 std::set<int> ProjetoAberto::indicesExistentes(const std::string& itemId, const std::string& nivel) const {
     std::set<int> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT DISTINCT nivel_indice FROM item_campo WHERE item_id = ? AND nivel = ? ORDER BY nivel_indice");
     stmt.bind(1, matriz::db::Value::of(itemId));
     stmt.bind(2, matriz::db::Value::of(nivel));
     while (stmt.step()) out.insert(static_cast<int>(stmt.columnInt(0)));
     return out;
+}
+
+void ProjetoAberto::gravarTipoMidia(const std::string& itemId, const std::string& tipoMidia, const std::string& agora,
+                                    bool promoverEstado) {
+    auto& registro = projeto_->registro();
+    if (promoverEstado) {
+        // Classificar É o que move o item de 'novo' pra 'catalogado' (§4): o
+        // ingest só o trouxe pra dentro; a decisão de que tipo de mídia é isto
+        // é humana. Estados posteriores (revisado/aprovado/publicado) não são
+        // sobrescritos — reclassificar um item já aprovado não o rebaixa.
+        registro.run(
+            "UPDATE item SET tipo_midia = ?, atualizado_em = ?, "
+            "estado = CASE WHEN estado IN ('novo', 'capturado', 'nao_digitalizado') THEN 'catalogado' ELSE estado END "
+            "WHERE id = ?",
+            {matriz::db::Value::of(tipoMidia), matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+    } else {
+        registro.run("UPDATE item SET tipo_midia = ?, atualizado_em = ? WHERE id = ?",
+                     {matriz::db::Value::of(tipoMidia), matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+    }
+
+    auto origem = matriz::ficha::origemPadraoParaTipo(tipoMidia);
+    if (origem) {
+        registro.run(
+            "INSERT OR IGNORE INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+            "VALUES (?, ?, 'raiz', 0, 'origem', ?, 'leitura_tecnica', ?)",
+            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+             matriz::db::Value::of(*origem), matriz::db::Value::of(agora)});
+    }
 }
 
 void ProjetoAberto::atualizarTipoMidia(const std::string& itemId, const std::string& tipoMidia) {
@@ -5006,30 +5061,33 @@ void ProjetoAberto::atualizarTipoMidia(const std::string& itemId, const std::str
             atualizarTipoMidia(itemId, oldTipo);
         });
     }
-    std::string agora = matriz::model::agoraIso8601();
-    // Classificar É o que move o item de 'novo' pra 'catalogado' (§4): o
-    // ingest só o trouxe pra dentro; a decisão de que tipo de mídia é isto
-    // é humana. Estados posteriores (revisado/aprovado/publicado) não são
-    // sobrescritos — reclassificar um item já aprovado não o rebaixa.
-    projeto_->registro().run(
-        "UPDATE item SET tipo_midia = ?, atualizado_em = ?, "
-        "estado = CASE WHEN estado IN ('novo', 'capturado', 'nao_digitalizado') THEN 'catalogado' ELSE estado END "
-        "WHERE id = ?",
-        {matriz::db::Value::of(tipoMidia), matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
-
-    auto origem = matriz::ficha::origemPadraoParaTipo(tipoMidia);
-    if (origem) {
-        projeto_->registro().run(
-            "INSERT OR IGNORE INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-            "VALUES (?, ?, 'raiz', 0, 'origem', ?, 'leitura_tecnica', ?)",
-            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-             matriz::db::Value::of(*origem), matriz::db::Value::of(agora)});
-    }
+    gravarTipoMidia(itemId, tipoMidia, matriz::model::agoraIso8601(), /*promoverEstado*/ true);
 
     EventBus::obterInstancia().dispararItemAlterado(itemId, "classificacao");
 }
 
-void ProjetoAberto::aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia) {
+void ProjetoAberto::restaurarTiposMidia(const std::map<std::string, std::string>& tiposPorItem) {
+    if (!projeto_) return;
+    // Mesma escrita de atualizarTipoMidia() (o desfazer sempre foi por ela), mas
+    // numa transação só e com um evento de lote.
+    const std::string agora = matriz::model::agoraIso8601();
+    auto& registro = projeto_->registro();
+    registro.run("BEGIN", {});
+    try {
+        for (const auto& [id, tipo] : tiposPorItem) gravarTipoMidia(id, tipo, agora, /*promoverEstado*/ true);
+        registro.run("COMMIT", {});
+    } catch (...) {
+        registro.run("ROLLBACK", {});
+        throw;
+    }
+    std::vector<std::string> ids;
+    ids.reserve(tiposPorItem.size());
+    for (const auto& par : tiposPorItem) ids.push_back(par.first);
+    EventBus::obterInstancia().dispararItensAlterados(ids, "classificacao");
+}
+
+void ProjetoAberto::aplicarTipoMidiaEmLote(const std::vector<std::string>& itemIds, const std::string& tipoMidia,
+                                           bool promoverEstado) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
     if (!desfazendo_) {
@@ -5040,44 +5098,28 @@ void ProjetoAberto::aplicarTipoMidiaEmLote(const std::vector<std::string>& itemI
             if (stmt.step()) antigosTipos[id] = stmt.columnText(0);
         }
         registrarUndo("Batch Change Media Type", [this, antigosTipos]() {
-            for (const auto& [id, tipo] : antigosTipos) {
-                atualizarTipoMidia(id, tipo);
-            }
+            restaurarTiposMidia(antigosTipos);
         });
     }
     std::string agora = matriz::model::agoraIso8601();
     auto& registro = projeto_->registro();
     registro.run("BEGIN", {});
     try {
-        for (auto& id : itemIds) {
-            registro.run("UPDATE item SET tipo_midia = ?, atualizado_em = ? WHERE id = ?",
-                         {matriz::db::Value::of(tipoMidia), matriz::db::Value::of(agora), matriz::db::Value::of(id)});
-
-            auto origem = matriz::ficha::origemPadraoParaTipo(tipoMidia);
-            if (origem) {
-                registro.run(
-                    "INSERT OR IGNORE INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                    "VALUES (?, ?, 'raiz', 0, 'origem', ?, 'leitura_tecnica', ?)",
-                    {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(id),
-                     matriz::db::Value::of(*origem), matriz::db::Value::of(agora)});
-            }
-        }
+        for (auto& id : itemIds) gravarTipoMidia(id, tipoMidia, agora, promoverEstado);
         registro.run("COMMIT", {});
     } catch (...) {
         registro.run("ROLLBACK", {});
         throw;
     }
 
-    for (auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "classificacao");
-    }
+    EventBus::obterInstancia().dispararItensAlterados(itemIds, "classificacao");
 }
 
 void ProjetoAberto::obterTiposMidiaDosItens(const std::vector<std::string>& itemIds, std::set<std::string>& tiposPresentes, bool& algumNulo) const {
     algumNulo = false;
     if (!projeto_) return;
     for (auto& id : itemIds) {
-        auto stmt = projeto_->registro().prepare("SELECT tipo_midia FROM item WHERE id = ?");
+        auto stmt = leitura().prepare("SELECT tipo_midia FROM item WHERE id = ?");
         stmt.bind(1, matriz::db::Value::of(id));
         if (!stmt.step()) continue;
         if (stmt.columnIsNull(0)) algumNulo = true;
@@ -5092,7 +5134,7 @@ namespace matriz::ui {
 std::vector<ProjetoAberto::VaultResumo> ProjetoAberto::listarVaults() const {
     std::vector<VaultResumo> out;
     if (!projeto_) return out;
-    auto stmt = projeto_->registro().prepare(
+    auto stmt = leitura().prepare(
         "SELECT v.id, v.nome, v.localizacao, v.status, "
         "(SELECT COUNT(DISTINCT a.item_id) FROM arquivo a WHERE a.vault_id = v.id) "
         "FROM vault v "
@@ -5314,17 +5356,31 @@ std::vector<ProjetoAberto::VersaoResumo> ProjetoAberto::listarVersoes() {
 void ProjetoAberto::sincronizarBackupDestinoDeHistorico() {
     if (!projeto_) return;
     auto& db = projeto_->registro();
+    // Roda a cada visita à aba BACKUP: só grava (e só marca o projeto como
+    // sujo — Database::run() sempre marca) quando há algo a mudar de fato.
+    auto destinoJaRegistrado = [&db](const std::string& caminho) {
+        auto st = db.prepare("SELECT 1 FROM backup_destino WHERE destino_path = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(caminho));
+        return st.step();
+    };
     try {
         // Se houver registros legados com destino_path vazio e existir a pasta padrão <projeto>/Backup com arquivos
         juce::File pastaBackupPadrao = projeto_->pasta().getChildFile("Backup");
         if (pastaBackupPadrao.isDirectory()) {
             std::string pathPadrao = pastaBackupPadrao.getFullPathName().toStdString();
-            db.run("UPDATE consolidacao_registro SET destino_path = ? WHERE destino_path = '' OR destino_path IS NULL",
-                   {matriz::db::Value::of(pathPadrao)});
+            bool temLegado = false;
+            {
+                auto stmtLegado = db.prepare(
+                    "SELECT 1 FROM consolidacao_registro WHERE destino_path = '' OR destino_path IS NULL LIMIT 1");
+                temLegado = stmtLegado.step();
+            }
+            if (temLegado)
+                db.run("UPDATE consolidacao_registro SET destino_path = ? WHERE destino_path = '' OR destino_path IS NULL",
+                       {matriz::db::Value::of(pathPadrao)});
 
             auto stmtCount = db.prepare("SELECT COUNT(*) FROM consolidacao_registro WHERE destino_path = ?");
             stmtCount.bind(1, matriz::db::Value::of(pathPadrao));
-            if (stmtCount.step() && stmtCount.columnInt(0) > 0) {
+            if (stmtCount.step() && stmtCount.columnInt(0) > 0 && !destinoJaRegistrado(pathPadrao)) {
                 std::string agora = matriz::model::agoraIso8601();
                 db.run("INSERT OR IGNORE INTO backup_destino (id, destino_path, rotulo, ativo, criado_em) VALUES (?, ?, ?, 1, ?)",
                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(pathPadrao),
@@ -5341,7 +5397,7 @@ void ProjetoAberto::sincronizarBackupDestinoDeHistorico() {
             if (fVault.isDirectory()) {
                 auto sCheck = db.prepare("SELECT COUNT(*) FROM consolidacao_registro WHERE destino_path = ?");
                 sCheck.bind(1, matriz::db::Value::of(vLoc));
-                if (sCheck.step() && sCheck.columnInt(0) > 0) {
+                if (sCheck.step() && sCheck.columnInt(0) > 0 && !destinoJaRegistrado(vLoc)) {
                     std::string agora = matriz::model::agoraIso8601();
                     db.run("INSERT OR IGNORE INTO backup_destino (id, destino_path, rotulo, ativo, criado_em) VALUES (?, ?, ?, 1, ?)",
                            {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(vLoc),
@@ -5384,7 +5440,7 @@ std::vector<ProjetoAberto::ColecaoEmbutida> ProjetoAberto::listarColecoesEmbutid
 
     std::map<std::string, int> contagens;
     try {
-        auto stmt = projeto_->registro().prepare(
+        auto stmt = leitura().prepare(
             "SELECT colecao, COUNT(DISTINCT item_id) FROM colecao_embutida GROUP BY colecao");
         while (stmt.step()) contagens[stmt.columnText(0)] = static_cast<int>(stmt.columnInt(1));
     } catch (const std::exception&) {
@@ -5409,9 +5465,9 @@ std::set<std::string> ProjetoAberto::itensDaColecaoEmbutida(const std::string& c
     if (!projeto_) return out;
     // Fase 4: não é view do schema (bancos antigos não a teriam) — vem direto
     // do histórico de merge.
-    if (chave == "merge_conflitos") return matriz::model::merge::itensComConflitoPendente(projeto_->registro());
+    if (chave == "merge_conflitos") return matriz::model::merge::itensComConflitoPendente(leitura());
     try {
-        auto stmt = projeto_->registro().prepare("SELECT DISTINCT item_id FROM colecao_embutida WHERE colecao = ?");
+        auto stmt = leitura().prepare("SELECT DISTINCT item_id FROM colecao_embutida WHERE colecao = ?");
         stmt.bind(1, matriz::db::Value::of(chave));
         while (stmt.step()) out.insert(stmt.columnText(0));
     } catch (const std::exception&) {
@@ -5422,7 +5478,10 @@ std::set<std::string> ProjetoAberto::itensDaColecaoEmbutida(const std::string& c
 std::vector<std::string> ProjetoAberto::reavaliarVaults() {
     if (!projeto_) return {};
     try {
-        return matriz::vault::reavaliarVaults(projeto_->registro());
+        bool mudou = false;
+        auto reconectados = matriz::vault::reavaliarVaults(projeto_->registro(), &mudou);
+        if (mudou) vaultsMudaram_.store(true);
+        return reconectados;
     } catch (const std::exception&) {
         return {};
     }
@@ -6010,9 +6069,7 @@ void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::s
             }
         }
     }
-    for (const auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
-    }
+    EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
 void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds, bool marcado) {
@@ -6025,9 +6082,7 @@ void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::st
             else s.erase(id);
         }
     }
-    for (const auto& id : itemIds) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
-    }
+    EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
 bool ProjetoAberto::contemMarcacao(TipoMarcacao tipo, const std::string& itemId) const {
@@ -6051,16 +6106,21 @@ void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
         afetados.assign(s.begin(), s.end());
         s.clear();
     }
-    for (const auto& id : afetados) {
-        EventBus::obterInstancia().dispararItemAlterado(id, "marcacao");
-    }
+    EventBus::obterInstancia().dispararItensAlterados(afetados, "marcacao");
 }
 
 void ProjetoAberto::limparTodasMarcacoes() {
-    limparMarcacoes(TipoMarcacao::Html);
-    limparMarcacoes(TipoMarcacao::Zip);
-    limparMarcacoes(TipoMarcacao::Print);
-    limparMarcacoes(TipoMarcacao::Watermark);
+    // Os 4 conjuntos de uma vez e UM evento de lote com a união dos afetados.
+    std::set<std::string> afetados;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
+            auto& s = obterConjuntoMarcacao(tipo);
+            afetados.insert(s.begin(), s.end());
+            s.clear();
+        }
+    }
+    EventBus::obterInstancia().dispararItensAlterados(std::vector<std::string>(afetados.begin(), afetados.end()), "marcacao");
 }
 
 std::vector<std::string> ProjetoAberto::idsMarcados(TipoMarcacao tipo) const {
@@ -6176,10 +6236,10 @@ bool ProjetoAberto::verificarTimeoutEdicaoMain() {
 int ProjetoAberto::contarArquivosDaPastaNoMain(const std::string& pastaId) const {
     if (!projeto_) return 0;
     try {
-        const auto pref = matriz::consolidacao::caminhoFisicoDaPasta(projeto_->registro(), pastaId);
+        const auto pref = matriz::consolidacao::caminhoFisicoDaPasta(leitura(), pastaId);
         if (pref.isEmpty()) return 0;
         const std::string prefixo = (pref + "/").toStdString();
-        auto st = projeto_->registro().prepare(
+        auto st = leitura().prepare(
             "SELECT COUNT(*) FROM consolidacao_registro WHERE substr(caminho_relativo_destino, 1, ?) = ?");
         st.bind(1, matriz::db::Value::of(static_cast<long long>(pref.length() + 1)));
         st.bind(2, matriz::db::Value::of(prefixo));

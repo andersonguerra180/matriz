@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 
+#include <chrono>
 #include <functional>
 #include <future>
 #include <map>
@@ -736,6 +737,100 @@ void definirCampoRaiz(matriz::db::Database& reg, const std::string& itemId, cons
              matriz::db::Value::of(valor), matriz::db::Value::of(matriz::model::agoraIso8601())});
     // EVENT DATE é a coluna item.ano (é o que a ficha mostra e o que o METADATA/auto-organização leem).
     if (campo == "ano") reg.run("UPDATE item SET ano = ? WHERE id = ?", {matriz::db::Value::of(valor), matriz::db::Value::of(itemId)});
+}
+
+// Etapa 3: segunda conexão somente-leitura (Project::registroLeitura) e cache de statements.
+void rodarTestesConexaoLeitura(const Checar& checar) {
+    using matriz::db::Value;
+    std::cout << "\n-- Read-only connection + prepared statement cache --\n";
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_leitura_selftest_" + juce::Uuid().toDashedString());
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Leitura";
+        params.prefixoNomenclatura = "LEI";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        const auto a = inserirItem(reg, projetoId, "LEI-1", false);
+
+        std::string titulo, tipo, codigo;
+        checar(&pa.projeto().registroLeitura() != &reg && &pa.projeto().indiceLeitura() != &pa.projeto().indice(),
+               "reads get a second connection (registro and indice), separate from the write one");
+        checar(pa.obterItemInfo(a, titulo, tipo, codigo) && codigo == "LEI-1",
+               "a committed write is visible at once on the read connection");
+
+        // Transação aberta por ESTA thread: ela lê pela conexão de escrita (vê o que acabou de escrever).
+        reg.run("BEGIN", {});
+        const auto b = inserirItem(reg, projetoId, "LEI-2", false);
+        checar(&pa.projeto().registroLeitura() == &reg, "inside this thread's open transaction, reads use the write connection");
+        codigo.clear();
+        checar(pa.obterItemInfo(b, titulo, tipo, codigo) && codigo == "LEI-2",
+               "... and see its own uncommitted write");
+
+        // OUTRA thread lendo com a transação ainda aberta: não espera o COMMIT e vê só o que já está commitado.
+        auto outra = std::async(std::launch::async, [&] {
+            auto st = pa.projeto().registroLeitura().prepare("SELECT COUNT(*) FROM item WHERE id = ?");
+            st.bind(1, Value::of(b));
+            return st.step() ? static_cast<int>(st.columnInt(0)) : -1;
+        });
+        const bool naoBloqueou = outra.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+        reg.run("COMMIT", {});
+        const int viu = outra.get();
+        checar(naoBloqueou, "another thread's read is not blocked behind the open transaction");
+        checar(viu == 0, "... and sees the last committed state, not the open transaction (" + juce::String(viu) + ")");
+        codigo.clear();
+        checar(pa.obterItemInfo(b, titulo, tipo, codigo) && codigo == "LEI-2", "after COMMIT the read connection sees it");
+
+        // Cache de statements: duas cópias do mesmo SQL vivas ao mesmo tempo são independentes,
+        // e o statement devolvido ao cache volta sem bindings.
+        {
+            auto s1 = reg.prepare("SELECT codigo_acervo FROM item WHERE id = ?");
+            s1.bind(1, Value::of(a));
+            auto s2 = reg.prepare("SELECT codigo_acervo FROM item WHERE id = ?");
+            s2.bind(1, Value::of(b));
+            const bool r1 = s1.step(), r2 = s2.step();
+            checar(r1 && r2 && s1.columnText(0) == "LEI-1" && s2.columnText(0) == "LEI-2",
+                   "two live statements for the same SQL do not share state");
+        }
+        {
+            auto s3 = reg.prepare("SELECT codigo_acervo FROM item WHERE id = ?");
+            checar(!s3.step(), "a statement returned to the cache comes back with its bindings cleared");
+            s3.reset();
+            s3.bind(1, Value::of(b));
+            checar(s3.step() && s3.columnText(0) == "LEI-2", "... and works again after binding");
+        }
+        for (int i = 0; i < 50; ++i) {
+            auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE projeto_id = ?");
+            st.bind(1, Value::of(projetoId));
+            if (!st.step() || st.columnInt(0) != 2) { checar(false, "repeated cached SELECT returns the same result"); break; }
+        }
+
+        // Um snapshot mantido aberto por OUTRA thread (statement ativo na conexão DELA) não pode
+        // fazer esta thread ler o estado antigo depois de um COMMIT: uma conexão por thread.
+        {
+            std::promise<void> segurando, soltar;
+            auto prontoSeg = segurando.get_future();
+            auto fimSeg = soltar.get_future().share();
+            auto outraThread = std::async(std::launch::async, [&] {
+                auto s = pa.projeto().registroLeitura().prepare("SELECT id FROM item");
+                s.step();  // statement ativo = snapshot aberto nesta conexão
+                segurando.set_value();
+                fimSeg.wait();
+            });
+            prontoSeg.wait();
+            const auto c = inserirItem(reg, projetoId, "LEI-3", false);
+            codigo.clear();
+            checar(pa.obterItemInfo(c, titulo, tipo, codigo) && codigo == "LEI-3",
+                   "a snapshot held open by another thread does not make this thread read stale data");
+            soltar.set_value();
+            outraThread.get();
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("read connection selftest: ") + e.what());
+    }
+    raiz.deleteRecursively();
 }
 
 void rodarTestesLoteAjustes(const Checar& checar) {
@@ -4137,6 +4232,7 @@ int rodarLoteSelfTest() {
     rodarTestesPacote(checar);
     rodarTestesMerge(checar);
     rodarTestesLoteAjustes(checar);
+    rodarTestesConexaoLeitura(checar);
 
     std::cout << "\n" << (falhas == 0 ? juce::String("ALL TESTS PASSED") : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;

@@ -23,6 +23,10 @@
 
 namespace matriz::ui::acoes {
 
+// Item da grade já carregado em memória (nullptr = não está na grade). Quem tem a
+// grade (Mosaico) passa isto pra o menu/ações não consultarem o banco item a item.
+using ResolvedorItemEmMemoria = std::function<const ItemResumo*(const std::string& itemId)>;
+
 // O que a UI precisa fazer em resposta a uma ação, e que este módulo não
 // tem como fazer sozinho (não conhece MosaicoComponent nem a ficha).
 struct Ganchos {
@@ -32,11 +36,17 @@ struct Ganchos {
     std::function<void()> aoAbrirDetalhes;
     // Filtrar a grade por um conjunto de itens (Ver duplicatas).
     std::function<void(std::set<std::string>)> aoFiltrarItens;
+    // Opcional (sempre por ÚLTIMO: Ganchos é inicializado por chaves em alguns pontos):
+    // dados da grade pra decidir "é foto?" sem obterItemResumo por item.
+    ResolvedorItemEmMemoria itemEmMemoria;
 };
 
 // Monta o menu de contexto pra `itemIds` (nunca vazio). Os rótulos mudam de
 // singular pra plural conforme a quantidade.
-juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds);
+// Os estados da seleção (H/K/P/W, "tem foto", "tem capa") saem de UMA passada;
+// `emMemoria` (opcional) evita o obterItemResumo por item.
+juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
+                              ResolvedorItemEmMemoria emMemoria = {});
 
 // Executa o item de menu escolhido. `resultado` é o id devolvido por
 // PopupMenu::showMenuAsync; 0 (nada escolhido) é ignorado com segurança.

@@ -838,26 +838,20 @@ StorageWorkspaceComponent::StorageWorkspaceComponent(ProjetoAberto& projeto)
     hdr.addColumn(i18n::t("storage.col_report"), kColReport, 65, 50, 90);
 
     carregarDados();
-    startTimer(2000);
+    startTimer(5000);  // no máximo a cada 5 s, e só com a aba visível (timerCallback)
 }
 
 StorageWorkspaceComponent::~StorageWorkspaceComponent() {
     stopTimer();
+    ++geracaoDados_;  // resposta atrasada é descartada
+    poolDados_.removeAllJobs(true, 15000);  // o job usa o ProjetoAberto: espera ele terminar
 }
 
 void StorageWorkspaceComponent::timerCallback() {
-    if (isShowing()) {
-        try {
-            projeto_.reavaliarVaults();
-        } catch (...) {}
-        carregarDados();
-    }
+    if (isShowing()) carregarDados();
 }
 
 void StorageWorkspaceComponent::recarregar() {
-    try {
-        projeto_.reavaliarVaults();
-    } catch (...) {}
     carregarDados();
 }
 
@@ -867,18 +861,17 @@ void StorageWorkspaceComponent::visibilityChanged() {
     }
 }
 
-void StorageWorkspaceComponent::carregarDados() {
-    sourceDevices_.clear();
-    backupDevices_.clear();
-    lastStorageError_ = "";
-    lastStorageErrorDetails_ = "";
+StorageWorkspaceComponent::DadosColetados StorageWorkspaceComponent::coletarDados(ProjetoAberto& projeto) {
+    // Roda em BACKGROUND (carregarDados): banco, log do projeto, estatísticas de volume e
+    // contas do Google Drive — nada aqui toca em componente.
+    DadosColetados out;
 
     try {
-        matriz::vault::sincronizarDrivesDoProjeto(projeto_.projeto().registro(), projeto_.projeto().projetoId());
+        matriz::vault::sincronizarDrivesDoProjeto(projeto.projeto().registro(), projeto.projeto().projetoId());
     } catch (...) {}
 
     try {
-        matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
+        matriz::model::ProjectLog pLog(projeto.projeto().pasta());
         juce::String logText = pLog.readContent();
         int idx = logText.lastIndexOf("Storage: failed to register");
         if (idx >= 0) {
@@ -886,9 +879,9 @@ void StorageWorkspaceComponent::carregarDados() {
             if (lineStart < 0) lineStart = 0;
             int lineEnd = logText.indexOfChar(idx, '\n');
             if (lineEnd < 0) lineEnd = logText.length();
-            lastStorageError_ = logText.substring(lineStart, lineEnd).trim();
-            if (lastStorageError_.startsWith("###")) {
-                lastStorageError_ = lastStorageError_.substring(3).trim();
+            out.erro = logText.substring(lineStart, lineEnd).trim();
+            if (out.erro.startsWith("###")) {
+                out.erro = out.erro.substring(3).trim();
             }
 
             int nextSection = logText.indexOf(lineEnd, "###");
@@ -902,11 +895,11 @@ void StorageWorkspaceComponent::carregarDados() {
                     detailItems.add(trimmed.substring(2));
                 }
             }
-            lastStorageErrorDetails_ = detailItems.joinIntoString("   |   ");
+            out.erroDetalhes = detailItems.joinIntoString("   |   ");
         }
     } catch (...) {}
 
-    auto& db = projeto_.projeto().registro();
+    auto& db = projeto.projeto().registro();
     std::vector<StorageDevice> allDevs;
 
     try {
@@ -1008,21 +1001,21 @@ void StorageWorkspaceComponent::carregarDados() {
         } catch (...) {}
 
         if (dev.isSource) {
-            sourceDevices_.push_back(dev);
+            out.source.push_back(dev);
         }
         if (dev.isBackup) {
-            backupDevices_.push_back(dev);
+            out.backup.push_back(dev);
         }
         if (!dev.isSource && !dev.isBackup) {
             if (dev.tipo == "backup") {
-                backupDevices_.push_back(dev);
+                out.backup.push_back(dev);
             } else {
-                sourceDevices_.push_back(dev);
+                out.source.push_back(dev);
             }
         }
     }
 
-    // Garantir que todos os backup_destino registrados apareçam em backupDevices_
+    // Garantir que todos os backup_destino registrados apareçam em out.backup
     try {
         auto stmtDest = db.prepare(
             "SELECT id, destino_path, rotulo, papel FROM backup_destino WHERE ativo = 1 AND destino_path IS NOT NULL AND destino_path != ''");
@@ -1032,7 +1025,7 @@ void StorageWorkspaceComponent::carregarDados() {
             juce::File dFile(dPath);
 
             bool jaExiste = false;
-            for (auto& b : backupDevices_) {
+            for (auto& b : out.backup) {
                 if (!b.localizacao.isEmpty() && (dPath.startsWithIgnoreCase(b.localizacao) || b.localizacao.startsWithIgnoreCase(dPath))) {
                     jaExiste = true;
                     b.isBackup = true;
@@ -1041,9 +1034,9 @@ void StorageWorkspaceComponent::carregarDados() {
             }
             if (!jaExiste && dFile.exists()) {
                 StorageDevice bdev;
-                std::string destVaultId = matriz::vault::obterOuCriarVaultParaDestino(db, dFile, projeto_.projeto().projetoId());
+                std::string destVaultId = matriz::vault::obterOuCriarVaultParaDestino(db, dFile, projeto.projeto().projetoId());
                 bdev.id = destVaultId.empty() ? stmtDest.columnText(0) : destVaultId;
-                bdev.projetoId = projeto_.projeto().projetoId();
+                bdev.projetoId = projeto.projeto().projetoId();
 
                 juce::File volFile = matriz::vault::raizDoVault(dFile);
                 juce::String volName = dFile.getVolumeLabel();
@@ -1068,7 +1061,7 @@ void StorageWorkspaceComponent::carregarDados() {
                         bdev.metricasEspacoDisponiveis = true;
                     }
                 }
-                backupDevices_.push_back(std::move(bdev));
+                out.backup.push_back(std::move(bdev));
             }
         }
     } catch (...) {}
@@ -1097,7 +1090,7 @@ void StorageWorkspaceComponent::carregarDados() {
                 gd.pctLivre = 100.0 - gd.pctUsado;
                 gd.metricasEspacoDisponiveis = true;
             }
-            backupDevices_.push_back(std::move(gd));
+            out.backup.push_back(std::move(gd));
         }
     }
 
@@ -1119,9 +1112,47 @@ void StorageWorkspaceComponent::carregarDados() {
                 else d.temClone = true;
             }
         };
-        for (auto& d : sourceDevices_) marcar(d);
-        for (auto& d : backupDevices_) marcar(d);
+        for (auto& d : out.source) marcar(d);
+        for (auto& d : out.backup) marcar(d);
     } catch (...) {}
+
+    return out;
+}
+
+void StorageWorkspaceComponent::carregarDados() {
+    // reavaliarVaults() (IPC síncrono com o DiskArbitration) e a coleta rodam fora da message
+    // thread. Uma de cada vez; pedido que chega com uma em andamento vira UMA coleta depois.
+    if (coletaEmVoo_) { coletaPendente_ = true; return; }
+    coletaEmVoo_ = true;
+    coletaPendente_ = false;
+    const int geracao = ++geracaoDados_;
+    juce::Component::SafePointer<StorageWorkspaceComponent> safeThis(this);
+    ProjetoAberto* projeto = &projeto_;
+
+    poolDados_.addJob([safeThis, projeto, geracao]() {
+        try {
+            projeto->reavaliarVaults();
+        } catch (...) {}
+        DadosColetados dados;
+        try {
+            dados = coletarDados(*projeto);
+        } catch (...) {}
+
+        juce::MessageManager::callAsync([safeThis, geracao, dados = std::move(dados)]() mutable {
+            if (safeThis == nullptr) return;
+            auto* self = safeThis.getComponent();
+            self->coletaEmVoo_ = false;
+            if (geracao == self->geracaoDados_) self->aplicarDados(std::move(dados));
+            if (self->coletaPendente_) self->carregarDados();
+        });
+    });
+}
+
+void StorageWorkspaceComponent::aplicarDados(DadosColetados dados) {
+    sourceDevices_ = std::move(dados.source);
+    backupDevices_ = std::move(dados.backup);
+    lastStorageError_ = dados.erro;
+    lastStorageErrorDetails_ = dados.erroDetalhes;
 
     std::string targetVaultId = selectedVaultId_;
     bool targetIsSource = selectedIsSource_;

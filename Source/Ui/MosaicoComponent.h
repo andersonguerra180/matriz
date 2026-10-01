@@ -2,7 +2,9 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <deque>
+#include <map>
 #include <optional>
 #include <set>
 #include <unordered_map>
@@ -36,6 +38,13 @@ public:
     ~MosaicoComponent() override;
 
     void aoItemAlterado(const EventoItemAlterado& e) override;
+    // Escondido (outra aba na frente): o evento vira "precisa atualizar" e é aplicado,
+    // numa passada só, quando a grade volta a aparecer (aqui e no primeiro paint —
+    // visibilityChanged() não dispara quando é um ANCESTRAL que aparece).
+    void visibilityChanged() override;
+    // Item da grade carregado em memória (por mapa id->índice), nullptr se não está. O
+    // ponteiro vale até a próxima mudança da lista — use na hora, não guarde.
+    const ItemResumo* itemEmMemoria(const std::string& itemId) { return itemEmTodos(itemId); }
 
     // Recarrega a lista de itens do banco e reaplica filtro/ordenação atuais.
     // Recarrega em BACKGROUND (I1/I4): a consulta e a montagem do vetor
@@ -371,7 +380,99 @@ private:
     int geracaoBusca_ = 0;
 
     std::vector<ItemResumo> itensTodos_;
-    std::vector<ItemResumo> itensFiltrados_; // agrupado — itens do mesmo grupo sempre contíguos
+
+    // A lista filtrada/agrupada guarda só ÍNDICES em itensTodos_ (antes: uma cópia de cada ItemResumo,
+    // com todas as strings, a cada refiltro). Mantém a sintaxe de vetor — [], size(), empty(), front(),
+    // for (auto& item : itensFiltrados_) — pros pontos de uso, mas o item é o MESMO objeto de itensTodos_.
+    // Agrupado: itens do mesmo grupo sempre contíguos.
+    class ListaFiltrada {
+    public:
+        explicit ListaFiltrada(std::vector<ItemResumo>& base) : base_(&base) {}
+        size_t size() const { return indices_.size(); }
+        bool empty() const { return indices_.empty(); }
+        ItemResumo& operator[](size_t i) { return (*base_)[indices_[i]]; }
+        const ItemResumo& operator[](size_t i) const { return (*base_)[indices_[i]]; }
+        ItemResumo& front() { return (*this)[0]; }
+        const ItemResumo& front() const { return (*this)[0]; }
+        size_t indiceNaBase(size_t i) const { return indices_[i]; }
+        std::vector<uint32_t>& indices() { return indices_; }
+        void limpar() { indices_.clear(); }
+
+        template <typename Lista, typename Item>
+        class Iterador {
+        public:
+            Iterador(Lista* lista, size_t pos) : lista_(lista), pos_(pos) {}
+            Item& operator*() const { return (*lista_)[pos_]; }
+            Iterador& operator++() { ++pos_; return *this; }
+            bool operator!=(const Iterador& o) const { return pos_ != o.pos_; }
+        private:
+            Lista* lista_;
+            size_t pos_;
+        };
+        using Mut = Iterador<ListaFiltrada, ItemResumo>;
+        using Const = Iterador<const ListaFiltrada, const ItemResumo>;
+        Mut begin() { return Mut(this, 0); }
+        Mut end() { return Mut(this, indices_.size()); }
+        Const begin() const { return Const(this, 0); }
+        Const end() const { return Const(this, indices_.size()); }
+
+    private:
+        std::vector<ItemResumo>* base_;
+        std::vector<uint32_t> indices_;
+    };
+    ListaFiltrada itensFiltrados_{itensTodos_};
+
+    // Textos de exibição de cada item, calculados UMA vez (no job do snapshot / em atualizarItemEmMemoria)
+    // em vez de a cada paint: nome, extensão, ano, resumo do ORIGINAL SOURCE MEDIUM (parse de JSON!), etc.
+    // Paralelo a itensTodos_ (mesmo índice).
+    struct TextosCelula {
+        juce::String nome;            // título, ou o nome original do arquivo
+        juce::String extensao;        // extensão em MAIÚSCULAS ("" se não tem)
+        juce::String ano;             // coluna DATE CREATED da lista ("" se não tem)
+        juce::String sourceMedium;    // resumo do ORIGINAL SOURCE MEDIUM ("" = nenhum)
+        juce::String caminho;         // caminho de origem (ou relativo) pra coluna PATH
+        juce::String tamanho;         // tamanho formatado (coluna SIZE)
+        juce::String categoria;       // categoria da lista (coluna TYPE)
+        juce::String categoriaMaiuscula;
+        juce::String duracao;         // duração do selo da grade ("" se não tem)
+        juce::String subtituloGrade;  // "EXT  |  pasta" (sem o sufixo OFFLINE)
+    };
+    static TextosCelula calcularTextos(const ItemResumo& item);
+    std::vector<TextosCelula> textosTodos_;
+    const TextosCelula& textosDoFiltrado(size_t i) const { return textosTodos_[itensFiltrados_.indiceNaBase(i)]; }
+
+    // Zebrado de "editado": desenhado UMA vez numa imagem (por tamanho de célula e escala de pixel)
+    // e reaproveitado por todas as células, em vez de dezenas de linhas com clip por célula por paint.
+    juce::Image zebraGrade_, zebraBarraLista_;
+    juce::Rectangle<int> zebraGradeTamanho_, zebraBarraListaTamanho_;
+    float zebraGradeEscala_ = 0.0f, zebraBarraListaEscala_ = 0.0f;
+    const juce::Image& imagemZebraGrade(juce::Rectangle<int> bounds, float escala);
+    const juce::Image& imagemZebraBarraLista(juce::Rectangle<float> barRect, float escala);
+
+    // Repinta só a célula (e o que vaza dela: pilha de nest, anel de foco) em vez do componente todo.
+    void repintarCelula(int indice);
+    int indiceFiltradoDe(const std::string& itemId);
+    // id -> índice nas duas listas (antes: find_if linear por evento/item, O(N²) em lote).
+    // Reconstruídos sob demanda; quem troca/refaz a lista chama invalidarIndices*().
+    // Cada acesso confere o id no índice, então um mapa velho nunca devolve o item errado.
+    std::unordered_map<std::string, size_t> indiceTodos_, indiceFiltrados_;
+    bool indiceTodosValido_ = false, indiceFiltradosValido_ = false;
+    void invalidarIndiceTodos() { indiceTodosValido_ = false; }
+    void invalidarIndiceFiltrados() { indiceFiltradosValido_ = false; }
+    ItemResumo* itemEmTodos(const std::string& itemId);
+    ItemResumo* itemEmFiltrados(const std::string& itemId);
+
+    // Eventos recebidos com a grade escondida, já deduplicados: tipos "amplos" (sem id)
+    // e, por tipo, os ids afetados. Aplicados por aplicarEventosPendentes().
+    std::set<std::string> tiposAmplosPendentes_;
+    std::map<std::string, std::set<std::string>> idsPendentesPorTipo_;
+    bool aplicacaoPendenteAgendada_ = false;
+    bool escondido() const { return getPeer() != nullptr && !isShowing(); }
+    bool temEventosPendentes() const { return !tiposAmplosPendentes_.empty() || !idsPendentesPorTipo_.empty(); }
+    void guardarEventoPendente(const EventoItemAlterado& e);
+    void aplicarEventosPendentes();
+    void agendarAplicarPendentes();
+    void aplicarEvento(const EventoItemAlterado& e);
     std::vector<GrupoMosaico> grupos_;
     std::set<juce::String> filtrosTipoMidia_, filtrosEstado_, filtrosExtensao_, filtrosOrigem_;
     std::set<juce::String> filtrosContentType_, filtrosCollectionType_;
@@ -447,6 +548,10 @@ private:
     std::unordered_map<std::string, bool> semMiniatura_; // cache negativo — não reconsulta o índice a cada repaint
     std::deque<std::string> ordemCache_;
     static constexpr size_t kCapacidadeCache = 400;
+    // Área da imagem da MAIOR célula (largura 320 no zoom máximo; ver definirTamanhoContinuo),
+    // em pixels lógicos: 320-8 de largura; altura 0,88*320 = 281, menos 8 de margem e 40 de texto.
+    static constexpr int kLarguraMaximaMiniatura = 312;
+    static constexpr int kAlturaMaximaMiniatura = 233;
     juce::CriticalSection cacheLock_;
 
     // Inline rename (click on title area of selected item)

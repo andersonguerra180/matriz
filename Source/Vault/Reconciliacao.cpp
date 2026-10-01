@@ -155,7 +155,12 @@ bool atualizarPresencaDoVault(matriz::db::Database& registro, const std::string&
     return true;
 }
 
-std::vector<std::string> reavaliarVaults(matriz::db::Database& registro) {
+std::vector<std::string> reavaliarVaults(matriz::db::Database& registro, bool* algumMudou) {
+    std::set<std::string> idsAntes;
+    if (algumMudou != nullptr) {
+        auto stmt = registro.prepare("SELECT id FROM vault");
+        while (stmt.step()) idsAntes.insert(stmt.columnText(0));
+    }
     sincronizarDrivesDoProjeto(registro, "");
     std::vector<std::string> ficaramOnline;
     std::vector<std::pair<std::string, std::string>> vaults;  // id, status anterior
@@ -163,13 +168,21 @@ std::vector<std::string> reavaliarVaults(matriz::db::Database& registro) {
         auto stmt = registro.prepare("SELECT id, status FROM vault");
         while (stmt.step()) vaults.emplace_back(stmt.columnText(0), stmt.columnText(1));
     }
+    bool mudou = false;
+    if (algumMudou != nullptr) {
+        std::set<std::string> idsDepois;
+        for (const auto& v : vaults) idsDepois.insert(v.first);
+        mudou = idsAntes != idsDepois;  // vault novo ou removido
+    }
 
     for (auto& [id, statusAnterior] : vaults) {
         if (!atualizarPresencaDoVault(registro, id)) continue;
+        mudou = true;
         // Só interessa a transição offline -> online: é ela que significa
         // "o disco acabou de ser conectado", o gatilho da varredura.
         if (statusAnterior == "offline") ficaramOnline.push_back(id);
     }
+    if (algumMudou != nullptr) *algumMudou = mudou;
     return ficaramOnline;
 }
 
