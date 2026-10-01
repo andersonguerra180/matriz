@@ -4121,8 +4121,8 @@ void BackupWorkspaceComponent::carregarDestinosBackup() {
             if (safeThis == nullptr || geracao != safeThis->geracaoDestinos_) return;  // superado por uma carga mais nova
             bool mudou = false;
             for (auto& d : safeThis->destinosBackup_)
-                for (const auto& [caminho, ok] : resultados)
-                    if (d.caminho == caminho && d.online != ok) { d.online = ok; mudou = true; }
+                for (const auto& res : resultados)
+                    if (d.caminho == res.first && d.online != res.second) { d.online = res.second; mudou = true; }
             if (mudou && safeThis->listVaults_) safeThis->listVaults_->repaint();
         });
     });

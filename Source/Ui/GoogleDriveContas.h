@@ -47,7 +47,7 @@ inline std::vector<ContaGoogleDrive> contasGoogleDrive() {
 #elif JUCE_WINDOWS
     // Procura por drives virtuais mapeados pelo Google Drive (geralmente G:\ ou volume com nome Google Drive)
     for (char letter = 'D'; letter <= 'Z'; ++letter) {
-        juce::File root(juce::String(juce::CharPointer_UTF8(&letter, 1)) + ":\\");
+        juce::File root(juce::String::charToString(letter) + ":\\");
         if (root.isDirectory()) {
             juce::String label = root.getVolumeLabel();
             if (label.containsIgnoreCase("Google Drive") || label.containsIgnoreCase("Meu Drive") || label.containsIgnoreCase("My Drive")) {
