@@ -147,8 +147,8 @@ VolumeHardwareIdentity encontrarVolumePorSerialOuUuid(const std::string& serialO
     if (serialOrUuid.empty()) return {};
     auto volumes = listarVolumesMontados();
     for (const auto& v : volumes) {
-        if (juce::String(v.volumeUuid).equalsIgnoreCase(serialOrUuid) ||
-            juce::String(v.serialNumber).equalsIgnoreCase(serialOrUuid)) {
+        if (juce::String(v.volumeUuid).equalsIgnoreCase(juce::String(serialOrUuid)) ||
+            juce::String(v.serialNumber).equalsIgnoreCase(juce::String(serialOrUuid))) {
             return v;
         }
     }
