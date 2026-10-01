@@ -9,6 +9,9 @@ if(APPLE)
         set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "" FORCE)
     endif()
     set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "" FORCE)
+elseif(MSVC)
+    add_compile_options(/utf-8 /EHsc)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # Locate JUCE
@@ -22,73 +25,59 @@ add_subdirectory("${JUCE_DIR}" "${CMAKE_BINARY_DIR}/JUCE" EXCLUDE_FROM_ALL)
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/Dependencies.cmake")
 
 # ------------------------------------------------------------------------------
-# AddressSanitizer opcional (critério 21 — `--selftest-modal-loop` sob ASan).
-#
-# Aplicado só aos NOSSOS alvos, nunca globalmente: com -fsanitize=address em
-# CMAKE_CXX_FLAGS, o try_run de std::filesystem do exiv2 falha na
-# configuração e a build inteira não sai do lugar. O binário principal ser
-# instrumentado já basta — é onde vive o código de ciclo de vida de diálogo
-# que o teste exercita.
-#
-#   cmake -B build-asan -DMATRIZ_ASAN=ON && cmake --build build-asan --target matriz
+# AddressSanitizer opcional
 # ------------------------------------------------------------------------------
 option(MATRIZ_ASAN "Compila os alvos do MATRIZ com AddressSanitizer" OFF)
 option(MATRIZ_TRIAL "Compila a versao Trial do MATRIZ" OFF)
 
 function(matriz_aplicar_asan alvo)
     if(MATRIZ_ASAN)
-        target_compile_options(${alvo} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
-        target_link_options(${alvo} PRIVATE -fsanitize=address)
+        if(MSVC)
+            target_compile_options(${alvo} PRIVATE /fsanitize=address /Zi)
+        else()
+            target_compile_options(${alvo} PRIVATE -fsanitize=address -fno-omit-frame-pointer -g)
+            target_link_options(${alvo} PRIVATE -fsanitize=address)
+        endif()
     endif()
 endfunction()
 
 # ------------------------------------------------------------------------------
-# ThreadSanitizer opcional (Fase 1c do diagnostico de crash/freeze — data
-# races em ProjetoAberto e afins). Mesmo motivo do ASan acima pra nao aplicar
-# globalmente via CMAKE_CXX_FLAGS (quebra o try_run do exiv2 na configuracao).
-# ASan e TSan sao mutuamente exclusivos no mesmo alvo — nunca ligar os dois
-# ao mesmo tempo.
-#
-#   cmake -B build-tsan -DMATRIZ_TSAN=ON && cmake --build build-tsan --target matriz
+# ThreadSanitizer opcional (macOS / Clang)
 # ------------------------------------------------------------------------------
 option(MATRIZ_TSAN "Compila os alvos do MATRIZ com ThreadSanitizer" OFF)
 
 function(matriz_aplicar_tsan alvo)
     if(MATRIZ_TSAN)
-        target_compile_options(${alvo} PRIVATE -fsanitize=thread -g)
-        target_link_options(${alvo} PRIVATE -fsanitize=thread)
+        if(NOT MSVC)
+            target_compile_options(${alvo} PRIVATE -fsanitize=thread -g)
+            target_link_options(${alvo} PRIVATE -fsanitize=thread)
+        endif()
     endif()
 endfunction()
 
 # ------------------------------------------------------------------------------
-# Schema do banco (schema/registro.sql, schema/indice.sql) embutido no binário
-# — aplicado (idempotente, CREATE ... IF NOT EXISTS) toda vez que um projeto é
-# criado ou aberto (Source/Model/Project.cpp).
+# Schema do banco embutido no binário
 # ------------------------------------------------------------------------------
 juce_add_binary_data(MatrizSchemaAssets SOURCES
     schema/registro.sql
     schema/indice.sql)
 
 # ------------------------------------------------------------------------------
-# Strings de interface (i18n/pt_BR.yaml) embutidas no binário — B.5, §0.6.
-# NAMESPACE/HEADER_NAME próprios: o alvo `matriz` linka isto junto com
-# MatrizSchemaAssets, e os dois gerariam "BinaryData.h"/BinaryData:: por
-# padrão — colisão de nome de arquivo gerado entre os dois alvos.
+# Strings de interface embutidas no binário
 # ------------------------------------------------------------------------------
 juce_add_binary_data(MatrizI18nAssets
     NAMESPACE I18nBinaryData
     HEADER_NAME I18nBinaryData.h
     SOURCES i18n/en.yaml i18n/pt_BR.yaml)
 
-# Assets (splash screen, icon) embutidos no binário
+# Assets embutidos no binário
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
     SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png)
 
 # ------------------------------------------------------------------------------
-# Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
-# de projeto portátil. "Nenhuma UI além do mínimo para testar" (§16).
+# Etapa 1 — self-test headless
 # ------------------------------------------------------------------------------
 juce_add_console_app(matriz_selftest PRODUCT_NAME "matriz_selftest")
 juce_generate_juce_header(matriz_selftest)
@@ -99,6 +88,9 @@ target_sources(matriz_selftest PRIVATE
     Source/Ficha/CatalogoDeFichas.cpp
     Source/Db/Database.cpp
     Source/Model/Project.cpp
+    Source/Model/CaminhosBanco.cpp
+    Source/Model/NomesCanonicos.cpp
+    Source/Model/NomesSeguros.cpp
     Source/I18n/Strings.cpp
     Source/App/Preferencias.cpp
     Source/Ingest/LeituraTecnica.cpp
@@ -108,8 +100,13 @@ target_sources(matriz_selftest PRIVATE
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
-    Source/Vault/DiskIdentity_mac.mm
     Source/Model/ProjectLog.cpp)
+
+if(APPLE)
+    target_sources(matriz_selftest PRIVATE Source/Vault/DiskIdentity_mac.mm)
+elseif(WIN32)
+    target_sources(matriz_selftest PRIVATE Source/Vault/DiskIdentity_win.cpp)
+endif()
 
 target_include_directories(matriz_selftest PRIVATE Source)
 
@@ -134,6 +131,9 @@ target_link_libraries(matriz_selftest PRIVATE
     juce::juce_events
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+    $<$<PLATFORM_ID:Windows>:dbghelp>
+    $<$<PLATFORM_ID:Windows>:psapi>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -141,9 +141,7 @@ matriz_aplicar_asan(matriz_selftest)
 matriz_aplicar_tsan(matriz_selftest)
 
 # ------------------------------------------------------------------------------
-# Etapa 2 — self-test headless: motor de ingestão (leitura técnica, checksum,
-# duplicata, agrupamento, painel de inconsistências). Cresce a cada peça da
-# Etapa 2; roda sobre mídia sintética gerada com ffmpeg em tempo de teste.
+# Etapa 2 — self-test headless de ingestão
 # ------------------------------------------------------------------------------
 juce_add_console_app(matriz_ingest_selftest PRODUCT_NAME "matriz_ingest_selftest")
 juce_generate_juce_header(matriz_ingest_selftest)
@@ -156,7 +154,6 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Ingest/LeituraTecnica.cpp
     Source/Ingest/Loudness.cpp
     Source/Ingest/Miniaturas.cpp
-    Source/Ingest/MiniaturaPsd.mm
     Source/Ingest/Duplicata.cpp
     Source/Ingest/Pcm.cpp
     Source/Ingest/ClassificadorFalaMusica.cpp
@@ -168,7 +165,6 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
-    Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
@@ -188,7 +184,19 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Model/ProjectLog.cpp
     Source/Model/NotasEstruturadas.cpp
     Source/Model/NomesCanonicos.cpp
+    Source/Model/CaminhosBanco.cpp
+    Source/Model/NomesSeguros.cpp
     Source/Model/Project.cpp)
+
+if(APPLE)
+    target_sources(matriz_ingest_selftest PRIVATE
+        Source/Vault/DiskIdentity_mac.mm
+        Source/Ingest/MiniaturaPsd.mm)
+elseif(WIN32)
+    target_sources(matriz_ingest_selftest PRIVATE
+        Source/Vault/DiskIdentity_win.cpp
+        Source/Ingest/MiniaturaPsd_win.cpp)
+endif()
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
 
@@ -199,9 +207,6 @@ target_compile_definitions(matriz_ingest_selftest PRIVATE
     JUCE_APPLICATION_NAME_STRING="MATRIZ ingest selftest"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
     MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
-    # Self-test roda fora de um bundle empacotado — sem isso, ffmpeg/ffprobe
-    # não seriam encontrados ao lado do executável e a build falharia (por
-    # design: build de produção não deve depender do PATH, ver §A.4/A.6).
     MATRIZ_DEV_BUILD=1)
 
 target_link_libraries(matriz_ingest_selftest PRIVATE
@@ -213,13 +218,14 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_cryptography
     juce::juce_dsp
     juce::juce_graphics
-    # Loudness EBU R128 (item 6.1) decodifica o arquivo com os formatos do
-    # JUCE pra medir LUFS-I/LRA na leitura técnica.
     juce::juce_audio_formats
-    # UUID de volume pra identidade de Vault (Source/Vault/Volume.cpp, §8).
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+    $<$<PLATFORM_ID:Windows>:dbghelp>
+    $<$<PLATFORM_ID:Windows>:psapi>
+    $<$<PLATFORM_ID:Windows>:windowscodecs>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -227,10 +233,68 @@ matriz_aplicar_asan(matriz_ingest_selftest)
 matriz_aplicar_tsan(matriz_ingest_selftest)
 
 # ------------------------------------------------------------------------------
-# Etapa 3 — app principal (B.1.1-B.1.3, B.4, B.5): janela, criação/abertura de
-# projeto, layout de três painéis, mosaico virtualizado, ficha lateral
-# genérica, configurações do projeto, i18n. Tira de diagnóstico, transporte,
-# marcadores e tema System CRT são B.1.4+ (fronteira de etapa).
+# Interoperabilidade Headless (matriz_interop_selftest)
+# ------------------------------------------------------------------------------
+juce_add_console_app(matriz_interop_selftest PRODUCT_NAME "matriz_interop_selftest")
+juce_generate_juce_header(matriz_interop_selftest)
+
+target_sources(matriz_interop_selftest PRIVATE
+    tools/interop_selftest/main.cpp
+    Source/Model/Project.cpp
+    Source/Model/CaminhosBanco.cpp
+    Source/Model/NomesCanonicos.cpp
+    Source/Model/NomesSeguros.cpp
+    Source/Ingest/Checksum.cpp
+    Source/Ingest/LeituraTecnica.cpp
+    Source/Ingest/Loudness.cpp
+    Source/Ingest/ProcessoExterno.cpp
+    Source/Db/Database.cpp
+    Source/I18n/Strings.cpp
+    Source/App/Preferencias.cpp
+    Source/Model/ProjectLog.cpp
+    Source/Vault/Volume.cpp
+    Source/Vault/SmartHealth.cpp
+    Source/Vault/DeviceUsageLog.cpp)
+
+if(APPLE)
+    target_sources(matriz_interop_selftest PRIVATE Source/Vault/DiskIdentity_mac.mm)
+elseif(WIN32)
+    target_sources(matriz_interop_selftest PRIVATE Source/Vault/DiskIdentity_win.cpp)
+endif()
+
+target_include_directories(matriz_interop_selftest PRIVATE Source)
+
+target_compile_definitions(matriz_interop_selftest PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_APPLICATION_NAME_STRING="MATRIZ Interop Selftest"
+    JUCE_APPLICATION_VERSION_STRING="0.1.0")
+
+target_link_libraries(matriz_interop_selftest PRIVATE
+    MatrizSchemaAssets
+    MatrizI18nAssets
+    matriz_sqlite3
+    yaml-cpp::yaml-cpp
+    Exiv2::exiv2lib
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_audio_formats
+    juce::juce_graphics
+    juce::juce_events
+    $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
+    $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+    $<$<PLATFORM_ID:Windows>:dbghelp>
+    $<$<PLATFORM_ID:Windows>:psapi>
+    PUBLIC
+    juce::juce_recommended_config_flags)
+
+matriz_aplicar_asan(matriz_interop_selftest)
+matriz_aplicar_tsan(matriz_interop_selftest)
+
+# ------------------------------------------------------------------------------
+# Etapa 3 — app principal (matriz)
 # ------------------------------------------------------------------------------
 if(MATRIZ_TRIAL)
     set(MATRIZ_PRODUCT_NAME "BKR Matriz Trial")
@@ -255,17 +319,18 @@ juce_add_gui_app(matriz
     ICON_SMALL "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icon.iconset/icon_32x32.png")
 juce_generate_juce_header(matriz)
 
-# Replace JUCE-generated icns with our pre-built one (has all required sizes)
-add_custom_command(TARGET matriz POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_CURRENT_SOURCE_DIR}/Assets/icon.icns"
-        "$<TARGET_BUNDLE_DIR:matriz>/Contents/Resources/AppIcon.icns"
-    COMMENT "Copying pre-built AppIcon.icns into app bundle")
+if(APPLE)
+    # Replace JUCE-generated icns with our pre-built one (has all required sizes)
+    add_custom_command(TARGET matriz POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/Assets/icon.icns"
+            "$<TARGET_BUNDLE_DIR:matriz>/Contents/Resources/AppIcon.icns"
+        COMMENT "Copying pre-built AppIcon.icns into app bundle")
+endif()
 
 target_sources(matriz PRIVATE
     Source/Main.cpp
     Source/App/Preferencias.cpp
-    Source/Diag/NSExceptionGuard.mm
     Source/I18n/Strings.cpp
     Source/Ui/AboutDialog.cpp
     Source/Ui/HelpDialog.cpp
@@ -351,9 +416,7 @@ target_sources(matriz PRIVATE
     Source/Ui/MainComponent.cpp
     Source/Ui/MainWindow.cpp
     Source/Ui/VideoPlayerComponent.cpp
-    Source/Ui/VideoPlayerBridge.mm
     Source/Ui/DocumentPreviewComponent.cpp
-    Source/Ui/DocumentPreviewBridge.mm
     Source/Audio/MotorReproducao.cpp
     Source/Audio/FormatoAudioQuickTime.cpp
     Source/Audio/DispositivoAudioApp.cpp
@@ -363,6 +426,8 @@ target_sources(matriz PRIVATE
     Source/Model/NotasEstruturadas.cpp
     Source/Model/CompactacaoRegistro.cpp
     Source/Model/NomesCanonicos.cpp
+    Source/Model/CaminhosBanco.cpp
+    Source/Model/NomesSeguros.cpp
     Source/Model/MergeFichas.cpp
     Source/Ui/ConflitosMergeDialog.cpp
     Source/Ui/NotesEstruturadasComponent.cpp
@@ -375,14 +440,12 @@ target_sources(matriz PRIVATE
     Source/Ingest/PainelInconsistencias.cpp
     Source/Preservation/Preservation.cpp
     Source/Ingest/Miniaturas.cpp
-    Source/Ingest/MiniaturaPsd.mm
     Source/Ingest/ClassificadorFalaMusica.cpp
     Source/Ingest/Pcm.cpp
     Source/Ingest/Duplicata.cpp
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
-    Source/Vault/DiskIdentity_mac.mm
     Source/Vault/Resolucao.cpp
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
@@ -413,10 +476,26 @@ target_sources(matriz PRIVATE
     Source/Sync/SyncEngine.cpp
     Source/Ui/SyncDestinationDialog.cpp)
 
+if(APPLE)
+    target_sources(matriz PRIVATE
+        Source/Diag/NSExceptionGuard.mm
+        Source/Vault/DiskIdentity_mac.mm
+        Source/Ingest/MiniaturaPsd.mm
+        Source/Ui/VideoPlayerBridge.mm
+        Source/Ui/DocumentPreviewBridge.mm)
+elseif(WIN32)
+    target_sources(matriz PRIVATE
+        Source/Diag/NSExceptionGuard_win.cpp
+        Source/Vault/DiskIdentity_win.cpp
+        Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ui/VideoPlayerBridge_win.cpp
+        Source/Ui/DocumentPreviewBridge_win.cpp)
+endif()
+
 target_include_directories(matriz PRIVATE Source)
 
 target_compile_definitions(matriz PRIVATE
-    JUCE_WEB_BROWSER=1
+    JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=1
     JUCE_APPLICATION_NAME_STRING="${MATRIZ_PRODUCT_NAME}"
     JUCE_APPLICATION_VERSION_STRING="${MATRIZ_VERSION_STRING}"
@@ -448,14 +527,23 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ CoreMedia>
     $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>
-    $<$<PLATFORM_ID:Darwin>:-framework\ WebKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ QuickLookUI>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+    $<$<PLATFORM_ID:Windows>:dbghelp>
+    $<$<PLATFORM_ID:Windows>:psapi>
+    $<$<PLATFORM_ID:Windows>:windowscodecs>
+    $<$<PLATFORM_ID:Windows>:mfplat>
+    $<$<PLATFORM_ID:Windows>:mfreadwrite>
+    $<$<PLATFORM_ID:Windows>:mfuuid>
+    $<$<PLATFORM_ID:Windows>:dwmapi>
     PUBLIC
     juce::juce_recommended_config_flags)
 
 if(APPLE)
     target_link_options(matriz PRIVATE "LINKER:-stack_size,0x4000000")
+elseif(MSVC)
+    target_link_options(matriz PRIVATE "/STACK:67108864" "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/Assets/app.manifest")
 endif()
 
 matriz_aplicar_asan(matriz)
@@ -480,6 +568,9 @@ target_sources(matriz_analytics_selftest PRIVATE
     Source/Db/Database.cpp
     Source/Model/ProjectLog.cpp
     Source/Model/Project.cpp
+    Source/Model/CaminhosBanco.cpp
+    Source/Model/NomesCanonicos.cpp
+    Source/Model/NomesSeguros.cpp
     Source/I18n/Strings.cpp
     Source/App/Preferencias.cpp)
 
@@ -505,9 +596,11 @@ target_link_libraries(matriz_analytics_selftest PRIVATE
     juce::juce_gui_basics
     juce::juce_audio_basics
     juce::juce_audio_formats
+    $<$<PLATFORM_ID:Windows>:bcrypt>
+    $<$<PLATFORM_ID:Windows>:dbghelp>
+    $<$<PLATFORM_ID:Windows>:psapi>
     PUBLIC
     juce::juce_recommended_config_flags)
 
 matriz_aplicar_asan(matriz_analytics_selftest)
 matriz_aplicar_tsan(matriz_analytics_selftest)
-

@@ -1,0 +1,189 @@
+name: CI BKR Matriz (Cross-Platform)
+
+on:
+  push:
+    branches: [ main, windows-port ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, windows-port ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-mac:
+    name: Build & Test (macOS)
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Ninja
+        uses: asepticvoid/setup-ninja@v1.0.3
+
+      - name: Cache JUCE / CPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/CPM
+            build-ci/_deps
+          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cpm-
+
+      - name: Configure CMake
+        run: |
+          cmake -B build-ci -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DMATRIZ_ASAN=OFF \
+            -DMATRIZ_TSAN=OFF
+
+      - name: Build macOS targets
+        run: |
+          cmake --build build-ci --target matriz matriz_selftest matriz_ingest_selftest matriz_interop_selftest -j $(sysctl -n hw.ncpu)
+
+      - name: Run Selftests (macOS)
+        run: |
+          ./build-ci/matriz_selftest_artefacts/Release/matriz_selftest
+          ./build-ci/matriz_ingest_selftest_artefacts/Release/matriz_ingest_selftest
+
+      - name: Generate Interoperability Fixture (macOS -> Windows)
+        run: |
+          ./build-ci/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest --gerar fixture-mac
+          ./build-ci/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest --verificar fixture-mac
+
+      - name: Upload macOS Interop Fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-mac
+          path: fixture-mac
+          retention-days: 7
+
+      - name: Upload macOS Binaries (matriz_interop_selftest for verification)
+        uses: actions/upload-artifact@v4
+        with:
+          name: matriz-interop-selftest-mac
+          path: build-ci/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest
+          retention-days: 7
+
+  build-windows:
+    name: Build & Test (Windows x64)
+    needs: build-mac
+    runs-on: windows-2022
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Setup Ninja
+        uses: asepticvoid/setup-ninja@v1.0.3
+
+      - name: Setup Inno Setup
+        uses: LuisEnMarroquin/setup-inno-setup@v1
+
+      - name: Cache JUCE / CPM dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/AppData/Local/CPM
+            build-win/_deps
+          key: ${{ runner.os }}-cpm-${{ hashFiles('**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-cpm-
+
+      - name: Configure CMake (Windows MSVC)
+        run: |
+          cmake -B build-win -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER=cl.exe `
+            -DCMAKE_CXX_COMPILER=cl.exe
+
+      - name: Build Windows targets
+        run: |
+          cmake --build build-win --target matriz matriz_selftest matriz_ingest_selftest matriz_interop_selftest -j $env:NUMBER_OF_PROCESSORS
+
+      - name: Run Selftests (Windows x64)
+        run: |
+          .\build-win\matriz_selftest_artefacts\Release\matriz_selftest.exe
+          .\build-win\matriz_ingest_selftest_artefacts\Release\matriz_ingest_selftest.exe
+
+      - name: Download macOS Interop Fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: fixture-mac
+          path: fixture-mac
+
+      - name: Verify macOS Fixture on Windows (Interoperability Mac -> Win)
+        run: |
+          .\build-win\matriz_interop_selftest_artefacts\Release\matriz_interop_selftest.exe --verificar fixture-mac
+
+      - name: Generate Windows Fixture for macOS Verification (Win -> Mac)
+        run: |
+          .\build-win\matriz_interop_selftest_artefacts\Release\matriz_interop_selftest.exe --gerar fixture-win
+          .\build-win\matriz_interop_selftest_artefacts\Release\matriz_interop_selftest.exe --verificar fixture-win
+
+      - name: Upload Windows Interop Fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: fixture-win
+          path: fixture-win
+          retention-days: 7
+
+      - name: Stage Release Artifacts
+        run: |
+          mkdir staging\bin\Release
+          mkdir staging\bin\tools
+          mkdir staging\installer
+          Copy-Item "build-win\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\Release\BKR Matriz.exe"
+          Copy-Item "installer\installer.iss" "staging\installer\installer.iss"
+
+      - name: Build Inno Setup Installer
+        run: |
+          cd staging\installer
+          iscc installer.iss
+
+      - name: Create Portable Zip
+        run: |
+          Compress-Archive -Path "staging\bin\Release\*" -DestinationPath "staging\installer\BKR_Matriz_Portable_v1.5.0_win64.zip"
+
+      - name: Upload Windows Installer & Portable Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: BKR-Matriz-Windows-Release
+          path: |
+            staging/installer/Output/*.exe
+            staging/installer/*.zip
+          retention-days: 14
+
+  interop-verify-mac:
+    name: Verify Windows Fixture on macOS (Two-Way Interop)
+    needs: [build-mac, build-windows]
+    runs-on: macos-14
+    steps:
+      - name: Download macOS binary
+        uses: actions/download-artifact@v4
+        with:
+          name: matriz-interop-selftest-mac
+          path: bin-mac
+
+      - name: Download Windows Fixture
+        uses: actions/download-artifact@v4
+        with:
+          name: fixture-win
+          path: fixture-win
+
+      - name: Set executable permissions
+        run: chmod +x bin-mac/matriz_interop_selftest
+
+      - name: Verify Windows-generated project on macOS (Win -> Mac Interop)
+        run: |
+          ./bin-mac/matriz_interop_selftest --verificar fixture-win
