@@ -1312,15 +1312,20 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
             if (!precisaCarregar || !f.existsAsFile()) continue;
 
             auto res = matriz::imagem::lerImagem(f);
+            // O arquivo vem sem a rotação EXIF aplicada (a impressão final aplica, ~linha 438):
+            // miniatura, preview e orientação Auto precisam usar a foto já orientada.
+            const auto bufFoto = res.sucesso && res.buffer.valido()
+                ? matriz::imagem::aplicarOrientacao(res.buffer, res.orientacaoExif)
+                : res.buffer;
             juce::Image tImg;
             juce::Image pImg;
             matriz::imagem::ImagemBuffer prevBuf;
 
-            if (res.sucesso && res.buffer.valido()) {
+            if (res.sucesso && bufFoto.valido()) {
                 int thumbW = 104;
-                int thumbH = static_cast<int>(std::round(thumbW * (static_cast<double>(res.buffer.altura) / res.buffer.largura)));
+                int thumbH = static_cast<int>(std::round(thumbW * (static_cast<double>(bufFoto.altura) / bufFoto.largura)));
                 if (thumbH <= 0) thumbH = 104;
-                auto thumbBuf = matriz::imagem::redimensionar(res.buffer, thumbW, thumbH);
+                auto thumbBuf = matriz::imagem::redimensionar(bufFoto, thumbW, thumbH);
 
                 tImg = juce::Image(juce::Image::RGB, thumbBuf.largura, thumbBuf.altura, false);
                 for (int y = 0; y < thumbBuf.altura; ++y) {
@@ -1330,10 +1335,10 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
                     }
                 }
 
-                int prevW = std::min(res.buffer.largura, 1200);
-                int prevH = static_cast<int>(std::round(prevW * (static_cast<double>(res.buffer.altura) / res.buffer.largura)));
+                int prevW = std::min(bufFoto.largura, 1200);
+                int prevH = static_cast<int>(std::round(prevW * (static_cast<double>(bufFoto.altura) / bufFoto.largura)));
                 if (prevH <= 0) prevH = prevW;
-                prevBuf = matriz::imagem::redimensionar(res.buffer, prevW, prevH);
+                prevBuf = matriz::imagem::redimensionar(bufFoto, prevW, prevH);
 
                 pImg = juce::Image(juce::Image::RGB, prevBuf.largura, prevBuf.altura, false);
                 for (int y = 0; y < prevBuf.altura; ++y) {
@@ -1344,16 +1349,18 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
                 }
             }
 
-            juce::MessageManager::callAsync([safeThis, i, res, tImg, pImg, prevBuf, total, f, isPt]() {
+            const int fotoW = bufFoto.largura, fotoH = bufFoto.altura;
+            const bool fotoOk = res.sucesso && bufFoto.valido();
+            juce::MessageManager::callAsync([safeThis, i, res, tImg, pImg, prevBuf, total, f, isPt, fotoW, fotoH, fotoOk]() {
                 if (!safeThis) return;
                 if (i >= static_cast<int>(safeThis->fila_.size())) return;
 
                 auto& it = safeThis->fila_[i];
                 it.carregado = true;
-                if (res.sucesso && res.buffer.valido()) {
+                if (fotoOk) {
                     it.valido = true;
-                    it.larguraOriginal = res.buffer.largura;
-                    it.alturaOriginal = res.buffer.altura;
+                    it.larguraOriginal = fotoW;
+                    it.alturaOriginal = fotoH;
                     it.orientacaoExif = res.orientacaoExif;
                     it.miniatura = tImg;
                     it.imagemPreview = pImg;
