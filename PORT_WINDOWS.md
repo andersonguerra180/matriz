@@ -24,7 +24,7 @@ Requisito fundamental: interoperabilidade bidirecional total (projetos, MAIN, CL
 
 ## 2. CI Real no GitHub Actions (Etapa 2 — Evidência de Execução Verde)
 
-- **Workflow Run**: [GitHub Actions Run 36959293389](https://github.com/andersonguerra180/matriz/actions/runs/36959293389)
+- **Workflow Run**: [GitHub Actions Run 36972298079](https://github.com/andersonguerra180/matriz/actions/runs/36972298079)
 - **Branch**: `windows-port`
 - **Status Geral**: **SUCCESS (100% GREEN)**
 
@@ -32,11 +32,11 @@ Requisito fundamental: interoperabilidade bidirecional total (projetos, MAIN, CL
 
 | Job | Runner | Duração | Itens Validados e Status |
 | :--- | :--- | :--- | :--- |
-| **Build & Test (macOS)** | `macos-14` (Apple Silicon) | 21m 44s | ✓ Compilação Release (`clang++` C++20)<br>✓ `matriz_selftest` (PASS)<br>✓ `matriz_ingest_selftest` (PASS)<br>✓ ThreadSanitizer (`MATRIZ_TSAN=ON`) limpo<br>✓ `matriz_interop_selftest --gerar fixture-mac` (PASS) |
-| **Build & Test (Windows x64)** | `windows-2022` (x64) | 20m 24s | ✓ Compilação MSVC Release (`cl.exe` C++20 + Ninja)<br>✓ `matriz_selftest.exe` (PASS)<br>✓ `matriz_ingest_selftest.exe` (PASS)<br>✓ AddressSanitizer (`/fsanitize=address`) limpo<br>✓ `matriz_interop_selftest.exe --gerar fixture-win` (PASS) |
-| **Verify macOS Fixture on Windows (Interop Mac -> Win)** | `windows-2022` (x64) | 5s | ✓ `matriz_interop_selftest.exe --verificar fixture-mac` (PASS) |
-| **Verify Windows Fixture on macOS (Two-Way Interop)** | `macos-14` (arm64) | 9s | ✓ `./matriz_interop_selftest --verificar fixture-win` (PASS) |
-| **Package Release & Trial (Windows x64)** | `windows-2022` (x64) | 24m 51s | ✓ Compilação Full Release (`BKR Matriz.exe`)<br>✓ Compilação Trial (`BKR Matriz Trial.exe`)<br>✓ FFmpeg e FFprobe com hash/licença embutidos<br>✓ Instaladores Inno Setup gerados<br>✓ Pacotes Portáteis ZIP gerados<br>✓ Artefatos publicados no GitHub Actions |
+| **Build & Test (macOS)** | `macos-14` (Apple Silicon) | 19m 43s | ✓ Compilação Release (`clang++` C++20)<br>✓ `matriz_selftest` (PASS)<br>✓ `matriz_ingest_selftest` (PASS)<br>✓ ThreadSanitizer (`MATRIZ_TSAN=ON`) limpo<br>✓ `matriz_interop_selftest --gerar fixture-mac` (PASS) |
+| **Build & Test (Windows x64)** | `windows-2022` (x64) | 16m 32s | ✓ Compilação MSVC Release (`cl.exe` C++20 + Ninja)<br>✓ `matriz_selftest.exe` (PASS)<br>✓ `matriz_ingest_selftest.exe` (PASS)<br>✓ AddressSanitizer (`/fsanitize=address`) limpo<br>✓ `matriz_interop_selftest.exe --gerar fixture-win` (PASS) |
+| **Verify Windows Fixture on macOS (Two-Way Interop)** | `macos-14` (arm64) | 9s | ✓ `./matriz_interop_selftest --verificar fixture-win` (PASS - 22/22 checks) |
+| **Verify macOS Fixture on Windows (Interoperability Mac -> Win)** | `windows-2022` (x64) | 17s | ✓ `matriz_interop_selftest.exe --verificar fixture-mac` (PASS - 22/22 checks) |
+| **Package Release & Trial (Windows x64)** | `windows-2022` (x64) | 23m 13s | ✓ Compilação Full Release (`BKR Matriz.exe`)<br>✓ Compilação Trial (`BKR Matriz Trial.exe`)<br>✓ FFmpeg e FFprobe com hash/licença embutidos<br>✓ Instaladores Inno Setup gerados<br>✓ Pacotes Portáteis ZIP gerados<br>✓ Artefatos publicados no GitHub Actions |
 
 ---
 
