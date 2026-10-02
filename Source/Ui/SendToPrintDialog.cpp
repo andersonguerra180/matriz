@@ -758,6 +758,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     sldBrilho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sldBrilho_->setRange(-100.0, 100.0, 1.0);
     sldBrilho_->setValue(0.0, juce::dontSendNotification);
+    sldBrilho_->setDoubleClickReturnValue(true, 0.0);
     sldBrilho_->onValueChange = [this] {
         if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
             fila_[indiceSelecionado_].brilho = static_cast<float>(sldBrilho_->getValue() / 100.0);
@@ -773,6 +774,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     sldContraste_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sldContraste_->setRange(-100.0, 100.0, 1.0);
     sldContraste_->setValue(0.0, juce::dontSendNotification);
+    sldContraste_->setDoubleClickReturnValue(true, 0.0);
     sldContraste_->onValueChange = [this] {
         if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
             fila_[indiceSelecionado_].contraste = static_cast<float>(sldContraste_->getValue() / 100.0);
@@ -788,6 +790,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     sldSaturacao_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sldSaturacao_->setRange(0.0, 200.0, 1.0);
     sldSaturacao_->setValue(100.0, juce::dontSendNotification);
+    sldSaturacao_->setDoubleClickReturnValue(true, 100.0);
     sldSaturacao_->onValueChange = [this] {
         if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
             fila_[indiceSelecionado_].saturacao = static_cast<float>(sldSaturacao_->getValue() / 100.0);
@@ -803,6 +806,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     sldNitidez_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sldNitidez_->setRange(0.0, 100.0, 1.0);
     sldNitidez_->setValue(0.0, juce::dontSendNotification);
+    sldNitidez_->setDoubleClickReturnValue(true, 0.0);
     sldNitidez_->onValueChange = [this] {
         if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
             fila_[indiceSelecionado_].nitidez = static_cast<float>(sldNitidez_->getValue() / 100.0);
@@ -818,6 +822,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     sldTemperatura_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sldTemperatura_->setRange(-100.0, 100.0, 1.0);
     sldTemperatura_->setValue(0.0, juce::dontSendNotification);
+    sldTemperatura_->setDoubleClickReturnValue(true, 0.0);
     sldTemperatura_->onValueChange = [this] {
         if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
             fila_[indiceSelecionado_].temperaturaCor = static_cast<float>(sldTemperatura_->getValue() / 100.0);

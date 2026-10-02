@@ -345,6 +345,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sliderTamanho_->setRange(50.0, 200.0, 1.0);
     sliderTamanho_->setValue(100.0, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, 100.0);
     sliderTamanho_->setTextValueSuffix("%");
     sliderTamanho_->setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
     sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));

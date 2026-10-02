@@ -364,6 +364,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     sldOpacidade_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sldOpacidade_->setRange(0.0, 100.0, 1.0);
     sldOpacidade_->setValue(cfg_.opacidade * 100.0, juce::dontSendNotification);
+    sldOpacidade_->setDoubleClickReturnValue(true, ConfiguracaoWatermark{}.opacidade * 100.0);
     sldOpacidade_->setTextValueSuffix("%");
     sldOpacidade_->onValueChange = [this] {
         cfg_.opacidade = (float)(sldOpacidade_->getValue() / 100.0);
@@ -381,6 +382,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     sldEscala_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sldEscala_->setRange(5.0, 80.0, 1.0);
     sldEscala_->setValue(cfg_.escala * 100.0, juce::dontSendNotification);
+    sldEscala_->setDoubleClickReturnValue(true, ConfiguracaoWatermark{}.escala * 100.0);
     sldEscala_->setTextValueSuffix("%");
     sldEscala_->onValueChange = [this] {
         cfg_.escala = (float)(sldEscala_->getValue() / 100.0);
@@ -398,6 +400,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     sldMargem_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sldMargem_->setRange(0.0, 120.0, 1.0);
     sldMargem_->setValue(cfg_.margem, juce::dontSendNotification);
+    sldMargem_->setDoubleClickReturnValue(true, ConfiguracaoWatermark{}.margem);
     sldMargem_->setTextValueSuffix(" px");
     sldMargem_->onValueChange = [this] {
         cfg_.margem = (float)sldMargem_->getValue();

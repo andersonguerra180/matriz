@@ -463,6 +463,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sliderTamanho_->setRange(0.0, 1.0, 0.01);
     sliderTamanho_->setValue(0.24, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, 0.24);
     if (mosaico_) mosaico_->definirTamanhoContinuo(0.24);
     sliderTamanho_->setColour(juce::Slider::trackColourId, tema().borda);
     sliderTamanho_->setColour(juce::Slider::thumbColourId, tema().acento);
