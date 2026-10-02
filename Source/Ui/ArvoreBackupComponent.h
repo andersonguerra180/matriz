@@ -21,6 +21,9 @@ public:
     void aoItemAlterado(const EventoItemAlterado& e) override;
 
     void recarregar();
+    // Ao entrar na aba STRUCTURE com arquivo(s) selecionados no grid: seleciona a(s) pasta(s) onde ele(s) está(ão)
+    // e centraliza o mapa nela(s). Fica pendente até o canvas ter tamanho.
+    void definirFocoNosItens(std::set<std::string> itemIds);
     void moverItemParaPasta(const std::string& itemId, const std::string& novaPasta);
     void selecionarERenomearPasta(const std::string& pastaId);
 
@@ -157,6 +160,9 @@ private:
     bool enquadrarPendente_ = true;
     std::string mapaEnquadradoId_;
     void tentarEnquadrar();
+    bool aplicarFocoPendente();
+    std::set<std::string> itensEmFoco_;
+    bool focoPendente_ = false;
 
     // Auto-organização por pasta (menu de contexto da pasta).
     bool pastaPodeAutoOrganizar(const std::string& pastaId);

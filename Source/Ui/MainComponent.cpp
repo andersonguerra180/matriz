@@ -1908,6 +1908,8 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             treeWorkspace_->setVisible(true);
             treeWorkspace_->recarregar();
         }
+        // Arquivo(s) selecionado(s) no grid: o Folder Map abre com a pasta deles selecionada e centralizada.
+        if (catalogWorkspace_) treeWorkspace_->definirFocoNosItens(catalogWorkspace_->itensSelecionados());
     } else {
         if (treeWorkspace_) treeWorkspace_->setVisible(false);
         if (!analyticsWorkspace_) {
