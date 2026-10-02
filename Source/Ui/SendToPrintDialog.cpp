@@ -1055,6 +1055,46 @@ bool SendToPrintDialog::keyPressed(const juce::KeyPress& key) {
 // ListBoxModel (Coluna 1)
 // ==============================================================================
 
+namespace {
+// Botão "×" (remover da lista) no canto direito da linha 1 do card. Mesmo cálculo no paint e no clique.
+juce::Rectangle<int> retanguloRemoverFila(int largura, int altura) {
+    auto content = juce::Rectangle<int>(0, 0, largura, altura).reduced(2).reduced(8, 7);
+    auto header = content.removeFromTop(18);
+    return header.removeFromRight(18);
+}
+}  // namespace
+
+void SendToPrintDialog::listBoxItemClicked(int row, const juce::MouseEvent& e) {
+    if (row < 0 || row >= static_cast<int>(fila_.size()) || e.eventComponent == nullptr) return;
+    auto b = e.eventComponent->getLocalBounds();
+    if (retanguloRemoverFila(b.getWidth(), b.getHeight()).expanded(2).contains(e.getPosition()))
+        removerDaFila(row);
+}
+
+void SendToPrintDialog::deleteKeyPressed(int lastRowSelected) {
+    removerDaFila(lastRowSelected);
+}
+
+void SendToPrintDialog::removerDaFila(int indice) {
+    if (exportando_ || indice < 0 || indice >= static_cast<int>(fila_.size())) return;
+
+    projeto_.definirMarcacao(ProjetoAberto::TipoMarcacao::Print, {fila_[static_cast<size_t>(indice)].id}, false);
+    fila_.erase(fila_.begin() + indice);
+
+    int fotosValidas = 0;
+    for (const auto& it : fila_) if (it.valido) ++fotosValidas;
+    lblFilaTitulo_->setText(matriz::i18n::t("print.fila_titulo").replace("{n}", juce::String(static_cast<int>(fila_.size()))),
+                            juce::dontSendNotification);
+    btnExportar_->setButtonText(matriz::i18n::t("print.btn_exportar").replace("{n}", juce::String(fotosValidas)));
+    btnExportar_->setEnabled(fotosValidas > 0);
+
+    listaFila_->updateContent();
+    const int novo = fila_.empty() ? -1 : std::min(indice, static_cast<int>(fila_.size()) - 1);
+    selecionarFoto(novo);
+    if (novo >= 0) listaFila_->selectRow(novo);
+    listaFila_->repaint();
+}
+
 int SendToPrintDialog::getNumRows() {
     return static_cast<int>(fila_.size());
 }
@@ -1108,6 +1148,14 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
     int pIdx = std::clamp(item.papelIndex, 0, static_cast<int>(papeisPadrao().size()) - 1);
     const auto& papelItem = papeisPadrao()[pIdx];
     juce::String papelTag = papelItem.id.equalsIgnoreCase("a4") ? "A4" : (papelItem.id + " cm");
+
+    {
+        auto xr = retanguloRemoverFila(width, height);
+        g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+        g.setColour(tk.textoTerciario);
+        g.drawText(juce::String::charToString(0x00D7), xr, juce::Justification::centred);
+        headerRow.removeFromRight(xr.getWidth() + 2);
+    }
 
     g.setFont(juce::Font(juce::FontOptions(11.5f)));
     g.setColour(tk.textoSecundario);
@@ -1287,11 +1335,14 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
 
     juce::Component::SafePointer<SendToPrintDialog> safeThis(this);
 
-    poolCarregamento_.addJob([safeThis, total, isPt]() {
-        for (int i = 0; i < total; ++i) {
+    poolCarregamento_.addJob([safeThis, isPt]() {
+        // Pega sempre o PRÓXIMO item ainda não carregado (por id, não por índice):
+        // o usuário pode remover itens da lista enquanto as fotos carregam.
+        for (;;) {
             if (!safeThis) return;
 
             juce::File f;
+            std::string idItem;
             bool precisaCarregar = false;
 
             {
@@ -1301,15 +1352,25 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
                 // thread à força ("!! killing thread by force !!").
                 const juce::MessageManagerLock mml(juce::ThreadPoolJob::getCurrentThreadPoolJob());
                 if (!mml.lockWasGained() || !safeThis) return;
-                if (i < static_cast<int>(safeThis->fila_.size())) {
-                    if (!safeThis->fila_[i].carregado && safeThis->fila_[i].arquivo.existsAsFile()) {
-                        f = safeThis->fila_[i].arquivo;
+                for (auto& pendente : safeThis->fila_) {
+                    if (!pendente.carregado && !pendente.carregando && pendente.arquivo.existsAsFile()) {
+                        pendente.carregando = true;
+                        f = pendente.arquivo;
+                        idItem = pendente.id;
                         precisaCarregar = true;
+                        break;
                     }
                 }
             }
 
-            if (!precisaCarregar || !f.existsAsFile()) continue;
+            if (!precisaCarregar) {
+                juce::MessageManager::callAsync([safeThis] {
+                    if (!safeThis) return;
+                    safeThis->barraProgresso_->setVisible(false);
+                    safeThis->lblStatusProgresso_->setVisible(false);
+                });
+                return;
+            }
 
             auto res = matriz::imagem::lerImagem(f);
             // O arquivo vem sem a rotação EXIF aplicada (a impressão final aplica, ~linha 438):
@@ -1351,12 +1412,17 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
 
             const int fotoW = bufFoto.largura, fotoH = bufFoto.altura;
             const bool fotoOk = res.sucesso && bufFoto.valido();
-            juce::MessageManager::callAsync([safeThis, i, res, tImg, pImg, prevBuf, total, f, isPt, fotoW, fotoH, fotoOk]() {
+            juce::MessageManager::callAsync([safeThis, idItem, res, tImg, pImg, prevBuf, f, isPt, fotoW, fotoH, fotoOk]() {
                 if (!safeThis) return;
-                if (i >= static_cast<int>(safeThis->fila_.size())) return;
+                int i = -1;
+                for (size_t k = 0; k < safeThis->fila_.size(); ++k)
+                    if (safeThis->fila_[k].id == idItem) { i = static_cast<int>(k); break; }
+                if (i < 0) return;  // removido da lista enquanto carregava
+                const int total = static_cast<int>(safeThis->fila_.size());
 
-                auto& it = safeThis->fila_[i];
+                auto& it = safeThis->fila_[static_cast<size_t>(i)];
                 it.carregado = true;
+                it.carregando = false;
                 if (fotoOk) {
                     it.valido = true;
                     it.larguraOriginal = fotoW;
@@ -1370,9 +1436,11 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
                     it.motivoInvalido = res.erro;
                 }
 
-                safeThis->progressoValor_ = static_cast<double>(i + 1) / total;
+                int carregados = 0;
+                for (const auto& ic : safeThis->fila_) if (ic.carregado) ++carregados;
+                safeThis->progressoValor_ = static_cast<double>(carregados) / std::max(1, total);
                 juce::String statusMsg = (isPt ? juce::String::fromUTF8("Carregando foto ") : "Loading photo ")
-                    + juce::String(i + 1) + " / " + juce::String(total) + " (" + f.getFileName() + ")";
+                    + juce::String(carregados) + " / " + juce::String(total) + " (" + f.getFileName() + ")";
                 safeThis->lblStatusProgresso_->setText(statusMsg, juce::dontSendNotification);
 
                 if (safeThis->indiceSelecionado_ == i) {
@@ -1390,10 +1458,6 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
                     matriz::i18n::t("print.btn_exportar").replace("{n}", juce::String(fotosValidas)));
                 safeThis->btnExportar_->setEnabled(fotosValidas > 0);
 
-                if (i == total - 1) {
-                    safeThis->barraProgresso_->setVisible(false);
-                    safeThis->lblStatusProgresso_->setVisible(false);
-                }
             });
         }
     });
