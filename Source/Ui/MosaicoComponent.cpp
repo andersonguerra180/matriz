@@ -1,6 +1,7 @@
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "LogosTipoArquivo.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -2160,13 +2161,9 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
                 if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
                 if (logoFile.isNotEmpty()) {
-                    juce::File assetsFolder = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
-                    juce::File logoImgFile = assetsFolder.getChildFile(logoFile);
-                    if (logoImgFile.existsAsFile()) {
-                        imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(logoImgFile), maxLargura, maxAltura);
-                        if (imagem.isValid()) {
-                            temCaminho = true;
-                        }
+                    imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
+                    if (imagem.isValid()) {
+                        temCaminho = true;
                     }
                 }
             }

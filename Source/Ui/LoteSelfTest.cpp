@@ -40,6 +40,7 @@
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "LogosTipoArquivo.h"
 #include "../Analytics/AssetGeolocation.h"
 
 namespace matriz::ui {
@@ -3449,9 +3450,23 @@ int rodarLoteSelfTest() {
                    juce::File::getSpecialLocation(juce::File::userHomeDirectory),
                "no path: home folder");
         base.deleteRecursively();
-        checar(matriz::ingest::obterLogoParaExtensao("cdr") == "corel.jpeg" &&
-                   juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets/corel.jpeg").existsAsFile(),
-               "CorelDRAW .cdr files get the Corel icon");
+        checar(matriz::ingest::obterLogoParaExtensao("cdr") == "corel.jpeg" && carregarLogoDeTipo("corel.jpeg").isValid(),
+               "CorelDRAW .cdr files get the Corel icon (embedded in the binary)");
+        // Todo logo que o app pode pedir está embutido; só faltam os que ainda não foram fornecidos (ícone genérico).
+        {
+            juce::StringArray semLogo;
+            for (const char* ext : {"als", "prproj", "aep", "ai", "indd", "ptx", "rpp", "rxdoc", "fcpxml", "json", "bkrgs",
+                                    "logicx", "lrcat", "xlsx", "psd", "cdr", "docx", "pdf", "pd"}) {
+                juce::String nome = matriz::ingest::obterLogoParaExtensao(ext);
+                if (nome.isEmpty() && juce::String(ext) == "pd") nome = "puredata.png";
+                if (nome.isNotEmpty() && !carregarLogoDeTipo(nome).isValid()) semLogo.addIfNotAlreadyThere(nome);
+            }
+            bool soOsEsperados = true;
+            for (const auto& n : semLogo)
+                if (n != "adobeillustrator.png" && n != "capcut.png" && n != "finalcut.png") soOsEsperados = false;
+            checar(soOsEsperados, "every file-type logo is embedded except the ones not supplied yet (missing: " +
+                                      semLogo.joinIntoString(", ") + ")");
+        }
     }
     {
         juce::File raizA = juce::File::getSpecialLocation(juce::File::tempDirectory)
