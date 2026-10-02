@@ -738,6 +738,18 @@ int executarVerificacao(const juce::File& baseDir) {
             for (const auto& regArq : leitura.pacote.arquivos) {
                 juce::File midiaOrig = pastaPacote.getChildFile("Media").getChildFile(juce::String::fromUTF8(regArq.caminho.c_str()));
                 if (!midiaOrig.existsAsFile()) {
+                    juce::File pai = midiaOrig.getParentDirectory();
+                    if (pai.isDirectory()) {
+                        std::string chaveAlvo = matriz::model::nomes::chave(midiaOrig.getFileName().toStdString());
+                        for (const auto& entry : pai.findChildFiles(juce::File::findFiles, false)) {
+                            if (matriz::model::nomes::chave(entry.getFileName().toStdString()) == chaveAlvo) {
+                                midiaOrig = entry;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!midiaOrig.existsAsFile()) {
                     logMsg("  [INTAKE_AVISO] Arquivo de midia nao encontrado no pacote: " + midiaOrig.getFullPathName().toStdString());
                     continue;
                 }
