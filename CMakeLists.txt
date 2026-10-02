@@ -275,6 +275,12 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
+    Source/Vault/Resolucao.cpp
+    Source/Consolidacao/PacoteCollection.cpp
+    Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/Mascara.cpp
+    Source/Analytics/AssetGeolocation.cpp
     Source/Preservation/Preservation.cpp)
 
 if(APPLE)
