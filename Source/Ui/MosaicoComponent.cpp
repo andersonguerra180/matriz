@@ -695,7 +695,6 @@ std::set<std::string> MosaicoComponent::itensSelecionados() const {
 }
 
 int MosaicoComponent::totalSelecionadosOcultos() const {
-    if (incluirOcultosNaSelecao_) return 0;
     int ocultos = 0;
     for (const auto& id : selecionados_)
         if (!idsVisiveis_.count(id)) ++ocultos;
@@ -705,6 +704,7 @@ int MosaicoComponent::totalSelecionadosOcultos() const {
 void MosaicoComponent::definirIncluirOcultosNaSelecao(bool incluir) {
     if (incluirOcultosNaSelecao_ == incluir) return;
     incluirOcultosNaSelecao_ = incluir;
+    if (!incluir) aplicarFiltrosEOrdenacao();  // desligou: poda agora o que o filtro esconde
     if (aoMudarSelecao) aoMudarSelecao();
 }
 
@@ -1196,14 +1196,18 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         indices.insert(indices.end(), ordenados.begin(), ordenados.end());
     }
 
-    std::set<std::string> idsVisiveis;
-    for (auto& item : itensFiltrados_) idsVisiveis.insert(item.id);
-    for (auto it = selecionados_.begin(); it != selecionados_.end();) {
-        if (!idsVisiveis.count(*it)) it = selecionados_.erase(it);
-        else ++it;
+    // A seleção é podada pelo filtro INTEIRO (o que sumiu da grade sai da seleção). Com o override
+    // "Include Hidden" ligado a seleção é mantida mesmo escondida pelo filtro.
+    if (!incluirOcultosNaSelecao_) {
+        std::set<std::string> idsVisiveis;
+        for (auto& item : itensFiltrados_) idsVisiveis.insert(item.id);
+        for (auto it = selecionados_.begin(); it != selecionados_.end();) {
+            if (!idsVisiveis.count(*it)) it = selecionados_.erase(it);
+            else ++it;
+        }
+        if (!selecionadoId_.empty() && !idsVisiveis.count(selecionadoId_))
+            selecionadoId_.clear();
     }
-    if (!selecionadoId_.empty() && !idsVisiveis.count(selecionadoId_))
-        selecionadoId_.clear();
 
     // Paginação da LISTA: fatia depois de ordenar e de podar a seleção pelo
     // filtro INTEIRO (a seleção sobrevive à troca de página).

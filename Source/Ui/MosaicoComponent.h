@@ -556,7 +556,7 @@ private:
     bool destacarEditados_ = false;
     bool ocultarEditados_ = false;
     bool mostrarOcultos_ = true;
-    bool incluirOcultosNaSelecao_ = true;
+    bool incluirOcultosNaSelecao_ = false;  // padrão: a seleção é podada pelo filtro (comportamento de sempre)
     std::unordered_set<std::string> idsVisiveis_;  // ids que passam pelos filtros (antes da paginação da lista)
     bool ocultarNaoSelecionados_ = false;
     int celulaLargura_ = 168;
