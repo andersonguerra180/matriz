@@ -18,6 +18,11 @@
 #include "ModalMitigacao.h"
 #include "ProjectLoadingModalDialog.h"
 
+#if JUCE_WINDOWS
+#include <windows.h>
+#include <dwmapi.h>
+#endif
+
 namespace matriz::ui {
 
 namespace {
@@ -110,6 +115,18 @@ void MainWindow::closeButtonPressed() { juce::JUCEApplication::getInstance()->sy
 
 void MainWindow::lookAndFeelChanged() {
     setBackgroundColour(tema().fundo);
+#if JUCE_WINDOWS
+    if (auto* peer = getPeer()) {
+        HWND hwnd = (HWND) peer->getNativeHandle();
+        if (hwnd) {
+            BOOL dark = TRUE;
+            ::DwmSetWindowAttribute(hwnd, 20 /* DWMWA_USE_IMMERSIVE_DARK_MODE */, &dark, sizeof(dark));
+            auto fundo = tema().fundo;
+            COLORREF captionColor = RGB(fundo.getRed(), fundo.getGreen(), fundo.getBlue());
+            ::DwmSetWindowAttribute(hwnd, 35 /* DWMWA_CAPTION_COLOR */, &captionColor, sizeof(captionColor));
+        }
+    }
+#endif
     if (conteudo_) {
         conteudo_->sendLookAndFeelChange();
         conteudo_->repaint();

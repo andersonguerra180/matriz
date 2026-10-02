@@ -274,7 +274,8 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Model/ProjectLog.cpp
     Source/Vault/Volume.cpp
     Source/Vault/SmartHealth.cpp
-    Source/Vault/DeviceUsageLog.cpp)
+    Source/Vault/DeviceUsageLog.cpp
+    Source/Preservation/Preservation.cpp)
 
 if(APPLE)
     target_sources(matriz_interop_selftest PRIVATE Source/Vault/DiskIdentity_mac.mm)
@@ -298,6 +299,7 @@ target_link_libraries(matriz_interop_selftest PRIVATE
     yaml-cpp::yaml-cpp
     Exiv2::exiv2lib
     juce::juce_core
+    juce::juce_cryptography
     juce::juce_data_structures
     juce::juce_audio_formats
     juce::juce_graphics

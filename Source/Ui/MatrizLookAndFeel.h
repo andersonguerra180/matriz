@@ -25,6 +25,8 @@ public:
     void drawScrollbar(juce::Graphics&, juce::ScrollBar&, int x, int y, int width, int height,
                         bool isScrollbarVertical, int thumbStartPosition, int thumbSize,
                         bool isMouseOver, bool isMouseDown) override;
+
+    juce::Typeface::Ptr getTypefaceForFont(const juce::Font& font) override;
 };
 
 } // namespace matriz::ui

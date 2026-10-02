@@ -60,4 +60,20 @@ void MatrizLookAndFeel::drawScrollbar(juce::Graphics& g, juce::ScrollBar&, int x
     g.drawEllipse(knob.reduced(0.5f), 1.0f);
 }
 
+juce::Typeface::Ptr MatrizLookAndFeel::getTypefaceForFont(const juce::Font& font) {
+#if JUCE_WINDOWS
+    // Inter font on Windows as default typography, fallback to Segoe UI
+    juce::Font f(font);
+    f.setTypefaceName("Inter");
+    auto tf = LookAndFeel_V4::getTypefaceForFont(f);
+    if (tf != nullptr && tf->getName().containsIgnoreCase("Inter")) {
+        return tf;
+    }
+    f.setTypefaceName("Segoe UI");
+    return LookAndFeel_V4::getTypefaceForFont(f);
+#else
+    return LookAndFeel_V4::getTypefaceForFont(font);
+#endif
+}
+
 } // namespace matriz::ui
