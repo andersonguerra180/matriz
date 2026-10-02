@@ -2,6 +2,7 @@
 #include "../Audio/DispositivoAudioApp.h"
 #include "../Vault/DiskIdentity.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "LogosTipoArquivo.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -24,10 +25,6 @@ static int lerOrientacaoExif(const juce::File& arquivo) {
         if (pos != ed.end()) return static_cast<int>(pos->toInt64());
     } catch (...) {}
     return 1;
-}
-
-inline juce::File obterPastaAssets() {
-    return juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
 }
 
 static juce::Image rotacionarConformeExif(const juce::Image& src, int orient) {
@@ -290,10 +287,7 @@ void PreviewComponent::construirParaItem() {
             if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
             if (logoFile.isNotEmpty()) {
-                juce::File logoImgFile = obterPastaAssets().getChildFile(logoFile);
-                if (logoImgFile.existsAsFile()) {
-                    imagemPrincipal_ = juce::ImageFileFormat::loadFrom(logoImgFile);
-                }
+                imagemPrincipal_ = matriz::ui::carregarLogoDeTipo(logoFile);
             }
             break;
         }

@@ -18,6 +18,7 @@
 #include "HierarquiaEditorComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "LogosTipoArquivo.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
 #include <algorithm>
@@ -1069,12 +1070,8 @@ public:
                     juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
                     if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
                     if (logoFile.isNotEmpty()) {
-                        juce::File assetsFolder = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
-                        juce::File logoImgFile = assetsFolder.getChildFile(logoFile);
-                        if (logoImgFile.existsAsFile()) {
-                            img = juce::ImageFileFormat::loadFrom(logoImgFile);
-                            if (img.isValid()) temCaminho = true;
-                        }
+                        img = matriz::ui::carregarLogoDeTipo(logoFile);
+                        if (img.isValid()) temCaminho = true;
                     }
                 }
             }

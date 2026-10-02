@@ -2,6 +2,7 @@
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "LogosTipoArquivo.h"
 
 #include "../I18n/Strings.h"
 #include "Tokens.h"
@@ -298,10 +299,6 @@ void ArvoreComponent::navegarPraCima() {
     notificarSelecao();
 }
 
-inline juce::File obterPastaAssets() {
-    return juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
-}
-
 juce::Image ArvoreComponent::miniaturaParaItem(const std::string& itemId) {
     auto it = cacheMiniaturas_.find(itemId);
     if (it != cacheMiniaturas_.end()) return it->second;
@@ -326,12 +323,9 @@ juce::Image ArvoreComponent::miniaturaParaItem(const std::string& itemId) {
             if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
             if (logoFile.isNotEmpty()) {
-                juce::File logoImgFile = obterPastaAssets().getChildFile(logoFile);
-                if (logoImgFile.existsAsFile()) {
-                    img = juce::ImageFileFormat::loadFrom(logoImgFile);
-                    if (img.isValid()) {
-                        img = img.rescaled(64, 64, juce::Graphics::mediumResamplingQuality);
-                    }
+                img = matriz::ui::carregarLogoDeTipo(logoFile);
+                if (img.isValid()) {
+                    img = img.rescaled(64, 64, juce::Graphics::mediumResamplingQuality);
                 }
             }
         }

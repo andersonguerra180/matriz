@@ -84,7 +84,23 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png)
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png
+        # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
+        "Assets/ableton live.png"
+        "Assets/adobeaftereffects.png"
+        "Assets/adobepremiere.png"
+        "Assets/corel.jpeg"
+        "Assets/excel.jpeg"
+        "Assets/groovesculptor.png"
+        "Assets/indesign.png"
+        "Assets/izotope.png"
+        "Assets/logic.png"
+        "Assets/pdf.jpeg"
+        "Assets/photoshop.jpeg"
+        "Assets/pro tools.png"
+        "Assets/puredata.png"
+        "Assets/reaper.png"
+        "Assets/word.jpeg")
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
@@ -311,6 +327,7 @@ target_sources(matriz PRIVATE
     Source/Ui/UiSelfTest.cpp
     Source/Ui/LoteSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
+    Source/Ui/LogosTipoArquivo.cpp
     Source/Ui/ModalLoopSelfTest.cpp
     Source/Ui/OverlayComponent.cpp
     Source/Ui/AudioWorkspace.cpp
