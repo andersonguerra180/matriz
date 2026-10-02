@@ -1129,8 +1129,8 @@ void MainComponent::reconstruirLayoutProjeto() {
         // não só as funções de ação, mas também o que acontece depois delas.
         auto idsSelecionados = [this] {
             if (!mosaico_) return std::vector<std::string>{};
-            return std::vector<std::string>(mosaico_->itensSelecionados().begin(),
-                                             mosaico_->itensSelecionados().end());
+            const auto sel = mosaico_->itensSelecionados();
+            return std::vector<std::string>(sel.begin(), sel.end());
         };
         barraAcoesFicha_->aoCategorizar = [this, idsSelecionados] {
             matriz::ui::acoes::mudarTipo(*projetoAberto_, idsSelecionados(), ganchosDeAcao());
@@ -2755,7 +2755,8 @@ void MainComponent::selecionarItem(const std::string& itemId) {
     // Seleção múltipla (§12.2, item 8): 2+ itens marcados na grade entra em
     // modo lote na ficha, não só o último clicado (itemId, a âncora).
     if (mosaico_ && mosaico_->itensSelecionados().size() > 1) {
-        std::vector<std::string> ids(mosaico_->itensSelecionados().begin(), mosaico_->itensSelecionados().end());
+        const auto sel = mosaico_->itensSelecionados();
+        std::vector<std::string> ids(sel.begin(), sel.end());
         fichaPanel_->mostrarSelecao(ids);
     } else {
         fichaPanel_->mostrarItem(itemId);

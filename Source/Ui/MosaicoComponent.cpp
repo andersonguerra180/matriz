@@ -686,6 +686,28 @@ void MosaicoComponent::definirOrdenacao(Ordenacao ordenacao) {
     aplicarFiltrosEOrdenacao();
 }
 
+std::set<std::string> MosaicoComponent::itensSelecionados() const {
+    if (incluirOcultosNaSelecao_) return selecionados_;
+    std::set<std::string> efetiva;
+    for (const auto& id : selecionados_)
+        if (idsVisiveis_.count(id)) efetiva.insert(id);
+    return efetiva;
+}
+
+int MosaicoComponent::totalSelecionadosOcultos() const {
+    if (incluirOcultosNaSelecao_) return 0;
+    int ocultos = 0;
+    for (const auto& id : selecionados_)
+        if (!idsVisiveis_.count(id)) ++ocultos;
+    return ocultos;
+}
+
+void MosaicoComponent::definirIncluirOcultosNaSelecao(bool incluir) {
+    if (incluirOcultosNaSelecao_ == incluir) return;
+    incluirOcultosNaSelecao_ = incluir;
+    if (aoMudarSelecao) aoMudarSelecao();
+}
+
 void MosaicoComponent::definirFiltroItens(std::optional<std::set<std::string>> itemIds) {
     filtroItens_ = std::move(itemIds);
     aplicarFiltrosEOrdenacao();
@@ -1106,6 +1128,11 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         }
         indices = std::move(saida);
     }
+
+    // Quem está visível pelos filtros (a paginação da lista, mais abaixo, não conta): base da seleção efetiva.
+    idsVisiveis_.clear();
+    idsVisiveis_.reserve(indices.size());
+    for (uint32_t pos : indices) idsVisiveis_.insert(itensTodos_[pos].id);
 
     auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
         // Ordenação escolhida clicando no cabeçalho da LISTA (igual ao INTAKE);

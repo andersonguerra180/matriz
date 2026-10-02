@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <unordered_set>
 #include <unordered_map>
 
 #include "../Ingest/LeituraTecnica.h"
@@ -203,7 +204,14 @@ public:
     // Cmd/Ctrl). selecionadoId_ continua sendo a âncora/último clicado —
     // é o que a ficha lateral mostra hoje; edição em lote de verdade
     // (§7.2) é trabalho futuro, fora do ponto de parada desta etapa.
-    const std::set<std::string>& itensSelecionados() const { return selecionados_; }
+    // Seleção EFETIVA (a que as ações em lote usam). Com incluirOcultosNaSelecao_ ligado (padrão) é a seleção inteira;
+    // desligado (Catalog), só o que passa pelos filtros atuais, ou seja, o que está visível na grade — um item marcado
+    // e depois escondido por um filtro não entra numa edição em lote sem o usuário ver.
+    std::set<std::string> itensSelecionados() const;
+    const std::set<std::string>& itensSelecionadosBrutos() const { return selecionados_; }
+    int totalSelecionadosOcultos() const;  // marcados mas escondidos pelos filtros
+    void definirIncluirOcultosNaSelecao(bool incluir);
+    bool incluirOcultosNaSelecao() const { return incluirOcultosNaSelecao_; }
 
     // Ações da barra de seleção (BarraSelecaoComponent). "Selecionar todos"
     // pega o que está VISÍVEL — se há filtro ou busca ativa, selecionar o
@@ -548,6 +556,8 @@ private:
     bool destacarEditados_ = false;
     bool ocultarEditados_ = false;
     bool mostrarOcultos_ = true;
+    bool incluirOcultosNaSelecao_ = true;
+    std::unordered_set<std::string> idsVisiveis_;  // ids que passam pelos filtros (antes da paginação da lista)
     bool ocultarNaoSelecionados_ = false;
     int celulaLargura_ = 168;
     int celulaAltura_ = 148;

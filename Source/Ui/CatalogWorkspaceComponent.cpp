@@ -215,6 +215,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     EventBus::obterInstancia().registrarListener(&escutaEventos_);
     mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
     mosaico_->definirMostrarOcultos(false);  // CONTENT = Hidden só aparece escolhendo Hidden em CONTENT TYPE
+    mosaico_->definirIncluirOcultosNaSelecao(false);  // seleção/lote só no que está visível (override: btnIncluirOcultosSelecao_)
     // Item 9: METADATA não tem Vault/pasta pra soltar arquivo arrastado —
     // clicar numa miniatura e arrastar deve criar seleção em laço, não
     // tentar um arrasto de arquivo sem destino nenhum.
@@ -228,6 +229,16 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             reaplicandoFiltrosAposSnapshot_ = true;
             aplicarFiltrosAdicionais();
             reaplicandoFiltrosAposSnapshot_ = false;
+        }
+        // Um filtro/busca escondeu itens que estavam selecionados: a seleção efetiva mudou sem clique. A ficha
+        // (edição em lote) e o rótulo "Selected" precisam refletir isso, senão o lote ainda mira o que sumiu da grade.
+        {
+            auto efetiva = mosaico_->itensSelecionados();
+            if (efetiva != selecaoEfetivaVista_) {
+                selecaoEfetivaVista_ = std::move(efetiva);
+                selecionarItem({});
+                atualizarRotuloSelecionados();
+            }
         }
         // Snapshot completo novo (ingest/rename/remoção/reload): reconta na
         // hora em vez de esperar o timer de 60 s.
@@ -260,18 +271,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         // concorrência no pool a cada seleção, piorando conforme o acervo
         // cresce; as outras contagens continuam atualizadas normalmente via
         // aoMudar/aoAplicarEmLote (edição real) e o timer de 60s.
-        for (size_t i = 0; i < categorias_.size(); ++i) {
-            if (categorias_[i].chave == "selected") {
-                int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
-                categorias_[i].contagem = selCount;
-                if (i < botoesCategorias_.size()) {
-                    juce::String label = categorias_[i].rotulo;
-                    if (selCount > 0) label += " (" + juce::String(selCount) + ")";
-                    botoesCategorias_[i]->setButtonText(label);
-                }
-                break;
-            }
-        }
+        atualizarRotuloSelecionados();
     };
     mosaico_->aoLimparMetadados = [this](const std::vector<std::string>& itemIds) {
         if (itemIds.empty()) return;
@@ -558,6 +558,23 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnMostrarRecentes_);
 
+    // Override da seleção restrita ao visível: ON inclui no lote também o que um filtro escondeu.
+    btnIncluirOcultosSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.incluir_ocultos_off"));
+    btnIncluirOcultosSelecao_->setLookAndFeel(&sidebarButtonLf_);
+    btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnIncluirOcultosSelecao_->setTooltip(matriz::i18n::t("catwork.incluir_ocultos_tooltip"));
+    btnIncluirOcultosSelecao_->onClick = [this] {
+        incluirOcultosNaSelecao_ = !incluirOcultosNaSelecao_;
+        btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tema().acento : tema().painelAlt);
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tema().textoSobreAcento : tema().textoSecundario);
+        if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
+        if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
+        atualizarRotuloSelecionados();
+    };
+    addAndMakeVisible(*btnIncluirOcultosSelecao_);
+
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -686,6 +703,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnOcultarEditados_) btnOcultarEditados_->setLookAndFeel(nullptr);
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
+    if (btnIncluirOcultosSelecao_) btnIncluirOcultosSelecao_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
 }
@@ -737,6 +755,11 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tk.acento : tk.painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tk.textoSobreAcento : tk.textoSecundario);
         btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+    }
+    if (btnIncluirOcultosSelecao_) {
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tk.acento : tk.painelAlt);
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tk.textoSobreAcento : tk.textoSecundario);
+        btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
     }
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tk.acento : tk.painelAlt);
@@ -1422,6 +1445,22 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     });
 }
 
+void CatalogWorkspaceComponent::atualizarRotuloSelecionados() {
+    for (size_t i = 0; i < categorias_.size(); ++i) {
+        if (categorias_[i].chave != "selected") continue;
+        const int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
+        const int ocultos = mosaico_ ? mosaico_->totalSelecionadosOcultos() : 0;
+        categorias_[i].contagem = selCount;
+        if (i < botoesCategorias_.size()) {
+            juce::String label = categorias_[i].rotulo;
+            if (selCount > 0) label += " (" + juce::String(selCount) + ")";
+            if (ocultos > 0) label += matriz::i18n::t("catwork.selecionados_ocultos").replace("{n}", juce::String(ocultos));
+            botoesCategorias_[i]->setButtonText(label);
+        }
+        break;
+    }
+}
+
 void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) {
     auto definirContagem = [&](const std::string& chave, int count) {
         for (size_t i = 0; i < categorias_.size(); ++i) {
@@ -1437,10 +1476,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         }
     };
 
-    int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
-
     definirContagem("all", res.total);
-    definirContagem("selected", selCount);
+    atualizarRotuloSelecionados();
     definirContagem("folders", res.total);
     definirContagem("vulneraveis", res.vulneraveis);
     definirContagem("merge_conflitos", res.mergeConflitos);
@@ -2089,7 +2126,7 @@ void CatalogWorkspaceComponent::resized() {
     totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
     if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
     totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (3 * (20 + 1)) + 6; // 3 toggle buttons
+    totalRequiredH += (4 * (20 + 1)) + 6; // 4 toggle buttons
     // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
     // MEDIA TYPE e DATE continuam sendo cards.
     totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
@@ -2190,6 +2227,10 @@ void CatalogWorkspaceComponent::resized() {
     }
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
+        sidebar.removeFromTop(1);
+    }
+    if (btnIncluirOcultosSelecao_) {
+        btnIncluirOcultosSelecao_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
         sidebar.removeFromTop(1);
     }
     sidebar.removeFromTop(sectionSpacing);
