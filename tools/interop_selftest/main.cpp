@@ -369,7 +369,9 @@ int executarGeracao(const juce::File& baseDir) {
     // 8. Gera Pacote de Coleção completo para teste de EXPORT -> INTAKE (export_pacote_collection)
     logMsg("GERAR [8/8]: Gerando Pacote de Colecao (export_pacote_collection)...");
     {
-        juce::File colMedia = pastaExportCol.getChildFile("Media/Shows 2026");
+        juce::File pastaMediaCol = pastaExportCol.getChildFile("Media");
+        pastaMediaCol.createDirectory();
+        juce::File colMedia = pastaMediaCol.getChildFile("Shows 2026");
         colMedia.createDirectory();
         juce::File colArq1 = colMedia.getChildFile(mainArq1.getFileName());
         colArq1.getParentDirectory().createDirectory();
@@ -694,6 +696,9 @@ int executarVerificacao(const juce::File& baseDir) {
         logMsg("CHECK [EXPORT_INTAKE]: Verificando pacote e importacao no destino...");
         juce::File pastaPacote = baseDir.getChildFile("export_pacote_collection");
         auto leitura = matriz::consolidacao::pacote::lerPacote(pastaPacote);
+        if (leitura.status != matriz::consolidacao::pacote::StatusLeitura::Ok) {
+            logMsg("  [INTAKE_ERRO] lerPacote erro: " + leitura.erro.toStdString() + " status=" + std::to_string(static_cast<int>(leitura.status)));
+        }
         check(leitura.status == matriz::consolidacao::pacote::StatusLeitura::Ok && leitura.pacote.arquivos.size() >= 2,
               "EXPORT_INTAKE_PACKAGE_PARSED",
               "Collection package parsed cleanly (" + std::to_string(leitura.pacote.arquivos.size()) + " items in manifest)");
@@ -731,7 +736,7 @@ int executarVerificacao(const juce::File& baseDir) {
             // Ingestão dos arquivos do pacote no projeto de destino
             std::vector<std::string> itensIngeridosDest;
             for (const auto& regArq : leitura.pacote.arquivos) {
-                juce::File midiaOrig(pastaPacote.getChildFile("Media").getFullPathName() + "/" + juce::String::fromUTF8(regArq.caminho.c_str()));
+                juce::File midiaOrig = pastaPacote.getChildFile("Media").getChildFile(juce::String::fromUTF8(regArq.caminho.c_str()));
                 if (!midiaOrig.existsAsFile()) {
                     logMsg("  [INTAKE_AVISO] Arquivo de midia nao encontrado no pacote: " + midiaOrig.getFullPathName().toStdString());
                     continue;
