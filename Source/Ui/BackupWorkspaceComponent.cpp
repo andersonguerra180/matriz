@@ -1908,6 +1908,7 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     aplicarEstiloBotao(*btnDone_, false);
     btnDone_->setTooltip("Return to Home screen");
     btnDone_->onClick = [this] {
+        voltarParaConfiguracao();
         if (aoConcluir) aoConcluir();
         else if (aoVoltarHome) aoVoltarHome();
     };
@@ -5112,6 +5113,28 @@ void BackupWorkspaceComponent::resized() {
     if (listPrevia_) listPrevia_->setSize(dentroPrevia.getWidth(), listPrevia_->getHeight());
 
     overlay_.setBounds(getLocalBounds());
+}
+
+void BackupWorkspaceComponent::voltarParaConfiguracao() {
+    if (estado_ != Estado::Done) return;
+    estado_ = Estado::Config;
+    executando_ = false;
+    progressoValor_ = 0.0;
+    copiadoCount_ = 0;
+    verificadoCount_ = 0;
+    falhasCount_ = 0;
+    falhasLista_.clear();
+    barraProgresso_->setVisible(false);
+    labelProgressoStatus_->setVisible(false);
+    labelProgressoStatus_->setText({}, juce::dontSendNotification);
+    labelProgressoStatus_->setColour(juce::Label::textColourId, tema().textoPrimario);
+    const bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    labelTitulo_->setText(isCatalogMode ? matriz::i18n::t("backup.titulo_catalogo") : matriz::i18n::t("backup.titulo_configuracao"),
+                          juce::dontSendNotification);
+    btnDone_->setVisible(false);
+    if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
+    recarregar();
+    resized();
 }
 
 void BackupWorkspaceComponent::recarregar() {
