@@ -2650,13 +2650,18 @@ void BackupWorkspaceComponent::exportarDublinCore() {
     }
 }
 
-juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::function<void(int, int)>& onProgress) {
+juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::function<bool(int, int)>& onProgress,
+                                                                    bool* cancelado) {
     juce::String manifest;
     int total = static_cast<int>(plano_.itens.size());
     int feito = 0;
+    if (cancelado) *cancelado = false;
 
     for (const auto& item : plano_.itens) {
-        if (onProgress) onProgress(feito, total);
+        if (onProgress && !onProgress(feito, total)) {
+            if (cancelado) *cancelado = true;
+            return manifest;
+        }
 
         juce::String hash;
         try {
@@ -2714,6 +2719,7 @@ void BackupWorkspaceComponent::exportarChecksums() {
                         t->setStatusMessage("Generating SHA-256 Checksum: " + juce::String(feito + 1) + " of " + juce::String(total) + "...");
                         t->setProgress(static_cast<double>(feito) / total);
                     }
+                    return true;
                 });
             }
         });
@@ -2740,11 +2746,26 @@ void BackupWorkspaceComponent::exportarDublinCorePara(const juce::File& destFold
     targetFile.replaceWithText(csv.toStdString());
 }
 
-void BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder) {
+bool BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder,
+                                                     const std::function<bool(int, int)>& onProgress) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
     juce::File targetFile = destFolder.getChildFile(projectName + ".sha256");
-    juce::String manifest = gerarManifestChecksumsBackup(nullptr);
-    targetFile.replaceWithText(manifest);
+    juce::File tmpFile = destFolder.getChildFile(projectName + ".sha256.tmp");
+
+    bool cancelado = false;
+    juce::String manifest = gerarManifestChecksumsBackup(onProgress, &cancelado);
+    if (cancelado) {
+        // O .sha256 do backup anterior não pode ficar parecendo o deste.
+        tmpFile.deleteFile();
+        targetFile.deleteFile();
+        return false;
+    }
+    // Temporário + rename: nunca existe um .sha256 pela metade.
+    if (!tmpFile.replaceWithText(manifest) || !tmpFile.moveFileTo(targetFile)) {
+        tmpFile.deleteFile();
+        targetFile.replaceWithText(manifest);
+    }
+    return true;
 }
 
 void BackupWorkspaceComponent::aplicarEstiloBotao(juce::TextButton& botao, bool primario) {
@@ -3626,21 +3647,47 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (!safeThis) return;
 
         // Auto-export CSV, XLS, BKM to Project/relatorios folder
+        bool checksumsPuladas = false;
         if (!resultado.cancelado) {
-            safeThis->labelProgressoStatus_->setText("Exporting CSV, XLS, Dublin Core and checksums...", juce::dontSendNotification);
-            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Exporting CSV, XLS & checksums...");
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            // Um texto por fase, com um giro do loop entre elas: antes o diálogo
+            // ficava em 100% com um único texto durante todo o export.
+            auto fase = [safeThis](const juce::String& texto) {
+                if (!safeThis) return;
+                safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            };
+            fase("Exporting CSV...");
             if (safeThis) {
                 juce::File relatoriosDir = safeThis->projeto_.projeto().pasta().getChildFile("relatorios");
                 relatoriosDir.createDirectory();
                 safeThis->exportarCsvPara(relatoriosDir);
+                fase("Exporting XLS...");
+                if (!safeThis) return;
                 safeThis->exportarXlsPara(relatoriosDir);
+                fase("Exporting Dublin Core...");
+                if (!safeThis) return;
                 safeThis->exportarDublinCorePara(relatoriosDir);
-                safeThis->exportarChecksumsPara(relatoriosDir);
+                fase("Checksums: 0 of " + juce::String(static_cast<int>(safeThis->plano_.itens.size())) + "...");
+                if (!safeThis) return;
+                const bool completo = safeThis->exportarChecksumsPara(
+                    relatoriosDir,
+                    [safeThis, cancelamento](int feito, int total) {
+                        if (!safeThis) return false;
+                        const juce::String texto = "Checksums: " + juce::String(feito) + " of " + juce::String(total) + "...";
+                        safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
+                        safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                        ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+                        return !cancelamento->pedido() && safeThis != nullptr;
+                    });
+                if (!safeThis) return;
+                checksumsPuladas = !completo;
             }
         }
 
-        // Increment and confirm revision on active project
+        // Increment and confirm revision on active project. A cópia já terminou e
+        // foi verificada: cancelar só o manifesto não invalida o backup.
         if (!resultado.cancelado) {
             safeThis->projeto_.projeto().confirmarRevisao();
         }
@@ -3664,17 +3711,19 @@ void BackupWorkspaceComponent::iniciarBackup() {
         juce::String msgFinal = resultado.cancelado ? "Backup cancelled"
                                                    : (houveFalha ? "Backup finished with " + juce::String(safeThis->falhasCount_) + " errors"
                                                                  : "Backup completed: " + juce::String(safeThis->copiadoCount_) + " assets consolidated");
+        if (checksumsPuladas && !resultado.cancelado) msgFinal << " (checksum manifest skipped)";
         ProgressoGlobal::obterInstancia().concluirTarefa("backup", msgFinal);
 
         // A linha de destaque diz o QUE aconteceu; a de baixo, os números.
         safeThis->labelProgressoStatus_->setText(
-            resultado.cancelado ? "Backup cancelled."
-                                : (houveFalha ? "Backup finished with errors."
-                                              : "Backup completed successfully."),
+            resultado.cancelado ? juce::String("Backup cancelled.")
+                                : (houveFalha ? juce::String("Backup finished with errors.")
+                                              : (checksumsPuladas ? juce::String::fromUTF8("Backup completed \xe2\x80\x94 checksum manifest skipped (cancelled)")
+                                                                  : juce::String("Backup completed successfully."))),
             juce::dontSendNotification);
         safeThis->labelProgressoStatus_->setColour(
             juce::Label::textColourId,
-            houveFalha ? tema().perigo : (resultado.cancelado ? tema().alerta : tema().estadoQcOk));
+            houveFalha ? tema().perigo : ((resultado.cancelado || checksumsPuladas) ? tema().alerta : tema().estadoQcOk));
 
         juce::String finalMsg;
         finalMsg << safeThis->copiadoCount_ << " copied   |   "
