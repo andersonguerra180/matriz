@@ -200,6 +200,13 @@ std::vector<std::string> dividirSubjects(const std::string& valor) {
     }
     return out;
 }
+
+// Entrada fixa, sempre a última do filtro SUBJECT: itens sem nenhum subject cadastrado.
+constexpr const char* kSemSubject = "__sem_subject__";
+
+bool semSubject(const ItemResumo& item) {
+    return !item.subject.has_value() || dividirSubjects(*item.subject).empty();
+}
 } // namespace
 
 CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
@@ -1100,7 +1107,10 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
         }
 
-        if (subjectSelecionado_.has_value()) {
+        if (subjectSelecionado_.has_value() && *subjectSelecionado_ == kSemSubject) {
+            anyFilter = true;
+            if (!semSubject(item)) continue;
+        } else if (subjectSelecionado_.has_value()) {
             anyFilter = true;
             if (!item.subject.has_value()) continue;
             // Nomes case-insensitive: "show" passa no filtro "Show".
@@ -1195,7 +1205,9 @@ void CatalogWorkspaceComponent::construirFiltroSubject() {
     comboSubject_->addItem(matriz::i18n::t("catwork.subject_todos"), idTodos);
     for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i) {
         const auto& [valor, contagem] = subjectsDisponiveis_[i];
-        comboSubject_->addItem(juce::String::fromUTF8(valor.c_str()) + " (" + juce::String(contagem) + ")",
+        const juce::String rotulo = (valor == kSemSubject) ? matriz::i18n::t("catwork.subject_nenhum")
+                                                           : juce::String::fromUTF8(valor.c_str());
+        comboSubject_->addItem(rotulo + " (" + juce::String(contagem) + ")",
                                static_cast<int>(i + 1));
     }
     int idSel = idTodos;
@@ -1272,6 +1284,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
             int semCollection = 0;
+            int totalSemSubject = 0;
             std::map<std::string, int> contagemPorSubject;
             std::map<std::string, std::string> grafiaPorChaveSubject;
 
@@ -1324,6 +1337,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 else
                     semCollection++;
 
+                if (semSubject(item)) ++totalSemSubject;
                 if (item.subject.has_value()) {
                     // "A, a" conta uma vez só; variações de maiúsculas são o
                     // mesmo subject, mostrado na primeira grafia vista.
@@ -1349,6 +1363,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
             for (const auto& pair : contagemPorSubject)
                 res.subjects.push_back(pair);
+            res.subjects.push_back({kSemSubject, totalSemSubject});  // sempre por último, mesmo com 0
 
             res.mergeConflitos = static_cast<int>(proj->itensDaColecaoEmbutida("merge_conflitos").size());
             auto colecoes = proj->listarColecoesEmbutidas();
