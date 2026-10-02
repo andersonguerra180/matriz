@@ -967,17 +967,9 @@ void SendToPrintDialog::resized() {
 
     col3.removeFromTop(10);
 
-    // Grupo Destino
-    auto grpDestBounds = col3.removeFromTop(122);
-    grpDestino_->setBounds(grpDestBounds);
-    auto innerDest = grpDestBounds.reduced(12, 10);
-    innerDest.removeFromTop(16);
-    lblCaminhoDestino_->setBounds(innerDest.removeFromTop(20));
-    btnEscolherPasta_->setBounds(innerDest.removeFromTop(26));
-    innerDest.removeFromTop(6);
-    chkExportarZip_->setBounds(innerDest.removeFromTop(24));
-
-    col3.removeFromTop(10);
+    // Grupo Destino: agora fica EMBAIXO de Ajustes Rápidos; reserva o espaço antes.
+    auto grpDestBounds = col3.removeFromBottom(122);
+    col3.removeFromBottom(10);
 
     // Grupo Ajustes Rápidos
     auto grpAjustesBounds = col3;
@@ -1014,6 +1006,15 @@ void SendToPrintDialog::resized() {
     btnResetarAjustes_->setBounds(rowButtons.removeFromLeft((rowButtons.getWidth() - 8) / 2));
     rowButtons.removeFromLeft(8);
     btnBypass_->setBounds(rowButtons);
+
+    // Grupo Destino (posição inferior)
+    grpDestino_->setBounds(grpDestBounds);
+    auto innerDest = grpDestBounds.reduced(12, 10);
+    innerDest.removeFromTop(16);
+    lblCaminhoDestino_->setBounds(innerDest.removeFromTop(20));
+    btnEscolherPasta_->setBounds(innerDest.removeFromTop(26));
+    innerDest.removeFromTop(6);
+    chkExportarZip_->setBounds(innerDest.removeFromTop(24));
 
     area.removeFromRight(16); // Espaçador coluna 2-3
 
