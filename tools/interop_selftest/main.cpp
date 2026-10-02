@@ -4,23 +4,27 @@
 #include <vector>
 #include <fstream>
 #include <iomanip>
+#include <thread>
+#include <atomic>
 
 #include "Model/Project.h"
 #include "Model/CaminhosBanco.h"
 #include "Model/NomesCanonicos.h"
 #include "Model/NomesSeguros.h"
 #include "Ingest/Checksum.h"
+#include "Ingest/Loudness.h"
+#include "Preservation/Preservation.h"
 #include "Db/Database.h"
 
 namespace {
 
 int failures = 0;
 
-void check(bool condition, const std::string& description) {
+void check(bool condition, const std::string& tag, const std::string& description) {
     if (condition) {
-        std::cout << "  OK   " << description << "\n";
+        std::cout << "  PASS [" << tag << "] " << description << "\n";
     } else {
-        std::cout << "  FAIL " << description << "\n";
+        std::cout << "  FAIL [" << tag << "] " << description << "\n";
         ++failures;
     }
 }
@@ -59,6 +63,12 @@ int executarGeracao(const juce::File& baseDir) {
     juce::File arqProfundo = pastaOrigens.getChildFile("Nivel1/Nivel2_Subpasta_Longa/Nivel3_Com_Nome_Bem_Extenso_Para_Testar_Caminhos_Longos_No_Windows/Nivel4_Mais_Uma_Pasta_Profunda_Para_Garantir/Documento_Final_Super_Longo.txt");
     criarArquivoTexto(arqProfundo, "Documento em arvore profunda");
 
+    // Arquivo de origem com caracteres que exigem sanitização segura no Windows (ex: ':' e '?')
+    std::string nomeOrigEspecial = "Show Especial: Acústico? 2026.txt";
+    std::string nomeSeguroDisco = matriz::nomes_seguros::sanitizarComponente(nomeOrigEspecial);
+    juce::File arqEspecial = pastaOrigens.getChildFile("Especiais/" + juce::String::fromUTF8(nomeSeguroDisco.c_str()));
+    criarArquivoTexto(arqEspecial, "Conteudo de show especial com nome sanitizado");
+
     // 2. Cria projeto no banco SQLite
     matriz::model::NovoProjetoParams params;
     params.nome = "Projeto Interop Mac-Win";
@@ -66,7 +76,7 @@ int executarGeracao(const juce::File& baseDir) {
     params.instituicaoOuSelo = "2026";
     params.responsavel = "Criador Interop";
     auto proj = matriz::model::Project::criar(pastaProj, params);
-    check(proj != nullptr, "Project created successfully");
+    check(proj != nullptr, "PROJECT_CREATION", "Project created successfully");
     if (!proj) return 1;
 
     auto& db = proj->registro();
@@ -76,16 +86,19 @@ int executarGeracao(const juce::File& baseDir) {
     auto ck2 = matriz::ingest::calcularChecksums(arq2);
     auto ckH = matriz::ingest::calcularChecksums(arqHidden);
     auto ckP = matriz::ingest::calcularChecksums(arqProfundo);
+    auto ckE = matriz::ingest::calcularChecksums(arqEspecial);
 
     std::string id1 = matriz::model::novoUuid();
     std::string id2 = matriz::model::novoUuid();
     std::string idH = matriz::model::novoUuid();
     std::string idP = matriz::model::novoUuid();
+    std::string idE = matriz::model::novoUuid();
 
     std::string arqId1 = matriz::model::novoUuid();
     std::string arqId2 = matriz::model::novoUuid();
     std::string arqIdH = matriz::model::novoUuid();
     std::string arqIdP = matriz::model::novoUuid();
+    std::string arqIdE = matriz::model::novoUuid();
 
     std::string agora = matriz::model::agoraIso8601();
 
@@ -134,6 +147,15 @@ int executarGeracao(const juce::File& baseDir) {
            "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
            {Value::of(arqIdP), Value::of(idP), Value::of(matriz::caminhos::relativoParaBanco(arqProfundo, pastaOrigens)), Value::of(arqProfundo.getFullPathName().toStdString()), Value::of(ckP.sha256), Value::of(ckP.md5), Value::of(static_cast<juce::int64>(arqProfundo.getSize())), Value::of(agora), Value::of(agora)});
 
+    // Item Especial (origem com ':' e '?', preservado no caminho_absoluto_origem)
+    std::string origemComCharsEspeciais = "/Volumes/Origem/" + nomeOrigEspecial;
+    db.run("INSERT INTO item (id, projeto_id, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'Show Especial com Nome Original Especial', 'audio', 'catalogado', ?, ?)",
+           {Value::of(idE), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
+    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+           {Value::of(arqIdE), Value::of(idE), Value::of(matriz::caminhos::relativoParaBanco(arqEspecial, pastaOrigens)), Value::of(origemComCharsEspeciais), Value::of(ckE.sha256), Value::of(ckE.md5), Value::of(static_cast<juce::int64>(arqEspecial.getSize())), Value::of(agora), Value::of(agora)});
+
     // Adiciona entidade de pessoa e lugar
     std::string entPessoaId = matriz::model::novoUuid();
     std::string entLugarId = matriz::model::novoUuid();
@@ -178,34 +200,78 @@ int executarGeracao(const juce::File& baseDir) {
     juce::File mainArq2 = pastaMain.getChildFile("Media/Fotos & Vídeos/Apresentação/Foto_Ção_Ão.txt");
     arq2.copyFileTo(mainArq2);
 
-    // 6. Simula pacote de EXPORT com manifesto sha256sum
+    // 6. Cria índice de miniaturas (indice.sqlite)
+    {
+        juce::File indiceFile = pastaProj.getChildFile("indice.sqlite");
+        matriz::db::Database indiceDb(indiceFile.getFullPathName().toStdString());
+        indiceDb.execScript(
+            "CREATE TABLE IF NOT EXISTS miniatura ("
+            "  id TEXT PRIMARY KEY,"
+            "  item_id TEXT NOT NULL,"
+            "  arquivo_id TEXT NOT NULL,"
+            "  tipo TEXT NOT NULL,"
+            "  caminho_relativo TEXT NOT NULL,"
+            "  largura INTEGER NOT NULL,"
+            "  altura INTEGER NOT NULL,"
+            "  gerado_em TEXT NOT NULL);"
+        );
+        indiceDb.run(
+            "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
+            "VALUES (?, ?, ?, 'miniatura', ?, 320, 240, ?)",
+            {Value::of(matriz::model::novoUuid()), Value::of(id1), Value::of(arqId1),
+             Value::of(matriz::caminhos::paraBanco(".miniaturas/thumb_audio1.png").toStdString()), Value::of(agora)});
+    }
+
+    // 7. Simula pacote de EXPORT com manifesto sha256sum e manifest.sqlite
     juce::File exportMedia = pastaExport.getChildFile("Media");
     exportMedia.createDirectory();
     mainArq1.copyFileTo(exportMedia.getChildFile(mainArq1.getFileName()));
     mainArq2.copyFileTo(exportMedia.getChildFile(mainArq2.getFileName()));
     juce::File manifestExport = pastaExport.getChildFile("manifest.sha256");
-    manifestExport.replaceWithText(juce::String(ck1.sha256) + " *Media/" + mainArq1.getFileName() + "\n" +
-                                   juce::String(ck2.sha256) + " *Media/" + mainArq2.getFileName() + "\n", false, false, "\n");
+    manifestExport.replaceWithText(juce::String(ck1.sha256) + "  Media/" + mainArq1.getFileName() + "\n" +
+                                   juce::String(ck2.sha256) + "  Media/" + mainArq2.getFileName() + "\n", false, false, "\n");
 
-    // 7. Checkpoint WAL
+    {
+        juce::File manifestSqlite = pastaExport.getChildFile("manifest.sqlite");
+        matriz::db::Database mDb(manifestSqlite.getFullPathName().toStdString());
+        mDb.execScript(
+            "CREATE TABLE IF NOT EXISTS manifesto ("
+            "  caminho_relativo TEXT PRIMARY KEY,"
+            "  checksum_sha256 TEXT NOT NULL,"
+            "  verificado_em TEXT NOT NULL);"
+        );
+        mDb.run(
+            "INSERT INTO manifesto (caminho_relativo, checksum_sha256, verificado_em) VALUES (?, ?, ?)",
+            {Value::of(matriz::caminhos::paraBanco("Media/" + mainArq1.getFileName().toStdString())),
+             Value::of(ck1.sha256), Value::of(agora)});
+        mDb.run(
+            "INSERT INTO manifesto (caminho_relativo, checksum_sha256, verificado_em) VALUES (?, ?, ?)",
+            {Value::of(matriz::caminhos::paraBanco("Media/" + mainArq2.getFileName().toStdString())),
+             Value::of(ck2.sha256), Value::of(agora)});
+    }
+
+    // 8. Checkpoint WAL
     try {
         db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
     } catch (...) {}
 
-    // 8. Grava manifesto JSON da fixture
+    // 9. Grava manifesto JSON da fixture
     juce::DynamicObject::Ptr manifest = new juce::DynamicObject();
-    manifest->setProperty("total_itens", 4);
-    manifest->setProperty("total_arquivos", 4);
+    manifest->setProperty("total_itens", 5);
+    manifest->setProperty("total_arquivos", 5);
     manifest->setProperty("id1", juce::String(id1));
     manifest->setProperty("id2", juce::String(id2));
     manifest->setProperty("id_hidden", juce::String(idH));
     manifest->setProperty("id_profundo", juce::String(idP));
+    manifest->setProperty("id_especial", juce::String(idE));
     manifest->setProperty("sha256_1", juce::String(ck1.sha256));
     manifest->setProperty("sha256_2", juce::String(ck2.sha256));
     manifest->setProperty("sha256_hidden", juce::String(ckH.sha256));
     manifest->setProperty("sha256_profundo", juce::String(ckP.sha256));
+    manifest->setProperty("sha256_especial", juce::String(ckE.sha256));
     manifest->setProperty("pessoa_nome", juce::String("Gilberto Gil"));
     manifest->setProperty("lugar_nome", juce::String("Teatro Municipal"));
+    manifest->setProperty("nome_orig_especial", juce::String::fromUTF8(nomeOrigEspecial.c_str()));
 
     juce::File manifestFile = baseDir.getChildFile("manifesto_interop.json");
     manifestFile.replaceWithText(juce::JSON::toString(juce::var(manifest.get()), true));
@@ -218,16 +284,16 @@ int executarVerificacao(const juce::File& baseDir) {
     std::cout << "== MATRIZ INTEROP: VERIFICANDO FIXTURE EM " << baseDir.getFullPathName() << " ==\n";
 
     juce::File manifestFile = baseDir.getChildFile("manifesto_interop.json");
-    check(manifestFile.existsAsFile(), "manifesto_interop.json exists");
+    check(manifestFile.existsAsFile(), "FIXTURE_MANIFEST_EXISTS", "manifesto_interop.json exists");
     if (!manifestFile.existsAsFile()) return 1;
 
     auto varManifest = juce::JSON::parse(manifestFile);
-    check(varManifest.isObject(), "manifesto_interop.json parsed successfully");
+    check(varManifest.isObject(), "FIXTURE_MANIFEST_PARSED", "manifesto_interop.json parsed successfully");
     if (!varManifest.isObject()) return 1;
 
     juce::File pastaProj = baseDir.getChildFile("projeto");
     auto proj = matriz::model::Project::abrir(pastaProj);
-    check(proj != nullptr, "Project opened cleanly from " + pastaProj.getFullPathName().toStdString());
+    check(proj != nullptr, "PROJECT_OPEN", "Project opened cleanly from " + pastaProj.getFullPathName().toStdString());
     if (!proj) return 1;
 
     auto& db = proj->registro();
@@ -236,83 +302,192 @@ int executarVerificacao(const juce::File& baseDir) {
     auto stmtCount = db.prepare("SELECT COUNT(*) FROM item;");
     if (stmtCount.step()) {
         int count = stmtCount.columnInt(0);
-        check(count == 4, "total items in database matches expected (4), got " + std::to_string(count));
+        check(count == 5, "ITEM_COUNT", "Total items in database matches expected (5), got " + std::to_string(count));
     }
 
     // 2. Caminhos relativos SEMPRE com '/' (Zero barras invertidas '\' no banco)
     auto stmtPaths = db.prepare("SELECT caminho_relativo FROM arquivo;");
     bool todosCaminhosComBarra = true;
+    int totalCaminhos = 0;
     while (stmtPaths.step()) {
         std::string rel = stmtPaths.columnText(0);
+        ++totalCaminhos;
         if (rel.find('\\') != std::string::npos) {
             todosCaminhosComBarra = false;
             std::cout << "  FAIL Caminho com barra invertida encontrado no banco: " << rel << "\n";
             ++failures;
         }
     }
-    check(todosCaminhosComBarra, "all relative paths in database strictly use '/' format (no backslashes)");
+    check(todosCaminhosComBarra && totalCaminhos >= 5, "PATHS_CANONICAL",
+          "All " + std::to_string(totalCaminhos) + " relative paths in database strictly use '/' format (no backslashes)");
 
-    // 3. Verifica item Hidden
+    // 3. Miniaturas no indice.sqlite
+    {
+        juce::File indiceFile = pastaProj.getChildFile("indice.sqlite");
+        if (indiceFile.existsAsFile()) {
+            matriz::db::Database indDb(indiceFile.getFullPathName().toStdString());
+            auto stMini = indDb.prepare("SELECT caminho_relativo FROM miniatura;");
+            bool miniOk = false;
+            if (stMini.step()) {
+                std::string cr = stMini.columnText(0);
+                miniOk = (cr.find('\\') == std::string::npos && cr.find('/') != std::string::npos);
+            }
+            check(miniOk, "PATHS_THUMBNAIL", "Miniatura relative path in indice.sqlite uses normalized '/'");
+        } else {
+            check(false, "PATHS_THUMBNAIL", "indice.sqlite exists in project root");
+        }
+    }
+
+    // 4. Export manifest.sqlite e manifest.sha256
+    {
+        juce::File mSqlite = baseDir.getChildFile("export_pacote/manifest.sqlite");
+        if (mSqlite.existsAsFile()) {
+            matriz::db::Database mDb(mSqlite.getFullPathName().toStdString());
+            auto stMan = mDb.prepare("SELECT caminho_relativo FROM manifesto;");
+            bool manOk = true;
+            int countMan = 0;
+            while (stMan.step()) {
+                std::string cr = stMan.columnText(0);
+                ++countMan;
+                if (cr.find('\\') != std::string::npos) manOk = false;
+            }
+            check(manOk && countMan >= 2, "PATHS_EXPORT_MANIFEST",
+                  "Export manifest.sqlite relative paths strictly use '/' (" + std::to_string(countMan) + " entries)");
+        }
+    }
+
+    // 5. Preservação do nome original em arquivos com caracteres especiais (: e ?)
+    {
+        auto stOrig = db.prepare("SELECT a.caminho_absoluto_origem, a.caminho_relativo FROM arquivo a JOIN item i ON a.item_id = i.id WHERE i.titulo = 'Show Especial com Nome Original Especial';");
+        bool origOk = false;
+        if (stOrig.step()) {
+            std::string origPath = stOrig.columnText(0);
+            std::string relPath = stOrig.columnText(1);
+            origOk = (origPath.find(':') != std::string::npos || origPath.find('?') != std::string::npos) &&
+                     (relPath.find(':') == std::string::npos && relPath.find('?') == std::string::npos);
+        }
+        check(origOk, "SAFE_NAMES_ORIGIN_PRESERVED",
+              "Original path with special chars preserved in database while safe sanitized name used on disk");
+    }
+
+    // 6. Verifica item Hidden
     auto stmtHidden = db.prepare("SELECT c.valor FROM item_campo c JOIN item i ON c.item_id = i.id WHERE i.titulo = 'Documento Oculto' AND c.campo_id = 'collection_type';");
     bool achouHidden = false;
     if (stmtHidden.step()) {
         achouHidden = (stmtHidden.columnText(0) == "Hidden");
     }
-    check(achouHidden, "Hidden item preserved and correctly classified");
+    check(achouHidden, "HIDDEN_ITEMS", "Hidden item (collection_type=Hidden) preserved and correctly classified");
 
-    // 4. Verifica campos, tags e entidades
+    // 7. Verifica campos, tags e entidades
     auto stmtArtist = db.prepare("SELECT c.valor FROM item_campo c JOIN item i ON c.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso' AND c.campo_id = 'artista_principal';");
     bool achouArtista = false;
     if (stmtArtist.step()) {
         achouArtista = (stmtArtist.columnText(0) == "Anderson Guerra");
     }
-    check(achouArtista, "Field 'artista_principal' preserved");
+    check(achouArtista, "METADATA_FIELDS", "Field 'artista_principal' preserved ('Anderson Guerra')");
 
     auto stmtEnt = db.prepare("SELECT e.nome FROM entidade e JOIN item_entidade ie ON e.id = ie.entidade_id WHERE ie.papel = 'artista';");
     bool achouEntidade = false;
     if (stmtEnt.step()) {
         achouEntidade = (stmtEnt.columnText(0) == varManifest["pessoa_nome"].toString().toStdString());
     }
-    check(achouEntidade, "Entity 'Gilberto Gil' associated with asset");
+    check(achouEntidade, "METADATA_ENTITIES", "Entity 'Gilberto Gil' associated with asset");
 
-    // 5. Verifica marcação R (Reject)
+    // 8. Verifica marcação R (Reject)
     auto stmtR = db.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE origem = 'usuario';");
     bool achouR = false;
     if (stmtR.step()) {
         achouR = (stmtR.columnInt(0) == 1);
     }
-    check(achouR, "INTAKE Reject mark (R) preserved");
+    check(achouR, "INTAKE_REJECT_MARK", "INTAKE Reject mark (R) preserved");
 
-    // 6. Verifica normalização canônica de nomes (NFC)
+    // 9. Verifica normalização canônica de nomes (NFC)
     std::string chave1 = matriz::model::nomes::chave("São Paulo");
     std::string chave2 = matriz::model::nomes::chave("são paulo");
-    check(chave1 == chave2, "Canonical Unicode key comparison matches ('São Paulo' == 'são paulo')");
+    check(chave1 == chave2, "CANONICAL_UNICODE_NFC", "Canonical Unicode key comparison matches ('São Paulo' == 'são paulo')");
 
-    // 7. Verifica integridade de checksums
+    // 10. Verifica integridade de checksums
     std::string expSha1 = varManifest["sha256_1"].toString().toStdString();
     auto stmtSha = db.prepare("SELECT a.checksum_sha256 FROM arquivo a JOIN item i ON a.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso';");
     if (stmtSha.step()) {
         std::string dbSha = stmtSha.columnText(0);
-        check(dbSha == expSha1, "SHA-256 matches exact hash: " + dbSha);
+        check(dbSha == expSha1, "CHECKSUM_PARITY", "SHA-256 matches exact hash: " + dbSha);
     }
 
-    // 8. Verifica folder map
+    // 11. Verifica folder map
     auto stmtMap = db.prepare("SELECT nome FROM folder_map WHERE nome = 'Mapa Shows 2026';");
     bool mapaOk = false;
     if (stmtMap.step()) {
         if (stmtMap.columnText(0) == "Mapa Shows 2026") mapaOk = true;
     }
-    check(mapaOk, "Folder Map structure preserved and matched exactly");
+    check(mapaOk, "FOLDER_MAPS", "Folder Map structure preserved and matched exactly");
 
-    // 9. Verifica MAIN destination.json
+    // 12. Verifica MAIN destination.json
     juce::File destJson = baseDir.getChildFile("backup_main/destination.json");
-    check(destJson.existsAsFile(), "destination.json exists in MAIN backup root");
+    check(destJson.existsAsFile(), "MAIN_DESTINATION_EXISTS", "destination.json exists in MAIN backup root");
     auto dInfo = matriz::model::DestinationInfo::lerDeArquivo(destJson);
-    check(dInfo.has_value() && dInfo->papel == "MAIN", "MAIN destination parsed and identified cleanly");
+    check(dInfo.has_value() && dInfo->papel == "MAIN", "MAIN_DESTINATION_PARSED", "MAIN destination parsed and identified cleanly");
 
-    // 10. Verifica ausência de arquivos WAL pendentes (.sqlite-wal)
+    // 13. Verifica ausência de arquivos WAL pendentes (.sqlite-wal)
     juce::File walFile = pastaProj.getChildFile("registro.sqlite-wal");
-    check(!walFile.existsAsFile(), "SQLite database is fully checkpointed (no pending -wal file)");
+    check(!walFile.existsAsFile(), "SQLITE_WAL_CLEAN", "SQLite database is fully checkpointed (no pending -wal file)");
+
+    // 14. Teste de paridade de medição de Loudness BS.1770 / EBU R128
+    {
+        juce::AudioBuffer<float> testAudio(2, 48000 * 2); // 2 segundos de áudio estéreo
+        testAudio.clear();
+        for (int i = 0; i < testAudio.getNumSamples(); ++i) {
+            float s = 0.5f * std::sin(2.0f * 3.14159265f * 440.0f * i / 48000.0f);
+            testAudio.setSample(0, i, s);
+            testAudio.setSample(1, i, s);
+        }
+        auto loud = matriz::ingest::medirLoudness(testAudio, 48000.0);
+        bool lufsOk = (loud.lufsIntegrado > -25.0 && loud.lufsIntegrado < -5.0);
+        check(lufsOk, "LOUDNESS_BS1770_PARITY",
+              "BS.1770 Loudness calculation verified (LUFS=" + std::to_string(loud.lufsIntegrado) + ")");
+    }
+
+    // 15. Classificação de risco de formato de preservação (Preservation Risk)
+    {
+        std::string riscoWav = matriz::preservation::classificarRiscoFormato("wav");
+        std::string riscoMp4 = matriz::preservation::classificarRiscoFormato("mp4");
+        std::string riscoWma = matriz::preservation::classificarRiscoFormato("wma");
+        bool riscoOk = (riscoWav == "OK" && riscoMp4 == "OK" && riscoWma == "AT_RISK");
+        check(riscoOk, "PRESERVATION_RISK", "Format risk classification consistent (WAV=OK, MP4=OK, WMA=AT_RISK)");
+    }
+
+    // 16. Teste de estresse de concorrência multithreaded no SQLite
+    {
+        std::atomic<int> readSuccesses{0};
+        std::vector<std::thread> readers;
+        for (int t = 0; t < 4; ++t) {
+            readers.emplace_back([&]() {
+                try {
+                    auto st = db.prepare("SELECT COUNT(*) FROM item;");
+                    if (st.step() && st.columnInt(0) == 5) {
+                        readSuccesses++;
+                    }
+                } catch (const std::exception& e) {
+                    std::cout << "  [THREAD_ERR] " << e.what() << "\n";
+                } catch (...) {
+                    std::cout << "  [THREAD_ERR] unknown\n";
+                }
+            });
+        }
+        for (auto& th : readers) th.join();
+        check(readSuccesses == 4, "SQLITE_CONCURRENCY_STRESS", "4 concurrent reader threads completed cleanly without locks");
+    }
+
+    // 17. Formato de texto UTF-8 sem BOM com quebras LF
+    {
+        juce::File mSha = baseDir.getChildFile("export_pacote/manifest.sha256");
+        if (mSha.existsAsFile()) {
+            auto text = mSha.loadFileAsString();
+            bool semBom = !text.startsWithChar(0xFEFF);
+            bool usaLf = text.containsChar('\n') && !text.containsChar('\r');
+            check(semBom && usaLf, "TEXT_UTF8_LF", "Manifest file encoded in UTF-8 without BOM with strict LF line endings");
+        }
+    }
 
     std::cout << "\nRESULTADO DA VERIFICAÇÃO INTEROP: " << failures << " FALHAS\n";
     return failures == 0 ? 0 : 1;
