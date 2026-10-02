@@ -1,8 +1,26 @@
 #include "Resolucao.h"
+#include "../Model/NomesCanonicos.h"
 
 namespace matriz::vault {
 
 namespace {
+
+bool existeArquivoCanonico(const juce::File& f, juce::File* encontrado = nullptr) {
+    if (f.existsAsFile()) {
+        if (encontrado) *encontrado = f;
+        return true;
+    }
+    juce::File pai = f.getParentDirectory();
+    if (!pai.isDirectory()) return false;
+    const std::string chaveAlvo = matriz::model::nomes::chave(f.getFileName().toStdString());
+    for (const auto& entry : pai.findChildFiles(juce::File::findFiles, false)) {
+        if (matriz::model::nomes::chave(entry.getFileName().toStdString()) == chaveAlvo) {
+            if (encontrado) *encontrado = entry;
+            return true;
+        }
+    }
+    return false;
+}
 
 // Candidatos de PROVENIÊNCIA, na ordem 3 → 4 → 5 descrita no header.
 std::vector<juce::File> candidatosDeOrigem(const juce::File& pastaProjeto, const std::string& localizacaoVault,
@@ -12,30 +30,32 @@ std::vector<juce::File> candidatosDeOrigem(const juce::File& pastaProjeto, const
 
     // 3. SOURCE: vault registrado + caminho relativo à raiz do volume.
     if (!localizacaoVault.empty() && !caminhoRelativo.empty())
-        out.push_back(juce::File(juce::String(localizacaoVault)).getChildFile(juce::String(caminhoRelativo)));
+        out.push_back(juce::File(juce::String::fromUTF8(localizacaoVault.c_str())).getChildFile(juce::String::fromUTF8(caminhoRelativo.c_str())));
 
     // 4. Caminho absoluto de origem.
-    if (!caminhoAbsolutoOrigem.empty() && juce::File::isAbsolutePath(juce::String(caminhoAbsolutoOrigem)))
-        out.push_back(juce::File(juce::String(caminhoAbsolutoOrigem)));
+    if (!caminhoAbsolutoOrigem.empty() && juce::File::isAbsolutePath(juce::String::fromUTF8(caminhoAbsolutoOrigem.c_str())))
+        out.push_back(juce::File(juce::String::fromUTF8(caminhoAbsolutoOrigem.c_str())));
 
     // 5. Legado: o ingest antigo copiava pra dentro do projeto.
     if (!caminhoRelativo.empty()) {
         juce::File pastaRaiz = pastaProjeto.getParentDirectory();
         if (pastaRaiz.isDirectory()) {
-            out.push_back(pastaRaiz.getChildFile("Media").getChildFile(juce::String(caminhoRelativo)));
-            out.push_back(pastaRaiz.getChildFile(juce::String(caminhoRelativo)));
+            out.push_back(pastaRaiz.getChildFile("Media").getChildFile(juce::String::fromUTF8(caminhoRelativo.c_str())));
+            out.push_back(pastaRaiz.getChildFile(juce::String::fromUTF8(caminhoRelativo.c_str())));
         }
         if (pastaProjeto.isDirectory()) {
-            out.push_back(pastaProjeto.getChildFile("Media").getChildFile(juce::String(caminhoRelativo)));
-            out.push_back(pastaProjeto.getChildFile(juce::String(caminhoRelativo)));
+            out.push_back(pastaProjeto.getChildFile("Media").getChildFile(juce::String::fromUTF8(caminhoRelativo.c_str())));
+            out.push_back(pastaProjeto.getChildFile(juce::String::fromUTF8(caminhoRelativo.c_str())));
         }
     }
     return out;
 }
 
 std::optional<juce::File> primeiroExistente(const std::vector<juce::File>& lista) {
-    for (auto& f : lista)
-        if (f.existsAsFile()) return f;
+    for (auto& f : lista) {
+        juce::File achado;
+        if (existeArquivoCanonico(f, &achado)) return achado;
+    }
     return std::nullopt;
 }
 
@@ -57,7 +77,7 @@ void acrescentarCandidatosDeBackup(std::vector<juce::File>& out, const std::vect
                 if (r.caminhoRelativoDestino.empty()) continue;
                 const bool desteDestino = !r.destinoId.empty() && r.destinoId == d.destinationId;
                 if ((passo == 0) != desteDestino) continue;
-                out.push_back(media.getChildFile(juce::String(r.caminhoRelativoDestino)));
+                out.push_back(media.getChildFile(juce::String::fromUTF8(r.caminhoRelativoDestino.c_str())));
             }
         }
     }
@@ -105,7 +125,7 @@ std::vector<DestinoDeBackup> destinosDeBackup(matriz::db::Database& registro, co
             if (!idDaRaizAberta.empty() && d.destinationId == idDaRaizAberta)
                 d.raiz = raizAberta;
             else
-                d.raiz = juce::File(juce::String(st.columnText(1)));
+                d.raiz = juce::File(juce::String::fromUTF8(st.columnText(1).c_str()));
             d.ehMain = st.columnText(2) == "ORIGINAL";
             (d.ehMain ? main : clones).push_back(std::move(d));
         }
