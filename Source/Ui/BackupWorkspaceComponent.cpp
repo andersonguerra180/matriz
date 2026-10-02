@@ -2704,11 +2704,17 @@ juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::f
 
         juce::String hash;
         // (a) hash gravado na consolidação (bytes finais do destino)
+        // WINPORT: CaminhosBanco — relPath vem do banco/plano e é comparado como string com
+        // consolidacao_registro.caminho_relativo_destino (o mapa acima); no merge, normalizar os dois lados com
+        // CaminhosBanco::doBanco/paraBanco.
         auto it = doRegistro.find(item.arquivoId + "\n" + relPath.toStdString());
         if (it != doRegistro.end()) hash = juce::String(it->second.sha);
 
         // (b) sem registro (projeto antigo): relê o arquivo NO DESTINO
         if (hash.isEmpty() && temDestino) {
+            // WINPORT: CaminhosBanco — caminho lido do banco usado direto em getChildFile; passar por doBanco.
+            // WINPORT: nada de I/O na message thread — este SHA-256 (fallback b) hoje roda na message thread no fim do
+            // backup (auto-export); o fix do hang o leva pra thread de fundo.
             juce::File noDestino = destinoMedia.getChildFile(relPath);
             if (noDestino.existsAsFile()) hash = juce::SHA256(noDestino).toHexString().toLowerCase();
         }
@@ -2813,6 +2819,7 @@ void BackupWorkspaceComponent::exportarDublinCorePara(const juce::File& destFold
 bool BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder, const juce::File& destinoMedia,
                                                      const std::function<bool(int, int)>& onProgress) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
+    // WINPORT: NomesSeguros — nome de arquivo gerado a partir do nome do projeto (caracteres inválidos no Windows).
     juce::File targetFile = destFolder.getChildFile(projectName + ".sha256");
     juce::File tmpFile = destFolder.getChildFile(projectName + ".sha256.tmp");
 

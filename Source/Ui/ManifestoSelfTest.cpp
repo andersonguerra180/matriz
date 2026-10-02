@@ -191,6 +191,8 @@ int rodarManifestoSelfTest() {
                 "WHERE a.id = consolidacao_registro.arquivo_id)", {});
         ok = bw.exportarChecksumsPara(rel, media, nullptr);
         checar(ok && sha.existsAsFile() && !tmp.exists(), "a completed manifest is written and no .tmp is left");
+// WINPORT: API exclusiva de macOS/Linux — `/bin/sh` + `shasum` só existem aqui; no merge, equivalente Windows
+// (ex.: certutil -hashfile ou comparação direta em C++) atrás de #if JUCE_WINDOWS no mesmo commit.
 #if JUCE_MAC || JUCE_LINUX
         // O mesmo comando que o usuário roda: shasum -c dentro de Media/. O registro tem o hash da ORIGEM
         // aqui (acima), então regrava o do destino antes — é o que a consolidação grava de verdade.

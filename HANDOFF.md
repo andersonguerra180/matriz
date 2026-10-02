@@ -103,6 +103,22 @@ Pendências conhecidas (do backup de 201 GB de 2026-10-01; ver prompt de fix):
   Cancelamento: sem `.sha256`/`.tmp`, antigo removido. TSan (Debug): 0 warnings com o manifesto em
   thread de fundo e ~4.700 gravações concorrentes. NÃO verificado: texto/barra/cor da tela (só no app).
 
+## WINPORT — pontos a adaptar quando a windows-port for mergeada
+
+Regras do port (AGENTS.md da windows-port): CaminhosBanco, NomesSeguros, NomesCanonicos, ProcessoExterno, nada de
+I/O na message thread, API de macOS só atrás de `#if JUCE_MAC` com equivalente Windows. Código novo na main marca o
+ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
+
+- `BackupWorkspaceComponent.cpp` `gerarManifestChecksumsBackup`: chave do mapa e `destinoMedia.getChildFile(relPath)`
+  com caminho vindo do banco — **CaminhosBanco** (`doBanco`/`paraBanco`).
+- Mesma função, fallback (b): SHA-256 do arquivo no destino na message thread — **nada de I/O na message thread**
+  (sai com o fix do hang: manifesto do fim do backup em thread de fundo).
+- `BackupWorkspaceComponent.cpp` `exportarChecksumsPara`: `<projeto>.sha256`/`.sha256.tmp` — **NomesSeguros**.
+- `ManifestoSelfTest.cpp`: `/bin/sh` + `shasum` atrás de `JUCE_MAC || JUCE_LINUX`, sem equivalente Windows — **API de
+  macOS/Linux**.
+- AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
+  `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
+
 ## Baseline dos self-tests (não confundir com regressão)
 
 - `--selftest-lote`: verde (ASan/TSan/Release).
