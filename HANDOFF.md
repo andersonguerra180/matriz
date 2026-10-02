@@ -77,6 +77,25 @@ Pendências conhecidas (do backup de 201 GB de 2026-10-01; ver prompt de fix):
   `git worktree` próprio (`.worktrees/`, build próprio) para não trocar a branch um do outro.
 - Self-tests (`--selftest-lote`) e ASan/TSan NÃO rodados nesta rodada.
 
+### Manifesto de checksums do fim do backup (branch `fix/backup-checksums-progresso`)
+
+- **Progresso/cancelamento**: `exportarChecksumsPara`/`gerarManifestChecksumsBackup` recebem
+  callback `bool(feito,total)` (false = cancelar). O auto-export mostra "Checksums: N of M...",
+  barra e `ProgressoGlobal`, gira o loop e respeita `cancelamento->pedido()`. Cancelado no
+  manifesto: o `.sha256` é gravado em `.tmp` e renomeado só no sucesso; no cancelamento remove o
+  `.tmp` **e o `.sha256` do backup anterior** (não pode parecer atual). A cópia já foi verificada,
+  então `confirmarRevisao()` roda normalmente e a tela diz "Backup completed — checksum manifest
+  skipped (cancelled)". Não reverter para "cancelou = backup cancelado".
+- **Hash do manifesto = hash da cópia no destino**, nunca da origem (embed/marca d'água mudam os
+  bytes). Ordem: (a) `consolidacao_registro.checksum_sha256` (um SELECT em lote, mapa em memória),
+  casando por `arquivo_id` + `caminho_relativo_destino` do plano + (`destino_path` = `chaveDestino(Media)`
+  OU `destino_id` do destino OU legado vazio/NULL), prioridade exato > destino_id > legado, sem exigir
+  `item_id`/`pasta_id` (mesma regra de `planejarConsolidacao`); (b) relê o arquivo NO DESTINO;
+  (c) só com destino inacessível: `arquivo.checksum_sha256` (origem) + uma entrada de resumo no
+  `ProjectLog` com a contagem. `chaveDestino` agora é pública (Consolidacao.h). O botão manual
+  (thread de fundo) usa o destino selecionado (`resolvedDestFolder_`) ou a raiz do MAIN.
+- Medições antes/depois: ver abaixo (preencher após o teste manual).
+
 ## Baseline dos self-tests (não confundir com regressão)
 
 - `--selftest-lote`: verde (ASan/TSan/Release).
