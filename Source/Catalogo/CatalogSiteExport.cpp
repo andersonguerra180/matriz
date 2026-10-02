@@ -215,7 +215,7 @@ static bool gerarThumbnailWeb(const juce::File& master,
     return false;
 }
 
-static const char* kCssTemplate = R"CSS(
+static const char* kCssTemplate_Part1 = R"CSS(
 /* ==========================================================================
    BKR MATRIZ — CATALOG HTML BROWSER
    Unified Touch-First Theme (Dark, Minimalist)
@@ -545,7 +545,9 @@ body.idle-hide-cursor, body.idle-hide-cursor * {
   outline: none;
   border-color: var(--accent);
 }
+)CSS";
 
+static const char* kCssTemplate_Part2 = R"CSS(
 /* Collection Hub Showcase Cards */
 .collections-grid {
   display: grid;
@@ -902,7 +904,11 @@ body.idle-hide-cursor, body.idle-hide-cursor * {
 }
 )CSS";
 
-static const char* kJsTemplate = R"JS(
+static juce::String obterCssTemplate() {
+    return juce::String(kCssTemplate_Part1) + kCssTemplate_Part2;
+}
+
+static const char* kJsTemplate_Part1 = R"JS(
 /**
  * BKR MATRIZ — CATALOG HTML BROWSER
  * Pure Vanilla JS, zero-dependency, touch-optimized single interface.
@@ -1176,7 +1182,9 @@ static const char* kJsTemplate = R"JS(
       console.error('Error loading collection data:', e);
     }
   }
+)JS";
 
+static const char* kJsTemplate_Part2 = R"JS(
   function setupCollectionToolbar() {
     const searchInput = document.getElementById('collection-search');
     if (searchInput) {
@@ -1427,6 +1435,10 @@ static const char* kJsTemplate = R"JS(
   }
 })();
 )JS";
+
+static juce::String obterJsTemplate() {
+    return juce::String(kJsTemplate_Part1) + kJsTemplate_Part2;
+}
 
 static const char* kLandingHtmlTemplate = R"HTML(<!DOCTYPE html>
 <html lang="en">
@@ -1761,8 +1773,8 @@ ResultadoExportSite exportarHtmlBrowser(ui::ProjetoAberto& projeto,
     }
 
     // Write static CSS & JS templates
-    dirCss.getChildFile("style.css").replaceWithText(kCssTemplate);
-    dirJs.getChildFile("app.js").replaceWithText(kJsTemplate);
+    dirCss.getChildFile("style.css").replaceWithText(obterCssTemplate());
+    dirJs.getChildFile("app.js").replaceWithText(obterJsTemplate());
 
     std::set<juce::String> usedSlugs;
 
