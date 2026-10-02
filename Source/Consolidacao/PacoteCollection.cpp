@@ -409,14 +409,28 @@ void gravarDadosFicha(matriz::db::Database& registro, const std::string& itemId,
     // + espelho em item_campo.
     auto gravar = [&](const char* coluna, const std::string& valor) {
         if (valor.empty()) return;
-        registro.run(std::string("UPDATE item SET ") + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
-                     {Value::of(valor), Value::of(agora), Value::of(itemId)});
-        registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
-                     "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
-                     "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, "
-                     "fonte = 'humano', atualizado_em = excluded.atualizado_em",
-                     {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(std::string(coluna)),
-                      Value::of(valor), Value::of(agora)});
+        try {
+            if (std::string(coluna) == "dc_title") {
+                registro.run("UPDATE item SET titulo = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                             {Value::of(valor), Value::of(agora), Value::of(itemId)});
+            } else {
+                registro.run(std::string("UPDATE item SET ") + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                             {Value::of(valor), Value::of(agora), Value::of(itemId)});
+            }
+        } catch (...) {
+            try {
+                registro.run("UPDATE item SET atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                             {Value::of(agora), Value::of(itemId)});
+            } catch (...) {}
+        }
+        try {
+            registro.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                         "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+                         "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, "
+                         "fonte = 'humano', atualizado_em = excluded.atualizado_em",
+                         {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(std::string(coluna)),
+                          Value::of(valor), Value::of(agora)});
+        } catch (...) {}
     };
     gravar("dc_title", d.titulo);
     gravar("dc_description", d.descricao);
