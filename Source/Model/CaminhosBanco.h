@@ -43,3 +43,7 @@ std::string relativoParaBanco(const juce::File& arquivo, const juce::File& pasta
 juce::File resolverDoBanco(const juce::File& pastaBase, const std::string& caminhoRelativoDoBanco);
 
 } // namespace matriz::caminhos
+
+namespace matriz::model {
+using namespace matriz::caminhos;
+}

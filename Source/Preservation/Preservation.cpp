@@ -12,6 +12,7 @@
 #endif
 
 #include "../Model/Project.h"   // novoUuid(), agoraIso8601()
+#include "../Model/CaminhosBanco.h"
 #include "../Ingest/LeituraTecnica.h" // categoriaPorExtensao
 
 namespace matriz::preservation {
@@ -1247,7 +1248,7 @@ juce::String exportarFixityManifest(db::Database& db,
                 juce::String hash = usarSha
                     ? juce::String(stmt.columnText(0))
                     : juce::String(stmt.columnText(1));
-                juce::String path = juce::String(stmt.columnText(2));
+                juce::String path = matriz::caminhos::paraBanco(stmt.columnText(2));
                 if (hash.isNotEmpty() && path.isNotEmpty())
                     manifest += hash + "  " + path + "\n";
             }

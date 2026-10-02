@@ -5,6 +5,7 @@
 #include "../Ingest/CacheArquivo.h"
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
+#include "../Model/CaminhosBanco.h"
 #include "../Vault/Reconciliacao.h"
 #include "../Vault/Resolucao.h"
 
@@ -137,8 +138,8 @@ ResultadoPublicacao publicar(matriz::db::Database& registro, const juce::File& p
             continue;
         }
 
-        std::string relativo = std::string(kPastaExports) + "/" + item.caminhoRelativoDestino.toStdString();
-        juce::File destino = pacote.getChildFile(juce::String(relativo));
+        std::string relativo = matriz::model::paraBanco(std::string(kPastaExports) + "/" + item.caminhoRelativoDestino.toStdString());
+        juce::File destino = pacote.getChildFile(juce::String(matriz::model::doBanco(relativo)));
 
         std::string erro;
         std::string sha = copiarEVerificar(*origem, destino, erro);
@@ -176,7 +177,7 @@ ResultadoPublicacao publicar(matriz::db::Database& registro, const juce::File& p
                                          "ORDER BY gerado_em DESC LIMIT 1");
                 st.bind(1, Value::of(item.itemId));
                 if (st.step()) {
-                    const juce::File mini = pastaProjeto.getChildFile(juce::String(st.columnText(0)));
+                    const juce::File mini = pastaProjeto.getChildFile(juce::String(matriz::model::doBanco(st.columnText(0))));
                     if (mini.existsAsFile()) {
                         dirCache.createDirectory();
                         mini.copyFileTo(dirCache.getChildFile("thumb" + mini.getFileExtension()));

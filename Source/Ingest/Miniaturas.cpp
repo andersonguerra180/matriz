@@ -1,6 +1,7 @@
 #include "Miniaturas.h"
 
 #include "../Model/Project.h"
+#include "../Model/CaminhosBanco.h"
 #include "ProcessoExterno.h"
 #include "MiniaturaPsd.h"
 
@@ -356,12 +357,12 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
         }
 
         if (!destino.existsAsFile()) return;
-        juce::String relativo = destino.getRelativePathFrom(pastaProjeto);
+        std::string relativo = matriz::model::paraBanco(matriz::model::caminhoRelativoEntre(destino, pastaProjeto));
         escrever([&] { indice.run(
             "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
             "VALUES (?, ?, ?, 'miniatura', ?, ?, ?, ?)",
             {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
-             matriz::db::Value::of(arquivoId), matriz::db::Value::of(relativo.toStdString()),
+             matriz::db::Value::of(arquivoId), matriz::db::Value::of(relativo),
              matriz::db::Value::of(largura), matriz::db::Value::of(altura), matriz::db::Value::of(matriz::model::agoraIso8601())}); });
     } catch (const std::exception&) {
     }

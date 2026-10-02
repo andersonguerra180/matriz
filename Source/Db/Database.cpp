@@ -107,11 +107,14 @@ Database::Database(const std::string& path, Modo modo) {
     if (modo == Modo::SomenteLeitura) {
         // Segunda conexão só pra leitura (WAL: não espera a transação da conexão de escrita).
         // Não mexe no journal_mode: quem o define é a conexão de escrita.
-        if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
-            std::string msg = db_ ? sqlite3_errmsg(db_) : "unknown error";
-            if (db_) sqlite3_close(db_);
-            db_ = nullptr;
-            throw DatabaseError("failed to open database read-only at \"" + path + "\": " + msg);
+        if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI, nullptr) != SQLITE_OK) {
+            // Se falhar (ex: WAL mode precisando inicializar SHM), tenta com flags padrão sem alterar schema
+            if (sqlite3_open_v2(path.c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_URI, nullptr) != SQLITE_OK) {
+                std::string msg = db_ ? sqlite3_errmsg(db_) : "unknown error";
+                if (db_) sqlite3_close(db_);
+                db_ = nullptr;
+                throw DatabaseError("failed to open database read-only at \"" + path + "\": " + msg);
+            }
         }
         sqlite3_busy_timeout(db_, 5000);
         return;
