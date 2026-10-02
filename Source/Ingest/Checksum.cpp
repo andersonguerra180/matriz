@@ -76,9 +76,9 @@ std::string toHex(const unsigned char* data, size_t length) {
 Checksums calcularChecksums(const juce::File& arquivo) {
     Checksums c;
     
-    // Suporte a caminhos longos no Windows
+    // Suporte a caminhos longos no Windows e caracteres Unicode/UTF-8
     std::wstring wpath = arquivo.getFullPathName().toWideCharPointer();
-    std::ifstream file(arquivo.getFullPathName().toStdString(), std::ios::binary);
+    std::ifstream file(wpath.c_str(), std::ios::binary);
     if (!file.is_open()) {
         return c;
     }
