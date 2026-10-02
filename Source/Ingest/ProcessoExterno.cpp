@@ -39,6 +39,14 @@ juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta) {
 std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
     juce::StringArray argv;
     argv.add(resolverCaminhoExecutavel(nomeFerramenta));
+    if (nomeFerramenta == "ffmpeg" || nomeFerramenta == "ffprobe") {
+        if (!argumentos.contains("-hide_banner")) argv.add("-hide_banner");
+        if (!argumentos.contains("-loglevel")) { argv.add("-loglevel"); argv.add("error"); }
+        if (nomeFerramenta == "ffmpeg") {
+            if (!argumentos.contains("-y")) argv.add("-y");
+            if (!argumentos.contains("-nostdin")) argv.add("-nostdin");
+        }
+    }
     argv.addArray(argumentos);
 
     juce::ChildProcess proc;
@@ -46,13 +54,25 @@ std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::St
         throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
 
     juce::String output = proc.readAllProcessOutput();
-    proc.waitForProcessToFinish(timeoutMs);
+    int timeout = (timeoutMs > 0) ? timeoutMs : 60000;
+    if (!proc.waitForProcessToFinish(timeout)) {
+        proc.kill();
+        throw ProcessoExternoError(nomeFerramenta + " timed out after " + std::to_string(timeout) + " ms");
+    }
     return output.toStdString();
 }
 
 void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
     juce::StringArray argv;
     argv.add(resolverCaminhoExecutavel(nomeFerramenta));
+    if (nomeFerramenta == "ffmpeg" || nomeFerramenta == "ffprobe") {
+        if (!argumentos.contains("-hide_banner")) argv.add("-hide_banner");
+        if (!argumentos.contains("-loglevel")) { argv.add("-loglevel"); argv.add("error"); }
+        if (nomeFerramenta == "ffmpeg") {
+            if (!argumentos.contains("-y")) argv.add("-y");
+            if (!argumentos.contains("-nostdin")) argv.add("-nostdin");
+        }
+    }
     argv.addArray(argumentos);
 
     juce::ChildProcess proc;
@@ -60,7 +80,11 @@ void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::String
         throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
 
     proc.readAllProcessOutput();
-    proc.waitForProcessToFinish(timeoutMs);
+    int timeout = (timeoutMs > 0) ? timeoutMs : 60000;
+    if (!proc.waitForProcessToFinish(timeout)) {
+        proc.kill();
+        throw ProcessoExternoError(nomeFerramenta + " timed out after " + std::to_string(timeout) + " ms");
+    }
     if (proc.getExitCode() != 0)
         throw ProcessoExternoError(nomeFerramenta + " exited with error code " + std::to_string(proc.getExitCode()));
 }
