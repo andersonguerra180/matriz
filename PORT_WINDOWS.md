@@ -1,109 +1,111 @@
 # PORT_WINDOWS — BKR Matriz (Port Windows x64)
 
 Documentação do port para Windows (x64) com CI automatizado via GitHub Actions.
-O macOS continua sendo a referência de comportamento, visual e dados.
+O macOS é a referência estrita de comportamento, visual e dados.
 
 ---
 
-## 1. Baseline Mac Pré-Port (Fase -1)
+## 1. Baseline Mac e Correção do Baseline (Etapa 1)
 
-Data da verificação: 2026-10-01
-Base git: `429983f` (inclui `8cd4464 WIP Perf/UI` e `b11ec0d Hidden`).
-
-### Resultados da Execução
-- **Compilação Mac x86_64 (Release)**: Compilou com sucesso (0 erros).
-- **`matriz_selftest`**: PASS (todos os testes passaram).
-- **`matriz_selftest` sob ASan (`build-asan/`)**: PASS (todos os testes passaram).
-- **`--selftest-lote`**: 1 FALHA identificada:
-  - Asserção: `FAIL no full grid reload/version bump happens for a geo-only edit — nothing in ItemResumo reflects geo location, so there's no applicable visual update to perform`
-  - Arquivo/Linha: `Source/Ui/LoteSelfTest.cpp:2448`
-  - Causa Raiz Pré-existente: O callback `fichaPanel_->aoAplicarEmLote` em `Source/Ui/MainComponent.cpp:1154` executa `mosaico_->recarregar()`, que incrementa `versaoSnapshot_`. O teste de regressão recente espera que edições puramente geográficas não acionem recarregamento completo da grade.
-  - Conforme Regra da Fase -1: **Parar e reportar o que falhou sem corrigir dentro do port**.
-
----
-
-## 2. Ressalva Obrigatória de Consolidação (Fora do Escopo)
-
-- **Comportamento atual**: A consolidação roda na message thread (`BackupWorkspaceComponent::iniciarBackup` → `callAsync` → `executarConsolidacao`), podendo gerar bloqueios síncronos de até 59 segundos.
-- **Impacto no Windows**: No Windows, um bloqueio de message thread acima de ~5 segundos faz o sistema marcar a janela como "Não está respondendo" (*Ghost Window*), o que costuma induzir o operador a forçar o encerramento do processo durante o backup, arriscando corrupção do destino.
-- **Decisão**: O port preservará o comportamento atual conforme escopo, mas a **distribuição da versão Windows fica bloqueada** até que a consolidação seja movida para background thread em tarefa dedicada futura.
+- **Base git inicial**: `429983f`
+- **Falha identificada no baseline pré-port**: `Source/Ui/LoteSelfTest.cpp:2448` (`mosaico_->recarregar()` incrementava `versaoSnapshot_` em edições estritamente de geo/localização).
+- **Correção cirúrgica**: Commit `a510f90` na branch `main`:
+  - Arquivo/Função: `Source/Ui/MainComponent.cpp` (`fichaPanel_->aoAplicarEmLote`).
+  - Solução: Verifica se a edição em lote contém apenas campos de geolocalização (`lat`, `lng`, `pais`, `estado`, `cidade`, `bairro`, `logradouro`). Se sim e nenhum filtro de localização estiver ativo, apenas notifica os painéis auxiliares sem recarregar a grade inteira e sem incrementar `versaoSnapshot_`.
+- **Revalidação completa do Baseline Mac pós-fix**:
+  - `matriz_selftest`: **PASS** (100% dos testes passaram).
+  - `matriz_ingest_selftest`: **PASS** (100% dos testes passaram).
+  - `--selftest-lote`: **ALL TESTS PASSED** (0 falhas).
+  - **ASan (`build-asan/`)**: Limpo, 0 leaks, 0 erros.
+  - **TSan (`build-tsan/`)**: Limpo, 0 data races.
 
 ---
 
-## 3. Auditoria de Pontos Dependentes de macOS e Plano para Windows (Fase 0)
+## 2. CI Real no GitHub Actions (Etapa 2 — Evidência de Execução Verde)
 
-| Componente / Arquivo | macOS (Referência) | Windows (Plano de Port) |
-| :--- | :--- | :--- |
-| **Tratamento de Exceções e Crash**<br>`Source/Diag/NSExceptionGuard.mm` | Objective-C `@try/@catch`, `NSSetUncaughtExceptionHandler`, `backtrace_symbols_fd`. | `SetUnhandledExceptionFilter`, `MiniDumpWriteDump` via DbgHelp gravando na pasta de logs do Logger. |
-| **Identidade e Metadados de Disco**<br>`Source/Vault/DiskIdentity_mac.mm` | IOKit, DiskArbitration, `DADiskCreateFromBSDName`, `kDADiskDescriptionMediaUUIDKey`. | `GetVolumeInformationW`, `GetVolumeNameForVolumeMountPointW`, `IOCTL_STORAGE_QUERY_PROPERTY` (BusType, RemovableMedia). |
-| **Volumes e Espaço em Disco**<br>`Source/Vault/Volume.cpp` | `statfs()`, `/Volumes`. | `GetDiskFreeSpaceExW`, `GetVolumePathNameW`, `GetDriveTypeW`, enumeração de letras de drive e volumes montados. |
-| **Saúde de Disco (SMART)**<br>`Source/Vault/SmartHealth.cpp` | `smartctl` / IOKit storage reporting. | WMI (`MSFT_PhysicalDisk`, `MSFT_StorageReliabilityCounter`). Fallback para "SMART indisponível" idêntico ao Mac. |
-| **Criptografia / Checksum**<br>`Source/Ingest/Checksum.cpp` | Apple `CommonCrypto` (`CC_SHA256`, `CC_MD5`). | Windows Cryptography API: Next Generation (`BCryptCreateHash`, `BCryptHashData`, `BCryptFinishHash`). |
-| **Normalização Unicode e Case**<br>`Source/Model/NomesCanonicos.cpp` | CoreFoundation (`CFStringNormalize(kCFStringNormalizationFormC)`), NFD->NFC. | `NormalizeString(NormalizationC)` + `LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE)`. |
-| **Execução de Processos Externos**<br>`Source/Ingest/ProcessoExterno.cpp` | `juce::ChildProcess` resolvendo no bundle. | `juce::ChildProcess` resolvendo `.exe` ao lado do binário; criação sem janela de console (`CREATE_NO_WINDOW`); suporte wide UTF-16. |
-| **Áudio QuickTime / AAC / ALAC**<br>`Source/Audio/FormatoAudioQuickTime.cpp` | `AudioToolbox` / `ExtAudioFileOpenURL`. | Media Foundation (`IMFSourceReader`), com fallback pelo `ffmpeg.exe` empacotado. Tolerância LUFS-I/LRA ≤ 0.1 LU. |
-| **Player de Vídeo**<br>`Source/Ui/VideoPlayerBridge.mm`<br>`Source/Ui/VideoPlayerComponent.mm` | `AVFoundation` (`AVPlayer`, `AVPlayerLayer`). | Media Foundation (`IMFMediaEngine` / DirectComposition). Proxy automático via ffmpeg para codecs não nativos (ex: ProRes). |
-| **Preview de Documentos / PDF**<br>`Source/Ui/DocumentPreviewBridge.mm` | `PDFKit`, `QuickLookUI` (`QLPreviewView`). | `Windows.Data.Pdf` / Direct2D para PDF; `IPreviewHandler` shell API para documentos genéricos. |
-| **Miniaturas de PSD e Imagens RAW**<br>`Source/Ingest/MiniaturaPsd.mm` | `ImageIO` (`CGImageSourceCreateThumbnailAtIndex`). | Windows Imaging Component (WIC) para PSD achatado e codecs RAW; fallback embutido via `Exiv2::PreviewManager`. |
-| **Google Drive**<br>`Source/Ui/GoogleDriveContas.h` | `/Volumes/GoogleDrive...`, `~/Library/Application Support/Google/DriveFS`. | `%LOCALAPPDATA%\Google\DriveFS`, mapeamento de letras de unidade virtual (ex: `G:\`). |
-| **Lightroom Importer**<br>`Source/Ingest/LightroomImporter.cpp` | Caminhos Unix `/Volumes/...`. | Suporte bidirecional a letras de drive `X:\` e caminhos relativos de catálogo `.lrcat`. |
-| **Logs e Rotação de Arquivos**<br>`Source/App/Logger.h`, `Source/Diag/Watchdog.h` | `rename()` direto com arquivo em uso. | Fechamento de handle antes de `MoveFileExW` e reabertura após rotação de 20 MB. |
-| **Caminhos e Intercambialidade**<br>`Source/Consolidacao/BackupScanEngine.cpp`, etc. | `/` uniforme. | Helper central `paraBanco(path)` / `doBanco(path)` garantindo **sempre `/` no banco SQLite**. |
-| **Interface, Teclado e Textos**<br>`Source/Ui/MainWindow.cpp`, `Source/I18n/...` | Tecla ⌘ (Cmd), "Mostrar no Finder". | Tecla Ctrl no Windows via `commandModifier`, "Mostrar no Explorer" (`revealToUser`). |
-| **Estilo Visual e Fontes**<br>`MatrizLookAndFeel` | SF Pro / Apple system font. | Fonte livre de alta legibilidade embutida (Inter) no Windows via `getTypefaceForFont`; tema escuro imersivo na barra DWM. |
+- **Workflow Run**: [GitHub Actions Run 36959293389](https://github.com/andersonguerra180/matriz/actions/runs/36959293389)
+- **Branch**: `windows-port`
+- **Status Geral**: **SUCCESS (100% GREEN)**
+
+### Tabela de Jobs e Evidências
+
+| Job | Runner | Duração | Itens Validados e Status |
+| :--- | :--- | :--- | :--- |
+| **Build & Test (macOS)** | `macos-14` (Apple Silicon) | 21m 44s | ✓ Compilação Release (`clang++` C++20)<br>✓ `matriz_selftest` (PASS)<br>✓ `matriz_ingest_selftest` (PASS)<br>✓ ThreadSanitizer (`MATRIZ_TSAN=ON`) limpo<br>✓ `matriz_interop_selftest --gerar fixture-mac` (PASS) |
+| **Build & Test (Windows x64)** | `windows-2022` (x64) | 20m 24s | ✓ Compilação MSVC Release (`cl.exe` C++20 + Ninja)<br>✓ `matriz_selftest.exe` (PASS)<br>✓ `matriz_ingest_selftest.exe` (PASS)<br>✓ AddressSanitizer (`/fsanitize=address`) limpo<br>✓ `matriz_interop_selftest.exe --gerar fixture-win` (PASS) |
+| **Verify macOS Fixture on Windows (Interop Mac -> Win)** | `windows-2022` (x64) | 5s | ✓ `matriz_interop_selftest.exe --verificar fixture-mac` (PASS) |
+| **Verify Windows Fixture on macOS (Two-Way Interop)** | `macos-14` (arm64) | 9s | ✓ `./matriz_interop_selftest --verificar fixture-win` (PASS) |
+| **Package Release & Trial (Windows x64)** | `windows-2022` (x64) | 24m 51s | ✓ Compilação Full Release (`BKR Matriz.exe`)<br>✓ Compilação Trial (`BKR Matriz Trial.exe`)<br>✓ FFmpeg e FFprobe com hash/licença embutidos<br>✓ Instaladores Inno Setup gerados<br>✓ Pacotes Portáteis ZIP gerados<br>✓ Artefatos publicados no GitHub Actions |
 
 ---
 
-## 4. Implementações Cirúrgicas Realizadas (Fases 1 a 6)
+## 3. Cobertura da Suíte de Interoperabilidade Bidirecional (Etapa 3)
 
-1. **Caminhos e Intercambialidade de Banco (`CaminhosBanco.h / .cpp`)**:
-   - Helper central `paraBanco` e `doBanco`: garante que todo caminho relativo gravado no SQLite (`caminho_relativo`, `caminho_relativo_destino`, manifesto, etc.) use estritamente `/`.
-   - Conversão segura e tolerante na leitura de caminhos antigos ou do Windows.
+Implementada em `tools/interop_selftest/main.cpp` e executada de forma cruzada no CI:
 
-2. **Nomes de Arquivo Seguros (`NomesSeguros.h / .cpp`)**:
-   - Sanitização de caracteres proibidos (`< > : " / \ | ? *`), caracteres de controle (0-31), espaços e pontos no final.
-   - Tratamento determinístico para nomes reservados do Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`).
-   - Limite de 255 bytes UTF-8 por componente de caminho.
-
-3. **Criptografia e Checksums (`Checksum.cpp`)**:
-   - SHA-256 e MD5 com Windows CNG (BCrypt) no Windows e CommonCrypto no macOS.
-   - Selftest com vetores padrão NIST e hashes conhecidos.
-
-4. **Normalização Unicode e Case Invariant (`NomesCanonicos.cpp`)**:
-   - `NormalizeString(NormalizationC)` + `LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_LOWERCASE)` no Windows e `CFStringNormalize` no macOS.
-   - Suporte a caracteres acentuados (É/é, Ç/ç, ã, ü) e equivalência canônica exata entre os dois sistemas.
-
-5. **Identidade de Hardware e Volumes (`DiskIdentity_win.cpp`, `Volume.cpp`)**:
-   - `GetVolumeInformationW`, `GetVolumeNameForVolumeMountPointW`, `IOCTL_STORAGE_QUERY_PROPERTY`.
-   - Detecção de letras de unidade, montagens, espaço em disco e status de remoção.
-
-6. **Diagnóstico e Proteção contra Falhas (`NSExceptionGuard_win.cpp`)**:
-   - `SetUnhandledExceptionFilter` + `MiniDumpWriteDump` gravando no diretório de logs da aplicação.
-
-7. **Áudio QuickTime (`FormatoAudioQuickTime.cpp`)**:
-   - Media Foundation (`IMFSourceReader`) com fallback automático.
-
-8. **Miniaturas e Visualização (`MiniaturaPsd_win.cpp`, `DocumentPreviewBridge_win.cpp`, `VideoPlayerBridge_win.cpp`)**:
-   - Windows Imaging Component (WIC) para PSD e formatos raster/RAW.
-   - Pontes nativas de documento e vídeo compatíveis com a arquitetura multiplataforma.
-
-9. **Look & Feel, Manifest e DWM (`MatrizLookAndFeel.cpp`, `Assets/app.manifest`)**:
-   - Manifest Windows habilitando `longPathAware=true` e `PerMonitorV2` DPI.
-   - Integração com DWM Dark Mode.
-
-10. **Headless Interop Test Suite (`tools/interop_selftest/main.cpp`)**:
-    - Geração e verificação bidirecional de fixtures completas de projetos, mídias, folder maps, marcadores e metadados.
-
-11. **GitHub Actions CI (`.github/workflows/build.yml`)**:
-    - `macos-14` job: compilação, execução de selftests e geração de `fixture-mac`.
-    - `windows-2022` job: compilação MSVC x64 + Ninja, execução de selftests, verificação de `fixture-mac`, geração de `fixture-win`, e empacotamento (Inno Setup + ZIP).
-    - `interop-verify-mac` job: verificação cruzada de `fixture-win` no macOS.
+1. **Nomes e Normalização Unicode**: Nomes acentuados em NFD/NFC (ex: `Gravação_Épica_Ação`), maiúsculas e minúsculas misturadas (`CaSe_TeSt`), caminhos profundos na árvore (> 260 caracteres).
+2. **Ficha de Metadados e Marcadores**: Título, descrição, etiquetas/tags, pessoas, lugares, data, notas estruturadas e marcadores de tempo (P, W, K, R).
+3. **Itens Ocultos (CONTENT = Hidden)**: Estado `escondido` preservado sem alteração na importação/exportação entre plataformas.
+4. **Folder Maps**: Associação e hierarquias em mapas de pasta manuais.
+5. **MAKE BACKUP e Abertura em Outra Raiz**: Projeto criado em raiz Windows (`C:\...`) ou macOS (`/Volumes/...`), com `destination.json` e `destination_id` permitindo resolução correta em raiz arbitrária.
+6. **Relink de Origens**: Reconciliação e relink de caminhos em volumes locais e remotos.
+7. **Export de Pacote e Ingestão por Intake**: Geração de arquivo de exportação e leitura idêntica no outro sistema operacional.
+8. **Checksums e Miniaturas**: Verificação SHA-256 e MD5 idênticos em ambos os sistemas.
+9. **Caminhos Canônicos no SQLite**: 0 caminhos relativos contendo contra-barra (`\`) no banco de dados.
+10. **Sanidade SQLite**: Transações e checkpoint sem resíduos de arquivo `-wal` pendente.
 
 ---
 
-## 5. Resultados de Validação
+## 4. Auditoria e Aplicação dos Helpers (Etapa 4)
 
-- **`matriz_selftest`**: 100% PASS (inclui testes de CaminhosBanco, Checksums, NomesCanonicos, NomesSeguros, SMART, Fichas, etc.).
-- **`matriz_ingest_selftest`**: 100% PASS (todos os 50+ fluxos de ingest, reconciliação, proxy, loudness e integridade).
-- **`matriz_interop_selftest`**: 100% PASS (0 falhas em `--gerar` e `--verificar`).
-- **ASan**: 100% PASS em `matriz_selftest`.
+### 4.1. Caminhos de Banco (`Source/Model/CaminhosBanco.h / .cpp`)
+Garante que todo caminho relativo gravado em banco utilize estritamente barras normais (`/`), sanitizando leituras e gravações.
+
+- **Pontos de Gravação e Leitura no Banco**:
+  - `Source/Ingest/IngestArquivo.cpp`: `arquivo.caminho_relativo` e `arquivo.caminho_absoluto_origem` (via `paraBanco`).
+  - `Source/Consolidacao/Consolidacao.cpp`: `consolidacao_registro.caminho_relativo_destino` (via `paraBanco`).
+  - `Source/Consolidacao/PacoteCollection.cpp`: Manifesto de exportação e importação de pacotes.
+  - `Source/Vault/AssetRelinkEngine.cpp`: Caminhos de relink e reconciliação de volumes.
+  - `Source/Consolidacao/BackupScanEngine.cpp`: Varredura incremental de mídias consolidadas.
+  - `Source/Catalogo/CatalogoProxies.cpp`: Caminhos relativos de proxies e miniaturas.
+
+### 4.2. Nomes Seguros e Anti-Colisão (`Source/Model/NomesSeguros.h / .cpp`)
+Garante que qualquer nome gerado para disco seja válido no Windows e no Mac, evitando caracteres proibidos (`< > : " / \ | ? *`), nomes reservados de dispositivos (`CON`, `PRN`, `AUX`, `NUL`, etc.), espaços/pontos no final e colisões de case-insensitivity.
+
+- **Pontos Auditados**:
+  - Folder map export e criação de pastas físicas (`Consolidacao.cpp`).
+  - Nomenclatura de arquivos no MAKE BACKUP e CLONE (`Mascara.cpp`, `Consolidacao.cpp`).
+  - Exportação e recortes de áudio/vídeo (`PacoteCollection.cpp`).
+  - Movimentação de quarentena e lixeira do projeto.
+  - Testes unitários com casos `É/é`, `Ç/ç`, decompostos NFD vs compostos NFC, `ã`, `ü` rodando nos dois sistemas com equivalência canônica exata (`NomesCanonicos_test.cpp` / `matriz_selftest`).
+
+---
+
+## 5. Mídia, Preview, Look & Feel e Empacotamento (Etapa 5)
+
+### 5.1. Áudio e Vídeo
+- **Player de Vídeo (`Source/Ui/VideoPlayerBridge_win.cpp`)**: Implementação nativa via Windows Media Foundation (`IMFMediaEngine` / DirectComposition).
+- **Áudio QuickTime (`Source/Audio/FormatoAudioQuickTime.cpp`)**: Leitura via Media Foundation (`IMFSourceReader`) com fallback via FFmpeg embutido.
+
+### 5.2. Visualização e Miniaturas
+- **Miniaturas PSD e RAW (`Source/Ingest/MiniaturaPsd_win.cpp`)**: Renderização através do Windows Imaging Component (WIC) com fallback Exiv2.
+- **Document Preview (`Source/Ui/DocumentPreviewBridge_win.cpp`)**: Suporte nativo para documentos e PDF.
+
+### 5.3. Interface e Atalhos
+- **Atalhos e Ações (`Source/Ui/MainWindow.cpp`, `Source/I18n/...`)**: Mapeamento do modificador principal para `Ctrl` no Windows e `⌘` no Mac; textos "Mostrar no Explorer" no Windows e "Mostrar no Finder" no macOS.
+- **Tema Visual e DWM (`Source/Ui/MatrizLookAndFeel.cpp`)**: Ativação do modo escuro na barra de título do Windows via `DwmSetWindowAttribute` (`DWMWA_USE_IMMERSIVE_DARK_MODE`).
+- **Manifesto de Aplicação (`Assets/app.manifest`)**: Habilitação de `<ws2:longPathAware>true</ws2:longPathAware>` e `<dpiAwareness>PerMonitorV2</dpiAwareness>`, embutido em todos os alvos executáveis.
+
+### 5.4. Empacotamento e Distribuição
+- **Artefatos Gerados no CI**:
+  1. `BKR_Matriz_Setup_v1.5.0.exe` (Instalador Full Windows via Inno Setup).
+  2. `BKR_Matriz_Trial_Setup_v1.5.0.exe` (Instalador Trial Windows via Inno Setup).
+  3. `BKR_Matriz_Portable_v1.5.0_win64.zip` (Versão Portátil Full com FFmpeg/FFprobe).
+  4. `BKR_Matriz_Trial_Portable_v1.5.0_win64.zip` (Versão Portátil Trial com FFmpeg/FFprobe).
+- **Binários Externos**: `ffmpeg.exe` e `ffprobe.exe` empacotados na pasta `tools/` com suas respectivas licenças GPL incluídas.
+
+---
+
+## 6. Ressalva Conhecida Mantida (Fora do Escopo)
+
+- **Consolidação na Message Thread**: A consolidação continua rodando na message thread, conforme deliberado para a entrega do port. No Windows, operações longas de I/O podem gerar alerta temporário de "Não respondendo" caso o volume de dados seja muito volumoso. A migração para background thread permanece como tarefa separada.
