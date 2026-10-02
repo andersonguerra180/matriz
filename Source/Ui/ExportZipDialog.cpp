@@ -379,7 +379,7 @@ public:
         arqManifestoTemp.replaceWithText(manifesto);
 
         juce::File arqChecksumsTemp = pastaTemp.getChildFile("checksums.sha256");
-        arqChecksumsTemp.replaceWithText(checksums);
+        arqChecksumsTemp.replaceWithText(checksums, false, false, "\n");  // LF: o checksums.sha256 do ZIP tem que passar em shasum -c
 
         // Prepara juce::ZipFile::Builder
         juce::ZipFile::Builder builder;

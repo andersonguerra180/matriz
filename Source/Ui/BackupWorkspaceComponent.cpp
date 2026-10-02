@@ -2789,7 +2789,7 @@ void BackupWorkspaceComponent::exportarChecksums() {
         });
         thread.runThread();
 
-        targetFile.replaceWithText(manifest);
+        targetFile.replaceWithText(manifest, false, false, "\n");  // LF: com CRLF o shasum -c lê "nome\r"
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::InfoIcon)
@@ -2825,9 +2825,9 @@ bool BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolde
         return false;
     }
     // Temporário + rename: nunca existe um .sha256 pela metade.
-    if (!tmpFile.replaceWithText(manifest) || !tmpFile.moveFileTo(targetFile)) {
+    if (!tmpFile.replaceWithText(manifest, false, false, "\n") || !tmpFile.moveFileTo(targetFile)) {
         tmpFile.deleteFile();
-        targetFile.replaceWithText(manifest);
+        targetFile.replaceWithText(manifest, false, false, "\n");  // LF: com CRLF o shasum -c lê "nome\r"
     }
     return true;
 }
