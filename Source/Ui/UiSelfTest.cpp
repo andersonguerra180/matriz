@@ -1,4 +1,5 @@
 #include "UiSelfTest.h"
+#include "FichasEmbutidas.h"
 
 #include "../App/Preferencias.h"
 #include "../Ficha/CatalogoDeFichas.h"
@@ -186,7 +187,7 @@ void gravarCampoRaiz(matriz::db::Database& registro, const std::string& itemId, 
 const std::vector<std::string>& todosOsTipos() {
     static const std::vector<std::string> ids = [] {
         std::vector<std::string> out;
-        for (auto& info : matriz::ficha::listarTodosOsTipos(MATRIZ_FICHAS_DIR)) out.push_back(info.id);
+        for (auto& info : matriz::ficha::listarTodosOsTipos(matriz::ui::fichasEmbutidas())) out.push_back(info.id);
         return out;
     }();
     return ids;

@@ -102,6 +102,14 @@ juce_add_binary_data(MatrizAssets
         "Assets/reaper.png"
         "Assets/word.jpeg")
 
+# Fichas (fichas/*.yaml) embutidas no binário (Ui/FichasEmbutidas.cpp): o app não depende da pasta do
+# código-fonte. Glob com CONFIGURE_DEPENDS: acrescentar um tipo continua sendo só escrever um YAML.
+file(GLOB MATRIZ_FICHAS_YAML CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fichas/*.yaml")
+juce_add_binary_data(MatrizFichasAssets
+    NAMESPACE FichasBinaryData
+    HEADER_NAME FichasBinaryData.h
+    SOURCES ${MATRIZ_FICHAS_YAML})
+
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless: parser/validador de ficha + criação/abertura
 # de projeto portátil. "Nenhuma UI além do mínimo para testar" (§16).
@@ -328,6 +336,7 @@ target_sources(matriz PRIVATE
     Source/Ui/LoteSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
     Source/Ui/LogosTipoArquivo.cpp
+    Source/Ui/FichasEmbutidas.cpp
     Source/Ui/ModalLoopSelfTest.cpp
     Source/Ui/OverlayComponent.cpp
     Source/Ui/AudioWorkspace.cpp
@@ -448,6 +457,7 @@ target_link_libraries(matriz PRIVATE
     MatrizSchemaAssets
     MatrizI18nAssets
     MatrizAssets
+    MatrizFichasAssets
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     Exiv2::exiv2lib

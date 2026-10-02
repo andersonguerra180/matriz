@@ -1,4 +1,6 @@
 #include "FloatingPreviewWindow.h"
+#include "FichasEmbutidas.h"
+#include "../Ficha/CatalogoDeFichas.h"
 #include "LoteSelfTest.h"
 
 #include <JuceHeader.h>
@@ -3452,6 +3454,23 @@ int rodarLoteSelfTest() {
         base.deleteRecursively();
         checar(matriz::ingest::obterLogoParaExtensao("cdr") == "corel.jpeg" && carregarLogoDeTipo("corel.jpeg").isValid(),
                "CorelDRAW .cdr files get the Corel icon (embedded in the binary)");
+        // Fichas embutidas: carregam todas (o app não lê mais fichas/ da pasta do código-fonte) e, quando a pasta
+        // existe (build de desenvolvimento), há uma embutida por YAML — pega YAML novo sem rodar o cmake de novo.
+        {
+            int validas = 0;
+            std::string erro;
+            try {
+                for (const auto& info : matriz::ficha::listarTodosOsTipos(matriz::ui::fichasEmbutidas())) validas += info.id.empty() ? 0 : 1;
+            } catch (const std::exception& e) { erro = e.what(); }
+            checar(erro.empty() && validas > 0 && validas == static_cast<int>(matriz::ui::fichasEmbutidas().size()),
+                   "embedded fichas all load (" + juce::String(validas) + ")" + (erro.empty() ? juce::String() : juce::String(" - ") + erro));
+            juce::File dir(MATRIZ_FICHAS_DIR);
+            if (dir.isDirectory()) {
+                const int emDisco = dir.findChildFiles(juce::File::findFiles, false, "*.yaml").size();
+                checar(emDisco == static_cast<int>(matriz::ui::fichasEmbutidas().size()),
+                       "one embedded ficha per fichas/*.yaml (" + juce::String(emDisco) + " on disk)");
+            }
+        }
         // Todo logo que o app pode pedir está embutido; só faltam os que ainda não foram fornecidos (ícone genérico).
         {
             juce::StringArray semLogo;

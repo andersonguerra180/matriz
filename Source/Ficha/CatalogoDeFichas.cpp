@@ -26,6 +26,26 @@ std::vector<TipoFichaInfo> listarTodosOsTipos(const std::string& fichasDir) {
     return out;
 }
 
+std::vector<TipoFichaInfo> listarTodosOsTipos(const std::map<std::string, std::string>& yamlPorId) {
+    std::vector<TipoFichaInfo> out;
+    for (const auto& [id, yaml] : yamlPorId) out.push_back(TipoFichaInfo{id, loadFromString(yaml, id + ".yaml")});
+
+    std::sort(out.begin(), out.end(), [](const TipoFichaInfo& a, const TipoFichaInfo& b) {
+        if (a.definicao.ordem != b.definicao.ordem) return a.definicao.ordem < b.definicao.ordem;
+        return a.id < b.id;
+    });
+    return out;
+}
+
+std::vector<TipoFichaInfo> listarTiposPorModo(const std::map<std::string, std::string>& yamlPorId, const std::string& modo) {
+    std::vector<TipoFichaInfo> out;
+    for (auto& info : listarTodosOsTipos(yamlPorId)) {
+        const auto& modos = info.definicao.modos;
+        if (modos.empty() || std::find(modos.begin(), modos.end(), modo) != modos.end()) out.push_back(std::move(info));
+    }
+    return out;
+}
+
 std::vector<TipoFichaInfo> listarTiposPorModo(const std::string& fichasDir, const std::string& modo) {
     std::vector<TipoFichaInfo> out;
     for (auto& info : listarTodosOsTipos(fichasDir)) {

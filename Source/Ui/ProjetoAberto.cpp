@@ -1,4 +1,5 @@
 #include "ProjetoAberto.h"
+#include "FichasEmbutidas.h"
 #include "TraducaoContent.h"
 #include "../Diag/Watchdog.h"
 
@@ -1153,12 +1154,13 @@ const matriz::ficha::FichaDefinition& ProjetoAberto::definicaoPara(const std::st
     auto it = definicoesCache_.find(tipoMidia);
     if (it != definicoesCache_.end()) return it->second;
 
-    juce::File caminho = juce::File(MATRIZ_FICHAS_DIR).getChildFile(tipoMidia + ".yaml");
-    if (!caminho.existsAsFile())
-        throw ProjetoAbertoError("nenhuma definição de ficha encontrada para o tipo \"" + tipoMidia + "\": " +
-                                  caminho.getFullPathName().toStdString());
+    // Fichas embutidas no binário (FichasEmbutidas.cpp), não lidas da pasta do código-fonte.
+    const auto& embutidas = fichasEmbutidas();
+    auto yaml = embutidas.find(tipoMidia);
+    if (yaml == embutidas.end())
+        throw ProjetoAbertoError("nenhuma definição de ficha encontrada para o tipo \"" + tipoMidia + "\"");
 
-    auto [inserido, ok] = definicoesCache_.emplace(tipoMidia, matriz::ficha::loadFromFile(caminho.getFullPathName().toStdString()));
+    auto [inserido, ok] = definicoesCache_.emplace(tipoMidia, matriz::ficha::loadFromString(yaml->second, tipoMidia + ".yaml"));
     return inserido->second;
 }
 
