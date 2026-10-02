@@ -79,6 +79,7 @@ public:
 
 private:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp): travas da etapa 5
+    friend int rodarManifestoSelfTest();  // --selftest-manifesto (ManifestoSelfTest.cpp)
     class PreviaLista;
 
     // ListBoxModel methods for Vaults list
