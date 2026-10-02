@@ -1774,8 +1774,11 @@ int rodarLoteSelfTest() {
         int idTour = -1;
         for (size_t i = 0; i < cw->subjectsDisponiveis_.size(); ++i)
             if (cw->subjectsDisponiveis_[i].first == "Tour") idTour = static_cast<int>(i + 1);
-        checar(cw->comboSubject_ != nullptr && idTour > 0 && cw->subjectsDisponiveis_.size() == 2,
-               "SUBJECT dropdown lists each existing subject once (" + juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
+        // 2 subjects existentes + a entrada fixa "No Subject" (kSemSubject), sempre a última.
+        checar(cw->comboSubject_ != nullptr && idTour > 0 && cw->subjectsDisponiveis_.size() == 3 &&
+                   cw->subjectsDisponiveis_.back().first == "__sem_subject__",
+               "SUBJECT dropdown lists each existing subject once, plus the fixed No Subject entry last (" +
+                   juce::String((int) cw->subjectsDisponiveis_.size()) + ")");
         if (cw->comboSubject_ && idTour > 0) {
             cw->comboSubject_->setSelectedId(idTour, juce::sendNotificationSync);
             esperarAte([&] { return !cw->mosaico_->snapshotPendente(); });
