@@ -1153,6 +1153,7 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
                 collectionSelecionado_ = collectionDisponiveis_[static_cast<size_t>(sel - 1)].first;
             }
             aplicarFiltrosAdicionais();
+            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
     }
 
@@ -1197,6 +1198,7 @@ void CatalogWorkspaceComponent::construirFiltroSubject() {
             if (sel <= 0 || sel >= idTodos) subjectSelecionado_ = std::nullopt;
             else subjectSelecionado_ = subjectsDisponiveis_[static_cast<size_t>(sel - 1)].first;
             aplicarFiltrosAdicionais();
+            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
     }
 
@@ -1253,7 +1255,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // mesmo tratamento que mostrarApenasRecentes_ já recebe acima.
     std::optional<std::set<std::string>> filtroHerdado = filtroHerdadoIds_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, soRecentes, filtroHerdado,
+    // Contagens "facetadas": cada grupo (MEDIA TYPE, DATE, CONTENT TYPE, SUBJECT) conta só o que passa
+    // pelos filtros ATIVOS dos OUTROS grupos — assim o número do botão bate com o que a grade mostra.
+    const std::optional<std::string> collSel = collectionSelecionado_;
+    const std::optional<std::string> subjSel = subjectSelecionado_;
+    const int geracao = ++geracaoContagens_;
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, geracao, soRecentes, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1292,15 +1300,40 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
 
-                // item: quando há filtro de ano ativo, os contadores de MEDIA
-                // TYPE passam a contar só os arquivos daquele(s) ano(s) — sem
-                // filtro de ano nenhum, continuam mostrando o total global
-                // (mesmo comportamento de sempre).
-                bool passaFiltroAnoParaTipo = anosParaTipo.empty() ||
+                // Passa por cada filtro ativo? (sem filtro = passa)
+                const bool pAno = anosParaTipo.empty() ||
                     (item.ano.has_value() && anosParaTipo.count(*item.ano) > 0) ||
                     (item.anoDesconhecido() && anosParaTipo.count(-1) > 0);
 
-                if (passaFiltroAnoParaTipo) {
+                bool pTipo = true;
+                if (filtroTipoMidiaAnos.has_value()) {
+                    if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
+                    else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
+                    else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                    else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                    else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                }
+
+                bool pColl = true;
+                if (collSel.has_value() && *collSel != "Hidden") {  // Hidden: as contagens são do catálogo visível
+                    const bool temColl = item.collectionType.has_value() && !item.collectionType->empty();
+                    pColl = (*collSel == "Unknown") ? !temColl : (temColl && *item.collectionType == *collSel);
+                }
+
+                bool pSubj = true;
+                if (subjSel.has_value()) {
+                    if (*subjSel == kSemSubject) pSubj = semSubject(item);
+                    else {
+                        const auto chaveSel = matriz::model::nomes::chave(*subjSel);
+                        pSubj = false;
+                        if (item.subject.has_value())
+                            for (const auto& sub : dividirSubjects(*item.subject))
+                                if (matriz::model::nomes::chave(sub) == chaveSel) { pSubj = true; break; }
+                    }
+                }
+
+                // MEDIA TYPE: ano + collection + subject (não filtra por si mesmo).
+                if (pAno && pColl && pSubj) {
                     switch (cat) {
                         case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
                         case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
@@ -1312,43 +1345,45 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
 
-                // Item C.6: quando um tipo em MEDIA TYPE está selecionado, os
-                // botões de ano só contam os arquivos daquele tipo — os
-                // contadores de MEDIA TYPE acima (res.audio/video/...) continuam
-                // sempre totais, não filtrados por si mesmos.
-                bool passaFiltroTipoParaAno = true;
-                if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "audio") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Audio);
-                    else if (*filtroTipoMidiaAnos == "video") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Video);
-                    else if (*filtroTipoMidiaAnos == "images") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Imagem);
-                    else if (*filtroTipoMidiaAnos == "documents") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-                    else if (*filtroTipoMidiaAnos == "sessions") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Sessao);
-                }
-
-                if (passaFiltroTipoParaAno) {
-                    // Unknown = sem EVENT DATE e sem ano no metadado; o palpite
-                    // pela data do disco conta no ano chutado E em Unknown.
+                // DATE: tipo + collection + subject. Unknown = sem EVENT DATE e sem ano no
+                // metadado; o palpite pela data do disco conta no ano chutado E em Unknown.
+                if (pTipo && pColl && pSubj) {
                     if (item.ano.has_value()) contagemPorAno[*item.ano]++;
                     if (item.anoDesconhecido()) semAno++;
                 }
 
-                if (item.collectionType.has_value() && !item.collectionType->empty())
-                    contagemPorCollection[*item.collectionType]++;
-                else
-                    semCollection++;
-
-                if (semSubject(item)) ++totalSemSubject;
-                if (item.subject.has_value()) {
-                    // "A, a" conta uma vez só; variações de maiúsculas são o
-                    // mesmo subject, mostrado na primeira grafia vista.
-                    std::set<std::string> distintos;
-                    for (auto& sub : dividirSubjects(*item.subject)) {
-                        auto chave = matriz::model::nomes::chave(sub);
-                        grafiaPorChaveSubject.emplace(chave, sub);
-                        distintos.insert(chave);
-                    }
-                    for (const auto& chave : distintos) contagemPorSubject[grafiaPorChaveSubject[chave]]++;
+                // CONTENT TYPE: tipo + ano + subject.
+                if (pTipo && pAno && pSubj) {
+                    if (item.collectionType.has_value() && !item.collectionType->empty())
+                        contagemPorCollection[*item.collectionType]++;
+                    else
+                        semCollection++;
                 }
+
+                // SUBJECT: tipo + ano + collection.
+                if (pTipo && pAno && pColl) {
+                    if (semSubject(item)) ++totalSemSubject;
+                    if (item.subject.has_value()) {
+                        // "A, a" conta uma vez só; variações de maiúsculas são o
+                        // mesmo subject, mostrado na primeira grafia vista.
+                        std::set<std::string> distintos;
+                        for (auto& sub : dividirSubjects(*item.subject)) {
+                            auto chave = matriz::model::nomes::chave(sub);
+                            grafiaPorChaveSubject.emplace(chave, sub);
+                            distintos.insert(chave);
+                        }
+                        for (const auto& chave : distintos) contagemPorSubject[grafiaPorChaveSubject[chave]]++;
+                    }
+                }
+            }
+
+            // O valor hoje selecionado nunca some da lista (mesmo com 0 no contexto atual),
+            // senão o combo/botão fica inconsistente com o filtro ainda ativo.
+            for (int anoSel : anosParaTipo) if (anoSel != -1) contagemPorAno.emplace(anoSel, 0);
+            if (collSel && *collSel != "Unknown" && *collSel != "Hidden") contagemPorCollection.emplace(*collSel, 0);
+            if (subjSel && *subjSel != kSemSubject) {
+                const auto chaveSel = matriz::model::nomes::chave(*subjSel);
+                if (!grafiaPorChaveSubject.count(chaveSel)) contagemPorSubject.emplace(*subjSel, 0);
             }
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
@@ -1378,8 +1413,9 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             return;
         }
 
-        juce::MessageManager::callAsync([safeThis, res]() {
-            if (safeThis) {
+        juce::MessageManager::callAsync([safeThis, res, geracao]() {
+            // Resultado de uma contagem já superada por outra mais nova: descarta (senão mostra número velho).
+            if (safeThis && geracao == safeThis->geracaoContagens_) {
                 safeThis->aplicarContagens(res);
             }
         });

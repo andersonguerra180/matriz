@@ -277,6 +277,7 @@ private:
     // busca ou clique em outra categoria da sidebar.
     std::optional<std::set<std::string>> filtroHerdadoIds_;
     int geracaoContagensAgendadas_ = 0;
+    int geracaoContagens_ = 0;  // só o resultado da contagem mais recente é aplicado
     int versaoSnapshotContada_ = -1;  // MosaicoComponent::versaoSnapshot() da última contagem
 
     std::vector<std::pair<int, int>> anosDisponiveis_;
