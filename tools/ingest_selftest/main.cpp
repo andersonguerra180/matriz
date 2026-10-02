@@ -1626,6 +1626,7 @@ void testarCatalogoProxies(const juce::File& dirTemp) {
         // O teste que importa: some com o projeto E com o volume de origem.
         // O catálogo tem que continuar respondendo.
         // =================================================================
+        projeto.reset();
         pastaProjeto.deleteRecursively();
         dirTemp.getChildFile("VolumeExterno").deleteRecursively();
         check(!pastaProjeto.exists(), "the original project was deleted");

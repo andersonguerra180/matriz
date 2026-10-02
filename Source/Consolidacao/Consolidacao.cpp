@@ -590,13 +590,17 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     if (cadeia.empty() && semPastaFisica) segmentosPasta.add(kPastaSemPasta);
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
-                    juce::File fRel(caminhoRelativoOrigem);
-                    juce::File dirPai = fRel.getParentDirectory();
-                    if (dirPai.getFullPathName() != "." && dirPai.getFullPathName().isNotEmpty()) {
+                    juce::String dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("/", false, false);
+                    if (dirStr.isEmpty() && caminhoRelativoOrigem.contains("\\"))
+                        dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("\\", false, false);
+                    if (dirStr.isNotEmpty()) {
                         juce::StringArray segs;
-                        segs.addTokens(dirPai.getFullPathName(), "/\\", "");
-                        for (auto& s : segs)
-                            if (s.trim().isNotEmpty()) segmentosPasta.add(segmentoSeguro(s, "Folder"));
+                        segs.addTokens(dirStr, "/\\", "");
+                        for (auto& s : segs) {
+                            juce::String limpo = s.trim();
+                            if (limpo.endsWithChar(':')) limpo = limpo.dropLastCharacters(1);
+                            if (limpo.isNotEmpty() && limpo != ".") segmentosPasta.add(segmentoSeguro(limpo, "Folder"));
+                        }
                     }
                     break;
                 }

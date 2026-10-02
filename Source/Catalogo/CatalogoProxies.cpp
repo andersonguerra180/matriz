@@ -176,11 +176,9 @@ juce::String descreverLocalizacao(const juce::String& caminhoAbsoluto) {
     if (caminhoAbsoluto.isEmpty()) return {};
 
     juce::StringArray partes;
-    partes.addTokens(caminhoAbsoluto, juce::File::getSeparatorString(), "");
+    partes.addTokens(caminhoAbsoluto, "/\\", "");
     partes.removeEmptyStrings();
-#if JUCE_MAC
     if (partes.size() >= 2 && partes[0] == "Volumes") partes.remove(0);
-#endif
 
     // Sem o nome do arquivo: a pergunta que isto responde é "onde procurar",
     // e o nome já está na frente do operador na própria linha do catálogo.
