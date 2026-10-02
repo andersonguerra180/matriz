@@ -1773,6 +1773,10 @@ void CatalogWorkspaceComponent::revalidarPastaAtual() {
 void CatalogWorkspaceComponent::selecionarItem(const std::string& itemId) {
     if (fichaPanel_) {
         auto sel = mosaico_ ? mosaico_->itensSelecionados() : std::set<std::string>{};
+        // O que a ficha acabou de receber: aoMudarConteudoVisivel compara com isto. Sem registrar aqui, a seleção
+        // feita por clique/Select all nunca igualava selecaoEfetivaVista_ e o próximo refresh do grid (ex.: após
+        // uma edição em lote) reconstruía a ficha por baixo do usuário (use-after-free nos campos em edição).
+        selecaoEfetivaVista_ = sel;
         fichaPanel_->mostrarSelecao(std::vector<std::string>(sel.begin(), sel.end()));
     }
 }
