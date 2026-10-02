@@ -357,7 +357,7 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
         }
 
         if (!destino.existsAsFile()) return;
-        std::string relativo = matriz::model::paraBanco(matriz::model::caminhoRelativoEntre(destino, pastaProjeto));
+        std::string relativo = matriz::caminhos::relativoParaBanco(destino, pastaProjeto);
         escrever([&] { indice.run(
             "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
             "VALUES (?, ?, ?, 'miniatura', ?, ?, ?, ?)",
