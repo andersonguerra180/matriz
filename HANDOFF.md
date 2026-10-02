@@ -94,7 +94,14 @@ Pendências conhecidas (do backup de 201 GB de 2026-10-01; ver prompt de fix):
   (c) só com destino inacessível: `arquivo.checksum_sha256` (origem) + uma entrada de resumo no
   `ProjectLog` com a contagem. `chaveDestino` agora é pública (Consolidacao.h). O botão manual
   (thread de fundo) usa o destino selecionado (`resolvedDestFolder_`) ou a raiz do MAIN.
-- Medições antes/depois: ver abaixo (preencher após o teste manual).
+- **Medições (2026-10-02)**. Antes (app de 1/out, backup real de 201 GB, mtimes de `relatorios/`):
+  CSV+XLS+Dublin Core ≈ 1 s; Checksums ≈ 6 min 23 s. Depois, teste headless com o código real
+  (temporário, não commitado: 120 JPEGs, 1.271 MB, embed XMP ligado, release x86_64):
+  manifesto pelo registro (a) **0,001 s** vs relendo o destino (b) **70,6 s** (~18 MB/s; o
+  `juce::SHA256` é o gargalo — extrapolado, 134 GB levariam ~2 h, bate com o "mais de 1 h" medido).
+  `shasum`-equivalente: 120/120 batem com o novo; o hash da origem (antigo) falharia 120/120.
+  Cancelamento: sem `.sha256`/`.tmp`, antigo removido. TSan (Debug): 0 warnings com o manifesto em
+  thread de fundo e ~4.700 gravações concorrentes. NÃO verificado: texto/barra/cor da tela (só no app).
 
 ## Baseline dos self-tests (não confundir com regressão)
 
