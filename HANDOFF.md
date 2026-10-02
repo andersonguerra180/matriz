@@ -77,6 +77,32 @@ Pendências conhecidas (do backup de 201 GB de 2026-10-01; ver prompt de fix):
   `git worktree` próprio (`.worktrees/`, build próprio) para não trocar a branch um do outro.
 - Self-tests (`--selftest-lote`) e ASan/TSan NÃO rodados nesta rodada.
 
+### Manifesto de checksums do fim do backup (branch `fix/backup-checksums-progresso`)
+
+- **Progresso/cancelamento**: `exportarChecksumsPara`/`gerarManifestChecksumsBackup` recebem
+  callback `bool(feito,total)` (false = cancelar). O auto-export mostra "Checksums: N of M...",
+  barra e `ProgressoGlobal`, gira o loop e respeita `cancelamento->pedido()`. Cancelado no
+  manifesto: o `.sha256` é gravado em `.tmp` e renomeado só no sucesso; no cancelamento remove o
+  `.tmp` **e o `.sha256` do backup anterior** (não pode parecer atual). A cópia já foi verificada,
+  então `confirmarRevisao()` roda normalmente e a tela diz "Backup completed — checksum manifest
+  skipped (cancelled)". Não reverter para "cancelou = backup cancelado".
+- **Hash do manifesto = hash da cópia no destino**, nunca da origem (embed/marca d'água mudam os
+  bytes). Ordem: (a) `consolidacao_registro.checksum_sha256` (um SELECT em lote, mapa em memória),
+  casando por `arquivo_id` + `caminho_relativo_destino` do plano + (`destino_path` = `chaveDestino(Media)`
+  OU `destino_id` do destino OU legado vazio/NULL), prioridade exato > destino_id > legado, sem exigir
+  `item_id`/`pasta_id` (mesma regra de `planejarConsolidacao`); (b) relê o arquivo NO DESTINO;
+  (c) só com destino inacessível: `arquivo.checksum_sha256` (origem) + uma entrada de resumo no
+  `ProjectLog` com a contagem. `chaveDestino` agora é pública (Consolidacao.h). O botão manual
+  (thread de fundo) usa o destino selecionado (`resolvedDestFolder_`) ou a raiz do MAIN.
+- **Medições (2026-10-02)**. Antes (app de 1/out, backup real de 201 GB, mtimes de `relatorios/`):
+  CSV+XLS+Dublin Core ≈ 1 s; Checksums ≈ 6 min 23 s. Depois, teste headless com o código real
+  (temporário, não commitado: 120 JPEGs, 1.271 MB, embed XMP ligado, release x86_64):
+  manifesto pelo registro (a) **0,001 s** vs relendo o destino (b) **70,6 s** (~18 MB/s; o
+  `juce::SHA256` é o gargalo — extrapolado, 134 GB levariam ~2 h, bate com o "mais de 1 h" medido).
+  `shasum`-equivalente: 120/120 batem com o novo; o hash da origem (antigo) falharia 120/120.
+  Cancelamento: sem `.sha256`/`.tmp`, antigo removido. TSan (Debug): 0 warnings com o manifesto em
+  thread de fundo e ~4.700 gravações concorrentes. NÃO verificado: texto/barra/cor da tela (só no app).
+
 ## Baseline dos self-tests (não confundir com regressão)
 
 - `--selftest-lote`: verde (ASan/TSan/Release).
