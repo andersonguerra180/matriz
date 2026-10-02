@@ -217,6 +217,7 @@ bool embutirMarcadoresEmWav(const juce::File& wavDestino, const std::vector<Marc
 
     juce::File temporario = wavDestino.getSiblingFile(wavDestino.getFileName() + ".marcadores.tmp");
     if (!temporario.replaceWithData(resultado.getData(), resultado.getSize())) return false;
+    wavDestino.deleteFile();
     if (!temporario.moveFileTo(wavDestino)) {
         temporario.deleteFile();
         return false;
@@ -324,7 +325,7 @@ StatusEmbedding embutirMetadadosNoArquivo(const juce::File& destino, const Metad
                 exif["Exif.Image.Artist"] = meta.artista;
 
             image->writeMetadata();
-
+            destino.deleteFile();
             if (!tempCopy.moveFileTo(destino)) {
                 tempCopy.deleteFile();
                 return StatusEmbedding::Failed;
@@ -429,6 +430,7 @@ std::string sha256DeArquivo(const juce::File& f) {
 bool gravarTextoAtomico(const juce::File& destino, const std::string& texto) {
     juce::File tmp = destino.getSiblingFile(destino.getFileName() + ".tmp");
     if (!tmp.replaceWithData(texto.data(), texto.size())) return false;
+    destino.deleteFile();
     if (!tmp.moveFileTo(destino)) {
         tmp.deleteFile();
         return false;
