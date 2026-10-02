@@ -2590,7 +2590,9 @@ void testarSourcesEtapa5(const juce::File& dirTemp) {
         check(sufixoSemPasta, "other structures: suffix on original names, no SOURCE root folder");
 
         auto r = executarConsolidacao(reg, projeto->pasta(), media, plano);
-        check(r.consolidados == 2 && r.falhas.empty(), "first backup copied both SOURCEs");
+        std::string falhasStr;
+        for (auto& f : r.falhas) falhasStr += (falhasStr.empty() ? "" : "; ") + f;
+        check(r.consolidados == 2 && r.falhas.empty(), "first backup copied both SOURCEs (" + std::to_string(r.consolidados) + " copied, errors: " + falhasStr + ")");
         {
             auto st = reg.prepare("SELECT codigo FROM vault WHERE id = 'vault-b'");
             check(st.step() && st.columnText(0) == "S02", "the SOURCE code is fixed once its first file is in the MAIN");
@@ -2666,7 +2668,9 @@ void testarExportEtapa6(const juce::File& dirTemp) {
         for (auto& ip : plano.itens) if (ip.itemId == noMain) so1.push_back(ip);
         plano.itens = so1;
         auto r1 = executarConsolidacao(reg, projeto->pasta(), media, plano);
-        check(r1.consolidados == 1, "only EXP-001 is in the MAIN");
+        std::string falhasStr1;
+        for (auto& f : r1.falhas) falhasStr1 += (falhasStr1.empty() ? "" : "; ") + f;
+        check(r1.consolidados == 1 && r1.falhas.empty(), "only EXP-001 is in the MAIN (" + std::to_string(r1.consolidados) + " copied, errors: " + falhasStr1 + ")");
         juce::String caminhoMain = so1.empty() ? juce::String() : so1.front().caminhoRelativoDestino;
         juce::MemoryBlock mainAntes;
         media.getChildFile(caminhoMain).loadFileAsData(mainAntes);

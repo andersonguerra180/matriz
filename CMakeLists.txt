@@ -148,6 +148,10 @@ target_link_libraries(matriz_selftest PRIVATE
 matriz_aplicar_asan(matriz_selftest)
 matriz_aplicar_tsan(matriz_selftest)
 
+if(MSVC)
+    target_link_options(matriz_selftest PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/Assets/app.manifest")
+endif()
+
 # ------------------------------------------------------------------------------
 # Etapa 2 — self-test headless de ingestão
 # ------------------------------------------------------------------------------
@@ -240,6 +244,10 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
 matriz_aplicar_asan(matriz_ingest_selftest)
 matriz_aplicar_tsan(matriz_ingest_selftest)
 
+if(MSVC)
+    target_link_options(matriz_ingest_selftest PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/Assets/app.manifest")
+endif()
+
 # ------------------------------------------------------------------------------
 # Interoperabilidade Headless (matriz_interop_selftest)
 # ------------------------------------------------------------------------------
@@ -300,6 +308,10 @@ target_link_libraries(matriz_interop_selftest PRIVATE
 
 matriz_aplicar_asan(matriz_interop_selftest)
 matriz_aplicar_tsan(matriz_interop_selftest)
+
+if(MSVC)
+    target_link_options(matriz_interop_selftest PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/Assets/app.manifest")
+endif()
 
 # ------------------------------------------------------------------------------
 # Etapa 3 — app principal (matriz)
@@ -612,3 +624,7 @@ target_link_libraries(matriz_analytics_selftest PRIVATE
 
 matriz_aplicar_asan(matriz_analytics_selftest)
 matriz_aplicar_tsan(matriz_analytics_selftest)
+
+if(MSVC)
+    target_link_options(matriz_analytics_selftest PRIVATE "/MANIFEST:EMBED" "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/Assets/app.manifest")
+endif()

@@ -103,6 +103,12 @@ jobs:
         with:
           arch: x64
 
+      - name: Enable Long Paths on Windows
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+          git config --global core.longpaths true
+
       - name: Install FFmpeg (Windows)
         run: choco install ffmpeg --no-progress
 
@@ -173,6 +179,11 @@ jobs:
     needs: [build-mac, build-windows]
     runs-on: windows-2022
     steps:
+      - name: Enable Long Paths on Windows
+        run: |
+          New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" `
+            -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+
       - name: Download Windows binary
         uses: actions/download-artifact@v4
         with:
