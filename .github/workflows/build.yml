@@ -243,8 +243,10 @@ jobs:
       - name: Verify Ninja
         run: ninja --version
 
-      - name: Setup Inno Setup
-        uses: LuisEnMarroquin/setup-inno-setup@v1
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup --no-progress
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
       - name: Download and Verify FFmpeg / FFprobe
         shell: pwsh
@@ -287,11 +289,17 @@ jobs:
           mkdir -p staging\bin\ReleaseTrial
           mkdir -p staging\installer
           mkdir -p staging\installerTrial
-          Copy-Item "build-pkg-full\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\Release\BKR Matriz.exe"
-          Copy-Item "build-pkg-trial\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\ReleaseTrial\BKR Matriz Trial.exe"
+          Copy-Item "build-pkg-full\matriz_artefacts\Release\BKR Matriz.exe" "staging\bin\Release\BKR Matriz.exe" -ErrorAction SilentlyContinue
+          if (-not (Test-Path "staging\bin\Release\BKR Matriz.exe")) {
+              Copy-Item "build-pkg-full\matriz_artefacts\Release\matriz.exe" "staging\bin\Release\BKR Matriz.exe"
+          }
+          Copy-Item "build-pkg-trial\matriz_artefacts\Release\BKR Matriz Trial.exe" "staging\bin\ReleaseTrial\BKR Matriz Trial.exe" -ErrorAction SilentlyContinue
+          if (-not (Test-Path "staging\bin\ReleaseTrial\BKR Matriz Trial.exe")) {
+              Copy-Item "build-pkg-trial\matriz_artefacts\Release\matriz.exe" "staging\bin\ReleaseTrial\BKR Matriz Trial.exe"
+          }
           Copy-Item "installer\installer.iss" "staging\installer\installer.iss"
           Copy-Item "installer\installer.iss" "staging\installerTrial\installer.iss"
-          (Get-Content "staging\installerTrial\installer.iss") -replace 'MyAppName "BKR Matriz"', 'MyAppName "BKR Matriz Trial"' -replace 'MyAppExeName "BKR Matriz.exe"', 'MyAppExeName "BKR Matriz Trial.exe"' -replace 'OutputBaseFilename=BKR_Matriz_Setup', 'OutputBaseFilename=BKR_Matriz_Trial_Setup' | Set-Content "staging\installerTrial\installer.iss"
+          (Get-Content "staging\installerTrial\installer.iss") -replace 'MyAppName "BKR Matriz"', 'MyAppName "BKR Matriz Trial"' -replace 'MyAppExeName "BKR Matriz.exe"', 'MyAppExeName "BKR Matriz Trial.exe"' -replace 'OutputBaseFilename=BKR_Matriz_Setup', 'OutputBaseFilename=BKR_Matriz_Trial_Setup' -replace '\.\.\\bin\\Release', '..\bin\ReleaseTrial' | Set-Content "staging\installerTrial\installer.iss"
 
       - name: Optional Code Signing
         shell: pwsh
