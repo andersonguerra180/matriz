@@ -40,6 +40,8 @@
 #include "EventBus.h"
 #include "../Sync/SyncEngine.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "../Consolidacao/MetadadoEmbutido.h"
+#include "../Consolidacao/MainEdit.h"
 #include "LogosTipoArquivo.h"
 #include "../Analytics/AssetGeolocation.h"
 
@@ -3355,6 +3357,89 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("background removal selftest: ") + e.what());
     }
     raizRemBg.deleteRecursively();
+
+    // ------------- MAIN EDIT: substituir arquivo grava na hora o sidecar da nova versão
+    std::cout << "\n-- MAIN EDIT replace: the new version gets its sidecar right away --\n";
+    juce::File raizSub = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                             .getChildFile("matriz_substituir_sidecar_" + juce::Uuid().toDashedString());
+    try {
+        raizSub.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "SubSidecar";
+        params.prefixoNomenclatura = "SUB";
+        auto projeto = matriz::model::Project::criar(raizSub.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        auto* bruto = projeto.get();
+        auto& reg = bruto->registro();
+        using matriz::db::Value;
+        const juce::File src = raizSub.getChildFile("SRC");
+        src.createDirectory();
+        const juce::File fOrig = src.getChildFile("a.jpg");
+        fOrig.replaceWithText("original version bytes");
+        const std::string item = inserirItemComArquivo(reg, projetoId, "SUB-1", fOrig);
+        reg.run("UPDATE item SET dc_title = 'Titulo atual', dc_creator = 'Fulano' WHERE id = ?", {Value::of(item)});
+
+        const juce::File mainRaiz = raizSub.getChildFile("MAIN");
+        const juce::File media = mainRaiz.getChildFile("Media");
+        media.createDirectory();
+        matriz::consolidacao::HierarquiaBackup hier = {matriz::consolidacao::NivelHierarquia::TipoMidia};
+        auto plano = matriz::consolidacao::planejarConsolidacao(reg, bruto->pasta(), media, hier, {},
+                                                                 matriz::consolidacao::ModoPrefixoArquivo::Nenhum, "", true, false);
+        auto rc = matriz::consolidacao::executarConsolidacao(reg, bruto->pasta(), media, plano);
+        checar(rc.consolidados == 1, "the item is consolidated into the MAIN");
+
+        auto texto1 = [&](const std::string& sql) {
+            auto st = reg.prepare(sql);
+            return st.step() ? st.columnText(0) : std::string();
+        };
+        const std::string registroId = texto1("SELECT id FROM consolidacao_registro LIMIT 1");
+        const std::string arquivoId = texto1("SELECT arquivo_id FROM consolidacao_registro LIMIT 1");
+        const juce::String relAntes = juce::String::fromUTF8(texto1("SELECT caminho_relativo_destino FROM consolidacao_registro LIMIT 1").c_str());
+        checar(matriz::consolidacao::gravarSidecarDoArquivo(reg, media, item, arquivoId, relAntes) ==
+                   matriz::consolidacao::ResultadoSidecarUnico::Escrito &&
+                   media.getChildFile(relAntes + ".xmp").existsAsFile(),
+               "the first version has its sidecar (written by the same routine used for the whole MAIN)");
+
+        // metadado ATUAL do item no momento da substituição
+        reg.run("UPDATE item SET dc_title = 'Titulo novo' WHERE id = ?", {Value::of(item)});
+        const juce::File fNovo = src.getChildFile("b.jpg");
+        fNovo.replaceWithText("new version bytes, different");
+        matriz::mainedit::ContextoMain ctx;
+        ctx.registro = &reg;
+        ctx.raiz = mainRaiz;
+        ctx.pastaProjeto = bruto->pasta();
+        auto rs = matriz::mainedit::substituirArquivo(ctx, registroId, fNovo);
+        checar(rs.ok, "replace succeeds (" + juce::String(rs.erro) + ")");
+
+        const juce::File novoNoMain = media.getChildFile(rs.paraRel);
+        checar(novoNoMain.existsAsFile() && juce::SHA256(novoNoMain).toHexString().toLowerCase() == juce::SHA256(fNovo).toHexString().toLowerCase(),
+               "the new version is in the MAIN with its own hash");
+        const juce::File sidecarNovo = media.getChildFile(rs.paraRel + ".xmp");
+        const juce::String xmpNovo = sidecarNovo.existsAsFile() ? sidecarNovo.loadFileAsString() : juce::String();
+        checar(xmpNovo.contains("Titulo novo") && !xmpNovo.contains("Titulo atual"),
+               "the new version has a sidecar right away, with the item's CURRENT metadata");
+        checar(texto1("SELECT sha256 FROM sidecar_registro WHERE caminho = '" + (rs.paraRel + ".xmp").toStdString() + "'") ==
+                   matriz::ingest::calcularChecksums(sidecarNovo).sha256,
+               "it is registered in sidecar_registro like every other sidecar");
+
+        // a antiga + o sidecar antigo ficam juntos na quarentena
+        const std::string qRel = texto1("SELECT caminho_quarentena FROM quarentena_item LIMIT 1");
+        const juce::File qArquivo = mainRaiz.getChildFile("_QUARENTENA").getChildFile(juce::String::fromUTF8(qRel.c_str()));
+        const juce::File qSidecar = qArquivo.getSiblingFile(qArquivo.getFileName() + ".xmp");
+        checar(qArquivo.existsAsFile() && qSidecar.existsAsFile() && qSidecar.loadFileAsString().contains("Titulo atual"),
+               "the old version and its old sidecar are in the quarantine together");
+
+        // restaurar traz os dois de volta (o caminho original está ocupado pela nova versão: destino alternativo)
+        const std::string qId = texto1("SELECT id FROM quarentena_item LIMIT 1");
+        const juce::String relAlt = (relAntes.contains("/") ? relAntes.upToLastOccurrenceOf("/", true, false) : juce::String()) + "restaurado.jpg";
+        auto rr = matriz::mainedit::restaurar(ctx, qId, relAlt);
+        checar(rr.ok && media.getChildFile(relAlt).existsAsFile() && media.getChildFile(relAlt + ".xmp").existsAsFile() &&
+                   media.getChildFile(relAlt + ".xmp").loadFileAsString().contains("Titulo atual"),
+               "restoring from the quarantine brings the old file and its old sidecar back together");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("main edit replace selftest: ") + e.what());
+    }
+    raizSub.deleteRecursively();
 
     // ------------------- Lista de hoje: LOCATE na pasta, autocomplete único, CDR
     std::cout << "\n-- registro.sqlite: no binary EXIF, no thumbnail blobs, compaction --\n";
