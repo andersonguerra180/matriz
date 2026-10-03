@@ -191,8 +191,6 @@ int rodarManifestoSelfTest() {
                 "WHERE a.id = consolidacao_registro.arquivo_id)", {});
         ok = bw.exportarChecksumsPara(rel, media, nullptr);
         checar(ok && sha.existsAsFile() && !tmp.exists(), "a completed manifest is written and no .tmp is left");
-// WINPORT: API exclusiva de macOS/Linux — `/bin/sh` + `shasum` só existem aqui; no merge, equivalente Windows
-// (ex.: certutil -hashfile ou comparação direta em C++) atrás de #if JUCE_WINDOWS no mesmo commit.
 #if JUCE_MAC || JUCE_LINUX
         // O mesmo comando que o usuário roda: shasum -c dentro de Media/. O registro tem o hash da ORIGEM
         // aqui (acima), então regrava o do destino antes — é o que a consolidação grava de verdade.
@@ -208,6 +206,14 @@ int rodarManifestoSelfTest() {
         const bool shasumOk = lancou && cp.getExitCode() == 0;
         checar(shasumOk, "`shasum -a 256 -c` passes on the delivered files (embed on)");
         if (!shasumOk) std::cout << "    shasum said: " << saida.substring(0, 300) << "\n";
+#elif JUCE_WINDOWS
+        for (const auto& ip : bw.plano_.itens)
+            reg.run("UPDATE consolidacao_registro SET checksum_sha256 = ? WHERE arquivo_id = ?",
+                    {Value::of(sha256Do(media.getChildFile(ip.caminhoRelativoDestino)).toStdString()), Value::of(ip.arquivoId)});
+        bw.exportarChecksumsPara(rel, media, nullptr);
+        int linhasSha = 0;
+        int errosSha = contarDivergentes(sha.loadFileAsString(), linhasSha);
+        checar(linhasSha == N && errosSha == 0, "`shasum -a 256 -c` equivalent passes on the delivered files (embed on)");
 #endif
 
         // Thread de fundo (botão manual) enquanto a message thread grava no banco; força o caminho lento (b)
