@@ -411,8 +411,10 @@ void gravarDadosFicha(matriz::db::Database& registro, const std::string& itemId,
         if (valor.empty()) return;
         try {
             if (std::string(coluna) == "dc_title") {
-                registro.run("UPDATE item SET titulo = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
-                             {Value::of(valor), Value::of(agora), Value::of(itemId)});
+                // O título do pacote vai nas DUAS colunas (como em importarSidecarsEditados): item.titulo é o que a grade
+                // mostra e item.dc_title é o campo Title da ficha. Só titulo deixava a ficha sem título após o INTAKE.
+                registro.run("UPDATE item SET titulo = ?, dc_title = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
+                             {Value::of(valor), Value::of(valor), Value::of(agora), Value::of(itemId)});
             } else {
                 registro.run(std::string("UPDATE item SET ") + coluna + " = ?, atualizado_em = ?, metadados_editados = 1 WHERE id = ?",
                              {Value::of(valor), Value::of(agora), Value::of(itemId)});
