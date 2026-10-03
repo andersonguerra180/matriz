@@ -85,6 +85,9 @@ juce::String caminhoFisicoDaPasta(matriz::db::Database& registro, const std::str
 // Segmento de pasta seguro nos dois sistemas de arquivos (mesma regra do planner).
 juce::String segmentoDePastaSeguro(const juce::String& nome);
 
+// Chave de consolidacao_registro.destino_path para a pasta Media de um destino.
+std::string chaveDestino(const juce::File& destino);
+
 struct ItemPlanejado {
     std::string itemId;
     std::string codigoAcervo;

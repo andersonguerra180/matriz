@@ -345,6 +345,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
     sliderTamanho_->setRange(50.0, 200.0, 1.0);
     sliderTamanho_->setValue(100.0, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, 100.0);
     sliderTamanho_->setTextValueSuffix("%");
     sliderTamanho_->setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
     sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
@@ -588,7 +589,49 @@ void ArvoreBackupComponent::recalcularPivot() {
     pivotEscala_ = uniao.getCentre().toFloat();
 }
 
+void ArvoreBackupComponent::definirFocoNosItens(std::set<std::string> itemIds) {
+    itensEmFoco_ = std::move(itemIds);
+    focoPendente_ = !itensEmFoco_.empty();
+    tentarEnquadrar();
+    repaint();
+}
+
+bool ArvoreBackupComponent::aplicarFocoPendente() {
+    if (!focoPendente_ || nodes_.empty()) return false;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return false;  // sem tamanho ainda: resized() tenta de novo
+
+    bool achou = false;
+    juce::Rectangle<int> uniao;
+    for (auto& n : nodes_) {
+        n.selecionado = false;
+        for (const auto& id : itensEmFoco_) {
+            if (n.itemIdsDiretos.count(id)) {
+                n.selecionado = true;
+                uniao = achou ? uniao.getUnion(n.bounds) : n.bounds;
+                achou = true;
+                break;
+            }
+        }
+    }
+    focoPendente_ = false;
+    if (!achou) return false;  // o arquivo não está em nenhuma pasta deste mapa: segue o enquadramento normal
+
+    constexpr float kMargem = 120.0f;
+    const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+    const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+    zoom_ = juce::jlimit(0.5f, 1.0f, std::min(zx, zy));  // legível: nunca menor que 50% nem maior que 100%
+    const auto centro = uniao.getCentre().toFloat();
+    panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                  static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+    enquadrarPendente_ = false;
+    sincronizarSlider();
+    repaint();
+    return true;
+}
+
 void ArvoreBackupComponent::tentarEnquadrar() {
+    if (aplicarFocoPendente()) return;
     if (!enquadrarPendente_ || nodes_.empty()) return;
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;  // ainda sem tamanho: resized() tenta de novo

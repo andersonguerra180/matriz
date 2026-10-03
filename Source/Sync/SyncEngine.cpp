@@ -1047,7 +1047,7 @@ SyncEngine::ResultadoClone SyncEngine::clonarSource(matriz::model::Project& proj
         manifesto << juce::String(shaOrigem) << "  " << arquivos[(size_t) i] << "\n";
         ++r.copiados;
     }
-    r.raiz.getChildFile("checksums.sha256").replaceWithText(manifesto);
+    r.raiz.getChildFile("checksums.sha256").replaceWithText(manifesto, false, false, "\n");
     const std::string agora = matriz::model::agoraIso8601();
     r.id = matriz::model::novoUuid();
     db.run("INSERT INTO source_clone (id, vault_id, origem_path, destino_path, rotulo, criado_em, ultima_sync_em, arquivos) "
@@ -1134,7 +1134,7 @@ ResultadoSync SyncEngine::sincronizarCloneDeSource(matriz::model::Project& proje
     if (aplicarRemocoes && !res.cancelado)
         for (const auto& rel : p.removidos)
             if (moverParaLixeira(p.clone.getChildFile(rel), pastaLixeiraClone(), "SOURCE", rel)) res.itensLixeira++;
-    p.clone.getChildFile("checksums.sha256").replaceWithText(manifesto);
+    p.clone.getChildFile("checksums.sha256").replaceWithText(manifesto, false, false, "\n");
     res.sucesso = !res.cancelado && res.falhas.empty();
     res.pastaLixeiraCriada = lixeira;
     projeto.registro().run("UPDATE source_clone SET ultima_sync_em = ?, arquivos = arquivos + ? WHERE id = ?",

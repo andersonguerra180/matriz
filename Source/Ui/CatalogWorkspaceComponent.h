@@ -213,12 +213,16 @@ private:
     std::unique_ptr<juce::TextButton> btnOcultarEditados_;
     std::unique_ptr<juce::TextButton> btnOcultarNaoSelecionados_;
     std::unique_ptr<juce::TextButton> btnMostrarRecentes_;
+    std::unique_ptr<juce::TextButton> btnIncluirOcultosSelecao_;  // override: seleção também vale para o que o filtro esconde
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
     bool modoVisaoGrade_ = true;
     bool ocultarEditados_ = false;
     bool ocultarNaoSelecionados_ = false;
     bool mostrarApenasRecentes_ = false;
+    bool incluirOcultosNaSelecao_ = false;  // OFF (padrão): edição em lote só nos itens visíveis na grade
+    std::set<std::string> selecaoEfetivaVista_;  // última seleção efetiva que a ficha recebeu
+    void atualizarRotuloSelecionados();
     bool editMode_ = true;
     std::optional<std::string> pastaNavegarAtual_;
     std::vector<std::string> caminhoNavegacao_;
@@ -277,6 +281,7 @@ private:
     // busca ou clique em outra categoria da sidebar.
     std::optional<std::set<std::string>> filtroHerdadoIds_;
     int geracaoContagensAgendadas_ = 0;
+    int geracaoContagens_ = 0;  // só o resultado da contagem mais recente é aplicado
     int versaoSnapshotContada_ = -1;  // MosaicoComponent::versaoSnapshot() da última contagem
 
     std::vector<std::pair<int, int>> anosDisponiveis_;

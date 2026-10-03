@@ -200,6 +200,13 @@ std::vector<std::string> dividirSubjects(const std::string& valor) {
     }
     return out;
 }
+
+// Entrada fixa, sempre a última do filtro SUBJECT: itens sem nenhum subject cadastrado.
+constexpr const char* kSemSubject = "__sem_subject__";
+
+bool semSubject(const ItemResumo& item) {
+    return !item.subject.has_value() || dividirSubjects(*item.subject).empty();
+}
 } // namespace
 
 CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
@@ -208,6 +215,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     EventBus::obterInstancia().registrarListener(&escutaEventos_);
     mosaico_ = std::make_unique<MosaicoComponent>(projeto_);
     mosaico_->definirMostrarOcultos(false);  // CONTENT = Hidden só aparece escolhendo Hidden em CONTENT TYPE
+    mosaico_->definirIncluirOcultosNaSelecao(false);  // seleção/lote só no que está visível (override: btnIncluirOcultosSelecao_)
     // Item 9: METADATA não tem Vault/pasta pra soltar arquivo arrastado —
     // clicar numa miniatura e arrastar deve criar seleção em laço, não
     // tentar um arrasto de arquivo sem destino nenhum.
@@ -221,6 +229,16 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             reaplicandoFiltrosAposSnapshot_ = true;
             aplicarFiltrosAdicionais();
             reaplicandoFiltrosAposSnapshot_ = false;
+        }
+        // Um filtro/busca escondeu itens que estavam selecionados: a seleção efetiva mudou sem clique. A ficha
+        // (edição em lote) e o rótulo "Selected" precisam refletir isso, senão o lote ainda mira o que sumiu da grade.
+        {
+            auto efetiva = mosaico_->itensSelecionados();
+            if (efetiva != selecaoEfetivaVista_) {
+                selecaoEfetivaVista_ = std::move(efetiva);
+                selecionarItem({});
+                atualizarRotuloSelecionados();
+            }
         }
         // Snapshot completo novo (ingest/rename/remoção/reload): reconta na
         // hora em vez de esperar o timer de 60 s.
@@ -253,18 +271,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         // concorrência no pool a cada seleção, piorando conforme o acervo
         // cresce; as outras contagens continuam atualizadas normalmente via
         // aoMudar/aoAplicarEmLote (edição real) e o timer de 60s.
-        for (size_t i = 0; i < categorias_.size(); ++i) {
-            if (categorias_[i].chave == "selected") {
-                int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
-                categorias_[i].contagem = selCount;
-                if (i < botoesCategorias_.size()) {
-                    juce::String label = categorias_[i].rotulo;
-                    if (selCount > 0) label += " (" + juce::String(selCount) + ")";
-                    botoesCategorias_[i]->setButtonText(label);
-                }
-                break;
-            }
-        }
+        atualizarRotuloSelecionados();
     };
     mosaico_->aoLimparMetadados = [this](const std::vector<std::string>& itemIds) {
         if (itemIds.empty()) return;
@@ -456,6 +463,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
     sliderTamanho_->setRange(0.0, 1.0, 0.01);
     sliderTamanho_->setValue(0.24, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, 0.24);
     if (mosaico_) mosaico_->definirTamanhoContinuo(0.24);
     sliderTamanho_->setColour(juce::Slider::trackColourId, tema().borda);
     sliderTamanho_->setColour(juce::Slider::thumbColourId, tema().acento);
@@ -550,6 +558,23 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a leva
     };
     addAndMakeVisible(*btnMostrarRecentes_);
+
+    // Override da seleção restrita ao visível: ON inclui no lote também o que um filtro escondeu.
+    btnIncluirOcultosSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.incluir_ocultos_off"));
+    btnIncluirOcultosSelecao_->setLookAndFeel(&sidebarButtonLf_);
+    btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
+    btnIncluirOcultosSelecao_->setTooltip(matriz::i18n::t("catwork.incluir_ocultos_tooltip"));
+    btnIncluirOcultosSelecao_->onClick = [this] {
+        incluirOcultosNaSelecao_ = !incluirOcultosNaSelecao_;
+        btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tema().acento : tema().painelAlt);
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tema().textoSobreAcento : tema().textoSecundario);
+        if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
+        if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
+        atualizarRotuloSelecionados();
+    };
+    addAndMakeVisible(*btnIncluirOcultosSelecao_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
@@ -679,6 +704,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnOcultarEditados_) btnOcultarEditados_->setLookAndFeel(nullptr);
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
+    if (btnIncluirOcultosSelecao_) btnIncluirOcultosSelecao_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
 }
@@ -730,6 +756,11 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tk.acento : tk.painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tk.textoSobreAcento : tk.textoSecundario);
         btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+    }
+    if (btnIncluirOcultosSelecao_) {
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tk.acento : tk.painelAlt);
+        btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tk.textoSobreAcento : tk.textoSecundario);
+        btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
     }
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tk.acento : tk.painelAlt);
@@ -1100,7 +1131,10 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
         }
 
-        if (subjectSelecionado_.has_value()) {
+        if (subjectSelecionado_.has_value() && *subjectSelecionado_ == kSemSubject) {
+            anyFilter = true;
+            if (!semSubject(item)) continue;
+        } else if (subjectSelecionado_.has_value()) {
             anyFilter = true;
             if (!item.subject.has_value()) continue;
             // Nomes case-insensitive: "show" passa no filtro "Show".
@@ -1143,6 +1177,7 @@ void CatalogWorkspaceComponent::construirFiltroCollection() {
                 collectionSelecionado_ = collectionDisponiveis_[static_cast<size_t>(sel - 1)].first;
             }
             aplicarFiltrosAdicionais();
+            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
     }
 
@@ -1187,6 +1222,7 @@ void CatalogWorkspaceComponent::construirFiltroSubject() {
             if (sel <= 0 || sel >= idTodos) subjectSelecionado_ = std::nullopt;
             else subjectSelecionado_ = subjectsDisponiveis_[static_cast<size_t>(sel - 1)].first;
             aplicarFiltrosAdicionais();
+            atualizarContagens();  // os outros grupos contam só o que passa por este filtro
         };
     }
 
@@ -1195,7 +1231,9 @@ void CatalogWorkspaceComponent::construirFiltroSubject() {
     comboSubject_->addItem(matriz::i18n::t("catwork.subject_todos"), idTodos);
     for (size_t i = 0; i < subjectsDisponiveis_.size(); ++i) {
         const auto& [valor, contagem] = subjectsDisponiveis_[i];
-        comboSubject_->addItem(juce::String::fromUTF8(valor.c_str()) + " (" + juce::String(contagem) + ")",
+        const juce::String rotulo = (valor == kSemSubject) ? matriz::i18n::t("catwork.subject_nenhum")
+                                                           : juce::String::fromUTF8(valor.c_str());
+        comboSubject_->addItem(rotulo + " (" + juce::String(contagem) + ")",
                                static_cast<int>(i + 1));
     }
     int idSel = idTodos;
@@ -1241,7 +1279,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // mesmo tratamento que mostrarApenasRecentes_ já recebe acima.
     std::optional<std::set<std::string>> filtroHerdado = filtroHerdadoIds_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, soRecentes, filtroHerdado,
+    // Contagens "facetadas": cada grupo (MEDIA TYPE, DATE, CONTENT TYPE, SUBJECT) conta só o que passa
+    // pelos filtros ATIVOS dos OUTROS grupos — assim o número do botão bate com o que a grade mostra.
+    const std::optional<std::string> collSel = collectionSelecionado_;
+    const std::optional<std::string> subjSel = subjectSelecionado_;
+    const int geracao = ++geracaoContagens_;
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, geracao, soRecentes, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1272,6 +1316,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
             int semCollection = 0;
+            int totalSemSubject = 0;
             std::map<std::string, int> contagemPorSubject;
             std::map<std::string, std::string> grafiaPorChaveSubject;
 
@@ -1279,15 +1324,40 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
 
-                // item: quando há filtro de ano ativo, os contadores de MEDIA
-                // TYPE passam a contar só os arquivos daquele(s) ano(s) — sem
-                // filtro de ano nenhum, continuam mostrando o total global
-                // (mesmo comportamento de sempre).
-                bool passaFiltroAnoParaTipo = anosParaTipo.empty() ||
+                // Passa por cada filtro ativo? (sem filtro = passa)
+                const bool pAno = anosParaTipo.empty() ||
                     (item.ano.has_value() && anosParaTipo.count(*item.ano) > 0) ||
                     (item.anoDesconhecido() && anosParaTipo.count(-1) > 0);
 
-                if (passaFiltroAnoParaTipo) {
+                bool pTipo = true;
+                if (filtroTipoMidiaAnos.has_value()) {
+                    if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
+                    else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
+                    else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                    else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                    else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                }
+
+                bool pColl = true;
+                if (collSel.has_value() && *collSel != "Hidden") {  // Hidden: as contagens são do catálogo visível
+                    const bool temColl = item.collectionType.has_value() && !item.collectionType->empty();
+                    pColl = (*collSel == "Unknown") ? !temColl : (temColl && *item.collectionType == *collSel);
+                }
+
+                bool pSubj = true;
+                if (subjSel.has_value()) {
+                    if (*subjSel == kSemSubject) pSubj = semSubject(item);
+                    else {
+                        const auto chaveSel = matriz::model::nomes::chave(*subjSel);
+                        pSubj = false;
+                        if (item.subject.has_value())
+                            for (const auto& sub : dividirSubjects(*item.subject))
+                                if (matriz::model::nomes::chave(sub) == chaveSel) { pSubj = true; break; }
+                    }
+                }
+
+                // MEDIA TYPE: ano + collection + subject (não filtra por si mesmo).
+                if (pAno && pColl && pSubj) {
                     switch (cat) {
                         case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
                         case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
@@ -1299,42 +1369,45 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
 
-                // Item C.6: quando um tipo em MEDIA TYPE está selecionado, os
-                // botões de ano só contam os arquivos daquele tipo — os
-                // contadores de MEDIA TYPE acima (res.audio/video/...) continuam
-                // sempre totais, não filtrados por si mesmos.
-                bool passaFiltroTipoParaAno = true;
-                if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "audio") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Audio);
-                    else if (*filtroTipoMidiaAnos == "video") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Video);
-                    else if (*filtroTipoMidiaAnos == "images") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Imagem);
-                    else if (*filtroTipoMidiaAnos == "documents") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-                    else if (*filtroTipoMidiaAnos == "sessions") passaFiltroTipoParaAno = (cat == matriz::ingest::CategoriaMidia::Sessao);
-                }
-
-                if (passaFiltroTipoParaAno) {
-                    // Unknown = sem EVENT DATE e sem ano no metadado; o palpite
-                    // pela data do disco conta no ano chutado E em Unknown.
+                // DATE: tipo + collection + subject. Unknown = sem EVENT DATE e sem ano no
+                // metadado; o palpite pela data do disco conta no ano chutado E em Unknown.
+                if (pTipo && pColl && pSubj) {
                     if (item.ano.has_value()) contagemPorAno[*item.ano]++;
                     if (item.anoDesconhecido()) semAno++;
                 }
 
-                if (item.collectionType.has_value() && !item.collectionType->empty())
-                    contagemPorCollection[*item.collectionType]++;
-                else
-                    semCollection++;
-
-                if (item.subject.has_value()) {
-                    // "A, a" conta uma vez só; variações de maiúsculas são o
-                    // mesmo subject, mostrado na primeira grafia vista.
-                    std::set<std::string> distintos;
-                    for (auto& sub : dividirSubjects(*item.subject)) {
-                        auto chave = matriz::model::nomes::chave(sub);
-                        grafiaPorChaveSubject.emplace(chave, sub);
-                        distintos.insert(chave);
-                    }
-                    for (const auto& chave : distintos) contagemPorSubject[grafiaPorChaveSubject[chave]]++;
+                // CONTENT TYPE: tipo + ano + subject.
+                if (pTipo && pAno && pSubj) {
+                    if (item.collectionType.has_value() && !item.collectionType->empty())
+                        contagemPorCollection[*item.collectionType]++;
+                    else
+                        semCollection++;
                 }
+
+                // SUBJECT: tipo + ano + collection.
+                if (pTipo && pAno && pColl) {
+                    if (semSubject(item)) ++totalSemSubject;
+                    if (item.subject.has_value()) {
+                        // "A, a" conta uma vez só; variações de maiúsculas são o
+                        // mesmo subject, mostrado na primeira grafia vista.
+                        std::set<std::string> distintos;
+                        for (auto& sub : dividirSubjects(*item.subject)) {
+                            auto chave = matriz::model::nomes::chave(sub);
+                            grafiaPorChaveSubject.emplace(chave, sub);
+                            distintos.insert(chave);
+                        }
+                        for (const auto& chave : distintos) contagemPorSubject[grafiaPorChaveSubject[chave]]++;
+                    }
+                }
+            }
+
+            // O valor hoje selecionado nunca some da lista (mesmo com 0 no contexto atual),
+            // senão o combo/botão fica inconsistente com o filtro ainda ativo.
+            for (int anoSel : anosParaTipo) if (anoSel != -1) contagemPorAno.emplace(anoSel, 0);
+            if (collSel && *collSel != "Unknown" && *collSel != "Hidden") contagemPorCollection.emplace(*collSel, 0);
+            if (subjSel && *subjSel != kSemSubject) {
+                const auto chaveSel = matriz::model::nomes::chave(*subjSel);
+                if (!grafiaPorChaveSubject.count(chaveSel)) contagemPorSubject.emplace(*subjSel, 0);
             }
 
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
@@ -1349,6 +1422,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
             for (const auto& pair : contagemPorSubject)
                 res.subjects.push_back(pair);
+            res.subjects.push_back({kSemSubject, totalSemSubject});  // sempre por último, mesmo com 0
 
             res.mergeConflitos = static_cast<int>(proj->itensDaColecaoEmbutida("merge_conflitos").size());
             auto colecoes = proj->listarColecoesEmbutidas();
@@ -1363,12 +1437,29 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             return;
         }
 
-        juce::MessageManager::callAsync([safeThis, res]() {
-            if (safeThis) {
+        juce::MessageManager::callAsync([safeThis, res, geracao]() {
+            // Resultado de uma contagem já superada por outra mais nova: descarta (senão mostra número velho).
+            if (safeThis && geracao == safeThis->geracaoContagens_) {
                 safeThis->aplicarContagens(res);
             }
         });
     });
+}
+
+void CatalogWorkspaceComponent::atualizarRotuloSelecionados() {
+    for (size_t i = 0; i < categorias_.size(); ++i) {
+        if (categorias_[i].chave != "selected") continue;
+        const int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
+        const int ocultos = mosaico_ ? mosaico_->totalSelecionadosOcultos() : 0;
+        categorias_[i].contagem = selCount;
+        if (i < botoesCategorias_.size()) {
+            juce::String label = categorias_[i].rotulo;
+            if (selCount > 0) label += " (" + juce::String(selCount) + ")";
+            if (ocultos > 0) label += matriz::i18n::t("catwork.selecionados_ocultos").replace("{n}", juce::String(ocultos));
+            botoesCategorias_[i]->setButtonText(label);
+        }
+        break;
+    }
 }
 
 void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) {
@@ -1386,10 +1477,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
         }
     };
 
-    int selCount = mosaico_ ? static_cast<int>(mosaico_->itensSelecionados().size()) : 0;
-
     definirContagem("all", res.total);
-    definirContagem("selected", selCount);
+    atualizarRotuloSelecionados();
     definirContagem("folders", res.total);
     definirContagem("vulneraveis", res.vulneraveis);
     definirContagem("merge_conflitos", res.mergeConflitos);
@@ -1684,6 +1773,10 @@ void CatalogWorkspaceComponent::revalidarPastaAtual() {
 void CatalogWorkspaceComponent::selecionarItem(const std::string& itemId) {
     if (fichaPanel_) {
         auto sel = mosaico_ ? mosaico_->itensSelecionados() : std::set<std::string>{};
+        // O que a ficha acabou de receber: aoMudarConteudoVisivel compara com isto. Sem registrar aqui, a seleção
+        // feita por clique/Select all nunca igualava selecaoEfetivaVista_ e o próximo refresh do grid (ex.: após
+        // uma edição em lote) reconstruía a ficha por baixo do usuário (use-after-free nos campos em edição).
+        selecaoEfetivaVista_ = sel;
         fichaPanel_->mostrarSelecao(std::vector<std::string>(sel.begin(), sel.end()));
     }
 }
@@ -2038,7 +2131,7 @@ void CatalogWorkspaceComponent::resized() {
     totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
     if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
     totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (3 * (20 + 1)) + 6; // 3 toggle buttons
+    totalRequiredH += (4 * (20 + 1)) + 6; // 4 toggle buttons
     // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
     // MEDIA TYPE e DATE continuam sendo cards.
     totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
@@ -2139,6 +2232,10 @@ void CatalogWorkspaceComponent::resized() {
     }
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
+        sidebar.removeFromTop(1);
+    }
+    if (btnIncluirOcultosSelecao_) {
+        btnIncluirOcultosSelecao_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
         sidebar.removeFromTop(1);
     }
     sidebar.removeFromTop(sectionSpacing);

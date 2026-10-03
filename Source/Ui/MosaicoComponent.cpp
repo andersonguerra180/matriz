@@ -1,6 +1,7 @@
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "LogosTipoArquivo.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -686,6 +687,28 @@ void MosaicoComponent::definirOrdenacao(Ordenacao ordenacao) {
     aplicarFiltrosEOrdenacao();
 }
 
+std::set<std::string> MosaicoComponent::itensSelecionados() const {
+    if (incluirOcultosNaSelecao_) return selecionados_;
+    std::set<std::string> efetiva;
+    for (const auto& id : selecionados_)
+        if (idsVisiveis_.count(id)) efetiva.insert(id);
+    return efetiva;
+}
+
+int MosaicoComponent::totalSelecionadosOcultos() const {
+    int ocultos = 0;
+    for (const auto& id : selecionados_)
+        if (!idsVisiveis_.count(id)) ++ocultos;
+    return ocultos;
+}
+
+void MosaicoComponent::definirIncluirOcultosNaSelecao(bool incluir) {
+    if (incluirOcultosNaSelecao_ == incluir) return;
+    incluirOcultosNaSelecao_ = incluir;
+    if (!incluir) aplicarFiltrosEOrdenacao();  // desligou: poda agora o que o filtro esconde
+    if (aoMudarSelecao) aoMudarSelecao();
+}
+
 void MosaicoComponent::definirFiltroItens(std::optional<std::set<std::string>> itemIds) {
     filtroItens_ = std::move(itemIds);
     aplicarFiltrosEOrdenacao();
@@ -1107,6 +1130,11 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         indices = std::move(saida);
     }
 
+    // Quem está visível pelos filtros (a paginação da lista, mais abaixo, não conta): base da seleção efetiva.
+    idsVisiveis_.clear();
+    idsVisiveis_.reserve(indices.size());
+    for (uint32_t pos : indices) idsVisiveis_.insert(itensTodos_[pos].id);
+
     auto comparador = [this](const ItemResumo& a, const ItemResumo& b) {
         // Ordenação escolhida clicando no cabeçalho da LISTA (igual ao INTAKE);
         // vale também na grade de miniaturas.
@@ -1169,14 +1197,18 @@ void MosaicoComponent::aplicarFiltrosEOrdenacao() {
         indices.insert(indices.end(), ordenados.begin(), ordenados.end());
     }
 
-    std::set<std::string> idsVisiveis;
-    for (auto& item : itensFiltrados_) idsVisiveis.insert(item.id);
-    for (auto it = selecionados_.begin(); it != selecionados_.end();) {
-        if (!idsVisiveis.count(*it)) it = selecionados_.erase(it);
-        else ++it;
+    // A seleção é podada pelo filtro INTEIRO (o que sumiu da grade sai da seleção). Com o override
+    // "Include Hidden" ligado a seleção é mantida mesmo escondida pelo filtro.
+    if (!incluirOcultosNaSelecao_) {
+        std::set<std::string> idsVisiveis;
+        for (auto& item : itensFiltrados_) idsVisiveis.insert(item.id);
+        for (auto it = selecionados_.begin(); it != selecionados_.end();) {
+            if (!idsVisiveis.count(*it)) it = selecionados_.erase(it);
+            else ++it;
+        }
+        if (!selecionadoId_.empty() && !idsVisiveis.count(selecionadoId_))
+            selecionadoId_.clear();
     }
-    if (!selecionadoId_.empty() && !idsVisiveis.count(selecionadoId_))
-        selecionadoId_.clear();
 
     // Paginação da LISTA: fatia depois de ordenar e de podar a seleção pelo
     // filtro INTEIRO (a seleção sobrevive à troca de página).
@@ -2129,13 +2161,9 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
                 if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
                 if (logoFile.isNotEmpty()) {
-                    juce::File assetsFolder = juce::File(MATRIZ_FICHAS_DIR).getParentDirectory().getChildFile("Assets");
-                    juce::File logoImgFile = assetsFolder.getChildFile(logoFile);
-                    if (logoImgFile.existsAsFile()) {
-                        imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(logoImgFile), maxLargura, maxAltura);
-                        if (imagem.isValid()) {
-                            temCaminho = true;
-                        }
+                    imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
+                    if (imagem.isValid()) {
+                        temCaminho = true;
                     }
                 }
             }

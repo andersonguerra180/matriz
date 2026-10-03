@@ -454,10 +454,9 @@ CREATE INDEX IF NOT EXISTS idx_localizacao_conhecida_arquivo ON localizacao_conh
 -- que é novo ou mudou, "não toca no que não mudou"). Uma linha por
 -- combinação (item, pasta do acervo, arquivo) — o mesmo item em duas pastas
 -- (§5.4) gera duas linhas, duas cópias físicas, de propósito.
--- Escopo desta etapa, declarado: metadado embutido (BWF/bext, iXML, EXIF
--- write, ID3, XMP) NÃO é gravado na cópia — precisa de escritores por
--- formato que não existem ainda. O checksum aqui é da cópia renomeada tal
--- como saiu, sem nenhum metadado embutido além do que já veio na origem.
+-- O checksum aqui é o SHA-256 dos bytes FINAIS entregues no destino, calculado
+-- depois de marca d'água e embed de metadados (Consolidacao.cpp, "FINAL SHA256");
+-- é por ele que o manifesto .sha256 do backup é gerado, não pelo da origem.
 -- Destino também restrito a pasta local nesta etapa; NAS/FTP/S3/nuvem são
 -- os mesmos "destino" já previstos na tabela `destino`, mas a consolidação
 -- em si só sabe escrever em disco local por enquanto.
@@ -468,7 +467,7 @@ CREATE TABLE IF NOT EXISTS consolidacao_registro (
     pasta_id                TEXT NOT NULL DEFAULT '',
     arquivo_id              TEXT NOT NULL REFERENCES arquivo(id) ON DELETE CASCADE,
     caminho_relativo_destino TEXT NOT NULL, -- relativo à raiz de destino escolhida, ex.: "consolidado/01 Fitas/ACR-001.wav"
-    checksum_sha256         TEXT NOT NULL,   -- da CÓPIA consolidada (sem embedding), verificado depois de copiar
+    checksum_sha256         TEXT NOT NULL,   -- da CÓPIA consolidada, bytes finais (depois de embed/marca d'água)
     consolidado_em          TEXT NOT NULL,
     destino_path            TEXT NOT NULL DEFAULT '',
     UNIQUE (item_id, pasta_id, arquivo_id, destino_path)

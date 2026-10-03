@@ -52,6 +52,7 @@ struct ItemFilaPrint {
     int alturaOriginal = 0;
     int orientacaoExif = 1;
     bool valido = false;
+    bool carregando = false; // o loader assíncrono já pegou este item (carregado ainda é false)
     juce::String motivoInvalido;
     juce::Image miniatura;
     juce::Image imagemPreview; // Cache da imagem carregada para o preview central
@@ -149,6 +150,8 @@ public:
     int getNumRows() override;
     void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override;
     void selectedRowsChanged(int lastRowSelected) override;
+    void listBoxItemClicked(int row, const juce::MouseEvent& e) override;
+    void deleteKeyPressed(int lastRowSelected) override;
 
     std::function<void()> aoFechar;
 
@@ -180,6 +183,7 @@ private:
     void carregarFila();
     void iniciarCarregamentoAssincrono();
     void selecionarFoto(int indice);
+    void removerDaFila(int indice);  // tira da lista (e da marcação P) sem fechar o diálogo
     void atualizarDetalhesFotoAtiva();
     void escolherPastaDestino();
     void limparListaPrint();

@@ -338,13 +338,11 @@ void gravarHierarquiaDoProjeto(matriz::db::Database& registro, const HierarquiaB
                   {Value::of(hierarquiaParaCsv(hierarquia)), Value::of(matriz::model::agoraIso8601())});
 }
 
-namespace {
 // Identifica o destino em consolidacao_registro.destino_path: caminho
 // absoluto normalizado da pasta de mídia passada a planejar/executar.
 std::string chaveDestino(const juce::File& destino) {
     return destino.getFullPathName().trimCharactersAtEnd("/").toStdString();
 }
-} // namespace
 
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                         const juce::File& destino, const HierarquiaBackup& hierarquiaPedida,

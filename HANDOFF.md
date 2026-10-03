@@ -44,6 +44,81 @@ até 59 s (beachball). É o `runDispatchLoopUntil` deliberado do AGENTS.md; o fi
 para thread de fundo) é mudança maior, **pendente, candidata a branch própria**. Não forçar o
 encerramento do app durante a consolidação (efeito no destino não verificado).
 
+## Ajustes de 2026-10-02 (branch `fix/ajustes-print-metadata`, integrada na `main`)
+
+Um commit por item. Decisões que não devem ser revertidas sem entender a causa:
+
+- **Seleção × filtro (Catalog)**: `MosaicoComponent::aplicarFiltrosEOrdenacao` poda `selecionados_` pelo filtro
+  (o que sumiu da grade sai da seleção). O botão **Include Hidden: OFF/ON** (override, sidebar) liga
+  `incluirOcultosNaSelecao_`: ligado, NÃO poda e a seleção sobrevive aos filtros e entra no lote; desligar poda na
+  hora. Quando um filtro muda a seleção efetiva, `CatalogWorkspaceComponent` atualiza a ficha em lote
+  (`selecionarItem({})`) — sem isso o lote ainda mirava o que tinha sumido. O rótulo "Selected (N) +M hidden".
+- **Contadores da coluna esquerda são facetados**: cada grupo (MEDIA TYPE, DATE, CONTENT TYPE, SUBJECT) conta só o que
+  passa pelos filtros ATIVOS dos outros grupos; o valor selecionado nunca some da lista (aparece com 0); só o resultado
+  da contagem mais recente é aplicado (`geracaoContagens_`). Itens CONTENT=Hidden ficam fora das contagens.
+- **Filtro SUBJECT**: última entrada fixa "No Subject"/"Sem Assunto" (`kSemSubject`), sempre listada.
+- **Send to Print**: preview/miniatura usam a foto com a rotação EXIF aplicada (antes aparecia deitada e o Auto
+  escolhia paisagem errado); × no card e Delete removem da fila e desmarcam P; o loader pega o próximo item por id
+  (`ItemFilaPrint::carregando`); Destination Folder fica abaixo de Quick Adjustments.
+- **Duplo clique em slider volta ao padrão** (`setDoubleClickReturnValue`): Print, Watermark, tamanho da miniatura,
+  FOLDER SIZE (100%, o JUCE chama onDragEnd, então persiste).
+- **STRUCTURE**: `ArvoreBackupComponent::definirFocoNosItens` — com arquivo selecionado no grid, o FOLDER MAP abre com a
+  pasta dele selecionada e centralizada (zoom 50–100%).
+- **Backup**: DONE chama `BackupWorkspaceComponent::voltarParaConfiguracao()` (estado_ nunca voltava de Done).
+
+Pendências conhecidas (do backup de 201 GB de 2026-10-01; ver prompt de fix):
+- Passo final "Exporting CSV, XLS & checksums" roda na message thread, sem progresso e sem cancelar; relê arquivo por
+  arquivo quando `arquivo.checksum_sha256` está vazio (96 min medidos), embora `consolidacao_registro.checksum_sha256`
+  já tenha o SHA-256 do arquivo FINAL copiado (calculado depois do embed, Consolidacao.cpp ~1023).
+- Tela final de erro sem lista completa, sem RETRY, sem exportar lista; falhas só em memória.
+- 478 itens pendentes foram religados (vault/caminho_absoluto_origem) a cópias locais; rodar BACKUP → "Assets with no
+  backup yet". Os `caminho_relativo` dos masters seguem com o caminho antigo do Drive (gatilho `arquivo_master_travado`).
+- **Repositório compartilhado com outra sessão** (porte Windows, branch `windows-port`): trabalhar em
+  `git worktree` próprio (`.worktrees/`, build próprio) para não trocar a branch um do outro.
+- Self-tests (`--selftest-lote`) e ASan/TSan NÃO rodados nesta rodada.
+
+### Manifesto de checksums do fim do backup (branch `fix/backup-checksums-progresso`)
+
+- **Progresso/cancelamento**: `exportarChecksumsPara`/`gerarManifestChecksumsBackup` recebem
+  callback `bool(feito,total)` (false = cancelar). O auto-export mostra "Checksums: N of M...",
+  barra e `ProgressoGlobal`, gira o loop e respeita `cancelamento->pedido()`. Cancelado no
+  manifesto: o `.sha256` é gravado em `.tmp` e renomeado só no sucesso; no cancelamento remove o
+  `.tmp` **e o `.sha256` do backup anterior** (não pode parecer atual). A cópia já foi verificada,
+  então `confirmarRevisao()` roda normalmente e a tela diz "Backup completed — checksum manifest
+  skipped (cancelled)". Não reverter para "cancelou = backup cancelado".
+- **Hash do manifesto = hash da cópia no destino**, nunca da origem (embed/marca d'água mudam os
+  bytes). Ordem: (a) `consolidacao_registro.checksum_sha256` (um SELECT em lote, mapa em memória),
+  casando por `arquivo_id` + `caminho_relativo_destino` do plano + (`destino_path` = `chaveDestino(Media)`
+  OU `destino_id` do destino OU legado vazio/NULL), prioridade exato > destino_id > legado, sem exigir
+  `item_id`/`pasta_id` (mesma regra de `planejarConsolidacao`); (b) relê o arquivo NO DESTINO;
+  (c) só com destino inacessível: `arquivo.checksum_sha256` (origem) + uma entrada de resumo no
+  `ProjectLog` com a contagem. `chaveDestino` agora é pública (Consolidacao.h). O botão manual
+  (thread de fundo) usa o destino selecionado (`resolvedDestFolder_`) ou a raiz do MAIN.
+- **Medições (2026-10-02)**. Antes (app de 1/out, backup real de 201 GB, mtimes de `relatorios/`):
+  CSV+XLS+Dublin Core ≈ 1 s; Checksums ≈ 6 min 23 s. Depois, teste headless com o código real
+  (temporário, não commitado: 120 JPEGs, 1.271 MB, embed XMP ligado, release x86_64):
+  manifesto pelo registro (a) **0,001 s** vs relendo o destino (b) **70,6 s** (~18 MB/s; o
+  `juce::SHA256` é o gargalo — extrapolado, 134 GB levariam ~2 h, bate com o "mais de 1 h" medido).
+  `shasum`-equivalente: 120/120 batem com o novo; o hash da origem (antigo) falharia 120/120.
+  Cancelamento: sem `.sha256`/`.tmp`, antigo removido. TSan (Debug): 0 warnings com o manifesto em
+  thread de fundo e ~4.700 gravações concorrentes. NÃO verificado: texto/barra/cor da tela (só no app).
+
+## WINPORT — pontos a adaptar quando a windows-port for mergeada
+
+Regras do port (AGENTS.md da windows-port): CaminhosBanco, NomesSeguros, NomesCanonicos, ProcessoExterno, nada de
+I/O na message thread, API de macOS só atrás de `#if JUCE_MAC` com equivalente Windows. Código novo na main marca o
+ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
+
+- `BackupWorkspaceComponent.cpp` `gerarManifestChecksumsBackup`: chave do mapa e `destinoMedia.getChildFile(relPath)`
+  com caminho vindo do banco — **CaminhosBanco** (`doBanco`/`paraBanco`).
+- Mesma função, fallback (b): SHA-256 do arquivo no destino na message thread — **nada de I/O na message thread**
+  (sai com o fix do hang: manifesto do fim do backup em thread de fundo).
+- `BackupWorkspaceComponent.cpp` `exportarChecksumsPara`: `<projeto>.sha256`/`.sha256.tmp` — **NomesSeguros**.
+- `ManifestoSelfTest.cpp`: `/bin/sh` + `shasum` atrás de `JUCE_MAC || JUCE_LINUX`, sem equivalente Windows — **API de
+  macOS/Linux**.
+- AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
+  `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
+
 ## Baseline dos self-tests (não confundir com regressão)
 
 - `--selftest-lote`: verde (ASan/TSan/Release).

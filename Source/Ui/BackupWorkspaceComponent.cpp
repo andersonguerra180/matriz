@@ -1,4 +1,5 @@
 #include "BackupWorkspaceComponent.h"
+#include <unordered_map>
 #include "GoogleDriveContas.h"
 #include "BackupFileSelectorDialog.h"
 #include "BackupSyncDialog.h"
@@ -2650,33 +2651,94 @@ void BackupWorkspaceComponent::exportarDublinCore() {
     }
 }
 
-juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::function<void(int, int)>& onProgress) {
+juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::function<bool(int, int)>& onProgress,
+                                                                    bool* cancelado,
+                                                                    const juce::File& destinoMedia) {
     juce::String manifest;
     int total = static_cast<int>(plano_.itens.size());
     int feito = 0;
+    int usaramChecksumDaOrigem = 0;
+    if (cancelado) *cancelado = false;
 
-    for (const auto& item : plano_.itens) {
-        if (onProgress) onProgress(feito, total);
+    auto& registro = projeto_.projeto().registro();
+    const bool temDestino = destinoMedia.isDirectory();
 
-        juce::String hash;
+    // O manifesto lista o caminho do DESTINO, então o hash tem que ser o do
+    // arquivo no destino (depois de embed/marca d'água), não o da origem.
+    // consolidacao_registro.checksum_sha256 já guarda esse hash: um SELECT só,
+    // antes do loop. Chave: arquivo_id + '\n' + caminho_relativo_destino (mesma
+    // regra de planejarConsolidacao: o item pode ter mudado de pasta no MAPA).
+    // Prioridade quando há mais de uma linha: destino_path exato > destino_id >
+    // legado (destino_path vazio/NULL).
+    struct HashRegistro { int prioridade; std::string sha; };
+    std::unordered_map<std::string, HashRegistro> doRegistro;
+    if (temDestino) {
         try {
-            auto stmt = projeto_.projeto().registro().prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
-            stmt.bind(1, matriz::db::Value::of(item.arquivoId));
-            if (stmt.step() && !stmt.columnIsNull(0)) {
-                hash = stmt.columnText(0);
+            const std::string chave = matriz::consolidacao::chaveDestino(destinoMedia);
+            const std::string destinoId = matriz::vault::destinationIdDaRaiz(destinoMedia.getParentDirectory());
+            auto stmt = registro.prepare(
+                "SELECT arquivo_id, caminho_relativo_destino, checksum_sha256, COALESCE(destino_path, ''), "
+                "COALESCE(destino_id, '') FROM consolidacao_registro WHERE checksum_sha256 != '' "
+                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
+                "     OR (? != '' AND COALESCE(destino_id, '') = ?)) ORDER BY consolidado_em");
+            stmt.bind(1, matriz::db::Value::of(chave));
+            stmt.bind(2, matriz::db::Value::of(destinoId));
+            stmt.bind(3, matriz::db::Value::of(destinoId));
+            while (stmt.step()) {
+                const int prioridade = stmt.columnText(3) == chave ? 0
+                                       : (!destinoId.empty() && stmt.columnText(4) == destinoId ? 1 : 2);
+                auto& slot = doRegistro[stmt.columnText(0) + "\n" + stmt.columnText(1)];
+                if (slot.sha.empty() || prioridade <= slot.prioridade) slot = {prioridade, stmt.columnText(2)};
             }
         } catch (...) {}
+    }
+
+    for (const auto& item : plano_.itens) {
+        if (onProgress && !onProgress(feito, total)) {
+            if (cancelado) *cancelado = true;
+            return manifest;
+        }
+
+        juce::String relPath = item.caminhoRelativoDestino;
+        if (relPath.isEmpty()) relPath = item.nomeOriginal;
+
+        juce::String hash;
+        // (a) hash gravado na consolidação (bytes finais do destino)
+        // WINPORT: CaminhosBanco — relPath vem do banco/plano e é comparado como string com
+        // consolidacao_registro.caminho_relativo_destino (o mapa acima); no merge, normalizar os dois lados com
+        // CaminhosBanco::doBanco/paraBanco.
+        auto it = doRegistro.find(item.arquivoId + "\n" + relPath.toStdString());
+        if (it != doRegistro.end()) hash = juce::String(it->second.sha);
+
+        // (b) sem registro (projeto antigo): relê o arquivo NO DESTINO
+        if (hash.isEmpty() && temDestino) {
+            // WINPORT: CaminhosBanco — caminho lido do banco usado direto em getChildFile; passar por doBanco.
+            // WINPORT: nada de I/O na message thread — este SHA-256 (fallback b) hoje roda na message thread no fim do
+            // backup (auto-export); o fix do hang o leva pra thread de fundo.
+            juce::File noDestino = destinoMedia.getChildFile(relPath);
+            if (noDestino.existsAsFile()) hash = juce::SHA256(noDestino).toHexString().toLowerCase();
+        }
+
+        // (c) destino inacessível: último recurso, o hash da origem (pode não
+        // bater se houve embed/marca d'água) — contado e avisado no log no fim.
+        if (hash.isEmpty()) {
+            ++usaramChecksumDaOrigem;
+            try {
+                auto stmt = registro.prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
+                stmt.bind(1, matriz::db::Value::of(item.arquivoId));
+                if (stmt.step() && !stmt.columnIsNull(0)) {
+                    hash = stmt.columnText(0);
+                }
+            } catch (...) {}
+        }
 
         if (hash.isEmpty()) {
-            auto resolvido = matriz::vault::resolverArquivo(projeto_.projeto().registro(), item.arquivoId, projeto_.projeto().pasta());
+            auto resolvido = matriz::vault::resolverArquivo(registro, item.arquivoId, projeto_.projeto().pasta());
             juce::File srcFile = resolvido ? *resolvido : projeto_.projeto().pasta().getChildFile(item.nomeOriginal);
             if (srcFile.existsAsFile()) {
                 hash = juce::SHA256(srcFile).toHexString().toLowerCase();
             }
         }
-
-        juce::String relPath = item.caminhoRelativoDestino;
-        if (relPath.isEmpty()) relPath = item.nomeOriginal;
 
         if (hash.isEmpty()) hash = "0000000000000000000000000000000000000000000000000000000000000000";
         manifest += hash + "  " + relPath + "\n";
@@ -2684,6 +2746,14 @@ juce::String BackupWorkspaceComponent::gerarManifestChecksumsBackup(const std::f
     }
 
     if (onProgress) onProgress(total, total);
+
+    if (usaramChecksumDaOrigem > 0) {
+        matriz::model::ProjectLog pLog(projeto_.projeto().pasta());
+        pLog.appendEntry("Checksum manifest: source checksums used",
+                         {juce::String(usaramChecksumDaOrigem) + " of " + juce::String(total) +
+                              " items had no destination copy to hash and used the source checksum.",
+                          "These entries may not match the delivered files if metadata embedding or watermark was applied."});
+    }
     return manifest;
 }
 
@@ -2701,8 +2771,13 @@ void BackupWorkspaceComponent::exportarChecksums() {
             std::function<void(ProgressThread*)> work_;
         };
 
+        // Destino selecionado (lido aqui, na message thread): é nele que o manifesto
+        // hasheia; sem destino válido cai no checksum da origem.
+        const juce::File destinoMedia = matriz::model::normalizarParaRaizDestino(
+            resolvedDestFolder_.isDirectory() ? resolvedDestFolder_ : projeto_.projeto().raiz()).getChildFile("Media");
+
         juce::String manifest;
-        ProgressThread thread("EXPORT METADATA - CHECKSUMS", [this, &manifest, isCatalogMode](ProgressThread* t) {
+        ProgressThread thread("EXPORT METADATA - CHECKSUMS", [this, &manifest, isCatalogMode, destinoMedia](ProgressThread* t) {
             if (isCatalogMode || plano_.itens.empty()) {
                 t->setStatusMessage("Generating SHA-256 Checksum Manifest...");
                 t->setProgress(0.5);
@@ -2714,12 +2789,13 @@ void BackupWorkspaceComponent::exportarChecksums() {
                         t->setStatusMessage("Generating SHA-256 Checksum: " + juce::String(feito + 1) + " of " + juce::String(total) + "...");
                         t->setProgress(static_cast<double>(feito) / total);
                     }
-                });
+                    return true;
+                }, nullptr, destinoMedia);
             }
         });
         thread.runThread();
 
-        targetFile.replaceWithText(manifest);
+        targetFile.replaceWithText(manifest, false, false, "\n");  // LF: com CRLF o shasum -c lê "nome\r"
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions()
                 .withIconType(juce::MessageBoxIconType::InfoIcon)
@@ -2740,11 +2816,27 @@ void BackupWorkspaceComponent::exportarDublinCorePara(const juce::File& destFold
     targetFile.replaceWithText(csv.toStdString());
 }
 
-void BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder) {
+bool BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolder, const juce::File& destinoMedia,
+                                                     const std::function<bool(int, int)>& onProgress) {
     juce::String projectName = juce::String(projeto_.projeto().nome());
+    // WINPORT: NomesSeguros — nome de arquivo gerado a partir do nome do projeto (caracteres inválidos no Windows).
     juce::File targetFile = destFolder.getChildFile(projectName + ".sha256");
-    juce::String manifest = gerarManifestChecksumsBackup(nullptr);
-    targetFile.replaceWithText(manifest);
+    juce::File tmpFile = destFolder.getChildFile(projectName + ".sha256.tmp");
+
+    bool cancelado = false;
+    juce::String manifest = gerarManifestChecksumsBackup(onProgress, &cancelado, destinoMedia);
+    if (cancelado) {
+        // O .sha256 do backup anterior não pode ficar parecendo o deste.
+        tmpFile.deleteFile();
+        targetFile.deleteFile();
+        return false;
+    }
+    // Temporário + rename: nunca existe um .sha256 pela metade.
+    if (!tmpFile.replaceWithText(manifest, false, false, "\n") || !tmpFile.moveFileTo(targetFile)) {
+        tmpFile.deleteFile();
+        targetFile.replaceWithText(manifest, false, false, "\n");  // LF: com CRLF o shasum -c lê "nome\r"
+    }
+    return true;
 }
 
 void BackupWorkspaceComponent::aplicarEstiloBotao(juce::TextButton& botao, bool primario) {
@@ -3626,21 +3718,47 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (!safeThis) return;
 
         // Auto-export CSV, XLS, BKM to Project/relatorios folder
+        bool checksumsPuladas = false;
         if (!resultado.cancelado) {
-            safeThis->labelProgressoStatus_->setText("Exporting CSV, XLS, Dublin Core and checksums...", juce::dontSendNotification);
-            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Exporting CSV, XLS & checksums...");
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            // Um texto por fase, com um giro do loop entre elas: antes o diálogo
+            // ficava em 100% com um único texto durante todo o export.
+            auto fase = [safeThis](const juce::String& texto) {
+                if (!safeThis) return;
+                safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+            };
+            fase("Exporting CSV...");
             if (safeThis) {
                 juce::File relatoriosDir = safeThis->projeto_.projeto().pasta().getChildFile("relatorios");
                 relatoriosDir.createDirectory();
                 safeThis->exportarCsvPara(relatoriosDir);
+                fase("Exporting XLS...");
+                if (!safeThis) return;
                 safeThis->exportarXlsPara(relatoriosDir);
+                fase("Exporting Dublin Core...");
+                if (!safeThis) return;
                 safeThis->exportarDublinCorePara(relatoriosDir);
-                safeThis->exportarChecksumsPara(relatoriosDir);
+                fase("Checksums: 0 of " + juce::String(static_cast<int>(safeThis->plano_.itens.size())) + "...");
+                if (!safeThis) return;
+                const bool completo = safeThis->exportarChecksumsPara(
+                    relatoriosDir, destinoMedia,
+                    [safeThis, cancelamento](int feito, int total) {
+                        if (!safeThis) return false;
+                        const juce::String texto = "Checksums: " + juce::String(feito) + " of " + juce::String(total) + "...";
+                        safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
+                        safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                        ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+                        return !cancelamento->pedido() && safeThis != nullptr;
+                    });
+                if (!safeThis) return;
+                checksumsPuladas = !completo;
             }
         }
 
-        // Increment and confirm revision on active project
+        // Increment and confirm revision on active project. A cópia já terminou e
+        // foi verificada: cancelar só o manifesto não invalida o backup.
         if (!resultado.cancelado) {
             safeThis->projeto_.projeto().confirmarRevisao();
         }
@@ -3664,17 +3782,19 @@ void BackupWorkspaceComponent::iniciarBackup() {
         juce::String msgFinal = resultado.cancelado ? "Backup cancelled"
                                                    : (houveFalha ? "Backup finished with " + juce::String(safeThis->falhasCount_) + " errors"
                                                                  : "Backup completed: " + juce::String(safeThis->copiadoCount_) + " assets consolidated");
+        if (checksumsPuladas && !resultado.cancelado) msgFinal << " (checksum manifest skipped)";
         ProgressoGlobal::obterInstancia().concluirTarefa("backup", msgFinal);
 
         // A linha de destaque diz o QUE aconteceu; a de baixo, os números.
         safeThis->labelProgressoStatus_->setText(
-            resultado.cancelado ? "Backup cancelled."
-                                : (houveFalha ? "Backup finished with errors."
-                                              : "Backup completed successfully."),
+            resultado.cancelado ? juce::String("Backup cancelled.")
+                                : (houveFalha ? juce::String("Backup finished with errors.")
+                                              : (checksumsPuladas ? juce::String::fromUTF8("Backup completed \xe2\x80\x94 checksum manifest skipped (cancelled)")
+                                                                  : juce::String("Backup completed successfully."))),
             juce::dontSendNotification);
         safeThis->labelProgressoStatus_->setColour(
             juce::Label::textColourId,
-            houveFalha ? tema().perigo : (resultado.cancelado ? tema().alerta : tema().estadoQcOk));
+            houveFalha ? tema().perigo : ((resultado.cancelado || checksumsPuladas) ? tema().alerta : tema().estadoQcOk));
 
         juce::String finalMsg;
         finalMsg << safeThis->copiadoCount_ << " copied   |   "

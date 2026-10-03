@@ -79,6 +79,7 @@ public:
 
 private:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp): travas da etapa 5
+    friend int rodarManifestoSelfTest();  // --selftest-manifesto (ManifestoSelfTest.cpp)
     class PreviaLista;
 
     // ListBoxModel methods for Vaults list
@@ -396,8 +397,15 @@ private:
     void exportarCsvPara(const juce::File& destFolder);
     void exportarXlsPara(const juce::File& destFolder);
     void exportarDublinCorePara(const juce::File& destFolder);
-    void exportarChecksumsPara(const juce::File& destFolder);
-    juce::String gerarManifestChecksumsBackup(const std::function<void(int, int)>& onProgress = nullptr);
+    // false = cancelado no meio do manifesto: nenhum .sha256 fica na pasta.
+    bool exportarChecksumsPara(const juce::File& destFolder, const juce::File& destinoMedia,
+                               const std::function<bool(int, int)>& onProgress = nullptr);
+    // onProgress devolve false pra cancelar; nesse caso *cancelado vira true e o
+    // texto devolvido é parcial (o chamador não pode gravá-lo como completo).
+    // destinoMedia = <raiz do destino>/Media deste backup; inválido => só o
+    // checksum da origem (pode não bater se houve embed/marca d'água).
+    juce::String gerarManifestChecksumsBackup(const std::function<bool(int, int)>& onProgress = nullptr,
+                                              bool* cancelado = nullptr, const juce::File& destinoMedia = {});
 
     // Helpers
     std::set<std::string> obterItensSelecionadosPeloCriterio();
