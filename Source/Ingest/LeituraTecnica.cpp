@@ -835,9 +835,9 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
     if (ext == "aep" || ext == "aepx" || ext == "aet" || ext == "mgjson")
         return "adobeaftereffects.png";
     if (ext == "ai" || ext == "ait" || ext == "eps" || ext == "svg")
-        return "adobeillustrator.png";
+        return "illustrator.jpg";
     if (ext == "indd" || ext == "indt" || ext == "indl" || ext == "indb" || ext == "idml" || ext == "idms" || ext == "inx")
-        return "indesign.png";
+        return "indesign.jpg";
     if (ext == "ptx" || ext == "ptf" || ext == "pts" || ext == "wfm" || ext == "aan")
         return "pro tools.png";
     if (ext == "rpp" || ext == "rpp-bak" || ext == "rpp-undo")
@@ -845,9 +845,9 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
     if (ext == "rxdoc")
         return "izotope.png";
     if (ext == "fcpbundle" || ext == "fcpxml" || ext == "fcpxmld" || ext == "fcpevent" || ext == "fcproject" || ext == "fcp" || ext == "fcarch" || ext == "cboard")
-        return "finalcut.png";
+        return "finalcutpro.jpg";
     if (ext == "json")
-        return "capcut.png";
+        return "capcut.jpeg";
     if (ext == "bkrgs")
         return "groovesculptor.png";
     if (ext == "logic" || ext == "logicx")
