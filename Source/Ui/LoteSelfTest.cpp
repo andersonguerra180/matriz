@@ -3377,7 +3377,7 @@ int rodarLoteSelfTest() {
         const juce::File fOrig = src.getChildFile("a.jpg");
         fOrig.replaceWithText("original version bytes");
         const std::string item = inserirItemComArquivo(reg, projetoId, "SUB-1", fOrig);
-        reg.run("UPDATE item SET dc_title = 'Titulo atual', dc_creator = 'Fulano' WHERE id = ?", {Value::of(item)});
+        reg.run("UPDATE item SET titulo = 'Titulo atual', dc_title = 'Titulo atual', dc_creator = 'Fulano' WHERE id = ?", {Value::of(item)});
 
         const juce::File mainRaiz = raizSub.getChildFile("MAIN");
         const juce::File media = mainRaiz.getChildFile("Media");
@@ -3401,7 +3401,7 @@ int rodarLoteSelfTest() {
                "the first version has its sidecar (written by the same routine used for the whole MAIN)");
 
         // metadado ATUAL do item no momento da substituição
-        reg.run("UPDATE item SET dc_title = 'Titulo novo' WHERE id = ?", {Value::of(item)});
+        reg.run("UPDATE item SET titulo = 'Titulo novo', dc_title = 'Titulo novo' WHERE id = ?", {Value::of(item)});
         const juce::File fNovo = src.getChildFile("b.jpg");
         fNovo.replaceWithText("new version bytes, different");
         matriz::mainedit::ContextoMain ctx;
@@ -3429,13 +3429,22 @@ int rodarLoteSelfTest() {
         checar(qArquivo.existsAsFile() && qSidecar.existsAsFile() && qSidecar.loadFileAsString().contains("Titulo atual"),
                "the old version and its old sidecar are in the quarantine together");
 
-        // restaurar traz os dois de volta (o caminho original está ocupado pela nova versão: destino alternativo)
+        // Restaurar uma versão substituída é uma TROCA: a antiga volta ao caminho original COM o sidecar antigo, e a
+        // atual (nova) vai pra quarentena COM o sidecar novo — que agora existe.
         const std::string qId = texto1("SELECT id FROM quarentena_item LIMIT 1");
-        const juce::String relAlt = (relAntes.contains("/") ? relAntes.upToLastOccurrenceOf("/", true, false) : juce::String()) + "restaurado.jpg";
-        auto rr = matriz::mainedit::restaurar(ctx, qId, relAlt);
-        checar(rr.ok && media.getChildFile(relAlt).existsAsFile() && media.getChildFile(relAlt + ".xmp").existsAsFile() &&
-                   media.getChildFile(relAlt + ".xmp").loadFileAsString().contains("Titulo atual"),
-               "restoring from the quarantine brings the old file and its old sidecar back together");
+        auto rr = matriz::mainedit::restaurar(ctx, qId);
+        const juce::File voltou = media.getChildFile(relAntes);
+        const juce::File voltouXmp = media.getChildFile(relAntes + ".xmp");
+        checar(rr.ok && voltou.existsAsFile() &&
+                   juce::SHA256(voltou).toHexString().toLowerCase() == juce::SHA256(fOrig).toHexString().toLowerCase() &&
+                   voltouXmp.existsAsFile() && voltouXmp.loadFileAsString().contains("Titulo atual"),
+               "restoring brings the old file and its old sidecar back together (ok=" + juce::String(rr.ok ? 1 : 0) +
+                   ", erro=" + juce::String(rr.erro) + ")");
+        const std::string qRel2 = texto1("SELECT caminho_quarentena FROM quarentena_item WHERE restaurado_em IS NULL AND motivo = 'substituido' LIMIT 1");
+        const juce::File q2 = mainRaiz.getChildFile("_QUARENTENA").getChildFile(juce::String::fromUTF8(qRel2.c_str()));
+        const juce::File q2Xmp = q2.getSiblingFile(q2.getFileName() + ".xmp");
+        checar(q2.existsAsFile() && q2Xmp.existsAsFile() && q2Xmp.loadFileAsString().contains("Titulo novo"),
+               "...and the version that was in use goes to the quarantine together with ITS sidecar");
     } catch (const std::exception& e) {
         checar(false, juce::String("main edit replace selftest: ") + e.what());
     }
