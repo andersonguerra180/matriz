@@ -80,6 +80,7 @@ jobs:
         with:
           name: fixture-mac
           path: fixture-mac
+          include-hidden-files: true  # .miniaturas/ é pasta oculta; sem isto o upload-artifact@v4 não a envia
           retention-days: 7
 
       - name: Upload macOS Binaries (matriz_interop_selftest for verification)
@@ -164,6 +165,7 @@ jobs:
         with:
           name: fixture-win
           path: fixture-win
+          include-hidden-files: true  # .miniaturas/ é pasta oculta; sem isto o upload-artifact@v4 não a envia
           retention-days: 7
 
       - name: Upload Windows Binaries (matriz_interop_selftest for verification)
