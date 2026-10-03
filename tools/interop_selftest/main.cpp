@@ -1234,23 +1234,33 @@ int executarVerificacao(const juce::File& baseDir) {
         logMsg("CHECK [CAMINHO_LONGO]: Verificando arvore com caminho > 260 caracteres...");
         std::string idP = varManifest["id_profundo"].toString().toStdString();
         std::string shaP = varManifest["sha256_profundo"].toString().toStdString();
-        auto stProf = db.prepare("SELECT a.id, a.caminho_relativo FROM arquivo a WHERE a.item_id = ?;");
-        stProf.bind(1, matriz::db::Value::of(idP));
+        // Resolve no MAIN COPIADO pra outra pasta (a mesma raiz relocada do teste MAIN_OUTRA_RAIZ): os caminhos absolutos
+        // gravados no banco do projeto pertencem à máquina que gerou o fixture e não existem na que verifica.
+        const juce::File mainReloc = baseDir.getChildFile("copia_main_outra_pasta");
+        const juce::File projRel = mainReloc.getChildFile("Project");
         bool caminhoLongoOk = false;
-        if (stProf.step()) {
-            std::string arqIdP = stProf.columnText(0);
-            std::string relP = stProf.columnText(1);
-            if (relP.length() > 100) {
-                auto resolvido = matriz::vault::resolverArquivo(db, arqIdP, pastaProj, matriz::vault::Preferencia::MainPrimeiro);
-                if (resolvido.has_value() && resolvido->existsAsFile()) {
-                    auto ck = matriz::ingest::calcularChecksums(*resolvido);
-                    if (ck.sha256 == shaP) {
-                        caminhoLongoOk = true;
+        auto projRelocadoLongo = matriz::model::Project::abrir(projRel);
+        if (!projRelocadoLongo) {
+            logMsg("  FAIL MAIN relocado nao abriu: " + projRel.getFullPathName().toStdString());
+        } else {
+            auto& regLongo = projRelocadoLongo->registro();
+            auto stProf = regLongo.prepare("SELECT a.id, a.caminho_relativo FROM arquivo a WHERE a.item_id = ?;");
+            stProf.bind(1, matriz::db::Value::of(idP));
+            if (stProf.step()) {
+                std::string arqIdP = stProf.columnText(0);
+                std::string relP = stProf.columnText(1);
+                if (relP.length() > 100) {
+                    auto resolvido = matriz::vault::resolverArquivo(regLongo, arqIdP, projRel, matriz::vault::Preferencia::MainPrimeiro);
+                    if (resolvido.has_value() && resolvido->existsAsFile() && resolvido->isAChildOf(mainReloc)) {
+                        auto ck = matriz::ingest::calcularChecksums(*resolvido);
+                        if (ck.sha256 == shaP) {
+                            caminhoLongoOk = true;
+                        } else {
+                            logMsg("  FAIL Checksum do arquivo de caminho longo divergente: " + ck.sha256 + " vs exp " + shaP);
+                        }
                     } else {
-                        logMsg("  FAIL Checksum do arquivo de caminho longo divergente: " + ck.sha256 + " vs exp " + shaP);
+                        logMsg("  FAIL Arquivo de caminho longo nao resolvido na raiz relocada");
                     }
-                } else {
-                    logMsg("  FAIL Arquivo de caminho longo nao resolvido");
                 }
             }
         }
