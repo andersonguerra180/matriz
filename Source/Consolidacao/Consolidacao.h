@@ -88,6 +88,7 @@ juce::String segmentoDePastaSeguro(const juce::String& nome);
 // Chave de consolidacao_registro.destino_path para a pasta Media de um destino.
 std::string chaveDestino(const juce::File& destino);
 
+
 struct ItemPlanejado {
     std::string itemId;
     std::string codigoAcervo;
@@ -103,6 +104,22 @@ struct ItemPlanejado {
     // nunca recopiado). Vazio = sem movimento.
     juce::String moverDe;
 };
+
+// Manifesto de checksums do MAIN (formato `shasum -a 256 -c` / `sha256sum -c`, rodado a partir da pasta Media):
+// "<sha256>  <caminho relativo ao Media>\n" por arquivo, com o SHA-256 dos bytes ENTREGUES (consolidacao_registro).
+// Lê o registro em UMA consulta e NUNCA abre arquivo (nem da SOURCE, que pode ser um placeholder de nuvem, nem do
+// MAIN): item sem registro de consolidação não entra com hash inventado — vai pro fim como comentário
+// "# not consolidated: <caminho>". Linhas com casamento por arquivo_id + caminho do plano, e destino_path exato >
+// destino_id > legado (mesma regra de planejarConsolidacao). aoProgredir(feito,total) devolve false pra cancelar.
+struct ResultadoManifestoChecksums {
+    std::string texto;
+    int comHash = 0;
+    int semRegistro = 0;
+    bool cancelado = false;
+};
+ResultadoManifestoChecksums gerarManifestChecksums(matriz::db::Database& registro, const juce::File& destinoMedia,
+                                                   const std::vector<ItemPlanejado>& itens,
+                                                   const std::function<bool(int, int)>& aoProgredir = {});
 
 struct PlanoConsolidacao {
     std::vector<ItemPlanejado> itens;

@@ -1061,3 +1061,8 @@ CREATE TABLE IF NOT EXISTS nest_item (
 
 CREATE INDEX IF NOT EXISTS idx_nest_item_nest ON nest_item(nest_id);
 CREATE INDEX IF NOT EXISTS idx_nest_capa ON nest(capa_item_id);
+
+-- Índices nas colunas por onde remover um item/arquivo procura as linhas filhas (ON DELETE CASCADE e a cópia pro Undo):
+-- sem eles, cada remoção varria proveniencia e preservation_event inteiras.
+CREATE INDEX IF NOT EXISTS idx_proveniencia_item ON proveniencia(item_id);
+CREATE INDEX IF NOT EXISTS idx_preservation_event_arquivo ON preservation_event(arquivo_id);

@@ -160,25 +160,52 @@ int rodarManifestoSelfTest() {
         checar(tempoA < 1.0, "(a) never re-reads the files (" + juce::String(tempoA, 3) + " s)");
         checar(chamadas == N + 1 && monotonico, "progress is called N+1 times and never goes backwards (" + juce::String(chamadas) + ")");
 
-        // (b) sem registro: relê o arquivo NO DESTINO
-        reg.run("UPDATE consolidacao_registro SET checksum_sha256 = ''", {});
-        t0 = Clock::now();
-        const juce::String manifestoB = bw.gerarManifestChecksumsBackup(nullptr, nullptr, media);
-        const double tempoB = seg(t0);
-        ruins = contarDivergentes(manifestoB, linhas);
-        checar(linhas == N && ruins == 0, "(b) with no registro hash it re-reads the destination: " + juce::String(ruins) +
-                                              " mismatches, " + juce::String(tempoB, 3) + " s");
+        // O manifesto não abre arquivo: some com os arquivos do destino e ele sai igual.
+        const juce::File media2 = raiz.getChildFile("DEST_APAGADO");
+        {
+            const juce::File sombra = raiz.getChildFile("DEST_SOMBRA");
+            media.copyDirectoryTo(sombra);  // guarda uma cópia só pra poder restaurar depois
+            media.deleteRecursively();
+            media.createDirectory();
+            t0 = Clock::now();
+            const juce::String semArquivos = bw.gerarManifestChecksumsBackup(nullptr, nullptr, media);
+            const double tempoSem = seg(t0);
+            int linhasSem = 0;
+            for (auto& l : juce::StringArray::fromLines(semArquivos)) if (l.isNotEmpty() && !l.startsWith("#")) ++linhasSem;
+            checar(linhasSem == N && tempoSem < 1.0,
+                   "(b) the manifest reads no file: same " + juce::String(linhasSem) + " lines with the destination files deleted (" +
+                       juce::String(tempoSem, 3) + " s)");
+            media.deleteRecursively();
+            sombra.moveFileTo(media);
+        }
+        (void) media2;
 
-        // (c) sem destino acessível: hash da origem + UMA entrada de resumo no log.md
+        // Item sem registro de consolidação: comentário no fim, nunca hash zerado; resumo UMA vez no log.md.
+        reg.run("UPDATE consolidacao_registro SET checksum_sha256 = ''", {});
         const juce::File logf = pasta.getChildFile("log.md");
         const juce::String logAntes = logf.existsAsFile() ? logf.loadFileAsString() : juce::String();
-        ruins = contarDivergentes(bw.gerarManifestChecksumsBackup(nullptr, nullptr, juce::File()), linhas);
+        const juce::String semRegistro = bw.gerarManifestChecksumsBackup(nullptr, nullptr, media);
         const juce::String logDepois = logf.existsAsFile() ? logf.loadFileAsString() : juce::String();
-        const juce::String marca = "Checksum manifest: source checksums used";
-        checar(linhas == N && ruins == N, "(c) with no destination it falls back to the source hash (" + juce::String(ruins) + " mismatches, expected)");
+        int comentarios = 0, hashes = 0;
+        bool hashZerado = false;
+        for (auto& l : juce::StringArray::fromLines(semRegistro)) {
+            if (l.startsWith("# not consolidated: ")) ++comentarios;
+            else if (l.isNotEmpty()) { ++hashes; if (l.startsWith("0000000000000000")) hashZerado = true; }
+        }
+        checar(comentarios == N && hashes == 0 && !hashZerado,
+               "(c) items with no consolidation record become '# not consolidated' comments, never a zero hash (" +
+                   juce::String(comentarios) + ")");
+        const juce::String marca = "Checksum manifest: items not consolidated";
         checar(logDepois.length() > logAntes.length() && logDepois.contains(marca) &&
                    logDepois.fromFirstOccurrenceOf(marca, false, false).fromFirstOccurrenceOf(marca, false, false).isEmpty(),
                "(c) logs exactly one summary entry in log.md");
+        // Sem destino acessível: também só comentários (nada de hash da SOURCE).
+        {
+            const juce::String semDestino = bw.gerarManifestChecksumsBackup(nullptr, nullptr, juce::File());
+            int linhasComHash = 0;
+            for (auto& l : juce::StringArray::fromLines(semDestino)) if (l.isNotEmpty() && !l.startsWith("#")) ++linhasComHash;
+            checar(linhasComHash == 0, "with no destination folder there is no hash line at all (no SOURCE hash fallback)");
+        }
 
         // exportarChecksumsPara: cancelamento no meio e sucesso
         const juce::File rel = pasta.getChildFile("relatorios");
@@ -216,14 +243,17 @@ int rodarManifestoSelfTest() {
         checar(linhasSha == N && errosSha == 0, "`shasum -a 256 -c` equivalent passes on the delivered files (embed on)");
 #endif
 
-        // Thread de fundo (botão manual) enquanto a message thread grava no banco; força o caminho lento (b)
-        // pra a janela de concorrência ser longa o bastante.
-        reg.run("UPDATE consolidacao_registro SET checksum_sha256 = ''", {});
+        // Fase final do backup (CSV, XLS, Dublin Core e manifesto) em thread de fundo — como o job do
+        // BackupWorkspaceComponent — enquanto a message thread grava no banco: o que o TSan precisa ver.
+        const juce::File relBg = pasta.getChildFile("relatorios_bg");
+        relBg.createDirectory();
         std::atomic<bool> fim{false};
-        juce::String manifestoBg;
-        bool canceladoBg = false;
+        bool manifestoBgOk = false;
         std::thread th([&] {
-            manifestoBg = bw.gerarManifestChecksumsBackup([](int, int) { return true; }, &canceladoBg, media);
+            bw.exportarCsvPara(relBg);
+            bw.exportarXlsPara(relBg);
+            bw.exportarDublinCorePara(relBg);
+            manifestoBgOk = bw.exportarChecksumsPara(relBg, media, nullptr);
             fim = true;
         });
         int escritas = 0;
@@ -232,9 +262,14 @@ int rodarManifestoSelfTest() {
             juce::Thread::sleep(2);
         }
         th.join();
-        std::cout << "  (" << escritas << " writes on the message thread during the background manifest)\n";
-        checar(!canceladoBg && juce::StringArray::fromLines(manifestoBg).size() >= N,
-               "the manifest built on a background thread completes while the message thread writes to the DB");
+        std::cout << "  (" << escritas << " writes on the message thread during the background final phase)\n";
+        int tmps = 0;
+        for (auto& f : relBg.findChildFiles(juce::File::findFiles, false, "*.tmp")) { (void) f; ++tmps; }
+        checar(manifestoBgOk && tmps == 0 && relBg.getChildFile("ManifTest_full_report.csv").existsAsFile() &&
+                   relBg.getChildFile("ManifTest_catalog.xls").existsAsFile() &&
+                   relBg.getChildFile("ManifTest_dublin_core.csv").existsAsFile() &&
+                   relBg.getChildFile("ManifTest.sha256").existsAsFile(),
+               "the 4 reports built on a background thread complete (no .tmp left) while the message thread writes to the DB");
     } catch (const std::exception& e) {
         checar(false, juce::String("manifest selftest: ") + e.what());
     }

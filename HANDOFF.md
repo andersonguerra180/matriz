@@ -119,6 +119,28 @@ ponto com `// WINPORT: <regra>` (`grep -rn "WINPORT:" Source`). Pontos hoje:
 - AGENTS.md: já existe na main (desde 738321c); a seção do port chega com a windows-port. Na hora do merge, garantir
   `CLAUDE.md` na main com a linha `@AGENTS.md` (hoje não existe CLAUDE.md).
 
+### Branch `fix/travamentos` (2026-10-03) — message thread presa em disco, sem merge ainda
+
+Três defeitos, um commit cada (`926784b`, `1cc7cdb`, `32b07ba`); decisões que não devem ser revertidas:
+
+- **Remover da lista** (`AcoesItem.cpp` kRemoverDaLista): `ProjetoAberto::removerItensDoProjetoEmSegundoPlano` roda no pool do
+  projeto, em lotes de 100 (uma transação por lote, `writeMutex` só durante o lote), com progresso, Cancelar entre lotes e
+  UM Undo no fim (`registrarUndoDeRemocao`, também usado pelo caminho síncrono, que segue igual pros outros chamadores).
+  A grade recarrega pelo EventBus (`"recarregar_tudo"`), nunca por ganchos de UI (podem já ter sido destruídos).
+  Índices novos: `idx_proveniencia_item`, `idx_preservation_event_arquivo`. Causa medida ao vivo: 41 s de `pread` em
+  `guardarParaUndo` num registro de 288 MB em disco externo.
+- **Fase final do backup**: relatórios + manifesto em job do `poolExport_` (progresso "Report n/4", Cancelar, `.tmp` + rename).
+  O manifesto (`gerarManifestChecksums`, Consolidacao.cpp) **só lê `consolidacao_registro` e nunca abre arquivo**; item sem
+  registro vira `# not consolidated: <caminho>`, sem hash zerado. `confirmarRevisao`/`registrarDestinoBackup` rodam mesmo com
+  relatórios cancelados. O `runDispatchLoopUntil` da CÓPIA segue (deliberado, ver AGENTS.md); só a fase final saiu da message thread.
+- **Card "Scanning Duplicates" órfão**: o destrutor de `DuplicatesWorkspaceComponent` conclui a tarefa e o Cancelar usa SafePointer.
+
+Verificação: `--selftest-lote` 555 OK e `--selftest-manifesto`, em release e TSan (build Debug, `MATRIZ_TSAN`), todos ALL TESTS PASSED,
+0 warnings. Limites conhecidos: CSV/XLS/Dublin Core são uma chamada só (progresso por etapa, não por item; Cancelar entre etapas);
+a recarga pós-remoção não chama `ganchos.aoMudarDados` (só EventBus).
+Achado fora do escopo (TSan Debug): `Preservation.cpp:1130` monta o cabeçalho do XLS com `—` como `const char*` — o XLS sai com
+"â€"" no lugar do travessão (JUCE assert em Debug). Conserto de uma linha (`juce::String::fromUTF8`), não aplicado.
+
 ## Baseline dos self-tests (não confundir com regressão)
 
 - `--selftest-lote`: verde (ASan/TSan/Release).

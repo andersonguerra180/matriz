@@ -939,6 +939,10 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
         signalThreadShouldExit();
         waitForThreadToExit(2000);
     }
+    // O card "Scanning Duplicates" é de quem o abriu: quem concluía era o timerCallback deste componente.
+    // Destruído no meio do scan (troca de idioma/tema, projeto fechado), o card ficava parado pra sempre.
+    if (estado_ == State::Scanning)
+        ProgressoGlobal::obterInstancia().concluirTarefa("duplicates_scan", "Scan interrupted");
     listaComponent_.reset();
     viewport_.reset();
 }
@@ -1108,8 +1112,10 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     lblStatus_->setText(matriz::i18n::t("duplicatas.scanning"), juce::dontSendNotification);  // dá altura ao status antes do resized()
     viewport_->setVisible(false);
 
+    // SafePointer, nunca `this` bruto: o card pode sobreviver ao componente e o Cancelar chamaria um objeto liberado.
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
     ProgressoGlobal::obterInstancia().iniciarTarefa(
-        "duplicates_scan", "Scanning Duplicates", 0, [this] { signalThreadShouldExit(); },
+        "duplicates_scan", "Scanning Duplicates", 0, [safeThis] { if (safeThis) safeThis->signalThreadShouldExit(); },
         "Analyzing catalog for duplicate assets...");
     
     startTimer(100); // Poll scan progress

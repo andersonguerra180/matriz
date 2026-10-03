@@ -1,4 +1,5 @@
 #include "Consolidacao.h"
+#include <unordered_map>
 #include "../Diag/Watchdog.h"
 
 #include "../Ingest/Checksum.h"
@@ -342,6 +343,60 @@ void gravarHierarquiaDoProjeto(matriz::db::Database& registro, const HierarquiaB
 // absoluto normalizado da pasta de mídia passada a planejar/executar.
 std::string chaveDestino(const juce::File& destino) {
     return destino.getFullPathName().trimCharactersAtEnd("/").toStdString();
+}
+
+ResultadoManifestoChecksums gerarManifestChecksums(matriz::db::Database& registro, const juce::File& destinoMedia,
+                                                   const std::vector<ItemPlanejado>& itens,
+                                                   const std::function<bool(int, int)>& aoProgredir) {
+    ResultadoManifestoChecksums r;
+    struct HashRegistro { int prioridade; std::string sha; };
+    std::unordered_map<std::string, HashRegistro> doRegistro;
+    if (destinoMedia.isDirectory()) {
+        try {
+            const std::string chave = chaveDestino(destinoMedia);
+            const std::string destinoId = matriz::vault::destinationIdDaRaiz(destinoMedia.getParentDirectory());
+            auto stmt = registro.prepare(
+                "SELECT arquivo_id, caminho_relativo_destino, checksum_sha256, COALESCE(destino_path, ''), "
+                "COALESCE(destino_id, '') FROM consolidacao_registro WHERE checksum_sha256 != '' "
+                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
+                "     OR (? != '' AND COALESCE(destino_id, '') = ?)) ORDER BY consolidado_em");
+            stmt.bind(1, Value::of(chave));
+            stmt.bind(2, Value::of(destinoId));
+            stmt.bind(3, Value::of(destinoId));
+            while (stmt.step()) {
+                const int prioridade = stmt.columnText(3) == chave ? 0
+                                       : (!destinoId.empty() && stmt.columnText(4) == destinoId ? 1 : 2);
+                auto& slot = doRegistro[stmt.columnText(0) + "\n" + stmt.columnText(1)];
+                if (slot.sha.empty() || prioridade <= slot.prioridade) slot = {prioridade, stmt.columnText(2)};
+            }
+        } catch (...) {}
+    }
+
+    const int total = static_cast<int>(itens.size());
+    int feito = 0;
+    std::string semRegistro;
+    for (const auto& item : itens) {
+        if (aoProgredir && !aoProgredir(feito, total)) {
+            r.cancelado = true;
+            return r;
+        }
+        juce::String relPath = item.caminhoRelativoDestino;
+        if (relPath.isEmpty()) relPath = item.nomeOriginal;
+        // WINPORT: CaminhosBanco — relPath vem do banco/plano e é comparado como string com
+        // consolidacao_registro.caminho_relativo_destino; no merge, normalizar os dois lados (doBanco/paraBanco).
+        auto it = doRegistro.find(item.arquivoId + "\n" + relPath.toStdString());
+        if (it != doRegistro.end()) {
+            r.texto += it->second.sha + "  " + relPath.toStdString() + "\n";
+            ++r.comHash;
+        } else {
+            semRegistro += "# not consolidated: " + relPath.toStdString() + "\n";
+            ++r.semRegistro;
+        }
+        ++feito;
+    }
+    r.texto += semRegistro;
+    if (aoProgredir) aoProgredir(total, total);
+    return r;
 }
 
 PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,

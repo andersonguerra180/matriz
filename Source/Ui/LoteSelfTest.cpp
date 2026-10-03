@@ -3273,6 +3273,89 @@ int rodarLoteSelfTest() {
     }
     raizU.deleteRecursively();
 
+    // ---------------- Remover da lista em segundo plano: lotes, progresso, Cancelar e um Undo só
+    std::cout << "\n-- Remove from list in the background: batches, progress, cancel, one undo --\n";
+    juce::File raizRemBg = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                           .getChildFile("matriz_remover_bg_" + juce::Uuid().toDashedString());
+    try {
+        raizRemBg.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "RemoverBg";
+        params.prefixoNomenclatura = "RBG";
+        auto projeto = matriz::model::Project::criar(raizRemBg.getChildFile("MAIN"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        constexpr int kN = 250;  // 3 lotes de 100
+        std::vector<std::string> ids;
+        reg.run("BEGIN TRANSACTION", {});
+        for (int i = 0; i < kN; ++i) {
+            ids.push_back(inserirItem(reg, projetoId, "RBG-" + std::to_string(i), false));
+            reg.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'show')", {Value::of(matriz::model::novoUuid()), Value::of(ids.back())});
+            reg.run("UPDATE item SET dc_creator = 'Fulano' WHERE id = ?", {Value::of(ids.back())});
+        }
+        reg.run("COMMIT", {});
+        auto contar = [&](const std::string& sql) {
+            auto st = reg.prepare(sql);
+            return st.step() ? static_cast<int>(st.columnInt(0)) : -1;
+        };
+        auto esperar = [&](const std::function<bool()>& cond) {
+            const auto limite = juce::Time::getMillisecondCounter() + 30000;
+            while (!cond() && juce::Time::getMillisecondCounter() < limite)
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(20);
+            return cond();
+        };
+
+        struct Fim { bool feito = false; int removidos = -1; bool cancelado = false; std::string erro; int progressos = 0; int ultimo = 0; };
+        auto executar = [&](const std::vector<std::string>& alvo, std::shared_ptr<std::atomic<bool>> cancelar, bool cancelarNoPrimeiroProgresso) {
+            auto fim = std::make_shared<Fim>();
+            pa.removerItensDoProjetoEmSegundoPlano(
+                alvo, cancelar,
+                [fim, cancelar, cancelarNoPrimeiroProgresso](int feitos, int) {
+                    ++fim->progressos;
+                    fim->ultimo = feitos;
+                    if (cancelarNoPrimeiroProgresso && cancelar) cancelar->store(true);
+                },
+                [fim](int removidos, bool cancelado, const std::string& erro) {
+                    fim->removidos = removidos; fim->cancelado = cancelado; fim->erro = erro; fim->feito = true;
+                });
+            esperar([&] { return fim->feito; });
+            return fim;
+        };
+
+        // 1) tudo: sai em lotes, com progresso, e a message thread segue viva (o loop acima bombeou durante o job)
+        auto r1 = executar(ids, std::make_shared<std::atomic<bool>>(false), false);
+        checar(r1->feito && r1->erro.empty() && !r1->cancelado && r1->removidos == kN &&
+                   contar("SELECT COUNT(*) FROM item") == 0 && contar("SELECT COUNT(*) FROM arquivo") == 0,
+               "the background removal takes all " + juce::String(kN) + " items out, in batches (" + juce::String(r1->removidos) + ")");
+        checar(r1->progressos >= 3 && r1->ultimo == kN, "progress is reported per batch, ending at the total (" + juce::String(r1->progressos) + " updates)");
+        // 2) UM Undo traz tudo de volta, com tags e metadados
+        checar(pa.podeDesfazer() && pa.desfazer(), "the whole removal is ONE undo entry");
+        checar(contar("SELECT COUNT(*) FROM item") == kN && contar("SELECT COUNT(*) FROM arquivo") == kN &&
+                   contar("SELECT COUNT(*) FROM item_tag WHERE tag = 'show'") == kN &&
+                   contar("SELECT COUNT(*) FROM item WHERE dc_creator = 'Fulano'") == kN,
+               "Cmd+Z brings all items back with files, tags and metadata");
+        // 3) cancelado antes de começar: nada sai, nada entra no Undo
+        auto cancelaJa = std::make_shared<std::atomic<bool>>(true);
+        auto r3 = executar(ids, cancelaJa, false);
+        checar(r3->feito && r3->cancelado && r3->removidos == 0 && contar("SELECT COUNT(*) FROM item") == kN && !pa.podeDesfazer(),
+               "cancelled before the first batch: nothing is removed and no undo entry is created");
+        // 4) cancelado no meio: o que saiu fica removido e é desfazível; o resto fica
+        auto r4 = executar(ids, std::make_shared<std::atomic<bool>>(false), true);
+        const int sobraram = contar("SELECT COUNT(*) FROM item");
+        checar(r4->feito && r4->erro.empty() && r4->removidos + sobraram == kN && r4->removidos >= 100 && (r4->removidos % 100 == 0 || r4->removidos == kN),
+               "cancelled after the first batch: removed + remaining = total (" + juce::String(r4->removidos) + " + " + juce::String(sobraram) + ")");
+        if (r4->removidos > 0) {
+            checar(pa.podeDesfazer() && pa.desfazer() && contar("SELECT COUNT(*) FROM item") == kN &&
+                       contar("SELECT COUNT(*) FROM item_tag WHERE tag = 'show'") == kN,
+                   "undo restores exactly what a cancelled removal had taken out");
+        }
+    } catch (const std::exception& e) {
+        checar(false, juce::String("background removal selftest: ") + e.what());
+    }
+    raizRemBg.deleteRecursively();
+
     // ------------------- Lista de hoje: LOCATE na pasta, autocomplete único, CDR
     std::cout << "\n-- registro.sqlite: no binary EXIF, no thumbnail blobs, compaction --\n";
     {
