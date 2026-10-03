@@ -292,6 +292,7 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Vault/SmartHealth.cpp
     Source/Vault/DeviceUsageLog.cpp
     Source/Vault/Resolucao.cpp
+    Source/Vault/AssetRelinkEngine.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp

@@ -21,6 +21,8 @@
 // binário embarcado vira erro explícito, nunca uma tentativa silenciosa via
 // PATH.
 
+#include "../App/Cancelamento.h"
+
 namespace matriz::ingest {
 
 class ProcessoExternoError : public std::runtime_error {
@@ -38,14 +40,21 @@ juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta);
 // Roda `nomeFerramenta` (resolvido via resolverCaminhoExecutavel) com
 // `argumentos` e retorna sua saída padrão como texto. Uso: ffprobe. Não é
 // seguro para saída binária — para isso, faça a ferramenta escrever num
-// arquivo e leia o arquivo (é o que calcularFormaDeOnda faz com o PCM
-// decodificado).
+// arquivo e leia o arquivo.
+// timeoutInatividadeMs: timeout por inatividade (sem dados lidos). Padrão = 300.000 ms (5 min).
+// Sem limite de duração total se houver atividade contínua.
+// cancelamento: ponteiro opcional para cancelamento pelo usuário (App/Cancelamento.h).
 std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::StringArray& argumentos,
-                                int timeoutMs = 30000);
+                                int timeoutInatividadeMs = 300000,
+                                matriz::app::CancelamentoPtr cancelamento = nullptr);
 
 // Roda `nomeFerramenta` até terminar e lança se o código de saída não for
 // zero. Uso: ffmpeg escrevendo miniatura/keyframe/PCM em disco.
+// timeoutInatividadeMs: timeout por inatividade (sem dados lidos). Padrão = 300.000 ms (5 min).
+// Sem limite de duração total se houver atividade contínua.
+// cancelamento: ponteiro opcional para cancelamento pelo usuário (App/Cancelamento.h).
 void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos,
-                            int timeoutMs = 30000);
+                            int timeoutInatividadeMs = 300000,
+                            matriz::app::CancelamentoPtr cancelamento = nullptr);
 
 } // namespace matriz::ingest

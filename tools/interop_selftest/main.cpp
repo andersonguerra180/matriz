@@ -17,6 +17,7 @@
 #include "Preservation/Preservation.h"
 #include "Db/Database.h"
 #include "Vault/Resolucao.h"
+#include "Vault/AssetRelinkEngine.h"
 #include "Consolidacao/PacoteCollection.h"
 #include "Consolidacao/Consolidacao.h"
 #include "Analytics/AssetGeolocation.h"
@@ -55,6 +56,38 @@ void check(bool condition, const std::string& tag, const std::string& descriptio
 void criarArquivoTexto(const juce::File& f, const juce::String& conteudo) {
     f.getParentDirectory().createDirectory();
     f.replaceWithText(conteudo, false, false, "\n");
+}
+
+// Gera áudio WAV sintetizado com tom senoidal
+void gerarWavSintetico(const juce::File& f, int sampleRate = 44100, double durationSec = 1.0) {
+    f.getParentDirectory().createDirectory();
+    juce::WavAudioFormat wavFormat;
+    std::unique_ptr<juce::AudioFormatWriter> writer(
+        wavFormat.createWriterFor(new juce::FileOutputStream(f), sampleRate, 1, 16, {}, 0));
+    if (writer) {
+        int numSamples = static_cast<int>(sampleRate * durationSec);
+        juce::AudioBuffer<float> buffer(1, numSamples);
+        for (int i = 0; i < numSamples; ++i) {
+            float sample = std::sin(2.0 * juce::MathConstants<double>::pi * 440.0 * i / sampleRate) * 0.4f;
+            buffer.setSample(0, i, sample);
+        }
+        writer->writeFromAudioSampleBuffer(buffer, 0, numSamples);
+    }
+}
+
+// Gera thumbnail PNG sintetizado
+void gerarPngSintetico(const juce::File& f, int width = 320, int height = 240) {
+    f.getParentDirectory().createDirectory();
+    juce::Image img(juce::Image::RGB, width, height, true);
+    juce::Graphics g(img);
+    g.fillAll(juce::Colours::darkgrey);
+    g.setColour(juce::Colours::orange);
+    g.drawText("MATRIZ INTEROP THUMBNAIL", 0, 0, width, height, juce::Justification::centred);
+    juce::PNGImageFormat pngFormat;
+    juce::FileOutputStream fos(f);
+    if (fos.openedOk()) {
+        pngFormat.writeImageToStream(img, fos);
+    }
 }
 
 int executarGeracao(const juce::File& baseDir) {
@@ -314,9 +347,14 @@ int executarGeracao(const juce::File& baseDir) {
            {Value::of(matriz::model::novoUuid()), Value::of(idE), Value::of(arqIdE), Value::of(mainDestId),
             Value::of("Especiais/" + nomeSeguroDisco), Value::of(ckE.sha256), Value::of(agora)});
 
-    // 6. Cria índice de miniaturas (indice.sqlite)
-    logMsg("GERAR [6/8]: Criando indice de miniaturas...");
+    // 6. Cria índice de miniaturas (indice.sqlite) e imagem real de miniatura
+    logMsg("GERAR [6/8]: Criando indice de miniaturas e imagem PNG real...");
     {
+        juce::File indiceDir = pastaProj.getChildFile(".miniaturas");
+        indiceDir.createDirectory();
+        juce::File thumbFile = indiceDir.getChildFile("thumb_audio1.png");
+        gerarPngSintetico(thumbFile, 320, 240);
+
         juce::File indiceFile = pastaProj.getChildFile("indice.sqlite");
         matriz::db::Database indiceDb(indiceFile.getFullPathName().toStdString());
         indiceDb.execScript(
@@ -337,7 +375,100 @@ int executarGeracao(const juce::File& baseDir) {
              Value::of(matriz::caminhos::paraBanco(std::string(".miniaturas/thumb_audio1.png"))), Value::of(agora)});
     }
 
-    // 7. Simula pacote de EXPORT com manifesto sha256sum e manifest.sqlite
+    // NFD Real e Loudness Cruzado: Gravação Épica.wav e Ação ç ã ü.mov
+    juce::File arqNfd1 = pastaOrigens.getChildFile(juce::String::fromUTF8("Gravação Épica.wav"));
+    gerarWavSintetico(arqNfd1, 44100, 1.5);
+    auto ckNfd1 = matriz::ingest::calcularChecksums(arqNfd1);
+    auto loudMedidoOpt = matriz::ingest::medirLoudnessDoArquivo(arqNfd1);
+    matriz::ingest::Loudness loudMedido = loudMedidoOpt.value_or(matriz::ingest::Loudness{});
+
+    juce::File arqNfd2 = pastaOrigens.getChildFile(juce::String::fromUTF8("Ação ç ã ü.mov"));
+    criarArquivoTexto(arqNfd2, "Conteudo sintetico de video com acentos NFD");
+    auto ckNfd2 = matriz::ingest::calcularChecksums(arqNfd2);
+
+    std::string idNfd1 = matriz::model::novoUuid();
+    std::string arqIdNfd1 = matriz::model::novoUuid();
+    std::string idNfd2 = matriz::model::novoUuid();
+    std::string arqIdNfd2 = matriz::model::novoUuid();
+
+    db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'NFD-001', 'Gravação Épica', 'Gravação Épica', 'audio', 'catalogado', ?, ?)",
+           {Value::of(idNfd1), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
+    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+           {Value::of(arqIdNfd1), Value::of(idNfd1), Value::of(matriz::caminhos::relativoParaBanco(arqNfd1, pastaOrigens)), Value::of(arqNfd1.getFullPathName().toStdString()), Value::of(ckNfd1.sha256), Value::of(ckNfd1.md5), Value::of(static_cast<juce::int64>(arqNfd1.getSize())), Value::of(agora), Value::of(agora)});
+
+    db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, dc_title, tipo_midia, estado, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'NFD-002', 'Ação ç ã ü', 'Ação ç ã ü', 'video', 'catalogado', ?, ?)",
+           {Value::of(idNfd2), Value::of(proj->projetoId()), Value::of(agora), Value::of(agora)});
+    db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+           "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+           {Value::of(arqIdNfd2), Value::of(idNfd2), Value::of(matriz::caminhos::relativoParaBanco(arqNfd2, pastaOrigens)), Value::of(arqNfd2.getFullPathName().toStdString()), Value::of(ckNfd2.sha256), Value::of(ckNfd2.md5), Value::of(static_cast<juce::int64>(arqNfd2.getSize())), Value::of(agora), Value::of(agora)});
+
+    juce::File mainNfd1 = pastaMain.getChildFile("Media").getChildFile(arqNfd1.getFileName());
+    arqNfd1.copyFileTo(mainNfd1);
+    db.run("INSERT INTO consolidacao_registro (id, item_id, arquivo_id, destino_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
+           "VALUES (?, ?, ?, ?, ?, ?, ?)",
+           {Value::of(matriz::model::novoUuid()), Value::of(idNfd1), Value::of(arqIdNfd1), Value::of(mainDestId),
+            Value::of(matriz::caminhos::paraBanco(arqNfd1.getFileName().toStdString())), Value::of(ckNfd1.sha256), Value::of(agora)});
+
+    juce::File mainNfd2 = pastaMain.getChildFile("Media").getChildFile(arqNfd2.getFileName());
+    arqNfd2.copyFileTo(mainNfd2);
+    db.run("INSERT INTO consolidacao_registro (id, item_id, arquivo_id, destino_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
+           "VALUES (?, ?, ?, ?, ?, ?, ?)",
+           {Value::of(matriz::model::novoUuid()), Value::of(idNfd2), Value::of(arqIdNfd2), Value::of(mainDestId),
+            Value::of(matriz::caminhos::paraBanco(arqNfd2.getFileName().toStdString())), Value::of(ckNfd2.sha256), Value::of(agora)});
+
+    // 7. Geração em Escala: 200 itens em 20 pastas
+    logMsg("GERAR [ESCALA]: Gerando 200 itens em 20 pastas...");
+    int totalEscala = 200;
+    int pastasEscala = 20;
+    int itensPorPasta = totalEscala / pastasEscala;
+    for (int p = 1; p <= pastasEscala; ++p) {
+        std::string pNome = "pasta_" + (p < 10 ? std::string("0") : "") + std::to_string(p);
+        juce::File pastaEscalaOrig = pastaOrigens.getChildFile("escala/" + pNome);
+        juce::File pastaEscalaMain = pastaMain.getChildFile("Media/escala/" + pNome);
+        pastaEscalaOrig.createDirectory();
+        pastaEscalaMain.createDirectory();
+
+        for (int i = 1; i <= itensPorPasta; ++i) {
+            int idxGlobal = (p - 1) * itensPorPasta + i;
+            std::string idxStr = std::to_string(idxGlobal);
+            while (idxStr.length() < 3) idxStr = "0" + idxStr;
+
+            std::string ext = (i % 4 == 0) ? ".wav" : (i % 4 == 1) ? ".jpg" : (i % 4 == 2) ? ".mp4" : ".txt";
+            std::string fName = "item_" + idxStr + ext;
+            juce::File arqEsc = pastaEscalaOrig.getChildFile(fName);
+            criarArquivoTexto(arqEsc, "Conteudo sintetico escala " + idxStr);
+
+            auto ckEsc = matriz::ingest::calcularChecksums(arqEsc);
+            juce::File arqEscMain = pastaEscalaMain.getChildFile(fName);
+            arqEsc.copyFileTo(arqEscMain);
+
+            std::string escItemId = matriz::model::novoUuid();
+            std::string escArqId = matriz::model::novoUuid();
+            std::string codAcervo = "ESC-" + idxStr;
+
+            db.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, ?, ?, 'documento', 'catalogado', ?, ?)",
+                   {Value::of(escItemId), Value::of(proj->projetoId()), Value::of(codAcervo),
+                    Value::of("Item Escala " + idxStr), Value::of(agora), Value::of(agora)});
+            db.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?, ?)",
+                   {Value::of(escArqId), Value::of(escItemId),
+                    Value::of(matriz::caminhos::relativoParaBanco(arqEsc, pastaOrigens)),
+                    Value::of(arqEsc.getFullPathName().toStdString()),
+                    Value::of(ckEsc.sha256), Value::of(ckEsc.md5),
+                    Value::of(static_cast<juce::int64>(arqEsc.getSize())), Value::of(agora), Value::of(agora)});
+            db.run("INSERT INTO consolidacao_registro (id, item_id, arquivo_id, destino_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
+                   "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(escItemId), Value::of(escArqId), Value::of(mainDestId),
+                    Value::of(matriz::caminhos::paraBanco("escala/" + pNome + "/" + fName)),
+                    Value::of(ckEsc.sha256), Value::of(agora)});
+        }
+    }
+
+    // 8. Simula pacote de EXPORT com manifesto sha256sum e manifest.sqlite
     logMsg("GERAR [7/8]: Criando pacote de export com manifestos...");
     juce::File exportMedia = pastaExport.getChildFile("Media");
     exportMedia.createDirectory();
@@ -366,7 +497,7 @@ int executarGeracao(const juce::File& baseDir) {
              Value::of(ck2.sha256), Value::of(agora)});
     }
 
-    // 8. Gera Pacote de Coleção completo para teste de EXPORT -> INTAKE (export_pacote_collection)
+    // 9. Gera Pacote de Coleção completo para teste de EXPORT -> INTAKE (export_pacote_collection)
     logMsg("GERAR [8/8]: Gerando Pacote de Colecao (export_pacote_collection)...");
     {
         juce::File pastaMediaCol = pastaExportCol.getChildFile("Media");
@@ -456,18 +587,24 @@ int executarGeracao(const juce::File& baseDir) {
 
     // Grava manifesto JSON da fixture
     juce::DynamicObject::Ptr manifest = new juce::DynamicObject();
-    manifest->setProperty("total_itens", 5);
-    manifest->setProperty("total_arquivos", 5);
+    manifest->setProperty("total_itens", 5 + 2 + 200);
+    manifest->setProperty("total_arquivos", 5 + 2 + 200);
     manifest->setProperty("id1", juce::String(id1));
     manifest->setProperty("id2", juce::String(id2));
     manifest->setProperty("id_hidden", juce::String(idH));
     manifest->setProperty("id_profundo", juce::String(idP));
     manifest->setProperty("id_especial", juce::String(idE));
+    manifest->setProperty("id_nfd1", juce::String(idNfd1));
+    manifest->setProperty("id_nfd2", juce::String(idNfd2));
     manifest->setProperty("sha256_1", juce::String(ck1.sha256));
     manifest->setProperty("sha256_2", juce::String(ck2.sha256));
     manifest->setProperty("sha256_hidden", juce::String(ckH.sha256));
     manifest->setProperty("sha256_profundo", juce::String(ckP.sha256));
     manifest->setProperty("sha256_especial", juce::String(ckE.sha256));
+    manifest->setProperty("sha256_nfd1", juce::String(ckNfd1.sha256));
+    manifest->setProperty("sha256_nfd2", juce::String(ckNfd2.sha256));
+    manifest->setProperty("lufs_i", loudMedido.lufsIntegrado);
+    manifest->setProperty("lra", loudMedido.lra);
     manifest->setProperty("pessoa_nome", juce::String("Gilberto Gil"));
     manifest->setProperty("lugar_nome", juce::String("Teatro Municipal"));
     manifest->setProperty("nome_orig_especial", juce::String::fromUTF8(nomeOrigEspecial.c_str()));
@@ -498,11 +635,13 @@ int executarVerificacao(const juce::File& baseDir) {
 
     auto& db = proj->registro();
 
+    int expectedItens = varManifest["total_itens"].isVoid() ? 5 : static_cast<int>(varManifest["total_itens"]);
+
     // 1. Contagens de itens e integridade
     auto stmtCount = db.prepare("SELECT COUNT(*) FROM item;");
     if (stmtCount.step()) {
         int count = stmtCount.columnInt(0);
-        check(count == 5, "ITEM_COUNT", "Total items in database matches expected (5), got " + std::to_string(count));
+        check(count == expectedItens, "ITEM_COUNT", "Total items in database matches expected (" + std::to_string(expectedItens) + "), got " + std::to_string(count));
     }
 
     // 2. Caminhos relativos SEMPRE com '/' (Zero barras invertidas '\' no banco)
@@ -518,7 +657,7 @@ int executarVerificacao(const juce::File& baseDir) {
             ++failures;
         }
     }
-    check(todosCaminhosComBarra && totalCaminhos >= 5, "PATHS_CANONICAL",
+    check(todosCaminhosComBarra && totalCaminhos >= expectedItens, "PATHS_CANONICAL",
           "All " + std::to_string(totalCaminhos) + " relative paths in database strictly use '/' format (no backslashes)");
 
     // 3. Miniaturas no indice.sqlite
@@ -664,7 +803,7 @@ int executarVerificacao(const juce::File& baseDir) {
             readers.emplace_back([&]() {
                 try {
                     auto st = db.prepare("SELECT COUNT(*) FROM item;");
-                    if (st.step() && st.columnInt(0) == 5) {
+                    if (st.step() && st.columnInt(0) == expectedItens) {
                         readSuccesses++;
                     }
                 } catch (const std::exception& e) {
@@ -908,8 +1047,8 @@ int executarVerificacao(const juce::File& baseDir) {
                 }
             }
 
-            check(resolvidosCount == 5 && todosResolvidosNaNovaRaiz, "MAIN_RELOCATED_ALL_FILES_RESOLVED",
-                  "All 5 files resolved strictly within relocated directory root without missing files");
+            check(resolvidosCount == expectedItens && todosResolvidosNaNovaRaiz, "MAIN_RELOCATED_ALL_FILES_RESOLVED",
+                  "All " + std::to_string(expectedItens) + " files resolved strictly within relocated directory root without missing files");
             check(todosChecksumsBatem, "MAIN_RELOCATED_CHECKSUMS_VERIFIED",
                   "SHA-256 bit parity verified for all resolved files in relocated MAIN");
         }
@@ -943,12 +1082,12 @@ int executarVerificacao(const juce::File& baseDir) {
                                 ++countS;
                             }
                         }
-                        substOk = (countS == 5);
+                        substOk = (countS == expectedItens);
                     }
                     juce::String cleanCmd = "subst " + dStr + " /d";
                     system(cleanCmd.toRawUTF8());
                     check(substOk, "MAIN_RELOCATED_SUBST_DRIVE_VERIFIED",
-                          "MAIN verified on virtual drive " + dStr.toStdString() + " via subst (all 5 files resolved to virtual drive)");
+                          "MAIN verified on virtual drive " + dStr.toStdString() + " via subst (all " + std::to_string(expectedItens) + " files resolved to virtual drive)");
                 } else {
                     check(true, "MAIN_RELOCATED_SUBST_DRIVE_VERIFIED", "subst returned non-zero (skipped with PASS on restricted CI environment)");
                 }
@@ -971,13 +1110,201 @@ int executarVerificacao(const juce::File& baseDir) {
                         ++countAlt;
                     }
                 }
-                altOk = (countAlt == 5);
+                altOk = (countAlt == expectedItens);
             }
             altRoot.deleteRecursively();
             check(altOk, "MAIN_RELOCATED_ALTERNATIVE_ROOT_VERIFIED",
-                  "MAIN verified on alternative isolated root directory (all 5 files resolved to alternative root)");
+                  "MAIN verified on alternative isolated root directory (all " + std::to_string(expectedItens) + " files resolved to alternative root)");
         }
 #endif
+    }
+
+    // =========================================================================
+    // 20. TESTE MINIATURAS_VISIVEIS
+    // =========================================================================
+    {
+        logMsg("CHECK [MINIATURAS_VISIVEIS]: Verificando decodificacao de imagem real...");
+        juce::File thumbFile = pastaProj.getChildFile(".miniaturas/thumb_miniatura_visivel.png");
+        bool thumbValida = false;
+        if (thumbFile.existsAsFile()) {
+            juce::PNGImageFormat pngFormat;
+            juce::FileInputStream stream(thumbFile);
+            juce::Image img = pngFormat.decodeImage(stream);
+            if (img.isValid() && img.getWidth() == 320 && img.getHeight() == 240) {
+                thumbValida = true;
+            } else {
+                logMsg("  FAIL Imagem de miniatura invalida ou dimensoes incorretas (" + std::to_string(img.getWidth()) + "x" + std::to_string(img.getHeight()) + ")");
+            }
+        } else {
+            logMsg("  FAIL Arquivo .miniaturas/thumb_miniatura_visivel.png nao encontrado");
+        }
+        check(thumbValida, "MINIATURAS_VISIVEIS", "Thumbnail PNG from source decoded cleanly into valid 320x240 image");
+    }
+
+    // =========================================================================
+    // 21. TESTE LOUDNESS_CRUZADO
+    // =========================================================================
+    {
+        logMsg("CHECK [LOUDNESS_CRUZADO]: Verificando medicao cruzada BS.1770 / EBU R128...");
+        juce::File wavFile = baseDir.getChildFile("backup_main/Media").getChildFile(juce::String::fromUTF8("Gravação Épica.wav"));
+        if (!wavFile.existsAsFile()) {
+            // Tenta busca com resolução canônica se o sistema de arquivos normalizou de outra forma
+            juce::File pastaMedia = baseDir.getChildFile("backup_main/Media");
+            if (pastaMedia.isDirectory()) {
+                std::string k1 = matriz::model::nomes::chave("Gravação Épica.wav");
+                for (const auto& f : pastaMedia.findChildFiles(juce::File::findFiles, false)) {
+                    if (matriz::model::nomes::chave(f.getFileName().toStdString()) == k1) {
+                        wavFile = f;
+                        break;
+                    }
+                }
+            }
+        }
+
+        bool loudOk = false;
+        if (wavFile.existsAsFile()) {
+            auto medidoOpt = matriz::ingest::medirLoudnessDoArquivo(wavFile);
+            if (medidoOpt.has_value()) {
+                auto medido = *medidoOpt;
+                double expLufs = varManifest["lufs_i"].isVoid() ? -18.0 : static_cast<double>(varManifest["lufs_i"]);
+                double expLra = varManifest["lra"].isVoid() ? 0.0 : static_cast<double>(varManifest["lra"]);
+                double diffLufs = std::abs(medido.lufsIntegrado - expLufs);
+                double diffLra = std::abs(medido.lra - expLra);
+                if (diffLufs <= 0.1 && diffLra <= 0.1) {
+                    loudOk = true;
+                } else {
+                    logMsg("  FAIL Loudness cruzado divergiu: medido LUFS=" + std::to_string(medido.lufsIntegrado) +
+                           " (exp=" + std::to_string(expLufs) + ", diff=" + std::to_string(diffLufs) + "), LRA=" +
+                           std::to_string(medido.lra) + " (exp=" + std::to_string(expLra) + ", diff=" + std::to_string(diffLra) + ")");
+                }
+            } else {
+                logMsg("  FAIL Nao foi possivel medir loudness de " + wavFile.getFullPathName().toStdString());
+            }
+        } else {
+            logMsg("  FAIL Arquivo Gravação Épica.wav nao encontrado para medicao de loudness cruzado");
+        }
+        check(loudOk, "LOUDNESS_CRUZADO", "Cross-platform BS.1770 loudness parity within 0.1 LU tolerance");
+    }
+
+    // =========================================================================
+    // 22. TESTE NFD_REAL
+    // =========================================================================
+    {
+        logMsg("CHECK [NFD_REAL]: Verificando resolucao e correspondencia de nomes acentuados...");
+        juce::File arqNfd1 = baseDir.getChildFile("backup_main/Media").getChildFile(juce::String::fromUTF8("Gravação Épica.wav"));
+        juce::File arqNfd2 = baseDir.getChildFile("backup_main/Media").getChildFile(juce::String::fromUTF8("Ação ç ã ü.mov"));
+        bool arqsExistem = arqNfd1.existsAsFile() && arqNfd2.existsAsFile();
+        if (!arqsExistem) {
+            juce::File pastaMedia = baseDir.getChildFile("backup_main/Media");
+            if (pastaMedia.isDirectory()) {
+                std::string k1 = matriz::model::nomes::chave("Gravação Épica.wav");
+                std::string k2 = matriz::model::nomes::chave("Ação ç ã ü.mov");
+                bool achou1 = false, achou2 = false;
+                for (const auto& f : pastaMedia.findChildFiles(juce::File::findFiles, false)) {
+                    std::string fk = matriz::model::nomes::chave(f.getFileName().toStdString());
+                    if (fk == k1) achou1 = true;
+                    if (fk == k2) achou2 = true;
+                }
+                arqsExistem = achou1 && achou2;
+            }
+        }
+
+        auto stNfd = db.prepare("SELECT titulo FROM item;");
+        int countNfd = 0;
+        while (stNfd.step()) {
+            std::string tit = stNfd.columnText(0);
+            if (matriz::model::nomes::chave(tit) == matriz::model::nomes::chave("Gravação Épica") ||
+                matriz::model::nomes::chave(tit) == matriz::model::nomes::chave("Ação ç ã ü")) {
+                ++countNfd;
+            }
+        }
+        check(arqsExistem && countNfd >= 2, "NFD_REAL", "NFD Unicode accented filenames ('Gravação Épica.wav', 'Ação ç ã ü.mov') resolved and matched canonically");
+    }
+
+    // =========================================================================
+    // 23. TESTE CAMINHO_LONGO
+    // =========================================================================
+    {
+        logMsg("CHECK [CAMINHO_LONGO]: Verificando arvore com caminho > 260 caracteres...");
+        std::string idP = varManifest["id_profundo"].toString().toStdString();
+        std::string shaP = varManifest["sha256_profundo"].toString().toStdString();
+        auto stProf = db.prepare("SELECT a.id, a.caminho_relativo FROM arquivo a WHERE a.item_id = ?;");
+        stProf.bind(1, matriz::db::Value::of(idP));
+        bool caminhoLongoOk = false;
+        if (stProf.step()) {
+            std::string arqIdP = stProf.columnText(0);
+            std::string relP = stProf.columnText(1);
+            if (relP.length() > 100) {
+                auto resolvido = matriz::vault::resolverArquivo(db, arqIdP, pastaProj, matriz::vault::Preferencia::MainPrimeiro);
+                if (resolvido.has_value() && resolvido->existsAsFile()) {
+                    auto ck = matriz::ingest::calcularChecksums(*resolvido);
+                    if (ck.sha256 == shaP) {
+                        caminhoLongoOk = true;
+                    } else {
+                        logMsg("  FAIL Checksum do arquivo de caminho longo divergente: " + ck.sha256 + " vs exp " + shaP);
+                    }
+                } else {
+                    logMsg("  FAIL Arquivo de caminho longo nao resolvido");
+                }
+            }
+        }
+        check(caminhoLongoOk, "CAMINHO_LONGO", "Long path (>260 chars) preserved, resolved, and verified with SHA-256 bit parity");
+    }
+
+    // =========================================================================
+    // 24. TESTE RELINK_ORIGENS
+    // =========================================================================
+    {
+        logMsg("CHECK [RELINK_ORIGENS]: Verificando relink de origens via AssetRelinkEngine...");
+        juce::File pastaOrigReloc = baseDir.getChildFile("origens_relocadas");
+        pastaOrigReloc.deleteRecursively();
+        juce::File pastaOrig = baseDir.getChildFile("origens");
+        pastaOrig.copyDirectoryTo(pastaOrigReloc);
+
+        juce::File sampleFile = pastaOrigReloc.getChildFile("gravacao_show.wav");
+        std::string oldPath = "";
+        auto stOld = db.prepare("SELECT a.caminho_absoluto_origem FROM arquivo a JOIN item i ON a.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso';");
+        if (stOld.step()) {
+            oldPath = stOld.columnText(0);
+        }
+
+        std::map<std::string, std::string> inMemoryOverrides;
+        auto relResult = matriz::vault::AssetRelinkEngine::relocarColecaoEmMemoria(db, pastaProj, juce::String(oldPath), sampleFile, inMemoryOverrides);
+        auto presReport = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(db, pastaProj, inMemoryOverrides);
+
+        bool relinkOk = (relResult.resolvedCount > 0 && presReport.onlineAssets > 0 && presReport.offlineAssets == 0);
+        if (!relinkOk) {
+            logMsg("  FAIL AssetRelinkEngine: resolvedCount=" + std::to_string(relResult.resolvedCount) +
+                   ", onlineAssets=" + std::to_string(presReport.onlineAssets) +
+                   ", offlineAssets=" + std::to_string(presReport.offlineAssets));
+        }
+        check(relinkOk, "RELINK_ORIGENS", "AssetRelinkEngine successfully inferred new root and brought all assets online in memory");
+    }
+
+    // =========================================================================
+    // 25. TESTE ESCALA
+    // =========================================================================
+    {
+        logMsg("CHECK [ESCALA]: Verificando 200 itens em 20 pastas...");
+        auto stEscala = db.prepare("SELECT COUNT(*) FROM item WHERE codigo_acervo LIKE 'ESC-%';");
+        bool escalaDbOk = false;
+        if (stEscala.step()) {
+            escalaDbOk = (stEscala.columnInt(0) == 200);
+        }
+
+        juce::File pastaEscalaMain = baseDir.getChildFile("backup_main/Media/escala");
+        int subpastasCount = 0;
+        int arqsCount = 0;
+        if (pastaEscalaMain.isDirectory()) {
+            for (const auto& p : pastaEscalaMain.findChildFiles(juce::File::findDirectories, false)) {
+                ++subpastasCount;
+                for (const auto& f : p.findChildFiles(juce::File::findFiles, false)) {
+                    ++arqsCount;
+                }
+            }
+        }
+        bool escalaDiscoOk = (subpastasCount == 20 && arqsCount == 200);
+        check(escalaDbOk && escalaDiscoOk, "ESCALA", "Scale test verified (200 items across 20 subfolders in database and Media directory)");
     }
 
     logMsg("RESULTADO DA VERIFICAÇÃO INTEROP: " + std::to_string(failures) + " FALHAS");

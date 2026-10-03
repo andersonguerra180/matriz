@@ -17,6 +17,8 @@
 #include "Model/NomesCanonicos.h"
 #include "Model/NomesSeguros.h"
 #include "Ingest/Checksum.h"
+#include "Ingest/ProcessoExterno.h"
+#include "App/Cancelamento.h"
 #include "Vault/SmartHealth.h"
 
 namespace {
@@ -430,6 +432,45 @@ void testarNomesSeguros() {
           "relative path components are safely sanitized");
 }
 
+void testarProcessoExterno() {
+    std::cout << "== External Process Timeout & Inactivity Handling ==\n";
+    
+    // 1. Processo válido executa e captura texto
+    try {
+        auto saida = matriz::ingest::capturarSaidaTexto("ffprobe", {"-version"});
+        check(!saida.empty() && saida.find("ffprobe") != std::string::npos, "ffprobe -version captured successfully");
+    } catch (const std::exception& e) {
+        check(false, std::string("ffprobe execution failed: ") + e.what());
+    }
+
+    // 2. Cancelamento pelo usuário interrompe imediatamente
+    auto cancelamento = matriz::app::novoCancelamento();
+    cancelamento->pedir();
+    bool canceladoOk = false;
+    try {
+        matriz::ingest::capturarSaidaTexto("ffmpeg", {"-version"}, 300000, cancelamento);
+    } catch (const matriz::ingest::ProcessoExternoError& e) {
+        std::string msg = e.what();
+        canceladoOk = (msg.find("cancelled by user") != std::string::npos);
+    }
+    check(canceladoOk, "user cancellation immediately interrupts external process");
+
+    // 3. Timeout por inatividade dispara se o processo parar de emitir dados
+    bool inatividadeOk = false;
+    try {
+        // Usa timeout de inatividade curto (50 ms)
+#if JUCE_WINDOWS
+        matriz::ingest::rodarEsperandoSucesso("powershell", {"-Command", "Start-Sleep -Seconds 2"}, 50);
+#else
+        matriz::ingest::rodarEsperandoSucesso("sleep", {"2"}, 50);
+#endif
+    } catch (const matriz::ingest::ProcessoExternoError& e) {
+        std::string msg = e.what();
+        inatividadeOk = (msg.find("timed out due to inactivity") != std::string::npos);
+    }
+    check(inatividadeOk, "inactivity timeout triggers on silent process");
+}
+
 } // namespace
 
 int main() {
@@ -443,6 +484,7 @@ int main() {
     testarChecksums();
     testarNomesCanonicos();
     testarNomesSeguros();
+    testarProcessoExterno();
 
     std::cout << "\n" << (failures == 0 ? "ALL TESTS PASSED" : std::to_string(failures) + " FAILURE(S)") << "\n";
     return failures == 0 ? 0 : 1;

@@ -1,5 +1,9 @@
 #include "ProcessoExterno.h"
 
+#include <thread>
+#include <mutex>
+#include <atomic>
+
 namespace matriz::ingest {
 
 juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta) {
@@ -36,7 +40,9 @@ juce::String resolverCaminhoExecutavel(const std::string& nomeFerramenta) {
 #endif
 }
 
-std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
+namespace {
+
+juce::StringArray prepararArgumentos(const std::string& nomeFerramenta, const juce::StringArray& argumentos) {
     juce::StringArray argv;
     argv.add(resolverCaminhoExecutavel(nomeFerramenta));
     if (nomeFerramenta == "ffmpeg" || nomeFerramenta == "ffprobe") {
@@ -48,45 +54,94 @@ std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::St
         }
     }
     argv.addArray(argumentos);
-
-    juce::ChildProcess proc;
-    if (!proc.start(argv, juce::ChildProcess::wantStdOut))
-        throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
-
-    juce::String output = proc.readAllProcessOutput();
-    int timeout = (timeoutMs > 0) ? timeoutMs : 60000;
-    if (!proc.waitForProcessToFinish(timeout)) {
-        proc.kill();
-        throw ProcessoExternoError(nomeFerramenta + " timed out after " + std::to_string(timeout) + " ms");
-    }
-    return output.toStdString();
+    return argv;
 }
 
-void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos, int timeoutMs) {
-    juce::StringArray argv;
-    argv.add(resolverCaminhoExecutavel(nomeFerramenta));
-    if (nomeFerramenta == "ffmpeg" || nomeFerramenta == "ffprobe") {
-        if (!argumentos.contains("-hide_banner")) argv.add("-hide_banner");
-        if (!argumentos.contains("-loglevel")) { argv.add("-loglevel"); argv.add("error"); }
-        if (nomeFerramenta == "ffmpeg") {
-            if (!argumentos.contains("-y")) argv.add("-y");
-            if (!argumentos.contains("-nostdin")) argv.add("-nostdin");
-        }
-    }
-    argv.addArray(argumentos);
+std::string executarProcesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos,
+                            int timeoutInatividadeMs, matriz::app::CancelamentoPtr cancelamento,
+                            bool exigirSucesso) {
+    auto argv = prepararArgumentos(nomeFerramenta, argumentos);
 
     juce::ChildProcess proc;
-    if (!proc.start(argv, juce::ChildProcess::wantStdOut))
+    if (!proc.start(argv, juce::ChildProcess::wantStdOut | juce::ChildProcess::wantStdErr))
         throw ProcessoExternoError(nomeFerramenta + " could not be started: " + argv[0].toStdString());
 
-    proc.readAllProcessOutput();
-    int timeout = (timeoutMs > 0) ? timeoutMs : 60000;
-    if (!proc.waitForProcessToFinish(timeout)) {
-        proc.kill();
-        throw ProcessoExternoError(nomeFerramenta + " timed out after " + std::to_string(timeout) + " ms");
+    const int timeoutInat = (timeoutInatividadeMs > 0) ? timeoutInatividadeMs : 300000;
+    std::string output;
+    std::mutex outputMutex;
+    std::atomic<uint32_t> ultimaAtividade{juce::Time::getMillisecondCounter()};
+    std::atomic<bool> leitorConcluido{false};
+
+    std::thread leitorThread([&] {
+        char buffer[4096];
+        while (true) {
+            int lidos = proc.readProcessOutput(buffer, sizeof(buffer));
+            if (lidos <= 0) break;
+            {
+                std::lock_guard<std::mutex> lock(outputMutex);
+                output.append(buffer, static_cast<size_t>(lidos));
+            }
+            ultimaAtividade.store(juce::Time::getMillisecondCounter());
+        }
+        leitorConcluido.store(true);
+    });
+
+    bool cancelado = false;
+    bool inatividadeEstourada = false;
+
+    while (!leitorConcluido.load() && proc.isRunning()) {
+        if (cancelamento != nullptr && cancelamento->pedido()) {
+            cancelado = true;
+            proc.kill();
+            break;
+        }
+
+        auto agora = juce::Time::getMillisecondCounter();
+        auto ultima = ultimaAtividade.load();
+        if (agora >= ultima && (agora - ultima) > static_cast<juce::uint32>(timeoutInat)) {
+            inatividadeEstourada = true;
+            proc.kill();
+            break;
+        }
+
+        juce::Thread::sleep(20);
     }
-    if (proc.getExitCode() != 0)
-        throw ProcessoExternoError(nomeFerramenta + " exited with error code " + std::to_string(proc.getExitCode()));
+
+    if (leitorThread.joinable())
+        leitorThread.join();
+
+    if (cancelado || (cancelamento != nullptr && cancelamento->pedido())) {
+        throw ProcessoExternoError(nomeFerramenta + " cancelled by user");
+    }
+
+    if (inatividadeEstourada) {
+        throw ProcessoExternoError(nomeFerramenta + " timed out due to inactivity (" + std::to_string(timeoutInat) + " ms without output)");
+    }
+
+    if (exigirSucesso && proc.getExitCode() != 0) {
+        std::string errOut;
+        {
+            std::lock_guard<std::mutex> lock(outputMutex);
+            errOut = output;
+        }
+        throw ProcessoExternoError(nomeFerramenta + " exited with error code " + std::to_string(proc.getExitCode()) +
+                                   (errOut.empty() ? "" : ": " + errOut));
+    }
+
+    std::lock_guard<std::mutex> lock(outputMutex);
+    return output;
+}
+
+} // namespace
+
+std::string capturarSaidaTexto(const std::string& nomeFerramenta, const juce::StringArray& argumentos,
+                                int timeoutInatividadeMs, matriz::app::CancelamentoPtr cancelamento) {
+    return executarProcesso(nomeFerramenta, argumentos, timeoutInatividadeMs, cancelamento, false);
+}
+
+void rodarEsperandoSucesso(const std::string& nomeFerramenta, const juce::StringArray& argumentos,
+                            int timeoutInatividadeMs, matriz::app::CancelamentoPtr cancelamento) {
+    executarProcesso(nomeFerramenta, argumentos, timeoutInatividadeMs, cancelamento, true);
 }
 
 } // namespace matriz::ingest

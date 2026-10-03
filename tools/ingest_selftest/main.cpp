@@ -16,6 +16,9 @@
 #include "Consolidacao/BackupScanEngine.h"
 #include "Consolidacao/MetadadoEmbutido.h"
 #include "Consolidacao/Mascara.h"
+#include "Consolidacao/PacoteCollection.h"
+#include "Model/NomesCanonicos.h"
+#include "Model/CaminhosBanco.h"
 #include "Ficha/FichaDefinition.h"
 #include "Ingest/Checksum.h"
 #include "Ingest/ClassificadorFalaMusica.h"
@@ -2838,6 +2841,262 @@ void testarDataDeVideo(const juce::File& dirTemp) {
     fonte.deleteRecursively();
 }
 
+void testarExportIntakePacoteCollection(const juce::File& dir) {
+    std::cout << "\n== Collection Package: Mac -> Mac EXPORT -> INTAKE ==\n";
+    juce::File raizOrigem = dir.getChildFile("pacote_origem_proj");
+    juce::File raizDestino = dir.getChildFile("pacote_destino_proj");
+    juce::File pastaExport = dir.getChildFile("pacote_exportado");
+    raizOrigem.deleteRecursively();
+    raizDestino.deleteRecursively();
+    pastaExport.deleteRecursively();
+
+    using matriz::db::Value;
+
+    try {
+        // 1. Cria projeto origem
+        matriz::model::NovoProjetoParams pParams;
+        pParams.nome = "Projeto Origem Pacote";
+        pParams.modo = matriz::model::Modo::Preservacao;
+        pParams.prefixoNomenclatura = "ORIG";
+        auto projOrig = matriz::model::Project::criar(raizOrigem, pParams);
+        check(projOrig != nullptr, "source project created");
+        if (!projOrig) return;
+
+        auto& dbOrig = projOrig->registro();
+        const std::string agora = matriz::model::agoraIso8601();
+        std::string item1 = matriz::model::novoUuid();
+        std::string arqId1 = matriz::model::novoUuid();
+
+        // Cria mídia real (arquivo wav sintetizado)
+        juce::File wavFile = raizOrigem.getChildFile("origem_media.wav");
+        gerarComFfmpeg({"ffmpeg", "-f", "lavfi", "-i", "sine=frequency=440:duration=1", wavFile.getFullPathName()});
+        auto ck = matriz::ingest::calcularChecksums(wavFile);
+
+        // Insere item e arquivo
+        dbOrig.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, dc_title, dc_description, ano, collection_type, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'ORIG-001', 'Show em São Paulo', 'Show em São Paulo', 'Gravação master do show', '2026-05-20', 'Audio', 'audio', 'catalogado', ?, ?)",
+                   {Value::of(item1), Value::of(projOrig->projetoId()), Value::of(agora), Value::of(agora)});
+        dbOrig.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, checksum_md5, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'preservation_master', 'Media/origem_media.wav', ?, ?, ?, ?, ?, ?)",
+                   {Value::of(arqId1), Value::of(item1), Value::of(wavFile.getFullPathName().toStdString()),
+                    Value::of(ck.sha256), Value::of(ck.md5), Value::of(static_cast<juce::int64>(wavFile.getSize())), Value::of(agora), Value::of(agora)});
+
+        // Tags e Pessoas
+        dbOrig.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'Show')",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1)});
+        dbOrig.run("INSERT INTO item_tag (id, item_id, tag) VALUES (?, ?, 'Caetano Veloso')",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1)});
+        dbOrig.exec("CREATE TABLE IF NOT EXISTS collection_person (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, criado_em TEXT NOT NULL);");
+        dbOrig.run("INSERT INTO collection_person (id, nome, criado_em) VALUES (?, 'Caetano Veloso', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(agora)});
+
+        // Geolocalização
+        dbOrig.exec("CREATE TABLE IF NOT EXISTS asset_geolocation ("
+                    "  asset_id TEXT PRIMARY KEY,"
+                    "  latitude REAL, longitude REAL, altitude REAL,"
+                    "  continent TEXT, country TEXT, country_code TEXT,"
+                    "  state_province TEXT, state_code TEXT, city TEXT,"
+                    "  municipality TEXT, neighborhood TEXT, district TEXT,"
+                    "  postal_code TEXT, street TEXT, street_number TEXT, locality TEXT,"
+                    "  formatted_address TEXT, source TEXT, precision_accuracy REAL, confidence REAL,"
+                    "  created_at TEXT, updated_at TEXT);");
+        dbOrig.run("INSERT INTO asset_geolocation (asset_id, latitude, longitude, country, state_province, city, street, created_at, updated_at) "
+                   "VALUES (?, -23.5505, -46.6333, 'Brazil', 'São Paulo', 'São Paulo', 'Av Paulista', ?, ?)",
+                   {Value::of(item1), Value::of(agora), Value::of(agora)});
+
+        // Marcadores
+        dbOrig.run("INSERT INTO item_observacao (id, item_id, texto, autor, criado_em, minutagem_ms, titulo) "
+                   "VALUES (?, ?, 'Intro acústica', 'Operador', ?, 2000, 'Intro')",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(agora)});
+
+        // Marcas P, W, K, R
+        dbOrig.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_p', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(agora)});
+        dbOrig.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_w', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(agora)});
+        dbOrig.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_k', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(agora)});
+        dbOrig.exec("CREATE TABLE IF NOT EXISTS intake_marca_r (item_id TEXT PRIMARY KEY, origem TEXT, marcado_em TEXT NOT NULL);");
+        dbOrig.run("INSERT INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+                   {Value::of(item1), Value::of(agora)});
+
+        // Folder map no projeto origem
+        std::string mapId = matriz::model::novoUuid();
+        std::string fldId = matriz::model::novoUuid();
+        dbOrig.run("INSERT INTO folder_map (id, projeto_id, nome, ordem, criado_em, atualizado_em) VALUES (?, ?, 'Shows 2026', 1, ?, ?)",
+                   {Value::of(mapId), Value::of(projOrig->projetoId()), Value::of(agora), Value::of(agora)});
+        dbOrig.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, criado_em, atualizado_em) "
+                   "VALUES (?, ?, NULL, 'Ao Vivo', 0, ?, ?, ?)",
+                   {Value::of(fldId), Value::of(projOrig->projetoId()), Value::of(mapId), Value::of(agora), Value::of(agora)});
+        dbOrig.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(fldId), Value::of(agora)});
+
+        // Destination MAIN
+        std::string mainId = "";
+        auto stDest = dbOrig.prepare("SELECT destination_id FROM backup_destino LIMIT 1;");
+        if (stDest.step()) {
+            mainId = stDest.columnText(0);
+        } else {
+            mainId = matriz::model::novoUuid();
+            dbOrig.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em) "
+                       "VALUES (?, ?, ?, 'Main', 'ORIGINAL', 1, ?)",
+                       {Value::of(matriz::model::novoUuid()), Value::of(mainId), Value::of(raizOrigem.getFullPathName().toStdString()), Value::of(agora)});
+        }
+        matriz::model::DestinationInfo destInfo;
+        destInfo.formato = 1;
+        destInfo.destinationId = mainId;
+        destInfo.projetoId = projOrig->projetoId();
+        destInfo.papel = "MAIN";
+        destInfo.rotulo = "Main";
+        destInfo.revisao = 1;
+        destInfo.criadoEm = agora;
+        destInfo.ultimaEdicaoUtc = agora;
+        destInfo.gravarEmArquivo(raizOrigem.getChildFile("destination.json"));
+
+        juce::File mainMedia = raizOrigem.getChildFile("Media/Ao Vivo/origem_media.wav");
+        mainMedia.getParentDirectory().createDirectory();
+        wavFile.copyFileTo(mainMedia);
+
+        dbOrig.run("INSERT INTO consolidacao_registro (id, item_id, arquivo_id, destino_id, caminho_relativo_destino, checksum_sha256, consolidado_em) "
+                   "VALUES (?, ?, ?, ?, 'Ao Vivo/origem_media.wav', ?, ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(arqId1), Value::of(mainId), Value::of(ck.sha256), Value::of(agora)});
+
+        // 2. Exporta pacote de collection
+        pastaExport.createDirectory();
+        auto resExport = matriz::consolidacao::pacote::gerarPacote(
+            dbOrig, raizOrigem, pastaExport, "PacoteShow", mapId, "Shows 2026", "Colecao Show", {item1}, [](int, int) { return true; });
+        check(resExport.copiados == 1 && resExport.falhas.empty(), "collection package exported cleanly (1 file copied)");
+
+        // 3. Lê o pacote exportado
+        auto resLeitura = matriz::consolidacao::pacote::lerPacote(resExport.pasta);
+        check(resLeitura.status == matriz::consolidacao::pacote::StatusLeitura::Ok, "exported package read and parsed cleanly");
+        check(resLeitura.pacote.arquivos.size() == 1, "package contains 1 file record");
+
+        // 4. Cria projeto destino para o INTAKE
+        matriz::model::NovoProjetoParams dParams;
+        dParams.nome = "Projeto Destino Pacote";
+        dParams.modo = matriz::model::Modo::Preservacao;
+        dParams.prefixoNomenclatura = "DEST";
+        auto projDest = matriz::model::Project::criar(raizDestino, dParams);
+        check(projDest != nullptr, "destination project created");
+        if (!projDest) return;
+
+        auto& dbDest = projDest->registro();
+        auto vocabTags = matriz::model::nomes::Vocabulario::carregar(dbDest, matriz::model::nomes::Vocabulario::Tipo::Tags);
+        auto vocabSubjects = matriz::model::nomes::Vocabulario::carregar(dbDest, matriz::model::nomes::Vocabulario::Tipo::Subjects);
+
+        // Ingestão no destino
+        const auto& regArq = resLeitura.pacote.arquivos[0];
+        juce::File arqPkg = resExport.pasta.getChildFile("Media").getChildFile(juce::String::fromUTF8(regArq.caminho.c_str()));
+        check(arqPkg.existsAsFile(), "media file exists inside package Media directory");
+
+        std::string itemDestId = matriz::model::novoUuid();
+        std::string arqDestId = matriz::model::novoUuid();
+        const std::string agoraDest = matriz::model::agoraIso8601();
+
+        dbDest.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'DEST-001', ?, 'audio', 'catalogado', ?, ?)",
+                   {Value::of(itemDestId), Value::of(projDest->projetoId()), Value::of(regArq.dados.titulo), Value::of(agoraDest), Value::of(agoraDest)});
+        dbDest.run("INSERT INTO arquivo (id, item_id, papel, caminho_relativo, caminho_absoluto_origem, checksum_sha256, tamanho_bytes, criado_em, atualizado_em) "
+                   "VALUES (?, ?, 'preservation_master', ?, ?, ?, ?, ?, ?)",
+                   {Value::of(arqDestId), Value::of(itemDestId),
+                    Value::of(matriz::caminhos::relativoParaBanco(arqPkg, resExport.pasta.getChildFile("Media"))),
+                    Value::of(arqPkg.getFullPathName().toStdString()),
+                    Value::of(regArq.sha256),
+                    Value::of(static_cast<juce::int64>(arqPkg.getSize())),
+                    Value::of(agoraDest), Value::of(agoraDest)});
+
+        // Aplica os dados da ficha
+        matriz::consolidacao::pacote::gravarDadosFicha(dbDest, itemDestId, regArq.dados, vocabTags, vocabSubjects, "Intake Selftest");
+
+        // Marcas P/W/K/R no destino
+        dbDest.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_p', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(itemDestId), Value::of(agoraDest)});
+        dbDest.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_w', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(itemDestId), Value::of(agoraDest)});
+        dbDest.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+                   "VALUES (?, ?, 'raiz', 0, 'marca_k', '1', 'humano', ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(itemDestId), Value::of(agoraDest)});
+        dbDest.exec("CREATE TABLE IF NOT EXISTS intake_marca_r (item_id TEXT PRIMARY KEY, origem TEXT, marcado_em TEXT NOT NULL);");
+        dbDest.run("INSERT INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+                   {Value::of(itemDestId), Value::of(agoraDest)});
+
+        // Miniaturas no índice do destino
+        juce::File indFile = raizDestino.getChildFile("indice.sqlite");
+        matriz::db::Database indDb(indFile.getFullPathName().toStdString());
+        indDb.execScript(
+            "CREATE TABLE IF NOT EXISTS miniatura ("
+            "  id TEXT PRIMARY KEY,"
+            "  item_id TEXT NOT NULL,"
+            "  arquivo_id TEXT NOT NULL,"
+            "  tipo TEXT NOT NULL,"
+            "  caminho_relativo TEXT NOT NULL,"
+            "  largura INTEGER NOT NULL,"
+            "  altura INTEGER NOT NULL,"
+            "  gerado_em TEXT NOT NULL);"
+        );
+        indDb.run(
+            "INSERT INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
+            "VALUES (?, ?, ?, 'miniatura', ?, 320, 240, ?)",
+            {Value::of(matriz::model::novoUuid()), Value::of(itemDestId), Value::of(arqDestId),
+             Value::of(matriz::caminhos::paraBanco(std::string(".miniaturas/thumb_") + itemDestId + ".png")),
+             Value::of(agoraDest)});
+
+        // 5. Verificações no destino
+        // Metadados
+        auto stTitulo = dbDest.prepare("SELECT titulo, ano, collection_type FROM item WHERE id = ?");
+        stTitulo.bind(1, Value::of(itemDestId));
+        check(stTitulo.step() && stTitulo.columnText(0) == "Show em São Paulo" && stTitulo.columnText(1) == "2026-05-20" && stTitulo.columnText(2) == "Audio",
+              "metadata title, event date and content applied correctly");
+
+        // Tags e Pessoas
+        auto stTags = dbDest.prepare("SELECT COUNT(*) FROM item_tag WHERE item_id = ?");
+        stTags.bind(1, Value::of(itemDestId));
+        check(stTags.step() && stTags.columnInt(0) >= 2, "tags recorded in destination");
+
+        auto stPessoas = dbDest.prepare("SELECT COUNT(*) FROM collection_person WHERE nome = 'Caetano Veloso'");
+        check(stPessoas.step() && stPessoas.columnInt(0) == 1, "people preserved in collection_person");
+
+        // Geolocalização
+        auto stGeo = dbDest.prepare("SELECT city, country FROM asset_geolocation WHERE asset_id = ?");
+        stGeo.bind(1, Value::of(itemDestId));
+        check(stGeo.step() && stGeo.columnText(0) == "São Paulo" && stGeo.columnText(1) == "Brazil",
+              "geolocation preserved (São Paulo, Brazil)");
+
+        // Marcadores
+        auto stObs = dbDest.prepare("SELECT texto, minutagem_ms, titulo FROM item_observacao WHERE item_id = ?");
+        stObs.bind(1, Value::of(itemDestId));
+        check(stObs.step() && stObs.columnInt(1) == 2000 && stObs.columnText(0) == "Intro acústica" && stObs.columnText(2) == "Intro",
+              "timeline markers with timestamp and title preserved");
+
+        // Marcas P/W/K/R
+        auto stPWK = dbDest.prepare("SELECT COUNT(*) FROM item_campo WHERE item_id = ? AND campo_id IN ('marca_p', 'marca_w', 'marca_k')");
+        stPWK.bind(1, Value::of(itemDestId));
+        check(stPWK.step() && stPWK.columnInt(0) == 3, "marks P, W, K verified");
+
+        auto stR = dbDest.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE item_id = ?");
+        stR.bind(1, Value::of(itemDestId));
+        check(stR.step() && stR.columnInt(0) == 1, "mark R verified");
+
+        // Miniaturas
+        auto stMini = indDb.prepare("SELECT caminho_relativo FROM miniatura WHERE item_id = ?");
+        stMini.bind(1, Value::of(itemDestId));
+        check(stMini.step() && stMini.columnText(0).find(".miniaturas/") != std::string::npos, "thumbnail path verified in indice.sqlite");
+
+    } catch (const std::exception& e) {
+        check(false, std::string("testarExportIntakePacoteCollection failed: ") + e.what());
+    }
+
+    raizOrigem.deleteRecursively();
+    raizDestino.deleteRecursively();
+    pastaExport.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -2878,6 +3137,7 @@ int main() {
     testarExportEtapa6(tmpDir);
     testarSidecarsEtapa8(tmpDir);
     testarDataDeVideo(tmpDir);
+    testarExportIntakePacoteCollection(tmpDir);
 
     tmpDir.deleteRecursively();
 
