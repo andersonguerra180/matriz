@@ -2931,8 +2931,9 @@ void testarExportIntakePacoteCollection(const juce::File& dir) {
         dbOrig.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, criado_em, atualizado_em) "
                    "VALUES (?, ?, NULL, 'Ao Vivo', 0, ?, ?, ?)",
                    {Value::of(fldId), Value::of(projOrig->projetoId()), Value::of(mapId), Value::of(agora), Value::of(agora)});
-        dbOrig.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
-                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(fldId), Value::of(agora)});
+        // mapa_id: o planner de EXPORT por folder map filtra por ele; sem, o item "não está em nenhuma pasta do mapa".
+        dbOrig.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(item1), Value::of(fldId), Value::of(mapId), Value::of(agora)});
 
         // Destination MAIN
         std::string mainId = "";
@@ -2969,11 +2970,20 @@ void testarExportIntakePacoteCollection(const juce::File& dir) {
         auto resExport = matriz::consolidacao::pacote::gerarPacote(
             dbOrig, raizOrigem, pastaExport, "PacoteShow", mapId, "Shows 2026", "Colecao Show", {item1}, [](int, int) { return true; });
         check(resExport.copiados == 1 && resExport.falhas.empty(), "collection package exported cleanly (1 file copied)");
+        if (resExport.copiados != 1 || !resExport.falhas.empty()) {
+            std::cout << "    copiados=" << resExport.copiados << " falhas=" << resExport.falhas.size() << " foraDoMain=" << resExport.foraDoMain
+                      << " semPasta=" << resExport.semPasta << " cancelado=" << (resExport.cancelado ? 1 : 0) << " pasta=" << resExport.pasta.getFullPathName() << "\n";
+            for (const auto& f : resExport.falhas) std::cout << "    falha: " << f << "\n";
+        }
 
         // 3. Lê o pacote exportado
         auto resLeitura = matriz::consolidacao::pacote::lerPacote(resExport.pasta);
         check(resLeitura.status == matriz::consolidacao::pacote::StatusLeitura::Ok, "exported package read and parsed cleanly");
         check(resLeitura.pacote.arquivos.size() == 1, "package contains 1 file record");
+        if (resLeitura.status != matriz::consolidacao::pacote::StatusLeitura::Ok)
+            std::cout << "    status da leitura=" << static_cast<int>(resLeitura.status) << " pasta=" << resExport.pasta.getFullPathName() << "\n";
+        // Sem registro de arquivo não há o que ingerir: os checks acima já contaram a falha; seguir indexaria um vetor vazio.
+        if (resLeitura.pacote.arquivos.empty()) return;
 
         // 4. Cria projeto destino para o INTAKE
         matriz::model::NovoProjetoParams dParams;
