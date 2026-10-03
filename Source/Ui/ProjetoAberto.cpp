@@ -3406,12 +3406,14 @@ std::string colunasDe(matriz::db::Database& db, const std::string& tabela) {
     while (st.step()) cols += (cols.empty() ? "\"" : ", \"") + st.columnText(0) + "\"";
     return cols;
 }
-void guardarParaUndo(matriz::db::Database& db, const std::string& token, const std::string& tabela,
-                     const std::string& onde) {
+// tokenUndo marca as linhas guardadas (o Undo as restaura por ele); tokenIds seleciona, em temp.undo_ids, os itens
+// DESTE lote. Na remoção síncrona são o mesmo token; na em lotes, um tokenIds por lote e um tokenUndo só.
+void guardarParaUndo(matriz::db::Database& db, const std::string& tokenUndo, const std::string& tokenIds,
+                     const std::string& tabela, const std::string& onde) {
     db.exec("CREATE TEMP TABLE IF NOT EXISTS \"undo__" + tabela + "\" AS SELECT '' AS undo_token, * FROM \"" + tabela +
             "\" WHERE 0");
     db.run("INSERT INTO temp.\"undo__" + tabela + "\" SELECT ?, * FROM \"" + tabela + "\" WHERE " + onde,
-           {matriz::db::Value::of(token), matriz::db::Value::of(token)});
+           {matriz::db::Value::of(tokenUndo), matriz::db::Value::of(tokenIds)});
 }
 } // namespace
 
@@ -3433,13 +3435,13 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
                        {matriz::db::Value::of(token), matriz::db::Value::of(itemId)});
             const std::string idsItem = "(SELECT id FROM temp.undo_ids WHERE token = ?)";
             const std::string idsArquivo = "(SELECT id FROM arquivo WHERE item_id IN " + idsItem + ")";
-            guardarParaUndo(db, token, "item", "id IN " + idsItem);
+            guardarParaUndo(db, token, token, "item", "id IN " + idsItem);
             tabelasGuardadas.push_back("item");
-            guardarParaUndo(db, token, "arquivo", "item_id IN " + idsItem);
+            guardarParaUndo(db, token, token, "arquivo", "item_id IN " + idsItem);
             tabelasGuardadas.push_back("arquivo");
             for (const auto& t : tabelasLigadasAoItem(db)) {
                 if (t.tabela == "arquivo") continue;
-                guardarParaUndo(db, token, t.tabela,
+                guardarParaUndo(db, token, token, t.tabela,
                                 "\"" + t.coluna + "\" IN " + (t.alvo == "item" ? idsItem : idsArquivo));
                 tabelasGuardadas.push_back(t.tabela);
             }
@@ -3451,7 +3453,12 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
         db.run("ROLLBACK", {});
         throw;
     }
-    if (desfazendo_ || tabelasGuardadas.empty()) return;
+    registrarUndoDeRemocao(token, std::move(tabelasGuardadas), itemIds);
+}
+
+void ProjetoAberto::registrarUndoDeRemocao(const std::string& token, std::vector<std::string> tabelasGuardadas,
+                                           const std::vector<std::string>& itemIds) {
+    if (desfazendo_ || tabelasGuardadas.size() < 2) return;
     // Ordem: item, arquivo, depois as filhas (FK). OR IGNORE: tabela alcançada
     // por duas colunas (ex. item_relacao a/b) guardou a linha duas vezes.
     std::sort(tabelasGuardadas.begin() + 2, tabelasGuardadas.end());
@@ -3474,6 +3481,98 @@ void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemId
             return;
         }
         for (const auto& id : ids) EventBus::obterInstancia().dispararItemAlterado(id, "quarentena");
+    });
+}
+
+void ProjetoAberto::removerItensDoProjetoEmSegundoPlano(
+    std::vector<std::string> itemIds, std::shared_ptr<std::atomic<bool>> cancelar,
+    std::function<void(int, int)> aoProgredir,
+    std::function<void(int, bool, const std::string&)> aoConcluir) {
+    if (somenteLeitura_) {
+        avisarSomenteLeitura();
+        if (aoConcluir) aoConcluir(0, false, "read-only");
+        return;
+    }
+    if (!projeto_ || itemIds.empty()) {
+        if (aoConcluir) aoConcluir(0, false, std::string());
+        return;
+    }
+    const bool guardarUndo = !desfazendo_;
+    std::weak_ptr<bool> vivo = vivo_;
+    agendarNoPoolDoMain([this, vivo, guardarUndo, itemIds = std::move(itemIds), cancelar = std::move(cancelar),
+                         aoProgredir = std::move(aoProgredir), aoConcluir = std::move(aoConcluir)] {
+        constexpr size_t kLote = 100;
+        const int total = static_cast<int>(itemIds.size());
+        const std::string token = matriz::model::novoUuid();
+        std::vector<std::string> tabelasGuardadas;
+        size_t removidos = 0;
+        bool cancelado = false;
+        std::string erro;
+
+        try {
+            std::vector<TabelaLigada> ligadas;
+            if (guardarUndo) {
+                std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+                ligadas = tabelasLigadasAoItem(projeto_->registro());
+            }
+            while (removidos < itemIds.size() && erro.empty()) {
+                if (cancelar && cancelar->load()) { cancelado = true; break; }
+                if (vivo.expired()) return;  // projeto fechando: nada a reportar, a UI que chamava já se foi
+                const size_t fim = std::min(removidos + kLote, itemIds.size());
+                const std::string lote = matriz::model::novoUuid();
+                {
+                    // Uma transação por lote: o writeMutex só fica preso durante ele, não durante os 5.000 itens.
+                    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+                    auto& db = projeto_->registro();
+                    db.run("BEGIN IMMEDIATE", {});
+                    try {
+                        if (guardarUndo) {
+                            db.exec("CREATE TEMP TABLE IF NOT EXISTS undo_ids (token TEXT, id TEXT)");
+                            for (size_t j = removidos; j < fim; ++j)
+                                db.run("INSERT INTO temp.undo_ids (token, id) VALUES (?, ?)",
+                                       {matriz::db::Value::of(lote), matriz::db::Value::of(itemIds[j])});
+                            const std::string idsItem = "(SELECT id FROM temp.undo_ids WHERE token = ?)";
+                            const std::string idsArquivo = "(SELECT id FROM arquivo WHERE item_id IN " + idsItem + ")";
+                            const bool primeiro = tabelasGuardadas.empty();
+                            guardarParaUndo(db, token, lote, "item", "id IN " + idsItem);
+                            guardarParaUndo(db, token, lote, "arquivo", "item_id IN " + idsItem);
+                            if (primeiro) { tabelasGuardadas.push_back("item"); tabelasGuardadas.push_back("arquivo"); }
+                            for (const auto& t : ligadas) {
+                                if (t.tabela == "arquivo") continue;
+                                guardarParaUndo(db, token, lote, t.tabela,
+                                                "\"" + t.coluna + "\" IN " + (t.alvo == "item" ? idsItem : idsArquivo));
+                                if (primeiro) tabelasGuardadas.push_back(t.tabela);
+                            }
+                        }
+                        for (size_t j = removidos; j < fim; ++j)
+                            db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(itemIds[j])});
+                        if (guardarUndo) db.run("DELETE FROM temp.undo_ids WHERE token = ?", {matriz::db::Value::of(lote)});
+                        db.run("COMMIT", {});
+                    } catch (const std::exception& e) {
+                        try { db.run("ROLLBACK", {}); } catch (...) {}
+                        erro = e.what();
+                        break;
+                    }
+                }
+                removidos = fim;
+                if (aoProgredir)
+                    juce::MessageManager::callAsync([vivo, aoProgredir, feitos = static_cast<int>(removidos), total] {
+                        if (vivo.lock()) aoProgredir(feitos, total);
+                    });
+            }
+        } catch (const std::exception& e) {
+            erro = e.what();
+        } catch (...) {
+            erro = "unexpected error";
+        }
+
+        const std::vector<std::string> removidosIds(itemIds.begin(), itemIds.begin() + static_cast<std::ptrdiff_t>(removidos));
+        juce::MessageManager::callAsync([this, vivo, guardarUndo, token, tabelasGuardadas, removidosIds, cancelado, erro,
+                                         aoConcluir] {
+            if (!vivo.lock()) return;
+            if (guardarUndo && !removidosIds.empty()) registrarUndoDeRemocao(token, tabelasGuardadas, removidosIds);
+            if (aoConcluir) aoConcluir(static_cast<int>(removidosIds.size()), cancelado, erro);
+        });
     });
 }
 

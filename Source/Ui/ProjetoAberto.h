@@ -771,6 +771,17 @@ public:
     // método deliberadamente não apaga.
     void removerItensDoProjeto(const std::vector<std::string>& itemIds);
 
+    // Mesma remoção, FORA da message thread: antes a message thread copiava as linhas de ~23 tabelas pro Undo e
+    // apagava item por item, lendo um banco de centenas de MB em disco externo — minutos de beachball, sem Cancelar.
+    // Aqui vai em lotes de 100 (uma transação por lote, segurando o writeMutex só durante o lote), com progresso,
+    // cancelamento entre lotes (o que já saiu fica removido e desfazível) e UM Undo no fim.
+    // aoProgredir e aoConcluir voltam na message thread; nenhum dos dois roda se o projeto fechou no meio.
+    // `cancelar` pode ser nulo. aoConcluir(removidos, cancelado, erro): erro vazio = sem falha.
+    void removerItensDoProjetoEmSegundoPlano(std::vector<std::string> itemIds,
+                                             std::shared_ptr<std::atomic<bool>> cancelar,
+                                             std::function<void(int feitos, int total)> aoProgredir,
+                                             std::function<void(int removidos, bool cancelado, const std::string& erro)> aoConcluir);
+
     // NEST (grid): grupos de arquivos de uma mesma sequência. Na grade o nest é UM item (a capa); os outros
     // membros seguem sendo itens normais no banco. Tudo aqui tem Undo e nunca toca em arquivo.
     struct NestInfo {
@@ -1140,6 +1151,9 @@ private:
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
                             AoConcluirEdicaoMain aoConcluir);
     juce::ThreadPool poolMainEdit_{1};
+    // Registra o Undo de uma remoção (item, arquivo e as tabelas filhas guardadas em temp.undo__*). Message thread.
+    void registrarUndoDeRemocao(const std::string& token, std::vector<std::string> tabelasGuardadas,
+                                const std::vector<std::string>& ids);
     // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
     juce::ThreadPool poolMerge_{1};
     void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);

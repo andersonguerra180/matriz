@@ -489,15 +489,33 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
             ProjetoAberto* p = &projeto;
             confirmar(matriz::i18n::t("acoes.remover_da_lista_titulo"),
                       matriz::i18n::t("acoes.remover_da_lista_mensagem").replace("{n}", juce::String(quantidade)),
-                      matriz::i18n::t("acoes.remover_da_lista"), [p, itemIds, ganchos] {
-                          if (itemIds.size() > 1) {
-                              ProgressoGlobal::obterInstancia().iniciarTarefa("batch_remove_list", "Removing from List", (int)itemIds.size(), nullptr, "Removing " + juce::String((int)itemIds.size()) + " assets...");
-                          }
-                          p->removerItensDoProjeto(itemIds);
-                          if (itemIds.size() > 1) {
-                              ProgressoGlobal::obterInstancia().concluirTarefa("batch_remove_list", juce::String((int)itemIds.size()) + " assets removed");
-                          }
-                          if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                      matriz::i18n::t("acoes.remover_da_lista"), [p, itemIds] {
+                          // Em segundo plano: a janela segue viva, o card avança e o Cancelar responde.
+                          const int n = static_cast<int>(itemIds.size());
+                          auto cancelar = std::make_shared<std::atomic<bool>>(false);
+                          if (n > 1)
+                              ProgressoGlobal::obterInstancia().iniciarTarefa(
+                                  "batch_remove_list", "Removing from List", n, [cancelar] { cancelar->store(true); },
+                                  "Removing " + juce::String(n) + " assets...");
+                          p->removerItensDoProjetoEmSegundoPlano(
+                              itemIds, cancelar,
+                              [n](int feitos, int total) {
+                                  if (n > 1)
+                                      ProgressoGlobal::obterInstancia().atualizarProgresso(
+                                          "batch_remove_list", feitos,
+                                          "Removing " + juce::String(feitos) + " of " + juce::String(total) + " assets...");
+                              },
+                              [n](int removidos, bool cancelado, const std::string& erro) {
+                                  if (n > 1) {
+                                      juce::String msg = !erro.empty() ? "Removal failed after " + juce::String(removidos) + " assets"
+                                                         : cancelado   ? "Cancelled: " + juce::String(removidos) + " assets removed"
+                                                                       : juce::String(removidos) + " assets removed";
+                                      ProgressoGlobal::obterInstancia().concluirTarefa("batch_remove_list", msg);
+                                  }
+                                  // A grade/árvore/contagens recarregam pelo EventBus (os ganchos de UI podem já ter
+                                  // sido destruídos quando isto termina).
+                                  EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+                              });
                       });
             break;
         }
