@@ -99,3 +99,21 @@ regras e decisões que não mudam de sessão pra sessão.
 - **`crashHandler` (Main.cpp) fica desabilitado sob `MATRIZ_SANITIZER_BUILD`**
   (`__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)`)
   — não interferir com os handlers do próprio sanitizer.
+
+## Compatibilidade Windows (obrigatório em todo código novo)
+
+- Todo caminho relativo gravado ou lido do banco passa por CaminhosBanco
+  (paraBanco / doBanco / relativoParaBanco). Nunca gravar getRelativePathFrom
+  ou getFullPathName direto no banco.
+- Todo nome de arquivo ou pasta gerado pelo Matriz passa por NomesSeguros.
+- Comparação de nomes, tags, pessoas e lugares via NomesCanonicos (NFC +
+  case-insensitive).
+- API exclusiva de macOS só em arquivos *_mac.mm ou atrás de #if JUCE_MAC,
+  sempre com o equivalente Windows no mesmo commit.
+- Chamadas a ffmpeg/ffprobe só via ProcessoExterno: timeout por inatividade e
+  cancelamento em produção, timeout curto só em teste.
+- Nada de I/O na message thread.
+- Uma mudança só está pronta quando o CI estiver verde nos jobs macOS e
+  Windows e no interop.
+- Em código novo que toque num desses pontos e ainda não esteja adaptado,
+  marcar com `// WINPORT: <qual regra>` e listar no HANDOFF.md.
