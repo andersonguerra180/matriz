@@ -147,7 +147,10 @@ target_compile_definitions(matriz_selftest PRIVATE
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_APPLICATION_NAME_STRING="MATRIZ selftest"
     JUCE_APPLICATION_VERSION_STRING="0.1.0"
-    MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas")
+    MATRIZ_FICHAS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fichas"
+    # Teste do ProcessoExterno (ffprobe/ffmpeg/powershell/sleep): resolve pelo PATH, como o ingest_selftest. A regra de
+    # produção (a ferramenta tem que estar ao lado do executável) não é o que este alvo testa.
+    MATRIZ_DEV_BUILD=1)
 
 target_link_libraries(matriz_selftest PRIVATE
     MatrizSchemaAssets
