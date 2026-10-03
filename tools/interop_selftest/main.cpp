@@ -1124,7 +1124,13 @@ int executarVerificacao(const juce::File& baseDir) {
     // =========================================================================
     {
         logMsg("CHECK [MINIATURAS_VISIVEIS]: Verificando decodificacao de imagem real...");
-        juce::File thumbFile = pastaProj.getChildFile(".miniaturas/thumb_miniatura_visivel.png");
+        // O caminho vem do indice.sqlite (fonte de verdade da miniatura no app), não de um nome fixo.
+        juce::File thumbFile;
+        try {
+            matriz::db::Database indiceDb(pastaProj.getChildFile("indice.sqlite").getFullPathName().toStdString());
+            auto stThumb = indiceDb.prepare("SELECT caminho_relativo FROM miniatura WHERE tipo = 'miniatura' LIMIT 1");
+            if (stThumb.step()) thumbFile = pastaProj.getChildFile(juce::String::fromUTF8(stThumb.columnText(0).c_str()));
+        } catch (...) {}
         bool thumbValida = false;
         if (thumbFile.existsAsFile()) {
             juce::PNGImageFormat pngFormat;
@@ -1136,7 +1142,7 @@ int executarVerificacao(const juce::File& baseDir) {
                 logMsg("  FAIL Imagem de miniatura invalida ou dimensoes incorretas (" + std::to_string(img.getWidth()) + "x" + std::to_string(img.getHeight()) + ")");
             }
         } else {
-            logMsg("  FAIL Arquivo .miniaturas/thumb_miniatura_visivel.png nao encontrado");
+            logMsg("  FAIL miniatura registrada no indice.sqlite nao encontrada em disco: " + thumbFile.getFullPathName().toStdString());
         }
         check(thumbValida, "MINIATURAS_VISIVEIS", "Thumbnail PNG from source decoded cleanly into valid 320x240 image");
     }
@@ -1259,22 +1265,35 @@ int executarVerificacao(const juce::File& baseDir) {
         juce::File pastaOrigReloc = baseDir.getChildFile("origens_relocadas");
         pastaOrigReloc.deleteRecursively();
         juce::File pastaOrig = baseDir.getChildFile("origens");
+        const juce::File pastaOrigForaDoAr = baseDir.getChildFile("origens_fora_do_ar");
+        pastaOrigForaDoAr.deleteRecursively();
         pastaOrig.copyDirectoryTo(pastaOrigReloc);
+        // Cenário real de relink: o local ORIGINAL das origens some (disco desmontado / pasta movida) e o operador
+        // aponta UM arquivo na nova localização. Sem isso nada fica offline e não há o que relinkar.
+        const bool origemTirada = pastaOrig.moveFileTo(pastaOrigForaDoAr);
 
-        juce::File sampleFile = pastaOrigReloc.getChildFile("gravacao_show.wav");
+        // Arquivo de referência: o MESMO caminho relativo do arquivo do item 'Gravação do Show de Sucesso', na raiz nova.
+        juce::File sampleFile = pastaOrigReloc.getChildFile(juce::String::fromUTF8("Áudio e Música/Gravação_2026_SãoPaulo_Éxito.txt"));
         std::string oldPath = "";
         auto stOld = db.prepare("SELECT a.caminho_absoluto_origem FROM arquivo a JOIN item i ON a.item_id = i.id WHERE i.titulo = 'Gravação do Show de Sucesso';");
         if (stOld.step()) {
             oldPath = stOld.columnText(0);
         }
 
+        auto antes = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(db, pastaProj, {});
         std::map<std::string, std::string> inMemoryOverrides;
-        auto relResult = matriz::vault::AssetRelinkEngine::relocarColecaoEmMemoria(db, pastaProj, juce::String(oldPath), sampleFile, inMemoryOverrides);
+        auto relResult = matriz::vault::AssetRelinkEngine::relocarColecaoEmMemoria(db, pastaProj, juce::String::fromUTF8(oldPath.c_str()), sampleFile, inMemoryOverrides);
         auto presReport = matriz::vault::AssetRelinkEngine::verificarPresencaAssets(db, pastaProj, inMemoryOverrides);
+        // Devolve as origens ao lugar: as checagens seguintes dependem delas.
+        if (origemTirada) pastaOrigForaDoAr.moveFileTo(pastaOrig);
 
+        // Condições do teste: o engine relocou algo e, depois, todos os assets estão online (as origens ficam fora do ar
+        // durante a checagem; o fixture também tem a cópia no MAIN, então "offline antes" pode ser 0).
         bool relinkOk = (relResult.resolvedCount > 0 && presReport.onlineAssets > 0 && presReport.offlineAssets == 0);
         if (!relinkOk) {
-            logMsg("  FAIL AssetRelinkEngine: resolvedCount=" + std::to_string(relResult.resolvedCount) +
+            logMsg("  FAIL AssetRelinkEngine: origemTirada=" + std::to_string(origemTirada ? 1 : 0) +
+                   ", offlineAntes=" + std::to_string(antes.offlineAssets) +
+                   ", resolvedCount=" + std::to_string(relResult.resolvedCount) +
                    ", onlineAssets=" + std::to_string(presReport.onlineAssets) +
                    ", offlineAssets=" + std::to_string(presReport.offlineAssets));
         }
