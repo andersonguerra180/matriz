@@ -273,6 +273,8 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
     $<$<PLATFORM_ID:Windows>:windowscodecs>
+    $<$<PLATFORM_ID:Windows>:RuntimeObject>
+    $<$<PLATFORM_ID:Windows>:windowsapp>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -603,6 +605,8 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
     $<$<PLATFORM_ID:Windows>:windowscodecs>
+    $<$<PLATFORM_ID:Windows>:RuntimeObject>
+    $<$<PLATFORM_ID:Windows>:windowsapp>
     $<$<PLATFORM_ID:Windows>:mfplat>
     $<$<PLATFORM_ID:Windows>:mfreadwrite>
     $<$<PLATFORM_ID:Windows>:mfuuid>
