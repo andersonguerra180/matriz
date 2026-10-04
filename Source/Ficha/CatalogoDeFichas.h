@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -26,5 +27,12 @@ std::vector<TipoFichaInfo> listarTodosOsTipos(const std::string& fichasDir);
 // Filtra o resultado de listarTodosOsTipos por modo ("archive" ou "catalog").
 // Uma ficha com `modos` vazio no YAML é incluída nos dois modos.
 std::vector<TipoFichaInfo> listarTiposPorModo(const std::string& fichasDir, const std::string& modo);
+
+// Mesmas duas funções sobre fichas já em memória (id do tipo -> texto do YAML).
+// É o que o app usa: os YAMLs de fichas/ vão EMBUTIDOS no binário (Ui/FichasEmbutidas),
+// pra funcionar em qualquer Mac sem a pasta do código-fonte. A versão por diretório
+// fica pras ferramentas de linha de comando e testes.
+std::vector<TipoFichaInfo> listarTodosOsTipos(const std::map<std::string, std::string>& yamlPorId);
+std::vector<TipoFichaInfo> listarTiposPorModo(const std::map<std::string, std::string>& yamlPorId, const std::string& modo);
 
 } // namespace matriz::ficha

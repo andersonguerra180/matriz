@@ -1,4 +1,5 @@
 #include "SelecionarTipoMidiaDialogo.h"
+#include "FichasEmbutidas.h"
 
 #include "../Ficha/CatalogoDeFichas.h"
 #include "../Ficha/FichaI18n.h"
@@ -23,7 +24,7 @@ constexpr int kBotaoCancelar = 0;
 std::vector<TipoMidiaOpcao> listarTiposMidiaDisponiveis(ProjetoAberto& projeto) {
     std::vector<TipoMidiaOpcao> out;
     std::string modo = projeto.projeto().modo() == matriz::model::Modo::Catalogo ? "catalog" : "archive";
-    for (auto& info : matriz::ficha::listarTiposPorModo(MATRIZ_FICHAS_DIR, modo)) {
+    for (auto& info : matriz::ficha::listarTiposPorModo(fichasEmbutidas(), modo)) {
         juce::String rotulo = matriz::ficha::rotuloTipo(info.id, info.definicao.rotulo.empty() ? info.id : info.definicao.rotulo);
         out.push_back({info.id, rotulo, info.definicao.categoria});
     }

@@ -1,4 +1,5 @@
 #include "IngerirArquivosTest.h"
+#include "FichasEmbutidas.h"
 
 #include "../Ficha/CatalogoDeFichas.h"
 #include "../Model/Project.h"
@@ -678,7 +679,7 @@ int rodarTestIngerirArquivos() {
         // em fichas/*.yaml (§6.1) - acrescentar um YAML nao pode virar teste
         // vermelho. O que importa e que Archive oferece TODOS e Catalog nao.
         auto tiposArchive = listarTiposMidiaDisponiveis(abertoArchive);
-        auto todosOsTiposEmDisco = matriz::ficha::listarTodosOsTipos(MATRIZ_FICHAS_DIR);
+        auto todosOsTiposEmDisco = matriz::ficha::listarTodosOsTipos(matriz::ui::fichasEmbutidas());
         checar(tiposArchive.size() == todosOsTiposEmDisco.size(),
                "archive mode offers every type discovered in fichas/ (" +
                    juce::String(static_cast<int>(tiposArchive.size())).toStdString() + " of " +
