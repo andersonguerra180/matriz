@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <mutex>
+
 #include <functional>
 #include <set>
 #include <string>
@@ -223,7 +225,10 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir = {},
                                             const std::set<std::string>& itensMarcadosWatermark = {},
-                                            bool embutirNaCopia = false);
+                                            bool embutirNaCopia = false,
+                                            // Thread de fundo: passe o writeMutex do projeto — as gravações no banco
+                                            // de cada item o seguram (a cópia, que é longa, não). nullptr = sem lock.
+                                            std::recursive_mutex* escritaRegistro = nullptr);
 
 // Fase 2 — move (nunca recopia) os itens de _SEM_PASTA pra pasta nova do mapa
 // do MAIN, dentro do MAIN. Não sobrescreve: destino já existente vira falha.
@@ -237,7 +242,8 @@ struct ResultadoMovimentos {
 ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                                 const juce::File& destino,
                                                 const std::vector<ItemPlanejado>& movimentos,
-                                                const AoProgredir& aoProgredir = {});
+                                                const AoProgredir& aoProgredir = {},
+                                                std::recursive_mutex* escritaRegistro = nullptr);
 
 // EXPORT (etapa 6): recorte volátil do MAIN. Copia cada item do plano (feito
 // com paraExport = true) pra `destinoExport`, SEMPRE a partir da cópia no
