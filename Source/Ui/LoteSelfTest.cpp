@@ -3360,6 +3360,100 @@ int rodarLoteSelfTest() {
     }
     raizRemBg.deleteRecursively();
 
+    // ---------------- Consolidação em segundo plano: message thread livre, escrita sob o mutex, Cancelar, fechar travado
+    std::cout << "\n-- Consolidation in the background: free message thread, cancel, project close guard --\n";
+    juce::File raizConsBg = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("matriz_consolidar_bg_" + juce::Uuid().toDashedString());
+    try {
+        raizConsBg.createDirectory();
+        matriz::model::NovoProjetoParams params;
+        params.nome = "ConsBg";
+        params.prefixoNomenclatura = "CBG";
+        auto projeto = matriz::model::Project::criar(raizConsBg.getChildFile("projeto"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        using matriz::db::Value;
+        constexpr int kN = 40;
+        const juce::File src = raizConsBg.getChildFile("SRC");
+        src.createDirectory();
+        for (int i = 0; i < kN; ++i) {
+            const juce::File f = src.getChildFile("f" + juce::String(i) + ".jpg");
+            f.replaceWithText("bytes of file " + juce::String(i));
+            inserirItemComArquivo(reg, projetoId, "CBG-" + std::to_string(i), f);
+        }
+        matriz::consolidacao::HierarquiaBackup hier = {matriz::consolidacao::NivelHierarquia::TipoMidia};
+        auto contarReg = [&](const std::string& sql) {
+            auto st = reg.prepare(sql);
+            return st.step() ? static_cast<int>(st.columnInt(0)) : -1;
+        };
+
+        struct Execucao {
+            matriz::consolidacao::ResultadoConsolidacao res;
+            std::atomic<bool> feito{false};
+        };
+        // Roda a consolidação no job de fundo, como o diálogo e a aba Backup. Cada arquivo "demora" 25 ms — se isto
+        // rodasse na message thread, o laço de espera abaixo não conseguiria processar nenhum evento enquanto isso.
+        auto rodar = [&](const juce::File& media, int cancelarNoArquivo, int& pulsos, bool& fechamentoTravado,
+                         bool& escritaDaMessageThreadPassou) {
+            media.createDirectory();
+            auto plano = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), media, hier, {},
+                                                                     matriz::consolidacao::ModoPrefixoArquivo::Nenhum, "", true, false);
+            auto exec = std::make_shared<Execucao>();
+            auto cancela = std::make_shared<std::atomic<bool>>(false);
+            auto* pRegistro = &reg;
+            auto pasta = pa.projeto().pasta();
+            auto* mutexEscrita = &pa.projeto().writeMutex();
+            pa.executarConsolidacaoEmSegundoPlano([=] {
+                exec->res = matriz::consolidacao::executarConsolidacao(
+                    *pRegistro, pasta, media, plano,
+                    [=](int feito, int) {
+                        juce::Thread::sleep(25);
+                        if (feito + 1 == cancelarNoArquivo) cancela->store(true);
+                        return !cancela->load();
+                    },
+                    {}, false, mutexEscrita);
+                exec->feito.store(true);
+            });
+            pulsos = 0;
+            fechamentoTravado = pa.trabalhoDeConsolidacaoEmCurso();
+            escritaDaMessageThreadPassou = false;
+            const auto limite = juce::Time::getMillisecondCounter() + 60000;
+            while (!exec->feito.load() && juce::Time::getMillisecondCounter() < limite) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(5);
+                ++pulsos;
+                if (!escritaDaMessageThreadPassou && pulsos == 5) {
+                    // a message thread também escreve no registro, sob o mesmo mutex, enquanto o job corre
+                    std::unique_lock<std::recursive_mutex> escrita(pa.projeto().writeMutex());
+                    reg.run("UPDATE projeto SET atualizado_em = atualizado_em", {});
+                    escritaDaMessageThreadPassou = true;
+                }
+            }
+            esperarAte([&] { return !pa.trabalhoDeConsolidacaoEmCurso(); }, 10000);
+            return exec;
+        };
+
+        int pulsos = 0;
+        bool travado = false, escreveu = false;
+        auto e1 = rodar(raizConsBg.getChildFile("MAIN1/Media"), -1, pulsos, travado, escreveu);
+        checar(e1->feito.load() && !e1->res.cancelado && e1->res.consolidados == kN && e1->res.falhas.empty(),
+               "background consolidation copies all " + juce::String(kN) + " files (" + juce::String(e1->res.consolidados) + ")");
+        checar(contarReg("SELECT COUNT(*) FROM consolidacao_registro") == kN, "every copied file is recorded in the registry");
+        checar(pulsos >= 20, "the message thread keeps processing events while it copies (" + juce::String(pulsos) + " turns)");
+        checar(escreveu, "the message thread can write to the registry while the job runs (same write mutex)");
+        checar(travado, "closing the project is blocked while the job runs");
+        checar(!pa.trabalhoDeConsolidacaoEmCurso(), "closing is released when the job ends");
+
+        auto e2 = rodar(raizConsBg.getChildFile("MAIN2/Media"), 10, pulsos, travado, escreveu);
+        const int registrados2 = contarReg("SELECT COUNT(*) FROM consolidacao_registro WHERE destino_path LIKE '%MAIN2%'");
+        checar(e2->res.cancelado && e2->res.consolidados > 0 && e2->res.consolidados < kN,
+               "Cancel stops between files (" + juce::String(e2->res.consolidados) + " of " + juce::String(kN) + ")");
+        checar(registrados2 == e2->res.consolidados, "what was copied before the Cancel is recorded, nothing more");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("background consolidation selftest: ") + e.what());
+    }
+    raizConsBg.deleteRecursively();
+
     // ------------- MAIN EDIT: substituir arquivo grava na hora o sidecar da nova versão
     std::cout << "\n-- MAIN EDIT replace: the new version gets its sidecar right away --\n";
     juce::File raizSub = juce::File::getSpecialLocation(juce::File::tempDirectory)
