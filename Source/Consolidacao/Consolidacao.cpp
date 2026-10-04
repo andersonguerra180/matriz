@@ -823,7 +823,7 @@ std::map<std::string, std::string> codigosDeSource(matriz::db::Database& registr
 ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                                 const juce::File& destino,
                                                 const std::vector<ItemPlanejado>& movimentos,
-                                                const AoProgredir& aoProgredir) {
+                                                const AoProgredir& aoProgredir, std::recursive_mutex* escritaRegistro) {
     ResultadoMovimentos resultado;
     const int total = static_cast<int>(movimentos.size());
     int feito = 0;
@@ -861,6 +861,10 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                 } catch (...) {}
             }
             // (origem ausente + alvo presente = move já feito, registro atrasado: só atualiza o banco.)
+            // Só as gravações no banco seguram o writeMutex (a cópia/move acima não): quem chama de uma thread de
+            // fundo evita que um BEGIN da message thread absorva estas escritas.
+            std::unique_lock<std::recursive_mutex> trava;
+            if (escritaRegistro) trava = std::unique_lock<std::recursive_mutex>(*escritaRegistro);
             std::string shaMovido;
             try {
                 auto stSha = registro.prepare("SELECT checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND arquivo_id = ? "
@@ -885,6 +889,7 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
                 anotarMovePendentePraClones(registro, "arquivo", mv.moverDe.toStdString(),
                                             mv.caminhoRelativoDestino.toStdString(), shaMovido);
             } catch (...) {}
+            if (trava.owns_lock()) trava.unlock();
             matriz::model::ProjectLog pLog(pastaProjeto);
             pLog.appendEntry("Media Moved Out Of _SEM_PASTA",
                              {"Item: " + juce::String::fromUTF8(mv.codigoAcervo.c_str()), "From: " + mv.moverDe,
@@ -973,7 +978,7 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir,
                                             const std::set<std::string>& itensMarcadosWatermark,
-                                            bool embutirNaCopia) {
+                                            bool embutirNaCopia, std::recursive_mutex* escritaRegistro) {
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
@@ -1082,6 +1087,10 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
             matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
 
+            // Gravações no banco deste item sob o writeMutex (se o chamador está numa thread de fundo); a cópia e o
+            // checksum acima, que são o trabalho longo, ficam fora do lock.
+            std::unique_lock<std::recursive_mutex> trava;
+            if (escritaRegistro) trava = std::unique_lock<std::recursive_mutex>(*escritaRegistro);
             std::string destPathStr = chaveDestino(destino);
             try {
                 registro.run(
@@ -1189,6 +1198,7 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                         "bkr-agent-sistema");
                 }
             } catch (...) {}
+            if (trava.owns_lock()) trava.unlock();
 
             // Capa junto da cópia (item 9).
             {

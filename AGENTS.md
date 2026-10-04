@@ -91,11 +91,14 @@ regras e decisões que não mudam de sessão pra sessão.
   (~linha 5140), que intercala `salvarMetadado` com escrita SQL crua na
   mesma conexão logo em seguida — mover só o `salvarMetadado` pra
   background ali quebraria a ordem de gravação.
-- **`BackupWorkspaceComponent`/`ConsolidacaoDialogo` mantêm
-  `runDispatchLoopUntil()`** deliberadamente (padrão documentado no
-  próprio código: mantém o botão Cancelar responsivo durante cópia/
-  consolidação síncrona). Removê-los sem mais nada mataria essa resposta;
-  o fix "correto" (mover pra thread de fundo) é uma mudança maior.
+- **Consolidação (cópia, catálogo, movimentos) roda em job de fundo, não na message thread.**
+  `ConsolidacaoDialogo` usa `ProjetoAberto::executarConsolidacaoEmSegundoPlano`; `BackupWorkspaceComponent`
+  usa o `poolExport_` com `projeto.guardaConsolidacao()`. Os dois mantêm `trabalhoDeConsolidacaoEmCurso()` verdadeiro
+  (`MainComponent::ingestEmAndamento()` o consulta), o que trava fechar o projeto até o job acabar. A UI só é tocada via
+  `callAsync` com `SafePointer`/`weak_ptr` — nunca dereferenciar componente dentro do job. As gravações de
+  `executarConsolidacao`/`executarMovimentosSemPasta` seguram o `writeMutex()` (parâmetro `escritaRegistro`); a cópia, não.
+  Não voltar a `runDispatchLoopUntil()` para manter o Cancelar vivo: no Windows a tela travada por mais de ~5 s vira
+  "Não está respondendo".
 - **`crashHandler` (Main.cpp) fica desabilitado sob `MATRIZ_SANITIZER_BUILD`**
   (`__has_feature(address_sanitizer) || __has_feature(thread_sanitizer)`)
   — não interferir com os handlers do próprio sanitizer.

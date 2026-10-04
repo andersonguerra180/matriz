@@ -673,6 +673,17 @@ public:
     bool operacaoMainEmCurso() const { return operacaoMainEmCurso_.load(); }
     // Leitura em fundo pro painel do MAIN (o pool é encerrado antes do banco fechar).
     void agendarNoPoolDoMain(std::function<void()> trabalho) { poolMainEdit_.addJob(std::move(trabalho)); }
+    // Consolidação/catálogo em segundo plano (diálogo de consolidação e aba Backup). Roda no pool do MAIN — uma por vez,
+    // junto das edições do MAIN — e mantém trabalhoDeConsolidacaoEmCurso() verdadeiro até o job terminar:
+    // MainComponent::ingestEmAndamento() o consulta, e fechar o projeto fica travado enquanto o job ainda usa o banco.
+    void executarConsolidacaoEmSegundoPlano(std::function<void()> trabalho);
+    bool trabalhoDeConsolidacaoEmCurso() const { return consolidacoesEmCurso_.load() > 0; }
+    // Para quem roda a consolidação no PRÓPRIO pool (aba Backup): o job guarda o que isto devolve até acabar de usar o
+    // projeto — mesmo efeito de trabalhoDeConsolidacaoEmCurso(), sem passar pelo pool do MAIN.
+    std::shared_ptr<void> guardaConsolidacao() {
+        consolidacoesEmCurso_.fetch_add(1);
+        return std::shared_ptr<void>(nullptr, [this](void*) { consolidacoesEmCurso_.fetch_sub(1); });
+    }
     void editarMainRenomearArquivo(const std::string& registroId, const juce::String& novoNome, AoConcluirEdicaoMain aoConcluir,
                                     bool registrarUndoDesta = true);
     void editarMainMoverArquivo(const std::string& registroId, const std::string& novaPastaId, AoConcluirEdicaoMain aoConcluir,
@@ -1150,6 +1161,7 @@ private:
     std::atomic<bool> operacaoMainEmCurso_{false};
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
                             AoConcluirEdicaoMain aoConcluir);
+    std::atomic<int> consolidacoesEmCurso_{0};  // antes do pool: o job decrementa até o último instante
     juce::ThreadPool poolMainEdit_{1};
     // Registra o Undo de uma remoção (item, arquivo e as tabelas filhas guardadas em temp.undo__*). Message thread.
     void registrarUndoDeRemocao(const std::string& token, std::vector<std::string> tabelasGuardadas,

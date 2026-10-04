@@ -445,91 +445,107 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoConsolidacao(ProjetoAberto& pro
         vivo->botaoCancelar->setEnabled(true);
         vivo->botaoCancelar->setVisible(true);
 
-        // Roda na thread de mensagens, de propósito — ao contrário do
-        // ingest (§2, item 2/3), este diálogo já é MODAL (enterModalState),
-        // o operador não pode fazer mais nada enquanto está aberto de
-        // qualquer forma. Uma thread separada aqui escreveria em
-        // projeto.registro() depois de o operador poder fechar o projeto
-        // (o diálogo não impede isso do lado de fora), correndo o mesmo
-        // risco de ponteiro pendurado que já causou um crash real nesta
-        // sessão — não vale o ganho de não travar um modal que já trava
-        // tudo mesmo. Consolidações muito grandes deixam este diálogo sem
-        // responder até terminar; limitação conhecida, não escondida.
-        // Progresso + cancelamento entre arquivos. O runDispatchLoopUntil é
-        // o que permite o clique em "Cancelar" chegar até aqui sem mover a
-        // cópia pra outra thread — decisão preservada de propósito (ver nota
-        // acima). A janela é modal, então o loop bombeado só entrega evento
-        // pros botões DESTE diálogo, não pro resto do app.
-        auto resultado = matriz::consolidacao::executarConsolidacao(
-            projeto.projeto().registro(), projeto.projeto().pasta(), vivo->destino, vivo->plano,
-            [vivo](int feito, int total) {
-                vivo->labelResultado->setText(matriz::i18n::t("consolidacao.progresso")
-                                                   .replace("{feito}", juce::String(feito))
-                                                   .replace("{total}", juce::String(total)),
-                                               juce::dontSendNotification);
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                return !vivo->cancelamento->pedido();
-            });
-        vivo->consolidando = false;
-        vivo->botaoCancelar->setVisible(false);
+        // Cópia + catálogo rodam num job de fundo (pool do MAIN): a message thread só recebe progresso e resultado via
+        // callAsync, então o Cancelar é um clique normal e o SO não marca o app como "não está respondendo".
+        // Fechar o projeto fica travado (ingestEmAndamento) até o job acabar; o job só guarda weak_ptr do diálogo, e
+        // só toca nos componentes dentro do callAsync — se a janela já se foi, o resultado é descartado.
+        std::weak_ptr<EstadoVivo> fraco = vivo;
+        auto cancelamento = vivo->cancelamento;
+        ProjetoAberto* proj = &projeto;
+        const juce::File destino = vivo->destino;
+        const bool comCatalogo = vivo->caixaCatalogo->getToggleState();
 
-        if (resultado.cancelado) {
-            vivo->labelResultado->setColour(juce::Label::textColourId, tema().alerta);
-            vivo->labelResultado->setText(
-                matriz::i18n::t("consolidacao.cancelado")
-                    .replace("{feito}", juce::String(resultado.consolidados + resultado.pulados))
-                    .replace("{total}", juce::String(resultado.totalPlanejado)),
-                juce::dontSendNotification);
-            vivo->botaoConsolidar->setEnabled(true);
-            return;
-        }
+        proj->executarConsolidacaoEmSegundoPlano([fraco, cancelamento, proj, destino, plano = vivo->plano, comCatalogo] {
+            // Progresso no máximo a cada 100 ms: não inunda a fila de eventos em projetos com milhares de arquivos.
+            auto progresso = [fraco, cancelamento](std::string chave) {
+                auto ultimo = std::make_shared<juce::uint32>(0);  // só a thread do job lê/escreve
+                return [fraco, cancelamento, chave, ultimo](int feito, int total) {
+                    const auto agora = juce::Time::getMillisecondCounter();
+                    if (feito >= total || agora - *ultimo >= 100) {
+                        *ultimo = agora;
+                        juce::MessageManager::callAsync([fraco, chave, feito, total] {
+                            if (auto v = fraco.lock())
+                                v->labelResultado->setText(matriz::i18n::t(chave)
+                                                               .replace("{feito}", juce::String(feito))
+                                                               .replace("{total}", juce::String(total)),
+                                                           juce::dontSendNotification);
+                        });
+                    }
+                    return !cancelamento->pedido();
+                };
+            };
 
-        juce::String texto = matriz::i18n::t("consolidacao.resultado")
-                                  .replace("{consolidados}", juce::String(resultado.consolidados))
-                                  .replace("{pulados}", juce::String(resultado.pulados));
-        if (!resultado.falhas.empty()) {
-            texto += " | " +
-                     matriz::i18n::t("consolidacao.resultado_falhas").replace("{n}", juce::String((int)resultado.falhas.size()));
-            vivo->labelResultado->setColour(juce::Label::textColourId, tema().perigo);
-        } else {
-            vivo->labelResultado->setColour(juce::Label::textColourId, tema().estadoQcOk);
-        }
-        vivo->labelResultado->setText(texto, juce::dontSendNotification);
+            auto resultado = matriz::consolidacao::executarConsolidacao(
+                proj->projeto().registro(), proj->projeto().pasta(), destino, plano, progresso("consolidacao.progresso"), {},
+                false, &proj->projeto().writeMutex());
 
-        // Catálogo depois da cópia: ele registra ONDE cada arquivo ficou no
-        // backup, então precisa da consolidação já gravada pra ter o que
-        // apontar.
-        if (vivo->caixaCatalogo->getToggleState()) {
-            vivo->cancelamento->rearmar();
-            vivo->botaoCancelar->setEnabled(true);
-            vivo->botaoCancelar->setVisible(true);
-            auto resCatalogo = matriz::catalogo::gerar(
-                projeto.projeto().registro(), projeto.projeto().indice(), projeto.projeto().pasta(), vivo->destino,
-                [vivo](int feito, int total) {
-                    vivo->labelResultado->setText(matriz::i18n::t("catalogo.gerando")
-                                                       .replace("{feito}", juce::String(feito))
-                                                       .replace("{total}", juce::String(total)),
-                                                   juce::dontSendNotification);
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                    return !vivo->cancelamento->pedido();
+            juce::String texto;
+            if (resultado.cancelado) {
+                juce::MessageManager::callAsync([fraco, resultado] {
+                    auto v = fraco.lock();
+                    if (!v) return;
+                    v->consolidando = false;
+                    v->botaoCancelar->setVisible(false);
+                    v->labelResultado->setColour(juce::Label::textColourId, tema().alerta);
+                    v->labelResultado->setText(
+                        matriz::i18n::t("consolidacao.cancelado")
+                            .replace("{feito}", juce::String(resultado.consolidados + resultado.pulados))
+                            .replace("{total}", juce::String(resultado.totalPlanejado)),
+                        juce::dontSendNotification);
+                    v->botaoConsolidar->setEnabled(true);
                 });
-            vivo->botaoCancelar->setVisible(false);
+                return;
+            }
 
-            juce::String textoCatalogo =
-                resCatalogo.cancelado
-                    ? matriz::i18n::t("catalogo.cancelado")
-                          .replace("{feito}", juce::String(resCatalogo.gravados))
-                          .replace("{total}", juce::String(resCatalogo.totalPlanejado))
-                    : matriz::i18n::t("catalogo.gerado").replace("{n}", juce::String(resCatalogo.gravados));
-            vivo->labelResultado->setText(texto + "\n" + textoCatalogo, juce::dontSendNotification);
-        }
+            texto = matriz::i18n::t("consolidacao.resultado")
+                        .replace("{consolidados}", juce::String(resultado.consolidados))
+                        .replace("{pulados}", juce::String(resultado.pulados));
+            const bool temFalhas = !resultado.falhas.empty();
+            if (temFalhas)
+                texto += " | " + matriz::i18n::t("consolidacao.resultado_falhas").replace("{n}", juce::String((int)resultado.falhas.size()));
 
-        vivo->botaoConsolidar->setEnabled(true);
+            // Catálogo depois da cópia: ele registra ONDE cada arquivo ficou no backup, então precisa da
+            // consolidação já gravada pra ter o que apontar.
+            juce::MessageManager::callAsync([fraco, texto, temFalhas, comCatalogo] {
+                auto v = fraco.lock();
+                if (!v) return;
+                v->labelResultado->setColour(juce::Label::textColourId, temFalhas ? tema().perigo : tema().estadoQcOk);
+                v->labelResultado->setText(texto, juce::dontSendNotification);
+                if (!comCatalogo) {
+                    v->consolidando = false;
+                    v->botaoCancelar->setVisible(false);
+                    v->botaoConsolidar->setEnabled(true);
+                } else {
+                    v->botaoCancelar->setEnabled(true);
+                    v->botaoCancelar->setVisible(true);
+                }
+            });
+            if (!comCatalogo) return;
+
+            cancelamento->rearmar();
+            auto resCatalogo = matriz::catalogo::gerar(proj->projeto().registro(), proj->projeto().indice(),
+                                                        proj->projeto().pasta(), destino, progresso("catalogo.gerando"));
+            juce::MessageManager::callAsync([fraco, texto, resCatalogo] {
+                auto v = fraco.lock();
+                if (!v) return;
+                v->consolidando = false;
+                v->botaoCancelar->setVisible(false);
+                juce::String textoCatalogo =
+                    resCatalogo.cancelado
+                        ? matriz::i18n::t("catalogo.cancelado")
+                              .replace("{feito}", juce::String(resCatalogo.gravados))
+                              .replace("{total}", juce::String(resCatalogo.totalPlanejado))
+                        : matriz::i18n::t("catalogo.gerado").replace("{n}", juce::String(resCatalogo.gravados));
+                v->labelResultado->setText(texto + "\n" + textoCatalogo, juce::dontSendNotification);
+                v->botaoConsolidar->setEnabled(true);
+            });
+        });
     };
 
     atualizarPlano();
 
     vivo->janela->enterModalState(true, juce::ModalCallbackFunction::create([vivo, aoConcluir = std::move(aoFechar)](int) {
+                                        vivo->cancelamento->pedir();  // fechou a janela no meio: o job de fundo para no próximo arquivo
                                         retirarPeerDaTela(*vivo->janela); // §3
                                         if (aoConcluir) aoConcluir();
                                     }));

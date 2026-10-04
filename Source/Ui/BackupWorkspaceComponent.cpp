@@ -3484,30 +3484,35 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
         juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-        juce::MessageManager::callAsync([safeThis, cancelamento, colecoes, destinoRaiz, destinoMedia, &projeto,
-                                          gerarCatalogo]() {
-            if (!safeThis) return;
+        // Cópia das pastas de coleção num job do poolExport_ (o destrutor do workspace espera por ele): copiar uma
+        // coleção inteira pode levar minutos e antes travava a message thread. A UI só volta via callAsync.
+        ProjetoAberto* pProjeto = &projeto;
+        auto guarda = projeto.guardaConsolidacao();  // fechar o projeto fica travado até o job terminar
+        BackupWorkspaceComponent* self = this;
+        cancelarExport_->store(false);
 
+        poolExport_.addJob([self, safeThis, cancelamento, colecoes, destinoRaiz, destinoMedia, pProjeto, guarda]() {
             int copiado = 0;
             int falhas = 0;
             std::vector<juce::String> falhasLista;
+            auto parar = [cancelamento, self] { return cancelamento->pedido() || self->cancelarExport_->load(); };
 
             destinoMedia.createDirectory();
 
             for (size_t i = 0; i < colecoes.size(); ++i) {
-                if (cancelamento->pedido()) break;
+                if (parar()) break;
                 const auto& c = colecoes[i];
                 if (!c.valido) continue;
 
                 juce::File colOrigem(c.caminhoProjeto);
                 juce::File colDestino = destinoMedia.getChildFile(c.nome);
 
-                if (safeThis) {
-                    safeThis->progressoValor_ = static_cast<double>(i) / std::max<size_t>(1, colecoes.size());
-                    safeThis->labelProgressoStatus_->setText("Backing up collection " + juce::String(i + 1) + " of " + juce::String(colecoes.size()) + ": " + c.nome + "...", juce::dontSendNotification);
-                    ProgressoGlobal::obterInstancia().atualizarProgresso("backup", static_cast<int>(i), "Backing up: " + c.nome);
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                }
+                juce::MessageManager::callAsync([safeThis, i, n = colecoes.size(), nome = c.nome] {
+                    if (!safeThis) return;
+                    safeThis->progressoValor_ = static_cast<double>(i) / std::max<size_t>(1, n);
+                    safeThis->labelProgressoStatus_->setText("Backing up collection " + juce::String(i + 1) + " of " + juce::String(n) + ": " + nome + "...", juce::dontSendNotification);
+                    ProgressoGlobal::obterInstancia().atualizarProgresso("backup", static_cast<int>(i), "Backing up: " + nome);
+                });
 
                 if (colOrigem.isDirectory()) {
                     if (colDestino.exists()) colDestino.deleteRecursively();
@@ -3520,41 +3525,43 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 }
             }
 
-            if (!safeThis) return;
-
             // Copy catalog database as well into Project/
-            juce::File catOrigemDb = projeto.projeto().pasta().getChildFile("registro.sqlite");
+            juce::File catOrigemDb = pProjeto->projeto().pasta().getChildFile("registro.sqlite");
             if (catOrigemDb.existsAsFile()) {
                 juce::File projectSubBackup = destinoRaiz.getChildFile("Project");
                 projectSubBackup.createDirectory();
                 catOrigemDb.copyFileTo(projectSubBackup.getChildFile("registro.sqlite"));
             }
+            const bool cancelado = parar();
 
-            safeThis->copiadoCount_ = copiado;
-            safeThis->verificadoCount_ = copiado;
-            safeThis->falhasCount_ = falhas;
-            safeThis->falhasLista_ = falhasLista;
+            juce::MessageManager::callAsync([safeThis, copiado, falhas, falhasLista, destinoRaiz, cancelado] {
+                if (!safeThis) return;
+                safeThis->copiadoCount_ = copiado;
+                safeThis->verificadoCount_ = copiado;
+                safeThis->falhasCount_ = falhas;
+                safeThis->falhasLista_ = falhasLista;
 
-            safeThis->registrarDestinoBackup(destinoRaiz, "Catalog Backup", copiado, 0, falhas, cancelamento->pedido());
+                safeThis->registrarDestinoBackup(destinoRaiz, "Catalog Backup", copiado, 0, falhas, cancelado);
 
-            safeThis->executando_ = false;
-            safeThis->estado_ = Estado::Done;
-            safeThis->progressoValor_ = 1.0;
+                safeThis->executando_ = false;
+                safeThis->estado_ = Estado::Done;
+                safeThis->progressoValor_ = 1.0;
 
-            const bool houveFalha = (falhas > 0);
-            juce::String msgFinal = cancelamento->pedido() ? "Backup cancelled."
-                                                           : (houveFalha ? "Catalog backup completed with errors."
-                                                                         : "Catalog backup completed successfully (" + juce::String(copiado) + " collections).");
-            ProgressoGlobal::obterInstancia().concluirTarefa("backup", msgFinal);
+                const bool houveFalha = (falhas > 0);
+                juce::String msgFinal = cancelado ? "Backup cancelled."
+                                                  : (houveFalha ? "Catalog backup completed with errors."
+                                                                : "Catalog backup completed successfully (" + juce::String(copiado) + " collections).");
+                ProgressoGlobal::obterInstancia().concluirTarefa("backup", msgFinal);
 
-            safeThis->labelProgressoStatus_->setText(msgFinal, juce::dontSendNotification);
-            safeThis->labelProgressoStatus_->setColour(
-                juce::Label::textColourId,
-                houveFalha ? tema().perigo : (cancelamento->pedido() ? tema().alerta : tema().estadoQcOk));
+                safeThis->labelProgressoStatus_->setText(msgFinal, juce::dontSendNotification);
+                safeThis->labelProgressoStatus_->setColour(
+                    juce::Label::textColourId,
+                    houveFalha ? tema().perigo : (cancelado ? tema().alerta : tema().estadoQcOk));
 
-            safeThis->mostrarControlesConfig(false);
-            safeThis->resized();
-            safeThis->repaint();
+                safeThis->mostrarControlesConfig(false);
+                safeThis->resized();
+                safeThis->repaint();
+            });
         });
         return;
     }
@@ -3571,74 +3578,86 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-    juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto,
-                                      gerarCatalogo, embutirMeta, moverAgora]() {
-        if (!safeThis) return;
+    // Cópia, catálogo e relatórios rodam num job do poolExport_ (o destrutor do workspace espera por ele, cancelando
+    // entre arquivos). Antes isto rodava na message thread com runDispatchLoopUntil(1) entre arquivos: o Windows marca
+    // o app como "Não está respondendo" após ~5 s. A UI só é tocada via callAsync com SafePointer; `safeThis` nunca
+    // é dereferenciado dentro do job. Fechar o projeto fica travado (guardaConsolidacao) até o job terminar.
+    BackupWorkspaceComponent* self = this;
+    ProjetoAberto* pProjeto = &projeto;
+    std::weak_ptr<bool> vivoProjeto = projeto.tokenVida();
+    auto guarda = projeto.guardaConsolidacao();
+    cancelarExport_->store(false);
+
+    poolExport_.addJob([self, safeThis, cancelamento, plano, destinoRaiz, destinoMedia, pProjeto, vivoProjeto, guarda,
+                        gerarCatalogo, embutirMeta, moverAgora]() {
+        // modo: 0 = só o detalhe da tarefa; 1 = progresso + barra; 2 = progresso sem mexer na barra.
+        // No máximo a cada 100 ms, para não inundar a fila de eventos em backups com milhares de arquivos.
+        auto ultimoAviso = std::make_shared<juce::uint32>(0);  // só a thread do job lê/escreve
+        auto aviso = [safeThis, ultimoAviso](const juce::String& texto, int feito, int total, int modo) {
+            const auto agora = juce::Time::getMillisecondCounter();
+            if (feito < total && agora - *ultimoAviso < 100) return;
+            *ultimoAviso = agora;
+            juce::MessageManager::callAsync([safeThis, texto, feito, total, modo] {
+                if (!safeThis) return;
+                if (modo == 1) safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
+                safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                if (modo == 0) ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
+                else ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
+            });
+        };
 
         // Fase 2: moves de _SEM_PASTA primeiro (rename no mesmo volume, sem recópia).
         matriz::consolidacao::ResultadoMovimentos movs;
         if (moverAgora) {
             movs = matriz::consolidacao::executarMovimentosSemPasta(
-                projeto.projeto().registro(), projeto.projeto().pasta(), destinoMedia, plano.movimentosSemPasta,
-                [safeThis, cancelamento](int feito, int total) {
-                    if (!safeThis) return false;
-                    safeThis->labelProgressoStatus_->setText("Moving from _SEM_PASTA: " + juce::String(feito) + " of " + juce::String(total) + "...", juce::dontSendNotification);
-                    ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Moving " + juce::String(feito) + " of " + juce::String(total) + " out of _SEM_PASTA...");
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                    return !cancelamento->pedido() && safeThis != nullptr;
-                });
-            if (!safeThis) return;
+                pProjeto->projeto().registro(), pProjeto->projeto().pasta(), destinoMedia, plano.movimentosSemPasta,
+                [aviso, cancelamento, self](int feito, int total) {
+                    aviso("Moving " + juce::String(feito) + " of " + juce::String(total) + " out of _SEM_PASTA...", feito, total, 0);
+                    return !cancelamento->pedido() && !self->cancelarExport_->load();
+                },
+                &pProjeto->projeto().writeMutex());
         }
 
         // Marca d'água nunca vai pro MAIN (só EXPORT): nenhum id marcado com W
         // é passado; embed só no primeiro backup (embutirMeta).
         auto resultado = matriz::consolidacao::executarConsolidacao(
-            projeto.projeto().registro(),
-            projeto.projeto().pasta(),
+            pProjeto->projeto().registro(),
+            pProjeto->projeto().pasta(),
             destinoMedia,
             plano,
-            [safeThis, cancelamento](int feito, int total) {
-                if (!safeThis) return false;
-                safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
-                safeThis->labelProgressoStatus_->setText("Copying: " + juce::String(feito) + " of " + juce::String(total) + " assets...", juce::dontSendNotification);
-                ProgressoGlobal::obterInstancia().atualizarProgresso(
-                    "backup", feito, "Copying " + juce::String(feito) + " of " + juce::String(total) + " assets...");
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                return !cancelamento->pedido() && safeThis != nullptr;
+            [aviso, cancelamento, self](int feito, int total) {
+                aviso("Copying: " + juce::String(feito) + " of " + juce::String(total) + " assets...", feito, total, 1);
+                return !cancelamento->pedido() && !self->cancelarExport_->load();
             },
-            {}, embutirMeta
+            {}, embutirMeta, &pProjeto->projeto().writeMutex()
         );
 
-        if (!safeThis) return;
-
-        safeThis->copiadoCount_ = resultado.consolidados;
-        safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
-        safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
-        safeThis->falhasLista_.clear();
-        for (const auto& f : movs.falhas) safeThis->falhasLista_.push_back("move: " + f);
-        safeThis->falhasCount_ += static_cast<int>(movs.falhas.size());
-        for (const auto& f : resultado.falhas)
-            safeThis->falhasLista_.push_back(f);
-
-        if (gerarCatalogo && !resultado.cancelado && safeThis) {
-            safeThis->labelProgressoStatus_->setText("Generating HTML Catalog...", juce::dontSendNotification);
-            ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Generating HTML Catalog...");
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
+        // Contagens e lista de falhas (membros do workspace) voltam pela message thread, antes do `concluir`
+        // (a fila do callAsync é FIFO).
+        juce::MessageManager::callAsync([safeThis, resultado, movs] {
             if (!safeThis) return;
-            juce::File catDestDir = projeto.projeto().pasta().getChildFile("catalogo");
+            safeThis->copiadoCount_ = resultado.consolidados;
+            safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
+            safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
+            safeThis->falhasLista_.clear();
+            for (const auto& f : movs.falhas) safeThis->falhasLista_.push_back("move: " + f);
+            safeThis->falhasCount_ += static_cast<int>(movs.falhas.size());
+            for (const auto& f : resultado.falhas)
+                safeThis->falhasLista_.push_back(f);
+        });
+
+        if (gerarCatalogo && !resultado.cancelado) {
+            aviso("Generating HTML Catalog...", 0, 0, 0);
+            juce::File catDestDir = pProjeto->projeto().pasta().getChildFile("catalogo");
             catDestDir.createDirectory();
             auto resCatalogo = matriz::catalogo::gerar(
-                projeto.projeto().registro(),
-                projeto.projeto().indice(),
-                projeto.projeto().pasta(),
+                pProjeto->projeto().registro(),
+                pProjeto->projeto().indice(),
+                pProjeto->projeto().pasta(),
                 catDestDir,
-                [safeThis, cancelamento](int feito, int total) {
-                    if (!safeThis) return false;
-                    safeThis->labelProgressoStatus_->setText("Cataloging: " + juce::String(feito) + " of " + juce::String(total) + " files...", juce::dontSendNotification);
-                    ProgressoGlobal::obterInstancia().atualizarProgresso(
-                        "backup", feito, "Cataloging " + juce::String(feito) + " of " + juce::String(total) + " files...");
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                    return !cancelamento->pedido() && safeThis != nullptr;
+                [aviso, cancelamento, self](int feito, int total) {
+                    aviso("Cataloging: " + juce::String(feito) + " of " + juce::String(total) + " files...", feito, total, 2);
+                    return !cancelamento->pedido() && !self->cancelarExport_->load();
                 }
             );
             (void)resCatalogo;
@@ -3648,13 +3667,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
         // embutirMeta) — o passe antigo embutirMetadadosNoBackup reescrevia
         // TODOS os arquivos já registrados no destino.
 
-        if (!safeThis) return;
-
-        // Relatórios + manifesto do fim do backup: FORA da message thread (job em poolExport_, como o EXPORT). Antes
-        // rodavam aqui, síncronos, com um runDispatchLoopUntil(1) entre fases: o diálogo ficava em 100% com beachball
-        // e o Cancelar mudo enquanto o CSV/XLS e o hash dos arquivos rodavam. Só a UI volta pela message thread.
-        ProjetoAberto* pProjeto = &projeto;
-        std::weak_ptr<bool> vivoProjeto = projeto.tokenVida();
+        // Relatórios + manifesto do fim do backup: continuam neste mesmo job, fora da message thread. Só a UI volta
+        // pela message thread (callAsync).
 
         // Fechamento (message thread): revisão, destino registrado, mensagem final. A cópia já terminou e foi
         // verificada: cancelar só os relatórios não invalida o backup — registrar e confirmar rodam mesmo assim.
@@ -3734,19 +3748,14 @@ void BackupWorkspaceComponent::iniciarBackup() {
         };
 
         if (resultado.cancelado) {  // cópia cancelada: sem relatórios, sem revisão
-            concluir(false);
+            juce::MessageManager::callAsync([concluir] { concluir(false); });
             return;
         }
 
-        safeThis->labelProgressoStatus_->setText("Report 1/4 - CSV...", juce::dontSendNotification);
-        ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Report 1/4 - CSV...");
-        const juce::File relatoriosDir = safeThis->projeto_.projeto().pasta().getChildFile("relatorios");
+        const juce::File relatoriosDir = pProjeto->projeto().pasta().getChildFile("relatorios");
         relatoriosDir.createDirectory();
-        std::vector<matriz::consolidacao::ItemPlanejado> itensDoPlano = plano.itens;
-        BackupWorkspaceComponent* self = safeThis.getComponent();  // vivo durante o job: o destrutor espera o poolExport_
-        safeThis->cancelarExport_->store(false);
-        safeThis->poolExport_.addJob([self, safeThis, pProjeto, relatoriosDir, destinoMedia, itensDoPlano = std::move(itensDoPlano),
-                                      cancelamento, concluir] {
+        const std::vector<matriz::consolidacao::ItemPlanejado>& itensDoPlano = plano.itens;
+        {
             ProjetoAberto& proj = *pProjeto;
             auto parar = [self, cancelamento] { return cancelamento->pedido() || self->cancelarExport_->load(); };
             // Progresso: a UI só é tocada via callAsync com SafePointer.
@@ -3790,7 +3799,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 puladas = true;  // relatório que falhou não derruba o backup já copiado e verificado
             }
             juce::MessageManager::callAsync([concluir, puladas] { concluir(puladas); });
-        });
+        }
     });
 }
 
