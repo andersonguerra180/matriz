@@ -21,6 +21,9 @@
 #include "Model/CaminhosBanco.h"
 #include "Ficha/FichaDefinition.h"
 #include "Ingest/Checksum.h"
+#if defined(_WIN32)
+#include "Ui/PdfRenderer_win.h"
+#endif
 #include "Ingest/ClassificadorFalaMusica.h"
 #include "Ingest/Duplicata.h"
 #include "Ingest/FluxoLote.h"
@@ -3266,6 +3269,74 @@ void testarFormatosDoPlano(const juce::File& dirTemp) {
     destino.deleteRecursively();
 }
 
+#if JUCE_WINDOWS
+// Prévia de PDF do Windows (Windows.Data.Pdf): PDF válido de 2 páginas (com tabela xref correta), contagem de páginas,
+// renderização com tamanho e conteúdo esperados, e as falhas (página fora do intervalo, arquivo inexistente).
+void testarPdfWindows(const juce::File& dirTemp) {
+    std::cout << "== Windows PDF preview (Windows.Data.Pdf) ==\n";
+    const juce::File pdf = dirTemp.getChildFile("preview_" + juce::Uuid().toDashedString() + ".pdf");
+    {
+        std::string out = "%PDF-1.4\n";
+        std::vector<size_t> offs;
+        auto obj = [&](const std::string& corpo) {
+            offs.push_back(out.size());
+            out += std::to_string(offs.size()) + " 0 obj\n" + corpo + "\nendobj\n";
+        };
+        auto fluxo = [](const std::string& c) { return "<< /Length " + std::to_string(c.size()) + " >>\nstream\n" + c + "\nendstream"; };
+        obj("<< /Type /Catalog /Pages 2 0 R >>");
+        obj("<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>");
+        obj("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 4 0 R /Resources << >> >>");
+        obj(fluxo("0 0 0 rg 20 20 100 100 re f"));
+        obj("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 300] /Contents 6 0 R /Resources << >> >>");
+        obj(fluxo("1 0 0 rg 0 0 50 50 re f"));
+        const size_t xref = out.size();
+        out += "xref\n0 " + std::to_string(offs.size() + 1) + "\n0000000000 65535 f \n";
+        for (size_t o : offs) { char l[32]; snprintf(l, sizeof l, "%010zu 00000 n \n", o); out += l; }
+        out += "trailer\n<< /Size " + std::to_string(offs.size() + 1) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref) + "\n%%EOF\n";
+        pdf.replaceWithData(out.data(), out.size());
+    }
+    const std::wstring caminho = pdf.getFullPathName().toWideCharPointer();
+    using namespace matriz::ui::pdfwin;
+
+    InfoPdf info;
+    std::string erro;
+    const bool abriu = abrir(caminho, info, erro);
+    check(abriu && info.paginas == 2, "the PDF opens and reports 2 pages (" + std::to_string(info.paginas) + ") " + erro);
+    // O Windows.Data.Pdf devolve o tamanho em unidades de 1/96" (200 x 300 pt = 266,67 x 400): a proporção é o que importa.
+    check(std::abs(info.larguraPagina1 - 200.0 * 96.0 / 72.0) < 1.0 && std::abs(info.alturaPagina1 - 300.0 * 96.0 / 72.0) < 1.0,
+          "page 1 size is 200 x 300 pt = 266.7 x 400 in 1/96 inch (" + std::to_string(info.larguraPagina1) + " x " + std::to_string(info.alturaPagina1) + ")");
+
+    std::vector<std::uint8_t> png;
+    int w = 0, h = 0;
+    erro.clear();
+    const bool r1 = renderizarPagina(caminho, 1, 400, png, w, h, erro);
+    check(r1 && w == 400 && h == 600, "page 1 renders at 400 x 600 (" + std::to_string(w) + " x " + std::to_string(h) + ") " + erro);
+    juce::Image img = juce::ImageFileFormat::loadFrom(png.data(), png.size());
+    check(img.isValid() && img.getWidth() == 400 && img.getHeight() == 600, "the rendered page is a valid PNG of the requested size");
+    if (img.isValid() && img.getWidth() == 400 && img.getHeight() == 600) {
+        const auto preto = img.getPixelAt(140, 450);    // dentro do quadrado preto (PDF: origem embaixo à esquerda)
+        const auto branco = img.getPixelAt(350, 50);    // fundo, longe do desenho
+        check(preto.getRed() < 60 && preto.getGreen() < 60 && preto.getBlue() < 60, "the black square is drawn where expected");
+        check(branco.getRed() > 240 && branco.getGreen() > 240 && branco.getBlue() > 240 && branco.getAlpha() == 255,
+              "the page background is opaque white (not transparent)");
+    }
+
+    erro.clear();
+    const bool r2 = renderizarPagina(caminho, 2, 200, png, w, h, erro);
+    juce::Image img2 = r2 ? juce::ImageFileFormat::loadFrom(png.data(), png.size()) : juce::Image();
+    check(img2.isValid() && img2.getPixelAt(20, 280).getRed() > 200 && img2.getPixelAt(20, 280).getGreen() < 60,
+          "page 2 renders with its own content (red square)");
+
+    erro.clear();
+    check(!renderizarPagina(caminho, 3, 200, png, w, h, erro) && !erro.empty(), "a page past the end fails with a message");
+    erro.clear();
+    InfoPdf infoX;
+    check(!abrir(dirTemp.getChildFile("nao_existe.pdf").getFullPathName().toWideCharPointer(), infoX, erro) && !erro.empty(),
+          "a missing file fails with a message instead of crashing");
+    pdf.deleteFile();
+}
+#endif
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -3295,6 +3366,9 @@ int main() {
     testarLoudnessEMarcadores(tmpDir);
     testarConsolidacao(tmpDir);
     testarFormatosDoPlano(tmpDir);
+#if JUCE_WINDOWS
+    testarPdfWindows(tmpDir);
+#endif
     testarBackupScanEngine(tmpDir);
     testarCatalogoProxies(tmpDir);
     testarCacheDeArquivo(tmpDir);

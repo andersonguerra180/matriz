@@ -241,7 +241,8 @@ if(APPLE)
 elseif(WIN32)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_win.cpp
-        Source/Ingest/MiniaturaPsd_win.cpp)
+        Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ui/PdfRenderer_win.cpp)
 endif()
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -272,6 +273,8 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
     $<$<PLATFORM_ID:Windows>:windowscodecs>
+    $<$<PLATFORM_ID:Windows>:RuntimeObject>
+    $<$<PLATFORM_ID:Windows>:windowsapp>
     PUBLIC
     juce::juce_recommended_config_flags)
 
@@ -555,7 +558,9 @@ elseif(WIN32)
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
-        Source/Ui/DocumentPreviewBridge_win.cpp)
+        Source/Ui/DocumentPreviewBridge_win.cpp
+        Source/Ui/PdfRenderer_win.cpp
+        Source/Ui/PdfPageView_win.cpp)
 endif()
 
 target_include_directories(matriz PRIVATE Source)
@@ -600,6 +605,8 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
     $<$<PLATFORM_ID:Windows>:windowscodecs>
+    $<$<PLATFORM_ID:Windows>:RuntimeObject>
+    $<$<PLATFORM_ID:Windows>:windowsapp>
     $<$<PLATFORM_ID:Windows>:mfplat>
     $<$<PLATFORM_ID:Windows>:mfreadwrite>
     $<$<PLATFORM_ID:Windows>:mfuuid>
