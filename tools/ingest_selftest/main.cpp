@@ -3302,8 +3302,9 @@ void testarPdfWindows(const juce::File& dirTemp) {
     std::string erro;
     const bool abriu = abrir(caminho, info, erro);
     check(abriu && info.paginas == 2, "the PDF opens and reports 2 pages (" + std::to_string(info.paginas) + ") " + erro);
-    check(std::abs(info.larguraPagina1 - 200.0) < 1.0 && std::abs(info.alturaPagina1 - 300.0) < 1.0,
-          "page 1 size is 200 x 300 pt (" + std::to_string(info.larguraPagina1) + " x " + std::to_string(info.alturaPagina1) + ")");
+    // O Windows.Data.Pdf devolve o tamanho em unidades de 1/96" (200 x 300 pt = 266,67 x 400): a proporção é o que importa.
+    check(std::abs(info.larguraPagina1 - 200.0 * 96.0 / 72.0) < 1.0 && std::abs(info.alturaPagina1 - 300.0 * 96.0 / 72.0) < 1.0,
+          "page 1 size is 200 x 300 pt = 266.7 x 400 in 1/96 inch (" + std::to_string(info.larguraPagina1) + " x " + std::to_string(info.alturaPagina1) + ")");
 
     std::vector<std::uint8_t> png;
     int w = 0, h = 0;

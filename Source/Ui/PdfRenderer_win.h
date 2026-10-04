@@ -12,7 +12,7 @@ namespace matriz::ui::pdfwin {
 
 struct InfoPdf {
     int paginas = 0;
-    double larguraPagina1 = 0.0;  // em pontos (1/72")
+    double larguraPagina1 = 0.0;  // em unidades de 1/96" (como o Windows.Data.Pdf informa); só a proporção importa
     double alturaPagina1 = 0.0;
 };
 
