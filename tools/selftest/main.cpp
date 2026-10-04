@@ -377,6 +377,41 @@ void testarSmartHealth() {
     // 5. Empty / Invalid string
     auto repEmpty = parseSmartctlJson("");
     check(repEmpty.state == HealthState::Unavailable, "empty input triggers UNAVAILABLE state");
+
+    // 6. Windows: avaliação do JSON de Get-PhysicalDisk / Get-StorageReliabilityCounter (roda em qualquer sistema)
+    auto wh = avaliarSaudeWindowsJson(R"({"Health":"Healthy","Temp":35,"Hours":1200,"ReadErr":0,"WriteErr":0})");
+    check(wh.state == HealthState::Healthy && wh.smartStatus == "PASSED" && wh.temperatureC == 35 && wh.powerOnHours == 1200,
+          "Windows: Healthy with temperature and hours");
+    check(avaliarSaudeWindowsJson(R"({"Health":"Healthy","Temp":35,"ReadErr":3,"WriteErr":0})").state == HealthState::Warning,
+          "Windows: uncorrected read errors turn Healthy into WARNING");
+    check(avaliarSaudeWindowsJson(R"({"Health":"Healthy","Temp":65})").state == HealthState::Warning,
+          "Windows: temperature above 60 C is WARNING");
+    check(avaliarSaudeWindowsJson(R"({"Health":"Warning"})").state == HealthState::Warning, "Windows: Warning health is WARNING");
+    auto wf = avaliarSaudeWindowsJson(R"({"Health":"Unhealthy"})");
+    check(wf.state == HealthState::Failing && wf.smartStatus == "FAILED", "Windows: Unhealthy is FAILING / FAILED");
+    auto wn = avaliarSaudeWindowsJson(R"({"Health":"Healthy","Temp":null,"Hours":null,"ReadErr":null,"WriteErr":null})");
+    check(wn.state == HealthState::Healthy && wn.temperatureC == -1 && wn.powerOnHours == -1 && wn.uncorrectableSectors == -1,
+          "Windows: null counters mean 'no data', not zero");
+    check(avaliarSaudeWindowsJson(R"({"Health":"Healthy","Temp":0})").temperatureC == -1, "Windows: temperature 0 means the drive does not report it");
+    check(avaliarSaudeWindowsJson(R"({"Health":"Banana"})").state == HealthState::Unknown, "Windows: an unrecognised health value is UNKNOWN");
+    auto wu = avaliarSaudeWindowsJson("{}");
+    check(wu.state == HealthState::Unavailable && wu.unavailableMessage.contains("USB"),
+          "Windows: no health at all is UNAVAILABLE with an explanation (external USB enclosures)");
+    check(avaliarSaudeWindowsJson("not json").state == HealthState::Unavailable, "Windows: invalid JSON is UNAVAILABLE");
+#if defined(_WIN32)
+    {   // consulta de verdade (PowerShell). Na VM do CI o resultado varia: só exigimos um estado válido, sem travar nem quebrar.
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        auto vivo = obterSaudeSmartWindows(juce::File("C:\\"));
+        const double seg = (juce::Time::getMillisecondCounterHiRes() - t0) / 1000.0;
+        std::cout << "  info Windows live SMART for C: -> " << vivo.stateLabel << " (" << seg << " s)\n";
+        check(vivo.stateLabel.isNotEmpty() && seg < 20.0, "Windows: the live PowerShell query returns a valid state within 20 s");
+        const auto t1 = juce::Time::getMillisecondCounterHiRes();
+        obterSaudeSmartWindows(juce::File("C:\\"));
+        check(juce::Time::getMillisecondCounterHiRes() - t1 < 200.0, "Windows: the second query comes from the 10-minute cache");
+        check(obterSaudeSmartWindows(juce::File("\\\\servidor\\pasta")).state == HealthState::Unavailable,
+              "Windows: a path without a drive letter is UNAVAILABLE, with no process started");
+    }
+#endif
 }
 
 void testarCaminhosBanco() {

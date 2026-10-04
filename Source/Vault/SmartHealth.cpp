@@ -1,4 +1,7 @@
 #include "SmartHealth.h"
+
+#include <map>
+#include <mutex>
 #include "../Db/Database.h"
 #include "../Model/Project.h"
 #include "DiskIdentity.h"
@@ -190,6 +193,114 @@ SmartHealthReport parseSmartctlJson(const juce::String& jsonText) {
     return rep;
 }
 
+SmartHealthReport avaliarSaudeWindowsJson(const juce::String& jsonText) {
+    SmartHealthReport rep;
+    rep.rawJson = jsonText.toStdString();
+    rep.lastScanTime = formatScanTime(juce::Time::getCurrentTime());
+    auto indisponivel = [&rep](const juce::String& msg) {
+        rep.state = HealthState::Unavailable;
+        rep.stateLabel = "UNAVAILABLE";
+        rep.stateColour = juce::Colour(0xff71717a);
+        rep.unavailableMessage = msg;
+        return rep;
+    };
+
+    const juce::var raiz = juce::JSON::parse(jsonText);  // guarda o var: o DynamicObject morre junto com ele
+    auto* obj = raiz.getDynamicObject();
+    if (obj == nullptr) return indisponivel("Windows did not return drive health information.");
+    const juce::String saude = obj->getProperty("Health").toString().trim();
+    if (saude.isEmpty())
+        return indisponivel("Windows does not report health for this drive (common for external USB enclosures).");
+
+    auto numero = [obj](const char* nome) -> juce::int64 {
+        const juce::var v = obj->getProperty(nome);
+        return (v.isVoid() || v.isUndefined()) ? -1 : static_cast<juce::int64>(v);  // null do JSON = sem dado
+    };
+    const juce::int64 temp = numero("Temp");
+    const juce::int64 horas = numero("Hours");
+    const juce::int64 errosLeitura = numero("ReadErr");
+    const juce::int64 errosEscrita = numero("WriteErr");
+    if (temp > 0 && temp < 150) rep.temperatureC = static_cast<int>(temp);  // 0 = o disco não informa
+    if (horas >= 0) rep.powerOnHours = horas;
+    if (errosLeitura >= 0 || errosEscrita >= 0)
+        rep.uncorrectableSectors = juce::jmax<juce::int64>(errosLeitura, 0) + juce::jmax<juce::int64>(errosEscrita, 0);
+
+    const bool alerta = rep.uncorrectableSectors > 0 || rep.temperatureC > 60;
+    if (saude.equalsIgnoreCase("Healthy")) {
+        rep.smartStatus = "PASSED";
+        rep.state = alerta ? HealthState::Warning : HealthState::Healthy;
+    } else if (saude.equalsIgnoreCase("Warning")) {
+        rep.smartStatus = "WARNING";
+        rep.state = HealthState::Warning;
+    } else if (saude.equalsIgnoreCase("Unhealthy")) {
+        rep.smartStatus = "FAILED";
+        rep.state = HealthState::Failing;
+    } else {
+        rep.state = HealthState::Unknown;
+    }
+    switch (rep.state) {
+        case HealthState::Healthy: rep.stateLabel = "HEALTHY"; rep.stateColour = juce::Colour(0xff22c55e); break;
+        case HealthState::Warning: rep.stateLabel = "WARNING"; rep.stateColour = juce::Colour(0xffeab308); break;
+        case HealthState::Failing: rep.stateLabel = "FAILING"; rep.stateColour = juce::Colour(0xffef4444); break;
+        default: rep.stateLabel = "UNKNOWN"; rep.stateColour = juce::Colour(0xff71717a); break;
+    }
+    return rep;
+}
+
+#if defined(_WIN32)
+SmartHealthReport obterSaudeSmartWindows(const juce::File& mountPoint) {
+    const juce::String caminho = mountPoint.getFullPathName();
+    const juce::juce_wchar letra = caminho.isNotEmpty() ? caminho[0] : 0;
+    if (!((letra >= 'A' && letra <= 'Z') || (letra >= 'a' && letra <= 'z')) || caminho[1] != ':')
+        return avaliarSaudeWindowsJson("{}");  // sem letra de unidade (ex.: caminho de rede): nada a consultar
+
+    // Cache de 10 min por letra: a tela de Storage consulta cada dispositivo e o PowerShell leva alguns segundos.
+    static std::mutex mtxCache;
+    static std::map<juce::juce_wchar, std::pair<juce::uint32, SmartHealthReport>> cache;
+    const juce::juce_wchar chave = juce::CharacterFunctions::toUpperCase(letra);
+    {
+        std::lock_guard<std::mutex> lk(mtxCache);
+        auto it = cache.find(chave);
+        if (it != cache.end() && juce::Time::getMillisecondCounter() - it->second.first < 10u * 60u * 1000u)
+            return it->second.second;
+    }
+
+    // A letra já foi validada (um caractere A-Z): é a única parte variável do script.
+    const juce::String script =
+        "$ErrorActionPreference = 'Stop'\n"
+        "try {\n"
+        "  $d = @(Get-Partition -DriveLetter '" + juce::String::charToString(chave) + "' | Get-Disk | Get-PhysicalDisk)[0]\n"
+        "  $r = $null\n"
+        "  try { $r = $d | Get-StorageReliabilityCounter } catch {}\n"
+        "  [pscustomobject]@{ Health = [string]$d.HealthStatus; Media = [string]$d.MediaType; Bus = [string]$d.BusType;\n"
+        "    Temp = $r.Temperature; Hours = $r.PowerOnHours; ReadErr = $r.ReadErrorsUncorrected;\n"
+        "    WriteErr = $r.WriteErrorsUncorrected } | ConvertTo-Json -Compress\n"
+        "} catch { '{}' }\n";
+    // -EncodedCommand (UTF-16LE em base64): nenhuma aspa na linha de comando para quebrar.
+    const wchar_t* w = script.toWideCharPointer();
+    const juce::String b64 = juce::Base64::toBase64(w, wcslen(w) * sizeof(wchar_t));
+
+    juce::String saida;
+    {
+        juce::ChildProcess proc;  // o JUCE usa CREATE_NO_WINDOW: sem janela de console
+        if (proc.start(juce::StringArray{"powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                                         "-EncodedCommand", b64},
+                       juce::ChildProcess::wantStdOut)) {
+            if (proc.waitForProcessToFinish(15000))
+                saida = proc.readAllProcessOutput().trim();
+            else
+                proc.kill();  // travou: sem dado, e o resultado fica "indisponível"
+        }
+    }
+    auto rep = avaliarSaudeWindowsJson(saida);
+    {
+        std::lock_guard<std::mutex> lk(mtxCache);
+        cache[chave] = {juce::Time::getMillisecondCounter(), rep};
+    }
+    return rep;
+}
+#endif
+
 SmartHealthReport consultarSaudeSmart(const std::string& bsdDeviceNode, const juce::File& mountPoint) {
     juce::File smartctl = encontrarSmartctl();
     if (smartctl.existsAsFile()) {
@@ -220,6 +331,8 @@ SmartHealthReport consultarSaudeSmart(const std::string& bsdDeviceNode, const ju
 
 #if defined(__APPLE__)
     return obterSaudeSmartNativoMac(mountPoint, bsdDeviceNode);
+#elif defined(_WIN32)
+    return obterSaudeSmartWindows(mountPoint);
 #else
     SmartHealthReport rep;
     rep.state = HealthState::Unavailable;
