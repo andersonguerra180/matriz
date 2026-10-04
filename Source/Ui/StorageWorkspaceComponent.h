@@ -104,6 +104,7 @@ private:
     bool coletaPendente_ = false;
     void selecionarDevice(const std::string& vaultId, bool isSourceSelection);
     void atualizarSaudeSmartDoDevice(const std::string& vaultId, bool forcarNovaConsulta = true);
+    void aplicarSaudeSmart(const std::string& vaultId, const matriz::vault::SmartHealthReport& rep);
     void selecionarDataCalendario(const juce::String& yyyyMmDd);
     void atualizarListaLogsFiltrada();
     void abrirPastaLogs();

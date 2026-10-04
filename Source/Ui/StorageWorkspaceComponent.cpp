@@ -1276,15 +1276,45 @@ void StorageWorkspaceComponent::atualizarSaudeSmartDoDevice(const std::string& v
     if (!targetDev) return;
 
     auto& db = projeto_.projeto().registro();
-    matriz::vault::SmartHealthReport rep;
 
-    if (forcarNovaConsulta) {
-        rep = matriz::vault::consultarSaudeSmart(targetDev->numeroSerie, juce::File(targetDev->localizacao));
-        matriz::vault::gravarLogSmart(db, targetDev->id, rep);
-        matriz::vault::registrarUsoDoDispositivo(db, projeto_.projeto().pasta(), targetDev->id, "SMART CHECK", 0, 0, {}, "Drive health telemetry refreshed", &rep);
-    } else {
-        rep = matriz::vault::obterUltimoLogOuConsultar(db, targetDev->id, targetDev->numeroSerie, juce::File(targetDev->localizacao));
+    // Sem pedido de nova consulta: o último log gravado basta (leitura rápida, como antes).
+    if (!forcarNovaConsulta) {
+        auto existente = matriz::vault::obterUltimoLog(db, targetDev->id);
+        if (existente.state != matriz::vault::HealthState::Unavailable || existente.smartStatus != "-") {
+            aplicarSaudeSmart(targetDev->id, existente);
+            return;
+        }
     }
+
+    // A consulta roda um processo externo (smartctl no Mac, PowerShell no Windows — segundos) e esta função é chamada em
+    // laço, um dispositivo por vez: fora da message thread. O resultado volta por callAsync (SafePointer).
+    juce::Component::SafePointer<StorageWorkspaceComponent> safeThis(this);
+    poolDados_.addJob([safeThis, id = targetDev->id, serie = targetDev->numeroSerie, loc = targetDev->localizacao,
+                       forcarNovaConsulta] {
+        auto rep = matriz::vault::consultarSaudeSmart(serie, juce::File(loc));
+        juce::MessageManager::callAsync([safeThis, id, rep, forcarNovaConsulta] {
+            if (!safeThis) return;
+            auto& registro = safeThis->projeto_.projeto().registro();
+            matriz::vault::gravarLogSmart(registro, id, rep);
+            if (forcarNovaConsulta)
+                matriz::vault::registrarUsoDoDispositivo(registro, safeThis->projeto_.projeto().pasta(), id, "SMART CHECK", 0, 0,
+                                                         {}, "Drive health telemetry refreshed", &rep);
+            safeThis->aplicarSaudeSmart(id, rep);
+        });
+    });
+}
+
+void StorageWorkspaceComponent::aplicarSaudeSmart(const std::string& vaultId, const matriz::vault::SmartHealthReport& rep) {
+    StorageDevice* targetDev = nullptr;
+    for (auto& d : sourceDevices_) {
+        if (d.id == vaultId) { targetDev = &d; break; }
+    }
+    if (!targetDev) {
+        for (auto& d : backupDevices_) {
+            if (d.id == vaultId) { targetDev = &d; break; }
+        }
+    }
+    if (!targetDev) return;
 
     targetDev->smartReport = rep;
 
