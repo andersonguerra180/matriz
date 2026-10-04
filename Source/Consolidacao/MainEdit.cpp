@@ -7,6 +7,7 @@
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
 #include "Consolidacao.h"
+#include "MetadadoEmbutido.h"
 
 namespace matriz::mainedit {
 
@@ -548,6 +549,13 @@ Resultado substituirArquivo(const ContextoMain& ctx, const std::string& registro
         } catch (const std::exception& e) {
             return falha(std::string("the file was replaced but the registry update failed; it will be completed when the project reopens: ") + e.what());
         }
+        // Sidecar da NOVA versão, já com os metadados atuais do item: o da versão antiga foi pra quarentena junto com
+        // ela, e antes a nova ficava sem sidecar até o próximo ATUALIZAR SIDECARS. Registra em sidecar_registro como os
+        // demais. A substituição já está verificada e registrada: falhar aqui não a desfaz (o ATUALIZAR SIDECARS completa).
+        // WINPORT: NomesSeguros — nome do sidecar gerado a partir do nome do arquivo.
+        try {
+            matriz::consolidacao::gravarSidecarDoArquivo(*ctx.registro, ctx.media(), l.itemId, l.arquivoId, paraRel);
+        } catch (...) {}
         Resultado r;
         r.ok = true; r.idJournal = jid; r.idQuarentena = p["quarentenaId"].toString().toStdString();
         r.deRel = l.caminho; r.paraRel = paraRel;

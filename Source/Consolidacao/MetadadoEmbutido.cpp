@@ -514,6 +514,51 @@ bool escreverSidecarAvulso(matriz::db::Database& registro, const std::string& it
     return gravarTextoAtomico(juce::File(arquivo.getFullPathName() + ".xmp"), pacote);
 }
 
+namespace {
+// Corpo por arquivo, sem garantir a tabela (o laço em lote garante uma vez só).
+ResultadoSidecarUnico gravarSidecarInterno(matriz::db::Database& registro, const juce::File& media,
+                                           const std::string& itemId, const std::string& arquivoId,
+                                           const juce::String& caminhoRelativo, bool sobrescreverEditados) {
+    const juce::File master = media.getChildFile(caminhoRelativo);
+    if (!master.existsAsFile()) return ResultadoSidecarUnico::SemArquivo;
+    const juce::String relSidecar = caminhoRelativo + ".xmp";
+    const juce::File sidecar = media.getChildFile(relSidecar);
+    try {
+        const std::string pacote = gerarPacoteXmp(registro, itemId);
+        if (pacote.empty()) return ResultadoSidecarUnico::SemDados;
+        if (sidecar.existsAsFile()) {
+            std::string shaRegistrado;
+            auto st = registro.prepare("SELECT sha256 FROM sidecar_registro WHERE caminho = ?");
+            st.bind(1, Value::of(relSidecar.toStdString()));
+            if (st.step()) shaRegistrado = st.columnText(0);
+            const std::string shaAtual = sha256DeArquivo(sidecar);
+            if ((shaRegistrado.empty() || shaAtual != shaRegistrado) && !sobrescreverEditados)
+                return ResultadoSidecarUnico::EditadoPorFora;
+            if (shaAtual == sha256DeTexto(pacote)) return ResultadoSidecarUnico::Igual;
+        }
+        if (!gravarTextoAtomico(sidecar, pacote)) return ResultadoSidecarUnico::Falha;
+        registro.run("INSERT INTO sidecar_registro (caminho, arquivo_id, sha256, escrito_em) VALUES (?, ?, ?, ?) "
+                     "ON CONFLICT(caminho) DO UPDATE SET sha256 = excluded.sha256, escrito_em = excluded.escrito_em",
+                     {Value::of(relSidecar.toStdString()), Value::of(arquivoId), Value::of(sha256DeTexto(pacote)),
+                      Value::of(matriz::model::agoraIso8601())});
+        return ResultadoSidecarUnico::Escrito;
+    } catch (...) {
+        return ResultadoSidecarUnico::Falha;
+    }
+}
+} // namespace
+
+ResultadoSidecarUnico gravarSidecarDoArquivo(matriz::db::Database& registro, const juce::File& media,
+                                             const std::string& itemId, const std::string& arquivoId,
+                                             const juce::String& caminhoRelativo, bool sobrescreverEditados) {
+    try {
+        garantirTabelaSidecar(registro);
+    } catch (...) {
+        return ResultadoSidecarUnico::Falha;
+    }
+    return gravarSidecarInterno(registro, media, itemId, arquivoId, caminhoRelativo, sobrescreverEditados);
+}
+
 ResultadoSidecars atualizarSidecarsNoMain(matriz::db::Database& registro, const juce::File& media,
                                           const std::string& destinoIdMain, bool sobrescreverEditados,
                                           const std::function<bool(int, int)>& aoProgredir) {
@@ -524,39 +569,14 @@ ResultadoSidecars atualizarSidecarsNoMain(matriz::db::Database& registro, const 
     for (int i = 0; i < total; ++i) {
         if (aoProgredir && !aoProgredir(i, total)) break;
         const auto& a = arquivos[(size_t) i];
-        const juce::File master = media.getChildFile(juce::String::fromUTF8(a.relativo.c_str()));
-        if (!master.existsAsFile()) continue;
-        const juce::String relSidecar = juce::String::fromUTF8(a.relativo.c_str()) + ".xmp";
-        const juce::File sidecar = media.getChildFile(relSidecar);
-        try {
-            const std::string pacote = gerarPacoteXmp(registro, a.itemId);
-            if (pacote.empty()) continue;
-            if (sidecar.existsAsFile()) {
-                std::string shaRegistrado;
-                auto st = registro.prepare("SELECT sha256 FROM sidecar_registro WHERE caminho = ?");
-                st.bind(1, Value::of(relSidecar.toStdString()));
-                if (st.step()) shaRegistrado = st.columnText(0);
-                const std::string shaAtual = sha256DeArquivo(sidecar);
-                if ((shaRegistrado.empty() || shaAtual != shaRegistrado) && !sobrescreverEditados) {
-                    r.editadosPorFora.push_back(relSidecar);
-                    continue;
-                }
-                if (shaAtual == sha256DeTexto(pacote)) {
-                    ++r.iguais;
-                    continue;
-                }
-            }
-            if (!gravarTextoAtomico(sidecar, pacote)) {
-                ++r.falhas;
-                continue;
-            }
-            registro.run("INSERT INTO sidecar_registro (caminho, arquivo_id, sha256, escrito_em) VALUES (?, ?, ?, ?) "
-                         "ON CONFLICT(caminho) DO UPDATE SET sha256 = excluded.sha256, escrito_em = excluded.escrito_em",
-                         {Value::of(relSidecar.toStdString()), Value::of(a.arquivoId), Value::of(sha256DeTexto(pacote)),
-                          Value::of(matriz::model::agoraIso8601())});
-            ++r.escritos;
-        } catch (...) {
-            ++r.falhas;
+        const juce::String relativo = juce::String::fromUTF8(a.relativo.c_str());
+        switch (gravarSidecarInterno(registro, media, a.itemId, a.arquivoId, relativo, sobrescreverEditados)) {
+            case ResultadoSidecarUnico::Escrito:        ++r.escritos; break;
+            case ResultadoSidecarUnico::Igual:          ++r.iguais; break;
+            case ResultadoSidecarUnico::EditadoPorFora: r.editadosPorFora.push_back(relativo + ".xmp"); break;
+            case ResultadoSidecarUnico::Falha:          ++r.falhas; break;
+            case ResultadoSidecarUnico::SemArquivo:
+            case ResultadoSidecarUnico::SemDados:       break;
         }
     }
     return r;

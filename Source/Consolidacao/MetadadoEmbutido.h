@@ -93,6 +93,15 @@ std::string gerarPacoteXmp(matriz::db::Database& registro, const std::string& it
 // Grava o pacote ao lado de `arquivo` (arquivo.ext.xmp) — pra EXPORT, sem registro.
 bool escreverSidecarAvulso(matriz::db::Database& registro, const std::string& itemId, const juce::File& arquivo);
 
+// Resultado de gravar o sidecar de UM arquivo do MAIN.
+enum class ResultadoSidecarUnico { Escrito, Igual, EditadoPorFora, SemArquivo, SemDados, Falha };
+// A mesma rotina de atualizarSidecarsNoMain aplicada a um arquivo (`caminhoRelativo` = relativo a Media/):
+// escreve arquivo.ext.xmp com os metadados atuais do item e o registra em sidecar_registro. Sidecar em dia é
+// pulado; sidecar editado fora do Matriz nunca é sobrescrito (sobrescreverEditados = escolha explícita do operador).
+ResultadoSidecarUnico gravarSidecarDoArquivo(matriz::db::Database& registro, const juce::File& media,
+                                             const std::string& itemId, const std::string& arquivoId,
+                                             const juce::String& caminhoRelativo, bool sobrescreverEditados = false);
+
 struct ResultadoSidecars {
     int escritos = 0;
     int iguais = 0;
