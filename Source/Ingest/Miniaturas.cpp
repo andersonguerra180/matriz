@@ -88,6 +88,26 @@ DimensaoImagem gerarMiniaturaImagem(const juce::File& origem, const juce::File& 
                 d.altura = h;
                 return d;
             }
+            // Windows não decodifica PSD sem codec de terceiros no WIC; o ffmpeg tem decoder próprio. Só reduz (nunca amplia).
+            if (ext == ".psd") {
+                try {
+                    const juce::String lado = juce::String(ladoMaximoPx);
+                    rodarEsperandoSucesso("ffmpeg",
+                                          {"-y", "-hide_banner", "-loglevel", "error", "-i", origem.getFullPathName(), "-frames:v", "1",
+                                           "-vf", "scale='min(" + lado + ",iw)':'min(" + lado + ",ih)':force_original_aspect_ratio=decrease",
+                                           "-q:v", "3", destino.getFullPathName()},
+                                          60000);
+                    juce::Image pronta = juce::ImageFileFormat::loadFrom(destino);
+                    if (pronta.isValid()) {
+                        DimensaoImagem d;
+                        d.largura = pronta.getWidth();
+                        d.altura = pronta.getHeight();
+                        return d;
+                    }
+                } catch (const std::exception&) {
+                    // cai no throw abaixo: quem chama usa o ícone da categoria
+                }
+            }
         }
         throw MiniaturaError("Falha ao decodificar imagem para miniatura: " + origem.getFullPathName().toStdString());
     }
@@ -215,12 +235,29 @@ std::vector<uint8_t> FormaDeOnda::paraBlob() const {
     return blob;
 }
 
-FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File& /*dirTemporario*/,
+FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File& dirTemporario,
                                  double bucketsPorSegundo) {
     juce::AudioFormatManager formatManager;
     formatManager.registerBasicFormats();
 
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(origemAudio));
+
+    // O JUCE não abre todo formato em toda plataforma (.m4a AAC/ALAC não abre no Windows). Nesse caso o ffmpeg
+    // decodifica para um WAV mono de 16 kHz — de sobra para a forma de onda — que é lido e apagado ao sair.
+    struct ApagaAoSair {
+        juce::File f;
+        ~ApagaAoSair() { if (f != juce::File()) f.deleteFile(); }
+    } temporario;
+    if (reader == nullptr) {
+        const juce::File base = dirTemporario.isDirectory() ? dirTemporario : juce::File::getSpecialLocation(juce::File::tempDirectory);
+        temporario.f = base.getNonexistentChildFile("matriz_onda_", ".wav", false);
+        try {
+            rodarEsperandoSucesso("ffmpeg", {"-y", "-hide_banner", "-loglevel", "error", "-i", origemAudio.getFullPathName(), "-vn",
+                                             "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", temporario.f.getFullPathName()});
+            reader.reset(formatManager.createReaderFor(temporario.f));
+        } catch (const std::exception&) {
+        }
+    }
     if (reader == nullptr)
         throw MiniaturaError("could not read audio file: " + origemAudio.getFullPathName().toStdString());
 

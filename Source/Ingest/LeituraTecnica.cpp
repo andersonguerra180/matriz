@@ -141,6 +141,18 @@ void parseId3Tags(const juce::File& arquivo, juce::DynamicObject* tagsObj) {
     }
 }
 
+// Codec REAL da primeira faixa de áudio (aac, alac, mp3...). Para contêineres cuja extensão não diz o codec
+// (.m4a pode ser AAC ou ALAC), a extensão como "codec" marcava ALAC e AAC igual — e AAC em .m4a nunca era lossy.
+std::string codecDeAudioPorFfprobe(const juce::File& arquivo) {
+    try {
+        juce::StringArray args{"-v", "quiet", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+                                "-of", "default=nw=1:nk=1", arquivo.getFullPathName()};
+        return juce::String(runProcess("ffprobe", args)).trim().toLowerCase().toStdString();
+    } catch (...) {
+        return {};
+    }
+}
+
 LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
     juce::String ext = arquivo.getFileExtension().trimCharactersAtStart(".").toLowerCase();
     if (ext.isEmpty()) {
@@ -163,7 +175,12 @@ LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
                 else if (reader->bitsPerSample == 32) r.codec = "pcm_s32le";
                 else r.codec = "pcm_s16le";
             }
-            if (codecsAudioLossy().count(ext) > 0) r.codecLossyDeclarado = true;
+            if (ext == "m4a" || ext == "caf" || ext == "mp4") {
+                const std::string real = codecDeAudioPorFfprobe(arquivo);
+                if (!real.empty()) r.codec = real;
+            }
+            if (codecsAudioLossy().count(ext) > 0 || codecsAudioLossy().count(juce::String(r.codec)) > 0)
+                r.codecLossyDeclarado = true;
 
             auto formatObj = std::make_unique<juce::DynamicObject>();
             formatObj->setProperty("duration", r.duracaoSegundos.value_or(0.0));
@@ -231,11 +248,15 @@ LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
                 if (format.isObject()) r.exifDataOriginal = dataDasTags(format["tags"]);
 
                 juce::var streams = root["streams"];
+                bool viuVideo = false;
+                juce::var primeiroAudio;
                 if (streams.isArray()) {
                     for (auto& streamVar : *streams.getArray()) {
+                        if (streamVar["codec_type"].toString() == "audio" && primeiroAudio.isVoid()) primeiroAudio = streamVar;
                         if (!r.exifDataOriginal) r.exifDataOriginal = dataDasTags(streamVar["tags"]);
                         juce::String tipo = streamVar["codec_type"].toString();
                         if (tipo == "video") {
+                            viuVideo = true;
                             if (streamVar.hasProperty("width"))
                                 r.larguraPx = streamVar["width"].toString().getIntValue();
                             if (streamVar.hasProperty("height"))
@@ -245,6 +266,17 @@ LeituraTecnicaResultado lerViaFfprobe(const juce::File& arquivo) {
                             if (frameRate.isNotEmpty()) r.fps = parseFraction(frameRate);
                         }
                     }
+                }
+                // Arquivo SÓ de áudio lido pelo ffprobe (ex.: .m4a no Windows, onde o JUCE não o abre): sem isto ficava
+                // sem codec, sample rate, canais e flag de lossy, e o painel de inconsistências não via o áudio. Com
+                // vídeo junto nada muda: o codec registrado continua sendo o do vídeo.
+                if (!viuVideo && primeiroAudio.isObject()) {
+                    r.sampleRate = primeiroAudio["sample_rate"].toString().getIntValue();
+                    r.canais = primeiroAudio["channels"].toString().getIntValue();
+                    const int bits = primeiroAudio["bits_per_raw_sample"].toString().getIntValue();
+                    if (bits > 0) r.bitDepth = bits;
+                    r.codec = primeiroAudio["codec_name"].toString().toLowerCase().toStdString();
+                    if (codecsAudioLossy().count(juce::String(r.codec)) > 0) r.codecLossyDeclarado = true;
                 }
             }
         }
