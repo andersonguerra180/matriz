@@ -84,14 +84,22 @@ private:
     // perf.log passou de 787 MB sem rotação. Acima de kTamanhoMaxLogBytes,
     // perf.log vira perf.1.log (o perf.1.log anterior é descartado) e um
     // perf.log novo começa — no máximo 2 arquivos. Roda só na thread do logger.
-    void rotacionarSeNecessario() {
-        if (stream_ == nullptr || stream_->getPosition() <= kTamanhoMaxLogBytes) return;
-        stream_.reset();
-        auto anterior = logFile_.getSiblingFile("perf.1.log");
+    void rotacionarSeNecessario() { rotacionarArquivo(logFile_, stream_, kTamanhoMaxLogBytes); }
+
+public:
+    // Separado do membro para o self-test exercitar a rotação (inclusive no Windows, onde só se move um arquivo
+    // depois de fechá-lo). Devolve true se rotacionou.
+    static bool rotacionarArquivo(const juce::File& log, std::unique_ptr<juce::FileOutputStream>& stream, juce::int64 limiteBytes) {
+        if (stream == nullptr || stream->getPosition() <= limiteBytes) return false;
+        stream.reset();
+        auto anterior = log.getSiblingFile("perf.1.log");
         anterior.deleteFile();
-        logFile_.moveFileTo(anterior);
-        stream_ = logFile_.createOutputStream();
+        log.moveFileTo(anterior);
+        stream = log.createOutputStream();
+        return true;
     }
+
+private:
 
     static juce::File resolverLogFile() {
         auto primary = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)

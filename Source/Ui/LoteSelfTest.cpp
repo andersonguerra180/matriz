@@ -2,6 +2,7 @@
 #include "FichasEmbutidas.h"
 #include "../Ficha/CatalogoDeFichas.h"
 #include "LoteSelfTest.h"
+#include "../Diag/Watchdog.h"
 
 #include <JuceHeader.h>
 
@@ -3453,6 +3454,36 @@ int rodarLoteSelfTest() {
         checar(false, juce::String("background consolidation selftest: ") + e.what());
     }
     raizConsBg.deleteRecursively();
+
+    // ---------------- perf.log: rotação em no máximo 2 arquivos (passou de 787 MB sem rotação)
+    std::cout << "\n-- perf.log rotation: at most 2 files, the old perf.1.log is discarded --\n";
+    {
+        juce::File dirLog = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("matriz_perflog_" + juce::Uuid().toDashedString());
+        dirLog.createDirectory();
+        const juce::File log = dirLog.getChildFile("perf.log");
+        const juce::File anterior = dirLog.getChildFile("perf.1.log");
+        std::unique_ptr<juce::FileOutputStream> stream = log.createOutputStream();
+        auto escrever = [&](const juce::String& t) { stream->write(t.toRawUTF8(), t.getNumBytesAsUTF8()); stream->flush(); };
+        using matriz::diag::WatchdogLogger;
+        constexpr juce::int64 kLimite = 1000;
+
+        escrever("primeiro");
+        checar(!WatchdogLogger::rotacionarArquivo(log, stream, kLimite) && !anterior.existsAsFile(), "below the limit nothing rotates");
+        escrever(juce::String::repeatedString("A", 1200));
+        checar(WatchdogLogger::rotacionarArquivo(log, stream, kLimite), "above the limit it rotates");
+        checar(anterior.existsAsFile() && anterior.loadFileAsString().startsWith("primeiroAAAA"), "the old content moves to perf.1.log");
+        checar(stream != nullptr && log.existsAsFile() && log.getSize() == 0, "a new, empty perf.log starts and keeps being written");
+        escrever("novo");
+        checar(log.loadFileAsString() == "novo", "writing continues in the new perf.log");
+
+        escrever(juce::String::repeatedString("B", 1200));
+        checar(WatchdogLogger::rotacionarArquivo(log, stream, kLimite) && anterior.loadFileAsString().startsWith("novoBBBB"),
+               "a second rotation replaces perf.1.log (the previous one is discarded)");
+        checar(dirLog.findChildFiles(juce::File::findFiles, false, "*").size() == 2, "never more than 2 files (perf.log + perf.1.log)");
+        stream.reset();
+        dirLog.deleteRecursively();
+    }
 
     // ------------- MAIN EDIT: substituir arquivo grava na hora o sidecar da nova versão
     std::cout << "\n-- MAIN EDIT replace: the new version gets its sidecar right away --\n";
