@@ -3107,6 +3107,165 @@ void testarExportIntakePacoteCollection(const juce::File& dir) {
     pastaExport.deleteRecursively();
 }
 
+// Formatos do plano do port Windows ("Projeto de teste com AAC, ALAC, ProRes, PSD, RAW e PDF"): cada um passa pelo
+// ingest, vira miniatura/keyframe onde se aplica, é consolidado no MAIN e confere: bytes idênticos no MAIN, SOURCE
+// intocado (hash, tamanho e data) e data do MAIN dentro de 2 s da do SOURCE (a granularidade do exFAT). O "RAW" é um
+// TIFF com extensão .cr2 — exercita o caminho nativo de .cr2, mas NÃO é uma foto RAW de câmera de verdade.
+void testarFormatosDoPlano(const juce::File& dirTemp) {
+    std::cout << "== Plan formats: AAC, ALAC, ProRes, PSD, RAW, PDF through ingest, thumbnail and MAIN ==\n";
+
+    juce::File dir = dirTemp.getChildFile("formatos_plano_" + juce::Uuid().toDashedString());
+    dir.createDirectory();
+    struct Amostra { std::string rotulo; juce::File arquivo; };
+    std::vector<Amostra> amostras;
+
+    auto tentarFfmpeg = [&](const std::string& rotulo, const juce::File& saida, const juce::StringArray& args) {
+        try {
+            gerarComFfmpeg(args);
+            amostras.push_back({rotulo, saida});
+        } catch (const std::exception&) {
+            check(true, rotulo + ": this ffmpeg build cannot generate the sample - skipped, not a failure");
+        }
+    };
+    const juce::String ff = "ffmpeg";
+    tentarFfmpeg("AAC", dir.getChildFile("amostra_aac.m4a"),
+                 {ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                  "-c:a", "aac", "-b:a", "128k", dir.getChildFile("amostra_aac.m4a").getFullPathName()});
+    tentarFfmpeg("ALAC", dir.getChildFile("amostra_alac.m4a"),
+                 {ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                  "-c:a", "alac", dir.getChildFile("amostra_alac.m4a").getFullPathName()});
+    tentarFfmpeg("ProRes", dir.getChildFile("amostra_prores.mov"),
+                 {ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                  "testsrc=size=320x240:rate=10:duration=2", "-c:v", "prores_ks", "-profile:v", "0", "-pix_fmt", "yuv422p10le",
+                  dir.getChildFile("amostra_prores.mov").getFullPathName()});
+    tentarFfmpeg("RAW (TIFF as .cr2)", dir.getChildFile("amostra_raw.cr2"),
+                 {ff, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240",
+                  "-frames:v", "1", "-c:v", "tiff", "-f", "image2", dir.getChildFile("amostra_raw.cr2").getFullPathName()});
+
+    {   // PSD mínimo válido: 16x16 RGB 8 bits, sem camadas, dados crus planares
+        juce::MemoryOutputStream o;
+        auto u16 = [&](unsigned v) { o.writeByte(char(v >> 8)); o.writeByte(char(v)); };
+        auto u32 = [&](unsigned v) { u16(v >> 16); u16(v & 0xffff); };
+        o.write("8BPS", 4); u16(1);
+        for (int i = 0; i < 6; ++i) o.writeByte(0);
+        u16(3); u32(16); u32(16); u16(8); u16(3);
+        u32(0); u32(0); u32(0); u16(0);
+        for (int canal = 0; canal < 3; ++canal)
+            for (int i = 0; i < 16 * 16; ++i) o.writeByte(char((i * (canal + 2)) & 0xff));
+        juce::File psd = dir.getChildFile("amostra.psd");
+        psd.replaceWithData(o.getData(), o.getDataSize());
+        amostras.push_back({"PSD", psd});
+    }
+    {   // PDF mínimo de 1 página (só bytes de verdade para ingest/hash/cópia; sem leitor de PDF no projeto)
+        juce::File pdf = dir.getChildFile("amostra.pdf");
+        pdf.replaceWithText("%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+                            "3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n", false, false, "\n");
+        amostras.push_back({"PDF", pdf});
+    }
+
+    const juce::Time dataFixa(2019, 2, 4, 12, 0, 1, 500, true);  // 2019-03-04 12:00:01.500 local
+    juce::File pastaProjeto = dirTemp.getChildFile("projeto_formatos_" + juce::Uuid().toDashedString());
+    juce::File destino = dirTemp.getChildFile("destino_formatos_" + juce::Uuid().toDashedString());
+    destino.createDirectory();
+
+    try {
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Formatos do Plano";
+        params.modo = matriz::model::Modo::Preservacao;
+        params.prefixoNomenclatura = "FMT";
+        auto projeto = matriz::model::Project::criar(pastaProjeto, params);
+        auto& reg = projeto->registro();
+        const std::string agora = matriz::model::agoraIso8601();
+        const std::string projetoId = projeto->projetoId();
+        using matriz::db::Value;
+
+        const std::string pasta = matriz::model::novoUuid();
+        reg.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, criado_em, atualizado_em) "
+                "VALUES (?, ?, NULL, 'Formatos', 0, ?, ?)",
+                {Value::of(pasta), Value::of(projetoId), Value::of(agora), Value::of(agora)});
+
+        struct Registrado { Amostra a; std::string itemId; std::string shaAntes; juce::int64 tamAntes; juce::Time dataAntes; };
+        std::vector<Registrado> registrados;
+        int n = 0;
+        for (const auto& a : amostras) {
+            check(a.arquivo.existsAsFile() && a.arquivo.getSize() > 0, a.rotulo + ": sample file generated");
+            a.arquivo.setLastModificationTime(dataFixa);
+            Registrado r{a, matriz::model::novoUuid(), juce::SHA256(a.arquivo).toHexString().toStdString(),
+                         a.arquivo.getSize(), a.arquivo.getLastModificationTime()};
+
+            auto analise = matriz::ingest::analisarArquivo(a.arquivo);
+            check(analise.checksums.sha256 == r.shaAntes, a.rotulo + ": the ingest checksum matches an independent SHA-256");
+
+            if (a.rotulo == "AAC") {
+                check(analise.leitura.codec == "aac" && analise.leitura.codecLossyDeclarado, "AAC: codec 'aac', flagged as lossy (" + analise.leitura.codec + ")");
+                check(analise.leitura.duracaoSegundos && *analise.leitura.duracaoSegundos > 1.5 && *analise.leitura.duracaoSegundos < 2.5, "AAC: duration ~2 s");
+            } else if (a.rotulo == "ALAC") {
+                check(analise.leitura.codec == "alac" && !analise.leitura.codecLossyDeclarado, "ALAC: codec 'alac', NOT flagged as lossy (" + analise.leitura.codec + ")");
+            } else if (a.rotulo == "ProRes") {
+                check(analise.leitura.codec == "prores", "ProRes: codec 'prores' (" + analise.leitura.codec + ")");
+                check(analise.leitura.duracaoSegundos && *analise.leitura.duracaoSegundos > 1.5, "ProRes: duration read");
+            }
+
+            reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, criado_em, atualizado_em) "
+                    "VALUES (?, ?, ?, ?, 'fita_rolo', ?, ?)",
+                    {Value::of(r.itemId), Value::of(projetoId), Value::of("FMT-" + std::to_string(++n)),
+                     Value::of(a.rotulo), Value::of(agora), Value::of(agora)});
+            reg.run("INSERT INTO acervo_item_pasta (id, item_id, pasta_id, criado_em) VALUES (?, ?, ?, ?)",
+                    {Value::of(matriz::model::novoUuid()), Value::of(r.itemId), Value::of(pasta), Value::of(agora)});
+            auto ing = matriz::ingest::ingerirArquivo(reg, pastaProjeto, r.itemId, a.arquivo, "preservation_master", true);
+
+            // Miniatura / keyframe onde há prévia visual; áudio ganha forma de onda; PDF só não pode quebrar.
+            const auto categoria = matriz::ingest::categoriaPorExtensao(a.arquivo);
+            matriz::ingest::gerarEGravarMiniaturaPrincipal(projeto->indice(), pastaProjeto, r.itemId, ing.arquivoId,
+                                                           ing.arquivoNoProjeto, categoria, ing.leitura.duracaoSegundos);
+            auto contar = [&](const std::string& sql) {
+                auto st = projeto->indice().prepare(sql);
+                st.bind(1, Value::of(r.itemId));
+                return st.step() ? static_cast<int>(st.columnInt(0)) : -1;
+            };
+            if (a.rotulo == "PSD" || a.rotulo.rfind("RAW", 0) == 0 || a.rotulo == "ProRes")
+                check(contar("SELECT COUNT(*) FROM miniatura WHERE item_id = ?") >= 1, a.rotulo + ": a thumbnail was written to indice.sqlite");
+            if (a.rotulo == "AAC" || a.rotulo == "ALAC")
+                check(contar("SELECT COUNT(*) FROM forma_onda WHERE item_id = ?") >= 1, a.rotulo + ": a waveform was written to indice.sqlite");
+            if (a.rotulo == "ProRes") {
+                auto kfs = matriz::ingest::gerarKeyframesVideo(a.arquivo, 2.0, 2, dir.getChildFile("kf"), "pr", 160);
+                check(kfs.size() == 2 && kfs.front().arquivo.existsAsFile(), "ProRes: keyframes are extracted from the ProRes video");
+            }
+            registrados.push_back(std::move(r));
+        }
+
+        auto plano = matriz::consolidacao::planejarConsolidacao(reg, pastaProjeto, destino, soPastaManual());
+        check(plano.podeConsolidar() && plano.itens.size() == registrados.size(),
+              "the plan has one entry per format (" + std::to_string(plano.itens.size()) + ")");
+        auto res = matriz::consolidacao::executarConsolidacao(reg, pastaProjeto, destino, plano);
+        check(res.consolidados == static_cast<int>(registrados.size()) && res.falhas.empty(),
+              "every format is consolidated into the MAIN (" + std::to_string(res.consolidados) + ")");
+
+        for (const auto& r : registrados) {
+            // SOURCE intocado
+            check(juce::SHA256(r.a.arquivo).toHexString().toStdString() == r.shaAntes && r.a.arquivo.getSize() == r.tamAntes &&
+                      r.a.arquivo.getLastModificationTime() == r.dataAntes,
+                  r.a.rotulo + ": the SOURCE file is untouched (hash, size and date)");
+            // cópia no MAIN
+            auto st = reg.prepare("SELECT caminho_relativo_destino FROM consolidacao_registro WHERE item_id = ? LIMIT 1");
+            st.bind(1, Value::of(r.itemId));
+            juce::File noMain;
+            if (st.step()) noMain = destino.getChildFile(juce::String::fromUTF8(st.columnText(0).c_str()));
+            check(noMain.existsAsFile() && juce::SHA256(noMain).toHexString().toStdString() == r.shaAntes,
+                  r.a.rotulo + ": the MAIN copy has exactly the SOURCE bytes");
+            const auto dif = std::abs((noMain.getLastModificationTime() - r.dataAntes).inMilliseconds());
+            check(noMain.existsAsFile() && dif <= 2000,
+                  r.a.rotulo + ": the MAIN date is within 2 s of the SOURCE date (" + std::to_string(dif) + " ms)");
+        }
+    } catch (const std::exception& e) {
+        check(false, std::string("plan formats: ") + e.what());
+    }
+
+    dir.deleteRecursively();
+    pastaProjeto.deleteRecursively();
+    destino.deleteRecursively();
+}
+
 int main() {
     if (!ffmpegDisponivel()) {
         std::cout << "ffmpeg unavailable - cannot generate test media. Aborting.\n";
@@ -3135,6 +3294,7 @@ int main() {
     testarHierarquiaBackup(tmpDir);
     testarLoudnessEMarcadores(tmpDir);
     testarConsolidacao(tmpDir);
+    testarFormatosDoPlano(tmpDir);
     testarBackupScanEngine(tmpDir);
     testarCatalogoProxies(tmpDir);
     testarCacheDeArquivo(tmpDir);
