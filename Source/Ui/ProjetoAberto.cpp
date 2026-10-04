@@ -6372,6 +6372,17 @@ matriz::mainedit::ContextoMain ProjetoAberto::contextoDoMain() const {
     return c;
 }
 
+void ProjetoAberto::executarConsolidacaoEmSegundoPlano(std::function<void()> trabalho) {
+    consolidacoesEmCurso_.fetch_add(1);
+    poolMainEdit_.addJob([this, trabalho = std::move(trabalho)]() mutable {
+        try {
+            trabalho();
+        } catch (...) {}
+        trabalho = nullptr;  // solta o que o job capturou antes de liberar o fechamento do projeto
+        consolidacoesEmCurso_.fetch_sub(1);
+    });
+}
+
 void ProjetoAberto::executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
                                        AoConcluirEdicaoMain aoConcluir) {
     auto falhar = [&](const std::string& msg) {

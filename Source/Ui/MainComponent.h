@@ -180,7 +180,8 @@ public:
     // ponteiro que acabou de morrer.
     bool ingestEmAndamento() const {
         return pendentes_->load() > 0 || loteEmCurso_ || finalizandoLote_ || escaneandoEmAndamento_.load()
-            || trabalhosOrfaosLote_->load() > 0 || resolvendoDuplicatas_ > 0;
+            || trabalhosOrfaosLote_->load() > 0 || resolvendoDuplicatas_ > 0
+            || (projetoAberto_ && projetoAberto_->trabalhoDeConsolidacaoEmCurso());
     }
 
     // Item 10 — cancelar operação longa. Pede o cancelamento; os jobs ainda
