@@ -23,11 +23,21 @@ jobs:
     name: Build & Test (macOS)
     if: ${{ !inputs.somente_windows }}
     runs-on: macos-14
+    env:
+      # Cache de compilação (sccache no cache do GitHub): o CMake lê estes launchers do ambiente na primeira configuração.
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_OBJC_COMPILER_LAUNCHER: sccache
+      CMAKE_OBJCXX_COMPILER_LAUNCHER: sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup sccache (compilation cache)
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Install FFmpeg (macOS)
         run: brew install ffmpeg
@@ -90,14 +100,26 @@ jobs:
           path: build-ci/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest
           retention-days: 7
 
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
+
   build-windows:
     name: Build & Test (Windows x64)
     runs-on: windows-2022
+    env:
+      # Cache de compilação (sccache no cache do GitHub): o CMake lê estes launchers do ambiente na primeira configuração.
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup sccache (compilation cache)
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -175,6 +197,10 @@ jobs:
           path: build-win/matriz_interop_selftest_artefacts/Release/matriz_interop_selftest.exe
           retention-days: 7
 
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
+
   interop-win:
     name: Verify macOS Fixture on Windows (Interoperability Mac -> Win)
     if: ${{ !inputs.somente_windows }}
@@ -231,11 +257,19 @@ jobs:
     name: Package Release & Trial (Windows x64)
     needs: [build-windows]
     runs-on: windows-2022
+    env:
+      # Cache de compilação (sccache no cache do GitHub): o CMake lê estes launchers do ambiente na primeira configuração.
+      SCCACHE_GHA_ENABLED: "true"
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup sccache (compilation cache)
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup MSVC environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -351,3 +385,7 @@ jobs:
             staging/installer/Output/*.zip
             staging/installerTrial/Output/*.exe
             staging/installerTrial/Output/*.zip
+
+      - name: sccache statistics
+        if: always()
+        run: sccache --show-stats
