@@ -241,7 +241,8 @@ if(APPLE)
 elseif(WIN32)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_win.cpp
-        Source/Ingest/MiniaturaPsd_win.cpp)
+        Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ui/PdfRenderer_win.cpp)
 endif()
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -555,7 +556,9 @@ elseif(WIN32)
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
-        Source/Ui/DocumentPreviewBridge_win.cpp)
+        Source/Ui/DocumentPreviewBridge_win.cpp
+        Source/Ui/PdfRenderer_win.cpp
+        Source/Ui/PdfPageView_win.cpp)
 endif()
 
 target_include_directories(matriz PRIVATE Source)

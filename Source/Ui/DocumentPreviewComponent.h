@@ -4,6 +4,8 @@
 
 namespace matriz::ui {
 
+class PdfPageView;
+
 class DocumentPreviewComponent : public juce::Component, private juce::Timer {
 public:
     DocumentPreviewComponent();
@@ -38,6 +40,10 @@ private:
     std::unique_ptr<juce::Component> viewComponent_;
 #endif
     std::unique_ptr<juce::TextEditor> textViewer_;
+#if JUCE_WINDOWS
+    // Visualizador de PDF próprio (Windows.Data.Pdf). No Mac o PDFView do PDFKit vem pela ponte nativa.
+    std::unique_ptr<PdfPageView> pdfView_;
+#endif
 
     std::unique_ptr<juce::TextButton> btnPrimeiraPagina_;
     std::unique_ptr<juce::TextButton> btnPaginaAnterior_;

@@ -1,5 +1,6 @@
 #include "DocumentPreviewComponent.h"
 #include "DocumentPreviewBridge.h"
+#include "PdfPageView.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 
@@ -68,6 +69,9 @@ DocumentPreviewComponent::~DocumentPreviewComponent() {
     stopTimer();
     viewComponent_.reset();
     textViewer_.reset();
+#if JUCE_WINDOWS
+    pdfView_.reset();
+#endif
     if (bridge_) {
         docDestroy(static_cast<DocHandle>(bridge_));
         bridge_ = nullptr;
@@ -78,6 +82,9 @@ bool DocumentPreviewComponent::carregar(const juce::File& arquivo) {
     stopTimer();
     viewComponent_.reset();
     textViewer_.reset();
+#if JUCE_WINDOWS
+    pdfView_.reset();
+#endif
     carregadoNativo_ = false;
     carregadoTexto_ = false;
     paginaAtual_ = 1;
@@ -86,6 +93,23 @@ bool DocumentPreviewComponent::carregar(const juce::File& arquivo) {
     if (!arquivo.existsAsFile()) return false;
 
     auto ext = arquivo.getFileExtension().toLowerCase().replace(".", "");
+
+#if JUCE_WINDOWS
+    // PDF no Windows: visualizador próprio. Sem isto o arquivo caía no visualizador de TEXTO e mostrava os bytes do PDF.
+    if (ext == "pdf") {
+        juce::Component::SafePointer<DocumentPreviewComponent> safe(this);
+        pdfView_ = std::make_unique<PdfPageView>(arquivo, [safe](int pagina, int total) {
+            if (!safe) return;
+            safe->paginaAtual_ = pagina;
+            safe->totalPaginas_ = total;
+            safe->atualizarBarraNavegacao();
+        });
+        addAndMakeVisible(*pdfView_);
+        resized();
+        atualizarBarraNavegacao();
+        return true;
+    }
+#endif
 
     if (bridge_ && docLoad(static_cast<DocHandle>(bridge_), arquivo.getFullPathName().toRawUTF8())) {
         void* nativeView = docGetNSView(static_cast<DocHandle>(bridge_));
@@ -137,6 +161,12 @@ bool DocumentPreviewComponent::carregar(const juce::File& arquivo) {
 }
 
 void DocumentPreviewComponent::zoomIn() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->zoomIn();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docZoomIn(static_cast<DocHandle>(bridge_));
     } else if (textViewer_) {
@@ -146,6 +176,12 @@ void DocumentPreviewComponent::zoomIn() {
 }
 
 void DocumentPreviewComponent::zoomOut() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->zoomOut();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docZoomOut(static_cast<DocHandle>(bridge_));
     } else if (textViewer_) {
@@ -155,6 +191,12 @@ void DocumentPreviewComponent::zoomOut() {
 }
 
 void DocumentPreviewComponent::zoomReset() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->zoomReset();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docZoomReset(static_cast<DocHandle>(bridge_));
     } else if (textViewer_) {
@@ -164,6 +206,12 @@ void DocumentPreviewComponent::zoomReset() {
 }
 
 void DocumentPreviewComponent::proximaPagina() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->proximaPagina();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docGoToNextPage(static_cast<DocHandle>(bridge_));
         paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
@@ -174,6 +222,12 @@ void DocumentPreviewComponent::proximaPagina() {
 }
 
 void DocumentPreviewComponent::paginaAnterior() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->paginaAnterior();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docGoToPreviousPage(static_cast<DocHandle>(bridge_));
         paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
@@ -184,6 +238,12 @@ void DocumentPreviewComponent::paginaAnterior() {
 }
 
 void DocumentPreviewComponent::primeiraPagina() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->primeiraPagina();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docGoToFirstPage(static_cast<DocHandle>(bridge_));
         paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
@@ -194,6 +254,12 @@ void DocumentPreviewComponent::primeiraPagina() {
 }
 
 void DocumentPreviewComponent::ultimaPagina() {
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->ultimaPagina();
+        return;
+    }
+#endif
     if (carregadoNativo_ && bridge_) {
         docGoToLastPage(static_cast<DocHandle>(bridge_));
         paginaAtual_ = docGetCurrentPage(static_cast<DocHandle>(bridge_));
@@ -230,7 +296,12 @@ void DocumentPreviewComponent::paint(juce::Graphics& g) {
     g.setColour(tema().borda);
     g.drawHorizontalLine(topo.getBottom() - 1, 0.0f, static_cast<float>(getWidth()));
 
-    if (!carregadoNativo_ && !carregadoTexto_) {
+#if JUCE_WINDOWS
+    const bool temPdf = pdfView_ != nullptr;
+#else
+    const bool temPdf = false;
+#endif
+    if (!carregadoNativo_ && !carregadoTexto_ && !temPdf) {
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText("No document preview available", getLocalBounds(), juce::Justification::centred);
@@ -267,6 +338,11 @@ void DocumentPreviewComponent::resized() {
     if (textViewer_) {
         textViewer_->setBounds(viewArea);
     }
+#if JUCE_WINDOWS
+    if (pdfView_) {
+        pdfView_->setBounds(viewArea);
+    }
+#endif
 }
 
 } // namespace matriz::ui
