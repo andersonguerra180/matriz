@@ -875,6 +875,8 @@ juce::String obterLogoParaExtensao(const juce::String& extensaoSemPonto) {
     juce::String ext = extensaoSemPonto.toLowerCase().trim();
     if (ext == "pdf")
         return "pdf.jpeg";
+    if (ext == "zip" || ext == "rar")
+        return "zip.jpeg";
     return obterLogoSessaoPorExtensao(ext);
 }
 

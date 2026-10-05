@@ -75,14 +75,17 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
         {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
-        {"Spreadsheet", "Planilha"},
-        {"Planilha", "Planilha"}
+        {"Sheet", "Planilha"},
+        {"Spreadsheet", "Planilha"},  // valor antigo: lido como Sheet
+        {"Zip", "Zip"},
+        {"Rar", "Rar"}
     };
     return mapa;
 }
 
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
+    if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;

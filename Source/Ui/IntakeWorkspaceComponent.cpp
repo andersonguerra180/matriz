@@ -1611,7 +1611,7 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         }},
         { "DOCUMENT", {
             "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report",
-            "Reference", "Technical Documentation", "Planilha"
+            "Reference", "Technical Documentation", "Sheet", "Zip", "Rar"
         }}
     };
     return kVocab;

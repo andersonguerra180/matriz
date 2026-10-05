@@ -378,8 +378,10 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
         {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
-        {"Spreadsheet", "Planilha"},
-        {"Planilha", "Planilha"},
+        {"Sheet", "Planilha"},
+        {"Spreadsheet", "Planilha"},  // valor antigo: lido como Sheet
+        {"Zip", "Zip"},
+        {"Rar", "Rar"},
         {"Hidden", juce::String::fromUTF8("Invisível")}
     };
     return mapa;
@@ -387,6 +389,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
 
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
+    if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;
@@ -412,7 +415,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
                 "Graphics", "Logo", "3D", "Document"};
     } else if (cat == MediaCategory::Docs) {
         keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
-                "Technical Documentation", "Spreadsheet"};
+                "Technical Documentation", "Sheet", "Zip", "Rar"};
     } else {
         std::vector<juce::String> res;
         for (auto c : {MediaCategory::Audio, MediaCategory::Video, MediaCategory::Image, MediaCategory::Docs}) {
