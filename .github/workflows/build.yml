@@ -303,6 +303,27 @@ jobs:
           Copy-Item "installer\installer.iss" "staging\installerTrial\installer.iss"
           (Get-Content "staging\installerTrial\installer.iss") -replace 'MyAppName "BKR Matriz"', 'MyAppName "BKR Matriz Trial"' -replace 'MyAppExeName "BKR Matriz.exe"', 'MyAppExeName "BKR Matriz Trial.exe"' -replace 'OutputBaseFilename=BKR_Matriz_Setup', 'OutputBaseFilename=BKR_Matriz_Trial_Setup' -replace '\.\.\\bin\\Release', '..\bin\ReleaseTrial' | Set-Content "staging\installerTrial\installer.iss"
 
+      - name: Check the stack reserve of the Windows executables (>= 64 MB)
+        shell: pwsh
+        run: |
+          # O CMake liga o app com /STACK:67108864. No Windows toda thread sem tamanho próprio herda esse valor do
+          # cabeçalho do .exe, então ele protege a recursão profunda (árvore de pastas, hierarquia, JSON). Sem esta
+          # checagem, uma mudança no CMake poderia voltar a pilha para 1 MB sem ninguém perceber.
+          function Get-StackReserve([string]$path) {
+              $b = [IO.File]::ReadAllBytes($path)
+              $pe = [BitConverter]::ToInt32($b, 0x3C)
+              if ([BitConverter]::ToUInt16($b, $pe + 24) -ne 0x20b) { throw "$path is not a PE32+ executable" }
+              return [BitConverter]::ToUInt64($b, $pe + 24 + 72)  # SizeOfStackReserve
+          }
+          $min = 64MB
+          $falhou = $false
+          foreach ($exe in @("staging\bin\Release\BKR Matriz.exe", "staging\bin\ReleaseTrial\BKR Matriz Trial.exe")) {
+              $reserva = Get-StackReserve $exe
+              Write-Host ("{0}: stack reserve = {1} MB" -f $exe, ($reserva / 1MB))
+              if ($reserva -lt $min) { Write-Host "::error::$exe has a stack reserve below 64 MB"; $falhou = $true }
+          }
+          if ($falhou) { exit 1 }
+
       - name: Optional Code Signing
         shell: pwsh
         run: |
