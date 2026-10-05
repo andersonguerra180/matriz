@@ -63,6 +63,8 @@ std::vector<PainelMetadadosArquivo::Card> PainelMetadadosArquivo::lerCards(Proje
             add(arquivo, "Modified", ref.getLastModificationTime().formatted("%Y-%m-%d %H:%M:%S"));
         }
         add(arquivo, "Original path", origem);
+        add(arquivo, "Asset code", campo("codigo_acervo"));
+        add(arquivo, "Content type", campo("collection_type"));
     }
 
     // ---- TÉCNICO (características guardadas no ingest: chaves planas + "bruto" do ffprobe/Exiv2)
@@ -153,6 +155,11 @@ std::vector<PainelMetadadosArquivo::Card> PainelMetadadosArquivo::lerCards(Proje
     add(desc, "Language", campo("dc_language"));
     add(desc, "Source", campo("dc_source"));
     add(desc, "Identifier", campo("dc_identifier"));
+    add(desc, "Event date", campo("ano"));
+    add(desc, "Original medium", campo("source_media"));
+    add(desc, "Created (metadata)", campo("dc_created"));
+    add(desc, "Format (metadata)", campo("dc_format"));
+    add(desc, "Notes", campo("notas_livres"));
 
     std::vector<Card> out;
     for (auto* c : {&arquivo, &tecnico, &camera, &data, &geo, &desc})
@@ -204,8 +211,10 @@ public:
     }
 
     int alturaPara(int largura) {
-        setSize(largura, 10);
-        return organizar(largura);
+        setSize(largura, 10);  // a largura primeiro: a altura dos textos depende dela
+        const int altura = organizar(largura);
+        setSize(largura, altura);  // sem isto o conteúdo ficava com 10 px de altura e o painel parecia vazio
+        return altura;
     }
 
     void paint(juce::Graphics& g) override {

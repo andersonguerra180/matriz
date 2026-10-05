@@ -2651,16 +2651,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawLine((float) bounds.getX() + off + 2, (float) bounds.getBottom() + off,
                                (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 1.5f);
                 }
-                const juce::String txt = juce::String::fromUTF8("\xc3\x97") + juce::String(item.nestTotal);  // "×5"
-                const int w = juce::GlyphArrangement::getStringWidthInt(font9Bold, txt) + 12;
-                juce::Rectangle<int> pilula(areaImagem.getRight() - w - 4, areaImagem.getBottom() - 20, w, 16);
-                g.setColour(juce::Colour(0xe6111827));
-                g.fillRoundedRectangle(pilula.toFloat(), 8.0f);
-                g.setColour(juce::Colour(0xff38bdf8));
-                g.drawRoundedRectangle(pilula.toFloat(), 8.0f, 1.0f);
-                g.setColour(juce::Colours::white);
-                g.setFont(font9Bold);
-                g.drawText(txt, pilula, juce::Justification::centred);
+                // (o selo "N" vermelho no canto inferior direito é desenhado junto dos demais selos, mais abaixo)
             }
 
             // Selo "impressa" (já saiu em alguma sessão do SEND TO PRINT): ícone de impressora, sem texto.
@@ -2694,12 +2685,23 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (durText.isNotEmpty()) {
                 int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
                 int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
+                if (item.nestTotal > 1 && !modoQuarentena_) badgeX -= 20;  // abre espaço para o selo "N" do nest
                 juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, badgeW, 16);
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText(durText, durBadge, juce::Justification::centred);
+            }
+
+            // NEST: selo "N" vermelho no canto inferior direito — mesmo padrão dos selos H/K/P/W (16x16, raio 3, fonte 9 bold).
+            if (item.nestTotal > 1) {
+                juce::Rectangle<int> stampN(areaImagem.getRight() - 4 - 16, areaImagem.getBottom() - 4 - 16, 16, 16);
+                g.setColour(juce::Colour(0xffe11d48));
+                g.fillRoundedRectangle(stampN.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("N", stampN, juce::Justification::centred);
             }
 
             // Corner stamps H / K / P (top-right of areaImagem)
@@ -2760,14 +2762,6 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                                        static_cast<float>(bounds.getHeight() + 2 * kMargemZebra)));
                 }
                 offsetRing += 5.0f;
-            }
-
-            // NEST: borda própria (azul-céu de identidade, distinta do acento da seleção), um anel interno;
-            // a seleção e o foco continuam por cima, no anel externo.
-            if (item.nestTotal > 1) {
-                g.setColour(juce::Colour(0xff38bdf8));
-                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing) + 5).toFloat(),
-                                       juce::jmax(1.0f, tk.raioMedio - offsetRing - 4.0f), 2.5f);
             }
 
             if (selecionado) {

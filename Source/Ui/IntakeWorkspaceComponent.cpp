@@ -390,7 +390,92 @@ private:
 // ordem alfabética. Não cria uma base de valores paralela — os valores vêm
 // prontos de fora (query direta na tabela item, ver
 // IntakeWorkspaceComponent::valoresExistentesParaColuna).
-class AutocompleteAssistedField : public juce::Component, private juce::ListBoxModel {
+// Sugestões como CHIPS (mesmo visual dos chips do TagChipsEditor), com área de clique generosa: o chip inteiro e até o
+// espaço entre chips aceitam o clique. Não pede foco de teclado — clicar nunca tira o foco do campo de texto (era o que
+// fazia o ListBox perder o clique na linha pré-selecionada).
+class ChipsSugestoes : public juce::Component {
+public:
+    ChipsSugestoes() {
+        setWantsKeyboardFocus(false);
+        setMouseClickGrabsKeyboardFocus(false);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    std::function<void(int)> aoEscolher;
+
+    // Devolve a altura necessária para a largura dada.
+    int definir(const std::vector<juce::String>& valores, int largura) {
+        valores_ = valores;
+        if (valores_.size() > 24) valores_.resize(24);
+        destaque_ = -1;
+        hover_ = -1;
+        const auto fonte = juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
+        constexpr int kAlturaChip = 26, kPad = 12, kGap = 6, kMargem = 6;
+        const int util = juce::jmax(60, largura - 2 * kMargem);
+        chips_.clear();
+        int x = kMargem, y = kMargem;
+        for (const auto& v : valores_) {
+            int w = juce::jmin(util, kPad * 2 + juce::GlyphArrangement::getStringWidthInt(fonte, v) + 2);
+            if (x + w > kMargem + util && x > kMargem) { x = kMargem; y += kAlturaChip + kGap; }
+            chips_.push_back({x, y, w, kAlturaChip});
+            x += w + kGap;
+        }
+        const int altura = chips_.empty() ? 0 : y + kAlturaChip + kMargem;
+        setSize(largura, altura);
+        repaint();
+        return altura;
+    }
+    int destaque() const { return destaque_; }
+    void destacar(int i) {
+        destaque_ = (i >= 0 && i < static_cast<int>(valores_.size())) ? i : -1;
+        repaint();
+    }
+    int quantos() const { return static_cast<int>(valores_.size()); }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        g.setColour(juce::Colours::white);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
+            const auto r = chips_[static_cast<size_t>(i)].toFloat();
+            const bool ativo = (i == hover_ || i == destaque_);
+            g.setColour(ativo ? tk.acento.brighter(0.3f) : tk.acento.withAlpha(0.25f));
+            g.fillRoundedRectangle(r, r.getHeight() / 2.0f);
+            g.setColour(ativo ? tk.textoSobreAcento : tk.textoPrimario);
+            g.drawText(valores_[static_cast<size_t>(i)], chips_[static_cast<size_t>(i)].reduced(12, 0), juce::Justification::centredLeft, true);
+        }
+    }
+    void mouseMove(const juce::MouseEvent& e) override { const int i = maisProximo(e.getPosition()); if (i != hover_) { hover_ = i; repaint(); } }
+    void mouseExit(const juce::MouseEvent&) override { if (hover_ != -1) { hover_ = -1; repaint(); } }
+    void mouseDown(const juce::MouseEvent& e) override {
+        const int i = maisProximo(e.getPosition());
+        if (i >= 0 && aoEscolher) {
+            auto cb = aoEscolher;  // o callback pode destruir este componente
+            cb(i);
+        }
+    }
+
+private:
+    int maisProximo(juce::Point<int> p) const {
+        int melhor = -1;
+        float menor = 1.0e9f;
+        for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
+            const auto& r = chips_[static_cast<size_t>(i)];
+            const float dx = static_cast<float>(juce::jmax(r.getX() - p.x, 0, p.x - r.getRight()));
+            const float dy = static_cast<float>(juce::jmax(r.getY() - p.y, 0, p.y - r.getBottom()));
+            const float d = dx * dx + dy * dy;
+            if (d < menor) { menor = d; melhor = i; }
+        }
+        return (melhor >= 0 && menor <= 36.0f) ? melhor : -1;  // chip sob o ponto ou a até 6 px
+    }
+    std::vector<juce::String> valores_;
+    std::vector<juce::Rectangle<int>> chips_;
+    int hover_ = -1, destaque_ = -1;
+};
+
+class AutocompleteAssistedField : public juce::Component {
 public:
     AutocompleteAssistedField(std::vector<juce::String> valoresExistentes, const juce::String& placeholder) {
         valores_ = std::move(valoresExistentes);
@@ -415,11 +500,8 @@ public:
         };
         addAndMakeVisible(*editor_);
 
-        lista_ = std::make_unique<juce::ListBox>();
-        lista_->setModel(this);
-        lista_->setRowHeight(22);
-        lista_->setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
-        lista_->setColour(juce::ListBox::outlineColourId, tk.borda);
+        lista_ = std::make_unique<ChipsSugestoes>();
+        lista_->aoEscolher = [this](int i) { escolher(i); };
         addChildComponent(*lista_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
         lista_->toFront(false);
     }
@@ -434,30 +516,20 @@ public:
     // a lista flutue por cima do que vem embaixo em vez de reservar espaço.
     void abrirSugestoes() { mostrarTodasSugestoes(); }
     int alturaDesejada() const {
-        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
-        return 26 + ((lista_ && lista_->isVisible() && rows > 0) ? 2 + rows * 22 : 0);
+        return 26 + ((lista_ && lista_->isVisible() && !sugestoes_.empty()) ? 2 + alturaLista_ : 0);
     }
 
     void resized() override {
         auto area = getLocalBounds();
         editor_->setBounds(area.removeFromTop(26));
         area.removeFromTop(2);
-        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
-        lista_->setBounds(area.removeFromTop(rows * 22));
+        if (sugestoes_.empty()) { lista_->setBounds(area.removeFromTop(0)); return; }
+        alturaLista_ = lista_->definir(sugestoes_, area.getWidth());  // quebra em linhas conforme a largura
+        lista_->setBounds(area.removeFromTop(alturaLista_));
+        lista_->destacar(destaqueAtual_);
     }
 
 private:
-    int getNumRows() override { return static_cast<int>(sugestoes_.size()); }
-
-    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override {
-        if (rowNumber < 0 || rowNumber >= static_cast<int>(sugestoes_.size())) return;
-        g.fillAll(rowIsSelected ? tema().acento.withAlpha(0.25f) : juce::Colours::white);
-        g.setColour(juce::Colours::black);
-        g.setFont(juce::Font(juce::FontOptions(13.0f)));
-        g.drawText(sugestoes_[static_cast<size_t>(rowNumber)], 6, 0, width - 12, height, juce::Justification::centredLeft);
-    }
-
-    void listBoxItemClicked(int row, const juce::MouseEvent&) override { escolher(row); }
 
     void escolher(int row) {
         if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
@@ -470,7 +542,7 @@ private:
     // 1º Enter com sugestão destacada: confirma a sugestão (nunca aplica um
     // valor parcial por engano). Lista fechada: Enter aplica. Vazio: nada.
     void tratarEnter() {
-        const int destacada = lista_->isVisible() ? lista_->getSelectedRow() : -1;
+        const int destacada = lista_->isVisible() ? lista_->destaque() : -1;
         if (destacada >= 0 && destacada < static_cast<int>(sugestoes_.size())) {
             escolher(destacada);
             return;
@@ -483,13 +555,13 @@ private:
     void moverDestaque(int delta) {
         if (!lista_->isVisible() || sugestoes_.empty()) return;
         const int n = static_cast<int>(sugestoes_.size());
-        int r = lista_->getSelectedRow() + delta;
-        lista_->selectRow(juce::jlimit(0, n - 1, r));
+        destaqueAtual_ = juce::jlimit(0, n - 1, lista_->destaque() + delta);
+        lista_->destacar(destaqueAtual_);
     }
 
     void mostrarTodasSugestoes() {
         sugestoes_ = valores_;
-        lista_->updateContent();
+        destaqueAtual_ = -1;
         lista_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
@@ -501,10 +573,8 @@ private:
         sugestoes_.clear();
         for (auto& v : valores_)
             if (v.startsWithIgnoreCase(q)) sugestoes_.push_back(v);
-        lista_->updateContent();
         // Digitando: a 1ª sugestão fica destacada (é ela que o Enter confirma).
-        if (!sugestoes_.empty()) lista_->selectRow(0);
-        else lista_->deselectAllRows();
+        destaqueAtual_ = sugestoes_.empty() ? -1 : 0;
         lista_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
@@ -527,7 +597,9 @@ private:
     std::vector<juce::String> valores_;
     std::vector<juce::String> sugestoes_;
     std::unique_ptr<FocusAwareTextEditor> editor_;
-    std::unique_ptr<juce::ListBox> lista_;
+    std::unique_ptr<ChipsSugestoes> lista_;
+    int alturaLista_ = 0;
+    int destaqueAtual_ = -1;
 };
 
 class GeoLocationPopupContent : public juce::Component {
