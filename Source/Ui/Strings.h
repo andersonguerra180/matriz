@@ -813,6 +813,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"preview.sem_arquivo", "No file attached to this item yet."},
         {"preview.sem_visualizacao", "No preview available for this file type."},
         {"preview.tocar", "Play"},
+        {"preview.video_preparando", "Preparing video preview (converting for playback)..."},
         {"preview.video_sem_player", "Video playback isn't implemented yet  -  showing the keyframe and technical data."},
         {"selecao.contagem", "{n} files selected"},
         {"vault.backup_planejado", "{n} item(s) added to this drive's backup plan  -  {total} planned in total"},

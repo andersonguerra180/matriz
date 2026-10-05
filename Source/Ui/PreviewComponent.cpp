@@ -2,6 +2,8 @@
 #include "../Audio/DispositivoAudioApp.h"
 #include "../Vault/DiskIdentity.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/ProcessoExterno.h"
+#include "VideoPlayerBridge.h"
 #include "LogosTipoArquivo.h"
 
 #include "../Ficha/FichaI18n.h"
@@ -10,7 +12,9 @@
 
 #include <exiv2/exiv2.hpp>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <set>
 
 namespace matriz::ui {
 
@@ -164,6 +168,80 @@ void PreviewComponent::mostrarItem(const std::string& itemId) {
     repaint();
 }
 
+// Proxy de preview de vídeo: <temp>/BKRMatrizPreview/<nome>_<tamanho>_<mtime>.mp4
+juce::File PreviewComponent::arquivoProxyVideo(const juce::File& origem) {
+    auto dir = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("BKRMatrizPreview");
+    dir.createDirectory();
+    const auto chave = juce::String::toHexString(origem.getFullPathName().hashCode64()) + "_" +
+                       juce::String(origem.getSize()) + "_" + juce::String(origem.getLastModificationTime().toMilliseconds());
+    return dir.getChildFile(chave + ".mp4");
+}
+
+namespace {
+std::set<std::string>& proxiesVideoComFalha() {  // só a message thread mexe
+    static std::set<std::string> s;
+    return s;
+}
+}  // namespace
+
+bool PreviewComponent::proxyVideoFalhou(const juce::File& origem) {
+    return proxiesVideoComFalha().count(origem.getFullPathName().toStdString()) > 0;
+}
+
+void PreviewComponent::gerarProxyVideoAsync(const juce::File& origem, const juce::File& destino) {
+    static std::atomic<bool> emAndamento{false};
+    if (emAndamento.exchange(true)) return;  // um transcode por vez; o item volta a pedir ao reabrir
+    juce::Component::SafePointer<PreviewComponent> safeThis(this);
+    const std::string itemId = itemId_;
+    juce::Thread::launch([safeThis, itemId, origem, destino] {
+        const auto parcial = destino.withFileExtension("parcial.mp4");
+        bool ok = false;
+        parcial.deleteFile();
+        // Primeiro o encoder por software (qualquer ffmpeg); VideoToolbox como segunda tentativa.
+        for (const char* codec : {"libx264", "h264_videotoolbox"}) {
+            juce::StringArray args;
+            args.add("-nostdin");
+            args.add("-y");
+            args.add("-i");
+            args.add(origem.getFullPathName());
+            args.add("-vf");
+            args.add("scale=-2:'min(720,ih)',format=yuv420p");
+            args.add("-c:v");
+            args.add(codec);
+            if (juce::String(codec) == "libx264") {
+                args.add("-preset");
+                args.add("ultrafast");
+                args.add("-crf");
+                args.add("28");
+            } else {
+                args.add("-b:v");
+                args.add("3M");
+            }
+            args.add("-c:a");
+            args.add("aac");
+            args.add("-movflags");
+            args.add("+faststart");
+            args.add("-f");
+            args.add("mp4");
+            args.add(parcial.getFullPathName());
+            try {
+                matriz::ingest::rodarEsperandoSucesso("ffmpeg", args, 120000);
+                ok = parcial.existsAsFile() && parcial.getSize() > 0 && parcial.moveFileTo(destino);
+            } catch (...) {
+                ok = false;
+            }
+            if (ok) break;
+            parcial.deleteFile();
+        }
+        emAndamento = false;
+        juce::MessageManager::callAsync([safeThis, itemId, origem, ok] {
+            if (!ok) proxiesVideoComFalha().insert(origem.getFullPathName().toStdString());
+            if (safeThis != nullptr && safeThis->itemId_ == itemId) safeThis->construirParaItem();
+            if (safeThis != nullptr) { safeThis->resized(); safeThis->repaint(); }
+        });
+    });
+}
+
 void PreviewComponent::construirParaItem() {
     timeline_.reset();
     videoPlayer_.reset();
@@ -246,9 +324,27 @@ void PreviewComponent::construirParaItem() {
             break;
         }
         case matriz::ingest::CategoriaMidia::Video: {
+            // Formato que o player nativo não toca (AVI/MKV/WMV com codec sem suporte): toca um proxy H.264
+            // gerado pelo ffmpeg em segundo plano (cache em temp); enquanto isso mostra a miniatura.
+            juce::File arquivoParaTocar = arquivoFile;
+            if (!vpArquivoReproduzivel(arquivoFile.getFullPathName().toRawUTF8())) {
+                const juce::File proxy = arquivoProxyVideo(arquivoFile);
+                if (proxy.existsAsFile() && proxy.getSize() > 0) {
+                    arquivoParaTocar = proxy;
+                } else if (proxyVideoFalhou(arquivoFile)) {
+                    if (caminhoMiniatura) imagemPrincipal_ = juce::ImageFileFormat::loadFrom(juce::File(*caminhoMiniatura));
+                    labelSemPreview_->setText(matriz::i18n::t("preview.video_sem_player"), juce::dontSendNotification);
+                    break;
+                } else {
+                    if (caminhoMiniatura) imagemPrincipal_ = juce::ImageFileFormat::loadFrom(juce::File(*caminhoMiniatura));
+                    labelSemPreview_->setText(matriz::i18n::t("preview.video_preparando"), juce::dontSendNotification);
+                    gerarProxyVideoAsync(arquivoFile, proxy);
+                    break;
+                }
+            }
             videoPlayer_ = std::make_unique<VideoPlayerComponent>();
             addAndMakeVisible(*videoPlayer_);
-            if (!videoPlayer_->carregar(arquivoFile)) {
+            if (!videoPlayer_->carregar(arquivoParaTocar)) {
                 videoPlayer_.reset();
                 if (caminhoMiniatura) imagemPrincipal_ = juce::ImageFileFormat::loadFrom(juce::File(*caminhoMiniatura));
                 labelSemPreview_->setText(matriz::i18n::t("preview.video_sem_player"), juce::dontSendNotification);

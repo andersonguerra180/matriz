@@ -44,6 +44,9 @@ public:
 
 private:
     void construirParaItem();
+    static juce::File arquivoProxyVideo(const juce::File& origem);
+    static bool proxyVideoFalhou(const juce::File& origem);
+    void gerarProxyVideoAsync(const juce::File& origem, const juce::File& destino);
     void timerCallback() override;
 
     ProjetoAberto& projeto_;

@@ -21,6 +21,10 @@ bool vpLoad(VPHandle /*h*/, const char* /*path*/) {
     return false;
 }
 
+bool vpArquivoReproduzivel(const char* /*path*/) {
+    return true;
+}
+
 void vpPlay(VPHandle h) {
     if (auto* ctx = static_cast<WinVPContext*>(h)) ctx->playing = true;
 }
