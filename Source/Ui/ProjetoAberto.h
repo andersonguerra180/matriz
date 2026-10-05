@@ -316,7 +316,7 @@ public:
     // opcao_livre (marca, formulação, ...), não só marca de fita.
     std::vector<std::string> valoresUsadosNoCampo(const std::string& campoId) const;
 
-    // --- Undo (up to 25 levels) ---
+    // --- Undo (up to 100 levels) ---
     struct UndoEntry {
         std::string descricao;
         std::vector<std::function<void()>> acoesReversas;
@@ -324,6 +324,11 @@ public:
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
+    // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.
+    //  - Visual: posição, tamanho (escala_no), ativo, cor das pastas do mapa + fator dos cartões.
+    //  - Snapshot: pastas + vínculos do mapa inteiro (e, com incluirLinhaMapa, a linha do folder_map: mapa apagado).
+    void registrarUndoVisualMapa(const std::string& descricao, const std::string& mapaId);
+    void registrarUndoSnapshotMapa(const std::string& descricao, const std::string& mapaId, bool incluirLinhaMapa = false);
     bool desfazer();
     bool podeDesfazer() const { return !pilhaUndo_.empty(); }
     std::string descricaoUndoAtual() const;
@@ -1229,7 +1234,9 @@ private:
     mutable std::vector<std::string> ultimosItensIngeridos_;
     mutable bool ultimosItensIngeridosValido_ = false;
 
-    static constexpr int kMaxUndo = 25;
+    static constexpr int kMaxUndo = 100;
+    int contadorSnapUndo_ = 0;
+    void registrarUndoSubarvoreApagada(const std::string& pastaId);
     std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
     void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);
     std::vector<UndoEntry> pilhaUndo_;

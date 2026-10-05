@@ -1421,6 +1421,85 @@ void ProjetoAberto::finalizarGrupoUndo() {
     if (aoMudarUndo) aoMudarUndo();
 }
 
+void ProjetoAberto::registrarUndoVisualMapa(const std::string& descricao, const std::string& mapaId) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    const std::string tab = "undo_vi_" + std::to_string(++contadorSnapUndo_);
+    const double fator = fatorCardsDoMapa(mapaId);
+    try {
+        projeto_->registro().run("CREATE TEMP TABLE " + tab + " AS SELECT id, posicao_x, posicao_y, escala_no, ativo, cor_customizada "
+                                 "FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+    } catch (...) { return; }
+    registrarUndo(descricao, [this, tab, mapaId, fator]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            for (const char* col : {"posicao_x", "posicao_y", "escala_no", "ativo", "cor_customizada"})
+                d.run(std::string("UPDATE acervo_pasta SET ") + col + " = (SELECT u." + col + " FROM " + tab +
+                      " u WHERE u.id = acervo_pasta.id) WHERE id IN (SELECT id FROM " + tab + ")", {});
+            d.run("COMMIT", {});
+            if (fator > 0.0) definirFatorCardsDoMapa(mapaId, fator);
+            d.run("DROP TABLE IF EXISTS " + tab, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
+}
+
+void ProjetoAberto::registrarUndoSnapshotMapa(const std::string& descricao, const std::string& mapaId, bool incluirLinhaMapa) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    const std::string n = std::to_string(++contadorSnapUndo_);
+    const std::string tp = "undo_pa_" + n, tl = "undo_li_" + n, tm = "undo_fm_" + n;
+    auto& db = projeto_->registro();
+    try {
+        db.run("CREATE TEMP TABLE " + tp + " AS SELECT * FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+        db.run("CREATE TEMP TABLE " + tl + " AS SELECT * FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+        if (incluirLinhaMapa)
+            db.run("CREATE TEMP TABLE " + tm + " AS SELECT * FROM folder_map WHERE id = ?", {matriz::db::Value::of(mapaId)});
+    } catch (...) { return; }
+    registrarUndo(descricao, [this, tp, tl, tm, mapaId, incluirLinhaMapa]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            if (incluirLinhaMapa)
+                d.run("INSERT OR REPLACE INTO folder_map SELECT * FROM " + tm, {});
+            d.run("DELETE FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("INSERT INTO acervo_pasta SELECT * FROM " + tp, {});
+            d.run("INSERT OR IGNORE INTO acervo_item_pasta SELECT * FROM " + tl + " WHERE item_id IN (SELECT id FROM item)", {});
+            d.run("COMMIT", {});
+            for (const auto& t : {tp, tl, tm}) d.run("DROP TABLE IF EXISTS " + t, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
+}
+
+void ProjetoAberto::registrarUndoSubarvoreApagada(const std::string& pastaId) {
+    if (desfazendo_ || !projeto_ || pastaId.empty()) return;
+    const std::string n = std::to_string(++contadorSnapUndo_);
+    const std::string tp = "undo_pa_" + n, tl = "undo_li_" + n;
+    auto& db = projeto_->registro();
+    try {
+        db.run("CREATE TEMP TABLE " + tp + " AS WITH RECURSIVE t(id) AS (SELECT id FROM acervo_pasta WHERE id = ? "
+               "UNION ALL SELECT c.id FROM acervo_pasta c JOIN t ON c.pasta_pai_id = t.id) "
+               "SELECT * FROM acervo_pasta WHERE id IN (SELECT id FROM t)", {matriz::db::Value::of(pastaId)});
+        db.run("CREATE TEMP TABLE " + tl + " AS SELECT * FROM acervo_item_pasta WHERE pasta_id IN (SELECT id FROM " + tp + ")", {});
+    } catch (...) { return; }
+    registrarUndo("Delete Folder", [this, tp, tl]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            d.run("INSERT OR IGNORE INTO acervo_pasta SELECT * FROM " + tp, {});
+            d.run("INSERT OR IGNORE INTO acervo_item_pasta SELECT * FROM " + tl + " WHERE item_id IN (SELECT id FROM item)", {});
+            d.run("COMMIT", {});
+            d.run("DROP TABLE IF EXISTS " + tp, {});
+            d.run("DROP TABLE IF EXISTS " + tl, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
+}
+
 bool ProjetoAberto::desfazer() {
     if (pilhaUndo_.empty()) return false;
     auto entry = std::move(pilhaUndo_.back());
@@ -2343,6 +2422,16 @@ std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::o
             matriz::db::Value::of(nome.trim().toStdString()), matriz::db::Value::of(ordem),
             matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
 
+    registrarUndo("Create Folder Map", [this, mapaId]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            d.run("DELETE FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM folder_map WHERE id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("COMMIT", {});
+        } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} }
+    });
     if (!origemMapaId) return mapaId; // em branco
 
     // Cópia do ORIGINAL ou de outro mapa: um RETRATO do momento, não uma
@@ -2363,6 +2452,14 @@ std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::o
 bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::String& novoNome) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || mapaId == kMapaOriginal || novoNome.trim().isEmpty()) return false;
+    if (!desfazendo_) {
+        auto st = projeto_->registro().prepare("SELECT nome FROM folder_map WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        if (st.step()) {
+            const juce::String nomeAntes(st.columnText(0));
+            registrarUndo("Rename Folder Map", [this, mapaId, nomeAntes]() { renomearFolderMap(mapaId, nomeAntes); });
+        }
+    }
     projeto_->registro().run("UPDATE folder_map SET nome = ?, atualizado_em = ? WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(novoNome.trim().toStdString()),
                                matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(mapaId),
@@ -2375,6 +2472,7 @@ bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
     if (!projeto_ || mapaId == kMapaOriginal) return false;
     // Fase 2: o mapa do MAIN (backup_config_main.mapa_id) não pode ser apagado.
     if (mapaId == mapaDoMainId()) return false;
+    registrarUndoSnapshotMapa("Delete Folder Map", mapaId, true);
     projeto_->registro().run("DELETE FROM folder_map WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(mapaId), matriz::db::Value::of(projeto_->projetoId())});
     return true;
@@ -3260,6 +3358,7 @@ void ProjetoAberto::usarArvoreProposta(const std::string& raizId) {
 void ProjetoAberto::descartarProposta(const std::string& raizId) {
     if (somenteLeitura_ || !projeto_ || raizId.empty()) return;
     try {
+        registrarUndoSnapshotMapa("Discard Proposed Tree", mapaIdDaPasta(raizId));
         projeto_->registro().run("DELETE FROM acervo_pasta WHERE proposta_id = ?", {matriz::db::Value::of(raizId)});
     } catch (...) {}
 }
@@ -3330,6 +3429,7 @@ int ProjetoAberto::mesclarProposta(const std::string& raizId, const std::string&
     try {
         const std::string mapaId = mapaDaPasta(db, raizId);
         if (mapaId.empty()) return -1;
+        registrarUndoSnapshotMapa(alvoId.empty() ? "Use Proposed Tree" : "Merge Proposed Tree", mapaId);
         const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
         const std::string agora = matriz::model::agoraIso8601();
         int colocados = 0;
@@ -3475,6 +3575,7 @@ bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
     }
+    registrarUndoSubarvoreApagada(pastaId);
     projeto_->registro().run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(pastaId)});
     return true;
 }
