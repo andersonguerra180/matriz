@@ -126,6 +126,12 @@ inline void fecharWatchdog() {
     g_watchdogLogger.reset();
 }
 
+// Linha avulsa no log do Watchdog (no-op em alvos sem inicializarWatchdog()).
+inline void logarWatchdog(const juce::String& texto) {
+    if (g_watchdogLogger == nullptr) return;
+    g_watchdogLogger->log("[" + juce::Time::getCurrentTime().formatted("%Y-%m-%d %H:%M:%S.%s") + "] " + texto);
+}
+
 inline constexpr long long kOrcamentoCallbackMs = 16;
 // Acima disto o log inclui stack trace; entre o orçamento e este valor, só a linha com o tempo.
 inline constexpr long long kLimiarStackTraceMs = 500;

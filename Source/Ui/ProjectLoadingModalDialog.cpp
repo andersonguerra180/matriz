@@ -2,33 +2,51 @@
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
-#include <future>
-#include <thread>
+#include "../Diag/Watchdog.h"
+#include <chrono>
 
 namespace matriz::ui {
 
 namespace {
 
-// Item novo (hoje): um clique que reabre a mesma pasta (ou abre outra
-// enquanto a primeira ainda está tentando) não cancelava a tentativa
-// anterior — só o diálogo dela desistia de esperar. A leitura de
-// Project::abrir() ficava rodando sozinha em segundo plano, competindo por
-// CPU/IO com a tentativa nova. Resultado observado: abrir "Recovery"
-// estourou o prazo, o operador tentou "Antigas e Variadas" em seguida — que
-// também estourou, não porque tivesse algo de errado nele, mas porque
-// "Recovery" ainda estava rodando por baixo, brigando pelos mesmos
-// recursos. Este contador só deixa UMA tentativa de verdade em voo por vez;
-// um segundo clique enquanto isso é recusado com uma mensagem, em vez de
-// empilhar mais uma tentativa concorrente.
+// Só UMA abertura de verdade em voo por vez (um segundo clique competiria por CPU/IO com a
+// primeira). A trava é liberada em TODOS os caminhos de saída de Project::abrir() (sucesso,
+// erro, exceção, cancelamento) — ver o guard `Liberar` em launch().
 std::atomic<bool>& carregamentoEmVoo() {
     static std::atomic<bool> flag{false};
     return flag;
 }
 
+// Abertura atual/mais recente (acessada só pela message thread).
+std::shared_ptr<EstadoAberturaProjeto>& estadoAtual() {
+    static std::shared_ptr<EstadoAberturaProjeto> e;
+    return e;
+}
+
+juce::String formatarDuracao(juce::int64 segundos) {
+    const auto m = segundos / 60;
+    const auto s = segundos % 60;
+    return juce::String(m) + ":" + juce::String(s).paddedLeft('0', 2);
+}
+
 } // namespace
 
-ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta)
-    : pasta_(pasta), progressBar_(currentProgress_) {
+struct EstadoAberturaProjeto {
+    juce::File pasta;
+    juce::String nome;
+    std::chrono::steady_clock::time_point inicio = std::chrono::steady_clock::now();
+    std::shared_ptr<matriz::model::CancelamentoAbertura> cancel = std::make_shared<matriz::model::CancelamentoAbertura>();
+    std::atomic<bool> terminou{false};    // Project::abrir() retornou (trava liberada)
+    std::atomic<bool> abandonada{false};  // diálogo desistiu de esperar o cancelamento: descartar o resultado
+    juce::int64 segundosDecorridos() const {
+        return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - inicio).count();
+    }
+};
+
+ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta,
+                                                     std::shared_ptr<EstadoAberturaProjeto> estado,
+                                                     bool aguardandoApenas)
+    : pasta_(pasta), progressBar_(currentProgress_), estado_(std::move(estado)), aguardandoApenas_(aguardandoApenas) {
     const auto& tk = tema();
 
     bool isCatalog = matriz::catalogo::ehPastaDeCatalogo(pasta);
@@ -60,7 +78,22 @@ ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta)
     lblStatus_.setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(lblStatus_);
 
-    setSize(450, 140);
+    const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    btnContinuar_.setButtonText(isPt ? "CONTINUAR ESPERANDO" : "KEEP WAITING");
+    btnCancelar_.setButtonText(isPt ? "CANCELAR" : "CANCEL");
+    for (auto* b : {&btnContinuar_, &btnCancelar_}) {
+        b->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        b->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        addChildComponent(*b);
+    }
+    btnContinuar_.onClick = [this]() {
+        continuouEsperando_ = true;
+        btnContinuar_.setVisible(false);
+        btnCancelar_.setVisible(false);
+    };
+    btnCancelar_.onClick = [this]() { cliqueCancelar(); };
+
+    setSize(450, 152);
     startTimer(25);
 }
 
@@ -90,6 +123,11 @@ void ProjectLoadingModalDialog::resized() {
     area.removeFromTop(8);
 
     lblStatus_.setBounds(area.removeFromTop(20));
+    area.removeFromTop(8);
+    auto botoes = area.removeFromTop(24);
+    btnCancelar_.setBounds(botoes.removeFromRight(110));
+    botoes.removeFromRight(8);
+    btnContinuar_.setBounds(botoes.removeFromRight(170));
 }
 
 void ProjectLoadingModalDialog::setStatus(const juce::String& text, double progress) {
@@ -104,8 +142,31 @@ void ProjectLoadingModalDialog::timerCallback() {
     double target = targetProgress_;
     lock.unlock();
 
-    if (text.isNotEmpty() && lblStatus_.getText() != text) {
+    if (!avisoMostrado_ && !cancelando_ && !aguardandoApenas_ && text.isNotEmpty() && lblStatus_.getText() != text) {
         lblStatus_.setText(text, juce::dontSendNotification);
+    }
+
+    if (estado_ && !cancelando_) {
+        if (aguardandoApenas_) {
+            if (estado_->terminou.load()) { closeDialog(); return; }
+            lblStatus_.setText(textoAindaAbrindo("Ainda finalizando", "Still finishing"), juce::dontSendNotification);
+        } else if (!estado_->terminou.load() && estado_->segundosDecorridos() >= 45) {
+            if (!avisoMostrado_) {
+                avisoMostrado_ = true;
+                btnContinuar_.setVisible(true);
+                btnCancelar_.setVisible(true);
+            }
+            lblStatus_.setText(textoAindaAbrindo("Ainda abrindo", "Still opening"), juce::dontSendNotification);
+        }
+    } else if (estado_ && cancelando_) {
+        const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+        lblStatus_.setText(isPt ? "Cancelando..." : "Cancelling...", juce::dontSendNotification);
+        // Se o cancelamento demorar (disco preso), solta o diálogo; o resultado será descartado.
+        if (!estado_->terminou.load() && juce::Time::currentTimeMillis() - cancelouEmMs_ > 10000) {
+            estado_->abandonada.store(true);
+            closeDialog();
+            return;
+        }
     }
 
     if (std::abs(target - currentProgress_) > 0.005) {
@@ -113,6 +174,22 @@ void ProjectLoadingModalDialog::timerCallback() {
     } else {
         currentProgress_ = target;
     }
+}
+
+juce::String ProjectLoadingModalDialog::textoAindaAbrindo(const char* verboPt, const char* verboEn) const {
+    const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+    const auto tempo = formatarDuracao(estado_ ? estado_->segundosDecorridos() : 0);
+    return (isPt ? juce::String(verboPt) : juce::String(verboEn)) + " " + (estado_ ? estado_->nome : juce::String()) +
+           juce::String::fromUTF8(" \xe2\x80\x94 ") + tempo;
+}
+
+void ProjectLoadingModalDialog::cliqueCancelar() {
+    if (!estado_ || cancelando_) return;
+    cancelando_ = true;
+    cancelouEmMs_ = juce::Time::currentTimeMillis();
+    btnContinuar_.setVisible(false);
+    btnCancelar_.setVisible(false);
+    estado_->cancel->cancelar();
 }
 
 void ProjectLoadingModalDialog::closeDialog() {
@@ -126,22 +203,58 @@ void ProjectLoadingModalDialog::closeDialog() {
     }
 }
 
+void ProjectLoadingModalDialog::mostrarEsperaDaAnterior(juce::Component* parentComp) {
+    auto estado = estadoAtual();
+    if (!estado || estado->terminou.load()) return;
+
+    auto* dialog = new ProjectLoadingModalDialog(estado->pasta, estado, true);
+    juce::DialogWindow::LaunchOptions options;
+    options.content.setOwned(dialog);
+    options.dialogTitle = "";
+    options.dialogBackgroundColour = juce::Colours::transparentBlack;
+    options.useNativeTitleBar = false;
+    options.resizable = false;
+    options.escapeKeyTriggersCloseButton = false;
+    if (parentComp != nullptr && parentComp->isShowing()) {
+        auto c = parentComp->getScreenBounds().getCentre();
+        dialog->setCentrePosition(c.x, c.y);
+    }
+    options.launchAsync();
+}
+
 void ProjectLoadingModalDialog::launch(const juce::File& pasta,
                                       juce::Component* parentComp,
                                       OnCompleteCallback onComplete) {
     bool esperado = false;
     if (!carregamentoEmVoo().compare_exchange_strong(esperado, true)) {
-        bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
-        if (onComplete) {
-            onComplete(nullptr, "", 0, false,
-                (isPt ? juce::String::fromUTF8("Já existe uma abertura de projeto em andamento — aguarde ela terminar (ou dar erro) antes de tentar outra.")
-                      : juce::String("A project is already being opened — wait for it to finish (or fail) before trying another."))
-                    .toStdString());
-        }
+        const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+        auto anterior = estadoAtual();
+        const juce::String nome = anterior ? anterior->nome : juce::String("?");
+        const auto tempo = formatarDuracao(anterior ? anterior->segundosDecorridos() : 0);
+        const juce::String msg = isPt
+            ? (juce::String::fromUTF8("A cole\xc3\xa7\xc3\xa3o \"") + nome + juce::String::fromUTF8("\" ainda est\xc3\xa1 abrindo (h\xc3\xa1 ") + tempo +
+               juce::String::fromUTF8("). Aguarde ela terminar antes de abrir outra."))
+            : ("\"" + nome + "\" is still opening (" + tempo + " so far). Wait for it to finish before opening another.");
+        juce::Component::SafePointer<juce::Component> safeParent(parentComp);
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle(isPt ? "Abertura em andamento" : "Opening in progress")
+                .withMessage(msg)
+                .withButton(isPt ? "AGUARDAR" : "WAIT")
+                .withButton("OK"),
+            [safeParent](int resultado) {
+                if (resultado == 1) mostrarEsperaDaAnterior(safeParent.getComponent());
+            });
         return;
     }
 
-    auto* dialog = new ProjectLoadingModalDialog(pasta);
+    auto estado = std::make_shared<EstadoAberturaProjeto>();
+    estado->pasta = pasta;
+    estado->nome = pasta.getFileName().isNotEmpty() ? pasta.getFileName() : pasta.getFullPathName();
+    estadoAtual() = estado;
+
+    auto* dialog = new ProjectLoadingModalDialog(pasta, estado);
     juce::Component::SafePointer<ProjectLoadingModalDialog> safeDialog(dialog);
 
     juce::DialogWindow::LaunchOptions options;
@@ -163,57 +276,36 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
     options.launchAsync();
 
     // Spawn background worker thread
-    juce::Thread::launch([safeDialog, pasta, onComplete = std::move(onComplete)]() mutable {
+    juce::Thread::launch([safeDialog, estado, pasta, onComplete = std::move(onComplete)]() mutable {
         std::unique_ptr<matriz::model::Project> projeto;
         std::string erroMsg;
         std::string rotuloMaisRecente;
         int64_t revisaoMaisRecente = 0;
         bool isCatalog = false;
+        bool cancelado = false;
+        const auto inicioDialogo = std::chrono::steady_clock::now();
 
-        // Step 1: Open database & records
-        //
-        // Item novo (hoje): mesma classe de bug já corrigida no ingest —
-        // Project::abrir() é síncrono e bloqueante (SQLite abre e recupera
-        // WAL/journal, lê e escreve várias linhas), sem prazo nenhum. Se o
-        // projeto ficou com o banco num estado sujo por causa de um
-        // travamento anterior (ou o storage em si continuar lento/
-        // indisponível — a mesma causa do travamento original), abrir()
-        // podia travar pra sempre e este diálogo ficava preso em 25% sem
-        // nenhum jeito de fechar, sem cancelar, sem nada — exatamente o
-        // relatado. Roda numa thread solta com prazo: se estourar, some com
-        // um erro em vez de travar o diálogo pra sempre.
+        // Step 1: Open database & records. Sem prazo que gere erro: aos 45 s o diálogo oferece
+        // CONTINUAR ESPERANDO / CANCELAR; cancelar interrompe Project::abrir() de verdade.
         if (safeDialog) safeDialog->setStatus(matriz::i18n::t("loading.step_db"), 0.25);
         {
-            auto promessaAbrir = std::make_shared<std::promise<std::unique_ptr<matriz::model::Project>>>();
-            auto futuroAbrir = promessaAbrir->get_future();
-            std::thread([promessaAbrir, pasta]() {
-                try {
-                    promessaAbrir->set_value(matriz::model::Project::abrir(pasta));
-                } catch (...) {
-                    try { promessaAbrir->set_exception(std::current_exception()); } catch (...) {}
-                }
-                // Só libera aqui — quando Project::abrir() REALMENTE
-                // termina — não lá embaixo quando o wait_for desiste. É o
-                // que impede um segundo clique de empilhar outra tentativa
-                // por cima desta enquanto ela ainda está rodando de verdade.
-                carregamentoEmVoo().store(false);
-            }).detach();
-
-            constexpr int kPrazoAbrirSegundos = 45;
-            if (futuroAbrir.wait_for(std::chrono::seconds(kPrazoAbrirSegundos)) == std::future_status::ready) {
-                try {
-                    projeto = futuroAbrir.get();
-                } catch (const std::exception& e) {
-                    erroMsg = e.what();
-                }
-            } else {
-                erroMsg = "Timed out opening project after " + std::to_string(kPrazoAbrirSegundos) +
-                           "s (storage may be slow, disconnected, or unresponsive): " +
-                           pasta.getFullPathName().toStdString();
+            // A trava é liberada em TODOS os caminhos (sucesso, erro, exceção, cancelamento).
+            struct Liberar {
+                std::shared_ptr<EstadoAberturaProjeto> e;
+                ~Liberar() { e->terminou.store(true); carregamentoEmVoo().store(false); }
+            } liberar{estado};
+            try {
+                projeto = matriz::model::Project::abrir(pasta, estado->cancel.get());
+            } catch (const matriz::model::AberturaCancelada&) {
+                cancelado = true;
+            } catch (const std::exception& e) {
+                erroMsg = e.what();
+            } catch (...) {
+                erroMsg = "unknown error opening project";
             }
         }
 
-        if (projeto != nullptr) {
+        if (projeto != nullptr && !estado->cancel->cancelado()) {
             // Step 2: Destination checks
             if (safeDialog) safeDialog->setStatus(matriz::i18n::t("loading.step_destinations"), 0.55);
             try {
@@ -239,11 +331,22 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
             try {
                 projeto->registro().prepare("SELECT COUNT(*) FROM item").step();
             } catch (...) {}
-        } else {
+        } else if (projeto == nullptr && !cancelado) {
             if (matriz::catalogo::ehPastaDeCatalogo(pasta)) {
                 isCatalog = true;
             }
         }
+
+        // Cancelado (ou diálogo abandonado): fecha o projeto resultante (destrutor fecha os bancos) e descarta.
+        if (estado->cancel->cancelado() || estado->abandonada.load()) {
+            cancelado = true;
+            projeto.reset();
+        }
+
+        matriz::diag::logarWatchdog("[Abrir] dialogo " + estado->nome + " total=" +
+            juce::String(static_cast<juce::int64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - inicioDialogo).count())) + " ms" +
+            (cancelado ? " (cancelado)" : ""));
 
         // Step 4: Finalize workspace setup on Message Thread
         if (safeDialog) safeDialog->setStatus(matriz::i18n::t("loading.step_workspace"), 0.95);
@@ -256,11 +359,14 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
                                          rev = revisaoMaisRecente,
                                          cat = isCatalog,
                                          err = std::move(erroMsg),
+                                         cancelado,
                                          cb = std::move(onComplete)]() mutable {
             if (safeDialog) {
                 safeDialog->setStatus(matriz::i18n::t("loading.step_ready"), 1.0);
                 safeDialog->closeDialog();
             }
+            if (cancelado) return;  // abertura cancelada/abandonada: não abre sozinho
+            if (proj) proj->iniciarAutocorrecoesEmBackground();
             if (cb) {
                 cb(std::move(proj), std::move(rotulo), rev, cat, std::move(err));
             }

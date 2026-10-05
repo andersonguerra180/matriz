@@ -353,7 +353,7 @@ private:
 
         juce::String logMsg = activity;
         if (divs > 0) {
-            logMsg += (isPt ? "  •  Divergências encontradas: " : "  •  Divergences found: ") + juce::String(divs);
+            logMsg += (isPt ? juce::String::fromUTF8("  •  Divergências encontradas: ") : juce::String::fromUTF8("  •  Divergences found: ")) + juce::String(divs);
         }
         lblLog_.setText(logMsg, juce::dontSendNotification);
 
@@ -497,7 +497,7 @@ private:
                 juce::ScopedLock sl(lock_);
                 currentActivity_ = (matriz::i18n::localeAtivo().startsWith("pt"))
                     ? (juce::String::fromUTF8("⚠ Ausente no alvo: ") + relAlvo)
-                    : ("⚠ Missing in target: " + relAlvo);
+                    : (juce::String::fromUTF8("⚠ Missing in target: ") + relAlvo);
             } else {
                 {
                     juce::ScopedLock sl(lock_);
@@ -534,12 +534,12 @@ private:
                     juce::ScopedLock sl(lock_);
                     currentActivity_ = (matriz::i18n::localeAtivo().startsWith("pt"))
                         ? (juce::String::fromUTF8("⚠ Hash divergente detectado: ") + relFonte)
-                        : ("⚠ Divergent hash detected: " + relFonte);
+                        : (juce::String::fromUTF8("⚠ Divergent hash detected: ") + relFonte);
                 } else {
                     juce::ScopedLock sl(lock_);
                     currentActivity_ = (matriz::i18n::localeAtivo().startsWith("pt"))
                         ? (juce::String::fromUTF8("✓ Arquivo idêntico: ") + relFonte)
-                        : ("✓ Identical file: " + relFonte);
+                        : (juce::String::fromUTF8("✓ Identical file: ") + relFonte);
                 }
             }
 
@@ -830,7 +830,7 @@ private:
 
         juce::AlertWindow::showMessageBoxAsync(
             juce::AlertWindow::InfoIcon,
-            isPt ? "Sincronização Concluída" : "Sync Completed",
+            isPt ? juce::String::fromUTF8("Sincronização Concluída") : "Sync Completed",
             (isPt ? juce::String::fromUTF8("Arquivos copiados com sucesso para o alvo: ") : "Files successfully copied to target: ") + juce::String(copiados));
 
         if (onConcluido_) onConcluido_();

@@ -439,7 +439,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
 
     lblDicaArrastar_ = std::make_unique<juce::Label>(
         "", isPt ? juce::String::fromUTF8("💡 Arraste o logo diretamente na foto para posicionar.")
-                 : "💡 Drag the logo directly on the photo to position freely.");
+                 : juce::String::fromUTF8("💡 Drag the logo directly on the photo to position freely."));
     lblDicaArrastar_->setFont(juce::Font(juce::FontOptions(11.0f)));
     lblDicaArrastar_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblDicaArrastar_);

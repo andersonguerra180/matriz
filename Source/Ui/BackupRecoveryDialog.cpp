@@ -23,7 +23,7 @@ public:
         juce::File pastaRaiz(versao_.destinoPath);
 
         lblHeader_.setText((isPt ? "Navegador de Recuperação: [" : "Recovery Browser: [") +
-                           versao_.rotulo + "]  —  " + versao_.destinoPath, juce::dontSendNotification);
+                           versao_.rotulo + juce::String::fromUTF8("]  —  ") + versao_.destinoPath, juce::dontSendNotification);
         lblHeader_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(lblHeader_);
@@ -132,8 +132,8 @@ private:
             if (arqDestino.existsAsFile()) {
                 bool sobrescrever = juce::AlertWindow::showOkCancelBox(
                     juce::AlertWindow::WarningIcon,
-                    isPt ? "Arquivo já existe" : "File already exists",
-                    isPt ? "O arquivo já existe na pasta escolhida. Deseja substituí-lo?"
+                    isPt ? juce::String::fromUTF8("Arquivo já existe") : "File already exists",
+                    isPt ? juce::String::fromUTF8("O arquivo já existe na pasta escolhida. Deseja substituí-lo?")
                          : "The file already exists in the destination folder. Do you want to replace it?",
                     isPt ? "Substituir" : "Replace",
                     isPt ? "Cancelar" : "Cancel");
@@ -158,7 +158,7 @@ private:
             } else {
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::WarningIcon,
-                    isPt ? "Erro na Cópia" : "Copy Error",
+                    isPt ? juce::String::fromUTF8("Erro na Cópia") : "Copy Error",
                     isPt ? juce::String::fromUTF8("Não foi possível copiar o arquivo para a pasta de destino.")
                          : "Could not copy file to destination folder.");
             }
@@ -276,7 +276,7 @@ void abrirJanelaNavegador(ProjetoAberto& projeto, const BackupVersionRef& versao
 
     juce::DialogWindow::LaunchOptions opt;
     opt.content.setOwned(browserComp.release());
-    opt.dialogTitle = matriz::i18n::t("backup.recuperar_titulo") + " — " + versao.rotulo;
+    opt.dialogTitle = matriz::i18n::t("backup.recuperar_titulo") + juce::String::fromUTF8(" — ") + versao.rotulo;
     opt.dialogBackgroundColour = tema().painel;
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;

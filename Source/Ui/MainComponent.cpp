@@ -3925,7 +3925,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                         : juce::String("Ingest: File I/O Timeout")),
                             { (isPt ? juce::String::fromUTF8("Arquivo: ") : juce::String("File: ")) + arquivo.getFileName(),
                               isPt ? juce::String::fromUTF8("Removido do Intake — o restante do lote continuou normalmente.")
-                                   : juce::String("Removed from Intake — the rest of the batch continued normally.") });
+                                   : juce::String(juce::String::fromUTF8("Removed from Intake — the rest of the batch continued normally.")) });
                     } catch (...) {}
                 }
 

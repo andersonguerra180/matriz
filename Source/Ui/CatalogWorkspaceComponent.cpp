@@ -418,7 +418,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*campoBusca_);
 
     btnLupaBusca_ = std::make_unique<LupaBuscaButton>();
-    btnLupaBusca_->setTooltip("Run search — clears every active filter first, so the search is always project-wide");
+    btnLupaBusca_->setTooltip(juce::String::fromUTF8("Run search — clears every active filter first, so the search is always project-wide"));
     btnLupaBusca_->onClick = [this] { executarBusca(); };
     addAndMakeVisible(*btnLupaBusca_);
 

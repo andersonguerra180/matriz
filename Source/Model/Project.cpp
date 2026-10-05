@@ -1,10 +1,14 @@
 #include "Project.h"
 #include "ProjectLog.h"
 
+#include <algorithm>
+#include <chrono>
 #include <ctime>
+#include <functional>
 
 #include "BinaryData.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Diag/Watchdog.h"
 
 namespace matriz::model {
 
@@ -782,6 +786,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
 
     garantirColuna(registro, "arquivo", "visto_pela_ultima_vez", "TEXT");
     garantirColuna(registro, "arquivo", "estado_presenca", "TEXT NOT NULL DEFAULT 'presente'");
+    // Última vez (ms desde a época) que a autocorreção procurou o arquivo de origem e NÃO achou;
+    // evita repetir a busca em disco a cada abertura (Project::executarAutocorrecoes, passo 6).
+    garantirColuna(registro, "arquivo", "origem_verificada_em", "INTEGER");
     garantirColuna(registro, "arquivo", "vault_id", "TEXT REFERENCES vault(id) ON DELETE SET NULL");
 
     // Vault hardware & category columns (§2 Spec Storage)
@@ -1290,7 +1297,33 @@ std::unique_ptr<Project> Project::criar(const juce::File& pastaRaiz, const NovoP
     return std::unique_ptr<Project>(new Project(pastaProject, std::move(registro), std::move(indice), projetoId, destInfo));
 }
 
-std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
+void CancelamentoAbertura::cancelar() {
+    cancelado_.store(true);
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto* h : handles_) sqlite3_interrupt(h);
+}
+void CancelamentoAbertura::registrar(sqlite3* h) {
+    if (h == nullptr) return;
+    std::lock_guard<std::mutex> lock(mutex_);
+    handles_.push_back(h);
+    if (cancelado_.load()) sqlite3_interrupt(h);
+}
+void CancelamentoAbertura::remover(sqlite3* h) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    handles_.erase(std::remove(handles_.begin(), handles_.end(), h), handles_.end());
+}
+
+std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, CancelamentoAbertura* cancelamento) {
+    const auto inicioTotal = std::chrono::steady_clock::now();
+    auto ultimaEtapa = inicioTotal;
+    const juce::String nomeLog = qualquerPasta.getFileName();
+    auto etapa = [&](const char* nome) {
+        const auto agora = std::chrono::steady_clock::now();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(agora - ultimaEtapa).count();
+        ultimaEtapa = agora;
+        matriz::diag::logarWatchdog("[Abrir] " + nomeLog + " etapa=" + nome + " " + juce::String(static_cast<juce::int64>(ms)) + " ms");
+        if (cancelamento) cancelamento->verificar();
+    };
     juce::File pastaProjeto = resolverPastaProjeto(qualquerPasta);
     if (!pastaProjeto.isDirectory())
         throw ProjectError("project folder not found: " + pastaProjeto.getFullPathName().toStdString());
@@ -1304,9 +1337,19 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
     auto registro = std::make_unique<matriz::db::Database>(registroFile.getFullPathName().toStdString());
     auto indice = std::make_unique<matriz::db::Database>(indiceFile.getFullPathName().toStdString());
 
+    // Declarado DEPOIS dos bancos: desregistra os handles do sinal de cancelamento antes de
+    // qualquer fechamento (sqlite3_interrupt num handle fechado seria UB).
+    struct DesregistrarHandles {
+        CancelamentoAbertura* c; sqlite3* a; sqlite3* b;
+        ~DesregistrarHandles() { if (c) { c->remover(a); c->remover(b); } }
+    } desregistrar{cancelamento, registro->handle(), indice->handle()};
+    if (cancelamento) { cancelamento->registrar(registro->handle()); cancelamento->registrar(indice->handle()); }
+    etapa("abrir_bancos");
+
     registro->setRastrearSujo(false);
     indice->setRastrearSujo(false);
     aplicarSchemas(*registro, *indice);
+    etapa("schemas_e_migracoes");
 
     matriz::db::Statement stmt = registro->prepare("SELECT id FROM projeto LIMIT 1");
     if (!stmt.step())
@@ -1393,8 +1436,11 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
         // Safe fallback in case of errors
     }
 
+    etapa("destino_e_vault");
+
     // Higieniza a estrutura física do projeto para garantir Media/ estritamente limpa
     sanitizarEstruturaDestino(raiz);
+    etapa("sanitizar_estrutura_destino");
 
     // 0. Desativar destinos inválidos que apontam para /Media ou /Project (sem apagar nada do disco)
     try {
@@ -1422,12 +1468,16 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
         }
     } catch (...) {}
 
+    etapa("autocorrecao_0_destinos_invalidos");
+
     // 1. Remove empty/invalid ghost arquivo rows where no paths exist
     try {
         registro->run(
             "DELETE FROM arquivo WHERE (caminho_relativo IS NULL OR caminho_relativo = '') "
             "AND (caminho_absoluto_origem IS NULL OR caminho_absoluto_origem = '')", {});
     } catch (...) {}
+
+    etapa("autocorrecao_1_arquivos_fantasma");
 
     // 2. Self-healing database cleanup of zombie/ghost items from interrupted ingests.
     // Clean up items that have NO arquivo row, NO archive code (never completed analysis),
@@ -1442,6 +1492,8 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
             ")", {});
     } catch (...) {}
 
+    etapa("autocorrecao_2_itens_zumbi");
+
     // 3. Ensure master flag is set if an item has files but no eh_master = 1
     try {
         registro->run(
@@ -1453,94 +1505,17 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
             ")", {});
     } catch (...) {}
 
+    etapa("autocorrecao_3_eh_master");
+
     // 4. Ensure all primary files for images and documents are marked as eh_master = 1
     try {
         registro->run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
     } catch (...) {}
 
-    // 5. Self-heal missing/unknown tipo_midia based on file extension
-    try {
-        auto stmtTipo = registro->prepare(
-            "SELECT i.id, i.titulo, a.caminho_relativo, a.caminho_absoluto_origem "
-            "FROM item i "
-            "JOIN arquivo a ON a.item_id = i.id "
-            "WHERE (i.tipo_midia IS NULL OR i.tipo_midia = '' OR i.tipo_midia = 'desconhecido') "
-            "ORDER BY a.eh_master DESC, a.id ASC");
-        struct ItemFix {
-            std::string id;
-            std::string tipo;
-        };
-        std::vector<ItemFix> fixes;
-        while (stmtTipo.step()) {
-            std::string id = stmtTipo.columnText(0);
-            std::string tit = stmtTipo.columnText(1);
-            std::string rel = stmtTipo.columnText(2);
-            std::string abs = stmtTipo.columnText(3);
+    etapa("autocorrecao_4_eh_master_papel");
 
-            juce::String path(abs);
-            if (path.isEmpty()) path = juce::String(rel);
-            if (path.isEmpty()) path = juce::String(tit);
-
-            auto cat = matriz::ingest::categoriaPorExtensao(juce::File(path));
-            std::string tipo;
-            switch (cat) {
-                case matriz::ingest::CategoriaMidia::Audio:     tipo = "digital_audio"; break;
-                case matriz::ingest::CategoriaMidia::Video:     tipo = "digital_video"; break;
-                case matriz::ingest::CategoriaMidia::Imagem:    tipo = "foto"; break;
-                case matriz::ingest::CategoriaMidia::Documento: tipo = "documento"; break;
-                case matriz::ingest::CategoriaMidia::Texto:     tipo = "documento"; break;
-                case matriz::ingest::CategoriaMidia::Sessao:    tipo = "sessao"; break;
-                default: break;
-            }
-            if (!tipo.empty()) {
-                fixes.push_back({id, tipo});
-            }
-        }
-        for (const auto& f : fixes) {
-            registro->run("UPDATE item SET tipo_midia = ? WHERE id = ?",
-                          {matriz::db::Value::of(f.tipo), matriz::db::Value::of(f.id)});
-        }
-    } catch (...) {}
-
-    // 6. Self-heal missing caminho_absoluto_origem from caminho_relativo if file exists
-    try {
-        auto stmtCaminho = registro->prepare(
-            "SELECT a.id, a.caminho_relativo FROM arquivo a "
-            "WHERE (a.caminho_absoluto_origem IS NULL OR a.caminho_absoluto_origem = '') "
-            "AND (a.caminho_relativo IS NOT NULL AND a.caminho_relativo != '')");
-        struct PathFix {
-            std::string arquivoId;
-            std::string absolutePath;
-        };
-        std::vector<PathFix> pathFixes;
-        while (stmtCaminho.step()) {
-            std::string arqId = stmtCaminho.columnText(0);
-            juce::String rel = stmtCaminho.columnText(1);
-            juce::File f(rel);
-            if (juce::File::isAbsolutePath(rel) && f.existsAsFile()) {
-                pathFixes.push_back({arqId, f.getFullPathName().toStdString()});
-            } else {
-                juce::File inProj = pastaProjeto.getChildFile(rel);
-                if (inProj.existsAsFile()) {
-                    pathFixes.push_back({arqId, inProj.getFullPathName().toStdString()});
-                } else {
-                    juce::File inMedia = pastaProjeto.getParentDirectory().getChildFile("Media").getChildFile(rel);
-                    if (inMedia.existsAsFile()) {
-                        pathFixes.push_back({arqId, inMedia.getFullPathName().toStdString()});
-                    } else {
-                        juce::File inRaiz = pastaProjeto.getParentDirectory().getChildFile(rel);
-                        if (inRaiz.existsAsFile()) {
-                            pathFixes.push_back({arqId, inRaiz.getFullPathName().toStdString()});
-                        }
-                    }
-                }
-            }
-        }
-        for (const auto& pf : pathFixes) {
-            registro->run("UPDATE arquivo SET caminho_absoluto_origem = ? WHERE id = ?",
-                          {matriz::db::Value::of(pf.absolutePath), matriz::db::Value::of(pf.arquivoId)});
-        }
-    } catch (...) {}
+    // Passos 5 (tipo_midia ausente) e 6 (caminho_absoluto_origem ausente) varrem a tabela
+    // inteira e o disco: rodam em background depois da abertura — Project::executarAutocorrecoes.
 
     // Garante que o arquivo de projeto auto-contido (.mtz ou .bkm) existe na raiz do projeto/backup (Tarefa 11)
     try {
@@ -1578,12 +1553,195 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta) {
         }
     } catch (...) {}
 
+    etapa("arquivo_de_projeto_mtz");
     registro->limparSujo();
     indice->limparSujo();
     registro->setRastrearSujo(true);
     indice->setRastrearSujo(true);
 
+    matriz::diag::logarWatchdog("[Abrir] " + nomeLog + " TOTAL " +
+        juce::String(static_cast<juce::int64>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - inicioTotal).count())) + " ms");
     return std::unique_ptr<Project>(new Project(pastaProjeto, std::move(registro), std::move(indice), projetoId, destInfo));
+}
+
+Project::~Project() {
+    autocorrecaoCancel_.cancelar();
+    if (autocorrecaoThread_.joinable()) autocorrecaoThread_.join();
+}
+
+void Project::iniciarAutocorrecoesEmBackground() {
+    if (autocorrecaoThread_.joinable()) return;
+    autocorrecaoThread_ = std::thread([this]() {
+        try {
+            executarAutocorrecoes(&autocorrecaoCancel_);
+        } catch (...) {}
+    });
+}
+
+// Autocorreções pesadas, movidas para fora de Project::abrir(). Mesmas regras de antes;
+// só mudam QUANDO (depois da abertura, em background) e COMO gravam (blocos de 500 por transação).
+void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
+    constexpr size_t kBloco = 500;
+    const auto inicioTotal = std::chrono::steady_clock::now();
+    auto ultima = inicioTotal;
+    auto etapa = [&](const char* nome, long long linhas) {
+        const auto agora = std::chrono::steady_clock::now();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(agora - ultima).count();
+        ultima = agora;
+        matriz::diag::logarWatchdog(juce::String("[Autocorrecao] etapa=") + nome + " " +
+                                    juce::String(static_cast<juce::int64>(ms)) + " ms, linhas=" +
+                                    juce::String(static_cast<juce::int64>(linhas)));
+    };
+    auto cancelado = [&]() { return cancel != nullptr && cancel->cancelado(); };
+    auto& reg = registro();
+    if (cancel) cancel->registrar(reg.handle());
+    struct Desreg { CancelamentoAbertura* c; sqlite3* h; ~Desreg() { if (c) c->remover(h); } } desreg{cancel, reg.handle()};
+
+    // Grava `n` itens em blocos transacionais; `aplicar(i)` roda dentro da transação.
+    auto emBlocos = [&](size_t total, const std::function<void(size_t)>& aplicar) -> bool {
+        for (size_t ini = 0; ini < total; ini += kBloco) {
+            if (cancelado()) return false;
+            const size_t fim = std::min(total, ini + kBloco);
+            try {
+                reg.exec("BEGIN IMMEDIATE");
+                try {
+                    for (size_t i = ini; i < fim; ++i) aplicar(i);
+                    reg.exec("COMMIT");
+                } catch (...) {
+                    try { reg.exec("ROLLBACK"); } catch (...) {}
+                    return false;
+                }
+            } catch (...) { return false; }
+        }
+        return true;
+    };
+
+    // 5. Self-heal missing/unknown tipo_midia based on file extension
+    try {
+        auto stmtTipo = reg.prepare(
+            "SELECT i.id, i.titulo, a.caminho_relativo, a.caminho_absoluto_origem "
+            "FROM item i "
+            "JOIN arquivo a ON a.item_id = i.id "
+            "WHERE (i.tipo_midia IS NULL OR i.tipo_midia = '' OR i.tipo_midia = 'desconhecido') "
+            "ORDER BY a.eh_master DESC, a.id ASC");
+        struct ItemFix { std::string id; std::string tipo; };
+        std::vector<ItemFix> fixes;
+        while (stmtTipo.step()) {
+            if (cancelado()) return;
+            std::string id = stmtTipo.columnText(0);
+            std::string tit = stmtTipo.columnText(1);
+            std::string rel = stmtTipo.columnText(2);
+            std::string abs = stmtTipo.columnText(3);
+
+            juce::String path(abs);
+            if (path.isEmpty()) path = juce::String(rel);
+            if (path.isEmpty()) path = juce::String(tit);
+
+            auto cat = matriz::ingest::categoriaPorExtensao(juce::File(path));
+            std::string tipo;
+            switch (cat) {
+                case matriz::ingest::CategoriaMidia::Audio:     tipo = "digital_audio"; break;
+                case matriz::ingest::CategoriaMidia::Video:     tipo = "digital_video"; break;
+                case matriz::ingest::CategoriaMidia::Imagem:    tipo = "foto"; break;
+                case matriz::ingest::CategoriaMidia::Documento: tipo = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Texto:     tipo = "documento"; break;
+                case matriz::ingest::CategoriaMidia::Sessao:    tipo = "sessao"; break;
+                default: break;
+            }
+            if (!tipo.empty()) fixes.push_back({id, tipo});
+        }
+        emBlocos(fixes.size(), [&](size_t i) {
+            reg.run("UPDATE item SET tipo_midia = ? WHERE id = ?",
+                    {matriz::db::Value::of(fixes[i].tipo), matriz::db::Value::of(fixes[i].id)});
+        });
+        etapa("5_tipo_midia", static_cast<long long>(fixes.size()));
+    } catch (...) {}
+    if (cancelado()) return;
+
+    // 6. Self-heal missing caminho_absoluto_origem from caminho_relativo if file exists.
+    // Quem já foi procurado e NÃO achado só é procurado de novo depois de 7 dias.
+    try {
+        const juce::int64 agoraMs = juce::Time::currentTimeMillis();
+        const juce::int64 corteMs = agoraMs - juce::int64(7) * 24 * 60 * 60 * 1000;
+        struct PathFix { std::string arquivoId; std::string absolutePath; };  // absolutePath vazio: não achou
+        std::vector<std::pair<std::string, std::string>> pendentes;
+        {
+            auto stmtCaminho = reg.prepare(
+                "SELECT a.id, a.caminho_relativo FROM arquivo a "
+                "WHERE (a.caminho_absoluto_origem IS NULL OR a.caminho_absoluto_origem = '') "
+                "AND (a.caminho_relativo IS NOT NULL AND a.caminho_relativo != '') "
+                "AND (a.origem_verificada_em IS NULL OR a.origem_verificada_em < ?)");
+            stmtCaminho.bind(1, matriz::db::Value::of(static_cast<long long>(corteMs)));
+            while (stmtCaminho.step())
+                pendentes.emplace_back(stmtCaminho.columnText(0), stmtCaminho.columnText(1));
+        }
+        const juce::File pastaProj = pasta();
+        long long achados = 0;
+        for (size_t ini = 0; ini < pendentes.size(); ini += kBloco) {
+            if (cancelado()) return;
+            const size_t fim = std::min(pendentes.size(), ini + kBloco);
+            std::vector<PathFix> resultados;
+            resultados.reserve(fim - ini);
+            for (size_t i = ini; i < fim; ++i) {   // checagem de disco FORA da transação
+                if (cancelado()) return;
+                const std::string& arqId = pendentes[i].first;
+                juce::String rel = pendentes[i].second;
+                std::string achado;
+                juce::File f(rel);
+                if (juce::File::isAbsolutePath(rel) && f.existsAsFile()) {
+                    achado = f.getFullPathName().toStdString();
+                } else {
+                    juce::File inProj = pastaProj.getChildFile(rel);
+                    if (inProj.existsAsFile()) {
+                        achado = inProj.getFullPathName().toStdString();
+                    } else {
+                        juce::File inMedia = pastaProj.getParentDirectory().getChildFile("Media").getChildFile(rel);
+                        if (inMedia.existsAsFile()) {
+                            achado = inMedia.getFullPathName().toStdString();
+                        } else {
+                            juce::File inRaiz = pastaProj.getParentDirectory().getChildFile(rel);
+                            if (inRaiz.existsAsFile()) achado = inRaiz.getFullPathName().toStdString();
+                        }
+                    }
+                }
+                if (!achado.empty()) ++achados;
+                resultados.push_back({arqId, achado});
+            }
+            if (!emBlocos(1, [&](size_t) {
+                    for (const auto& r : resultados) {
+                        if (!r.absolutePath.empty())
+                            reg.run("UPDATE arquivo SET caminho_absoluto_origem = ? WHERE id = ?",
+                                    {matriz::db::Value::of(r.absolutePath), matriz::db::Value::of(r.arquivoId)});
+                        else
+                            reg.run("UPDATE arquivo SET origem_verificada_em = ? WHERE id = ?",
+                                    {matriz::db::Value::of(static_cast<long long>(agoraMs)), matriz::db::Value::of(r.arquivoId)});
+                    }
+                }))
+                break;
+        }
+        etapa("6_caminho_origem", static_cast<long long>(pendentes.size()));
+        (void) achados;
+    } catch (...) {}
+    if (cancelado()) return;
+
+    // Item 19-C: marcas R órfãs (item inexistente ou fora da quarentena).
+    try {
+        long long antes = 0;
+        { auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) antes = st.columnInt(0); }
+        reg.exec("BEGIN IMMEDIATE");
+        try {
+            reg.exec("DELETE FROM intake_marca_r WHERE NOT EXISTS ("
+                     "SELECT 1 FROM item i WHERE i.id = intake_marca_r.item_id AND i.em_quarentena = 1)");
+            reg.exec("COMMIT");
+        } catch (...) { try { reg.exec("ROLLBACK"); } catch (...) {} }
+        long long depois = 0;
+        { auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r"); if (st.step()) depois = st.columnInt(0); }
+        etapa("intake_marca_r_limpeza", antes - depois);
+    } catch (...) {}
+
+    matriz::diag::logarWatchdog("[Autocorrecao] TOTAL " + juce::String(static_cast<juce::int64>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - inicioTotal).count())) + " ms");
 }
 
 void Project::confirmarRevisao() {

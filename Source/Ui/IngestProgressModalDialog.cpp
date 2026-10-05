@@ -41,7 +41,7 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
                              : "Scanning files and checking items already in Intake...", juce::dontSendNotification);
     } else {
         lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
-                             : ("Processing " + juce::String(totalFiles_) + " files — calculating estimated time..."), juce::dontSendNotification);
+                             : ("Processing " + juce::String(totalFiles_) + juce::String::fromUTF8(" files — calculating estimated time...")), juce::dontSendNotification);
     }
     lblEta_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
     lblEta_.setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -84,7 +84,7 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     btnSkip_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
     btnSkip_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnSkip_.setTooltip(isPt ? juce::String::fromUTF8("Desiste do(s) arquivo(s) em andamento agora — o lote continua com o resto. O nome vai pro log do projeto.")
-                              : "Gives up on whichever file(s) are in flight right now — the batch continues with the rest. The name goes to the project log.");
+                              : juce::String::fromUTF8("Gives up on whichever file(s) are in flight right now — the batch continues with the rest. The name goes to the project log."));
     btnSkip_.onClick = [this] {
         if (onSkipCurrent_) onSkipCurrent_();
     };
@@ -190,7 +190,7 @@ void IngestProgressModalDialog::updateScanProgress(int totalScanned, int skipped
                                 juce::String::fromUTF8(" já no Intake — ignorados, ") +
                                 juce::String(newCount) + juce::String::fromUTF8(" novos)"))
                              : ("Scanning: " + juce::String(totalScanned) + " files (" +
-                                juce::String(skippedCount) + " in Intake — skipped, " +
+                                juce::String(skippedCount) + juce::String::fromUTF8(" in Intake — skipped, ") +
                                 juce::String(newCount) + " new)"),
                         juce::dontSendNotification);
     } else {
@@ -230,7 +230,7 @@ void IngestProgressModalDialog::startIngestMode(int totalFilesToIngest, int skip
     }
 
     lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
-                         : ("Processing " + juce::String(totalFiles_) + " files — calculating estimated time..."), juce::dontSendNotification);
+                         : ("Processing " + juce::String(totalFiles_) + juce::String::fromUTF8(" files — calculating estimated time...")), juce::dontSendNotification);
 
     btnCancel_.setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
     btnCancel_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffdc2626));
@@ -385,7 +385,7 @@ void IngestProgressModalDialog::beginFinalizing(int totalPassos) {
                        juce::dontSendNotification);
     lblHeader_.setColour(juce::Label::textColourId, tema().textoPrimario);
     lblFileName_.setText(isPt ? juce::String::fromUTF8("Arquivos processados — fechando o lote...")
-                              : "Files processed — closing the batch...", juce::dontSendNotification);
+                              : juce::String::fromUTF8("Files processed — closing the batch..."), juce::dontSendNotification);
     lblEta_.setText(isPt ? juce::String::fromUTF8("Não feche o aplicativo.") : "Do not close the app.",
                     juce::dontSendNotification);
 
@@ -558,13 +558,13 @@ void IngestProgressModalDialog::timerCallback() {
                             juce::String::fromUTF8(" arquivos — ") + timeStr, juce::dontSendNotification);
         } else {
             lblEta_.setText("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
-                            " files — " + timeStr, juce::dontSendNotification);
+                            juce::String::fromUTF8(" files — ") + timeStr, juce::dontSendNotification);
         }
     } else {
         lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(completed) + " de " + juce::String(totalFiles_) +
                                 juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
                              : ("Processing " + juce::String(completed) + " of " + juce::String(totalFiles_) +
-                                " files — calculating estimated time..."), juce::dontSendNotification);
+                                juce::String::fromUTF8(" files — calculating estimated time...")), juce::dontSendNotification);
     }
 }
 

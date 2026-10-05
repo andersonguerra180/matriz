@@ -25,6 +25,30 @@ public:
     explicit ProjectError(const std::string& message) : std::runtime_error(message) {}
 };
 
+// Abertura cancelada pelo usuário (ver CancelamentoAbertura).
+class AberturaCancelada : public ProjectError {
+public:
+    AberturaCancelada() : ProjectError("project opening cancelled") {}
+};
+
+// Sinal de cancelamento de Project::abrir() (e das autocorreções em background):
+// quem cancela chama cancelar() de qualquer thread — marca o flag (verificado entre
+// etapas e dentro dos laços longos) e dá sqlite3_interrupt nas conexões registradas
+// (se a abertura estiver presa dentro de uma chamada do SQLite).
+class CancelamentoAbertura {
+public:
+    void cancelar();
+    bool cancelado() const { return cancelado_.load(); }
+    void verificar() const { if (cancelado_.load()) throw AberturaCancelada(); }
+    // Registrar/remover precisa envolver TODA a vida do handle (remover antes do close).
+    void registrar(sqlite3* h);
+    void remover(sqlite3* h);
+private:
+    std::atomic<bool> cancelado_{false};
+    std::mutex mutex_;
+    std::vector<sqlite3*> handles_;
+};
+
 enum class Modo { Preservacao, Catalogo };
 
 std::string modoToString(Modo m);
@@ -63,7 +87,19 @@ public:
 
     // Abre uma pasta de projeto existente, aceitando a raiz de um DESTINATION,
     // a subpasta Project/, ou um diretório legado com registro.sqlite.
-    static std::unique_ptr<Project> abrir(const juce::File& qualquerPasta);
+    // `cancelamento` (opcional): ver CancelamentoAbertura; cancelado, lança AberturaCancelada
+    // depois de fechar os bancos. Só faz o essencial pra abrir com segurança — as autocorreções
+    // que varrem tabelas/disco rodam em iniciarAutocorrecoesEmBackground().
+    static std::unique_ptr<Project> abrir(const juce::File& qualquerPasta,
+                                          CancelamentoAbertura* cancelamento = nullptr);
+
+    // Autocorreções que não precisam bloquear a abertura (tipo_midia ausente, caminho de origem
+    // ausente, marcas R órfãs). Roda numa thread própria, em blocos transacionais; cancelada e
+    // aguardada no destrutor. Idempotente: chamar de novo com a thread já iniciada não faz nada.
+    void iniciarAutocorrecoesEmBackground();
+    // Versão síncrona (self-tests): mesmas regras, na thread que chama.
+    void executarAutocorrecoes(CancelamentoAbertura* cancelamento = nullptr);
+    ~Project();
 
     // Resolve qualquer pasta (raiz, Project/ ou legada) para a pasta que contém registro.sqlite
     static juce::File resolverPastaProjeto(const juce::File& qualquerPasta);
@@ -158,6 +194,8 @@ private:
     Modo modo_ = Modo::Preservacao;
     DestinationInfo destinationInfo_;
     std::recursive_mutex writeMutex_;
+    std::thread autocorrecaoThread_;
+    CancelamentoAbertura autocorrecaoCancel_;
 };
 
 // Timestamp ISO-8601 UTC ("YYYY-MM-DDTHH:MM:SSZ"), a convenção de todo

@@ -325,7 +325,7 @@ void PublishHtmlDialog::iniciarPublicacao() {
                                       juce::MessageBoxOptions()
                                           .withIconType(juce::MessageBoxIconType::WarningIcon)
                                           .withTitle(isPt ? "PUBLICAR HTML FALHOU" : "PUBLISH HTML FAILED")
-                                          .withMessage((isPt ? "A geração do HTML falhou:\n\n" : "HTML generation failed:\n\n") + errStr)
+                                          .withMessage((isPt ? juce::String::fromUTF8("A geração do HTML falhou:\n\n") : "HTML generation failed:\n\n") + errStr)
                                           .withButton("OK"),
                                       static_cast<juce::ModalComponentManager::Callback*>(nullptr));
                               }

@@ -1579,7 +1579,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                 [idDuplicata, codigoOriginal](matriz::db::Database& db) {
                     acrescentarNota(db, idDuplicata,
                                     "Validated as a known duplicate pair of " + codigoOriginal +
-                                    " by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                    juce::String::fromUTF8(" by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
                     return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
                 },
                 aoResolver);
@@ -1675,8 +1675,8 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
            juce::String::fromUTF8(" grupos de duplicatas encontrados. Nada é apagado do disco nem do catálogo — "
                                    "o lado descartado só sai da próxima leva de Make Backup."))
         : ("Apply the same choice to all " + juce::String(gruposDetectados_.size()) +
-           " detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
-           "won't be included in the next Make Backup run.");
+           juce::String::fromUTF8(" detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
+           "won't be included in the next Make Backup run."));
 
     auto* aw = new juce::AlertWindow(titulo, msg, juce::AlertWindow::QuestionIcon);
     aw->addButton(matriz::i18n::t("duplicatas.action_keep1"), 1);
@@ -1725,8 +1725,8 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
                 resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
             } else { // Keep Both — só documenta o par, os dois continuam entrando no backup normalmente
                 acrescentarNota(db, group.duplicata.itemId,
-                                "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
-                                "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                juce::String::fromUTF8("Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
+                                "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
             }
         }
         return resultados;
@@ -1876,7 +1876,7 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                     } else { // Keep Both — os dois continuam entrando no backup
                         acrescentarNota(db, group.duplicata.itemId,
                                         "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
-                                        " by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                        juce::String::fromUTF8(" by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
                     }
                 }
                 return resultados;

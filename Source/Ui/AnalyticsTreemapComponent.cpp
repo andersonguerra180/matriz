@@ -750,7 +750,7 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
                                 juce::MessageBoxOptions()
                                     .withIconType(juce::MessageBoxIconType::InfoIcon)
                                     .withTitle("Origem Ausente")
-                                    .withMessage("O arquivo de origem não foi encontrado no caminho:\n" + targetPath)
+                                    .withMessage(juce::String::fromUTF8("O arquivo de origem não foi encontrado no caminho:\n") + targetPath)
                                     .withButton("OK"),
                                 nullptr);
                         }

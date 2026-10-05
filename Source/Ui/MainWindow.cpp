@@ -359,7 +359,7 @@ void MainWindow::conectarConteudo() {
         if (conteudo_->temProjetoAberto()) {
             auto appName = obterNomeAppUI();
             auto pNome = juce::String::fromUTF8(conteudo_->projetoAberto()->projeto().nome().c_str());
-            setName(pNome.isEmpty() ? appName : (pNome + " — " + appName));
+            setName(pNome.isEmpty() ? appName : (pNome + juce::String::fromUTF8(" — ") + appName));
         } else {
             setName(obterNomeAppUI());
         }

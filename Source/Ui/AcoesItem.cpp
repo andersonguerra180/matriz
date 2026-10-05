@@ -509,7 +509,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
                     juce::MessageBoxOptions()
                         .withIconType(juce::MessageBoxIconType::InfoIcon)
                         .withTitle(matriz::i18n::t("acoes.origem_ausente_titulo"))
-                        .withMessage("O arquivo de origem não possui caminho registrado.")
+                        .withMessage(juce::String::fromUTF8("O arquivo de origem não possui caminho registrado."))
                         .withButton(matriz::i18n::t("comum.ok")),
                     static_cast<juce::ModalComponentManager::Callback*>(nullptr));
                 break;
