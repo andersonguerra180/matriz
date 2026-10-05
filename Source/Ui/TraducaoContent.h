@@ -30,6 +30,12 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"MIDI", "Arquivo MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo de Artista")},
         {"Artist Backup", "Backup do Artista"},
+        {"Demo Tape", "Fita Demo"},
+        {"Live Concert", "Concerto ao Vivo"},
+        {"VS", "VS"},
+        {"Impulse Response", "Resposta ao Impulso (IR)"},
+        {"Mix", "Mixagem"},
+        {"Master", juce::String::fromUTF8("Masterização")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},

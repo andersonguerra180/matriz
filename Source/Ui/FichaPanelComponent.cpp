@@ -328,6 +328,12 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"MIDI", "MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
         {"Artist Backup", "Backup do Artista"},
+        {"Demo Tape", "Fita Demo"},
+        {"Live Concert", "Concerto ao Vivo"},
+        {"VS", "VS"},
+        {"Impulse Response", "Resposta ao Impulso (IR)"},
+        {"Mix", "Mixagem"},
+        {"Master", juce::String::fromUTF8("Masterização")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},
@@ -396,7 +402,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
                 "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup"};
+                "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",

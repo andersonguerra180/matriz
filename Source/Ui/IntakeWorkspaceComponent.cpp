@@ -1597,7 +1597,7 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
             "Album", "EP", "Single", "Compilation", "Soundtrack",
             "Stems", "Multitracks", "Sample Pack", "Sample", "Preset", "DAW Session",
             "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-            "Artist Catalog", "Artist Backup"
+            "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"
         }},
         { "VIDEO", {
             "Raw Footage", "Home Video", "Music Video", "Film",

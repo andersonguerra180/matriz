@@ -1310,7 +1310,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         // Audio
         "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
         "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-        "Artist Catalog", "Artist Backup",
+        "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master",
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
         "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
