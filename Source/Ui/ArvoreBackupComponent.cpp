@@ -1538,20 +1538,22 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.drawRoundedRectangle(b, 8.0f, 1.2f);
         }
 
-        auto header = b.removeFromTop(24);
+        // A fonte acompanha o tamanho do folder (slider, escala por pasta, nível): 190x84 = 100%.
+        const float fs = juce::jlimit(0.4f, 4.0f, std::min(b.getWidth() / 190.0f, b.getHeight() / 84.0f));
+        auto header = b.removeFromTop(24.0f * fs);
         g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
         g.fillRoundedRectangle(header, 8.0f);
-        g.fillRect(header.withTrimmedTop(16));
+        g.fillRect(header.withTrimmedTop(16.0f * fs));
 
         desenharCabecalhoNo(g, node, header);
 
-        auto content = b.reduced(10, 6);
+        auto content = b.reduced(10.0f * fs, 6.0f * fs);
         g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-        g.drawText(node.nome, content.removeFromTop(18), juce::Justification::centredLeft, true);
+        g.setFont(juce::Font(juce::FontOptions(12.0f * fs, juce::Font::bold)));
+        g.drawText(node.nome, content.removeFromTop(18.0f * fs), juce::Justification::centredLeft, true);
 
         g.setColour(tema().textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.setFont(juce::Font(juce::FontOptions(10.0f * fs)));
         juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
         g.drawText(desc, content, juce::Justification::centredLeft, true);
 
@@ -1610,20 +1612,21 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
 // na ordem da regra; subpasta gerada pela regra: marca discreta "auto" à direita.
 void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const {
     const auto& tk = tema();
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    const float fs = header.getHeight() / 24.0f;  // o cabeçalho tem 24 px a 100% (ver paint)
+    g.setFont(juce::Font(juce::FontOptions(11.0f * fs, juce::Font::bold)));
     if (node.proposta) {
         g.setColour(node.hasCorCustomizada ? node.corCustomizada : tk.acento);
-        g.drawText(i18n::t("arvore_backup.nova_marca"), header.reduced(10, 0), juce::Justification::centredLeft);
+        g.drawText(i18n::t("arvore_backup.nova_marca"), header.reduced(10.0f * fs, 0), juce::Justification::centredLeft);
         return;
     }
     if (node.ativo && !node.niveisRegra.empty()) {
         g.setColour(tk.acento);
         const juce::String rotulo = i18n::t("arvore_backup.auto_marca");
         const float largura = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), rotulo));
-        auto area = header.reduced(10, 0);
+        auto area = header.reduced(10.0f * fs, 0);
         g.drawText(rotulo, area.removeFromLeft(largura + 2.0f), juce::Justification::centredLeft);
         area.removeFromLeft(8.0f);
-        constexpr float d = 8.0f, passo = 12.0f;
+        const float d = 8.0f * fs, passo = 12.0f * fs;
         float x = area.getX();
         for (auto nivel : node.niveisRegra) {
             g.setColour(corDoNivelHierarquia(nivel));
@@ -1634,11 +1637,11 @@ void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderN
     }
     g.setColour(node.ativo ? tk.acento : tk.textoTerciario);
     g.drawText(node.ativo ? i18n::t("arvore_backup.no_ativo") : i18n::t("arvore_backup.no_desativado"),
-               header.reduced(10, 0), juce::Justification::centredLeft);
+               header.reduced(10.0f * fs, 0), juce::Justification::centredLeft);
     if (node.autoSub) {
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(9.0f)));
-        g.drawText(i18n::t("arvore_backup.auto_sub_marca"), header.reduced(10, 0), juce::Justification::centredRight);
+        g.setFont(juce::Font(juce::FontOptions(9.0f * fs)));
+        g.drawText(i18n::t("arvore_backup.auto_sub_marca"), header.reduced(10.0f * fs, 0), juce::Justification::centredRight);
     }
 }
 
