@@ -1,5 +1,6 @@
 #include "FloatingPreviewWindow.h"
 #include "LoteSelfTest.h"
+#include "PainelMetadadosArquivo.h"
 
 #include <JuceHeader.h>
 
@@ -1270,6 +1271,97 @@ void rodarTestesLoteAjustes(const Checar& checar) {
                        "tooltip text lists every session name");
                 checar(pb.obterItemResumo(p1).has_value() && pb.obterItemResumo(p1)->impresso, "the item summary used by the grid carries the printed flag");
             }
+        }
+
+        // ----- NEST: extrair / apagar arquivos do nest
+        std::cout << "\n-- NEST: extract and delete files from a nest --\n";
+        {
+            using TM = ProjetoAberto::TipoMarcacao;
+            auto novoMembro = [&](const char* codigo, const char* data) {
+                auto f = raizAj.getChildFile(juce::String(codigo) + ".nst");
+                f.replaceWithText(codigo);
+                const auto id = inserirItemComArquivo(reg, projetoId, codigo, f);
+                definirCampoRaiz(reg, id, "data_criacao", data);
+                return std::make_pair(id, f);
+            };
+            const auto [e1, f1] = novoMembro("NXE-1", "2012-01-01 10:00:01");
+            const auto [e2, f2] = novoMembro("NXE-2", "2012-01-01 10:00:02");
+            const auto [e3, f3] = novoMembro("NXE-3", "2012-01-01 10:00:03");
+            const auto [e4, f4] = novoMembro("NXE-4", "2012-01-01 10:00:04");
+            const auto nid = pa.criarNest({e1, e2, e3, e4});
+            checar(!nid.empty() && pa.membrosDoNest(nid).size() == 4 && pa.nestDoItem(e1)->capaId == e1, "a nest of 4 with NXE-1 as cover");
+
+            // Extrair a capa: o próximo (por data) vira capa; o extraído volta ao grid como item normal.
+            pa.alternarMarcacao(TM::Print, {e1});
+            pa.extrairDoNest({e1});
+            checar(!pa.nestDoItem(e1).has_value(), "the extracted file is a normal item again");
+            checar(pa.nestDoItem(e2) && pa.nestDoItem(e2)->capaId == e2 && pa.membrosDoNest(nid).size() == 3,
+                   "when the cover is extracted the next file becomes the cover");
+            // Selecionar vários e extrair: sobra 1 → o nest se desfaz.
+            pa.extrairDoNest({e3, e4});
+            checar(!pa.nestDoItem(e2).has_value() && !pa.nestDoItem(e3).has_value() && !pa.nestDoItem(e4).has_value(),
+                   "a nest left with a single file dissolves (the file goes back to the grid)");
+            pa.desfazer();
+            checar(pa.nestDoItem(e2) && pa.membrosDoNest(nid).size() == 3, "undo of the extraction brings the nest back");
+            pa.desfazer();
+            checar(pa.nestDoItem(e1) && pa.membrosDoNest(nid).size() == 4, "undo of the first extraction restores the 4-file nest");
+
+            // Apagar do projeto (nunca do disco), a capa herda a marcação de EXPORT; um Undo desfaz tudo.
+            pa.alternarMarcacao(TM::Print, {e1});  // e1 estava com P desde antes; garante o estado conhecido
+            pa.definirMarcacao(TM::Print, {e1}, true);
+            auto contarItem = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
+                st.bind(1, matriz::db::Value::of(id));
+                st.step();
+                return static_cast<int>(st.columnInt(0));
+            };
+            pa.apagarDoNest({e1, e2});
+            checar(contarItem(e1) == 0 && contarItem(e2) == 0, "deleted files leave the project");
+            checar(f1.existsAsFile() && f2.existsAsFile(), "the original files on disk are never touched");
+            checar(pa.nestDoItem(e3) && pa.nestDoItem(e3)->capaId == e3 && pa.membrosDoNest(nid).size() == 2 && pa.contemMarcacao(TM::Print, e3),
+                   "deleting the cover leaves a 2-file nest: the next file is the cover and inherits the EXPORT mark");
+            pa.desfazer();
+            checar(contarItem(e1) == 1 && contarItem(e2) == 1 && pa.nestDoItem(e3) && pa.membrosDoNest(nid).size() == 4,
+                   "one Undo brings the deleted files and the nest back");
+            pa.apagarDoNest({e1, e2, e3});
+            checar(contarItem(e4) == 1 && !pa.nestDoItem(e4).has_value(), "deleting down to 1 file dissolves the nest");
+            pa.desfazer();
+            checar(pa.nestDoItem(e4) && pa.membrosDoNest(nid).size() == 4, "Undo restores the 4-file nest again");
+            // Capa apagada com sobra de 2+: a próxima capa herda a marca P.
+            pa.alternarMarcacao(TM::Print, {e1});
+            pa.definirMarcacao(TM::Print, {e1}, true);
+            pa.apagarDoNest({e1});
+            checar(pa.nestDoItem(e2) && pa.nestDoItem(e2)->capaId == e2 && pa.contemMarcacao(TM::Print, e2),
+                   "when the cover is deleted the next cover inherits the EXPORT mark");
+            pa.aguardarGravacoesMarcas();
+        }
+
+        // ----- Painel de metadados (INTAKE / preview): leitura pura, cards sem campos vazios
+        std::cout << "\n-- METADATA PANEL: read-only cards --\n";
+        {
+            const auto pm = inserirItem(reg, projetoId, "MDP-1", false, ".wav");
+            auto fArq = raizAj.getChildFile("MDP-1.wav");
+            fArq.replaceWithText("x");
+            reg.run("UPDATE arquivo SET caminho_absoluto_origem = ?, caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(fArq.getFullPathName().toStdString()),
+                     Value::of(R"({"duracaoSegundos":125.0,"sampleRate":48000,"canais":2,"bitDepth":24,"codec":"pcm_s24le","bruto":{}})"),
+                     Value::of(pm)});
+            pa.salvarMetadado(pm, "dc_creator", "Alguem");
+            const auto cards = PainelMetadadosArquivo::lerCards(pa, pm);
+            auto achar = [&](const char* titulo) -> const PainelMetadadosArquivo::Card* {
+                for (const auto& c : cards) if (c.titulo == titulo) return &c;
+                return nullptr;
+            };
+            checar(achar("FILE") != nullptr && achar("TECHNICAL") != nullptr, "FILE and TECHNICAL cards are present");
+            checar(achar("LOCATION / GPS") == nullptr && achar("CAMERA / EXIF") == nullptr, "cards with no field do not appear");
+            bool temDuracao = false, temVazio = false;
+            if (auto* t = achar("TECHNICAL"))
+                for (const auto& l : t->linhas) if (l.rotulo == "Duration" && l.valor == "2:05") temDuracao = true;
+            for (const auto& c : cards) for (const auto& l : c.linhas) if (l.valor.trim().isEmpty()) temVazio = true;
+            checar(temDuracao, "duration 125 s is shown as 2:05");
+            checar(!temVazio, "no empty field is ever listed");
+            const auto* d = achar("DESCRIPTIVE");
+            checar(d != nullptr && d->linhas.size() == 1 && d->linhas[0].valor == "Alguem", "descriptive card shows only what the file has (author)");
         }
 
         // ----- NEST (camada de dados)
@@ -3383,6 +3475,61 @@ int rodarLoteSelfTest() {
         esperarAte([&] { return dw.gruposDetectados_.empty(); });
         checar(estado(b2) == "duplicata" && estado(b1) != "duplicata" && dw.gruposDetectados_.empty(),
                "most recent ingest: pair B keeps the newer file");
+
+        // ----- DUPLICATES (HD recuperado): IDENTICAL por SHA-256 e PROBABLE por pHash
+        {
+            auto gravarPng = [&](const juce::File& f) {
+                juce::Image img(juce::Image::RGB, 96, 96, true);
+                for (int y = 0; y < 96; ++y)
+                    for (int x = 0; x < 96; ++x)
+                        img.setPixelAt(x, y, juce::Colour::fromRGB(static_cast<juce::uint8>((x * 5 + y) & 255), static_cast<juce::uint8>((y * 3) & 255),
+                                                                   static_cast<juce::uint8>(((x ^ y) * 4) & 255)));
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(f);
+                if (out.openedOk()) png.writeImageToStream(img, out);
+            };
+            const auto fOrig = raizQ.getChildFile("recuperada_0001.png");
+            gravarPng(fOrig);
+            const auto fExata = raizQ.getChildFile("nome_totalmente_outro.png");
+            fOrig.copyFileTo(fExata);
+            const auto fBytes = raizQ.getChildFile("IMG_9999_recovered.png");
+            fOrig.copyFileTo(fBytes);
+            fBytes.appendData("TRAILING-RECOVERY-BYTES", 23);  // simula arquivo recuperado: bytes a mais no final
+            const auto rOrig = inserirItemComArquivo(reg, projetoId, "REC-1", fOrig);
+            const auto rExata = inserirItemComArquivo(reg, projetoId, "REC-2", fExata);
+            const auto rBytes = inserirItemComArquivo(reg, projetoId, "REC-3", fBytes);
+            reg.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});  // só o teste: cria o cenário "sem checksum"
+            reg.run("UPDATE arquivo SET checksum_sha256 = NULL WHERE item_id = ?", {Value::of(rExata)});
+            reg.run("DELETE FROM reconciliacao_em_curso", {});
+
+            DuplicatesWorkspaceComponent dwRec(pa);
+            dwRec.iniciarScan();
+            esperarAte([&] { return !dwRec.isThreadRunning(); }, 120000);
+            auto acharGrupo = [&](const std::string& x, const std::string& y) -> const DuplicatesWorkspaceComponent::DuplicateGroup* {
+                for (const auto& g : dwRec.gruposDetectados_)
+                    if ((g.original.itemId == x && g.duplicata.itemId == y) || (g.original.itemId == y && g.duplicata.itemId == x)) return &g;
+                return nullptr;
+            };
+            const auto* gExata = acharGrupo(rOrig, rExata);
+            const auto* gBytes = acharGrupo(rOrig, rBytes);
+            checar(gExata != nullptr && gExata->criterio == "IDENTICAL", "exact copy with another name is IDENTICAL (same SHA-256)");
+            checar(gBytes != nullptr && gBytes->criterio == "PROBABLE" && gBytes->distanciaPHash >= 0,
+                   "renamed copy with extra trailing bytes is PROBABLE (pHash), for the user to decide");
+            {
+                auto st = reg.prepare("SELECT checksum_sha256 FROM arquivo WHERE item_id = ?");
+                st.bind(1, Value::of(rExata));
+                checar(st.step() && !st.columnText(0).empty(), "the scan computed and stored the missing checksum");
+            }
+            {
+                auto st = pa.projeto().indice().prepare("SELECT COUNT(*) FROM phash_imagem");
+                st.step();
+                checar(st.columnInt(0) >= 3, "pHash values are stored for the next scans (only what is missing is computed)");
+            }
+            // PROVÁVEIS nunca entram em decisão em lote.
+            dwRec.aplicarEscolhaGlobal(1);
+            esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);
+            checar(acharGrupo(rOrig, rBytes) != nullptr, "VALIDATE ALL never resolves a PROBABLE group");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("criteria selftest: ") + e.what());
     }

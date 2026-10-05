@@ -443,6 +443,9 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
+    Source/Ui/PainelMetadadosArquivo.cpp
+    Source/Ui/CartoesAnalyticsComponent.cpp
+    Source/Ui/ImportarGeoFavoritosDialogo.cpp
     Source/Ui/StorageWorkspaceComponent.cpp
     Source/Ui/DuplicatesWorkspaceComponent.cpp
     Source/Ui/DuplicateResolutionDialog.cpp

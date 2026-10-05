@@ -6,6 +6,7 @@
 #include "IntakeWorkspaceComponent.h"
 #include "GeoFavoritosGerenciar.h"
 #include "FloatingPreviewWindow.h"
+#include "PainelMetadadosArquivo.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
 #include "../Ficha/AutocompleteHistorico.h"
@@ -998,10 +999,12 @@ public:
         }
 
         int padding = 14;
-        int cardMinW = 190;
-        int cardH = 210;
+        // Slider de tamanho (mesma escala da aba METADATA: 80..320 px de largura mínima do card).
+        int cardMinW = static_cast<int>(80.0 + owner_.tamanhoMiniaturas_ * (320.0 - 80.0));
+        int cardH = 0;  // proporcional: miniatura (cardH - kAlturaTextoCard) + área de texto fixa
         int colunas = std::max(1, (w - padding) / (cardMinW + padding));
         int cardW = (w - padding * (colunas + 1)) / colunas;
+        cardH = std::max(150, static_cast<int>(cardW * 1.1));
         int linhas = (total + colunas - 1) / colunas;
         int totalH = padding + linhas * (cardH + padding);
 
@@ -1134,7 +1137,7 @@ public:
             g.fillRoundedRectangle(bounds.toFloat(), tk.raioMedio);
 
             // Thumbnail Area (~115px height)
-            auto thumbArea = bounds.reduced(6, 6).removeFromTop(115);
+            auto thumbArea = bounds.reduced(6, 6).removeFromTop(juce::jmax(60, cardH_ - 95));
             juce::Image img;
             {
                 const juce::ScopedLock sl(lock_);
@@ -1213,6 +1216,22 @@ public:
                 g.drawRoundedRectangle(offBadge.toFloat(), 4.0f, 1.0f);
                 g.setFont(font9Bold);
                 g.drawText("OFFLINE", offBadge, juce::Justification::centred);
+            }
+
+            // Duração (áudio/vídeo): selo no canto inferior esquerdo da miniatura, desenhado aqui (nunca embutido na
+            // imagem). Sem duração lida: nada (nunca "0:00").
+            if (item.duracaoSegundos && (item.categoria == "Audio" || item.categoria == "Video")) {
+                const auto total = static_cast<juce::int64>(*item.duracaoSegundos + 0.5);
+                const auto hh = total / 3600, mm = (total / 60) % 60, ss = total % 60;
+                const juce::String txt = hh > 0 ? juce::String(hh) + ":" + juce::String(mm).paddedLeft('0', 2) + ":" + juce::String(ss).paddedLeft('0', 2)
+                                                : juce::String(mm) + ":" + juce::String(ss).paddedLeft('0', 2);
+                const int w = juce::GlyphArrangement::getStringWidthInt(font10Bold, txt) + 12;
+                juce::Rectangle<int> durBadge(thumbArea.getX() + 6, thumbArea.getBottom() - 22, w, 16);
+                g.setColour(juce::Colour(0xcc000000));
+                g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font10Bold);
+                g.drawText(txt, durBadge, juce::Justification::centred);
             }
 
             // R (Reject): véu vermelho na miniatura, selo "R" e moldura vermelha no card.
@@ -1307,8 +1326,11 @@ public:
 
         if (e.getNumberOfClicks() >= 2) {
             if (idx >= 0 && idx < static_cast<int>(owner_.indicesFiltrados_.size())) {
-                owner_.abrirArquivoOrigem(idx);
+                const int real = owner_.indicesFiltrados_[static_cast<size_t>(idx)];
+                if (real >= 0 && real < static_cast<int>(owner_.todosItens_.size()))
+                    owner_.abrirPreviewDoItem(owner_.todosItens_[static_cast<size_t>(real)].id);  // "Mostrar na origem" fica no menu de contexto
             }
+            clickedCardIdx_ = -1;
             return;
         }
 
@@ -1387,21 +1409,9 @@ public:
         if (clickedCardIdx_ >= 0 && clickedCardIdx_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
             int realIdx = owner_.indicesFiltrados_[static_cast<size_t>(clickedCardIdx_)];
             if (realIdx >= 0 && realIdx < static_cast<int>(owner_.todosItens_.size())) {
-                // item (shift-clique seleciona intervalo): mesma âncora
-                // compartilhada com a visão em lista (cellClicked).
-                if (e.mods.isShiftDown() && owner_.ultimaPosicaoClicadaParaSelecao_ >= 0 &&
-                    owner_.ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
-                    int de = std::min(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
-                    int ate = std::max(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
-                    for (int p = de; p <= ate; ++p) {
-                        int ri = owner_.indicesFiltrados_[static_cast<size_t>(p)];
-                        if (ri >= 0 && ri < static_cast<int>(owner_.todosItens_.size()))
-                            owner_.todosItens_[static_cast<size_t>(ri)].selecionado = true;
-                    }
-                } else {
-                    owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado = !owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado;
-                    owner_.ultimaPosicaoClicadaParaSelecao_ = clickedCardIdx_;
-                }
+                // Seleção estilo Finder: clique simples = só este; Cmd/Ctrl = liga/desliga; Shift = intervalo
+                // (âncora compartilhada com a visão em lista).
+                owner_.aplicarCliqueSelecao(clickedCardIdx_, e.mods);
                 owner_.atualizarContagens();
                 if (owner_.tabela_) owner_.tabela_->repaint();
                 repaint();
@@ -1692,6 +1702,30 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnVisaoIcones_->setTooltip(i18n::t("intake.tooltip_icones"));
     btnVisaoIcones_->onClick = [this] { definirModoVisao(ModoVisao::Icones); };
     addAndMakeVisible(*btnVisaoIcones_);
+
+    painelMetadados_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
+    addAndMakeVisible(*painelMetadados_);
+
+    // Mesmo slider de tamanho da aba METADATA (mesmo visual e limites); só vale na visão em miniaturas.
+    sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+    sliderTamanho_->setRange(0.0, 1.0, 0.01);
+    sliderTamanho_->setValue(tamanhoMiniaturas_, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, tamanhoMiniaturas_);
+    sliderTamanho_->setColour(juce::Slider::trackColourId, tema().borda);
+    sliderTamanho_->setColour(juce::Slider::thumbColourId, tema().acento);
+    sliderTamanho_->setColour(juce::Slider::backgroundColourId, tema().painelAlt);
+    sliderTamanho_->onValueChange = [this] {
+        tamanhoMiniaturas_ = sliderTamanho_->getValue();
+        if (gridComponent_) gridComponent_->recalcularLayout();
+    };
+    sliderTamanho_->setTooltip("Adjust thumbnail display size");
+    sliderTamanho_->setEnabled(false);  // habilita ao entrar na visão em miniaturas
+    addAndMakeVisible(*sliderTamanho_);
+    lblTamanho_ = std::make_unique<juce::Label>("", "SIZE");
+    lblTamanho_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
+    lblTamanho_->setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(*lblTamanho_);
 
     auto btnIngerirPill = std::make_unique<PillButton>(i18n::t("intake.btn_ingerir"));
     btnIngerirPill->tamanhoFonte = 13.0f;
@@ -2024,6 +2058,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         it.nomeArquivo = item.nomeOriginalArquivo.empty() ? it.titulo : juce::String::fromUTF8(item.nomeOriginalArquivo.c_str());
         it.extensao = juce::String(item.extensaoArquivo).toUpperCase();
         it.tamanhoBytes = item.tamanhoBytes;
+        if (item.duracaoSegundos && *item.duracaoSegundos > 0.0) it.duracaoSegundos = item.duracaoSegundos;
 
         auto cat = matriz::ingest::categoriaPorExtensao(juce::String(item.extensaoArquivo));
         switch (cat) {
@@ -2085,6 +2120,7 @@ void IntakeWorkspaceComponent::definirModoVisao(ModoVisao modo) {
         if (btnVisaoIcones_) {
             btnVisaoIcones_->setAtivo(modoVisao_ == ModoVisao::Icones);
         }
+        if (sliderTamanho_) sliderTamanho_->setEnabled(modoVisao_ == ModoVisao::Icones);
         atualizarVisibilidadeEmptyState();
         resized();
         repaint();
@@ -2185,6 +2221,7 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
 }
 
 void IntakeWorkspaceComponent::atualizarContagens() {
+    atualizarPainelMetadados();  // toda mudança de seleção passa por aqui
     contagemAudio_ = 0;
     contagemVideo_ = 0;
     contagemImage_ = 0;
@@ -2822,6 +2859,7 @@ void IntakeWorkspaceComponent::moverFocoGrade(int dx, int dy, bool estender) {
     }
 
     if (auto* it = doItem(novo)) focoId_ = it->id;
+    if (selecaoMudou) ultimoClicadoId_ = focoId_;  // Shift+seta: o painel acompanha o item do foco
     posicaoFocoCache_ = novo;
     garantirCardVisivel(novo);
     if (selecaoMudou) {
@@ -2840,8 +2878,12 @@ void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
     if (pos < 0) return;
     const int real = indicesFiltrados_[static_cast<size_t>(pos)];
     if (real < 0 || real >= static_cast<int>(todosItens_.size())) return;
-    const std::string itemId = todosItens_[static_cast<size_t>(real)].id;
+    abrirPreviewDoItem(todosItens_[static_cast<size_t>(real)].id);
+}
 
+void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
+    if (itemId.empty()) return;
+    janelaPreview_.reset();  // duplo clique em outro arquivo troca o preview
     juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
     auto aoFechar = [safe] {
         juce::MessageManager::callAsync([safe] {
@@ -2870,7 +2912,7 @@ void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
         if (p >= 0) safe->garantirCardVisivel(p);
         if (safe->gridComponent_) safe->gridComponent_->repaint();
     };
-    janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou);
+    janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou, /*somenteLeitura=*/true);
 }
 
 bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
@@ -2889,10 +2931,10 @@ bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
             moverFocoGrade(dx, dy, mods.isShiftDown());
             return true;
         }
-        if (codigo == juce::KeyPress::spaceKey && !mods.isShiftDown()) {
-            alternarPreviewDoFoco();
-            return true;
-        }
+    }
+    if (k.getKeyCode() == juce::KeyPress::spaceKey && !mods.isShiftDown()) {  // preview também na visão em lista
+        alternarPreviewDoFoco();
+        return true;
     }
     const auto c = k.getTextCharacter();
     if (c == 'r' || c == 'R') {
@@ -3184,6 +3226,7 @@ void IntakeWorkspaceComponent::sortOrderChanged(int newSortColumnId, bool isForw
 
 void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) {
     focoVisivel_ = false;  // clique na lista: o R volta a valer para a seleção
+    grabKeyboardFocus();   // R e barra de espaço (preview) valem também na lista
     if (rowNumber < 0 || rowNumber >= static_cast<int>(indicesFiltrados_.size())) return;
     int realIndex = indicesFiltrados_[static_cast<size_t>(rowNumber)];
     if (realIndex < 0 || realIndex >= static_cast<int>(todosItens_.size())) return;
@@ -3194,7 +3237,7 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 
     if (e.getNumberOfClicks() >= 2) {
-        abrirArquivoOrigem(rowNumber);
+        abrirPreviewDoItem(todosItens_[static_cast<size_t>(realIndex)].id);  // "Mostrar na origem" fica no menu de contexto
         return;
     }
 
@@ -3208,24 +3251,7 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 
     if (columnId != kColSelect && columnId != kColAction) {
-        // item (shift-clique seleciona intervalo): segura shift e clica em
-        // outra linha — tudo entre a âncora (último clique simples) e esta
-        // linha vira selecionado, igual Finder/Explorer. A âncora só muda
-        // num clique simples (sem shift), pra dar pra esticar/encolher o
-        // intervalo repetindo o shift+clique a partir do mesmo ponto.
-        if (e.mods.isShiftDown() && ultimaPosicaoClicadaParaSelecao_ >= 0 &&
-            ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(indicesFiltrados_.size())) {
-            int de = std::min(ultimaPosicaoClicadaParaSelecao_, rowNumber);
-            int ate = std::max(ultimaPosicaoClicadaParaSelecao_, rowNumber);
-            for (int p = de; p <= ate; ++p) {
-                int ri = indicesFiltrados_[static_cast<size_t>(p)];
-                if (ri >= 0 && ri < static_cast<int>(todosItens_.size()))
-                    todosItens_[static_cast<size_t>(ri)].selecionado = true;
-            }
-        } else {
-            todosItens_[static_cast<size_t>(realIndex)].selecionado = !todosItens_[static_cast<size_t>(realIndex)].selecionado;
-            ultimaPosicaoClicadaParaSelecao_ = rowNumber;
-        }
+        aplicarCliqueSelecao(rowNumber, e.mods);
         if (tabela_) {
             tabela_->updateContent();
             tabela_->repaint();
@@ -3234,8 +3260,65 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 }
 
-void IntakeWorkspaceComponent::cellDoubleClicked(int rowNumber, int, const juce::MouseEvent&) {
-    abrirArquivoOrigem(rowNumber);
+void IntakeWorkspaceComponent::cellDoubleClicked(int, int, const juce::MouseEvent&) {
+    // o duplo clique é tratado em cellClicked (getNumberOfClicks() >= 2): abre o preview
+}
+
+void IntakeWorkspaceComponent::aplicarCliqueSelecao(int pos, const juce::ModifierKeys& mods) {
+    if (pos < 0 || pos >= static_cast<int>(indicesFiltrados_.size())) return;
+    auto item = [this](int p) -> ItemIntake* {
+        const int ri = indicesFiltrados_[static_cast<size_t>(p)];
+        return (ri >= 0 && ri < static_cast<int>(todosItens_.size())) ? &todosItens_[static_cast<size_t>(ri)] : nullptr;
+    };
+    auto* clicado = item(pos);
+    if (clicado == nullptr) return;
+
+    if (mods.isShiftDown() && ultimaPosicaoClicadaParaSelecao_ >= 0 &&
+        ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(indicesFiltrados_.size())) {
+        // Shift: intervalo entre a âncora (último clique sem Shift) e o clicado; a âncora não muda.
+        const int de = std::min(ultimaPosicaoClicadaParaSelecao_, pos);
+        const int ate = std::max(ultimaPosicaoClicadaParaSelecao_, pos);
+        for (int p = de; p <= ate; ++p)
+            if (auto* it = item(p)) it->selecionado = true;
+    } else if (mods.isCommandDown() || mods.isCtrlDown()) {
+        clicado->selecionado = !clicado->selecionado;  // liga/desliga só este; vira âncora
+        ultimaPosicaoClicadaParaSelecao_ = pos;
+    } else {
+        for (auto& it : todosItens_) it.selecionado = false;  // clique simples: só este; vira âncora
+        clicado->selecionado = true;
+        ultimaPosicaoClicadaParaSelecao_ = pos;
+    }
+    ultimoClicadoId_ = clicado->id;
+    focoId_ = clicado->id;   // a barra de espaço (preview) e as setas continuam daqui
+    posicaoFocoCache_ = pos;
+    if (tabela_) {
+        tabela_->updateContent();
+        tabela_->repaint();
+    }
+    if (gridComponent_) gridComponent_->repaint();
+    atualizarContagens();
+}
+
+void IntakeWorkspaceComponent::atualizarPainelMetadados() {
+    if (!painelMetadados_) return;
+    std::string alvo;
+    if (!ultimoClicadoId_.empty()) {
+        for (int idx : indicesFiltrados_) {
+            if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+            const auto& it = todosItens_[static_cast<size_t>(idx)];
+            if (it.id == ultimoClicadoId_ && it.selecionado) { alvo = it.id; break; }
+        }
+    }
+    if (alvo.empty()) {  // o último clicado saiu da seleção: usa qualquer selecionado visível
+        for (int idx : indicesFiltrados_) {
+            if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+            const auto& it = todosItens_[static_cast<size_t>(idx)];
+            if (it.selecionado) { alvo = it.id; }
+        }
+    }
+    if (alvo == idNoPainel_) return;
+    idNoPainel_ = alvo;
+    painelMetadados_->mostrarItem(alvo);
 }
 
 void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos) {
@@ -3564,7 +3647,13 @@ void IntakeWorkspaceComponent::resized() {
         btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
         viewRow.removeFromLeft(6);
         btnVisaoIcones_->setBounds(viewRow);
-        sidebar.removeFromTop(6);
+        sidebar.removeFromTop(3);
+    }
+    if (sliderTamanho_) {
+        auto sliderRow = sidebar.removeFromTop(18).reduced(4, 0);
+        if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(30));
+        sliderTamanho_->setBounds(sliderRow);
+        sidebar.removeFromTop(5);
     }
     // Select All / Clear Selection (antes num card SELECTION próprio) + a contagem de selecionados.
     {
@@ -3641,6 +3730,13 @@ void IntakeWorkspaceComponent::resized() {
     if (legendaAtalhos_) legendaAtalhos_->setBounds(sidebar.removeFromTop(22));
     if (lblNotaReject_) lblNotaReject_->setBounds(sidebar.removeFromTop(28));
     finalizarCard();
+
+    // Coluna da direita: metadados do arquivo selecionado (somente leitura), estreita (~280 px). Some em janelas estreitas.
+    if (painelMetadados_) {
+        const bool cabe = area.getWidth() >= 760;
+        painelMetadados_->setVisible(cabe);
+        if (cabe) painelMetadados_->setBounds(area.removeFromRight(280));
+    }
 
     // Right Area fills the remaining workspace (x = 230 to width, full height)
     if (tabela_) {
