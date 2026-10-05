@@ -982,13 +982,13 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
 
     // item: filtro por ano — De/Até, mesmo padrão de campo numérico do
     // size filter. Vazio de qualquer lado = sem limite naquela ponta.
-    lblAno_ = std::make_unique<juce::Label>("lblAno", "Year");
+    lblAno_ = std::make_unique<juce::Label>("lblAno", matriz::i18n::t("dup.ano"));
     lblAno_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblAno_);
 
     txtAnoDe_ = std::make_unique<juce::TextEditor>("txtAnoDe");
     txtAnoDe_->setInputRestrictions(4, "0123456789");
-    txtAnoDe_->setTextToShowWhenEmpty("From", juce::Colours::grey);
+    txtAnoDe_->setTextToShowWhenEmpty(matriz::i18n::t("dup.de"), juce::Colours::grey);
     txtAnoDe_->setTooltip("Only include items from this year onward (blank = no lower limit)");
     addAndMakeVisible(*txtAnoDe_);
 
@@ -998,7 +998,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
 
     txtAnoAte_ = std::make_unique<juce::TextEditor>("txtAnoAte");
     txtAnoAte_->setInputRestrictions(4, "0123456789");
-    txtAnoAte_->setTextToShowWhenEmpty("To", juce::Colours::grey);
+    txtAnoAte_->setTextToShowWhenEmpty(matriz::i18n::t("dup.ate"), juce::Colours::grey);
     txtAnoAte_->setTooltip("Only include items up to this year (blank = no upper limit)");
     addAndMakeVisible(*txtAnoAte_);
 

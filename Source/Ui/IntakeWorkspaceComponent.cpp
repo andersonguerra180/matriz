@@ -1946,25 +1946,25 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
         return btn;
     };
 
-    auto btnOrigMed = criarBotaoLote("SOURCE MEDIUM", corDoNivelHierarquia(NH::Origem), [this] {
+    auto btnOrigMed = criarBotaoLote(i18n::t("intake.btn_source_medium_lote"), corDoNivelHierarquia(NH::Origem), [this] {
         if (btnSourceMediumLote_) mostrarEditorOriginalSourceMediumLote(btnSourceMediumLote_->getScreenBounds());
     });
     btnSourceMediumLote_ = std::move(btnOrigMed);
     addAndMakeVisible(*btnSourceMediumLote_);
 
-    auto btnCreator = criarBotaoLote("CREATOR", corDoNivelHierarquia(NH::Artista), [this] {
+    auto btnCreator = criarBotaoLote(i18n::t("intake.btn_creator_lote"), corDoNivelHierarquia(NH::Artista), [this] {
         if (btnCreatorLote_) mostrarEditorCreatorLote(btnCreatorLote_->getScreenBounds());
     });
     btnCreatorLote_ = std::move(btnCreator);
     addAndMakeVisible(*btnCreatorLote_);
 
-    auto btnContent = criarBotaoLote("CONTENT", corDoNivelHierarquia(NH::ContentType), [this] {
+    auto btnContent = criarBotaoLote(i18n::t("intake.btn_content_lote"), corDoNivelHierarquia(NH::ContentType), [this] {
         if (btnContentLote_) mostrarEditorContentLote(btnContentLote_->getScreenBounds());
     });
     btnContentLote_ = std::move(btnContent);
     addAndMakeVisible(*btnContentLote_);
 
-    auto btnSubject = criarBotaoLote("SUBJECT", corDoNivelHierarquia(NH::Subject), [this] {
+    auto btnSubject = criarBotaoLote(i18n::t("intake.btn_subject_lote"), corDoNivelHierarquia(NH::Subject), [this] {
         if (btnSubjectLote_) mostrarEditorSubjectLote(btnSubjectLote_->getScreenBounds());
     });
     btnSubjectLote_ = std::move(btnSubject);
@@ -1978,7 +1978,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     // (ContentType) e ficava fácil de confundir um com o outro aqui; o
     // Visual Editor do BACKUP continua usando o verde original pro nível
     // Ano, não mexi nisso.
-    auto btnEventDate = criarBotaoLote("EVENT DATE", juce::Colour(0xff9575cd), [this] {
+    auto btnEventDate = criarBotaoLote(i18n::t("intake.btn_event_date_lote"), juce::Colour(0xff9575cd), [this] {
         if (btnEventDateLote_) mostrarEditorEventDateLote(btnEventDateLote_->getScreenBounds());
     });
     btnEventDateLote_ = std::move(btnEventDate);

@@ -672,12 +672,12 @@ public:
 
         {
             juce::StringArray faltando;
-            if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add("YEAR");
-            if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add("SOURCE MEDIA");
-            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add("CONTENT");
+            if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_ano"));
+            if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_source_media"));
+            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_content"));
             if (faltando.size() > 0) {
                 labelReviewFaltando_ = std::make_unique<juce::Label>();
-                labelReviewFaltando_->setText("Needs review: " + faltando.joinIntoString(", "),
+                labelReviewFaltando_->setText(matriz::i18n::t("ficha.precisa_revisao") + ": " + faltando.joinIntoString(", "),
                                               juce::dontSendNotification);
                 // Ajuste de layout METADATA: "Needs review" em texto preto.
                 labelReviewFaltando_->setColour(juce::Label::textColourId, juce::Colours::black);
