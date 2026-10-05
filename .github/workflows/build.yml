@@ -168,12 +168,12 @@ jobs:
 
       - name: Build & Run AddressSanitizer (Windows ASan)
         run: |
-          # /Z7 (debug info embutida em cada objeto) em vez de /Zi: com o sccache, vários cl.exe em paralelo disputam o mesmo
-          # .pdb compartilhado e falham com C1041.
+          # Sem sccache neste passo: o Debug usa /Zi (um .pdb compartilhado por alvo; o exiv2 fixa isso por conta própria) e o
+          # sccache não consegue empacotá-lo. O cache fica nos builds Release, que são os pesados.
           cmake -B build-asan-win -G Ninja `
             -DCMAKE_BUILD_TYPE=Debug `
-            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW `
-            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded `
+            -DCMAKE_C_COMPILER_LAUNCHER= `
+            -DCMAKE_CXX_COMPILER_LAUNCHER= `
             -DCMAKE_C_COMPILER=cl.exe `
             -DCMAKE_CXX_COMPILER=cl.exe `
             -DMATRIZ_ASAN=ON `
