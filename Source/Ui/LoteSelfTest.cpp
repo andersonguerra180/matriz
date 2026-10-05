@@ -3565,6 +3565,49 @@ int rodarLoteSelfTest() {
                 st.step();
                 checar(st.columnInt(0) >= 3, "pHash values are stored for the next scans (only what is missing is computed)");
             }
+            // ----- Filtros do SCAN: só entra o que passa pelos filtros, em TODAS as fases
+            {
+                auto varrer = [&](const std::function<void(DuplicatesWorkspaceComponent&)>& configurar,
+                                  const std::set<std::string>& selecao) {
+                    auto dwF = std::make_unique<DuplicatesWorkspaceComponent>(pa);
+                    dwF->fornecerSelecaoDoGrid = [selecao] { return selecao; };
+                    configurar(*dwF);
+                    dwF->iniciarScan();
+                    esperarAte([&] { return !dwF->isThreadRunning(); }, 120000);
+                    auto copia = dwF->gruposDetectados_;
+                    return copia;
+                };
+                auto temItem = [](const std::vector<DuplicatesWorkspaceComponent::DuplicateGroup>& gs, const std::string& id) {
+                    for (const auto& g : gs) if (g.original.itemId == id || g.duplicata.itemId == id) return true;
+                    return false;
+                };
+                // SELECTED FILES: só os selecionados (rOrig + rExata) — nada de fora entra, nem como "original".
+                const auto selGrupos = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig, rExata});
+                checar(selGrupos.size() == 1 && temItem(selGrupos, rOrig) && temItem(selGrupos, rExata),
+                       "SELECTED FILES: only the 2 selected files take part (1 pair, nothing from outside the selection)");
+                const auto selUm = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig});
+                checar(selUm.empty(), "SELECTED FILES with a single file: its copies outside the selection are NOT compared");
+                // Tipo de arquivo
+                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(4); }, {}).empty(),
+                       "file type = Audio: no image pair appears");
+                checar(!varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(2); }, {}).empty(),
+                       "file type = Image: the image pairs appear");
+                // Tamanho (os PNGs de teste têm poucos KB)
+                checar(varrer([](DuplicatesWorkspaceComponent& d) {
+                           d.cbSizeFilter_->setSelectedId(2);  // maior que
+                           d.txtSizeValue_->setText("1");
+                           d.cbSizeUnit_->setSelectedId(3);    // MB
+                       }, {}).empty(), "size > 1 MB: tiny test images are out");
+                checar(!varrer([](DuplicatesWorkspaceComponent& d) {
+                           d.cbSizeFilter_->setSelectedId(3);  // menor que
+                           d.txtSizeValue_->setText("1");
+                           d.cbSizeUnit_->setSelectedId(3);
+                       }, {}).empty(), "size < 1 MB: the test images are in");
+                // Ano (itens de teste não têm ano: fora de qualquer faixa)
+                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.txtAnoDe_->setText("2099"); }, {}).empty(),
+                       "year range: items without a year never enter a restricted range");
+            }
+
             // PROVÁVEIS nunca entram em decisão em lote.
             dwRec.aplicarEscolhaGlobal(1);
             esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);

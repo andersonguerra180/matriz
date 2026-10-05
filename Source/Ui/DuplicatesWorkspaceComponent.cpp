@@ -1122,7 +1122,16 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     
     // Capture filter selections from UI safely on main thread before starting the thread
     activeFilters_.scope = cbScope_->getSelectedId();
-    activeFilters_.selecionadosNoGrid = projeto_.obterItensSelecionadosNoGrid();
+    // A seleção vem do grid de verdade (aba METADATA) — antes vinha de projeto_.obterItensSelecionadosNoGrid(), que só o
+    // MosaicoComponent antigo do MainComponent atualizava: com "Selected files" o scan recebia uma seleção vazia.
+    activeFilters_.selecionadosNoGrid = fornecerSelecaoDoGrid ? fornecerSelecaoDoGrid() : projeto_.obterItensSelecionadosNoGrid();
+    if (activeFilters_.scope == 2 && activeFilters_.selecionadosNoGrid.empty()) {
+        const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "DUPLICATES",
+            pt ? juce::String::fromUTF8("Nenhum arquivo selecionado no grid. Selecione arquivos na aba METADATA ou escolha \"Todos\" no escopo.")
+               : juce::String("No files are selected in the grid. Select files in the METADATA tab or choose \"All\" as the scope."));
+        return;
+    }
     activeFilters_.fileType = cbFileType_->getSelectedId();
     activeFilters_.sizeFilter = cbSizeFilter_->getSelectedId();
     
@@ -1400,6 +1409,13 @@ void DuplicatesWorkspaceComponent::run() {
             }
         }
     } else {
+        // Com qualquer filtro ativo (escopo, tipo, tamanho, ano) o "original" também tem que passar pelos filtros:
+        // só se comparam arquivos que estão dentro do que o usuário escolheu.
+        const bool filtrosAtivos = activeFilters_.scope == 2 || activeFilters_.fileType > 1 || activeFilters_.sizeFilter > 1 ||
+                                   activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0;
+        std::set<std::string> idsFiltrados;
+        if (filtrosAtivos) for (const auto& it : items) idsFiltrados.insert(it.itemId);
+
         for (size_t i = 0; i < items.size(); ++i) {
             if (threadShouldExit()) return;
             progressoScan_ = static_cast<double>(i) / static_cast<double>(items.size());
@@ -1409,7 +1425,7 @@ void DuplicatesWorkspaceComponent::run() {
             
             auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
                 db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
-                projeto_.projeto().pasta());
+                projeto_.projeto().pasta(), "", filtrosAtivos ? &idsFiltrados : nullptr);
 
             if (matchOpt && matchOpt->itemId < item.itemId) {
                 DuplicateGroup group;

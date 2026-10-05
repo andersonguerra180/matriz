@@ -1843,6 +1843,12 @@ void MainComponent::mostrarDuplicates() {
 
     if (!duplicatesWorkspace_) {
         duplicatesWorkspace_ = std::make_unique<DuplicatesWorkspaceComponent>(*projetoAberto_);
+        // "Selected files" do SCAN = a seleção do grid de verdade (aba METADATA), lida na hora do SCAN.
+        duplicatesWorkspace_->fornecerSelecaoDoGrid = [this]() -> std::set<std::string> {
+            if (catalogWorkspace_) return catalogWorkspace_->itensSelecionados();
+            if (mosaico_) return mosaico_->itensSelecionados();
+            return {};
+        };
         addAndMakeVisible(*duplicatesWorkspace_);
     } else {
         duplicatesWorkspace_->setVisible(true);

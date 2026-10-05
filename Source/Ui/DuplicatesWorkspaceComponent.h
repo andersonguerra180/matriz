@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 #include <atomic>
+#include <functional>
+#include <set>
 #include <vector>
 #include <string>
 #include <optional>
@@ -26,6 +28,9 @@ public:
 
     void recarregar();
     void iniciarScan();
+
+    // Seleção atual do grid (para o escopo "Selected files"). Quem hospeda liga ao grid de verdade (aba METADATA).
+    std::function<std::set<std::string>()> fornecerSelecaoDoGrid;
 
 private:
     static constexpr int kAlturaResumo = 28;

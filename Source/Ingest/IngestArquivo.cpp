@@ -508,7 +508,8 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        const std::string& caminhoRelativo,
                                                        const std::string& excludeItemId,
                                                        const juce::File& pastaProjeto,
-                                                       const std::string& exifDateOriginal) {
+                                                       const std::string& exifDateOriginal,
+                                                       const std::set<std::string>* somenteItens) {
     if (tamanhoBytes <= 0) return std::nullopt;
 
     auto stmt = registro.prepare(
@@ -565,6 +566,7 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
     stmt.bind(3, Value::of(static_cast<long long>(tamanhoBytes)));
 
     while (stmt.step()) {
+        if (somenteItens && somenteItens->count(stmt.columnText(1)) == 0) continue;  // fora dos filtros do scan
         int coincidences = 0;
 
         // Coincidência 1: Nome (case-insensitive)
