@@ -21,6 +21,8 @@ public:
     void aoItemAlterado(const EventoItemAlterado& e) override;
 
     void recarregar();
+    // true enquanto uma ingestão ainda está processando arquivos: a árvore proposta só nasce depois.
+    std::function<bool()> aoPerguntarIngestEmProcessamento;
     // Ao entrar na aba STRUCTURE com arquivo(s) selecionados no grid: seleciona a(s) pasta(s) onde ele(s) está(ão)
     // e centraliza o mapa nela(s). Fica pendente até o canvas ter tamanho.
     void definirFocoNosItens(std::set<std::string> itemIds);
@@ -95,6 +97,7 @@ private:
         // acervo_pasta.cor_customizada; hasCorCustomizada=false = sem marcação.
         juce::Colour corCustomizada;
         bool hasCorCustomizada = false;
+        bool proposta = false;  // árvore nova ainda não aceita (NEW FOLDERS)
         // Auto-organização: regra (CSV) da pasta e blocos já lidos; autoSub = subpasta criada pela regra.
         juce::String regra;
         matriz::consolidacao::HierarquiaBackup niveisRegra;
@@ -124,6 +127,18 @@ private:
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
     std::unique_ptr<juce::TextButton> btnResetTamanhos_;
+
+    // Pasta ingerida inteira: árvore PROPOSTA (card NEW FOLDERS na coluna esquerda).
+    struct LinhaProposta {
+        std::string raizId;
+        int arquivos = 0;
+        std::unique_ptr<juce::Label> rotulo;
+        std::unique_ptr<juce::TextButton> usar, mesclar, descartar;
+    };
+    std::vector<LinhaProposta> propostas_;
+    void reconstruirPropostas();
+    void mostrarDialogoMescla(const std::string& raizId, const juce::String& nome);
+    void confirmarDescarteProposta(const std::string& raizId, int arquivos);
 
     // Fase 1 — dropdown com todos os folder maps do projeto (ORIGINAL +
     // mapas do usuário), botão "⋯" (rename/duplicate/delete/export/import)

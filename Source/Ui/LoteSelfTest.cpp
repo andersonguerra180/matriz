@@ -1364,6 +1364,107 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             checar(d != nullptr && d->linhas.size() == 1 && d->linhas[0].valor == "Alguem", "descriptive card shows only what the file has (author)");
         }
 
+        // ----- NEW FOLDERS (pasta ingerida inteira vira árvore proposta)
+        std::cout << "\n-- NEW FOLDERS: proposed tree, use, discard, merge with conflicts --\n";
+        {
+            const std::string mp = pa.criarFolderMap("Prop", std::nullopt);
+            const std::string exGaleria = pa.criarPastaAcervo("Galeria", std::nullopt, mp);
+            const std::string exLogo = pa.criarPastaAcervo("Logo", exGaleria, mp);
+            int seq = 0;
+            auto novo = [&](const juce::File& f) {
+                escreverWavTeste(f, ++seq);
+                return inserirItemComArquivo(reg, projetoId, "PRP-" + std::to_string(seq), f);
+            };
+            auto pastaDe = [&](const std::string& item) {
+                auto st = reg.prepare("SELECT p.id, p.nome, COALESCE(p.pasta_pai_id, ''), COALESCE(p.proposta_id, '') FROM acervo_item_pasta aip "
+                                      "JOIN acervo_pasta p ON p.id = aip.pasta_id WHERE aip.item_id = ? AND aip.mapa_id = ?");
+                st.bind(1, Value::of(item));
+                st.bind(2, Value::of(mp));
+                struct R { std::string id, nome, pai, prop; };
+                R r;
+                if (st.step()) r = {st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3)};
+                return r;
+            };
+            auto soltos = [&](const std::string& item) { return pa.itensSemPasta(mp).count(item) > 0; };
+
+            // 1) pasta inteira ingerida: nasce UMA proposta; os arquivos seguem em SEM PASTA
+            const auto base = raizAj.getChildFile("NovaPasta/Galeria");
+            const auto x1 = novo(base.getChildFile("x1.wav"));
+            const auto x2 = novo(base.getChildFile("Logo/x2.wav"));
+            const auto x3 = novo(base.getChildFile("Logo/x3.wav"));
+            const auto x4 = novo(base.getChildFile("Outra/x4.wav"));
+            pa.registrarPastasIngeridas({base.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "an ingested folder creates one proposed tree");
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 0, "the same folder does not create a second proposal");
+            auto props = pa.listarPropostas(mp);
+            checar(props.size() == 1 && props[0].nome == "Galeria" && props[0].arquivos == 4, "proposal: name and 4 loose files");
+            checar(soltos(x1) && soltos(x2) && soltos(x3) && soltos(x4), "the files stay in NO FOLDER until the user decides");
+            {
+                const auto arv = pa.arvoreAcervo(mp);
+                int propostas = 0;
+                std::function<void(const ProjetoAberto::NoArvore&)> cont = [&](const ProjetoAberto::NoArvore& n) {
+                    if (n.proposta) ++propostas;
+                    for (const auto& f : n.filhos) cont(f);
+                };
+                cont(arv);
+                checar(propostas == 3, "the map tree flags the 3 proposal folders (Galeria, Logo, Outra)");
+            }
+
+            // 2) mesclar na pasta existente: Logo conflita (mesmo nome) -> mescla; Outra vira subpasta nova
+            const auto dest = pa.destinosDeMescla(props[0].raizId);
+            checar(!dest.empty() && dest[0].id == exGaleria && dest[0].mesmoNome, "merge targets list the same-name folder first");
+            auto plano = pa.planoDeMescla(props[0].raizId, exGaleria, {});
+            checar(plano.size() == 1 && plano[0].alvoId == exLogo && plano[0].mesclar && plano[0].arquivos == 2,
+                   "conflict list: Logo -> existing Logo (2 files), merge by default");
+            checar(pa.mesclarProposta(props[0].raizId, exGaleria, {}) == 4, "merge places the 4 files");
+            checar(pastaDe(x1).id == exGaleria && pastaDe(x2).id == exLogo && pastaDe(x3).id == exLogo, "files went into the EXISTING folders");
+            const auto outra = pastaDe(x4);
+            checar(outra.nome == "Outra" && outra.pai == exGaleria && outra.prop.empty(), "the non-conflicting subfolder is added under the target, as a normal folder");
+            checar(pa.listarPropostas(mp).empty(), "the proposal is gone after merging");
+
+            // 3) manter separada: a decisão por conflito
+            const auto base2 = raizAj.getChildFile("Outro/Galeria");
+            const auto w1 = novo(base2.getChildFile("Logo/w1.wav"));
+            pa.registrarPastasIngeridas({base2.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "second proposal");
+            props = pa.listarPropostas(mp);
+            plano = pa.planoDeMescla(props[0].raizId, exGaleria, {});
+            checar(plano.size() == 1, "conflict Logo detected again");
+            std::map<std::string, bool> manter{{plano[0].propostaId, false}};
+            checar(pa.planoDeMescla(props[0].raizId, exGaleria, manter)[0].mesclar == false, "decision 'keep separate' is reflected in the plan");
+            checar(pa.mesclarProposta(props[0].raizId, exGaleria, manter) == 1, "merge with keep-separate places the file");
+            {
+                int logos = 0;
+                auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE pasta_pai_id = ? AND nome = 'Logo'");
+                st.bind(1, Value::of(exGaleria));
+                if (st.step()) logos = st.columnInt(0);
+                checar(logos == 2 && pastaDe(w1).id != exLogo && pastaDe(w1).prop.empty(), "kept separate: a second Logo folder under the target");
+            }
+
+            // 4) usar a árvore como está
+            const auto base3 = raizAj.getChildFile("Outro3/Show");
+            const auto y1 = novo(base3.getChildFile("y1.wav"));
+            const auto y2 = novo(base3.getChildFile("Sub/y2.wav"));
+            pa.registrarPastasIngeridas({base3.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "third proposal");
+            props = pa.listarPropostas(mp);
+            pa.usarArvoreProposta(props[0].raizId);
+            checar(pastaDe(y1).nome == "Show" && pastaDe(y2).nome == "Sub" && pastaDe(y1).prop.empty() && pastaDe(y2).prop.empty(),
+                   "USE TREE: files go to the folders of the new tree and the proposal mark is cleared");
+
+            // 5) descartar: some a árvore, arquivos ficam soltos
+            const auto base4 = raizAj.getChildFile("Outro4/Lixo");
+            const auto z1 = novo(base4.getChildFile("z1.wav"));
+            pa.registrarPastasIngeridas({base4.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "fourth proposal");
+            props = pa.listarPropostas(mp);
+            pa.descartarProposta(props[0].raizId);
+            checar(pa.listarPropostas(mp).empty() && soltos(z1), "DISCARD: tree removed, file stays loose in NO FOLDER");
+
+            // 6) mapa ORIGINAL nunca recebe proposta
+            checar(pa.gerarPropostasDeNovasPastas(ProjetoAberto::kMapaOriginal) == 0, "the ORIGINAL map never gets proposals");
+        }
+
         // ----- NEST (camada de dados)
         std::cout << "\n-- NEST: create, merge, cover, outputs, folders, undo --\n";
         {

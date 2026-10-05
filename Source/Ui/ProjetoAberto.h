@@ -490,6 +490,7 @@ public:
         juce::String corCustomizadaHex; // FOLDER COLOR (item 12) — "" = sem cor
         // Auto-organização: CSV de níveis (pasta com regra), "@auto" (subpasta gerada) ou "".
         juce::String regraOrganizacao;
+        bool proposta = false;  // pasta de uma árvore proposta (ainda não aceita) — ver PropostaPasta
         std::vector<NoArvore> filhos;
         std::set<std::string> itemIds;
         std::set<std::string> itemIdsDiretos;
@@ -623,6 +624,31 @@ public:
     // Passada automática: pastas com regra e itens diretos (checagem barata). Devolve
     // quantas pastas foram organizadas.
     int organizarItensSoltosDasPastasComRegra(const std::string& mapaId);
+
+    // ---- Pasta ingerida inteira: árvore PROPOSTA no Folder Map editado ----
+    // Os arquivos continuam em SEM PASTA até o usuário decidir: USAR a árvore, MESCLAR numa pasta
+    // existente (com gestão de conflitos) ou DESCARTAR (os arquivos ficam soltos).
+    struct PropostaPasta { std::string raizId; juce::String nome; int arquivos = 0; };
+    struct PastaDoMapa { std::string id; juce::String caminho; bool mesmoNome = false; };
+    struct LinhaMescla {
+        std::string propostaId;      // pasta da proposta em conflito
+        juce::String caminhoProposta;
+        std::string alvoId;          // pasta existente com o mesmo nome
+        juce::String caminhoAlvo;
+        int arquivos = 0;
+        bool mesclar = true;         // false = mantém como pasta separada
+    };
+    void registrarPastasIngeridas(const std::vector<std::string>& caminhos);
+    int gerarPropostasDeNovasPastas(const std::string& mapaId);
+    std::vector<PropostaPasta> listarPropostas(const std::string& mapaId) const;
+    void usarArvoreProposta(const std::string& raizId);
+    void descartarProposta(const std::string& raizId);
+    // Pastas existentes (não propostas) do mapa da proposta, as de mesmo nome da raiz primeiro.
+    std::vector<PastaDoMapa> destinosDeMescla(const std::string& raizId) const;
+    std::vector<LinhaMescla> planoDeMescla(const std::string& raizId, const std::string& alvoId,
+                                           const std::map<std::string, bool>& decisoes) const;
+    // alvoId vazio = usar a árvore como está. Devolve nº de arquivos colocados; -1 em erro.
+    int mesclarProposta(const std::string& raizId, const std::string& alvoId, const std::map<std::string, bool>& decisoes);
     // Fase 2 — ID do folder map gravado em projeto.backup_config_main.mapa_id
     // ("" = MAIN ainda não existe, ou foi criado por regra/estrutura original).
     // Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado.

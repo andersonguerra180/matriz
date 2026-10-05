@@ -400,10 +400,230 @@ void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
     });
 }
 
+// ---- NEW FOLDERS: árvore proposta por pasta ingerida inteira -------------------------------------------------
+namespace {
+// Gestão de conflitos da mescla, no estilo de Duplicates: uma linha por pasta com o mesmo nome, cada uma com
+// "mesclar com a existente" ou "manter como pasta separada".
+class DialogoMescla : public juce::Component {
+public:
+    DialogoMescla(ProjetoAberto& proj, std::string raizId, juce::String nome, std::function<void()> aoConcluir)
+        : proj_(proj), raizId_(std::move(raizId)), aoConcluir_(std::move(aoConcluir)) {
+        destinos_ = proj_.destinosDeMescla(raizId_);
+        lblAlvo_.setText(i18n::t("mescla.alvo").replace("{nome}", nome), juce::dontSendNotification);
+        addAndMakeVisible(lblAlvo_);
+        comboAlvo_.addItem(i18n::t("mescla.escolha"), 1);
+        for (size_t i = 0; i < destinos_.size(); ++i)
+            comboAlvo_.addItem((destinos_[i].mesmoNome ? juce::String(juce::CharPointer_UTF8("\xe2\x98\x85 ")) : juce::String()) +
+                                   destinos_[i].caminho, static_cast<int>(i) + 2);
+        comboAlvo_.setSelectedId(!destinos_.empty() && destinos_[0].mesmoNome ? 2 : 1, juce::dontSendNotification);
+        comboAlvo_.onChange = [this] { reconstruir(); };
+        addAndMakeVisible(comboAlvo_);
+        addAndMakeVisible(lblResumo_);
+        lblResumo_.setJustificationType(juce::Justification::topLeft);
+        viewport_.setViewedComponent(&linhas_, false);
+        viewport_.setScrollBarsShown(true, false);
+        addAndMakeVisible(viewport_);
+        for (auto* b : {&btnTodosMesclar_, &btnTodosSeparar_, &btnAplicar_, &btnCancelar_}) addAndMakeVisible(*b);
+        btnTodosMesclar_.setButtonText(i18n::t("mescla.todos_mesclar"));
+        btnTodosSeparar_.setButtonText(i18n::t("mescla.todos_separar"));
+        btnAplicar_.setButtonText(i18n::t("mescla.btn_aplicar"));
+        btnCancelar_.setButtonText(i18n::t("mescla.btn_cancelar"));
+        btnTodosMesclar_.onClick = [this] { definirTodos(true); };
+        btnTodosSeparar_.onClick = [this] { definirTodos(false); };
+        btnCancelar_.onClick = [this] { fechar(); };
+        btnAplicar_.onClick = [this] {
+            const auto alvo = alvoId();
+            if (alvo.empty()) return;
+            proj_.mesclarProposta(raizId_, alvo, decisoes_);
+            auto cb = aoConcluir_;
+            fechar();
+            if (cb) juce::MessageManager::callAsync(cb);
+        };
+        setSize(720, 500);
+        reconstruir();
+    }
+
+    static void exibir(ProjetoAberto& proj, const std::string& raizId, const juce::String& nome, std::function<void()> aoConcluir) {
+        juce::DialogWindow::LaunchOptions opt;
+        opt.dialogTitle = i18n::t("mescla.titulo");
+        opt.content.setOwned(new DialogoMescla(proj, raizId, nome, std::move(aoConcluir)));
+        opt.dialogBackgroundColour = tema().fundo;
+        opt.escapeKeyTriggersCloseButton = true;
+        opt.useNativeTitleBar = true;
+        opt.resizable = false;
+        opt.launchAsync();
+    }
+
+    void resized() override {
+        auto a = getLocalBounds().reduced(20);
+        lblAlvo_.setBounds(a.removeFromTop(20));
+        comboAlvo_.setBounds(a.removeFromTop(28));
+        a.removeFromTop(10);
+        auto rodape = a.removeFromBottom(36);
+        a.removeFromBottom(8);
+        auto bulk = a.removeFromBottom(28);
+        a.removeFromBottom(6);
+        lblResumo_.setBounds(a.removeFromTop(34));
+        viewport_.setBounds(a);
+        linhas_.setSize(viewport_.getMaximumVisibleWidth(), std::max(viewport_.getHeight(), alturaLinhas_));
+        btnCancelar_.setBounds(rodape.removeFromRight(130));
+        rodape.removeFromRight(8);
+        btnAplicar_.setBounds(rodape.removeFromRight(130));
+        btnTodosMesclar_.setBounds(bulk.removeFromLeft(170));
+        bulk.removeFromLeft(8);
+        btnTodosSeparar_.setBounds(bulk.removeFromLeft(210));
+        organizarLinhas();
+    }
+
+private:
+    struct Linha { std::string propostaId; std::unique_ptr<juce::Label> rotulo; std::unique_ptr<juce::ComboBox> opcao; };
+
+    std::string alvoId() const {
+        const int id = comboAlvo_.getSelectedId();
+        return id >= 2 && static_cast<size_t>(id - 2) < destinos_.size() ? destinos_[static_cast<size_t>(id - 2)].id : std::string();
+    }
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    }
+    void definirTodos(bool mesclar) {
+        for (const auto& l : plano_) decisoes_[l.propostaId] = mesclar;
+        reconstruir();
+    }
+    void reconstruir() {
+        linhasUi_.clear();
+        linhas_.removeAllChildren();
+        const auto alvo = alvoId();
+        plano_ = proj_.planoDeMescla(raizId_, alvo, decisoes_);
+        btnAplicar_.setEnabled(!alvo.empty());
+        btnTodosMesclar_.setEnabled(!plano_.empty());
+        btnTodosSeparar_.setEnabled(!plano_.empty());
+        lblResumo_.setText(alvo.empty() ? juce::String() : (plano_.empty() ? i18n::t("mescla.sem_conflitos") : i18n::t("mescla.conflitos")),
+                           juce::dontSendNotification);
+        juce::Component::SafePointer<DialogoMescla> safe(this);
+        for (const auto& l : plano_) {
+            Linha u;
+            u.propostaId = l.propostaId;
+            u.rotulo = std::make_unique<juce::Label>();
+            u.rotulo->setText(i18n::t("mescla.linha").replace("{p}", l.caminhoProposta).replace("{a}", l.caminhoAlvo)
+                                  .replace("{n}", juce::String(l.arquivos)), juce::dontSendNotification);
+            u.rotulo->setMinimumHorizontalScale(0.7f);
+            u.opcao = std::make_unique<juce::ComboBox>();
+            u.opcao->addItem(i18n::t("mescla.opt_mesclar"), 1);
+            u.opcao->addItem(i18n::t("mescla.opt_separar"), 2);
+            u.opcao->setSelectedId(l.mesclar ? 1 : 2, juce::dontSendNotification);
+            const std::string id = l.propostaId;
+            auto* combo = u.opcao.get();
+            u.opcao->onChange = [safe, id, combo] {
+                if (!safe) return;
+                safe->decisoes_[id] = combo->getSelectedId() == 1;
+                juce::MessageManager::callAsync([safe] { if (safe) safe->reconstruir(); });  // sem destruir o combo dentro do próprio callback
+            };
+            linhas_.addAndMakeVisible(*u.rotulo);
+            linhas_.addAndMakeVisible(*u.opcao);
+            linhasUi_.push_back(std::move(u));
+        }
+        alturaLinhas_ = static_cast<int>(linhasUi_.size()) * 56;
+        resized();
+    }
+    void organizarLinhas() {
+        int y = 0;
+        const int w = linhas_.getWidth();
+        for (auto& u : linhasUi_) {
+            u.rotulo->setBounds(0, y, w, 22);
+            u.opcao->setBounds(0, y + 24, std::min(w, 320), 26);
+            y += 56;
+        }
+    }
+
+    ProjetoAberto& proj_;
+    std::string raizId_;
+    std::function<void()> aoConcluir_;
+    std::vector<ProjetoAberto::PastaDoMapa> destinos_;
+    std::vector<ProjetoAberto::LinhaMescla> plano_;
+    std::map<std::string, bool> decisoes_;
+    std::vector<Linha> linhasUi_;
+    int alturaLinhas_ = 0;
+    juce::Label lblAlvo_, lblResumo_;
+    juce::ComboBox comboAlvo_;
+    juce::Viewport viewport_;
+    juce::Component linhas_;
+    juce::TextButton btnTodosMesclar_, btnTodosSeparar_, btnAplicar_, btnCancelar_;
+};
+}  // namespace
+
+void ArvoreBackupComponent::reconstruirPropostas() {
+    propostas_.clear();  // os filhos saem sozinhos do componente
+    if (mapaAtivoEhOriginal()) return;
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    for (const auto& p : projeto_.listarPropostas(mapaAtivoId_)) {
+        LinhaProposta l;
+        l.raizId = p.raizId;
+        l.arquivos = p.arquivos;
+        l.rotulo = std::make_unique<juce::Label>();
+        l.rotulo->setText(i18n::t("arvore_backup.nova_linha").replace("{nome}", p.nome).replace("{n}", juce::String(p.arquivos)),
+                          juce::dontSendNotification);
+        l.rotulo->setMinimumHorizontalScale(0.7f);
+        auto botao = [this](const juce::String& texto, const juce::String& dica) {
+            auto b = std::make_unique<juce::TextButton>(texto);
+            b->setTooltip(dica);
+            addAndMakeVisible(*b);
+            return b;
+        };
+        l.usar = botao(i18n::t("arvore_backup.btn_usar_arvore"), i18n::t("arvore_backup.usar_dica"));
+        l.mesclar = botao(i18n::t("arvore_backup.btn_mesclar"), i18n::t("arvore_backup.mesclar_dica"));
+        l.descartar = botao(i18n::t("arvore_backup.btn_descartar"), i18n::t("arvore_backup.descartar_dica"));
+        const std::string id = p.raizId;
+        const juce::String nome = p.nome;
+        const int arquivos = p.arquivos;
+        l.usar->onClick = [safe, id] {
+            juce::MessageManager::callAsync([safe, id] {
+                if (!safe) return;
+                safe->projeto_.usarArvoreProposta(id);
+                safe->recarregar();
+            });
+        };
+        l.mesclar->onClick = [safe, id, nome] {
+            juce::MessageManager::callAsync([safe, id, nome] { if (safe) safe->mostrarDialogoMescla(id, nome); });
+        };
+        l.descartar->onClick = [safe, id, arquivos] {
+            juce::MessageManager::callAsync([safe, id, arquivos] { if (safe) safe->confirmarDescarteProposta(id, arquivos); });
+        };
+        addAndMakeVisible(*l.rotulo);
+        propostas_.push_back(std::move(l));
+    }
+    resized();
+}
+
+void ArvoreBackupComponent::mostrarDialogoMescla(const std::string& raizId, const juce::String& nome) {
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, raizId, nome, [safe] { if (safe) safe->recarregar(); });
+}
+
+void ArvoreBackupComponent::confirmarDescarteProposta(const std::string& raizId, int arquivos) {
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                     .withTitle(i18n::t("arvore_backup.descartar_titulo"))
+                                     .withMessage(i18n::t("arvore_backup.descartar_msg").replace("{n}", juce::String(arquivos)))
+                                     .withButton(i18n::t("arvore_backup.btn_descartar"))
+                                     .withButton(i18n::t("mescla.btn_cancelar")),
+                                 juce::ModalCallbackFunction::create([safe, raizId](int r) {
+                                     if (r != 1 || !safe) return;
+                                     safe->projeto_.descartarProposta(raizId);
+                                     safe->recarregar();
+                                 }));
+}
+
 void ArvoreBackupComponent::recarregar() {
     // Itens que chegaram soltos numa pasta com regra (arrastados, SEND TO FOLDER...) são
     // organizados aqui. Uma consulta só quando não há nada a fazer.
-    if (!mapaAtivoEhOriginal()) projeto_.organizarItensSoltosDasPastasComRegra(mapaAtivoId_);
+    if (!mapaAtivoEhOriginal()) {
+        // Pasta ingerida inteira: nasce uma árvore proposta (os arquivos seguem em SEM PASTA até o usuário decidir).
+        if (!aoPerguntarIngestEmProcessamento || !aoPerguntarIngestEmProcessamento())
+            projeto_.gerarPropostasDeNovasPastas(mapaAtivoId_);
+        projeto_.organizarItensSoltosDasPastasComRegra(mapaAtivoId_);
+    }
+    reconstruirPropostas();
     recalcularNodes();
     if (mapaEnquadradoId_ != mapaAtivoId_) {  // primeira abertura deste mapa
         mapaEnquadradoId_ = mapaAtivoId_;
@@ -446,6 +666,7 @@ void ArvoreBackupComponent::recalcularNodes() {
                 node.corCustomizada = juce::Colour::fromString(no.corCustomizadaHex);
                 node.hasCorCustomizada = true;
             }
+            node.proposta = no.proposta;
             node.regra = no.regraOrganizacao;
             node.autoSub = ProjetoAberto::regraEhAuto(node.regra);
             if (node.regra.isNotEmpty() && !node.autoSub) node.niveisRegra = matriz::consolidacao::hierarquiaDeCsv(node.regra.toStdString());
@@ -1373,6 +1594,11 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
 void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const {
     const auto& tk = tema();
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    if (node.proposta) {
+        g.setColour(node.hasCorCustomizada ? node.corCustomizada : tk.acento);
+        g.drawText(i18n::t("arvore_backup.nova_marca"), header.reduced(10, 0), juce::Justification::centredLeft);
+        return;
+    }
     if (node.ativo && !node.niveisRegra.empty()) {
         g.setColour(tk.acento);
         const juce::String rotulo = i18n::t("arvore_backup.auto_marca");
@@ -1445,6 +1671,28 @@ void ArvoreBackupComponent::resized() {
     corpo.removeFromTop(4);
     if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
+
+    // NEW FOLDERS — árvores propostas por pastas ingeridas inteiras (só mapas do usuário, só enquanto houver).
+    for (auto& p : propostas_) {
+        for (auto* c : std::initializer_list<juce::Component*>{p.rotulo.get(), p.usar.get(), p.mesclar.get(), p.descartar.get()})
+            if (c) c->setVisible(!original);
+    }
+    if (!original && !propostas_.empty()) {
+        coluna_.iniciarCard(i18n::t("arvore_backup.card_novas"));
+        for (auto& p : propostas_) {
+            if (p.rotulo) p.rotulo->setBounds(corpo.removeFromTop(16));
+            corpo.removeFromTop(2);
+            auto linha = corpo.removeFromTop(24);
+            const int w = (linha.getWidth() - 8) / 3;
+            if (p.usar) p.usar->setBounds(linha.removeFromLeft(w));
+            linha.removeFromLeft(4);
+            if (p.mesclar) p.mesclar->setBounds(linha.removeFromLeft(w));
+            linha.removeFromLeft(4);
+            if (p.descartar) p.descartar->setBounds(linha);
+            corpo.removeFromTop(8);
+        }
+        coluna_.finalizarCard();
+    }
 
     // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
     semPastaBounds_ = {};

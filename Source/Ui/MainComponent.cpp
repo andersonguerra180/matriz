@@ -1937,6 +1937,7 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
                     mosaico_->definirSelecao(itemIds);
                 }
             };
+            treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
             addAndMakeVisible(*treeWorkspace_);
         } else {
             treeWorkspace_->setVisible(true);
@@ -2821,6 +2822,11 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     }
 
     if (temDiretorio) {
+        // Pasta inteira: o Folder Map editado ganha uma árvore proposta (ver ArvoreBackupComponent, NEW FOLDERS).
+        std::vector<std::string> pastasRaiz;
+        for (const auto& entrada : arquivosOuPastas)
+            if (entrada.isDirectory()) pastasRaiz.push_back(entrada.getFullPathName().toStdString());
+        projetoAberto_->registrarPastasIngeridas(pastasRaiz);
         expandirArquivosAsync(arquivosOuPastas, [this](std::vector<juce::File> novosArquivos, int) {
             if (novosArquivos.empty()) return;
             resolverDuplicatasIntakeEEnfileirar(std::move(novosArquivos));

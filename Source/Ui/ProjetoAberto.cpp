@@ -44,6 +44,7 @@ struct NoBuilder {
     bool ativo = true;
     juce::String corCustomizadaHex;
     juce::String regraOrganizacao;
+    bool proposta = false;
     std::vector<std::unique_ptr<NoBuilder>> filhos;
     std::map<juce::String, NoBuilder*> indiceFilhosPorNome; // dono é `filhos`; só busca
     std::set<std::string> itemIdsDiretos;
@@ -84,6 +85,7 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     n.ativo = b.ativo;
     n.corCustomizadaHex = b.corCustomizadaHex;
     n.regraOrganizacao = b.regraOrganizacao;
+    n.proposta = b.proposta;
     n.itemIds = b.itemIdsDiretos;
     n.itemIdsDiretos = b.itemIdsDiretos;
 
@@ -2433,7 +2435,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = leitura().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no FROM acervo_pasta "
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no, proposta_id FROM acervo_pasta "
         "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -2453,6 +2455,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
         if (!stmt.columnIsNull(6)) no->corCustomizadaHex = juce::String(stmt.columnText(6));
         if (!stmt.columnIsNull(7)) no->regraOrganizacao = juce::String(stmt.columnText(7));
         if (!stmt.columnIsNull(8)) no->escalaNo = stmt.columnReal(8);
+        no->proposta = !stmt.columnIsNull(9) && !stmt.columnText(9).empty();
         ptrPorId[r.id] = no.get();
         porId[r.id] = std::move(no);
     }
@@ -3031,6 +3034,351 @@ void ProjetoAberto::desligarAutoOrganizacao(const std::string& pastaId) {
             projeto_->registro().run("UPDATE acervo_pasta SET regra_organizacao = ? WHERE id = ?",
                                      {matriz::db::Value::of(regra), matriz::db::Value::of(id)});
     });
+}
+
+namespace {
+// Nº de code points UTF-8 (substr() do SQLite conta caracteres, não bytes).
+int comprimentoUtf8(const std::string& s) {
+    int n = 0;
+    for (unsigned char c : s) if ((c & 0xC0) != 0x80) ++n;
+    return n;
+}
+
+// Arquivos (itens) que ainda estão em SEM PASTA no mapa e cuja origem fica em `dir` — só direto, sem subpastas
+// (recursivo = true inclui as subpastas).
+std::vector<std::string> itensSoltosDoDiretorio(matriz::db::Database& db, const std::string& mapaId,
+                                                const std::string& dir, bool recursivo) {
+    std::vector<std::string> out;
+    const std::string prefixo = dir + "/";
+    const int len = comprimentoUtf8(prefixo);
+    auto st = db.prepare(
+        std::string("SELECT a.item_id FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ? ") +
+        (recursivo ? "" : "AND instr(substr(a.caminho_absoluto_origem, ?), '/') = 0 ") +
+        "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1) "
+        "AND a.item_id NOT IN (SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+    int k = 1;
+    st.bind(k++, matriz::db::Value::of(static_cast<int>(len)));
+    st.bind(k++, matriz::db::Value::of(prefixo));
+    if (!recursivo) st.bind(k++, matriz::db::Value::of(static_cast<int>(len + 1)));
+    st.bind(k++, matriz::db::Value::of(mapaId));
+    while (st.step()) out.push_back(st.columnText(0));
+    return out;
+}
+
+struct PastaLinha {
+    std::string id, pai, nome, proposta, origem;
+};
+
+std::vector<PastaLinha> carregarPastasDoMapa(matriz::db::Database& db, const std::string& projetoId, const std::string& mapaId) {
+    std::vector<PastaLinha> v;
+    auto st = db.prepare("SELECT id, COALESCE(pasta_pai_id, ''), nome, COALESCE(proposta_id, ''), COALESCE(origem_caminho, '') "
+                         "FROM acervo_pasta WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
+    st.bind(1, matriz::db::Value::of(projetoId));
+    st.bind(2, matriz::db::Value::of(mapaId));
+    while (st.step()) v.push_back({st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3), st.columnText(4)});
+    return v;
+}
+
+juce::String caminhoDaPastaNaLista(const std::vector<PastaLinha>& v, const std::string& id) {
+    std::map<std::string, const PastaLinha*> por;
+    for (const auto& p : v) por[p.id] = &p;
+    juce::StringArray partes;
+    std::string cur = id;
+    for (int guard = 0; guard < 200 && !cur.empty(); ++guard) {
+        auto it = por.find(cur);
+        if (it == por.end()) break;
+        partes.insert(0, juce::String::fromUTF8(it->second->nome.c_str()));
+        cur = it->second->pai;
+    }
+    return partes.joinIntoString(" / ");
+}
+}  // namespace
+
+void ProjetoAberto::registrarPastasIngeridas(const std::vector<std::string>& caminhos) {
+    if (somenteLeitura_ || !projeto_ || caminhos.empty()) return;
+    try {
+        const std::string agora = matriz::model::agoraIso8601();
+        for (const auto& c : caminhos) {
+            const std::string norm = juce::File(juce::String::fromUTF8(c.c_str())).getFullPathName().toStdString();
+            if (norm.empty()) continue;
+            projeto_->registro().run("INSERT INTO ingest_pasta_raiz (id, projeto_id, caminho, criado_em) VALUES (?, ?, ?, ?)",
+                                     {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(projeto_->projetoId()),
+                                      matriz::db::Value::of(norm), matriz::db::Value::of(agora)});
+        }
+    } catch (...) {}
+}
+
+int ProjetoAberto::gerarPropostasDeNovasPastas(const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal || mapaId == mapaDoMainId()) return 0;
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    struct Raiz { std::string id, caminho; bool velha; };
+    std::vector<Raiz> raizes;
+    try {
+        auto st = db.prepare(
+            "SELECT r.id, r.caminho, julianday(r.criado_em) < julianday('now', '-2 day') FROM ingest_pasta_raiz r "
+            "WHERE r.projeto_id = ? AND r.criado_em >= (SELECT criado_em FROM folder_map WHERE id = ?) "
+            "AND NOT EXISTS (SELECT 1 FROM ingest_pasta_raiz_mapa m WHERE m.raiz_id = r.id AND m.mapa_id = ?) "
+            "ORDER BY r.criado_em");
+        st.bind(1, Value::of(projeto_->projetoId()));
+        st.bind(2, Value::of(mapaId));
+        st.bind(3, Value::of(mapaId));
+        while (st.step()) raizes.push_back({st.columnText(0), st.columnText(1), st.columnInt(2) != 0});
+    } catch (...) { return 0; }
+    if (raizes.empty()) return 0;
+
+    static const char* kCores[] = {"ffe11d48", "ff0ea5e9", "fff59e0b", "ff10b981", "ff8b5cf6", "ffec4899"};
+    int criadas = 0;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    for (const auto& raiz : raizes) {
+        try {
+            const auto itens = itensSoltosDoDiretorio(db, mapaId, raiz.caminho, true);
+            const std::string agora = matriz::model::agoraIso8601();
+            if (itens.empty()) {
+                // Ingestão ainda não terminou (ou só trouxe duplicatas): tenta de novo; raiz antiga é dada como tratada.
+                if (raiz.velha)
+                    db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+                continue;
+            }
+            // Diretórios que contêm arquivos + ancestrais até a raiz.
+            std::set<std::string> dirs{raiz.caminho};
+            {
+                const std::string prefixo = raiz.caminho + "/";
+                const int len = comprimentoUtf8(prefixo);
+                auto st = db.prepare("SELECT DISTINCT a.caminho_absoluto_origem FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ?");
+                st.bind(1, Value::of(static_cast<int>(len)));
+                st.bind(2, Value::of(prefixo));
+                while (st.step()) {
+                    juce::File d = juce::File(juce::String::fromUTF8(st.columnText(0).c_str())).getParentDirectory();
+                    const juce::File r(juce::String::fromUTF8(raiz.caminho.c_str()));
+                    for (int guard = 0; guard < 100 && d != r && d.getFullPathName().length() > r.getFullPathName().length(); ++guard) {
+                        dirs.insert(d.getFullPathName().toStdString());
+                        d = d.getParentDirectory();
+                    }
+                }
+            }
+            std::vector<std::string> ordenados(dirs.begin(), dirs.end());
+            std::sort(ordenados.begin(), ordenados.end(), [](const std::string& a, const std::string& b) {
+                const auto pa = std::count(a.begin(), a.end(), '/'), pb = std::count(b.begin(), b.end(), '/');
+                return pa != pb ? pa < pb : a < b;
+            });
+
+            db.exec("BEGIN IMMEDIATE");
+            std::map<std::string, std::string> idPorDir;
+            const std::string raizPastaId = matriz::model::novoUuid();
+            const std::string cor = kCores[(criadas + std::count(raiz.caminho.begin(), raiz.caminho.end(), '/')) % 6];
+            int ordemRaiz = 0;
+            {
+                auto st = db.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id IS NULL AND projeto_id = ? AND mapa_id = ?");
+                st.bind(1, Value::of(projeto_->projetoId()));
+                st.bind(2, Value::of(mapaId));
+                if (st.step()) ordemRaiz = st.columnInt(0);
+            }
+            int ordem = 0;
+            for (const auto& dir : ordenados) {
+                const bool ehRaiz = dir == raiz.caminho;
+                const std::string id = ehRaiz ? raizPastaId : matriz::model::novoUuid();
+                std::string pai;
+                if (!ehRaiz) {
+                    const std::string paiDir = juce::File(juce::String::fromUTF8(dir.c_str())).getParentDirectory().getFullPathName().toStdString();
+                    if (auto it = idPorDir.find(paiDir); it != idPorDir.end()) pai = it->second;
+                    else pai = raizPastaId;
+                }
+                const std::string nome = juce::File(juce::String::fromUTF8(dir.c_str())).getFileName().toStdString();
+                db.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, posicao_y, ativo, "
+                       "cor_customizada, proposta_id, origem_caminho, criado_em, atualizado_em) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?, ?)",
+                       {Value::of(id), Value::of(projeto_->projetoId()), pai.empty() ? Value::null() : Value::of(pai),
+                        Value::of(nome), Value::of(ehRaiz ? ordemRaiz : ordem++), Value::of(mapaId), Value::of(cor),
+                        Value::of(raizPastaId), Value::of(dir), Value::of(agora), Value::of(agora)});
+                idPorDir[dir] = id;
+            }
+            db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+            db.exec("COMMIT");
+            ++criadas;
+        } catch (...) {
+            try { db.exec("ROLLBACK"); } catch (...) {}
+        }
+    }
+    return criadas;
+}
+
+std::vector<ProjetoAberto::PropostaPasta> ProjetoAberto::listarPropostas(const std::string& mapaId) const {
+    std::vector<PropostaPasta> out;
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return out;
+    try {
+        auto& db = projeto_->registro();
+        std::vector<std::tuple<std::string, std::string, std::string>> raizes;
+        {
+            auto st = db.prepare("SELECT id, nome, COALESCE(origem_caminho, '') FROM acervo_pasta "
+                                 "WHERE projeto_id = ? AND mapa_id = ? AND proposta_id = id ORDER BY criado_em, nome");
+            st.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            while (st.step()) raizes.emplace_back(st.columnText(0), st.columnText(1), st.columnText(2));
+        }
+        for (const auto& [id, nome, origem] : raizes) {
+            PropostaPasta p;
+            p.raizId = id;
+            p.nome = juce::String::fromUTF8(nome.c_str());
+            p.arquivos = origem.empty() ? 0 : static_cast<int>(itensSoltosDoDiretorio(db, mapaId, origem, true).size());
+            out.push_back(std::move(p));
+        }
+    } catch (...) {}
+    return out;
+}
+
+namespace {
+std::string mapaDaPasta(matriz::db::Database& db, const std::string& pastaId) {
+    auto st = db.prepare("SELECT COALESCE(mapa_id, '') FROM acervo_pasta WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(pastaId));
+    return st.step() ? st.columnText(0) : std::string();
+}
+
+int colocarItensDoDiretorio(matriz::db::Database& db, const std::string& mapaId, const std::string& pastaId,
+                            const std::string& dir, const std::string& agora) {
+    if (dir.empty()) return 0;
+    int n = 0;
+    for (const auto& item : itensSoltosDoDiretorio(db, mapaId, dir, false)) {
+        db.run("INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+               {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item), matriz::db::Value::of(pastaId),
+                matriz::db::Value::of(mapaId), matriz::db::Value::of(agora)});
+        ++n;
+    }
+    return n;
+}
+
+void descendentes(const std::vector<PastaLinha>& v, const std::string& id, std::vector<const PastaLinha*>& out) {
+    for (const auto& p : v)
+        if (p.pai == id) { out.push_back(&p); descendentes(v, p.id, out); }
+}
+}  // namespace
+
+void ProjetoAberto::usarArvoreProposta(const std::string& raizId) {
+    mesclarProposta(raizId, {}, {});
+}
+
+void ProjetoAberto::descartarProposta(const std::string& raizId) {
+    if (somenteLeitura_ || !projeto_ || raizId.empty()) return;
+    try {
+        projeto_->registro().run("DELETE FROM acervo_pasta WHERE proposta_id = ?", {matriz::db::Value::of(raizId)});
+    } catch (...) {}
+}
+
+std::vector<ProjetoAberto::PastaDoMapa> ProjetoAberto::destinosDeMescla(const std::string& raizId) const {
+    std::vector<PastaDoMapa> out;
+    if (!projeto_) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        juce::String nomeRaiz;
+        for (const auto& p : v) if (p.id == raizId) nomeRaiz = juce::String::fromUTF8(p.nome.c_str());
+        for (const auto& p : v) {
+            if (!p.proposta.empty()) continue;
+            PastaDoMapa d;
+            d.id = p.id;
+            d.caminho = caminhoDaPastaNaLista(v, p.id);
+            d.mesmoNome = juce::String::fromUTF8(p.nome.c_str()).equalsIgnoreCase(nomeRaiz);
+            out.push_back(std::move(d));
+        }
+        std::stable_sort(out.begin(), out.end(), [](const PastaDoMapa& a, const PastaDoMapa& b) {
+            if (a.mesmoNome != b.mesmoNome) return a.mesmoNome;
+            return a.caminho.compareIgnoreCase(b.caminho) < 0;
+        });
+    } catch (...) {}
+    return out;
+}
+
+std::vector<ProjetoAberto::LinhaMescla> ProjetoAberto::planoDeMescla(const std::string& raizId, const std::string& alvoId,
+                                                                    const std::map<std::string, bool>& decisoes) const {
+    std::vector<LinhaMescla> out;
+    if (!projeto_ || alvoId.empty()) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        std::function<void(const std::string&, const std::string&)> rec = [&](const std::string& propId, const std::string& alvo) {
+            for (const auto& c : v) {
+                if (c.pai != propId) continue;
+                const PastaLinha* par = nullptr;
+                for (const auto& x : v)
+                    if (x.pai == alvo && x.proposta.empty() &&
+                        juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (!par) continue;
+                LinhaMescla l;
+                l.propostaId = c.id;
+                l.caminhoProposta = caminhoDaPastaNaLista(v, c.id);
+                l.alvoId = par->id;
+                l.caminhoAlvo = caminhoDaPastaNaLista(v, par->id);
+                l.arquivos = c.origem.empty() ? 0 : static_cast<int>(itensSoltosDoDiretorio(db, mapaId, c.origem, true).size());
+                auto it = decisoes.find(c.id);
+                l.mesclar = it == decisoes.end() ? true : it->second;
+                out.push_back(l);
+                if (l.mesclar) rec(c.id, par->id);
+            }
+        };
+        rec(raizId, alvoId);
+    } catch (...) {}
+    return out;
+}
+
+int ProjetoAberto::mesclarProposta(const std::string& raizId, const std::string& alvoId, const std::map<std::string, bool>& decisoes) {
+    if (somenteLeitura_ || !projeto_ || raizId.empty()) return -1;
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        if (mapaId.empty()) return -1;
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        const std::string agora = matriz::model::agoraIso8601();
+        int colocados = 0;
+        db.exec("BEGIN IMMEDIATE");
+
+        // Aceita uma subárvore como está: arquivos nas pastas dela, marca de proposta e cor saem.
+        auto aceitar = [&](const std::string& id) {
+            std::vector<const PastaLinha*> todas;
+            for (const auto& p : v) if (p.id == id) todas.push_back(&p);
+            descendentes(v, id, todas);
+            for (const auto* p : todas) {
+                colocados += colocarItensDoDiretorio(db, mapaId, p->id, p->origem, agora);
+                db.run("UPDATE acervo_pasta SET proposta_id = NULL, cor_customizada = NULL WHERE id = ?", {Value::of(p->id)});
+            }
+        };
+
+        if (alvoId.empty()) {
+            aceitar(raizId);
+        } else {
+            std::function<void(const std::string&, const std::string&)> mesclar = [&](const std::string& propId, const std::string& alvo) {
+                const PastaLinha* prop = nullptr;
+                for (const auto& p : v) if (p.id == propId) prop = &p;
+                if (prop) colocados += colocarItensDoDiretorio(db, mapaId, alvo, prop->origem, agora);
+                for (const auto& c : v) {
+                    if (c.pai != propId) continue;
+                    const PastaLinha* par = nullptr;
+                    auto it = decisoes.find(c.id);
+                    const bool querMesclar = it == decisoes.end() ? true : it->second;
+                    if (querMesclar)
+                        for (const auto& x : v)
+                            if (x.pai == alvo && x.proposta.empty() &&
+                                juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                    if (par) {
+                        mesclar(c.id, par->id);
+                    } else {
+                        db.run("UPDATE acervo_pasta SET pasta_pai_id = ? WHERE id = ?", {Value::of(alvo), Value::of(c.id)});
+                        aceitar(c.id);
+                    }
+                }
+                db.run("DELETE FROM acervo_pasta WHERE id = ?", {Value::of(propId)});
+            };
+            mesclar(raizId, alvoId);
+        }
+        db.exec("COMMIT");
+        return colocados;
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return -1;
+    }
 }
 
 int ProjetoAberto::organizarItensSoltosDasPastasComRegra(const std::string& mapaId) {
