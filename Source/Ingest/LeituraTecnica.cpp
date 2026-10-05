@@ -39,6 +39,7 @@ const std::set<juce::String>& extensoesSessao() {
         "ai", "ait", "eps", "svg",
         "indd", "indt", "indl", "indb", "idml", "idms", "inx",
         "pts", "wfm", "aan",
+        "veg", "veg-bak",  // Sony Vegas
         "rpp-bak", "rpp-undo",
         "alp", "alc", "adg", "adv", "agr", "amxd", "ams", "abl", "ablbundle", "asd", "ask",
         "fcpbundle", "fcpxml", "fcpxmld", "fcpevent", "fcproject", "fcp", "fcarch", "cboard",
@@ -850,6 +851,8 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "capcut.jpeg";
     if (ext == "bkrgs")
         return "groovesculptor.png";
+    if (ext == "veg" || ext == "veg-bak")  // Sony Vegas (ícone genérico próprio, não a marca)
+        return "vegas.png";
     if (ext == "logic" || ext == "logicx")
         return "logic.png";
     if (ext == "lrcat" || ext == "lrcat-journal" || ext == "lrcat-wal" || ext == "lrcat-shm" || ext == "lrtemplate" || ext == "lrsmcol")

@@ -105,6 +105,7 @@ juce_add_binary_data(MatrizAssets
         "Assets/pro tools.png"
         "Assets/puredata.png"
         "Assets/reaper.png"
+        "Assets/vegas.png"
         "Assets/word.jpeg")
 
 # ------------------------------------------------------------------------------
