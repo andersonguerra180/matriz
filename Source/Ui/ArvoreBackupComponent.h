@@ -113,6 +113,13 @@ private:
     // pra aplicar o mesmo delta do nó primário (nodeDragIndice_) em todas —
     // sem isto só a pasta clicada se movia, o resto da seleção ficava parado.
     std::vector<std::pair<int, juce::Point<float>>> arrastoGrupoPosicoesIniciais_;
+    // Auto-rolagem: arrastando pastas até a borda do canvas, a vista rola devagar e o bloco acompanha.
+    struct TimerAutoRolagem : juce::Timer {
+        std::function<void()> aoTick;
+        void timerCallback() override { if (aoTick) aoTick(); }
+    } autoRolagem_;
+    void moverArrastoPara(juce::Point<int> mouseTela);
+    void tickAutoRolagem();
 
     float zoom_ = 1.0f;
     juce::Point<float> panOffset_{0.0f, 0.0f};

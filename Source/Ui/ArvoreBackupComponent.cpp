@@ -394,6 +394,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 }
 
 ArvoreBackupComponent::~ArvoreBackupComponent() {
+    autoRolagem_.stopTimer();
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
@@ -1795,7 +1796,11 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     if (!mapaAtivoEhOriginal()) {
         for (size_t i = 0; i < nodes_.size(); ++i) {
             juce::Point<float> outPort(static_cast<float>(nodes_[i].bounds.getRight()), static_cast<float>(nodes_[i].bounds.getCentreY()));
-            if (outPort.getDistanceSquaredFrom(canvasClick) <= 225.0f / (zoom_ * zoom_) + 225.0f) {
+            // Raio de captura em pixels de TELA, limitado a uma fração do card: com o zoom afastado o card
+            // fica pequeno e um raio fixo engolia o corpo dele (impedia selecionar/mover).
+            const float raioTela = juce::jmin(12.0f, 0.18f * static_cast<float>(nodes_[i].bounds.getWidth()) * zoom_);
+            const float raio = raioTela / zoom_;
+            if (outPort.getDistanceSquaredFrom(canvasClick) <= raio * raio) {
                 socketDragParentId_ = nodes_[i].id;
                 socketDragPos_ = canvasClick;
                 repaint();
@@ -1858,6 +1863,10 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         arrastoGrupoPosicoesIniciais_.clear();
         for (int idx : indicesParaMover) {
             arrastoGrupoPosicoesIniciais_.push_back({idx, nodes_[static_cast<size_t>(idx)].bounds.getPosition().toFloat()});
+        }
+        if (nodeDragIndice_ >= 0) {
+            autoRolagem_.aoTick = [this] { tickAutoRolagem(); };
+            autoRolagem_.startTimer(30);
         }
 
         if (e.mods.isPopupMenu()) {
@@ -2059,8 +2068,13 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
         return;
     }
 
+    if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size())) moverArrastoPara(e.getPosition());
+}
+
+// Posiciona o bloco arrastado como se o mouse estivesse em `mouseTela` (coordenadas do componente).
+void ArvoreBackupComponent::moverArrastoPara(juce::Point<int> mouseTela) {
     if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size())) {
-        auto canvasPos = screenToCanvas(e.getPosition() - arrastoOffset_);
+        auto canvasPos = screenToCanvas(mouseTela - arrastoOffset_);
 
         // Item 10: desloca todo o lote selecionado pelo mesmo delta do nó
         // primário, em vez de mover só a pasta em que o arrasto começou.
@@ -2079,8 +2093,32 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
     }
 }
 
+void ArvoreBackupComponent::tickAutoRolagem() {
+    if (nodeDragIndice_ < 0 || nodeDragIndice_ >= static_cast<int>(nodes_.size()) || !isMouseButtonDown()) {
+        autoRolagem_.stopTimer();
+        return;
+    }
+    const auto canvas = areaCanvas();
+    const auto mouse = getMouseXYRelative();
+    constexpr int kMargem = 32;
+    constexpr float kVelMax = 10.0f;  // px de tela por tick (~30 ms): devagar
+    auto empurrao = [&](int pos, int ini, int fim) {
+        if (pos < ini + kMargem) return juce::jmin(1.0f, static_cast<float>(ini + kMargem - pos) / kMargem) * kVelMax;
+        if (pos > fim - kMargem) return -juce::jmin(1.0f, static_cast<float>(pos - (fim - kMargem)) / kMargem) * kVelMax;
+        return 0.0f;
+    };
+    const float dx = empurrao(mouse.x, canvas.getX(), canvas.getRight());
+    const float dy = empurrao(mouse.y, canvas.getY(), canvas.getBottom());
+    if (dx == 0.0f && dy == 0.0f) return;
+    panOffset_.x += dx;
+    panOffset_.y += dy;
+    moverArrastoPara(mouse);  // o bloco segue o mouse, que agora aponta pra outra região do canvas
+    repaint();
+}
+
 void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     panning_ = false;
+    autoRolagem_.stopTimer();
 
     if (marqueeSelecting_) {
         marqueeSelecting_ = false;
