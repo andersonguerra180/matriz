@@ -280,6 +280,7 @@ std::string nivelHierarquiaToString(NivelHierarquia n) {
         case NivelHierarquia::Artista: return "artista";
         case NivelHierarquia::ContentType: return "content_type";
         case NivelHierarquia::Subject: return "subject";
+        case NivelHierarquia::Lista: return "lista";
         case NivelHierarquia::PastaManual: return "pasta_manual";
         case NivelHierarquia::EstruturaOriginal: return "estrutura_original";
     }
@@ -295,6 +296,7 @@ NivelHierarquia nivelHierarquiaFromString(const std::string& s) {
     if (s == "artista") return NivelHierarquia::Artista;
     if (s == "content_type") return NivelHierarquia::ContentType;
     if (s == "subject") return NivelHierarquia::Subject;
+    if (s == "lista") return NivelHierarquia::Lista;
     if (s == "pasta_manual") return NivelHierarquia::PastaManual;
     throw std::runtime_error("nível de hierarquia de backup desconhecido: \"" + s + "\"");
 }
@@ -400,7 +402,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     auto stmt = registro.prepare(
         std::string("SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
         "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
-        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, '') "
+        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, ''), i.lista "
         "FROM item i "
         "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id ") +
         (filtrarMapa ? "AND aip.mapa_id = ? " : "") +
@@ -451,6 +453,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string collectionTypeAtual = stmt.columnIsNull(10) ? std::string() : stmt.columnText(10);
         std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
         std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
+        std::string listaAtual = stmt.columnIsNull(14) ? std::string() : stmt.columnText(14);
         juce::String codigoSource;
         if (organizarPorSource) {
             auto itCod = codigoPorVault.find(stmt.columnText(13));
@@ -493,6 +496,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         if (!dcCreatorAtual.empty()) ctx.camposFicha["dc_creator"] = dcCreatorAtual;
         if (!collectionTypeAtual.empty()) ctx.camposFicha["collection_type"] = collectionTypeAtual;
         if (!dcSubjectAtual.empty()) ctx.camposFicha["dc_subject"] = dcSubjectAtual;
+        if (!listaAtual.empty()) ctx.camposFicha["lista"] = listaAtual;
         if (!sourceMediaAtual.empty()) ctx.camposFicha["source_media"] = sourceMediaAtual;
         bool temAnoNaFicha = false;
         {
@@ -580,6 +584,13 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     auto it = ctx.camposFicha.find("dc_subject");
                     juce::String assunto = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
                     segmentosPasta.add(segmentoSeguro(assunto, "No subject"));
+                    break;
+                }
+                case NivelHierarquia::Lista: {
+                    // LIST (nome de lista/seleção dentro do SUBJECT): pasta com o nome digitado na ficha.
+                    auto it = ctx.camposFicha.find("lista");
+                    juce::String lista = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    segmentosPasta.add(segmentoSeguro(lista, "No list"));
                     break;
                 }
                 case NivelHierarquia::PastaManual:

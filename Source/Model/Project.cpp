@@ -838,6 +838,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "item", "dc_title", "TEXT");
     garantirColuna(registro, "item", "dc_creator", "TEXT");
     garantirColuna(registro, "item", "dc_subject", "TEXT");
+    // LIST: nome de lista/seleção dentro de um SUBJECT (campo nativo do BKR, não Dublin Core).
+    garantirColuna(registro, "item", "lista", "TEXT");
     garantirColuna(registro, "item", "dc_description", "TEXT");
     garantirColuna(registro, "item", "dc_publisher", "TEXT");
     garantirColuna(registro, "item", "dc_contributor", "TEXT");

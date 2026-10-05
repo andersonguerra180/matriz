@@ -2051,6 +2051,7 @@ private:
         juce::String valDcCreator = projeto_.lerMetadado(itemId, "dc_creator").value_or("");
 
         juce::String valDcSubject = projeto_.lerMetadado(itemId, "dc_subject").value_or("");
+        juce::String valLista = projeto_.lerMetadado(itemId, "lista").value_or("");
 
         juce::String valDcDescription = projeto_.lerMetadado(itemId, "dc_description").value_or("");
 
@@ -2351,7 +2352,7 @@ private:
                         // alimentam o autocomplete do projeto — "creator"/
                         // "subject" (bloco UserAsset) usam a mesma coluna
                         // dc_creator/dc_subject, então caem no mesmo histórico.
-                        if (dbColuna == "dc_subject" || dbColuna == "dc_creator" ||
+                        if (dbColuna == "dc_subject" || dbColuna == "lista" || dbColuna == "dc_creator" ||
                             dbColuna == "dc_publisher" || dbColuna == "dc_contributor") {
                             matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), dbColuna, txt);
                         }
@@ -2834,6 +2835,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
@@ -2863,6 +2865,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
@@ -2891,6 +2894,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
@@ -2916,6 +2920,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("pages", isPt ? juce::String::fromUTF8("PÁGINAS") : juce::String("PAGES"), pagesStr);
@@ -4931,6 +4936,7 @@ private:
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Audio, isPt));
@@ -4957,6 +4963,7 @@ private:
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Video, isPt));
@@ -4982,6 +4989,7 @@ private:
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Image, isPt));
@@ -5007,6 +5015,7 @@ private:
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Docs, isPt));
@@ -5033,6 +5042,7 @@ private:
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Mixed, isPt));
@@ -5182,7 +5192,7 @@ private:
         // Fase 4: mesmos 4 campos do modo single alimentam o autocomplete
         // do projeto (uma vez por aplicação, não por item — é o mesmo
         // valor pros itens selecionados).
-        if (sucessos > 0 && (linha->colunaDb == "dc_subject" || linha->colunaDb == "dc_creator" ||
+        if (sucessos > 0 && (linha->colunaDb == "dc_subject" || linha->colunaDb == "lista" || linha->colunaDb == "dc_creator" ||
                               linha->colunaDb == "dc_publisher" || linha->colunaDb == "dc_contributor")) {
             matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), linha->colunaDb, val.toStdString());
         }

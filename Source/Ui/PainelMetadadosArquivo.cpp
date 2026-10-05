@@ -148,6 +148,7 @@ std::vector<PainelMetadadosArquivo::Card> PainelMetadadosArquivo::lerCards(Proje
     add(desc, "Title", campo("dc_title"));
     add(desc, "Description", campo("dc_description"));
     add(desc, "Keywords", campo("dc_subject"));
+    add(desc, "List", campo("lista"));
     add(desc, "Author", campo("dc_creator"));
     add(desc, "Contributor", campo("dc_contributor"));
     add(desc, "Publisher", campo("dc_publisher"));

@@ -67,6 +67,7 @@ struct ItemResumo {
     // CONTENT = "Hidden": fora da grade do Catalog, salvo se CONTENT TYPE = Hidden estiver selecionado.
     bool oculto() const { return collectionType.has_value() && *collectionType == "Hidden"; }
     std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)
+    std::optional<std::string> lista;    // item.lista — nome de lista/seleção dentro do SUBJECT (um valor só)
 
     // Extensão (sem ponto, minúscula) do arquivo principal — usada pro
     // ícone de placeholder por categoria enquanto não há miniatura real

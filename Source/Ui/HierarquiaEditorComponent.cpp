@@ -20,6 +20,7 @@ juce::String rotuloDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n) {
         case N::Artista:     return "CREATOR";
         case N::ContentType: return "CONTENT";
         case N::Subject:     return "SUBJECT";
+        case N::Lista:       return "LIST";
         case N::PastaManual: return "MANUAL FOLDERS";
     }
     return "?";
@@ -37,6 +38,7 @@ juce::Colour corDoNivelHierarquia(matriz::consolidacao::NivelHierarquia n) {
         case N::Artista:     return juce::Colour(0xffc04070);
         case N::ContentType: return juce::Colour(0xff2b9348);
         case N::Subject:     return juce::Colour(0xffd9a441);
+        case N::Lista:       return juce::Colour(0xff4db6e8);
         case N::PastaManual: return juce::Colour(0xffc0a030);
     }
     return juce::Colours::grey;
@@ -56,6 +58,7 @@ juce::String exemploDoNivel(matriz::consolidacao::NivelHierarquia n) {
         case N::Artista:     return "Creator Name";
         case N::ContentType: return "Photo";
         case N::Subject:     return "Family Vacation";
+        case N::Lista:       return "Best Of";
         case N::PastaManual: return "Category/Subcategory";
     }
     return "?";
@@ -72,7 +75,7 @@ HierarquiaEditorComponent::HierarquiaEditorComponent(const matriz::consolidacao:
     // de pé: projeto antigo com "pasta_manual" já ATIVO (vindo de
     // hierarquiaAtual, não desta lista) continua funcionando exatamente
     // como antes, só não aparece mais pra quem for adicionar um bloco novo.
-    std::vector<N> todos = {N::Projeto, N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject};
+    std::vector<N> todos = {N::Projeto, N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject, N::Lista};
     if (!opcoes.paleta.empty()) todos = opcoes.paleta;
     if (opcoes.raizPreview.isNotEmpty()) raizPreview_ = opcoes.raizPreview;
 

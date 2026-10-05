@@ -217,6 +217,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"estado_vazio.titulo", "Arraste sua pasta ou seu HD pra cá"},
         {"catwork.subject_todos", "Todos os Assuntos"},
         {"catwork.subject_nenhum", "Sem Assunto"},
+        {"catwork.lista_todas", "Todas as Listas"},
+        {"catwork.lista_nenhuma", "Sem Lista"},
         {"catwork.sem_leva_recente", "Nenhuma leva recente do Intake"},
         {"ficha.alerta_rotulo", "Atenção"},
         {"ficha.alternar", "Detalhes"},

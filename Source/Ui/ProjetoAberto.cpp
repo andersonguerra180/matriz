@@ -338,7 +338,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END, "
         "i.dc_subject, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao') "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
+        "i.lista "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -404,6 +405,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         }
         // Data do metadado (mesma regra do Intake, ver listarItensEmQuarentena):
         // sem isto a coluna DATE CREATED do Grid caía em criado_em (data do ingest).
+        if (!stmt.columnIsNull(30)) {
+            std::string lst = stmt.columnText(30);
+            if (!lst.empty()) r.lista = lst;
+        }
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
@@ -519,7 +524,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         "tipo_midia", "ano", "content_type", "source_media", "collection_type", "isrc",
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
-        "dc_language", "dc_relation", "dc_coverage", "dc_rights"};
+        "dc_language", "dc_relation", "dc_coverage", "dc_rights", "lista"};
     std::string cols = "codigo_acervo, titulo, COALESCE(notas_livres, '')";
     for (auto* c : kColunas) cols += std::string(", COALESCE(") + c + ", '')";
     auto lerItem = [&](const std::string& id, std::vector<std::string>& out) {
@@ -1346,7 +1351,7 @@ std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& 
 std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId, const std::string& coluna) const {
     if (!projeto_) return std::nullopt;
     static const std::set<std::string> kColunasPermitidas = {
-        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo",
+        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo", "lista",
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
         "dc_language", "dc_relation", "dc_coverage", "dc_rights",

@@ -18,7 +18,7 @@ const char* const kColunasValorUnico[] = {
     "tipo_midia", "ano", "content_type", "source_media", "collection_type", "isrc",
     "dc_title", "dc_creator", "dc_description", "dc_publisher", "dc_contributor",
     "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
-    "dc_language", "dc_relation", "dc_coverage", "dc_rights"};
+    "dc_language", "dc_relation", "dc_coverage", "dc_rights", "lista"};
 
 bool ehColunaDoItem(const std::string& campo) {
     if (campo == "dc_subject" || campo == "notas_livres" || campo == "titulo") return true;

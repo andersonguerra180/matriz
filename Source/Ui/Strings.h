@@ -919,6 +919,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"catwork.content_type_todos", "All Content Types"},
         {"catwork.subject_todos", "All Subjects"},
         {"catwork.subject_nenhum", "No Subject"},
+        {"catwork.lista_todas", "All Lists"},
+        {"catwork.lista_nenhuma", "No List"},
         {"catwork.sem_leva_recente", "No recent intake batch"},
         {"catwork.content_type_desconhecido", "No Content Type"},
         {"catwork.data_from", "FROM"},

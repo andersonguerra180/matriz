@@ -41,7 +41,7 @@ namespace matriz::consolidacao {
 // vai pra uma pasta "sem <campo>" em vez de desaparecer ou travar o backup
 // (§5.2 — "nunca desaparece nem trava").
 // EstruturaOriginal preserves the relative folder structure from the source path.
-enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, PastaManual, EstruturaOriginal };
+enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, Lista, PastaManual, EstruturaOriginal };
 
 std::string nivelHierarquiaToString(NivelHierarquia n);
 NivelHierarquia nivelHierarquiaFromString(const std::string& s); // lança std::runtime_error se desconhecido
