@@ -183,10 +183,12 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
             juce::Image img(juce::Image::RGB, larguraPx, alturaPx, true);
             juce::Graphics g(img);
             g.fillAll(juce::Colour(0xff2d2d32));
-            g.setColour(juce::Colour(0xffe0e0e4));
-            g.setFont(14.0f);
-            g.drawText("Video Thumbnail (t=" + juce::String(tempo, 1) + "s)",
-                       img.getBounds(), juce::Justification::centred);
+            // Sem texto: este código roda em thread de fundo e o cache de análise
+            // Unicode do JUCE (drawText) não é thread-safe — causava SIGSEGV na UI.
+            g.setColour(juce::Colour(0xff3c3c44));
+            const int lado = juce::jmax(8, juce::jmin(larguraPx, alturaPx) / 4);
+            g.fillRect(img.getBounds().getCentreX() - lado / 2,
+                       img.getBounds().getCentreY() - lado / 2, lado, lado);
             juce::JPEGImageFormat jpeg;
             if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream()))
                 jpeg.writeImageToStream(img, *stream);
