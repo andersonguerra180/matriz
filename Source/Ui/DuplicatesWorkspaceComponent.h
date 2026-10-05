@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <atomic>
 #include <vector>
 #include <string>
 #include <optional>
@@ -85,7 +86,7 @@ public:
     };
 private:
     State estado_ = State::Idle;
-    double progressoScan_ = 0.0;
+    std::atomic<double> progressoScan_{0.0};  // escrito pela thread do scan, lido pelo timer da UI
 
     std::vector<DuplicateGroup> gruposDetectados_;
 
