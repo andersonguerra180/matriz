@@ -322,6 +322,8 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Preset", "Preset"},
         {"DAW Session", juce::String::fromUTF8("Sessão de DAW")},
         {"Field Recording", juce::String::fromUTF8("Gravação de Campo")},
+        {"Voiceover", juce::String::fromUTF8("Locução")},
+        {"Speech", "Depoimento"},
         {"Sound FX", "Efeitos Sonoros (SFX)"},
         {"MIDI", "MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
@@ -388,7 +390,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     std::vector<juce::String> keys;
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-                "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Sound FX", "MIDI",
+                "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
                 "Artist Catalog", "Artist Backup"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
