@@ -200,14 +200,6 @@ void EstatisticasComponent::recarregar() {
         if (catalogAnalyticsViewport_) catalogAnalyticsViewport_->setVisible(false);
         treemapComponent_.setVisible(true);
         matriz::db::Database& db = projeto_.projeto().registro();
-        carregarMetricasDoBanco(db);
-        // Fase 3: mapa do dropdown do Folder Map; contagem = 1 COUNT agregado.
-        semPastaMapaId_ = projeto_.mapaSelecionadoNoFolderMap();
-        semPastaOriginal_ = (semPastaMapaId_ == ProjetoAberto::kMapaOriginal);
-        semPastaMapaNome_ = {};
-        for (auto& m : projeto_.listarFolderMaps())
-            if (m.id == semPastaMapaId_) semPastaMapaNome_ = m.nome;
-        semPastaContagem_ = semPastaOriginal_ ? 0 : projeto_.contarItensSemPasta(semPastaMapaId_);
         treemapComponent_.recarregarDoBanco(db);
     }
     repaint();
@@ -299,64 +291,6 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
     catalogTotalKpi_.backupHealthPercentage = 100.0;
 }
 
-void EstatisticasComponent::carregarMetricasDoBanco(matriz::db::Database& db) {
-    summaryKpi_ = SummaryKpi{};
-    std::map<std::string, uint64_t> formatCounts;
-
-    try {
-        auto stmt = db.prepare(
-            "SELECT i.id, IFNULL(a.caminho_relativo, IFNULL(a.caminho_absoluto_origem, '')), IFNULL(a.tamanho_bytes, 0) "
-            "FROM item i "
-            "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1");
-
-        while (stmt.step()) {
-            std::string pathStr = stmt.columnText(1);
-            juce::int64 sizeBytes = static_cast<juce::int64>(stmt.columnInt(2));
-
-            juce::String ext = "";
-            if (!pathStr.empty()) {
-                int dotIdx = pathStr.rfind('.');
-                if (dotIdx != std::string::npos && dotIdx < pathStr.length() - 1) {
-                    ext = pathStr.substr(dotIdx + 1);
-                    ext = ext.toLowerCase();
-                }
-            }
-
-            std::string format = ext.isEmpty() ? "No Format" : ext.toUpperCase().toStdString();
-            formatCounts[format]++;
-
-            summaryKpi_.totalAssets++;
-            summaryKpi_.totalBytes += sizeBytes;
-        }
-    } catch (...) {}
-
-    std::string topFmt = "Audio";
-    uint64_t topCnt = 0;
-    for (const auto& [fmt, cnt] : formatCounts) {
-        if (cnt > topCnt) {
-            topCnt = cnt;
-            topFmt = fmt;
-        }
-    }
-    summaryKpi_.primaryFormatName = topFmt;
-    summaryKpi_.primaryFormatCount = topCnt;
-    summaryKpi_.vulnerableAssetsCount = summaryKpi_.totalAssets;
-
-    // Calculate Needs Attention (§ B.2)
-    needsAttentionIds_.clear();
-    try {
-        auto stmtRev = db.prepare(
-            "SELECT id FROM item "
-            "WHERE (ano IS NULL OR ano = 0) "
-            "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-            "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
-        while (stmtRev.step()) {
-            needsAttentionIds_.insert(stmtRev.columnText(0));
-        }
-        summaryKpi_.needsAttentionCount = static_cast<uint64_t>(needsAttentionIds_.size());
-    } catch (...) {}
-}
-
 void EstatisticasComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
@@ -374,79 +308,11 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
     g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
     g.drawText(i18n::t("analytics.titulo"), area.removeFromTop(22), juce::Justification::left);
-    area.removeFromTop(8);
-
-    // Top 5 KPI Cards Area (Top 70px)
-    auto topKpiArea = area.removeFromTop(70);
-    desenharTopKpiCards(g, topKpiArea);
+    // Os 6 cards de analytics agora ficam acima das sub-abas FOLDER MAP / SPACE MAP (CartoesAnalyticsComponent).
 }
 
-void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area) {
-    const auto& tk = tema();
-    int cardW = (area.getWidth() - 60) / 6;
-    int cardH = area.getHeight();
-
-    auto drawCard = [&](int x, const juce::String& title, const juce::String& val, const juce::String& subtitle, juce::Colour accentColor) -> juce::Rectangle<int> {
-        juce::Rectangle<int> r(x, area.getY(), cardW, cardH);
-        g.setColour(tk.painel);
-        g.fillRoundedRectangle(r.toFloat(), 6.0f);
-
-        // Accent strip on left
-        auto strip = r.removeFromLeft(4);
-        g.setColour(accentColor);
-        g.fillRoundedRectangle(strip.toFloat(), 3.0f);
-
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.0f);
-
-        auto inner = r.reduced(10, 6);
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(title, inner.removeFromTop(12), juce::Justification::left);
-
-        g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-        g.drawText(val, inner.removeFromTop(20), juce::Justification::left);
-
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
-        g.drawText(subtitle, inner, juce::Justification::left);
-
-        return juce::Rectangle<int>(x, area.getY(), cardW, cardH);
-    };
-
-    int x = area.getX();
-    drawCard(x, i18n::t("analytics.total_assets"), juce::String(summaryKpi_.totalAssets), i18n::t("analytics.total_assets_sub"), juce::Colour(0xff3b82f6)); x += cardW + 12;
-    drawCard(x, i18n::t("analytics.storage_size"), formatSizeHuman(summaryKpi_.totalBytes), i18n::t("analytics.storage_size_sub"), juce::Colour(0xff10b981)); x += cardW + 12;
-    drawCard(x, i18n::t("analytics.primary_format"), juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " " + i18n::t("analytics.ativos"), juce::Colour(0xfff59e0b)); x += cardW + 12;
-    needsAttentionCardBounds_ = drawCard(x, i18n::t("analytics.needs_attention"), juce::String(summaryKpi_.needsAttentionCount), i18n::t("analytics.needs_attention_sub"), juce::Colour(0xfff97316)); x += cardW + 12;
-    backupHealthCardBounds_ = drawCard(x, i18n::t("analytics.backup_health"), juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444)); x += cardW + 12;
-    // Fase 3: SEM PASTA — número do mapa selecionado no Folder Map. Com o
-    // ORIGINAL o card fica neutro (ORIGINAL não tem itens sem pasta).
-    juce::String valorSemPasta = semPastaOriginal_
-        ? juce::String::fromUTF8("\xe2\x80\x94")
-        : i18n::t("analytics.sem_pasta_valor").replace("{n}", juce::String(semPastaContagem_));
-    juce::String subSemPasta = semPastaOriginal_ ? i18n::t("analytics.sem_pasta_original") : semPastaMapaNome_;
-    semPastaCardBounds_ = drawCard(x, i18n::t("analytics.sem_pasta"), valorSemPasta, subSemPasta,
-                                   semPastaOriginal_ ? juce::Colour(0xff6b7280) : juce::Colour(0xff6366f1));
-}
-
-void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
-    if (needsAttentionCardBounds_.contains(e.getPosition())) {
-        if (aoClicarNeedsAttention) {
-            aoClicarNeedsAttention(needsAttentionIds_);
-        } else if (aoAbrirNoGrid) {
-            aoAbrirNoGrid(needsAttentionIds_);
-        }
-    } else if (semPastaCardBounds_.contains(e.getPosition())) {
-        if (!semPastaOriginal_ && aoAbrirSemPasta) aoAbrirSemPasta(projeto_.itensSemPasta(semPastaMapaId_));
-    } else if (backupHealthCardBounds_.contains(e.getPosition())) {
-        VulnerabilidadesDialog::exibirModal(projeto_, this, [this](const std::set<std::string>& ids) {
-            if (aoAbrirNoGrid) {
-                aoAbrirNoGrid(ids);
-            }
-        });
-    }
+void EstatisticasComponent::mouseDown(const juce::MouseEvent&) {
+    // (os cards clicáveis moveram para CartoesAnalyticsComponent)
 }
 
 void EstatisticasComponent::resized() {
@@ -462,8 +328,6 @@ void EstatisticasComponent::resized() {
     } else {
         auto area = getLocalBounds().reduced(16, 12);
         area.removeFromTop(22); // Header
-        area.removeFromTop(8);  // Gap
-        area.removeFromTop(70); // KPI cards
         area.removeFromTop(12); // Gap
 
         treemapComponent_.setBounds(area);

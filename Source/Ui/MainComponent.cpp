@@ -684,6 +684,7 @@ void MainComponent::atualizarIdioma() {
     catalogWorkspace_.reset();
     duplicatesWorkspace_.reset();
     analyticsWorkspace_.reset();
+    cartoesAnalytics_.reset();
     treeWorkspace_.reset();
     backupWorkspace_.reset();
     storageWorkspace_.reset();
@@ -775,6 +776,7 @@ void MainComponent::reconstruirTelaInicial() {
     catalogWorkspace_.reset();
     duplicatesWorkspace_.reset();
     analyticsWorkspace_.reset();
+    cartoesAnalytics_.reset();
     treeWorkspace_.reset();
     backupWorkspace_.reset();
     storageWorkspace_.reset();
@@ -1889,6 +1891,32 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
     }
     subAbasEstrutura_->setVisible(true);
     subAbasEstrutura_->selecionar(folderAtivo ? 0 : 1);
+
+    // Os 6 cards de analytics vivem acima da faixa de sub-abas e valem para as DUAS abas.
+    if (!cartoesAnalytics_) {
+        cartoesAnalytics_ = std::make_unique<CartoesAnalyticsComponent>(*projetoAberto_);
+        cartoesAnalytics_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+            mostrarGrid();
+            if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
+        };
+        cartoesAnalytics_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
+            mostrarGrid();
+            if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
+        };
+        // Mesmo caminho do clique no nó SEM PASTA do Folder Map (atualiza a ficha e escopa as contagens).
+        cartoesAnalytics_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
+            mostrarGrid();
+            if (catalogWorkspace_) {
+                catalogWorkspace_->definirSelecaoItens(itemIds);
+            } else if (mosaico_) {
+                mosaico_->definirFiltroItens(itemIds);
+                mosaico_->definirSelecao(itemIds);
+            }
+        };
+        addAndMakeVisible(*cartoesAnalytics_);
+    }
+    cartoesAnalytics_->setVisible(true);
+    cartoesAnalytics_->recarregar();
 
     if (folderAtivo) {
         if (analyticsWorkspace_) analyticsWorkspace_->setVisible(false);
@@ -4667,6 +4695,7 @@ void MainComponent::resized() {
     bool estruturaVisivel = (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) ||
                              (treeWorkspace_ && treeWorkspace_->isVisible());
     if (subAbasEstrutura_) subAbasEstrutura_->setVisible(estruturaVisivel);
+    if (cartoesAnalytics_) cartoesAnalytics_->setVisible(estruturaVisivel);
 
     if (catalogo_) {
         auto cabecalho = area.removeFromTop(BarraFerramentasComponent::kAltura).reduced(tema().espacoMedio, 8);
@@ -4737,6 +4766,7 @@ void MainComponent::resized() {
     // numa faixa fixa acima de qual dos dois workspaces estiver visível
     // (a visibilidade delas já foi decidida lá no topo desta função).
     if (estruturaVisivel) {
+        if (cartoesAnalytics_) cartoesAnalytics_->setBounds(area.removeFromTop(cartoesAnalytics_->alturaPara(area.getWidth())));
         if (subAbasEstrutura_) subAbasEstrutura_->setBounds(area.removeFromTop(SubAbasEstruturaComponent::kAltura));
 
         if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) {

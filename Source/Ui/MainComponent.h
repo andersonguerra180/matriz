@@ -22,6 +22,7 @@
 #include "IngestWizardComponent.h"
 #include "BarraNavegacaoComponent.h"
 #include "SubAbasEstruturaComponent.h"
+#include "CartoesAnalyticsComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "PreservationWorkspaceComponent.h"
 #include "CatalogWorkspaceComponent.h"
@@ -512,6 +513,7 @@ private:
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
     // Item 4 (nova lista): sub-abas FOLDER MAP/SPACE MAP da aba "Structure".
     std::unique_ptr<SubAbasEstruturaComponent> subAbasEstrutura_;
+    std::unique_ptr<CartoesAnalyticsComponent> cartoesAnalytics_;  // 6 cards acima das sub-abas FOLDER MAP / SPACE MAP
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).
     std::unique_ptr<FaixaAvisoComponent> faixaAviso_;

@@ -9,6 +9,7 @@
 #include "AboutDialog.h"
 #include "HelpDialog.h"
 #include "BatchWatermarkDialog.h"
+#include "ImportarGeoFavoritosDialogo.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "ConsolidacaoDialogo.h"
 #include "ProjectLogViewerDialog.h"
@@ -45,6 +46,7 @@ enum ComandoMenu {
     kCmdIngerirArquivos,
     kCmdBatchWatermark,
     kCmdBatchRename,
+    kCmdImportGeoFavoritos,
     kCmdProjectLog,
     kCmdRescanBackupSources,
     kCmdMainEditModo,
@@ -238,6 +240,9 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdRescanBackupSources, isPt ? juce::String::fromUTF8("Rescanear Fontes de Backup...") : "Rescan Backup Sources...", temColecao);
         menu.addSeparator();
         menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdImportGeoFavoritos,
+                     isPt ? juce::String::fromUTF8("Importar Favoritos de Geo de Outra Coleção...") : "Import Geo Favorites from Collection...",
+                     temColecao);
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
         // MAIN EDIT MODE mora aqui (e não como botão no BACKUP) pra não ser acionado sem querer.
@@ -297,6 +302,10 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdBatchWatermark: mostrarBatchWatermarkDialogo(); break;
         case kCmdBatchRename:
             if (conteudo_) conteudo_->renomearEmLoteSelecionados();
+            break;
+        case kCmdImportGeoFavoritos:
+            if (conteudo_ && conteudo_->temProjetoAberto() && conteudo_->projetoAberto())
+                ImportarGeoFavoritosDialogo::iniciar(*conteudo_->projetoAberto(), this);
             break;
         case kCmdProjectLog:
             if (conteudo_->temProjetoAberto()) {

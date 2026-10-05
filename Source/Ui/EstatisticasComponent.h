@@ -72,9 +72,7 @@ private:
     int semPastaContagem_ = 0;
     bool semPastaOriginal_ = false;
 
-    void carregarMetricasDoBanco(matriz::db::Database& db);
     void carregarMetricasCatalogo();
-    void desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EstatisticasComponent)
 };
