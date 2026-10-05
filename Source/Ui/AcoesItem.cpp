@@ -186,6 +186,11 @@ void pedirNovoNome(ProjetoAberto& projeto, const std::vector<std::string>& itemI
     // Em lote, a prévia usa o primeiro item — os demais só diferem no
     // {codigo}/{seq}, que a máscara resolve por item na hora de gravar.
     auto campo = std::make_shared<DialogoRenomear>(projeto, itemIds.front());
+    if (itemIds.size() == 1) {  // um item só: o nome atual já vem preenchido e selecionado
+        std::string tituloAtual, tipo, cod;
+        if (projeto.obterItemInfo(itemIds.front(), tituloAtual, tipo, cod))
+            campo->editor().setText(juce::String::fromUTF8(tituloAtual.c_str()), true);
+    }
     janela->addCustomComponent(campo.get());
     janela->addButton(matriz::i18n::t("comum.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
     janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -200,6 +205,12 @@ void pedirNovoNome(ProjetoAberto& projeto, const std::vector<std::string>& itemI
         p->renomearItens(ids, novo.toStdString());
         if (aoConcluir) aoConcluir();
     }));
+    juce::Component::SafePointer<juce::TextEditor> ed(&campo->editor());
+    juce::MessageManager::callAsync([ed, campo] {  // depois de a janela aparecer: foco e tudo selecionado
+        if (ed == nullptr) return;
+        ed->grabKeyboardFocus();
+        ed->selectAll();
+    });
 }
 
 } // namespace

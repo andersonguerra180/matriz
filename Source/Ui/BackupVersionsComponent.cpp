@@ -369,6 +369,9 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
     if (editaCodigo) alert->addTextEditor("codigo", versao.codigo, matriz::i18n::t("backup.codigo_source"));
     alert->addButton(isPt ? "Salvar" : "Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::MessageManager::callAsync([alert] {  // rótulo atual já selecionado
+        if (auto* ed = alert->getTextEditor("rotulo")) { ed->grabKeyboardFocus(); ed->selectAll(); }
+    });
 
     alert->enterModalState(true, juce::ModalCallbackFunction::create([this, versao, alert](int result) {
         if (result != 1) return;

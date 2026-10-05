@@ -512,6 +512,9 @@ void MainWindow::pedirRenomearProjeto() {
     alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     juce::Component::SafePointer<MainWindow> safeThis(this);
+    juce::MessageManager::callAsync([alert] {  // nome atual já selecionado
+        if (auto* ed = alert->getTextEditor("nome")) { ed->grabKeyboardFocus(); ed->selectAll(); }
+    });
     alert->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, alert, &projeto, nomeAtual](int result) {
         if (!safeThis || result != 1) return;
         juce::String novoNome = alert->getTextEditorContents("nome").trim();
