@@ -638,7 +638,29 @@ private:
                 }
                 if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
                 else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE";
-                g.drawText(headerTag, x + 8, y + 2, subWidth - 16, 20, juce::Justification::centredLeft, true);
+                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT";
+                // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
+                int larguraSelo = 0;
+                if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
+                    const long long areaM = static_cast<long long>(m.largura) * m.altura;
+                    const long long areaO = static_cast<long long>(other.largura) * other.altura;
+                    if (areaM != areaO) {
+                        const bool menor = areaM < areaO;
+                        const juce::String rotulo = menor ? "LOWER RESOLUTION" : "HIGHER RESOLUTION";
+                        const juce::Font fonteSelo(juce::FontOptions(9.5f, juce::Font::bold));
+                        larguraSelo = juce::GlyphArrangement::getStringWidthInt(fonteSelo, rotulo) + 14;
+                        juce::Rectangle<int> selo(x + subWidth - larguraSelo - 6, y + 4, larguraSelo, 16);
+                        g.setColour(menor ? juce::Colour(0xffef4444) : juce::Colour(0xff22c55e));
+                        g.fillRoundedRectangle(selo.toFloat(), 8.0f);
+                        g.setColour(juce::Colours::white);
+                        g.setFont(fonteSelo);
+                        g.drawText(rotulo, selo, juce::Justification::centred);
+                        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                        g.setColour(isDup ? tk.alerta : tk.acento);
+                        larguraSelo += 6;
+                    }
+                }
+                g.drawText(headerTag, x + 8, y + 2, subWidth - 16 - larguraSelo, 20, juce::Justification::centredLeft, true);
 
                 // 4. Miniatura grande: ocupa toda a altura do sub-card abaixo
                 // da faixa do cabeçalho, colada à esquerda; as informações
@@ -698,6 +720,8 @@ private:
                     linhaInfo("Match", "same SHA-256", juce::Colour(0xffef4444));          // coincidência (vermelho, como os outros)
                 else if (grupo_.criterio == "PROBABLE")
                     linhaInfo("Match", "looks identical (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
+                else if (grupo_.criterio == "SIMILAR")
+                    linhaInfo("Match", "similar shot, seconds apart (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
                 linhaInfo(matriz::i18n::t("duplicatas.format"), juce::String(m.ext).toUpperCase(), tk.textoSecundario);
 
                 if (m.duracao > 0.0) {
@@ -1500,6 +1524,16 @@ void DuplicatesWorkspaceComponent::run() {
         // Original = o de menor id (mesma convenção do critério de sempre).
         auto ordenado = [](const ItemInfo& x, const ItemInfo& y) { return x.itemId < y.itemId ? std::make_pair(&x, &y) : std::make_pair(&y, &x); };
         auto chavePar = [](const std::string& a, const std::string& b) { return a < b ? a + "|" + b : b + "|" + a; };
+        // "2015:04:05 11:18:36" ou "2015-04-05T11:18:36": segundos desde 2000 (só para diferenças); -1 se não der para ler.
+        auto segundosExif = [](const std::string& t) -> long long {
+            std::string d;
+            for (char c : t) if (c >= '0' && c <= '9') d += c;
+            if (d.size() < 14) return -1;
+            const int ano = std::stoi(d.substr(0, 4)), mes = std::stoi(d.substr(4, 2)), dia = std::stoi(d.substr(6, 2));
+            const int hh = std::stoi(d.substr(8, 2)), mm = std::stoi(d.substr(10, 2)), ss = std::stoi(d.substr(12, 2));
+            const long long dias = static_cast<long long>(ano) * 372 + (mes - 1) * 31 + (dia - 1);  // só precisa ser monotônico por dia
+            return dias * 86400 + hh * 3600 + mm * 60 + ss;
+        };
 
         std::unordered_map<std::string, size_t> grupoExistente;  // par -> índice em gruposDetectados_ (fase A)
         for (size_t g = 0; g < gruposDetectados_.size(); ++g)
@@ -1661,20 +1695,36 @@ void DuplicatesWorkspaceComponent::run() {
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
                         // Mesmo SHA-256 = IDENTICAL, nunca PROBABLE (com 3+ cópias o par B-C não está no "em estrela" acima).
                         if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
-                        // Regra de sempre: duas fotos com EXIF DateTimeOriginal diferentes NÃO são duplicata.
-                        if (!a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                        // EXIF DateTimeOriginal diferente:
+                        //  - até 30 s de diferença e parecidas (pHash <= 10): foto em SEQUÊNCIA -> SIMILAR (decisão manual);
+                        //  - mais de 30 s: outra foto teria pHash bem diferente; se o pHash é quase igual (<= 4) é a mesma
+                        //    imagem com horário diferente (ex.: cópia editada) -> PROBABLE; senão, descarta.
+                        bool similar = false;
+                        if (!a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) {
+                            const auto sa = segundosExif(a.dataOriginal), sb = segundosExif(b.dataOriginal);
+                            if (sa < 0 || sb < 0) continue;
+                            if (std::llabs(sa - sb) <= 30) {
+                                if (dist > 10) continue;
+                                similar = true;
+                            } else if (dist > 4) {
+                                continue;
+                            }
+                        }
                         auto [o, d] = ordenado(a, b);
                         auto grupo = gruposParaPar(*o, *d);
-                        grupo.criterio = "PROBABLE";
+                        grupo.criterio = similar ? "SIMILAR" : "PROBABLE";
                         grupo.distanciaPHash = dist;
                         gruposDetectados_.push_back(std::move(grupo));
                     }
                 }
             }
         }
-        // PROVÁVEIS depois dos demais (categoria separada na lista).
+        // PROVÁVEIS e depois SIMILARES vão ao fim (categorias separadas na lista).
         std::stable_partition(gruposDetectados_.begin(), gruposDetectados_.end(),
-                              [](const DuplicateGroup& g) { return g.criterio != "PROBABLE"; });
+                              [](const DuplicateGroup& g) { return g.criterio != "PROBABLE" && g.criterio != "SIMILAR"; });
+        std::stable_partition(std::find_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                           [](const DuplicateGroup& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }),
+                              gruposDetectados_.end(), [](const DuplicateGroup& g) { return g.criterio == "PROBABLE"; });
     }
 
     progressoScan_ = 1.0;
@@ -1888,7 +1938,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         try {
             db.run("BEGIN TRANSACTION", {});
             for (const auto& group : gruposDetectados_) {
-                if (group.criterio == "PROBABLE") continue;  // PROVÁVEIS: só decisão manual
+                if (group.criterio == "PROBABLE" || group.criterio == "SIMILAR") continue;  // só decisão manual
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
@@ -1898,7 +1948,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         }
 
         gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
-                                               [](const DuplicateGroup& g) { return g.criterio != "PROBABLE"; }),
+                                               [](const DuplicateGroup& g) { return g.criterio != "PROBABLE" && g.criterio != "SIMILAR"; }),
                                 gruposDetectados_.end());
         if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
             listaComponent_->updateList(gruposDetectados_);
@@ -1951,7 +2001,7 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     // valem sem perguntar (conflitos no histórico + filtro "Merge conflicts").
     // PROVÁVEIS (pHash) nunca entram em decisão em lote: ficam na lista para decisão manual, um a um.
     std::vector<DuplicateGroup> grupos, provaveis;
-    for (const auto& g : gruposDetectados_) (g.criterio == "PROBABLE" ? provaveis : grupos).push_back(g);
+    for (const auto& g : gruposDetectados_) ((g.criterio == "PROBABLE" || g.criterio == "SIMILAR") ? provaveis : grupos).push_back(g);
     if (grupos.empty()) return;
     std::vector<std::string> ids;
     for (const auto& g : grupos) {
