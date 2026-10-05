@@ -823,7 +823,14 @@ public:
                         // não garante isso sozinho. SUBJECT é pulado aqui
                         // (tratado junto quando o loop chega no CREATOR,
                         // que já vem logo depois dele na ordem de inserção).
-                        if (cu->campoId == "subject") continue;
+                        // LIST e CONTENT também são tratados aqui: sempre na
+                        // coluna esquerda, nesta ordem, logo abaixo de SUBJECT.
+                        if (cu->campoId == "subject" || cu->campoId == "lista" || cu->campoId == "collection") {
+                            bool temCreator = false;
+                            for (auto& outro : camposUnificados_)
+                                if (outro && outro->bloco == bloco && outro->campoId == "creator") { temCreator = true; break; }
+                            if (temCreator) continue;
+                        }
                         if (cu->campoId == "creator") {
                             LinhaUnificada* cuSubject = nullptr;
                             for (auto& outro : camposUnificados_) {
@@ -847,6 +854,18 @@ public:
                             cu->editor->setBounds(x1, yLinha + 18, colW, 24);
                             y0 += alturaLinha + 24;
                             y1 += alturaLinha + 24;
+                            // LIST e CONTENT: coluna esquerda, em sequência.
+                            for (const char* id : {"lista", "collection"}) {
+                                for (auto& outro : camposUnificados_) {
+                                    if (!outro || outro->bloco != bloco || outro->campoId != id) continue;
+                                    outro->rotulo->setBounds(x0, y0, rotuloW, 16);
+                                    outro->badge->setBounds(x0 + colW - 80, y0, 80, 16);
+                                    outro->editor->setBounds(x0, y0 + 18, colW, 24);
+                                    y0 += alturaLinha + 24;
+                                    break;
+                                }
+                            }
+                            colContentGroup = 0;  // PATH/AI GENERATED seguem o CONTENT (esquerda)
                             continue;
                         }
                     }
