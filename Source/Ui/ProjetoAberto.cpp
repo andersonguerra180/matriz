@@ -4855,6 +4855,12 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
                 atual.pastaPaiId.empty() ? std::nullopt : std::optional(atual.pastaPaiId);
             std::string novaPastaId = criarPastaAcervo(atual.no->nome.toStdString(), pai, mapaId);
 
+            // A cópia leva o esquema de cores (FOLDER COLOR) da pasta de origem.
+            if (atual.no->corCustomizadaHex.isNotEmpty())
+                projeto_->registro().run("UPDATE acervo_pasta SET cor_customizada = ? WHERE id = ?",
+                                         {matriz::db::Value::of(atual.no->corCustomizadaHex.toStdString()),
+                                          matriz::db::Value::of(novaPastaId)});
+
             if (!atual.no->itemIdsDiretos.empty()) {
                 std::string agoraItem = matriz::model::agoraIso8601();
                 for (const auto& itemId : atual.no->itemIdsDiretos) {
