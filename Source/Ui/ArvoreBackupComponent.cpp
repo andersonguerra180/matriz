@@ -1072,7 +1072,14 @@ static void avisarNomeReservado() {
 void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
     if (mapaAtivoEhOriginal()) return;
     if (nomeReservadoDePasta(nome)) { avisarNomeReservado(); return; }
-    auto pos = posicaoLivrePertoDoCentro(190, 84);
+    // `pos` sai em coordenadas da VISTA (já com a escala/spread do slider); o banco guarda a posição a 100%.
+    const float g = std::max(0.05f, escalaTamanho_);
+    auto pos = posicaoLivrePertoDoCentro(juce::roundToInt(190 * g), juce::roundToInt(84 * g));
+    const auto centroVista = juce::Point<float>(pos.x + 190 * g * 0.5f, pos.y + 84 * g * 0.5f);
+    const auto centroOriginal = juce::Point<float>(
+        pivotEscala_.x + (centroVista.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
+        pivotEscala_.y + (centroVista.y - pivotEscala_.y) / g);
+    pos = {juce::roundToInt(centroOriginal.x - 95.0f), juce::roundToInt(centroOriginal.y - 42.0f)};
     std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
     projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
@@ -1261,8 +1268,65 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
     }
 }
 
+void ArvoreBackupComponent::autoArranjarSelecionadas(const std::vector<int>& selecionadas) {
+    std::set<int> sel(selecionadas.begin(), selecionadas.end());
+    std::vector<layoutarvore::No> nos;
+    juce::Rectangle<int> uniao;
+    int larguraMax = 0, alturaMax = 0;
+    bool primeiro = true;
+    for (int i : sel) {
+        const auto& n = nodes_[static_cast<size_t>(i)];
+        nos.push_back({n.id, n.pastaPaiId, false, 0, 0});  // pai fora da seleção = raiz do bloco
+        uniao = primeiro ? n.boundsOriginal : uniao.getUnion(n.boundsOriginal);
+        primeiro = false;
+        larguraMax = std::max(larguraMax, n.boundsOriginal.getWidth());
+        alturaMax = std::max(alturaMax, n.boundsOriginal.getHeight());
+    }
+    layoutarvore::Parametros p;
+    p.larguraNo = larguraMax;
+    p.alturaNo = alturaMax;
+    p.origemX = 0;
+    p.origemY = 0;
+    const auto pos = layoutarvore::calcular(nos, p);
+
+    // Bloco novo ancorado no canto superior esquerdo da região que a seleção ocupava; se cair em cima de
+    // uma pasta não selecionada, vai para baixo de todas as outras.
+    auto candidatos = [&](juce::Point<int> origem) {
+        std::map<int, juce::Rectangle<int>> out;
+        for (int i : sel) {
+            auto it = pos.find(nodes_[static_cast<size_t>(i)].id);
+            if (it == pos.end()) continue;
+            out[i] = nodes_[static_cast<size_t>(i)].boundsOriginal.withPosition(origem.x + it->second.x, origem.y + it->second.y);
+        }
+        return out;
+    };
+    auto colide = [&](const std::map<int, juce::Rectangle<int>>& c) {
+        for (const auto& [i, r] : c)
+            for (size_t k = 0; k < nodes_.size(); ++k)
+                if (!sel.count(static_cast<int>(k)) && r.intersects(nodes_[k].boundsOriginal)) return true;
+        return false;
+    };
+    auto c = candidatos(uniao.getTopLeft());
+    if (colide(c)) {
+        int baixo = uniao.getBottom();
+        for (size_t k = 0; k < nodes_.size(); ++k)
+            if (!sel.count(static_cast<int>(k))) baixo = std::max(baixo, nodes_[k].boundsOriginal.getBottom());
+        c = candidatos({uniao.getX(), baixo + 40});
+    }
+    for (const auto& [i, r] : c) nodes_[static_cast<size_t>(i)].boundsOriginal = r;
+
+    aplicarEscalaTamanho(escalaTamanho_);
+    std::vector<int> indices(sel.begin(), sel.end());
+    persistirPosicoesEmLote(indices);
+}
+
 void ArvoreBackupComponent::autoArranjar() {
     if (nodes_.empty()) return;
+    // Com várias pastas selecionadas, o AJUSTAR só atua nelas.
+    if (const auto selecionadas = indicesSelecionados(); selecionadas.size() >= 2) {
+        autoArranjarSelecionadas(selecionadas);
+        return;
+    }
 
     // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
     // ajustou em cada pasta é mantido; a escala global volta a 100%.

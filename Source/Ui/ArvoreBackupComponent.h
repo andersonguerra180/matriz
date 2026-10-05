@@ -230,6 +230,8 @@ private:
 
     void recalcularNodes();
     void autoArranjar();
+    // AJUSTAR com 2+ pastas selecionadas: reorganiza só elas (mesmos tamanhos), na região que já ocupavam.
+    void autoArranjarSelecionadas(const std::vector<int>& selecionadas);
 
     // Fase 1 — Export/Import to file do mapa ATIVO, formato JSON herdado do
     // antigo mecanismo de presets (S4/13). pastaPresets()/listarPresetsSalvos()
