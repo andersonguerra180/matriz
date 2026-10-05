@@ -128,7 +128,6 @@ private:
 
     std::unique_ptr<juce::TextButton> btnCriarPasta_;
     std::unique_ptr<juce::TextButton> btnRenomearPasta_;
-    std::unique_ptr<juce::TextButton> btnApagarPasta_;
     std::unique_ptr<juce::TextButton> btnAutoArranjar_;
     std::unique_ptr<juce::TextButton> btnZoomIn_;
     std::unique_ptr<juce::TextButton> btnZoomOut_;
@@ -205,9 +204,9 @@ private:
     float escalaTamanho_ = 1.0f;  // escala global (visual; não é persistida)
     // SPREAD: afasta as pastas só na horizontal (posições x em torno do pivot; tamanhos não mudam). Visual,
     // não persistida; persistirPosicoesEmLote desfaz o fator ao gravar.
-    std::unique_ptr<juce::Slider> sliderSpread_;
-    std::unique_ptr<juce::Label> rotuloSpread_;
-    float espalharX_ = 1.0f;
+    std::unique_ptr<juce::Slider> sliderSpread_, sliderSpreadV_;
+    std::unique_ptr<juce::Label> rotuloSpread_, rotuloSpreadV_;
+    float espalharX_ = 1.0f, espalharY_ = 1.0f;
     juce::Point<float> pivotEscala_{0.0f, 0.0f};
     double fatorCards_ = 0.0;  // fator do mapa escolhido pelo AJUSTAR; 0 = mapa antigo (tamanho único)
     std::map<std::string, float> escalasOriginal_;  // ORIGINAL é virtual: multiplicadores só em memória

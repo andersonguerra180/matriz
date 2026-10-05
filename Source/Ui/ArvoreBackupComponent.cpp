@@ -294,16 +294,6 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnRenomearPasta_);
 
-    btnApagarPasta_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_apagar"));
-    btnApagarPasta_->onClick = [this] {
-        for (const auto& n : nodes_) {
-            if (n.selecionado) {
-                apagarPastaSelecionada(n.id);
-                break;
-            }
-        }
-    };
-    addAndMakeVisible(*btnApagarPasta_);
 
     btnAutoArranjar_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_auto_arranjar"));
     btnAutoArranjar_->onClick = [this] { autoArranjar(); };
@@ -347,7 +337,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnNovoMapa_);
 
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
-    sliderTamanho_->setRange(50.0, 200.0, 1.0);
+    sliderTamanho_->setRange(50.0, 500.0, 1.0);
     sliderTamanho_->setValue(100.0, juce::dontSendNotification);
     sliderTamanho_->setDoubleClickReturnValue(true, 100.0);
     sliderTamanho_->setTextValueSuffix("%");
@@ -357,22 +347,29 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_->onDragEnd = [this] { persistirEscalas(); };
     addAndMakeVisible(*sliderTamanho_);
 
-    rotuloSpread_ = std::make_unique<juce::Label>(juce::String(), i18n::t("arvore_backup.spread_rotulo"));
-    rotuloSpread_->setFont(juce::Font(juce::FontOptions(10.0f)));
-    rotuloSpread_->setMinimumHorizontalScale(1.0f);
-    addAndMakeVisible(*rotuloSpread_);
-    sliderSpread_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
-    sliderSpread_->setRange(100.0, 400.0, 1.0);
-    sliderSpread_->setValue(100.0, juce::dontSendNotification);
-    sliderSpread_->setDoubleClickReturnValue(true, 100.0);
-    sliderSpread_->setTextValueSuffix("%");
-    sliderSpread_->setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
-    sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
-    sliderSpread_->onValueChange = [this] {
-        espalharX_ = static_cast<float>(sliderSpread_->getValue() / 100.0);
-        aplicarEscalaTamanho(escalaTamanho_);
+    auto criarSpread = [this](std::unique_ptr<juce::Label>& rotulo, std::unique_ptr<juce::Slider>& slider, const char* chaveRotulo,
+                              const char* chaveDica, float& fator) {
+        rotulo = std::make_unique<juce::Label>(juce::String(), i18n::t(chaveRotulo));
+        rotulo->setFont(juce::Font(juce::FontOptions(10.0f)));
+        rotulo->setMinimumHorizontalScale(1.0f);
+        addAndMakeVisible(*rotulo);
+        slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+        slider->setRange(100.0, 1000.0, 1.0);
+        slider->setSkewFactorFromMidPoint(300.0);
+        slider->setValue(100.0, juce::dontSendNotification);
+        slider->setDoubleClickReturnValue(true, 100.0);
+        slider->setTextValueSuffix("%");
+        slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+        slider->setTooltip(i18n::t(chaveDica));
+        auto* s = slider.get();
+        slider->onValueChange = [this, s, &fator] {
+            fator = static_cast<float>(s->getValue() / 100.0);
+            aplicarEscalaTamanho(escalaTamanho_);
+        };
+        addAndMakeVisible(*slider);
     };
-    addAndMakeVisible(*sliderSpread_);
+    criarSpread(rotuloSpread_, sliderSpread_, "arvore_backup.spread_rotulo", "arvore_backup.spread_tooltip", espalharX_);
+    criarSpread(rotuloSpreadV_, sliderSpreadV_, "arvore_backup.spread_v_rotulo", "arvore_backup.spread_v_tooltip", espalharY_);
 
     detailContent_ = std::make_unique<TreeDetailContent>();
     detailViewport_ = std::make_unique<juce::Viewport>();
@@ -633,6 +630,17 @@ void ArvoreBackupComponent::confirmarDescarteProposta(const std::string& raizId,
 }
 
 void ArvoreBackupComponent::recarregar() {
+    // Um Undo pode ter apagado/recriado/renomeado mapas: o combo e o mapa ativo acompanham.
+    {
+        const auto mapas = projeto_.listarFolderMaps();
+        bool mudou = mapas.size() != mapasCache_.size();
+        for (size_t i = 0; !mudou && i < mapas.size(); ++i)
+            mudou = mapas[i].id != mapasCache_[i].id || mapas[i].nome != mapasCache_[i].nome;
+        if (mudou) {
+            recarregarComboMapas();
+            atualizarEstadoBotoesParaMapa();
+        }
+    }
     // Itens que chegaram soltos numa pasta com regra (arrastados, SEND TO FOLDER...) são
     // organizados aqui. Uma consulta só quando não há nada a fazer.
     if (!mapaAtivoEhOriginal()) {
@@ -694,7 +702,7 @@ void ArvoreBackupComponent::recalcularNodes() {
                 auto it = escalasOriginal_.find(no.id);
                 escala = it != escalasOriginal_.end() ? it->second : 1.0f;
             }
-            node.escalaManual = juce::jlimit(0.5f, 2.0f, escala > 0.0f ? escala : 1.0f);
+            node.escalaManual = juce::jlimit(0.5f, 5.0f, escala > 0.0f ? escala : 1.0f);
 
             const bool posicaoSalva = no.posicaoX != 0 || no.posicaoY != 0;
             algumaPosicaoSalva = algumaPosicaoSalva || posicaoSalva;
@@ -1078,7 +1086,7 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
     const auto centroVista = juce::Point<float>(pos.x + 190 * g * 0.5f, pos.y + 84 * g * 0.5f);
     const auto centroOriginal = juce::Point<float>(
         pivotEscala_.x + (centroVista.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
-        pivotEscala_.y + (centroVista.y - pivotEscala_.y) / g);
+        pivotEscala_.y + (centroVista.y - pivotEscala_.y) / (g * std::max(0.05f, espalharY_)));
     pos = {juce::roundToInt(centroOriginal.x - 95.0f), juce::roundToInt(centroOriginal.y - 42.0f)};
     std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
     projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
@@ -1155,6 +1163,7 @@ void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
     if (mapaAtivoEhOriginal()) return;
     for (const auto& n : nodes_) {
         if (n.id == pastaId) {
+            projeto_.registrarUndoVisualMapa("Toggle Folder Active", mapaAtivoId_);
             projeto_.alternarAtivoPastaAcervo(pastaId, !n.ativo);
             break;
         }
@@ -1207,6 +1216,7 @@ void ArvoreBackupComponent::aplicarCorAPastas(const std::vector<std::string>& pa
     // o projeto ou reconstruir o Treemap não apaga, porque recalcularNodes()
     // relê cor_customizada do banco toda vez.
     juce::String hex = cor.toDisplayString(true);
+    projeto_.registrarUndoVisualMapa("Folder Color", mapaAtivoId_);
     for (const auto& id : pastaIds) projeto_.definirCorPastaAcervo(id, hex);
     for (auto& n : nodes_) {
         if (std::find(pastaIds.begin(), pastaIds.end(), n.id) != pastaIds.end()) {
@@ -1249,6 +1259,7 @@ void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<i
 
 void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
     if (indices.empty()) return;
+    if (!mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
     auto& db = projeto_.projeto().registro();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
     bool emTransacao = false;
@@ -1260,7 +1271,7 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
         const float g = std::max(0.05f, escalaTamanho_);
         const auto c = node.bounds.getCentre().toFloat();
         node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
-                                                          pivotEscala_.y + (c.y - pivotEscala_.y) / g).toInt());
+                                                          pivotEscala_.y + (c.y - pivotEscala_.y) / (g * std::max(0.05f, espalharY_))).toInt());
         projeto_.atualizarPosicaoPastaAcervo(node.id, node.boundsOriginal.getX(), node.boundsOriginal.getY());
     }
     if (emTransacao) {
@@ -1729,7 +1740,7 @@ void ArvoreBackupComponent::resized() {
 
     // PASTAS — Nova pasta, Renomear, Delete e Ajustar.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_pastas"));
-    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnApagarPasta_.get(), btnAutoArranjar_.get()}) {
+    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get()}) {
         if (b) b->setBounds(corpo.removeFromTop(26));
         corpo.removeFromTop(4);
     }
@@ -1756,6 +1767,8 @@ void ArvoreBackupComponent::resized() {
     corpo.removeFromTop(2);
     if (rotuloSpread_) rotuloSpread_->setBounds(corpo.removeFromTop(14));
     if (sliderSpread_) sliderSpread_->setBounds(corpo.removeFromTop(22));
+    if (rotuloSpreadV_) rotuloSpreadV_->setBounds(corpo.removeFromTop(14));
+    if (sliderSpreadV_) sliderSpreadV_->setBounds(corpo.removeFromTop(22));
     corpo.removeFromTop(4);
     if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
@@ -2062,11 +2075,12 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addItem(std::move(item));
             }
 
-            if (!batch) {
-                menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, pId] {
-                    apagarPastaSelecionada(pId);
-                });
-            }
+            menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, selectedIds] {
+                // Uma pasta apagada leva as subpastas; as já removidas junto com a pai são puladas. Um só Undo.
+                projeto_.iniciarGrupoUndo("Delete Folders");
+                for (const auto& id : selectedIds) apagarPastaSelecionada(id);
+                projeto_.finalizarGrupoUndo();
+            });
             menu.showMenuAsync(juce::PopupMenu::Options());
         }
     }
@@ -2465,7 +2479,6 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     juce::Component::lookAndFeelChanged();
     if (btnCriarPasta_) btnCriarPasta_->setButtonText(i18n::t("arvore_backup.btn_criar_pasta"));
     if (btnRenomearPasta_) btnRenomearPasta_->setButtonText(i18n::t("arvore_backup.btn_renomear"));
-    if (btnApagarPasta_) btnApagarPasta_->setButtonText(i18n::t("arvore_backup.btn_apagar"));
     if (btnAutoArranjar_) btnAutoArranjar_->setButtonText(i18n::t("arvore_backup.btn_auto_arranjar"));
     if (btnZoomFit_) btnZoomFit_->setButtonText(i18n::t("arvore_backup.btn_fit"));
     if (btnResetTamanhos_) {
@@ -2476,6 +2489,8 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
     if (rotuloSpread_) rotuloSpread_->setText(i18n::t("arvore_backup.spread_rotulo"), juce::dontSendNotification);
     if (sliderSpread_) sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
+    if (rotuloSpreadV_) rotuloSpreadV_->setText(i18n::t("arvore_backup.spread_v_rotulo"), juce::dontSendNotification);
+    if (sliderSpreadV_) sliderSpreadV_->setTooltip(i18n::t("arvore_backup.spread_v_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
     resized();
     repaint();
@@ -2512,7 +2527,7 @@ void ArvoreBackupComponent::aplicarEscalaTamanho(float escala) {
     for (auto& n : nodes_) {
         const auto c = n.boundsOriginal.getCentre().toFloat();
         const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala * espalharX_,
-                                            pivotEscala_.y + (c.y - pivotEscala_.y) * escala);
+                                            pivotEscala_.y + (c.y - pivotEscala_.y) * escala * espalharY_);
         const int w = juce::jmax(6, juce::roundToInt(n.boundsOriginal.getWidth() * escala));
         const int h = juce::jmax(4, juce::roundToInt(n.boundsOriginal.getHeight() * escala));
         n.bounds = juce::Rectangle<int>(w, h).withCentre(novoCentro.toInt());
@@ -2588,6 +2603,8 @@ void ArvoreBackupComponent::persistirEscalas() {
     if (!escalasSujas_) return;
     escalasSujas_ = false;
     if (mapaAtivoEhOriginal()) return;  // virtual: só em memória
+    projeto_.iniciarGrupoUndo("Resize Folders");
+    projeto_.registrarUndoVisualMapa("Resize Folders", mapaAtivoId_);
     std::vector<std::pair<std::string, double>> escalas;
     escalas.reserve(nodes_.size());
     for (const auto& n : nodes_) escalas.push_back({n.id, static_cast<double>(n.escalaManual)});
@@ -2597,6 +2614,7 @@ void ArvoreBackupComponent::persistirEscalas() {
     std::vector<int> todos;
     for (size_t i = 0; i < nodes_.size(); ++i) todos.push_back(static_cast<int>(i));
     persistirPosicoesEmLote(todos);
+    projeto_.finalizarGrupoUndo();
 }
 
 // RESET SIZES: volta cada pasta ao tamanho calculado pelo auto-arranjo (multiplicador 1) e a escala
@@ -2964,7 +2982,6 @@ void ArvoreBackupComponent::atualizarEstadoBotoesParaMapa() {
     juce::String dica = original ? i18n::t("arvore_backup.original_somente_leitura") : juce::String();
     if (btnCriarPasta_) { btnCriarPasta_->setEnabled(!original); btnCriarPasta_->setTooltip(dica); }
     if (btnRenomearPasta_) { btnRenomearPasta_->setEnabled(!original); btnRenomearPasta_->setTooltip(dica); }
-    if (btnApagarPasta_) { btnApagarPasta_->setEnabled(!original); btnApagarPasta_->setTooltip(dica); }
 }
 
 void ArvoreBackupComponent::mostrarMenuMapa() {

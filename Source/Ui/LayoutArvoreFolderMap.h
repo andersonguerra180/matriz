@@ -191,7 +191,7 @@ inline ResultadoAuto calcularAutoArranjo(const std::vector<NoTam>& nos, const Pa
     auto fatorNivel = [&](int d) { return std::max(p.pisoNivel, std::pow(p.decaimentoPorNivel, d)); };
     std::vector<double> w0(static_cast<size_t>(n)), h0(static_cast<size_t>(n));
     for (int i = 0; i < n; ++i) {
-        const double e = std::clamp(nos[static_cast<size_t>(i)].escala, 0.3, 3.0) * fatorNivel(nivel[static_cast<size_t>(i)]);
+        const double e = std::clamp(nos[static_cast<size_t>(i)].escala, 0.3, 5.0) * fatorNivel(nivel[static_cast<size_t>(i)]);
         w0[static_cast<size_t>(i)] = p.larguraBase * e;
         h0[static_cast<size_t>(i)] = p.alturaBase * e;
     }
