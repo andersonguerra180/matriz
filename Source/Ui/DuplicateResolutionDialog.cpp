@@ -197,12 +197,15 @@ DuplicateResolutionDialog::DuplicateResolutionDialog(juce::String intro, std::ve
         lblCriterios_->setColour(juce::Label::textColourId, tema().textoTerciario);
         addAndMakeVisible(*lblCriterios_);
         btnMaisRecente_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_recente"));
-        btnMaisRecente_->onClick = [this] { aplicarCriterio(true); };
+        btnMaisRecente_->onClick = [this] { aplicarCriterio(0); };
         addAndMakeVisible(*btnMaisRecente_);
         btnBackupPrimeiro_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_backup"));
-        btnBackupPrimeiro_->onClick = [this] { aplicarCriterio(false); };
+        btnBackupPrimeiro_->onClick = [this] { aplicarCriterio(1); };
         addAndMakeVisible(*btnBackupPrimeiro_);
-        for (auto* b : {btnMaisRecente_.get(), btnBackupPrimeiro_.get()}) {
+        btnMaiorResolucao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.criterio_resolucao"));
+        btnMaiorResolucao_->onClick = [this] { aplicarCriterio(2); };
+        addAndMakeVisible(*btnMaiorResolucao_);
+        for (auto* b : {btnMaisRecente_.get(), btnBackupPrimeiro_.get(), btnMaiorResolucao_.get()}) {
             b->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
             b->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
         }
@@ -245,10 +248,10 @@ void DuplicateResolutionDialog::aplicarATodos(int action) {
     repaint();
 }
 
-void DuplicateResolutionDialog::aplicarCriterio(bool maisRecente) {
+void DuplicateResolutionDialog::aplicarCriterio(int criterio) {
     int manuais = 0;
     for (auto& e : entries_) {
-        const int acao = maisRecente ? e.acaoMaisRecente : e.acaoBackupPrimeiro;
+        const int acao = criterio == 0 ? e.acaoMaisRecente : (criterio == 1 ? e.acaoBackupPrimeiro : e.acaoMaiorResolucao);
         e.decisaoManual = acao < 0;
         if (acao >= 0) e.action = acao;
         else ++manuais;
@@ -315,9 +318,12 @@ void DuplicateResolutionDialog::resized() {
         area.removeFromTop(6);
         auto linha = area.removeFromTop(32);
         lblCriterios_->setBounds(linha.removeFromLeft(120));
-        btnMaisRecente_->setBounds(linha.removeFromLeft(210));
+        // Três botões de mesma largura e altura, espaçados igualmente.
+        btnMaisRecente_->setBounds(linha.removeFromLeft(200));
         linha.removeFromLeft(8);
-        btnBackupPrimeiro_->setBounds(linha.removeFromLeft(210));
+        btnBackupPrimeiro_->setBounds(linha.removeFromLeft(200));
+        linha.removeFromLeft(8);
+        btnMaiorResolucao_->setBounds(linha.removeFromLeft(200));
         linha.removeFromLeft(12);
         lblManuais_->setBounds(linha);
     }

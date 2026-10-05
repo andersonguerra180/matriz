@@ -20,9 +20,88 @@
 namespace matriz::ui {
 
 namespace {
+    // Diálogo de decisão de duplicata: mensagem + GRADE simétrica de botões (3 colunas, mesma largura/altura) + VOLTAR em
+    // largura total. Substitui o AlertWindow, cujos 6 botões numa linha só estouravam a largura e cortavam o último.
+    class DialogoEscolhaDuplicata : public juce::Component {
+    public:
+        struct Botao { juce::String texto; int codigo; };
+
+        DialogoEscolhaDuplicata(const juce::String& mensagem, std::vector<Botao> botoes, const juce::String& textoVoltar,
+                                std::function<void(int)> aoEscolher)
+            : botoes_(std::move(botoes)), aoEscolher_(std::move(aoEscolher)) {
+            const auto& tk = tema();
+            lblMensagem_.setText(mensagem, juce::dontSendNotification);
+            lblMensagem_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            lblMensagem_.setColour(juce::Label::textColourId, tk.textoPrimario);
+            lblMensagem_.setJustificationType(juce::Justification::topLeft);
+            lblMensagem_.setMinimumHorizontalScale(1.0f);
+            addAndMakeVisible(lblMensagem_);
+            for (const auto& b : botoes_) {
+                auto btn = std::make_unique<juce::TextButton>(b.texto);
+                btn->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+                const int codigo = b.codigo;
+                btn->onClick = [this, codigo] { escolher(codigo); };
+                addAndMakeVisible(*btn);
+                botoesUi_.push_back(std::move(btn));
+            }
+            btnVoltar_.setButtonText(textoVoltar);
+            btnVoltar_.setColour(juce::TextButton::buttonColourId, tk.painel);
+            btnVoltar_.setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            btnVoltar_.onClick = [this] { escolher(0); };
+            addAndMakeVisible(btnVoltar_);
+            const int linhas = (static_cast<int>(botoes_.size()) + kColunas - 1) / kColunas;
+            setSize(kLargura, kMargem + kAlturaMensagem + kGap + linhas * kAlturaBotao + (linhas - 1) * kGap + kGap + 34 + kMargem);
+        }
+
+        void paint(juce::Graphics& g) override { g.fillAll(tema().fundo); }
+
+        void resized() override {
+            auto area = getLocalBounds().reduced(kMargem);
+            lblMensagem_.setBounds(area.removeFromTop(kAlturaMensagem));
+            area.removeFromTop(kGap);
+            const int largura = (area.getWidth() - (kColunas - 1) * kGap) / kColunas;
+            const int linhas = (static_cast<int>(botoesUi_.size()) + kColunas - 1) / kColunas;
+            for (int i = 0; i < static_cast<int>(botoesUi_.size()); ++i) {
+                const int col = i % kColunas, lin = i / kColunas;
+                botoesUi_[static_cast<size_t>(i)]->setBounds(area.getX() + col * (largura + kGap),
+                                                             area.getY() + lin * (kAlturaBotao + kGap), largura, kAlturaBotao);
+            }
+            area.removeFromTop(linhas * kAlturaBotao + (linhas - 1) * kGap + kGap);
+            btnVoltar_.setBounds(area.removeFromTop(34));
+        }
+
+        static void exibir(const juce::String& titulo, const juce::String& mensagem, std::vector<Botao> botoes,
+                           const juce::String& textoVoltar, std::function<void(int)> aoEscolher) {
+            auto* conteudo = new DialogoEscolhaDuplicata(mensagem, std::move(botoes), textoVoltar, std::move(aoEscolher));
+            juce::DialogWindow::LaunchOptions opt;
+            opt.dialogTitle = titulo;
+            opt.content.setOwned(conteudo);
+            opt.dialogBackgroundColour = tema().fundo;
+            opt.escapeKeyTriggersCloseButton = true;
+            opt.useNativeTitleBar = true;
+            opt.resizable = false;
+            opt.launchAsync();
+        }
+
+    private:
+        void escolher(int codigo) {
+            auto cb = aoEscolher_;
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(codigo);
+            if (codigo != 0 && cb) juce::MessageManager::callAsync([cb, codigo] { cb(codigo); });
+        }
+
+        static constexpr int kLargura = 640, kMargem = 24, kGap = 12, kColunas = 3, kAlturaBotao = 44, kAlturaMensagem = 92;
+        std::vector<Botao> botoes_;
+        std::function<void(int)> aoEscolher_;
+        juce::Label lblMensagem_;
+        std::vector<std::unique_ptr<juce::TextButton>> botoesUi_;
+        juce::TextButton btnVoltar_;
+    };
+
     // Closed: top margin (10) + subcard height (130) + bottom margin (12).
     // Sub-card maior (miniatura ocupando a altura toda — item 2).
-    constexpr int kAlturaSubCard = 168;
+    constexpr int kAlturaSubCard = 196;  // cabe título + 5 linhas (Código, Match, Formato, Dimensões, Tamanho) + caminho sem sobrepor
     constexpr int kAlturaFechado = kAlturaSubCard + 22;
     constexpr int kAlturaAberto = kAlturaSubCard + 360;
 
@@ -1814,28 +1893,45 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     // Validation path: Show prompt to ask which file to keep
-    auto janela = std::make_shared<juce::AlertWindow>(
-        isPt ? juce::String::fromUTF8("Resolver Correspondência de Duplicata") : "Resolve Duplicate Match",
-        isPt ? (juce::String::fromUTF8("Como você deseja tratar este par de duplicatas?\n\nArquivo 1 (Original): ") + juce::String(group.original.titulo) + juce::String::fromUTF8("\nArquivo 2 (Duplicata): ") + juce::String(group.duplicata.titulo))
-             : ("How would you like to handle this duplicate pair?\n\nFile 1 (Original): " + juce::String(group.original.titulo) + "\nFile 2 (Duplicate): " + juce::String(group.duplicata.titulo)),
-        juce::MessageBoxIconType::QuestionIcon
-    );
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 1") : "KEEP FILE 1", 1);
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 2") : "KEEP FILE 2", 2);
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER AMBOS") : "KEEP BOTH", 3);
-    janela->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 5);
-    janela->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 6);
-    janela->addButton(isPt ? juce::String::fromUTF8("VOLTAR") : "RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto descricaoLado = [](const juce::String& rotulo, const DuplicateMatch& m) {
+        juce::String t = rotulo + ": " + juce::String::fromUTF8(m.titulo.c_str());
+        if (m.largura > 0 && m.altura > 0) t += "   (" + juce::String(m.largura) + " x " + juce::String(m.altura) + " px)";
+        return t;
+    };
+    const juce::String mensagem = isPt
+        ? (juce::String::fromUTF8("Como você deseja tratar este par de duplicatas?\n\n") +
+           descricaoLado(juce::String("Arquivo 1 (Original)"), group.original) + "\n" +
+           descricaoLado(juce::String("Arquivo 2 (Duplicata)"), group.duplicata))
+        : ("How would you like to handle this duplicate pair?\n\n" + descricaoLado(juce::String("File 1 (Original)"), group.original) + "\n" +
+           descricaoLado(juce::String("File 2 (Duplicate)"), group.duplicata));
+    // Códigos: 1 = manter 1, 2 = manter 2, 3 = ambos, 5 = mais recente, 6 = primeira no backup, 7 = maior resolução.
+    std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
+        {matriz::i18n::t("duplicatas.action_keep1"), 1},
+        {matriz::i18n::t("duplicatas.action_keep2"), 2},
+        {matriz::i18n::t("duplicatas.action_keep_both"), 3},
+        {matriz::i18n::t("duplicatas.criterio_recente"), 5},
+        {matriz::i18n::t("duplicatas.criterio_backup"), 6},
+        {matriz::i18n::t("duplicatas.criterio_resolucao"), 7},
+    };
 
-    // safeThis: enterModalState() não impede o componente de ser destruído
-    // enquanto a janela de confirmação está aberta (ex.: trocar de aba) —
-    // sem isso, tanto o callback do ModalCallbackFunction quanto o
-    // callAsync aninhado dentro dele desreferenciariam `this` já liberado.
+    // safeThis: o diálogo não impede o componente de ser destruído enquanto está aberto (ex.: trocar de aba).
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
-    janela->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, janela, grupoIdx, group, isPt](int buttonResult) {
-        retirarPeerDaTela(*janela);
-        if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
+    DialogoEscolhaDuplicata::exibir(
+        isPt ? juce::String::fromUTF8("Resolver Correspondência de Duplicata") : juce::String("Resolve Duplicate Match"),
+        mensagem, std::move(botoes), isPt ? juce::String::fromUTF8("VOLTAR") : juce::String("RETURN"),
+        [safeThis, grupoIdx, group, isPt](int buttonResult) mutable {
         if (!safeThis) return;
+        if (buttonResult == 7) {  // maior resolução: mantém o lado com mais pixels
+            const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+            const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+            if (ao <= 0 || ad <= 0 || ao == ad) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("duplicatas.criterios"),
+                                                       matriz::i18n::t("duplicatas.criterio_nao_aplica"), {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            buttonResult = ao > ad ? 1 : 2;
+        }
         if (buttonResult == 5 || buttonResult == 6) {  // critério rápido (etapa 9)
             const auto c = criteriosDoPar(safeThis->projeto_.projeto().registro(), group.original.itemId,
                                           group.duplicata.itemId);
@@ -1928,7 +2024,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                         if (confirmado) juntar(std::move(trocados));
                     });
             });
-    }));
+    });
 }
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
@@ -1995,19 +2091,22 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
            juce::String::fromUTF8(" detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
            "won't be included in the next Make Backup run."));
 
-    auto* aw = new juce::AlertWindow(titulo, msg, juce::AlertWindow::QuestionIcon);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep1"), 1);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep2"), 2);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep_both"), 3);
-    aw->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 4);
-    aw->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 5);
-    aw->addButton(isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"), 0);
-
+    // Grade simétrica de botões (3 colunas). Códigos de aplicarEscolhaGlobal: 1/2/3 manter, 4 mais recente, 5 primeira no
+    // backup, 6 maior resolução.
+    std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
+        {matriz::i18n::t("duplicatas.action_keep1"), 1},
+        {matriz::i18n::t("duplicatas.action_keep2"), 2},
+        {matriz::i18n::t("duplicatas.action_keep_both"), 3},
+        {matriz::i18n::t("duplicatas.criterio_recente"), 4},
+        {matriz::i18n::t("duplicatas.criterio_backup"), 5},
+        {matriz::i18n::t("duplicatas.criterio_resolucao"), 6},
+    };
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
-    aw->enterModalState(true, juce::ModalCallbackFunction::create([safeThis](int resultado) {
+    DialogoEscolhaDuplicata::exibir(titulo, msg, std::move(botoes), isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"),
+                                    [safeThis](int resultado) {
         if (!safeThis || resultado == 0) return;
         safeThis->aplicarEscolhaGlobal(resultado);
-    }), true);
+    });
 }
 
 void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
@@ -2031,6 +2130,15 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
         for (const auto& grupo : grupos) {
             const auto& group = grupo;
             int escolhaDoGrupo = escolha;
+            if (escolha == 6) {  // maior resolução: o lado com mais pixels; sem dimensões ou empate => decisão manual
+                const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+                const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+                escolhaDoGrupo = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 1 : 2) : 0;
+                if (escolhaDoGrupo == 0) {
+                    paraDecisaoManual->push_back(group);
+                    continue;
+                }
+            }
             if (escolha == 4 || escolha == 5) {
                 const auto c = criteriosDoPar(db, group.original.itemId, group.duplicata.itemId);
                 escolhaDoGrupo = escolha == 4 ? c.maisRecente : c.backupPrimeiro;
@@ -2155,6 +2263,9 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             e.temCriterios = true;
             e.acaoMaisRecente = c.maisRecente == 0 ? -1 : c.maisRecente - 1;
             e.acaoBackupPrimeiro = c.backupPrimeiro == 0 ? -1 : c.backupPrimeiro - 1;
+            const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+            const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+            e.acaoMaiorResolucao = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 0 : 1) : -1;
         }
         e.imagemA = carregarMiniaturaDoItem(projeto_, group.original.itemId, group.original.collectionCaminho);
         e.imagemB = carregarMiniaturaDoItem(projeto_, group.duplicata.itemId, group.duplicata.collectionCaminho);

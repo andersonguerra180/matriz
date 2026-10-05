@@ -1008,6 +1008,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.criterios", "Quick criteria:"},
         {"duplicatas.criterio_recente", "KEEP MOST RECENT INGEST"},
         {"duplicatas.criterio_backup", "KEEP FIRST IN BACKUP"},
+        {"duplicatas.criterio_resolucao", "KEEP HIGHEST RESOLUTION"},
         {"duplicatas.decisao_manual", "[MANUAL]"},
         {"duplicatas.manuais", "{n} group(s) need a manual decision (no backup yet, or a tie)."},
         {"duplicatas.criterio_nao_aplica", "This criterion does not decide this pair (no backup yet, or a tie). Choose manually."},
