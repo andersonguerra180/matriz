@@ -136,6 +136,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"catwork.offline", "Offline"},
         {"catwork.selected", "Arquivos selecionados"},
         {"catwork.sessions", "Sessões"},
+        {"catwork.others", "Outros"},
         {"catwork.single_copy", "Cópia única"},
         {"catwork.source_structure", "Estrutura de origem"},
         {"catwork.video", "Vídeo"},

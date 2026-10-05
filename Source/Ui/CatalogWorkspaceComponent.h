@@ -60,6 +60,7 @@ private:
         int img = 0;
         int doc = 0;
         int sessao = 0;
+        int outros = 0;  // OTHERS: o que nenhuma categoria reconhece (inclusive extensão desconhecida)
         int revisao = 0;
         int vulneraveis = 0;
         int mergeConflitos = 0;

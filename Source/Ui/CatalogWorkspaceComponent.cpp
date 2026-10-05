@@ -821,6 +821,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         else if (cat.chave == "images")      cat.rotulo = matriz::i18n::t("catwork.images");
         else if (cat.chave == "documents")   cat.rotulo = matriz::i18n::t("catwork.documents");
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
+        else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -882,6 +883,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.images"), "images", 0});
     categorias_.push_back({matriz::i18n::t("catwork.documents"), "documents", 0});
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
     // duplicatas (valor perdedor no histórico), pra revisão.
@@ -1126,6 +1128,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             else if (*tipoMidiaSelecionado_ == "images") match = (cat == matriz::ingest::CategoriaMidia::Imagem);
             else if (*tipoMidiaSelecionado_ == "documents") match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
             else if (*tipoMidiaSelecionado_ == "sessions") match = (cat == matriz::ingest::CategoriaMidia::Sessao);
+            else if (*tipoMidiaSelecionado_ == "others") match = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
             if (!match) continue;
         }
 
@@ -1399,6 +1402,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
                     else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
                     else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                    else if (*filtroTipoMidiaAnos == "others") pTipo = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
                 }
 
                 bool pColl = true;
@@ -1430,7 +1434,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                         case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
                         case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
                         case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
-                        default: break;
+                        default: ++res.outros; break;  // Desconhecida/Arte
                     }
                 }
 
@@ -1570,6 +1574,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("images", res.img);
     definirContagem("documents", res.doc);
     definirContagem("sessions", res.sessao);
+    definirContagem("others", res.outros);
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -2171,6 +2176,7 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
         else if (ch == "images")    cor = juce::Colour(0xfff4a261);
         else if (ch == "documents") cor = juce::Colour(0xff2b9348);
         else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
+        else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
         else continue;
         auto btnBounds = botoesCategorias_[i]->getBounds();
         float cy = btnBounds.getCentreY() - 4.0f;

@@ -146,6 +146,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"catwork.back", "Back to catalog"},
         {"catwork.documents", "Documents"},
         {"catwork.sessions", "Sessions"},
+        {"catwork.others", "Others"},
         {"catwork.images", "Images"},
         {"catwork.needs_review", "Needs review"},
         {"catwork.no_backup", "No backup"},
