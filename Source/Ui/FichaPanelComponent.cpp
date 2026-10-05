@@ -362,6 +362,11 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
+        {"Release", "Release"},
+        {"Article", "Artigo"},
+        {"Press", juce::String::fromUTF8("Matéria")},
+        {"Text", "Texto"},
+        {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
@@ -400,7 +405,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
                 "Graphics", "Logo", "3D", "Document"};
     } else if (cat == MediaCategory::Docs) {
-        keys = {"Documentation", "Book", "Contract", "Manual", "Report", "Reference",
+        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
                 "Technical Documentation", "Spreadsheet"};
     } else {
         std::vector<juce::String> res;

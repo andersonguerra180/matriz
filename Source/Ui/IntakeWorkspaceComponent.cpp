@@ -1579,7 +1579,7 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
             "Image Edit Project", "Graphics", "Logo", "3D"
         }},
         { "DOCUMENT", {
-            "Documentation", "Book", "Contract", "Manual", "Report",
+            "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report",
             "Reference", "Technical Documentation", "Planilha"
         }}
     };

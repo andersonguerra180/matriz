@@ -1318,7 +1318,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
         "Graphics", "Logo", "3D",
         // Docs
-        "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
+        "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
         "Spreadsheet", "Planilha"
     };
 

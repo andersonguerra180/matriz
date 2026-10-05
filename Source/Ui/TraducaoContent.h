@@ -59,6 +59,11 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
+        {"Release", "Release"},
+        {"Article", "Artigo"},
+        {"Press", juce::String::fromUTF8("Matéria")},
+        {"Text", "Texto"},
+        {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
