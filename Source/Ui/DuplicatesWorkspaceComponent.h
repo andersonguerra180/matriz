@@ -67,7 +67,8 @@ private:
         DuplicateMatch original;
         DuplicateMatch duplicata;
         // Qual critério casou: "IDENTICAL" (mesmo SHA-256, qualquer nome/caminho), "PROBABLE" (só imagens: pHash
-        // parecido — SEMPRE decisão do usuário, nunca resolvido em lote/automaticamente) ou "" (critérios de sempre).
+        // parecido) , "SIMILAR" (imagens quase iguais tiradas com segundos de diferença: EXIF diferente, pHash bem baixo)
+        // — PROBABLE e SIMILAR são SEMPRE decisão do usuário, nunca resolvidos em lote — ou "" (critérios de sempre).
         std::string criterio;
         int distanciaPHash = -1;  // só PROBABLE
     };
