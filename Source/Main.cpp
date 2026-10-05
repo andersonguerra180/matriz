@@ -224,7 +224,8 @@ public:
         if (commandLine.contains("--selftest-"))
             matriz::diag::desativarAppNapParaSelfTest();
 
-        matriz::i18n::carregar(matriz::app::lerLocale());
+        // Self-tests são determinísticos: sempre em inglês, independente do idioma salvo nas preferências do usuário.
+        matriz::i18n::carregar(commandLine.contains("--selftest-") ? juce::String("en") : matriz::app::lerLocale());
 
         lookAndFeel_ = std::make_unique<matriz::ui::MatrizLookAndFeel>();
         matriz::ui::configurarLookAndFeel(*lookAndFeel_);

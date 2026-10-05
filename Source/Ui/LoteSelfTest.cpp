@@ -3502,6 +3502,34 @@ int rodarLoteSelfTest() {
             reg.run("UPDATE arquivo SET checksum_sha256 = NULL WHERE item_id = ?", {Value::of(rExata)});
             reg.run("DELETE FROM reconciliacao_em_curso", {});
 
+            // Foto em sequência: quase igual (pHash baixo), EXIF com 3 s de diferença => SIMILAR (nunca em lote).
+            const auto fSerie = raizQ.getChildFile("serie_seguinte.png");
+            fOrig.copyFileTo(fSerie);
+            fSerie.appendData("OUTROS-BYTES-DA-SERIE", 21);
+            const auto rSerie = inserirItemComArquivo(reg, projetoId, "REC-4", fSerie);
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:18:36"})")), Value::of(rOrig)});
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:18:39"})")), Value::of(rSerie)});
+            // 20 s depois: ainda é sequência (<= 30 s). 90 s depois com a MESMA imagem: pHash decide => PROBABLE.
+            const auto fLonge = raizQ.getChildFile("serie_longe.png");
+            fOrig.copyFileTo(fLonge);
+            fLonge.appendData("MAIS-BYTES-LONGE", 16);
+            const auto rLonge = inserirItemComArquivo(reg, projetoId, "REC-5", fLonge);
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:20:06"})")), Value::of(rLonge)});
+
+            // Versão de menor resolução (foto recuperada de HD com problema): mesma imagem em 48x48 => PROBABLE.
+            const auto fPequena = raizQ.getChildFile("recuperada_miniatura.png");
+            {
+                juce::Image grande = juce::ImageFileFormat::loadFrom(fOrig);
+                juce::Image pequena = grande.rescaled(48, 48, juce::Graphics::highResamplingQuality);
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(fPequena);
+                if (out.openedOk()) png.writeImageToStream(pequena, out);
+            }
+            const auto rPequena = inserirItemComArquivo(reg, projetoId, "REC-6", fPequena);
+
             DuplicatesWorkspaceComponent dwRec(pa);
             dwRec.iniciarScan();
             esperarAte([&] { return !dwRec.isThreadRunning(); }, 120000);
@@ -3513,6 +3541,18 @@ int rodarLoteSelfTest() {
             const auto* gExata = acharGrupo(rOrig, rExata);
             const auto* gBytes = acharGrupo(rOrig, rBytes);
             checar(gExata != nullptr && gExata->criterio == "IDENTICAL", "exact copy with another name is IDENTICAL (same SHA-256)");
+            {
+                const auto* gSerie = acharGrupo(rOrig, rSerie);
+                checar(gSerie != nullptr && gSerie->criterio == "SIMILAR", "a near-identical shot taken 3 s later is SIMILAR (manual decision)");
+                const auto* gLonge = acharGrupo(rOrig, rLonge);
+                checar(gLonge != nullptr && gLonge->criterio == "PROBABLE",
+                       "the same picture with EXIF 90 s apart: the pHash decides (PROBABLE), not a sequence");
+            }
+            {
+                const auto* gPequena = acharGrupo(rOrig, rPequena);
+                checar(gPequena != nullptr && gPequena->criterio == "PROBABLE",
+                       "a lower-resolution recovered version of the same picture is PROBABLE (the pHash ignores resolution)");
+            }
             checar(gBytes != nullptr && gBytes->criterio == "PROBABLE" && gBytes->distanciaPHash >= 0,
                    "renamed copy with extra trailing bytes is PROBABLE (pHash), for the user to decide");
             {
