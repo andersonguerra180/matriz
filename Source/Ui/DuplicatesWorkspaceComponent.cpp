@@ -250,6 +250,7 @@ public:
         
         if (isImage_) {
             if (image_.isValid()) {
+                g.setOpacity(1.0f);  // a imagem herda o alfa da cor atual
                 g.drawImageWithin(image_, 10, 10, getWidth() - 20, getHeight() - 20,
                                   juce::RectanglePlacement::centred, false);
             } else {
@@ -651,6 +652,7 @@ private:
                     g.setColour(juce::Colours::black.withAlpha(0.35f));
                     g.fillRect(thumbRect);
                     if (thumb.isValid()) {
+                        g.setOpacity(1.0f);  // a cor acima tem alfa 0.35 e a imagem herdava isso (miniatura opaca)
                         g.drawImageWithin(thumb, thumbRect.getX() + 4, thumbRect.getY() + 4, thumbRect.getWidth() - 8,
                                           thumbRect.getHeight() - 8, juce::RectanglePlacement::centred, false);
                     } else {
