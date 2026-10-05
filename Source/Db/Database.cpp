@@ -8,33 +8,40 @@ namespace matriz::db {
 
 namespace {
 struct ObservadorLento {
-    std::atomic<bool> ativo{false};
     std::function<bool()> estaNaThreadAlvo;
     std::function<void(const std::string&, long long)> aoLenta;
     long long limiarMs = 100;
 };
-ObservadorLento& observadorLento() { static ObservadorLento o; return o; }
+// O observador pode ser trocado (self-tests) enquanto outras threads executam SQL: a troca é
+// uma troca de shared_ptr sob mutex; quem mede segura sua própria cópia.
+std::atomic<bool>& observadorAtivo() { static std::atomic<bool> a{false}; return a; }
+std::mutex& observadorMutex() { static std::mutex m; return m; }
+std::shared_ptr<const ObservadorLento>& observadorAtual() { static std::shared_ptr<const ObservadorLento> o; return o; }
 
 // Mede só quando o observador está ligado E a thread atual é a alvo.
 class MedidorConsulta {
 public:
     explicit MedidorConsulta(const char* sql) : sql_(sql) {
-        auto& o = observadorLento();
-        if (o.ativo.load(std::memory_order_relaxed) && o.estaNaThreadAlvo && o.estaNaThreadAlvo()) {
+        if (!observadorAtivo().load(std::memory_order_relaxed)) return;
+        {
+            std::lock_guard<std::mutex> lock(observadorMutex());
+            obs_ = observadorAtual();
+        }
+        if (obs_ && obs_->estaNaThreadAlvo && obs_->estaNaThreadAlvo()) {
             medindo_ = true;
             inicio_ = std::chrono::steady_clock::now();
         }
     }
     ~MedidorConsulta() {
         if (!medindo_) return;
-        auto& o = observadorLento();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - inicio_).count();
-        if (ms > o.limiarMs && o.aoLenta) {
-            try { o.aoLenta(sql_ ? sql_ : "", static_cast<long long>(ms)); } catch (...) {}
+        if (ms > obs_->limiarMs && obs_->aoLenta) {
+            try { obs_->aoLenta(sql_ ? sql_ : "", static_cast<long long>(ms)); } catch (...) {}
         }
     }
 private:
     const char* sql_;
+    std::shared_ptr<const ObservadorLento> obs_;
     bool medindo_ = false;
     std::chrono::steady_clock::time_point inicio_;
 };
@@ -43,11 +50,17 @@ private:
 void Database::definirObservadorConsultaLenta(std::function<bool()> estaNaThreadAlvo,
                                               std::function<void(const std::string&, long long)> aoLenta,
                                               long long limiarMs) {
-    auto& o = observadorLento();
-    o.estaNaThreadAlvo = std::move(estaNaThreadAlvo);
-    o.aoLenta = std::move(aoLenta);
-    o.limiarMs = limiarMs;
-    o.ativo.store(o.estaNaThreadAlvo && o.aoLenta);
+    std::shared_ptr<const ObservadorLento> novo;
+    if (estaNaThreadAlvo && aoLenta) {
+        auto o = std::make_shared<ObservadorLento>();
+        o->estaNaThreadAlvo = std::move(estaNaThreadAlvo);
+        o->aoLenta = std::move(aoLenta);
+        o->limiarMs = limiarMs;
+        novo = std::move(o);
+    }
+    std::lock_guard<std::mutex> lock(observadorMutex());
+    observadorAtual() = novo;
+    observadorAtivo().store(novo != nullptr);
 }
 
 // ---------------------------------------------------------------------------
