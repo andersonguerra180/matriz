@@ -236,16 +236,13 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
                juce::String::fromUTF8("). Aguarde ela terminar antes de abrir outra."))
             : ("\"" + nome + "\" is still opening (" + tempo + " so far). Wait for it to finish before opening another.");
         juce::Component::SafePointer<juce::Component> safeParent(parentComp);
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions()
-                .withIconType(juce::MessageBoxIconType::InfoIcon)
-                .withTitle(isPt ? "Abertura em andamento" : "Opening in progress")
-                .withMessage(msg)
-                .withButton(isPt ? "AGUARDAR" : "WAIT")
-                .withButton("OK"),
-            [safeParent](int resultado) {
-                if (resultado == 1) mostrarEsperaDaAnterior(safeParent.getComponent());
-            });
+        auto* alerta = new juce::AlertWindow(isPt ? "Abertura em andamento" : "Opening in progress", msg,
+                                             juce::MessageBoxIconType::InfoIcon);
+        alerta->addButton(isPt ? "AGUARDAR" : "WAIT", 1);
+        alerta->addButton("OK", 0);
+        alerta->enterModalState(true, juce::ModalCallbackFunction::create([safeParent](int resultado) {
+            if (resultado == 1) mostrarEsperaDaAnterior(safeParent.getComponent());
+        }), true);
         return;
     }
 

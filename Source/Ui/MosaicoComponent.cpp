@@ -154,6 +154,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 item->marcadoZip = marcadoK;
                 item->marcadoPrint = marcadoP;
                 item->marcadoWatermark = marcadoW;
+                item->impresso = projeto_.itemImpresso(id);
             }
         };
         if (lote) for (const auto& id : e.itemIds) atualizar(id);
@@ -2662,6 +2663,20 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.drawText(txt, pilula, juce::Justification::centred);
             }
 
+            // Selo "impressa" (já saiu em alguma sessão do SEND TO PRINT): ícone de impressora, sem texto.
+            if (item.impresso && !modoQuarentena_) {
+                const auto r = boundsSeloImpressa(areaImagem);
+                g.setColour(juce::Colour(0xe6111827));
+                g.fillRoundedRectangle(r.toFloat(), 3.0f);
+                g.setColour(juce::Colour(0xff34d399));
+                g.drawRoundedRectangle(r.toFloat(), 3.0f, 1.0f);
+                const auto c = r.toFloat().reduced(3.5f, 3.0f);
+                g.fillRect(c.getX(), c.getY() + 3.5f, c.getWidth(), c.getHeight() - 5.0f);                 // corpo
+                g.fillRect(c.getX() + 2.0f, c.getY(), c.getWidth() - 4.0f, 3.0f);                          // papel entrando
+                g.setColour(juce::Colour(0xe6111827));
+                g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);               // papel saindo (vazado)
+            }
+
             // Extension badge (top-left)
             const juce::String& ext = tx.extensao;
             if (ext.isNotEmpty()) {
@@ -2907,6 +2922,24 @@ juce::Rectangle<int> MosaicoComponent::boundsBotaoAdicionarGrid(int indice) cons
     
     constexpr int kTamMais = 22;
     return juce::Rectangle<int>(areaImagem.getRight() - kTamMais - 6, areaImagem.getY() + 6, kTamMais, kTamMais);
+}
+
+juce::Rectangle<int> MosaicoComponent::boundsSeloImpressa(juce::Rectangle<int> areaImagem) {
+    return juce::Rectangle<int>(areaImagem.getX() + 4, areaImagem.getY() + 22, 18, 16);
+}
+
+juce::String MosaicoComponent::getTooltip() {
+    if (modoVisao_ != ModoVisao::Grade || modoQuarentena_) return {};
+    const auto pos = getMouseXYRelative();
+    const int indice = indiceNaPosicao(pos);
+    if (indice < 0 || indice >= static_cast<int>(itensFiltrados_.size())) return {};
+    const auto& item = itensFiltrados_[static_cast<size_t>(indice)];
+    if (!item.impresso) return {};
+    auto bounds = boundsDaCelula(indice).reduced(4);
+    const int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
+    const auto areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
+    if (!boundsSeloImpressa(areaImagem).contains(pos)) return {};
+    return ProjetoAberto::descreverSessoesPrint(projeto_.sessoesPrintDoItem(item.id));
 }
 
 } // namespace matriz::ui

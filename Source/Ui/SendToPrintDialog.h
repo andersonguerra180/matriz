@@ -152,6 +152,7 @@ public:
     void selectedRowsChanged(int lastRowSelected) override;
     void listBoxItemClicked(int row, const juce::MouseEvent& e) override;
     void deleteKeyPressed(int lastRowSelected) override;
+    juce::String getTooltipForRow(int row) override;
 
     std::function<void()> aoFechar;
 
@@ -192,7 +193,11 @@ private:
     void atualizarPreviewAjustada();
 
     void iniciarExportacao();
+    void pedirNomeSessao(const juce::String& valorInicial, bool mostrarErro);
+    void iniciarExportacaoComNome();
+    void avisarJaImpressas();
     void cancelarExportacao();
+    juce::String nomeSessaoAtual_;
 
     // Thread assíncrona de exportação em lote
     class ExportPrintThread;

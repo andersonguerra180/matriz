@@ -180,6 +180,7 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
     poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
     poolMarcas_.addJob([this]() { carregarMarcacoesDoBanco(); }); // P/W/K/HTML: idem
+    poolMarcas_.addJob([this]() { carregarSessoesPrintDoBanco(); }); // histórico de impressão: idem
 
     const bool somenteLeituraNaAbertura = somenteLeitura_;
     std::thread([registroFile, pastaProjeto, somenteLeituraNaAbertura]() {
@@ -481,7 +482,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     // "MatrizSnapshot") enquanto a message thread pode estar escrevendo
     // nesses mesmos sets/map ao mesmo tempo (H/K/P/W, relink).
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -489,6 +490,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
     auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia);
@@ -497,6 +499,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         item.marcadoZip = zipCopia.count(item.id) > 0;
         item.marcadoPrint = printCopia.count(item.id) > 0;
         item.marcadoWatermark = watermarkCopia.count(item.id) > 0;
+        item.impresso = impressosCopia.count(item.id) > 0;
     }
     return items;
 }
@@ -887,6 +890,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
                 item.marcadoZip = marcadosZip_.count(item.id) > 0;
                 item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
                 item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
+                item.impresso = sessoesPrintPorItem_.count(item.id) > 0;
             }
         }
         return items;
@@ -904,7 +908,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -912,6 +916,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
 
@@ -973,6 +978,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.marcadoZip = zipCopia.count(r.id) > 0;
                 r.marcadoPrint = printCopia.count(r.id) > 0;
                 r.marcadoWatermark = watermarkCopia.count(r.id) > 0;
+                r.impresso = impressosCopia.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -5094,6 +5100,7 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
     r.marcadoZip = contemMarcacao(TipoMarcacao::Zip, itemId);
     r.marcadoPrint = contemMarcacao(TipoMarcacao::Print, itemId);
     r.marcadoWatermark = contemMarcacao(TipoMarcacao::Watermark, itemId);
+    r.impresso = itemImpresso(itemId);
 
     return r;
 }
@@ -6294,6 +6301,117 @@ void ProjetoAberto::enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo,
         if (!ok) matriz::diag::logarWatchdog("[Marcacao] falha ao gravar item_marcacao (" + juce::String(nomeTipo) + ")");
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         --gravacoesMarcasPendentes_;
+    });
+}
+
+void ProjetoAberto::registrarSessaoPrint(const juce::String& nome, const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty() || nome.trim().isEmpty()) return;
+    SessaoPrintRef ref;
+    ref.id = matriz::model::novoUuid();
+    ref.nome = nome.trim();
+    ref.criadoEm = juce::String(matriz::model::agoraIso8601());
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds) sessoesPrintPorItem_[id].push_back(ref);
+        ++versaoMarcacoes_;
+        if (!somenteLeitura_) ++gravacoesMarcasPendentes_;
+    }
+    EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");  // grade repinta o selo
+    if (somenteLeitura_) return;
+    poolMarcas_.addJob([this, ref, itemIds]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");
+            try {
+                db.run("INSERT INTO print_sessao (id, nome, criado_em, quantidade) VALUES (?, ?, ?, ?)",
+                       {matriz::db::Value::of(ref.id), matriz::db::Value::of(ref.nome.toStdString()),
+                        matriz::db::Value::of(ref.criadoEm.toStdString()),
+                        matriz::db::Value::of(static_cast<long long>(itemIds.size()))});
+                for (const auto& id : itemIds)
+                    db.run("INSERT OR IGNORE INTO print_sessao_item (sessao_id, item_id) "
+                           "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM item WHERE id = ?)",
+                           {matriz::db::Value::of(ref.id), matriz::db::Value::of(id), matriz::db::Value::of(id)});
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        if (ok) {
+            try {
+                juce::StringArray linhas;
+                linhas.add("Session: " + ref.nome);
+                linhas.add("Photos: " + juce::String(static_cast<int>(itemIds.size())));
+                matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Print Session", linhas);
+            } catch (...) {}
+        } else {
+            matriz::diag::logarWatchdog("[Print] falha ao gravar a sessao de impressao");
+        }
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+juce::String ProjetoAberto::descreverSessoesPrint(const std::vector<SessaoPrintRef>& sessoes) {
+    juce::StringArray partes;
+    for (const auto& s : sessoes) {
+        const auto t = juce::Time::fromISO8601(s.criadoEm);
+        partes.add(s.nome + " (" + t.formatted("%Y-%m-%d %H:%M") + ")");
+    }
+    return juce::String("Printed: ") + partes.joinIntoString("; ");
+}
+
+bool ProjetoAberto::itemImpresso(const std::string& itemId) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    return sessoesPrintPorItem_.count(itemId) > 0;
+}
+
+std::vector<ProjetoAberto::SessaoPrintRef> ProjetoAberto::sessoesPrintDoItem(const std::string& itemId) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    auto it = sessoesPrintPorItem_.find(itemId);
+    return it == sessoesPrintPorItem_.end() ? std::vector<SessaoPrintRef>{} : it->second;
+}
+
+std::set<std::string> ProjetoAberto::idsImpressos() const {
+    std::set<std::string> out;
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    for (const auto& par : sessoesPrintPorItem_) out.insert(par.first);
+    return out;
+}
+
+void ProjetoAberto::carregarSessoesPrintDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcacoes_;
+    }
+    std::map<std::string, std::vector<SessaoPrintRef>> doBanco;
+    try {
+        auto st = leitura().prepare(
+            "SELECT pi.item_id, s.id, s.nome, s.criado_em FROM print_sessao_item pi "
+            "JOIN print_sessao s ON s.id = pi.sessao_id ORDER BY s.criado_em");
+        while (st.step()) {
+            SessaoPrintRef r;
+            r.id = st.columnText(1);
+            r.nome = juce::String::fromUTF8(st.columnText(2).c_str());
+            r.criadoEm = juce::String(st.columnText(3));
+            doBanco[st.columnText(0)].push_back(std::move(r));
+        }
+    } catch (...) { return; }
+    std::vector<std::string> ids;
+    for (const auto& par : doBanco) ids.push_back(par.first);
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        if (versaoMarcacoes_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;
+        sessoesPrintPorItem_ = std::move(doBanco);
+    }
+    if (ids.empty()) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    juce::MessageManager::callAsync([vivo, ids = std::move(ids)]() {
+        if (vivo.expired()) return;
+        EventBus::obterInstancia().dispararItensAlterados(ids, "marcacao");
     });
 }
 

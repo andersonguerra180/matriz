@@ -1,4 +1,6 @@
 #include "SendToPrintDialog.h"
+#include <algorithm>
+#include <map>
 #include "BatchWatermarkDialog.h"
 #include "Strings.h"
 #include "Tokens.h"
@@ -359,6 +361,7 @@ void PreviaPapelComponent::mouseUp(const juce::MouseEvent&) {
 class SendToPrintDialog::ExportPrintThread : public juce::Thread {
 public:
     struct ItemExport {
+        std::string itemId;
         juce::File arquivoOrigem;
         DefinicaoPapel papel;
         OrientacaoPapel orientacao = OrientacaoPapel::Auto;
@@ -386,7 +389,7 @@ public:
 
     ExportPrintThread(Params params,
                       std::function<void(double, const juce::String&)> onProgresso,
-                      std::function<void(bool, int, const juce::File&, const juce::StringArray&)> onConcluido)
+                      std::function<void(bool, int, const juce::File&, const juce::StringArray&, const std::vector<std::string>&)> onConcluido)
         : juce::Thread("ExportPrintThread"),
           params_(std::move(params)),
           onProgresso_(std::move(onProgresso)),
@@ -413,6 +416,7 @@ public:
         }
 
         std::vector<juce::File> arquivosExportados;
+        std::vector<std::string> idsExportados;  // quem de fato saiu (vai para o histórico de impressão)
 
         for (int i = 0; i < total; ++i) {
             if (threadShouldExit()) break;
@@ -506,6 +510,7 @@ public:
             if (gravou) {
                 exportados++;
                 arquivosExportados.push_back(arquivoDestino);
+                idsExportados.push_back(item.itemId);
             } else {
                 erros.add(nomeArq + ": falha ao gravar arquivo em disco");
             }
@@ -539,7 +544,7 @@ public:
         }
 
         notificarProgresso(1.0, matriz::i18n::t("print.concluido"));
-        notificarFim(!threadShouldExit() && exportados > 0, exportados, resultadoFinal, erros);
+        notificarFim(!threadShouldExit() && exportados > 0, exportados, resultadoFinal, erros, idsExportados);
     }
 
 private:
@@ -557,16 +562,17 @@ private:
         });
     }
 
-    void notificarFim(bool sucesso, int totalExportados, const juce::File& pasta, const juce::StringArray& erros) {
+    void notificarFim(bool sucesso, int totalExportados, const juce::File& pasta, const juce::StringArray& erros,
+                      const std::vector<std::string>& idsExportados) {
         auto callback = onConcluido_;
-        juce::MessageManager::callAsync([callback, sucesso, totalExportados, pasta, erros] {
-            if (callback) callback(sucesso, totalExportados, pasta, erros);
+        juce::MessageManager::callAsync([callback, sucesso, totalExportados, pasta, erros, idsExportados] {
+            if (callback) callback(sucesso, totalExportados, pasta, erros, idsExportados);
         });
     }
 
     Params params_;
     std::function<void(double, const juce::String&)> onProgresso_;
-    std::function<void(bool, int, const juce::File&, const juce::StringArray&)> onConcluido_;
+    std::function<void(bool, int, const juce::File&, const juce::StringArray&, const std::vector<std::string>&)> onConcluido_;
 };
 
 // ==============================================================================
@@ -879,6 +885,12 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
 
     carregarFila();
     setSize(1240, 760);
+
+    // Fotos da fila já impressas: avisa antes de qualquer coisa (depois que o diálogo aparece).
+    juce::Component::SafePointer<SendToPrintDialog> safeAviso(this);
+    juce::MessageManager::callAsync([safeAviso]() {
+        if (safeAviso) safeAviso->avisarJaImpressas();
+    });
 }
 
 SendToPrintDialog::~SendToPrintDialog() {
@@ -1167,6 +1179,20 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
     g.setColour(tk.textoSecundario);
     g.drawText(papelTag, headerRow.removeFromRight(65), juce::Justification::centredRight);
 
+    // Selo "impressa" (mesmo ícone da grade): ícone de impressora, sem texto.
+    if (projeto_.itemImpresso(item.id)) {
+        auto r = headerRow.removeFromRight(22).withSizeKeepingCentre(18, 16);
+        g.setColour(juce::Colour(0xe6111827));
+        g.fillRoundedRectangle(r.toFloat(), 3.0f);
+        g.setColour(juce::Colour(0xff34d399));
+        g.drawRoundedRectangle(r.toFloat(), 3.0f, 1.0f);
+        const auto c = r.toFloat().reduced(3.5f, 3.0f);
+        g.fillRect(c.getX(), c.getY() + 3.5f, c.getWidth(), c.getHeight() - 5.0f);
+        g.fillRect(c.getX() + 2.0f, c.getY(), c.getWidth() - 4.0f, 3.0f);
+        g.setColour(juce::Colour(0xe6111827));
+        g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);
+    }
+
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
     g.setColour(rowIsSelected ? tk.acento : (item.valido ? tk.textoPrimario : tk.textoTerciario));
     g.drawText(juce::String(rowNumber + 1) + ". " + item.nomeArquivo, headerRow, juce::Justification::centredLeft, true);
@@ -1234,6 +1260,12 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
         g.setColour(tk.perigo);
         g.drawText(item.motivoInvalido, statusRow, juce::Justification::centredLeft, true);
     }
+}
+
+juce::String SendToPrintDialog::getTooltipForRow(int row) {
+    if (row < 0 || row >= static_cast<int>(fila_.size())) return {};
+    const auto refs = projeto_.sessoesPrintDoItem(fila_[static_cast<size_t>(row)].id);
+    return refs.empty() ? juce::String() : ProjetoAberto::descreverSessoesPrint(refs);
 }
 
 void SendToPrintDialog::selectedRowsChanged(int lastRowSelected) {
@@ -1469,6 +1501,38 @@ void SendToPrintDialog::iniciarCarregamentoAssincrono() {
     });
 }
 
+// Ao abrir: se a fila tem fotos já impressas, avisa ANTES de qualquer coisa. Nunca bloqueia: repetir é permitido.
+void SendToPrintDialog::avisarJaImpressas() {
+    std::vector<std::string> idsImpressos;
+    std::map<std::string, ProjetoAberto::SessaoPrintRef> sessoes;  // por id da sessão
+    for (const auto& item : fila_) {
+        const auto refs = projeto_.sessoesPrintDoItem(item.id);
+        if (refs.empty()) continue;
+        idsImpressos.push_back(item.id);
+        for (const auto& r : refs) sessoes.emplace(r.id, r);
+    }
+    if (idsImpressos.empty()) return;
+
+    juce::String msg = matriz::i18n::t("print.ja_impressas_msg").replace("{n}", juce::String(static_cast<int>(idsImpressos.size()))) + "\n";
+    std::vector<ProjetoAberto::SessaoPrintRef> ordenadas;
+    for (const auto& par : sessoes) ordenadas.push_back(par.second);
+    std::sort(ordenadas.begin(), ordenadas.end(), [](const auto& a, const auto& b) { return a.criadoEm < b.criadoEm; });
+    for (const auto& r : ordenadas)
+        msg += "\n" + juce::String::fromUTF8("\xe2\x80\xa2 ") + r.nome + " (" +
+               juce::Time::fromISO8601(r.criadoEm).formatted("%Y-%m-%d %H:%M") + ")";
+
+    auto* w = new juce::AlertWindow(matriz::i18n::t("print.ja_impressas_titulo"), msg, juce::MessageBoxIconType::WarningIcon);
+    w->addButton(matriz::i18n::t("print.btn_remover_impressas"), 1);
+    w->addButton(matriz::i18n::t("print.btn_manter_impressas"), 0);
+    juce::Component::SafePointer<SendToPrintDialog> safeThis(this);
+    w->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, idsImpressos](int resultado) {
+        if (resultado != 1 || !safeThis) return;
+        // Tira da fila (e da marca P, como o × de cada linha) numa operação só e recarrega a fila.
+        safeThis->projeto_.definirMarcacao(ProjetoAberto::TipoMarcacao::Print, idsImpressos, false);
+        safeThis->carregarFila();
+    }), true);
+}
+
 void SendToPrintDialog::selecionarFoto(int indice) {
     indiceSelecionado_ = indice;
     if (indiceSelecionado_ >= 0 && indiceSelecionado_ < static_cast<int>(fila_.size())) {
@@ -1607,6 +1671,35 @@ void SendToPrintDialog::iniciarExportacao() {
         return;
     }
 
+    pedirNomeSessao(nomeSessaoAtual_, false);
+}
+
+// Nome da sessão de impressão: obrigatório, pedido ANTES de começar. Cancelar = não exporta.
+void SendToPrintDialog::pedirNomeSessao(const juce::String& valorInicial, bool mostrarErro) {
+    auto* w = new juce::AlertWindow(matriz::i18n::t("print.sessao_titulo"),
+                                    (mostrarErro ? matriz::i18n::t("print.sessao_obrigatorio") + "\n\n" : juce::String()) +
+                                        matriz::i18n::t("print.sessao_msg"),
+                                    juce::MessageBoxIconType::QuestionIcon);
+    w->addTextEditor("nome", valorInicial, matriz::i18n::t("print.sessao_rotulo"));
+    w->addButton(matriz::i18n::t("comum.ok"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    w->addButton(matriz::i18n::t("print.btn_cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<SendToPrintDialog> safeThis(this);
+    w->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, w](int resultado) {
+        if (resultado != 1) return;
+        const auto nome = w->getTextEditorContents("nome").trim();
+        if (!safeThis) return;
+        if (nome.isEmpty()) {
+            safeThis->pedirNomeSessao({}, true);
+            return;
+        }
+        safeThis->nomeSessaoAtual_ = nome;
+        safeThis->iniciarExportacaoComNome();
+    }), true);
+}
+
+void SendToPrintDialog::iniciarExportacaoComNome() {
+    if (exportando_) return;
+
     ExportPrintThread::Params params;
     params.pastaDestino = pastaDestinoSelecionada_;
     params.exportarZip = chkExportarZip_->getToggleState();
@@ -1619,6 +1712,7 @@ void SendToPrintDialog::iniciarExportacao() {
     for (const auto& item : fila_) {
         if (item.valido && item.arquivo.existsAsFile()) {
             ExportPrintThread::ItemExport ie;
+            ie.itemId = item.id;
             ie.arquivoOrigem = item.arquivo;
             int pIdx = std::clamp(item.papelIndex, 0, static_cast<int>(papeisPadrao().size()) - 1);
             ie.papel = papeisPadrao()[pIdx];
@@ -1671,9 +1765,13 @@ void SendToPrintDialog::iniciarExportacao() {
             safeThis->progressoValor_ = progresso;
             safeThis->lblStatusProgresso_->setText(msg, juce::dontSendNotification);
         },
-        [safeThis](bool sucesso, int totalExportados, const juce::File& resultado, const juce::StringArray& erros) {
+        [safeThis](bool sucesso, int totalExportados, const juce::File& resultado, const juce::StringArray& erros,
+                   const std::vector<std::string>& idsExportados) {
             if (!safeThis) return;
             safeThis->exportando_ = false;
+            // Só registra a sessão se a exportação TERMINOU com sucesso (cancelou/falhou: nada é registrado).
+            if (sucesso && !idsExportados.empty() && safeThis->nomeSessaoAtual_.isNotEmpty())
+                safeThis->projeto_.registrarSessaoPrint(safeThis->nomeSessaoAtual_, idsExportados);
             safeThis->btnExportar_->setEnabled(true);
             safeThis->btnLimparLista_->setEnabled(true);
             safeThis->cboTamanhoPapel_->setEnabled(true);

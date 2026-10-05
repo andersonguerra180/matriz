@@ -1036,6 +1036,21 @@ CREATE TABLE IF NOT EXISTS intake_rejeitados (
 
 -- Marcas de sessão que agora persistem: HTML (publicação), ZIP (K), Print (P), Watermark (W).
 -- Uma linha por (item, tipo). O conjunto em memória de ProjetoAberto é cache; esta tabela é a fonte de verdade.
+-- Histórico de impressão (SEND TO PRINT): uma sessão por exportação concluída, com os itens impressos nela.
+-- Uma foto pode estar em várias sessões. Nada aqui toca em arquivo algum.
+CREATE TABLE IF NOT EXISTS print_sessao (
+    id         TEXT PRIMARY KEY,
+    nome       TEXT NOT NULL,
+    criado_em  TEXT NOT NULL,
+    quantidade INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS print_sessao_item (
+    sessao_id TEXT NOT NULL REFERENCES print_sessao(id) ON DELETE CASCADE,
+    item_id   TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    PRIMARY KEY (sessao_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_print_sessao_item_item ON print_sessao_item(item_id);
+
 CREATE TABLE IF NOT EXISTS item_marcacao (
     item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
     tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark')),

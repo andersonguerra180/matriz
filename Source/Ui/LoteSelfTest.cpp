@@ -1242,6 +1242,36 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.carregarMarcacoesDoBanco();
         }
 
+        // ----- Histórico de impressão (sessões do SEND TO PRINT)
+        std::cout << "\n-- PRINT HISTORY: sessions persist, photos can be in several sessions --\n";
+        {
+            const auto p1 = inserirItem(reg, projetoId, "PRT-1", false);
+            const auto p2 = inserirItem(reg, projetoId, "PRT-2", false);
+            const auto p3 = inserirItem(reg, projetoId, "PRT-3", false);
+            checar(!pa.itemImpresso(p1), "a photo that was never printed has no printed seal");
+            pa.registrarSessaoPrint("Teste A", {p1, p2});
+            pa.registrarSessaoPrint("Teste B", {p2});
+            pa.registrarSessaoPrint("   ", {p3});  // nome vazio: nada é registrado
+            checar(pa.itemImpresso(p1) && pa.itemImpresso(p2) && !pa.itemImpresso(p3), "printed seal in memory right after the export");
+            checar(pa.sessoesPrintDoItem(p2).size() == 2 && pa.sessoesPrintDoItem(p1).size() == 1, "a photo can be in several sessions");
+            pa.aguardarGravacoesMarcas();
+            {
+                auto st = reg.prepare("SELECT COUNT(*), (SELECT COUNT(*) FROM print_sessao_item) FROM print_sessao");
+                st.step();
+                checar(st.columnInt(0) == 2 && st.columnInt(1) == 3, "2 sessions and 3 (session, photo) rows are in the project database");
+            }
+            {
+                ProjetoAberto pb(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pb.aguardarGravacoesMarcas();  // espera a carga em background
+                const auto s2 = pb.sessoesPrintDoItem(p2);
+                checar(s2.size() == 2 && s2[0].nome == "Teste A" && s2[1].nome == "Teste B", "sessions (name, order) survive close/reopen");
+                checar(pb.itemImpresso(p1) && !pb.itemImpresso(p3), "printed seals survive close/reopen");
+                checar(ProjetoAberto::descreverSessoesPrint(s2).contains("Teste A") && ProjetoAberto::descreverSessoesPrint(s2).contains("Teste B"),
+                       "tooltip text lists every session name");
+                checar(pb.obterItemResumo(p1).has_value() && pb.obterItemResumo(p1)->impresso, "the item summary used by the grid carries the printed flag");
+            }
+        }
+
         // ----- NEST (camada de dados)
         std::cout << "\n-- NEST: create, merge, cover, outputs, folders, undo --\n";
         {

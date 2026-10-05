@@ -91,6 +91,7 @@ struct ItemResumo {
     bool marcadoPublicacao = false;
     bool marcadoZip = false;
     bool marcadoPrint = false;
+    bool impresso = false;        // já saiu em alguma sessão de impressão (SEND TO PRINT)
     bool marcadoWatermark = false;
     bool metadadosEditados = false;
     bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
@@ -1046,6 +1047,23 @@ public:
     void limparTodasMarcacoes();
     std::vector<std::string> idsMarcados(TipoMarcacao tipo) const;
     void transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId);
+    // ---- Histórico de impressão (SEND TO PRINT) ----
+    struct SessaoPrintRef {
+        std::string id;
+        juce::String nome;
+        juce::String criadoEm;  // ISO-8601 UTC
+    };
+    // Registra uma sessão (só chamar com a exportação CONCLUÍDA): memória na hora, banco + ProjectLog em
+    // background (uma transação). `itemIds` = os itens que de fato saíram.
+    void registrarSessaoPrint(const juce::String& nome, const std::vector<std::string>& itemIds);
+    // "Printed: Nome (2012-12-25 14:30); Outro (...)" — data no fuso local. Para tooltips e avisos.
+    static juce::String descreverSessoesPrint(const std::vector<SessaoPrintRef>& sessoes);
+    bool itemImpresso(const std::string& itemId) const;                       // memória, sem banco
+    std::vector<SessaoPrintRef> sessoesPrintDoItem(const std::string& itemId) const;  // memória, sem banco
+    std::set<std::string> idsImpressos() const;                               // cópia, memória
+    // Recarrega do banco (SÓ thread de fundo; a memória manda se houve gravação durante a leitura).
+    void carregarSessoesPrintDoBanco();
+
     // Recarrega os 4 conjuntos a partir do banco. SÓ para thread de fundo; descarta o resultado se
     // houve alteração/gravação pendente durante a leitura (a memória manda).
     void carregarMarcacoesDoBanco();
@@ -1116,6 +1134,7 @@ private:
     // Grava a operação em background (fila serial poolMarcas_), numa transação. No-op em somente-leitura.
     void enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo, std::vector<std::string> ids,
                                     std::string novoId = {});
+    std::map<std::string, std::vector<SessaoPrintRef>> sessoesPrintPorItem_;  // sob marcacoesMutex_
     std::uint64_t versaoMarcacoes_ = 0;  // sob marcacoesMutex_; sobe a cada alteração em memória
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
