@@ -167,7 +167,7 @@ void ProjetoAberto::aguardarGravacoesMarcas() {
     for (int i = 0; i < 6000; ++i) {  // no máximo ~60 s
         {
             std::lock_guard<std::mutex> lock(marcacoesMutex_);
-            if (gravacoesMarcasPendentes_ == 0) break;
+            if (gravacoesMarcasPendentes_ == 0 && poolMarcas_.getNumJobs() == 0) break;
         }
         juce::Thread::sleep(10);
     }
@@ -179,6 +179,7 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
     // Fase 5: destino com papel CLONE abre somente leitura.
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
     poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
+    poolMarcas_.addJob([this]() { carregarMarcacoesDoBanco(); }); // P/W/K/HTML: idem
 
     const bool somenteLeituraNaAbertura = somenteLeitura_;
     std::thread([registroFile, pastaProjeto, somenteLeituraNaAbertura]() {
@@ -6135,26 +6136,23 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
 // só usada pelas funções abaixo, cada uma já tranca a sua parte.
 void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {
     if (itemIds.empty()) return;
+    bool remover = true;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         auto& s = obterConjuntoMarcacao(tipo);
-        bool todosMarcados = true;
         for (const auto& id : itemIds) {
             if (s.find(id) == s.end()) {
-                todosMarcados = false;
+                remover = false;
                 break;
             }
         }
-        if (todosMarcados) {
-            for (const auto& id : itemIds) {
-                s.erase(id);
-            }
-        } else {
-            for (const auto& id : itemIds) {
-                s.insert(id);
-            }
+        for (const auto& id : itemIds) {
+            if (remover) s.erase(id);
+            else s.insert(id);
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(remover ? OpMarcacao::Remover : OpMarcacao::Inserir, tipo, itemIds);
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
@@ -6167,7 +6165,9 @@ void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::st
             if (marcado) s.insert(id);
             else s.erase(id);
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(marcado ? OpMarcacao::Inserir : OpMarcacao::Remover, tipo, itemIds);
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
@@ -6191,7 +6191,9 @@ void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
         if (s.empty()) return;
         afetados.assign(s.begin(), s.end());
         s.clear();
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::LimparTipo, tipo, {});
     EventBus::obterInstancia().dispararItensAlterados(afetados, "marcacao");
 }
 
@@ -6205,7 +6207,9 @@ void ProjetoAberto::limparTodasMarcacoes() {
             afetados.insert(s.begin(), s.end());
             s.clear();
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::LimparTodas, TipoMarcacao::Html, {});
     EventBus::obterInstancia().dispararItensAlterados(std::vector<std::string>(afetados.begin(), afetados.end()), "marcacao");
 }
 
@@ -6225,8 +6229,109 @@ void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std:
                 s.insert(newItemId);
             }
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::Transferir, TipoMarcacao::Html, {oldItemId}, newItemId);
     EventBus::obterInstancia().dispararItemAlterado(newItemId, "marcacao");
+}
+
+namespace {
+const char* nomeTipoMarcacao(int t) {
+    switch (t) {
+        case 0: return "html";
+        case 1: return "zip";
+        case 2: return "print";
+        case 3: return "watermark";
+    }
+    return "html";
+}
+}  // namespace
+
+void ProjetoAberto::enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo, std::vector<std::string> ids,
+                                               std::string novoId) {
+    if (!projeto_ || somenteLeitura_) return;  // clone somente-leitura: marcas valem só na sessão
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        ++gravacoesMarcasPendentes_;
+    }
+    const std::string nomeTipo = nomeTipoMarcacao(static_cast<int>(tipo));
+    poolMarcas_.addJob([this, op, nomeTipo, ids = std::move(ids), novoId = std::move(novoId)]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");  // uma transação por operação, nunca uma por item
+            try {
+                switch (op) {
+                    case OpMarcacao::Inserir:
+                        for (const auto& id : ids)
+                            db.run("INSERT OR IGNORE INTO item_marcacao (item_id, tipo) "
+                                   "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM item WHERE id = ?)",
+                                   {matriz::db::Value::of(id), matriz::db::Value::of(nomeTipo), matriz::db::Value::of(id)});
+                        break;
+                    case OpMarcacao::Remover:
+                        for (const auto& id : ids)
+                            db.run("DELETE FROM item_marcacao WHERE item_id = ? AND tipo = ?",
+                                   {matriz::db::Value::of(id), matriz::db::Value::of(nomeTipo)});
+                        break;
+                    case OpMarcacao::LimparTipo:
+                        db.run("DELETE FROM item_marcacao WHERE tipo = ?", {matriz::db::Value::of(nomeTipo)});
+                        break;
+                    case OpMarcacao::LimparTodas:
+                        db.run("DELETE FROM item_marcacao", {});
+                        break;
+                    case OpMarcacao::Transferir:
+                        for (const auto& id : ids)
+                            db.run("UPDATE OR IGNORE item_marcacao SET item_id = ? WHERE item_id = ?",
+                                   {matriz::db::Value::of(novoId), matriz::db::Value::of(id)});
+                        break;
+                }
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        if (!ok) matriz::diag::logarWatchdog("[Marcacao] falha ao gravar item_marcacao (" + juce::String(nomeTipo) + ")");
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+void ProjetoAberto::carregarMarcacoesDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcacoes_;
+    }
+    std::set<std::string> h, z, p, w;
+    try {
+        auto st = leitura().prepare("SELECT item_id, tipo FROM item_marcacao");
+        while (st.step()) {
+            const std::string tipo = st.columnText(1);
+            if (tipo == "html") h.insert(st.columnText(0));
+            else if (tipo == "zip") z.insert(st.columnText(0));
+            else if (tipo == "print") p.insert(st.columnText(0));
+            else if (tipo == "watermark") w.insert(st.columnText(0));
+        }
+    } catch (...) { return; }
+    std::set<std::string> todos;
+    todos.insert(h.begin(), h.end()); todos.insert(z.begin(), z.end());
+    todos.insert(p.begin(), p.end()); todos.insert(w.begin(), w.end());
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        if (versaoMarcacoes_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;  // a memória manda
+        marcadosHtml_ = std::move(h);
+        marcadosZip_ = std::move(z);
+        marcadosPrint_ = std::move(p);
+        marcadosWatermark_ = std::move(w);
+    }
+    if (todos.empty()) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    juce::MessageManager::callAsync([vivo, ids = std::vector<std::string>(todos.begin(), todos.end())]() {
+        if (vivo.expired()) return;  // o grid já pintou antes da carga: avisa para repintar
+        EventBus::obterInstancia().dispararItensAlterados(ids, "marcacao");
+    });
 }
 
 void ProjetoAberto::salvarConfiguracaoWatermark(const ConfiguracaoWatermark& cfg) {

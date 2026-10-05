@@ -1204,6 +1204,44 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             checar(pa.idsMarcadosR().count(ids[0]) == 0, "marks of deleted items are gone (ON DELETE CASCADE)");
         }
 
+        // ----- Marcações E/P/W/K/HTML persistem ao fechar/reabrir
+        std::cout << "\n-- MARKS: E/P/W/K/HTML persist across close/reopen --\n";
+        {
+            using TM = ProjetoAberto::TipoMarcacao;
+            const auto m1 = inserirItem(reg, projetoId, "MRK-1", false);
+            const auto m2 = inserirItem(reg, projetoId, "MRK-2", false);
+            const auto m3 = inserirItem(reg, projetoId, "MRK-3", false);
+            const auto m4 = inserirItem(reg, projetoId, "MRK-4", false);
+            pa.alternarMarcacao(TM::Print, {m1, m2});
+            pa.alternarMarcacao(TM::Watermark, {m2});
+            pa.alternarMarcacao(TM::Zip, {m3});
+            pa.alternarMarcacao(TM::Html, {m1, m4});
+            pa.alternarMarcadoRevisado({m3});
+            pa.definirMarcacao(TM::Html, {m4}, false);  // desmarcar também persiste
+            pa.aguardarGravacoesMarcas();
+            {
+                ProjetoAberto pb(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pb.aguardarGravacoesMarcas();  // espera a carga em background
+                checar(pb.contemMarcacao(TM::Print, m1) && pb.contemMarcacao(TM::Print, m2) && pb.contarMarcacoes(TM::Print) == 2,
+                       "P marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Watermark, m2) && pb.contarMarcacoes(TM::Watermark) == 1, "W marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Zip, m3) && pb.contarMarcacoes(TM::Zip) == 1, "K marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Html, m1) && !pb.contemMarcacao(TM::Html, m4), "HTML marks survive and an unmark persists");
+                checar(pb.itemMarcadoRevisado(m3) && !pb.itemMarcadoRevisado(m1), "E marks survive close/reopen");
+                pb.limparMarcacoes(TM::Print);
+                pb.limparTodasMarcacoes();
+                pb.aguardarGravacoesMarcas();
+            }
+            {
+                ProjetoAberto pc(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pc.aguardarGravacoesMarcas();
+                checar(pc.contarMarcacoes(TM::Print) == 0 && pc.contarMarcacoes(TM::Zip) == 0 && pc.contarMarcacoes(TM::Html) == 0 &&
+                           pc.contarMarcacoes(TM::Watermark) == 0,
+                       "cleared marks stay cleared after reopen");
+            }
+            pa.carregarMarcacoesDoBanco();
+        }
+
         // ----- NEST (camada de dados)
         std::cout << "\n-- NEST: create, merge, cover, outputs, folders, undo --\n";
         {

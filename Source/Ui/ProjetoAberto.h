@@ -1028,7 +1028,8 @@ public:
     const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
     void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
 
-    // Tipos de marcação volátil de sessão (em memória, sem persistência em banco)
+    // Tipos de marcação (HTML/ZIP/Print/Watermark). Os conjuntos em memória são cache; a fonte de
+    // verdade é item_marcacao no registro (gravada em background, uma transação por operação).
     enum class TipoMarcacao {
         Html,
         Zip,
@@ -1045,6 +1046,9 @@ public:
     void limparTodasMarcacoes();
     std::vector<std::string> idsMarcados(TipoMarcacao tipo) const;
     void transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId);
+    // Recarrega os 4 conjuntos a partir do banco. SÓ para thread de fundo; descarta o resultado se
+    // houve alteração/gravação pendente durante a leitura (a memória manda).
+    void carregarMarcacoesDoBanco();
 
     // Aliases funcionais
     void alternar(TipoMarcacao tipo, const std::vector<std::string>& itemIds) { alternarMarcacao(tipo, itemIds); }
@@ -1108,6 +1112,11 @@ private:
     // Ver definirMapaAtivo()/mapaAtivoPadrao() acima.
     std::string mapaAtivoSelecionado_;
 
+    enum class OpMarcacao { Inserir, Remover, LimparTipo, LimparTodas, Transferir };
+    // Grava a operação em background (fila serial poolMarcas_), numa transação. No-op em somente-leitura.
+    void enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo, std::vector<std::string> ids,
+                                    std::string novoId = {});
+    std::uint64_t versaoMarcacoes_ = 0;  // sob marcacoesMutex_; sobe a cada alteração em memória
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
 

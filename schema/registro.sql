@@ -1034,6 +1034,15 @@ CREATE TABLE IF NOT EXISTS intake_rejeitados (
     rejeitado_em  TEXT NOT NULL
 );
 
+-- Marcas de sessão que agora persistem: HTML (publicação), ZIP (K), Print (P), Watermark (W).
+-- Uma linha por (item, tipo). O conjunto em memória de ProjetoAberto é cache; esta tabela é a fonte de verdade.
+CREATE TABLE IF NOT EXISTS item_marcacao (
+    item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark')),
+    PRIMARY KEY (item_id, tipo)
+);
+CREATE INDEX IF NOT EXISTS idx_item_marcacao_tipo ON item_marcacao(tipo);
+
 CREATE TABLE IF NOT EXISTS intake_marca_r (
     item_id    TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
     origem     TEXT NOT NULL DEFAULT 'usuario',  -- 'usuario' | 'hash' (pré-marcado pela lista de rejeitados)
