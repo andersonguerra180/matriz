@@ -1826,6 +1826,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"arvore_backup.card_pastas", "FOLDERS"},
         {"arvore_backup.card_visualizacao", "VIEW"},
         {"arvore_backup.card_tamanho", "FOLDER SIZE"},
+        {"arvore_backup.spread_rotulo", "SPREAD"},
+        {"arvore_backup.spread_tooltip", "Spreads the tree horizontally, using more of the window width (view only; folder sizes do not change)."},
         {"arvore_backup.btn_reset_tamanhos", "RESET SIZES"},
         {"arvore_backup.reset_tamanhos_dica", "Back to the sizes calculated by the auto-arrange, keeping the size difference between levels"},
         {"arvore_backup.auto_marca", "AUTO"},

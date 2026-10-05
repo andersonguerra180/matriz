@@ -196,6 +196,11 @@ private:
     // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
     std::unique_ptr<juce::Slider> sliderTamanho_;
     float escalaTamanho_ = 1.0f;  // escala global (visual; não é persistida)
+    // SPREAD: afasta as pastas só na horizontal (posições x em torno do pivot; tamanhos não mudam). Visual,
+    // não persistida; persistirPosicoesEmLote desfaz o fator ao gravar.
+    std::unique_ptr<juce::Slider> sliderSpread_;
+    std::unique_ptr<juce::Label> rotuloSpread_;
+    float espalharX_ = 1.0f;
     juce::Point<float> pivotEscala_{0.0f, 0.0f};
     double fatorCards_ = 0.0;  // fator do mapa escolhido pelo AJUSTAR; 0 = mapa antigo (tamanho único)
     std::map<std::string, float> escalasOriginal_;  // ORIGINAL é virtual: multiplicadores só em memória

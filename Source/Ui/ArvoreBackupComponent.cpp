@@ -357,6 +357,23 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_->onDragEnd = [this] { persistirEscalas(); };
     addAndMakeVisible(*sliderTamanho_);
 
+    rotuloSpread_ = std::make_unique<juce::Label>(juce::String(), i18n::t("arvore_backup.spread_rotulo"));
+    rotuloSpread_->setFont(juce::Font(juce::FontOptions(10.0f)));
+    rotuloSpread_->setMinimumHorizontalScale(1.0f);
+    addAndMakeVisible(*rotuloSpread_);
+    sliderSpread_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+    sliderSpread_->setRange(100.0, 400.0, 1.0);
+    sliderSpread_->setValue(100.0, juce::dontSendNotification);
+    sliderSpread_->setDoubleClickReturnValue(true, 100.0);
+    sliderSpread_->setTextValueSuffix("%");
+    sliderSpread_->setTextBoxStyle(juce::Slider::TextBoxRight, false, 46, 20);
+    sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
+    sliderSpread_->onValueChange = [this] {
+        espalharX_ = static_cast<float>(sliderSpread_->getValue() / 100.0);
+        aplicarEscalaTamanho(escalaTamanho_);
+    };
+    addAndMakeVisible(*sliderSpread_);
+
     detailContent_ = std::make_unique<TreeDetailContent>();
     detailViewport_ = std::make_unique<juce::Viewport>();
     detailViewport_->setViewedComponent(detailContent_.get(), false);
@@ -1234,7 +1251,7 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
         // `bounds` está na escala global do slider; o que se grava é a posição a 100% (boundsOriginal).
         const float g = std::max(0.05f, escalaTamanho_);
         const auto c = node.bounds.getCentre().toFloat();
-        node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / g,
+        node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
                                                           pivotEscala_.y + (c.y - pivotEscala_.y) / g).toInt());
         projeto_.atualizarPosicaoPastaAcervo(node.id, node.boundsOriginal.getX(), node.boundsOriginal.getY());
     }
@@ -1668,6 +1685,9 @@ void ArvoreBackupComponent::resized() {
     // FOLDER SIZE — slider de tamanho (seleção ou todos) e RESET SIZES.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_tamanho"));
     if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
+    corpo.removeFromTop(2);
+    if (rotuloSpread_) rotuloSpread_->setBounds(corpo.removeFromTop(14));
+    if (sliderSpread_) sliderSpread_->setBounds(corpo.removeFromTop(22));
     corpo.removeFromTop(4);
     if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
@@ -2349,6 +2369,8 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     }
     if (btnNovoMapa_) btnNovoMapa_->setButtonText(i18n::t("arvore_backup.btn_novo_mapa"));
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
+    if (rotuloSpread_) rotuloSpread_->setText(i18n::t("arvore_backup.spread_rotulo"), juce::dontSendNotification);
+    if (sliderSpread_) sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
     resized();
     repaint();
@@ -2384,7 +2406,7 @@ void ArvoreBackupComponent::visibilityChanged() {
 void ArvoreBackupComponent::aplicarEscalaTamanho(float escala) {
     for (auto& n : nodes_) {
         const auto c = n.boundsOriginal.getCentre().toFloat();
-        const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala,
+        const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala * espalharX_,
                                             pivotEscala_.y + (c.y - pivotEscala_.y) * escala);
         const int w = juce::jmax(6, juce::roundToInt(n.boundsOriginal.getWidth() * escala));
         const int h = juce::jmax(4, juce::roundToInt(n.boundsOriginal.getHeight() * escala));
