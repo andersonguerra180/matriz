@@ -425,6 +425,9 @@ public:
         return altura;
     }
     int destaque() const { return destaque_; }
+    juce::Rectangle<int> retanguloDoDestaque() const {
+        return (destaque_ >= 0 && destaque_ < static_cast<int>(chips_.size())) ? chips_[static_cast<size_t>(destaque_)] : juce::Rectangle<int>();
+    }
     void destacar(int i) {
         destaque_ = (i >= 0 && i < static_cast<int>(valores_.size())) ? i : -1;
         repaint();
@@ -496,14 +499,20 @@ public:
         editor_->aoSetaVertical = [this](int delta) { moverDestaque(delta); };
         editor_->onFocusLost = [this] {
             juce::Component::SafePointer<AutocompleteAssistedField> safe(this);
-            juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->lista_) safe->lista_->setVisible(false); });
+            juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->viewport_) safe->viewport_->setVisible(false); });
         };
         addAndMakeVisible(*editor_);
 
         lista_ = std::make_unique<ChipsSugestoes>();
         lista_->aoEscolher = [this](int i) { escolher(i); };
-        addChildComponent(*lista_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
-        lista_->toFront(false);
+        // Os chips ficam num Viewport com rolagem vertical (muitas sugestões): roda do mouse, barra e setas.
+        viewport_ = std::make_unique<juce::Viewport>();
+        viewport_->setViewedComponent(lista_.get(), false);
+        viewport_->setScrollBarsShown(true, false);
+        viewport_->setMouseClickGrabsKeyboardFocus(false);  // clicar/rolar nunca tira o foco do campo de texto
+        viewport_->setWantsKeyboardFocus(false);
+        addChildComponent(*viewport_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
+        viewport_->toFront(false);
     }
 
     juce::String getText() const { return editor_->getText().trim(); }
@@ -516,16 +525,19 @@ public:
     // a lista flutue por cima do que vem embaixo em vez de reservar espaço.
     void abrirSugestoes() { mostrarTodasSugestoes(); }
     int alturaDesejada() const {
-        return 26 + ((lista_ && lista_->isVisible() && !sugestoes_.empty()) ? 2 + alturaLista_ : 0);
+        return 26 + ((viewport_ && viewport_->isVisible() && !sugestoes_.empty()) ? 2 + alturaVisivel_ : 0);
     }
 
     void resized() override {
         auto area = getLocalBounds();
         editor_->setBounds(area.removeFromTop(26));
         area.removeFromTop(2);
-        if (sugestoes_.empty()) { lista_->setBounds(area.removeFromTop(0)); return; }
-        alturaLista_ = lista_->definir(sugestoes_, area.getWidth());  // quebra em linhas conforme a largura
-        lista_->setBounds(area.removeFromTop(alturaLista_));
+        if (sugestoes_.empty()) { viewport_->setBounds(area.removeFromTop(0)); return; }
+        constexpr int kAlturaMaxima = 150;  // acima disso rola
+        const int largura = area.getWidth() - viewport_->getScrollBarThickness();
+        alturaLista_ = lista_->definir(sugestoes_, juce::jmax(60, largura));  // quebra em linhas conforme a largura
+        alturaVisivel_ = juce::jmin(alturaLista_, kAlturaMaxima);
+        viewport_->setBounds(area.removeFromTop(alturaVisivel_));
         lista_->destacar(destaqueAtual_);
     }
 
@@ -535,34 +547,41 @@ private:
         if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
         juce::String escolhido = sugestoes_[static_cast<size_t>(row)];
         editor_->setText(escolhido, false);
-        lista_->setVisible(false);
+        viewport_->setVisible(false);
         if (aoEscolher) aoEscolher(escolhido);
     }
 
     // 1º Enter com sugestão destacada: confirma a sugestão (nunca aplica um
     // valor parcial por engano). Lista fechada: Enter aplica. Vazio: nada.
     void tratarEnter() {
-        const int destacada = lista_->isVisible() ? lista_->destaque() : -1;
+        const int destacada = viewport_->isVisible() ? lista_->destaque() : -1;
         if (destacada >= 0 && destacada < static_cast<int>(sugestoes_.size())) {
             escolher(destacada);
             return;
         }
         if (getText().isEmpty()) return;
-        lista_->setVisible(false);
+        viewport_->setVisible(false);
         if (aoEnter) aoEnter();
     }
 
     void moverDestaque(int delta) {
-        if (!lista_->isVisible() || sugestoes_.empty()) return;
+        if (!viewport_->isVisible() || sugestoes_.empty()) return;
         const int n = static_cast<int>(sugestoes_.size());
         destaqueAtual_ = juce::jlimit(0, n - 1, lista_->destaque() + delta);
         lista_->destacar(destaqueAtual_);
+        const auto r = lista_->retanguloDoDestaque();
+        if (!r.isEmpty()) {  // mantém o chip destacado à vista ao navegar pelas setas
+            auto pos = viewport_->getViewPosition();
+            if (r.getY() < pos.y) pos.y = r.getY() - 6;
+            else if (r.getBottom() > pos.y + viewport_->getViewHeight()) pos.y = r.getBottom() - viewport_->getViewHeight() + 6;
+            viewport_->setViewPosition(pos);
+        }
     }
 
     void mostrarTodasSugestoes() {
         sugestoes_ = valores_;
         destaqueAtual_ = -1;
-        lista_->setVisible(!sugestoes_.empty());
+        viewport_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
     }
@@ -575,7 +594,8 @@ private:
             if (v.startsWithIgnoreCase(q)) sugestoes_.push_back(v);
         // Digitando: a 1ª sugestão fica destacada (é ela que o Enter confirma).
         destaqueAtual_ = sugestoes_.empty() ? -1 : 0;
-        lista_->setVisible(!sugestoes_.empty());
+        viewport_->setViewPosition(0, 0);  // lista nova: volta ao topo
+        viewport_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
     }
@@ -598,7 +618,9 @@ private:
     std::vector<juce::String> sugestoes_;
     std::unique_ptr<FocusAwareTextEditor> editor_;
     std::unique_ptr<ChipsSugestoes> lista_;
+    std::unique_ptr<juce::Viewport> viewport_;
     int alturaLista_ = 0;
+    int alturaVisivel_ = 0;
     int destaqueAtual_ = -1;
 };
 
