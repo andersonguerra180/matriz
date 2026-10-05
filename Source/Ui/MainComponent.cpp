@@ -4179,7 +4179,11 @@ bool MainComponent::finalizarUnidadeDeLote(std::shared_ptr<EstadoLote> estadoLot
     passos->push_back({
         isPt ? juce::String::fromUTF8("Atualizando a árvore de pastas...")
              : juce::String("Updating folder tree..."),
-        [this] { if (arvoreOrigem_) arvoreOrigem_->recarregar(); },
+        [this] {
+            if (arvoreOrigem_) arvoreOrigem_->recarregar();
+            // Folder Map (STRUCTURE): a pasta recém-ingerida já aparece (mapa ORIGINAL / card SEM PASTA).
+            if (treeWorkspace_) treeWorkspace_->recarregar();
+        },
         [this] { return arvoreOrigem_ == nullptr || !arvoreOrigem_->recargaPendente(); }});
 
     if (!naoProcessados.empty()) {
