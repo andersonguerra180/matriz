@@ -77,6 +77,8 @@ public:
     std::function<void(const juce::File& gdFolder)> aoIngerirDeGoogleDrive;
     // Called when the Lightroom import button is clicked
     std::function<void()> aoIngerirDeLightroom;
+    // Called when the Adobe Bridge button is clicked
+    std::function<void()> aoIngerirDeBridge;
     std::function<void()> aoConfirmarParaGrid;
     std::function<void()> aoPedirAjuda;
     void setHasParentCatalog(bool hasParent);
@@ -236,6 +238,7 @@ private:
     std::unique_ptr<juce::TextButton> btnIngerir_;
     std::unique_ptr<juce::Button> btnGoogleDrive_;
     std::unique_ptr<juce::Button> btnLightroom_;
+    std::unique_ptr<juce::Button> btnBridge_;
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;

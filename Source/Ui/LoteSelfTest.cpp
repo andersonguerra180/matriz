@@ -31,6 +31,8 @@
 #include "../Model/NomesCanonicos.h"
 #include "../Model/ProjectLog.h"
 #include "../Consolidacao/PacoteCollection.h"
+#include "../Consolidacao/BridgeXmp.h"
+#include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/Checksum.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
@@ -463,6 +465,249 @@ void rodarTestesPacote(const Checar& checar) {
                "a normal folder is not a package");
     } catch (const std::exception& e) {
         checar(false, juce::String("package selftest (export): ") + e.what());
+    }
+    std::cout << "\n-- Adobe Bridge: EXPORT (XMP) and INTAKE (read back) --\n";
+    try {
+        namespace br = matriz::consolidacao::bridge;
+        juce::File raizBr = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("matriz_bridge_selftest_" + juce::Uuid().toDashedString());
+        const juce::File src = raizBr.getChildFile("SOURCE_BR");
+        auto tiffMinimo = [](const juce::File& f, bool be) {
+            juce::MemoryOutputStream m;
+            if (!be) { m.write("II", 2); m.writeShort(42); m.writeInt(8); m.writeShort(1);
+                       m.writeShort(256); m.writeShort(3); m.writeInt(1); m.writeShort(4); m.writeShort(0); m.writeInt(0); }
+            else { m.write("MM", 2); m.writeShortBigEndian(42); m.writeIntBigEndian(8); m.writeShortBigEndian(1);
+                   m.writeShortBigEndian(256); m.writeShortBigEndian(3); m.writeIntBigEndian(1); m.writeShortBigEndian(4);
+                   m.writeShortBigEndian(0); m.writeIntBigEndian(0); }
+            f.getParentDirectory().createDirectory();
+            f.replaceWithData(m.getData(), m.getDataSize());
+        };
+        const auto jpeg = src.getChildFile("fotos/img1.jpg");
+        {
+            jpeg.getParentDirectory().createDirectory();
+            juce::Image im(juce::Image::RGB, 32, 24, true);
+            juce::FileOutputStream o(jpeg);
+            juce::JPEGImageFormat fmt;
+            fmt.writeImageToStream(im, o);
+        }
+        const auto raw1 = src.getChildFile("fotos/img2.cr2");
+        const auto raw2 = src.getChildFile("fotos/img2.dng");  // mesmo nome de sidecar que o CR2
+        const auto tif = src.getChildFile("fotos/pic.tif");
+        tiffMinimo(raw1, false);
+        tiffMinimo(raw2, false);
+        tiffMinimo(tif, true);
+        const auto psd = src.getChildFile("video/arte.psd");
+        {
+            juce::MemoryOutputStream m;
+            m.write("8BPS", 4); m.writeShortBigEndian(1); for (int i = 0; i < 6; ++i) m.writeByte(0);
+            m.writeShortBigEndian(3); m.writeIntBigEndian(1); m.writeIntBigEndian(1); m.writeShortBigEndian(8); m.writeShortBigEndian(3);
+            m.writeIntBigEndian(0);                       // color mode data
+            m.writeIntBigEndian(12 + 4);                  // image resources: 1 bloco (1005, 4 bytes)
+            m.write("8BIM", 4); m.writeShortBigEndian(1005); m.writeByte(0); m.writeByte(0); m.writeIntBigEndian(4);
+            m.writeIntBigEndian(72);
+            m.writeIntBigEndian(0);                       // layer and mask
+            m.writeShortBigEndian(0); m.writeByte(1); m.writeByte(2); m.writeByte(3);
+            psd.getParentDirectory().createDirectory();
+            psd.replaceWithData(m.getData(), m.getDataSize());
+        }
+        const auto mp4 = src.getChildFile("video/clip.mp4");
+        {
+            juce::MemoryOutputStream m;
+            m.writeIntBigEndian(24); m.write("ftyp", 4); m.write("isom", 4); m.writeIntBigEndian(0); m.write("isom", 4); m.write("mp41", 4);
+            m.writeIntBigEndian(16); m.write("mdat", 4); m.writeInt64BigEndian(0x1122334455667788LL);
+            mp4.replaceWithData(m.getData(), m.getDataSize());
+        }
+        const auto wav = src.getChildFile("video/som.wav");
+        escreverWavTeste(wav, 5);
+        const std::vector<juce::File> fontes{jpeg, raw1, raw2, tif, psd, mp4, wav};
+
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Bridge A";
+        params.prefixoNomenclatura = "BRA";
+        auto projeto = matriz::model::Project::criar(raizBr.getChildFile("A"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        std::vector<std::string> ids;
+        for (size_t i = 0; i < fontes.size(); ++i) ids.push_back(inserirItemComArquivo(reg, projetoId, "BRA-" + std::to_string(i + 1), fontes[i]));
+
+        const std::string mapa = pa.criarFolderMap("Mapa BR", std::nullopt);
+        const std::string fotos = pa.criarPastaAcervo("Fotos", std::nullopt, mapa);
+        const std::string videos = pa.criarPastaAcervo("Video", std::nullopt, mapa);
+        pa.adicionarItensAPasta({ids[0], ids[1], ids[2], ids[3]}, fotos);
+        pa.adicionarItensAPasta({ids[4], ids[5], ids[6]}, videos);
+        pa.adicionarPessoa("Maria");
+        for (const auto& id : ids) {
+            pa.salvarMetadado(id, "dc_title", "Show no Rio");
+            pa.salvarMetadado(id, "dc_description", "Primeira noite");
+            pa.salvarMetadado(id, "ano", "2013");
+            pa.definirTags(id, {"Show", "Maria"});
+            reg.run("INSERT INTO asset_geolocation (asset_id, city, state_province, country, locality, source) "
+                    "VALUES (?, 'Rio de Janeiro', 'RJ', 'Brasil', 'Lapa', 'USER_ADDRESS')", {Value::of(id)});
+        }
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Print, {ids[0]}, true);
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Zip, {ids[0]}, true);
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Watermark, {ids[0]}, true);
+
+        const juce::File media = pa.projeto().pastaMedia();
+        auto planoMain = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), media,
+                                                                    {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                    matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                    false, false, false, mapa);
+        auto resMain = matriz::consolidacao::executarConsolidacao(reg, pa.projeto().pasta(), media, planoMain);
+        checar(resMain.consolidados == 7, "setup: 7 files in the MAIN (" + juce::String(resMain.consolidados) + ")");
+
+        auto shaDe = [](const juce::File& f) { return matriz::ingest::calcularChecksums(f).sha256; };
+        std::map<std::string, std::string> hashMain;
+        for (const auto& f : media.findChildFiles(juce::File::findFiles, true, "*")) hashMain[f.getFullPathName().toStdString()] = shaDe(f);
+        const std::string retratoAntes = retratoDoRegistro(reg);
+
+        // ---- 1/2) EXPORT > Adobe Bridge
+        const juce::File saida = raizBr.getChildFile("saida_bridge");
+        saida.createDirectory();
+        auto planoExp = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), saida,
+                                                                   {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                   matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                   false, false, /*paraExport*/ true, mapa);
+        auto rExp = matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saida, planoExp, {}, {}, true, /*bridge*/ true);
+        checar(rExp.copiados == 7 && rExp.falhas.empty(), "export copied the 7 files (" + juce::String(rExp.copiados) + ")");
+        checar(saida.getChildFile("Fotos/img1.jpg").existsAsFile() && saida.getChildFile("Fotos/img2.cr2").existsAsFile() &&
+                   saida.getChildFile("Video/clip.mp4").existsAsFile() && saida.getChildFile("Video/arte.psd").existsAsFile(),
+               "the folder map structure is respected in the export");
+        const auto cJpeg = saida.getChildFile("Fotos/img1.jpg");
+        const auto cTif = saida.getChildFile("Fotos/pic.tif");
+        const auto cPsd = saida.getChildFile("Video/arte.psd");
+        const auto cMp4 = saida.getChildFile("Video/clip.mp4");
+        const auto cWav = saida.getChildFile("Video/som.wav");
+        auto temTudo = [](const std::optional<br::DadosBridge>& d) {
+            return d && d->titulo == "Show no Rio" && d->descricao == "Primeira noite" && d->dataCriacao == "2013" &&
+                   d->local == "Lapa" && d->cidade == "Rio de Janeiro" && d->estado == "RJ" && d->pais == "Brasil" &&
+                   d->pessoas == std::vector<std::string>{"Maria"} &&
+                   std::find(d->palavrasChave.begin(), d->palavrasChave.end(), "Show") != d->palavrasChave.end() &&
+                   std::find(d->palavrasChave.begin(), d->palavrasChave.end(), "Maria") != d->palavrasChave.end();
+        };
+        checar(temTudo(br::lerXmpBridge(cJpeg)), "JPEG: XMP embedded (title, description, tags, people, place, date)");
+        checar(juce::ImageFileFormat::loadFrom(cJpeg).isValid() && juce::ImageFileFormat::loadFrom(cJpeg).getWidth() == 32,
+               "JPEG still decodes after embedding");
+        checar(!saida.getChildFile("Fotos/img1.xmp").exists(), "JPEG gets NO sidecar");
+        checar(temTudo(br::lerXmpBridge(cTif)) && cTif.getSize() > tif.getSize(), "TIFF: XMP embedded in tag 700");
+        checar(temTudo(br::lerXmpBridge(cPsd)), "PSD: XMP embedded as image resource 1060");
+        checar(temTudo(br::lerXmpBridge(cMp4)), "MP4: XMP embedded as uuid box");
+        checar(temTudo(br::lerXmpBridge(cWav)), "WAV: XMP embedded as _PMX chunk");
+        {
+            juce::MemoryBlock w;
+            cWav.loadFileAsData(w);
+            const auto* b = static_cast<const juce::uint8*>(w.getData());
+            const juce::uint32 riff = juce::uint32(b[4]) | (juce::uint32(b[5]) << 8) | (juce::uint32(b[6]) << 16) | (juce::uint32(b[7]) << 24);
+            checar(riff == w.getSize() - 8, "WAV: RIFF size matches the new file size");
+            juce::MemoryBlock p;
+            cPsd.loadFileAsData(p);
+            juce::MemoryBlock p0;
+            psd.loadFileAsData(p0);
+            const auto* pb2 = static_cast<const juce::uint8*>(p.getData());
+            const auto* pb0 = static_cast<const juce::uint8*>(p0.getData());
+            checar(std::memcmp(pb2, pb0, 26) == 0 && std::memcmp(pb2 + p.getSize() - 6, pb0 + p0.getSize() - 6, 6) == 0,
+                   "PSD: header and image data are byte-identical to the original");
+            juce::MemoryBlock m4;
+            cMp4.loadFileAsData(m4);
+            checar(std::memcmp(static_cast<const char*>(m4.getData()) + 4, "ftyp", 4) == 0, "MP4: ftyp box still first");
+        }
+        const auto sc = saida.getChildFile("Fotos/img2.xmp");
+        checar(sc.existsAsFile() && sc.loadFileAsString().contains("Pessoas|Maria"),
+               "RAW: sidecar img2.xmp (name with the extension swapped), people as Pessoas|Name");
+        checar(rExp.bridgeSidecars == 1 && rExp.avisos.size() == 1 && juce::String(rExp.avisos[0]).contains("already exists"),
+               "two files wanting the same sidecar name: second one is NOT overwritten and is reported (" + juce::String((int) rExp.avisos.size()) + ")");
+        checar(matriz::model::ProjectLog(pa.projeto().pasta()).readContent().contains("Export Adobe Bridge"),
+               "the collision is registered in the export log");
+        {
+            const juce::String pacote = juce::String(br::montarPacoteXmp(br::coletarDadosBridge(reg, ids[0])));
+            checar(pacote.contains("<rdf:li>Pessoas|Maria</rdf:li>") && pacote.contains("lr:hierarchicalSubject"),
+                   "people go to lr:hierarchicalSubject Pessoas|Maria");
+            checar(!pacote.containsIgnoreCase("print") && !pacote.containsIgnoreCase("watermark") && !pacote.containsIgnoreCase("zip"),
+                   "P / W / K are not exported anywhere");
+        }
+        bool mainIntacto = true;
+        for (const auto& f : media.findChildFiles(juce::File::findFiles, true, "*"))
+            mainIntacto = mainIntacto && hashMain[f.getFullPathName().toStdString()] == shaDe(f);
+        checar(mainIntacto && media.findChildFiles(juce::File::findFiles, true, "*").size() == (int) hashMain.size(),
+               "the MAIN files keep the same hash and no file was created there");
+        checar(retratoDoRegistro(reg) == retratoAntes, "the project record is not changed by the export");
+
+        // O EXPORT normal continua como antes (sem XMP do Bridge, sem sidecar).
+        const juce::File saidaNormal = raizBr.getChildFile("saida_normal");
+        saidaNormal.createDirectory();
+        auto planoN = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), saidaNormal,
+                                                                 {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                 matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                 false, false, true, mapa);
+        auto rN = matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saidaNormal, planoN, {}, {}, true);
+        checar(rN.copiados == 7 && rN.bridgeEmbutidos == 0 && rN.bridgeSidecars == 0 && rN.avisos.empty(),
+               "the other EXPORT items are unchanged (no Bridge XMP)");
+
+        // ---- 3) INTAKE > Adobe Bridge: lê o que saiu e aplica num projeto novo
+        matriz::model::NovoProjetoParams params2;
+        params2.nome = "Bridge B";
+        params2.prefixoNomenclatura = "BRB";
+        auto projeto2 = matriz::model::Project::criar(raizBr.getChildFile("B"), params2);
+        const std::string projetoId2 = projeto2->projetoId();
+        ProjetoAberto pb(std::move(projeto2));
+        auto& reg2 = pb.projeto().registro();
+        // O projeto novo já tem a tag "show" (minúscula) e uma tag "Old" num dos itens.
+        const auto preexistente = inserirItemComArquivo(reg2, projetoId2, "BRB-0", wav);
+        pb.definirTags(preexistente, {"show"});
+        std::map<std::string, std::string> hashSaida;
+        std::set<std::string> arquivosAntes;
+        for (const auto& f : saida.findChildFiles(juce::File::findFilesAndDirectories, true, "*")) {
+            arquivosAntes.insert(f.getFullPathName().toStdString());
+            if (f.existsAsFile()) hashSaida[f.getFullPathName().toStdString()] = shaDe(f);
+        }
+        std::vector<std::string> novos;
+        int lidos = 0;
+        for (const auto& f : {cJpeg, saida.getChildFile("Fotos/img2.cr2"), cTif, cPsd, cMp4, cWav}) {
+            const auto id = inserirItemComArquivo(reg2, projetoId2, "BRB-" + std::to_string(novos.size() + 1), f);
+            novos.push_back(id);
+            if (auto d = br::lerXmpBridge(f)) { br::aplicarDadosBridgeAoItem(reg2, id, *d); ++lidos; }
+        }
+        pb.definirTags(novos[1], {"Old"});
+        if (auto d = br::lerXmpBridge(saida.getChildFile("Fotos/img2.cr2"))) br::aplicarDadosBridgeAoItem(reg2, novos[1], *d);
+        checar(lidos == 6, "XMP read from embedded files and from the .xmp sidecar (" + juce::String(lidos) + "/6)");
+        {
+            auto tagsDe = [&](const std::string& id) { return pb.lerTags(id); };
+            const auto t0 = tagsDe(novos[0]);
+            checar(std::count(t0.begin(), t0.end(), "show") == 1 && std::count(t0.begin(), t0.end(), "Show") == 0 &&
+                       std::count(t0.begin(), t0.end(), "Maria") == 1,
+                   "same name without regard to case is the same entry (\"Show\" -> existing \"show\")");
+            const auto t1 = tagsDe(novos[1]);
+            checar(std::count(t1.begin(), t1.end(), "Old") == 1 && std::count(t1.begin(), t1.end(), "Maria") == 1,
+                   "tags are added, never replaced");
+            checar(pb.listarPessoas().size() == 1 && pb.listarPessoas()[0] == "Maria", "people from Pessoas|Name land in PEOPLE (one entry)");
+            auto st = reg2.prepare("SELECT titulo, dc_description, ano FROM item WHERE id = ?");
+            st.bind(1, Value::of(novos[0]));
+            checar(st.step() && st.columnText(0) == "Show no Rio" && st.columnText(1) == "Primeira noite" && st.columnText(2) == "2013",
+                   "title, description and EVENT DATE come back filled");
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg2, novos[0]);
+            checar(g && g->city && *g->city == "Rio de Janeiro" && g->stateProvince && *g->stateProvince == "RJ" &&
+                       g->country && *g->country == "Brasil" && g->locality && *g->locality == "Lapa",
+                   "location comes back as GEO LOCATION");
+        }
+        bool origemIntacta = true;
+        for (const auto& [caminho, h] : hashSaida) origemIntacta = origemIntacta && shaDe(juce::File(caminho)) == h;
+        std::set<std::string> arquivosDepois;
+        for (const auto& f : saida.findChildFiles(juce::File::findFilesAndDirectories, true, "*")) arquivosDepois.insert(f.getFullPathName().toStdString());
+        checar(origemIntacta && arquivosDepois == arquivosAntes, "the source files keep the same hash and no file is created in the source folder");
+
+        // ---- 4) pasta sem nenhum XMP: funciona como o INTAKE normal
+        const auto semXmp = raizBr.getChildFile("sem_xmp/a.wav");
+        escreverWavTeste(semXmp, 9);
+        juce::Image im2(juce::Image::RGB, 8, 8, true);
+        const auto semXmpJpg = raizBr.getChildFile("sem_xmp/b.jpg");
+        { juce::FileOutputStream o(semXmpJpg); juce::JPEGImageFormat fmt; fmt.writeImageToStream(im2, o); }
+        raizBr.getChildFile("sem_xmp/lixo.bin").replaceWithText("not a media file");
+        checar(!br::lerXmpBridge(semXmp) && !br::lerXmpBridge(semXmpJpg) && !br::lerXmpBridge(raizBr.getChildFile("sem_xmp/lixo.bin")),
+               "files without any XMP read as 'nothing' (no error)");
+        checar(raizBr.getChildFile("sem_xmp").getNumberOfChildFiles(juce::File::findFiles) == 3, "reading creates nothing in the folder");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("adobe bridge selftest: ") + e.what());
     }
     std::cout << "\n-- Collection package, phase 3: INTAKE of a package --\n";
     try {
@@ -4002,9 +4247,9 @@ int rodarLoteSelfTest() {
         checar(!bw.mainSelado_ && travados(), "no MAIN: PUBLISH / EXPORT / SPREADSHEET / SYNC locked, with the hint");
         // Pacote de collection (Fase 2): opção nova no dropdown, as de antes seguem lá.
         auto& combo = *bw.comboExportOrigem_;
-        checar(combo.getNumItems() == 6 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
-                   combo.getItemText(0).startsWith("Selected Files"),
-               "EXPORT dropdown: the 5 options as before + Collection Package");
+        checar(combo.getNumItems() == 7 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
+                   combo.getItemText(6).startsWith("Adobe Bridge") && combo.getItemText(0).startsWith("Selected Files"),
+               "EXPORT dropdown: the 5 options as before + Collection Package + Adobe Bridge");
         combo.setSelectedId(BackupWorkspaceComponent::kExpPacote, juce::sendNotificationSync);
         checar(!bw.btnExportUnificado_->isEnabled(), "no MAIN: Collection Package locked too");
         // FAZER BACKUP criou o MAIN (registro de cópia), ainda sem destino destacado.

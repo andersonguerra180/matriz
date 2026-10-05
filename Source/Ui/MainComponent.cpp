@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Consolidacao/BridgeXmp.h"
 #include "MainEditPanel.h"
 #include "BackupVersionsComponent.h"
 
@@ -1754,6 +1755,9 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoIngerirDeLightroom = [this] {
             importarCatalogoLightroom();
         };
+        intakeWorkspace_->aoIngerirDeBridge = [this] {
+            ingerirPastaDoBridge();
+        };
         intakeWorkspace_->aoConfirmarParaGrid = [this] {
             if (catalogWorkspace_) catalogWorkspace_->recarregar();
         };
@@ -3128,6 +3132,78 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
     });
 }
 
+void MainComponent::ingerirPastaDoBridge() {
+    if (!projetoAberto_) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
+    auto chooser = std::make_shared<juce::FileChooser>(
+        i18n::t("intake.bridge_escolher"), juce::File::getSpecialLocation(juce::File::userPicturesDirectory), "");
+    chooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [this, chooser](const juce::FileChooser& fc) {
+            const juce::File pasta = fc.getResult();
+            if (!pasta.isDirectory() || !projetoAberto_) return;
+            projetoAberto_->registrarPastasIngeridas({pasta.getFullPathName().toStdString()});  // vira proposta no Folder Map editado
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            ProjetoAberto* proj = projetoAberto_.get();
+            expandirArquivosAsync({pasta}, [safeThis, proj](std::vector<juce::File> novos, int) {
+                if (!safeThis || safeThis->projetoAberto_.get() != proj || novos.empty()) return;
+                ProgressoGlobal::obterInstancia().iniciarTarefa("bridge_xmp", i18n::t("intake.bridge_lendo"), 0);
+                auto arquivos = std::make_shared<std::vector<juce::File>>(std::move(novos));
+                // Leitura do XMP fora da message thread; só abre os arquivos de origem pra leitura.
+                safeThis->ingestPool_.addJob([safeThis, proj, arquivos] {
+                    auto xmp = std::make_shared<std::map<std::string, matriz::consolidacao::bridge::DadosBridge>>();
+                    for (const auto& f : *arquivos) {
+                        try {
+                            if (auto d = matriz::consolidacao::bridge::lerXmpBridge(f)) (*xmp)[f.getFullPathName().toStdString()] = std::move(*d);
+                        } catch (...) {}
+                    }
+                    juce::MessageManager::callAsync([safeThis, proj, arquivos, xmp] {
+                        ProgressoGlobal::obterInstancia().concluirTarefa("bridge_xmp");
+                        if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+                        if (!xmp->empty()) {
+                            safeThis->aoConcluirDoProximoLote_ = [safeThis, proj, xmp](const std::vector<std::string>& itemIds) {
+                                if (!safeThis || safeThis->projetoAberto_.get() != proj || itemIds.empty()) return;
+                                safeThis->poolVaults_.addJob([safeThis, proj, xmp, itemIds] {
+                                    std::vector<std::string> aplicados;
+                                    try {
+                                        auto& registro = proj->projeto().registro();
+                                        std::unique_lock<std::recursive_mutex> escrita(proj->projeto().writeMutex());
+                                        registro.exec("BEGIN IMMEDIATE");
+                                        try {
+                                            for (const auto& id : itemIds) {
+                                                std::string origem;
+                                                auto st = registro.prepare("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? "
+                                                                           "ORDER BY eh_master DESC, id LIMIT 1");
+                                                st.bind(1, matriz::db::Value::of(id));
+                                                if (st.step() && !st.columnIsNull(0)) origem = st.columnText(0);
+                                                auto it = xmp->find(origem);
+                                                if (it == xmp->end()) continue;
+                                                matriz::consolidacao::bridge::aplicarDadosBridgeAoItem(registro, id, it->second);
+                                                aplicados.push_back(id);
+                                            }
+                                            registro.exec("COMMIT");
+                                        } catch (...) {
+                                            try { registro.exec("ROLLBACK"); } catch (...) {}
+                                            aplicados.clear();
+                                        }
+                                    } catch (...) {}
+                                    juce::MessageManager::callAsync([safeThis, proj, aplicados] {
+                                        if (!safeThis || safeThis->projetoAberto_.get() != proj || aplicados.empty()) return;
+                                        EventBus::obterInstancia().dispararItensAlterados(aplicados, "metadado");
+                                        if (safeThis->mosaico_) safeThis->mosaico_->recarregar();
+                                        if (safeThis->intakeWorkspace_) safeThis->intakeWorkspace_->recarregar();
+                                        if (safeThis->catalogWorkspace_) safeThis->catalogWorkspace_->recarregar();
+                                    });
+                                });
+                            };
+                        }
+                        safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos));
+                    });
+                });
+            });
+        });
+}
+
 void MainComponent::importarCatalogoLightroom() {
     if (!projetoAberto_) return;
 
@@ -3725,6 +3801,10 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     // Lote novo com outro ainda em processamento (pendentes_ é um só): os
     // dois terminam juntos e são finalizados juntos — mesmo EstadoLote. Um
     // estado novo aqui descartava o do lote anterior sem nunca finalizá-lo.
+    if (!aoConcluir && aoConcluirDoProximoLote_) {  // INTAKE > Adobe Bridge
+        aoConcluir = std::move(aoConcluirDoProximoLote_);
+        aoConcluirDoProximoLote_ = nullptr;
+    }
     std::shared_ptr<EstadoLote> estadoLote;
     if (loteEmCurso_ && estadoLoteAtual_) {
         estadoLote = estadoLoteAtual_;

@@ -121,6 +121,37 @@ private:
     juce::Image img_;
 };
 
+class BridgeIconButton : public juce::Button {
+public:
+    BridgeIconButton() : juce::Button("AdobeBridge") {
+        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
+    }
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        
+        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
+                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
+        g.fillRoundedRectangle(r, 6.0f);
+        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff4d9fff) : tk.borda);
+        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+
+        if (img_.isValid()) {
+            auto iconArea = r.reduced(4.0f);
+            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
+                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
+                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
+        } else {
+            g.setColour(juce::Colour(0xff4d9fff));
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.drawText("Br", getLocalBounds(), juce::Justification::centred);
+        }
+    }
+private:
+    juce::Image img_;
+};
+
 // Cell component for Selection Checkbox
 class CheckboxCellComponent : public juce::Component {
 public:
@@ -1851,6 +1882,15 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     };
     btnLightroom_ = std::move(btnLR);
     addAndMakeVisible(*btnLightroom_);
+
+    // Adobe Bridge: pasta catalogada no Bridge entra no INTAKE normal, com o XMP já aplicado nos itens.
+    auto btnBR = std::make_unique<BridgeIconButton>();
+    btnBR->setTooltip(i18n::t("intake.importar_bridge"));
+    btnBR->onClick = [this] {
+        if (aoIngerirDeBridge) aoIngerirDeBridge();
+    };
+    btnBridge_ = std::move(btnBR);
+    addAndMakeVisible(*btnBridge_);
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     // CLOSE PROJECT / RETURN TO CATALOG saíram da barra desta aba (e de todas
@@ -3711,10 +3751,11 @@ void IntakeWorkspaceComponent::resized() {
     // 0. IMPORT — os três comandos de entrada de arquivo (INGEST FILES,
     // GOOGLE DRIVE, LIGHTROOM) vivem aqui, em card próprio no topo da
     // coluna esquerda, em vez de emprestados para a linha das tabs.
-    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_) {
+    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_ && btnBridge_) {
         for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
                                    static_cast<juce::Component*>(btnGoogleDrive_.get()),
-                                   static_cast<juce::Component*>(btnLightroom_.get())}) {
+                                   static_cast<juce::Component*>(btnLightroom_.get()),
+                                   static_cast<juce::Component*>(btnBridge_.get())}) {
             if (c->getParentComponent() != this) addAndMakeVisible(*c);
         }
         iniciarCard();
@@ -3724,10 +3765,12 @@ void IntakeWorkspaceComponent::resized() {
         sidebar.removeFromTop(4);
         {
             auto importRow = sidebar.removeFromTop(28);
-            int half = (importRow.getWidth() - 6) / 2;
-            btnGoogleDrive_->setBounds(importRow.removeFromLeft(half));
+            int terco = (importRow.getWidth() - 12) / 3;
+            btnGoogleDrive_->setBounds(importRow.removeFromLeft(terco));
             importRow.removeFromLeft(6);
-            btnLightroom_->setBounds(importRow);
+            btnLightroom_->setBounds(importRow.removeFromLeft(terco));
+            importRow.removeFromLeft(6);
+            btnBridge_->setBounds(importRow);
         }
         finalizarCard();
         sidebar.removeFromTop(8);

@@ -7,6 +7,7 @@
 #include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
+#include "BridgeXmp.h"
 #include "MetadadoEmbutido.h"
 // matriz_ingest_selftest (console app) não linka juce_gui_basics — Ui/BatchWatermarkDialog.h
 // declara um juce::Component e não compila nesse alvo. A aplicação de watermark no backup
@@ -856,7 +857,7 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir) {
+                               bool embutir, bool formatoBridge) {
     ResultadoExport resultado;
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensComMarcaDagua;
@@ -899,7 +900,20 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     ++resultado.comMarcaDagua;
             }
 #endif
-            if (embutir) {
+            if (formatoBridge) {
+                // EXPORT > Adobe Bridge: só a cópia recebe metadado, em XMP no formato que o Bridge lê.
+                if (destinoArquivo.hasFileExtension("wav")) {
+                    auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                    if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                }
+                std::string aviso;
+                switch (bridge::gravarXmpBridgeNaCopia(registro, ip.itemId, destinoArquivo, aviso)) {
+                    case bridge::ResultadoBridgeArquivo::Embutido: ++resultado.bridgeEmbutidos; break;
+                    case bridge::ResultadoBridgeArquivo::Sidecar: ++resultado.bridgeSidecars; break;
+                    default: break;
+                }
+                if (!aviso.empty()) resultado.avisos.push_back(aviso);
+            } else if (embutir) {
                 if (destinoArquivo.hasFileExtension("wav")) {
                     auto marcadores = marcadoresDoItem(registro, ip.itemId);
                     if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
@@ -919,8 +933,15 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             "Destination: " + destinoExport.getFullPathName(),
             "Files: " + juce::String(resultado.copiados) + " (not yet in MAIN, skipped: " +
                 juce::String(resultado.foraDoMain) + ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
-            juce::String("Embedded metadata: ") + (embutir ? "yes" : "no") +
+            juce::String("Embedded metadata: ") + (formatoBridge ? "Adobe Bridge XMP" : (embutir ? "yes" : "no")) +
                 ", watermarked: " + juce::String(resultado.comMarcaDagua)});
+        if (formatoBridge) {
+            juce::StringArray linhas{"Embedded XMP: " + juce::String(resultado.bridgeEmbutidos) +
+                                     ", sidecars: " + juce::String(resultado.bridgeSidecars) +
+                                     ", warnings: " + juce::String((int) resultado.avisos.size())};
+            for (const auto& a : resultado.avisos) linhas.add(juce::String::fromUTF8(a.c_str()));
+            matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Adobe Bridge", linhas);
+        }
     } catch (...) {}
     return resultado;
 }

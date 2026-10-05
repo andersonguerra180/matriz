@@ -86,7 +86,7 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/bridgelogo.png Assets/home.png Assets/geo.png
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"
@@ -211,6 +211,7 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
@@ -302,6 +303,7 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Consolidacao/PacoteCollection.cpp
     Source/Consolidacao/Consolidacao.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Analytics/AssetGeolocation.cpp
     Source/Preservation/Preservation.cpp)
@@ -516,6 +518,7 @@ target_sources(matriz PRIVATE
     Source/Consolidacao/MainEdit.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Catalogo/CatalogSiteExport.cpp

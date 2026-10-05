@@ -46,7 +46,7 @@ class ConteudoExport : public juce::Component {
 public:
     ConteudoExport(int marcadosW, bool marcaDaguaConfigurada, const juce::String& prefixoPadrao,
                    std::vector<std::pair<std::string, juce::String>> mapas,
-                   std::function<void(OpcoesExport)> aoExportar)
+                   std::function<void(OpcoesExport)> aoExportar, bool formatoBridge = false)
         : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
@@ -92,8 +92,9 @@ public:
         editPrefixo_.setText(prefixoPadrao, juce::dontSendNotification);
         addChildComponent(editPrefixo_);
 
-        toggleEmbutir_.setButtonText(matriz::i18n::t("export.embutir"));
+        toggleEmbutir_.setButtonText(matriz::i18n::t(formatoBridge ? "export.embutir_bridge" : "export.embutir"));
         toggleEmbutir_.setToggleState(true, juce::dontSendNotification);
+        toggleEmbutir_.setEnabled(!formatoBridge);  // no Adobe Bridge o XMP é o próprio objetivo do export
         addAndMakeVisible(toggleEmbutir_);
         toggleMarca_.setButtonText(matriz::i18n::t("export.marca_dagua").replace("{n}", juce::String(marcadosW)));
         toggleMarca_.setEnabled(marcadosW > 0 && marcaDaguaConfigurada);
@@ -1947,19 +1948,20 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
-        for (int id = kExpSelecionados; id <= kExpPacote; ++id) comboExportOrigem_->addItem("-", id);
+        for (int id = kExpSelecionados; id <= kExpBridge; ++id) comboExportOrigem_->addItem("-", id);
         // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá);
         // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
+        comboExportOrigem_->setItemEnabled(kExpBridge, !catalogo);
         // Coleção sempre abre em SELECTED FILES; só o Catálogo (sem essa opção)
         // lembra a última escolha.
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
         if (catalogo && arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
-            if (lembrado >= kExpSelecionados && lembrado <= kExpPacote &&
-                lembrado != kExpSelecionados && lembrado != kExpPacote)
+            if (lembrado >= kExpSelecionados && lembrado <= kExpBridge &&
+                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge)
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -2368,6 +2370,7 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     opcao(kExpWatermark, "export.op_watermark", nWm);
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
     opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
+    opcao(kExpBridge, "export.op_bridge", contagemSelecionados_);
 
     // changeItemText() não atualiza o texto já exibido no combo (ficava "-"):
     // reselecionar o mesmo id força o rótulo a acompanhar o item.
@@ -2386,10 +2389,11 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
         case kExpPlanilha: habilitado = catalogo ? !plano_.itens.empty() || projeto_.listarColecoesLinkadas().size() > 0
                                                  : mainSelado_; break;
         case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
+        case kExpBridge: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
-    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote)
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge)
                                         ? matriz::i18n::t("backup.saida_sem_main")
                                         : matriz::i18n::t("export.unificado_dica"));
 
@@ -2410,6 +2414,7 @@ void BackupWorkspaceComponent::executarExportUnificado() {
         case kExpWatermark: alvo = btnExportWatermark_.get(); break;
         case kExpPlanilha: alvo = btnExportJanela_.get(); break;
         case kExpPacote: abrirPacote(); return;
+        case kExpBridge: abrirExport(true); return;  // mesmo recorte do EXPORT de selecionados, com XMP do Bridge
         default: break;
     }
     // Exatamente a ação e o diálogo do botão antigo correspondente.
@@ -3866,7 +3871,7 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
     return projeto_.projeto().destinationId();
 }
 
-void BackupWorkspaceComponent::abrirExport() {
+void BackupWorkspaceComponent::abrirExport(bool formatoBridge) {
     if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     if (exportando_) return;
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
@@ -3875,13 +3880,13 @@ void BackupWorkspaceComponent::abrirExport() {
     std::vector<std::pair<std::string, juce::String>> mapas;
     for (auto& m : projeto_.listarFolderMaps())
         if (!m.original) mapas.emplace_back(m.id, m.nome);
-    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis](OpcoesExport o) {
+    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis, formatoBridge](OpcoesExport o) {
         if (safeThis != nullptr) safeThis->iniciarExport(o.destino, o.hierarquia, o.modoPrefixo, o.prefixo, o.embutir,
-                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string());
-    });
+                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string(), formatoBridge);
+    }, formatoBridge);
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
-    opts.dialogTitle = matriz::i18n::t("export.titulo");
+    opts.dialogTitle = matriz::i18n::t(formatoBridge ? "export.titulo_bridge" : "export.titulo");
     opts.dialogBackgroundColour = tema().painel;
     opts.escapeKeyTriggersCloseButton = true;
     opts.useNativeTitleBar = true;
@@ -3893,7 +3898,8 @@ void BackupWorkspaceComponent::abrirExport() {
 void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                              const matriz::consolidacao::HierarquiaBackup& hierarquia,
                                              matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo,
-                                             bool embutir, bool marcaDagua, const std::string& mapaIdPedido) {
+                                             bool embutir, bool marcaDagua, const std::string& mapaIdPedido,
+                                             bool formatoBridge) {
     if (exportando_ || !destino.isDirectory()) return;
     // "Manter organização" (PastaManual sem mapa escolhido) usa o mapa do MAIN
     // ou o mapa aberto — sem isso um item em pastas de dois mapas sairia duas vezes.
@@ -3915,7 +3921,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
         for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) comW.insert(id);
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId] {
+    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId, formatoBridge] {
         int semPasta = 0;
         matriz::consolidacao::ResultadoExport r;
         try {
@@ -3938,7 +3944,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                     });
                     return !cancelado->load();
                 },
-                comW, embutir);
+                comW, embutir, formatoBridge);
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
@@ -3957,6 +3963,12 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
             if (!r.falhas.empty()) {
                 msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
                 for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
+            }
+            if (r.bridgeEmbutidos > 0 || r.bridgeSidecars > 0 || !r.avisos.empty()) {
+                msg << "\n\n" << matriz::i18n::t("export.bridge_resumo")
+                           .replace("{e}", juce::String(r.bridgeEmbutidos)).replace("{s}", juce::String(r.bridgeSidecars));
+                for (size_t i = 0; i < r.avisos.size() && i < 5; ++i) msg << "\n- " << juce::String::fromUTF8(r.avisos[i].c_str());
+                if (r.avisos.size() > 5) msg << "\n... +" << (int) (r.avisos.size() - 5);
             }
             if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
             juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},

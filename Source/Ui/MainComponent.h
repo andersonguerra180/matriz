@@ -156,6 +156,11 @@ public:
     void alternarModoEdicaoMain();
     void abrirEditorDoMain();
     void importarCatalogoLightroom();
+    // Adobe Bridge: pasta catalogada no Bridge entra pelo INTAKE normal; o XMP (embutido ou sidecar) é lido ANTES
+    // da ingestão (só leitura) e aplicado nos itens criados por esse lote, quando ele termina.
+    void ingerirPastaDoBridge();
+    // Consumido pelo próximo processarLoteEmBackground() sem aoConcluir próprio (ver ingerirPastaDoBridge).
+    std::function<void(const std::vector<std::string>&)> aoConcluirDoProximoLote_;
 
     // Abre o navegador estilo Finder embutido (item 3) — segunda porta de
     // entrada, ao lado de arrastar do Finder. Público porque é uma ação de

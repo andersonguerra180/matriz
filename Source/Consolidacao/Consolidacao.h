@@ -234,11 +234,15 @@ struct ResultadoExport {
     int comMarcaDagua = 0;
     std::vector<std::string> falhas;
     bool cancelado = false;
+    // EXPORT > Adobe Bridge
+    int bridgeEmbutidos = 0;
+    int bridgeSidecars = 0;
+    std::vector<std::string> avisos;  // colisões de nome de sidecar etc. (também vão pro log do export)
 };
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir);
+                               bool embutir, bool formatoBridge = false);
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
 // para referência — não chamar a partir do fluxo de backup.
