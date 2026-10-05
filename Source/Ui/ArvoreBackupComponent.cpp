@@ -55,7 +55,11 @@ public:
             if (temCor) {
                 btn->setTooltip(historico_[static_cast<size_t>(i)].toDisplayString(false));
                 btn->onClick = [this, i] {
-                    seletor_.setCurrentColour(historico_[static_cast<size_t>(i)], juce::sendNotification);
+                    // Aplica direto (não depende do aviso do ColourSelector, que não dispara quando a
+                    // cor do seletor já é igual) e só atualiza o seletor para exibir, sem notificar de novo.
+                    const auto cor = historico_[static_cast<size_t>(i)];
+                    seletor_.setCurrentColour(cor, juce::dontSendNotification);
+                    if (onChange_) onChange_(cor);
                 };
             } else {
                 btn->setEnabled(false);
