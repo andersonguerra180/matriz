@@ -1777,7 +1777,15 @@ void CatalogWorkspaceComponent::selecionarItem(const std::string& itemId) {
         // feita por clique/Select all nunca igualava selecaoEfetivaVista_ e o próximo refresh do grid (ex.: após
         // uma edição em lote) reconstruía a ficha por baixo do usuário (use-after-free nos campos em edição).
         selecaoEfetivaVista_ = sel;
-        fichaPanel_->mostrarSelecao(std::vector<std::string>(sel.begin(), sel.end()));
+        // NEST: aplicar metadados com um nest selecionado vale para TODOS os arquivos dele (a grade mostra só a
+        // capa). A ficha entra em lote sobre os membros: campo preenchido sobrescreve, vazio não mexe, e TAGS /
+        // PEOPLE somam (o lote já se comporta assim). `selecaoEfetivaVista_` continua sendo a seleção da grade.
+        std::vector<std::string> alvo(sel.begin(), sel.end());
+        if (!alvo.empty()) {
+            auto expandido = projeto_.expandirMembrosDeNest(alvo);
+            if (expandido.size() > alvo.size()) alvo = std::move(expandido);
+        }
+        fichaPanel_->mostrarSelecao(alvo);
     }
 }
 

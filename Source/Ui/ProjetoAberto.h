@@ -786,6 +786,14 @@ public:
     std::string criarNest(const std::vector<std::string>& itemIds);
     // Un-nest: desfaz os nests que os itens integram (todos os arquivos voltam ao grid como itens normais).
     void desfazerNest(const std::vector<std::string>& itemIds);
+    // Linha no log do projeto (log.md), escrita em background na fila serial (nada de disco na message thread).
+    void registrarNoLog(const juce::String& titulo, const juce::StringArray& linhas);
+    // Tira arquivos de seus nests (voltam ao grid como itens normais). Se a capa sai, o próximo (por data) vira capa;
+    // um nest que fica com 1 arquivo se desfaz. Nada toca em arquivo algum. Com Undo.
+    void extrairDoNest(const std::vector<std::string>& itemIds);
+    // Remove do PROJETO (nunca do disco) os arquivos escolhidos do nest, com a mesma regra de capa/dissolução
+    // (a marcação de EXPORT da capa apagada passa para a nova capa). Registra no log; um Undo desfaz tudo.
+    void apagarDoNest(const std::vector<std::string>& itemIds);
     // A capa passa a ser `itemId`; as marcas P/K/H/W da capa antiga acompanham (EXPORT leva só a capa).
     void definirCapaDoNest(const std::string& nestId, const std::string& itemId);
     std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)

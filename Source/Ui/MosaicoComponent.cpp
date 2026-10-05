@@ -2651,7 +2651,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawLine((float) bounds.getX() + off + 2, (float) bounds.getBottom() + off,
                                (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 1.5f);
                 }
-                const juce::String txt = "NEST " + juce::String(item.nestTotal);
+                const juce::String txt = juce::String::fromUTF8("\xc3\x97") + juce::String(item.nestTotal);  // "×5"
                 const int w = juce::GlyphArrangement::getStringWidthInt(font9Bold, txt) + 12;
                 juce::Rectangle<int> pilula(areaImagem.getRight() - w - 4, areaImagem.getBottom() - 20, w, 16);
                 g.setColour(juce::Colour(0xe6111827));
@@ -2760,6 +2760,14 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                                        static_cast<float>(bounds.getHeight() + 2 * kMargemZebra)));
                 }
                 offsetRing += 5.0f;
+            }
+
+            // NEST: borda própria (azul-céu de identidade, distinta do acento da seleção), um anel interno;
+            // a seleção e o foco continuam por cima, no anel externo.
+            if (item.nestTotal > 1) {
+                g.setColour(juce::Colour(0xff38bdf8));
+                g.drawRoundedRectangle(bounds.reduced(static_cast<int>(offsetRing) + 5).toFloat(),
+                                       juce::jmax(1.0f, tk.raioMedio - offsetRing - 4.0f), 2.5f);
             }
 
             if (selecionado) {

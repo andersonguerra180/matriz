@@ -2275,6 +2275,8 @@ void ProjetoAberto::definirMapaAtivo(const std::string& mapaId) {
     mapaAtivoSelecionado_ = mapaId;
     if (!projeto_ || mapaId.empty()) return;
     projeto_->pasta().getChildFile("mapa_ativo.txt").replaceWithText(juce::String(mapaId));
+    // Os cards de analytics (NO FOLDER) seguem o mapa selecionado no dropdown do Folder Map.
+    EventBus::obterInstancia().dispararItemAlterado("", "mapa_ativo");
 }
 
 std::string ProjetoAberto::mapaInicialDoFolderMap() const {
@@ -3677,6 +3679,112 @@ void ProjetoAberto::desfazerNest(const std::vector<std::string>& itemIds) {
         });
     }
     EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+void ProjetoAberto::registrarNoLog(const juce::String& titulo, const juce::StringArray& linhas) {
+    if (!projeto_) return;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        ++gravacoesMarcasPendentes_;
+    }
+    poolMarcas_.addJob([this, titulo, linhas]() {
+        try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry(titulo, linhas); } catch (...) {}
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+namespace {
+// Capa que o nest passa a ter quando `retirados` saem dele: a atual, se continua; senão o 1º por data.
+std::string capaAposRetirar(const EstadoNest& e, const std::set<std::string>& retirados,
+                            const std::vector<std::string>& restantesOrdenados) {
+    if (!e.capa.empty() && retirados.count(e.capa) == 0 &&
+        std::find(restantesOrdenados.begin(), restantesOrdenados.end(), e.capa) != restantesOrdenados.end())
+        return e.capa;
+    return restantesOrdenados.empty() ? std::string() : restantesOrdenados.front();
+}
+}  // namespace
+
+void ProjetoAberto::extrairDoNest(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    const std::set<std::string> pedidos(itemIds.begin(), itemIds.end());
+    const auto antes = capturarNests(db, pedidos);
+    if (antes.empty()) return;
+
+    std::set<std::string> tocados;  // todos os membros dos nests afetados
+    std::vector<EstadoNest> depois;
+    for (const auto& e : antes) {
+        tocados.insert(e.membros.begin(), e.membros.end());
+        std::vector<std::string> restantes;
+        for (const auto& m : e.membros) if (pedidos.count(m) == 0) restantes.push_back(m);
+        if (restantes.size() < 2) continue;  // sobrou 1 (ou nenhum): o nest se desfaz
+        restantes = ordenarPorDataDeCriacao(restantes);
+        EstadoNest n = e;
+        n.membros = restantes;
+        n.capa = capaAposRetirar(e, pedidos, restantes);
+        depois.push_back(std::move(n));
+    }
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        removerNestsDosItens(db, tocados);
+        restaurarNests(db, depois);
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    if (!desfazendo_) {
+        registrarUndo("Extract from Nest", [this, antes, tocados]() {
+            auto& d = projeto_->registro();
+            d.run("BEGIN TRANSACTION", {});
+            try {
+                removerNestsDosItens(d, tocados);
+                restaurarNests(d, antes);
+                d.run("COMMIT", {});
+            } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} return; }
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        });
+    }
+    juce::StringArray linhas;
+    linhas.add("Files: " + juce::String(static_cast<int>(pedidos.size())));
+    registrarNoLog("Nest: files extracted", linhas);
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+void ProjetoAberto::apagarDoNest(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    const std::set<std::string> pedidos(itemIds.begin(), itemIds.end());
+
+    // A marcação de EXPORT (H/K/P/W) segue a capa: se a capa vai embora, a nova capa herda as marcas.
+    const auto antes = capturarNests(db, pedidos);
+    std::vector<std::pair<std::string, std::string>> trocasDeCapa;
+    for (const auto& e : antes) {
+        if (e.capa.empty() || pedidos.count(e.capa) == 0) continue;
+        std::vector<std::string> restantes;
+        for (const auto& m : e.membros) if (pedidos.count(m) == 0) restantes.push_back(m);
+        if (restantes.size() < 2) continue;
+        const auto nova = capaAposRetirar(e, pedidos, ordenarPorDataDeCriacao(restantes));
+        if (!nova.empty()) trocasDeCapa.emplace_back(e.capa, nova);
+    }
+
+    iniciarGrupoUndo(pedidos.size() == 1 ? "Delete File from Nest" : "Delete " + std::to_string(pedidos.size()) + " Files from Nest");
+    try {
+        for (const auto& [velha, nova] : trocasDeCapa) transferirMarcacoes(velha, nova);
+        extrairDoNest(itemIds);                  // estrutura do nest (capa nova / dissolução)
+        removerItensDoProjeto(itemIds);          // sai do projeto; o arquivo em disco nunca é tocado
+    } catch (...) {
+        finalizarGrupoUndo();
+        throw;
+    }
+    finalizarGrupoUndo();
+    juce::StringArray linhas;
+    linhas.add("Files removed from the project (originals untouched): " + juce::String(static_cast<int>(pedidos.size())));
+    registrarNoLog("Nest: files deleted", linhas);
 }
 
 void ProjetoAberto::definirCapaDoNest(const std::string& nestId, const std::string& itemId) {
