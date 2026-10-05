@@ -4,6 +4,30 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Lote de 19 modificações (2026-10-04/05, branch `windows-port`)
+
+Commits (ver `git log`): Fase 0 `4d604c8` (17), `fabd9fa` (18), `008bf9e` (19) + race do observador de SQL;
+Fase 1 `f11c1d5` (2), `e56fd8e` (11), marcas persistentes (3); Fase 2 `096b735` (1); Fase 3 `c793aaa` (6-10, 15);
+Fase 4 `548c604` (5, 12, 13); Fase 5 `1f81b78` (4, 14); Fase 6 `d1783af` (16). Decisões que não devem ser revertidas:
+
+- **Autocorreções saíram de `Project::abrir()`**: passos 5/6 (tipo_midia, caminho_absoluto_origem) + limpeza de `intake_marca_r`
+  rodam em `Project::executarAutocorrecoes()` numa thread própria (blocos de 500/transação); passo 6 não repete a busca por 7 dias
+  (`arquivo.origem_verificada_em`). `Project::abrir(pasta, CancelamentoAbertura*)` cancela de verdade (flag + `sqlite3_interrupt`);
+  `carregamentoEmVoo()` é liberada em todos os caminhos (guard `Liberar`). Passos 0-4 continuam na abertura, só com tempo medido.
+- **Marcas em memória + fila serial `poolMarcas_`** (ProjetoAberto): R (`intake_marca_r`), P/W/K/HTML (`item_marcacao`), sessões de
+  impressão (`print_sessao`, `print_sessao_item`). Memória na hora, banco em background numa transação por operação; a carga do banco
+  só vale se não houve toque/gravação pendente (`versaoMarcacoes_`, `gravacoesMarcasPendentes_`). `~ProjetoAberto` espera a fila.
+  `item.marcado_publicacao` NÃO é usada (tabela própria, para não mexer na linha de `item`).
+- **Checksum de master**: o gatilho `arquivo_master_travado` proíbe mudar checksum; o SCAN de DUPLICATES só PREENCHE checksum vazio,
+  usando a marca `reconciliacao_em_curso` dentro da transação. Nunca trocar um checksum existente.
+- **Diagnóstico**: `Database::definirObservadorConsultaLenta` (Main.cpp) loga no Watchdog SQL > 100 ms na message thread.
+- **Nest**: clicar na coluna do preview agora só mostra o arquivo; a capa muda pelo menu ("Use as cover").
+- Builds `build-asan`/`build-tsan` (alvo `matriz`): `--selftest-lote` passa em ambas. `--selftest-uitest` = as mesmas 42 falhas do
+  baseline; `--selftest-mosaico-10k` passa mas aborta no encerramento (destrutor de fonte estática do JUCE) — não investigado.
+  Cuidado: arquivo editado DURANTE um build pode ficar com objeto "mais novo" que a fonte — `touch` e recompile.
+- Não testado em uso real (só self-tests): aviso dos 45 s/CANCELAR, tempo de abertura da collection grande, selos/tooltips,
+  painel de metadados, cards de analytics, importação de favoritos.
+
 ## Branch atual e último commit
 
 - **Versão principal desde 2026-10-01**: a `main` aponta para o último commit de
