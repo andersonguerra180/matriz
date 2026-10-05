@@ -122,6 +122,7 @@ public:
 class ProjetoAberto {
 public:
     explicit ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto);
+    ~ProjetoAberto();  // espera a fila de gravação das marcas esvaziar (nada fica sem gravar)
 
     matriz::model::Project& projeto() { jassert(projeto_ != nullptr); return *projeto_; }
 
@@ -798,10 +799,19 @@ public:
 
     // INTAKE — R (Reject). Marcas R persistidas no projeto (intake_marca_r) e lista de rejeitados por
     // SHA-256 (intake_rejeitados). Só itens em quarentena contam. Nada aqui toca em arquivo algum.
-    // Os itens com R (todos os da quarentena, visíveis ou não sob o filtro atual).
+    // Os itens com R (todos os da quarentena, visíveis ou não sob o filtro atual). Cópia do conjunto
+    // EM MEMÓRIA — nunca consulta o banco (seguro na message thread).
     std::set<std::string> idsMarcadosR() const;
-    // Como P/W/K: se todos já têm R, tira o R de todos; senão marca todos. Uma transação só.
+    // Recarrega o conjunto em memória a partir do banco. SÓ para thread de fundo (faz a consulta);
+    // descarta o resultado se houve alteração/gravação pendente durante a leitura.
+    void carregarMarcasRDoBanco();
+    // Bloqueia até a fila de gravação das marcas esvaziar (destrutor, self-tests).
+    void aguardarGravacoesMarcas();
+    // Como P/W/K: se todos já têm R, tira o R de todos; senão marca todos. A memória muda na hora; a
+    // gravação vai para uma fila serial em background, numa transação. Falhou: reverte a memória e avisa.
     void alternarMarcaR(const std::vector<std::string>& itemIds);
+    // Chamado na message thread quando uma gravação de marca R falhou e a memória foi revertida.
+    std::function<void()> aoMarcasRRevertidas;
     // Rejeita os itens com R: guarda o SHA-256 de cada um na lista de rejeitados e os tira do projeto
     // (removerItensDoProjeto, com Undo). Devolve quantos saíram.
     int rejeitarMarcadosR();
@@ -1115,6 +1125,10 @@ private:
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
     std::set<std::string> marcadosWatermark_;
+    // Marcas R do INTAKE (espelho de intake_marca_r só dos itens em quarentena); também sob marcacoesMutex_.
+    std::set<std::string> marcadosR_;
+    std::uint64_t versaoMarcasR_ = 0;          // sobe a cada alteração em memória
+    int gravacoesMarcasPendentes_ = 0;         // jobs de gravação ainda na fila de poolMarcas_
     std::set<std::string> itensOfflineCache_;
     // Só existe pra ser observado por weak_ptr em callbacks assíncronos
     // (ex.: Undo do salvarMetadadoEmLote registrado via callAsync): expira
@@ -1140,6 +1154,8 @@ private:
     void executarEdicaoMain(const juce::String& titulo, std::function<matriz::mainedit::Resultado()> trabalho,
                             AoConcluirEdicaoMain aoConcluir);
     juce::ThreadPool poolMainEdit_{1};
+    // Fila SERIAL de gravação das marcas (R, e as demais) — preserva a ordem de toques rápidos.
+    juce::ThreadPool poolMarcas_{1};
     // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
     juce::ThreadPool poolMerge_{1};
     void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);

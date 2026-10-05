@@ -158,11 +158,27 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
 
 } // namespace
 
+ProjetoAberto::~ProjetoAberto() {
+    aguardarGravacoesMarcas();
+}
+
+void ProjetoAberto::aguardarGravacoesMarcas() {
+    // Sem isto o destrutor do ThreadPool descartaria gravações ainda na fila.
+    for (int i = 0; i < 6000; ++i) {  // no máximo ~60 s
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            if (gravacoesMarcasPendentes_ == 0) break;
+        }
+        juce::Thread::sleep(10);
+    }
+}
+
 ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : projeto_(std::move(projeto)) {
     juce::File registroFile = projeto_->pasta().getChildFile("registro.sqlite");
     juce::File pastaProjeto = projeto_->pasta();
     // Fase 5: destino com papel CLONE abre somente leitura.
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
+    poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
 
     const bool somenteLeituraNaAbertura = somenteLeitura_;
     std::thread([registroFile, pastaProjeto, somenteLeituraNaAbertura]() {
@@ -551,7 +567,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         juce::String s = juce::String::fromUTF8(atual.c_str()).trimEnd();
         return (s.isEmpty() ? bloco : s + "\n\n" + bloco).toStdString();
     };
-    juce::String blocoMantido = "[DUPLICATE MERGED] " + juce::String(agora) + " — duplicate " +
+    juce::String blocoMantido = "[DUPLICATE MERGED] " + juce::String(agora) + juce::String::fromUTF8(" — duplicate ") +
                                 juce::String::fromUTF8(r.codigoDescartado.c_str()) + " (\"" +
                                 juce::String::fromUTF8(d[1].c_str()) + "\") discarded; its file stays in SOURCE at " +
                                 juce::String::fromUTF8(localDescartado.c_str()) + " and is not copied to backup.";
@@ -565,8 +581,8 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
                  {Value::of(acrescentar(k[2], blocoMantido)), Value::of(agora), Value::of(manterId)});
 
     juce::String blocoDescartado = "Validated as duplicate of " + juce::String::fromUTF8(r.codigoMantido.c_str()) +
-                                   " — discarded side: file stays in SOURCE, excluded from backup; metadata merged "
-                                   "into the kept item. [USER_VERIFIED_DUPLICATE]";
+                                   juce::String::fromUTF8(" — discarded side: file stays in SOURCE, excluded from backup; metadata merged "
+                                   "into the kept item. [USER_VERIFIED_DUPLICATE]");
     registro.run("UPDATE item SET estado = 'duplicata', notas_livres = ?, atualizado_em = ? WHERE id = ?",
                  {Value::of(acrescentar(d[2], blocoDescartado)), Value::of(agora), Value::of(descartarId)});
 
@@ -591,7 +607,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
     r.linhasLog.add("Fields merged into kept item: " + juce::String(r.camposSomados) +
                     ", merge conflicts (kept in the item history): " + juce::String(r.conflitos));
     if (r.descartadoJaNoMain)
-        r.linhasLog.add("The discarded item already had a copy in MAIN — left untouched (nothing is deleted).");
+        r.linhasLog.add(juce::String::fromUTF8("The discarded item already had a copy in MAIN — left untouched (nothing is deleted)."));
     return r;
 }
 
@@ -1068,9 +1084,17 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     if (idsMarcadosR().count(itemId) > 0) return;  // marcado com R: não entra no grid de jeito nenhum
     registrarUndoEnvioAoGrid({itemId});
     std::string agora = matriz::model::agoraIso8601();
-    projeto_->registro().run(
-        "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
-        {matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+    projeto_->registro().exec("BEGIN IMMEDIATE");
+    try {
+        projeto_->registro().run(
+            "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
+            {matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+        projeto_->registro().run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(itemId)});
+        projeto_->registro().exec("COMMIT");
+    } catch (...) {
+        try { projeto_->registro().exec("ROLLBACK"); } catch (...) {}
+        throw;
+    }
     EventBus::obterInstancia().dispararItemAlterado(itemId, "quarentena");
 }
 
@@ -1090,6 +1114,7 @@ void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& todosOsIds
             projeto_->registro().run(
                 "UPDATE item SET em_quarentena = 0, atualizado_em = ?, lote_grid_id = ? WHERE id = ?",
                 {matriz::db::Value::of(agora), matriz::db::Value::of(loteGridId), matriz::db::Value::of(id)});
+            projeto_->registro().run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
         }
         projeto_->registro().run("COMMIT", {});
     } catch (...) {
@@ -3418,6 +3443,11 @@ void guardarParaUndo(matriz::db::Database& db, const std::string& token, const s
 void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    {   // as linhas de intake_marca_r saem por ON DELETE CASCADE; espelha na memória
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds) marcadosR_.erase(id);
+        ++versaoMarcasR_;
+    }
     // Uma transação só pro lote inteiro (era um DELETE autocommit por item —
     // cada um pagando seu próprio overhead de WAL + cascade de FK sozinho,
     // igual o removerItensDoBackup já fazia certo logo acima).
@@ -3766,39 +3796,95 @@ std::vector<std::string> ProjetoAberto::expandirMembrosDeNest(const std::vector<
 }
 
 std::set<std::string> ProjetoAberto::idsMarcadosR() const {
-    std::set<std::string> out;
-    if (!projeto_) return out;
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    return marcadosR_;
+}
+
+void ProjetoAberto::carregarMarcasRDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcasR_;
+    }
+    std::set<std::string> doBanco;
     try {
+        // i.em_quarentena = 1 (a coluna é NOT NULL DEFAULT 0): usa idx_item_quarentena_criado.
         auto st = leitura().prepare(
-            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE COALESCE(i.em_quarentena, 0) = 1");
-        while (st.step()) out.insert(st.columnText(0));
-    } catch (...) {}
-    return out;
+            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1");
+        while (st.step()) doBanco.insert(st.columnText(0));
+    } catch (...) { return; }
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    // A memória manda enquanto há toque recente ou gravação pendente: o banco ainda está atrasado.
+    if (versaoMarcasR_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;
+    marcadosR_ = std::move(doBanco);
 }
 
 void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
     if (itemIds.empty() || !projeto_) return;
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    auto& db = projeto_->registro();
-    const auto marcados = idsMarcadosR();
-    bool todosMarcados = true;
-    for (const auto& id : itemIds)
-        if (marcados.count(id) == 0) { todosMarcados = false; break; }
-    const std::string agora = matriz::model::agoraIso8601();
-    db.run("BEGIN TRANSACTION", {});
-    try {
+    bool remover = true;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds)
+            if (marcadosR_.count(id) == 0) { remover = false; break; }
         for (const auto& id : itemIds) {
-            if (todosMarcados)
-                db.run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
-            else
-                db.run("INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
-                       {matriz::db::Value::of(id), matriz::db::Value::of(agora)});
+            if (remover) marcadosR_.erase(id);
+            else marcadosR_.insert(id);
         }
-        db.run("COMMIT", {});
-    } catch (...) {
-        try { db.run("ROLLBACK", {}); } catch (...) {}
-        throw;
+        ++versaoMarcasR_;
+        ++gravacoesMarcasPendentes_;
     }
+    const std::string agora = matriz::model::agoraIso8601();
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMarcas_.addJob([this, itemIds, remover, agora, vivo]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");
+            try {
+                for (const auto& id : itemIds) {
+                    if (remover)
+                        db.run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
+                    else
+                        db.run("INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+                               {matriz::db::Value::of(id), matriz::db::Value::of(agora)});
+                }
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            if (!ok) {  // volta ao estado anterior
+                for (const auto& id : itemIds) {
+                    if (remover) marcadosR_.insert(id);
+                    else marcadosR_.erase(id);
+                }
+                ++versaoMarcasR_;
+            }
+            --gravacoesMarcasPendentes_;
+        }
+        if (!ok) {
+            juce::MessageManager::callAsync([this, vivo, itemIds]() {
+                if (vivo.expired()) return;
+                for (const auto& id : itemIds)
+                    EventBus::obterInstancia().dispararItemAlterado(id, "marca_r");
+                if (aoMarcasRRevertidas) aoMarcasRRevertidas();
+                const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::WarningIcon)
+                        .withTitle("R")
+                        .withMessage(isPt ? juce::String::fromUTF8("N\xc3\xa3o foi poss\xc3\xadvel gravar a marca R; a altera\xc3\xa7\xc3\xa3o foi desfeita.")
+                                          : juce::String("Could not save the R mark; the change was reverted."))
+                        .withButton("OK"),
+                    nullptr);
+            });
+        }
+    });
 }
 
 int ProjetoAberto::rejeitarMarcadosR() {

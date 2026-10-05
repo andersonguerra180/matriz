@@ -2268,6 +2268,7 @@ void IntakeWorkspaceComponent::recarregar() {
         std::vector<ItemResumo> quarentena;
         try {
             quarentena = proj->listarItensEmQuarentena();
+            proj->carregarMarcasRDoBanco();  // as marcas R chegam junto com a lista (nunca consultadas na message thread)
         } catch (const std::exception&) {
             return;
         }
@@ -2701,6 +2702,12 @@ void IntakeWorkspaceComponent::alternarMarcaRDosSelecionados() {
     else if (!selecionados.empty()) alvo = selecionados;
     else if (!idFoco.empty()) alvo.insert(idFoco);
     if (alvo.empty()) return;
+    projeto_.aoMarcasRRevertidas = [safeThis = juce::Component::SafePointer<IntakeWorkspaceComponent>(this)]() {
+        if (!safeThis) return;
+        safeThis->marcadosR_ = safeThis->projeto_.idsMarcadosR();
+        safeThis->atualizarBotaoRejeitar();
+        safeThis->repaint();
+    };
     projeto_.alternarMarcaR(std::vector<std::string>(alvo.begin(), alvo.end()));
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();
@@ -2716,6 +2723,12 @@ void IntakeWorkspaceComponent::alternarMarcaRDeItem(int itemIndex) {
     std::vector<std::string> ids;
     if (selecionados.count(itemId) > 0 && selecionados.size() > 1) ids.assign(selecionados.begin(), selecionados.end());
     else ids.push_back(itemId);
+    projeto_.aoMarcasRRevertidas = [safeThis = juce::Component::SafePointer<IntakeWorkspaceComponent>(this)]() {
+        if (!safeThis) return;
+        safeThis->marcadosR_ = safeThis->projeto_.idsMarcadosR();
+        safeThis->atualizarBotaoRejeitar();
+        safeThis->repaint();
+    };
     projeto_.alternarMarcaR(ids);
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();

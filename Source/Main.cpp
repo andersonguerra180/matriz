@@ -3,6 +3,7 @@
 
 #include "App/Preferencias.h"
 #include "Diag/NSExceptionGuard.h"
+#include "Db/Database.h"
 #include "Diag/Watchdog.h"
 #include "I18n/Strings.h"
 #include "Ui/IngerirArquivosTest.h"
@@ -128,7 +129,7 @@ public:
             g.fillRect(botRect);
             g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             g.setColour(juce::Colour(0xffffaa33));
-            g.drawText("EVALUATION COPY — NOT FOR SALE", botRect, juce::Justification::centred, false);
+            g.drawText(juce::String::fromUTF8("EVALUATION COPY — NOT FOR SALE"), botRect, juce::Justification::centred, false);
         }
     }
 
@@ -192,6 +193,17 @@ public:
     void initialise(const juce::String& commandLine) override {
         matriz::app::inicializarPreferencias();
         matriz::diag::inicializarWatchdog();
+        // Item 19-D: SQL na message thread acima de 100 ms vai pro log do Watchdog (só diagnóstico).
+        matriz::db::Database::definirObservadorConsultaLenta(
+            []() {
+                auto* mm = juce::MessageManager::getInstanceWithoutCreating();
+                return mm != nullptr && mm->isThisTheMessageThread();
+            },
+            [](const std::string& sql, long long ms) {
+                matriz::diag::logarWatchdog("[SQL lento na message thread] " + juce::String(static_cast<juce::int64>(ms)) +
+                                            " ms: " + juce::String::fromUTF8(sql.substr(0, 400).c_str()));
+            },
+            100);
 
 #if !MATRIZ_SANITIZER_BUILD && !JUCE_WINDOWS
         stack_t ss;

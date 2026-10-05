@@ -6,6 +6,50 @@
 
 namespace matriz::db {
 
+namespace {
+struct ObservadorLento {
+    std::atomic<bool> ativo{false};
+    std::function<bool()> estaNaThreadAlvo;
+    std::function<void(const std::string&, long long)> aoLenta;
+    long long limiarMs = 100;
+};
+ObservadorLento& observadorLento() { static ObservadorLento o; return o; }
+
+// Mede só quando o observador está ligado E a thread atual é a alvo.
+class MedidorConsulta {
+public:
+    explicit MedidorConsulta(const char* sql) : sql_(sql) {
+        auto& o = observadorLento();
+        if (o.ativo.load(std::memory_order_relaxed) && o.estaNaThreadAlvo && o.estaNaThreadAlvo()) {
+            medindo_ = true;
+            inicio_ = std::chrono::steady_clock::now();
+        }
+    }
+    ~MedidorConsulta() {
+        if (!medindo_) return;
+        auto& o = observadorLento();
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - inicio_).count();
+        if (ms > o.limiarMs && o.aoLenta) {
+            try { o.aoLenta(sql_ ? sql_ : "", static_cast<long long>(ms)); } catch (...) {}
+        }
+    }
+private:
+    const char* sql_;
+    bool medindo_ = false;
+    std::chrono::steady_clock::time_point inicio_;
+};
+} // namespace
+
+void Database::definirObservadorConsultaLenta(std::function<bool()> estaNaThreadAlvo,
+                                              std::function<void(const std::string&, long long)> aoLenta,
+                                              long long limiarMs) {
+    auto& o = observadorLento();
+    o.estaNaThreadAlvo = std::move(estaNaThreadAlvo);
+    o.aoLenta = std::move(aoLenta);
+    o.limiarMs = limiarMs;
+    o.ativo.store(o.estaNaThreadAlvo && o.aoLenta);
+}
+
 // ---------------------------------------------------------------------------
 // Statement
 // ---------------------------------------------------------------------------
@@ -61,6 +105,7 @@ void Statement::bind(int oneBasedIndex, const Value& value) {
 }
 
 bool Statement::step() {
+    MedidorConsulta medidor(stmt_ ? sqlite3_sql(stmt_) : nullptr);
     int rc;
     if (dono_) {
         Database::Trava trava(*dono_);
@@ -250,6 +295,7 @@ void Database::limparCache() {
 }
 
 void Database::execScript(const std::string& sqlScript) {
+    MedidorConsulta medidor(sqlScript.c_str());
     Trava trava(*this);
     char* errMsg = nullptr;
     int rc = sqlite3_exec(db_, sqlScript.c_str(), nullptr, nullptr, &errMsg);

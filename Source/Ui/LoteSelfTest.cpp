@@ -1070,7 +1070,48 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.alternarMarcaR({ra, rb});
             checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}), "R on a mixed selection marks all of it (same rule as P/W/K)");
             pa.alternarMarcaR({rd});
-            checar(pa.idsMarcadosR().count(rd) == 0, "an item that is no longer in the INTAKE is never listed as marked");
+            pa.aguardarGravacoesMarcas();
+            pa.carregarMarcasRDoBanco();  // a memória é recarregada do banco (que só lista quem está em quarentena)
+            checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}) && pa.idsMarcadosR().count(rd) == 0,
+                   "an item that is no longer in the INTAKE is never listed as marked");
+
+            // Persistência: as marcas gravadas em background estão no banco depois da fila esvaziar.
+            {
+                auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE item_id IN (?, ?)");
+                st.bind(1, Value::of(ra)); st.bind(2, Value::of(rb));
+                st.step();
+                checar(st.columnInt(0) == 2, "R marks are written to intake_marca_r by the background queue");
+            }
+            // Nenhuma consulta de intake_marca_r na message thread ao apertar R / ler os marcados.
+            {
+                auto consultas = std::make_shared<std::vector<std::string>>();
+                matriz::db::Database::definirObservadorConsultaLenta(
+                    []() { return juce::MessageManager::getInstance()->isThisTheMessageThread(); },
+                    [consultas](const std::string& sql, long long) { consultas->push_back(sql); }, 0);
+                for (int i = 0; i < 5; ++i) { pa.alternarMarcaR({rc}); (void) pa.idsMarcadosR(); }
+                matriz::db::Database::definirObservadorConsultaLenta(nullptr, nullptr, 100);
+                int deMarcaR = 0;
+                for (const auto& q : *consultas) if (q.find("intake_marca_r") != std::string::npos) ++deMarcaR;
+                checar(deMarcaR == 0, "pressing R repeatedly runs no intake_marca_r query on the message thread");
+                pa.aguardarGravacoesMarcas();
+                pa.alternarMarcaR({rc});  // 5 toques (ímpar) deixaram rc marcado; volta ao estado original
+                pa.aguardarGravacoesMarcas();
+                pa.carregarMarcasRDoBanco();
+                checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}), "rapid R toggles end in the right state");
+            }
+            // EXPLAIN QUERY PLAN: a consulta das marcas não varre item nem intake_marca_r por inteiro.
+            {
+                auto st = reg.prepare(
+                    "EXPLAIN QUERY PLAN SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1");
+                std::string plano;
+                while (st.step()) plano += st.columnText(3) + "\n";
+                std::cout << "   query plan (marcas R):\n" << plano;
+                checar(plano.find("USING INDEX idx_item_quarentena_criado") != std::string::npos ||
+                           plano.find("idx_item_quarentena") != std::string::npos,
+                       "the R-marks query uses the em_quarentena index (no full item scan)");
+                checar(plano.find("SCAN m") == std::string::npos || plano.find("SCAN i") == std::string::npos,
+                       "the R-marks query does not full-scan both tables");
+            }
 
             // Marcado com R não entra no grid de jeito nenhum (nem em lote, nem pelo "+" de um item só).
             auto emQuarentena = [&](const std::string& id) {
@@ -1114,6 +1155,53 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.desfazer();
             checar(contarItens(ra) == 1 && contarItens(rb) == 1, "one Undo brings the rejected items back");
             checar(contarRejeitados() == 0, "and takes their hashes out of the rejected list");
+        }
+
+        // ----- INTAKE: escala das marcas R (50.000 itens em quarentena, 20.000 marcas, metade 'hash')
+        std::cout << "\n-- INTAKE: R marks at scale (50k items / 20k marks) --\n";
+        {
+            const std::string agoraEsc = matriz::model::agoraIso8601();
+            std::vector<std::string> ids;
+            ids.reserve(50000);
+            reg.exec("BEGIN IMMEDIATE");
+            for (int i = 0; i < 50000; ++i) {
+                const std::string id = matriz::model::novoUuid();
+                ids.push_back(id);
+                reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em, em_quarentena) "
+                        "VALUES (?, ?, NULL, ?, 'digital_audio', 'capturado', ?, ?, 1)",
+                        {Value::of(id), Value::of(projetoId), Value::of("ESC-" + std::to_string(i)),
+                         Value::of(agoraEsc), Value::of(agoraEsc)});
+                if (i < 20000)
+                    reg.run("INSERT INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, ?, ?)",
+                            {Value::of(id), Value::of(i % 2 == 0 ? "hash" : "usuario"), Value::of(agoraEsc)});
+            }
+            reg.exec("COMMIT");
+
+            const auto t0 = juce::Time::getMillisecondCounter();
+            pa.carregarMarcasRDoBanco();  // (em produção roda em background)
+            const auto ms = juce::Time::getMillisecondCounter() - t0;
+            std::cout << "   loaded 20k marks in " << ms << " ms\n";
+            const auto marcadosEsc = pa.idsMarcadosR();
+            checar(marcadosEsc.size() >= 20000 && marcadosEsc.count(ids[0]) == 1 && marcadosEsc.count(ids[30000]) == 0,
+                   "20,000 marks are loaded into memory");
+
+            auto consultas = std::make_shared<std::vector<std::string>>();
+            matriz::db::Database::definirObservadorConsultaLenta(
+                []() { return juce::MessageManager::getInstance()->isThisTheMessageThread(); },
+                [consultas](const std::string& sql, long long) { consultas->push_back(sql); }, 0);
+            for (int i = 0; i < 20; ++i) { pa.alternarMarcaR({ids[30000 + i]}); (void) pa.idsMarcadosR(); }
+            matriz::db::Database::definirObservadorConsultaLenta(nullptr, nullptr, 100);
+            int deMarcaR = 0;
+            for (const auto& q : *consultas) if (q.find("intake_marca_r") != std::string::npos) ++deMarcaR;
+            checar(deMarcaR == 0, "20 rapid R presses with 50k items run no intake_marca_r query on the message thread");
+            pa.aguardarGravacoesMarcas();
+            pa.carregarMarcasRDoBanco();
+            checar(pa.idsMarcadosR().count(ids[30019]) == 1, "the 20 rapid marks reached the database");
+
+            // Enviar ao grid limpa as marcas dos itens que saem (na mesma transação).
+            reg.run("DELETE FROM item WHERE codigo_acervo IS NULL AND titulo LIKE 'ESC-%'", {});
+            pa.carregarMarcasRDoBanco();
+            checar(pa.idsMarcadosR().count(ids[0]) == 0, "marks of deleted items are gone (ON DELETE CASCADE)");
         }
 
         // ----- NEST (camada de dados)
