@@ -36,7 +36,7 @@ TarefaGlobalModalDialog::TarefaGlobalModalDialog() {
     btnCancelar_->setVisible(false);
     addAndMakeVisible(*btnCancelar_);
 
-    setSize(480, 190);
+    setSize(480, 216);
 }
 
 void TarefaGlobalModalDialog::definirEstado(const EstadoProgresso& estado) {
@@ -69,7 +69,7 @@ void TarefaGlobalModalDialog::paint(juce::Graphics& g) {
     const auto& tk = tema();
     g.fillAll(tk.painel);
 
-    auto barArea = getLocalBounds().reduced(32).withTrimmedTop(78).withHeight(22).toFloat();
+    const auto barArea = areaBarra().toFloat();
     g.setColour(tk.painelAlt);
     g.fillRoundedRectangle(barArea, 6.0f);
     g.setColour(tk.borda);
@@ -93,19 +93,20 @@ void TarefaGlobalModalDialog::resized() {
     if (!lblTitulo_ || !lblDetalhe_ || !lblPorcentagem_ || !btnCancelar_)
         return;
 
-    auto area = getLocalBounds().reduced(24);
-    lblTitulo_->setBounds(area.removeFromTop(30));
-    area.removeFromTop(6);
-    lblDetalhe_->setBounds(area.removeFromTop(22));
-    area.removeFromTop(18);
-    area.removeFromTop(22); // reservado pra barra pintada em paint()
-    area.removeFromTop(8);
-    lblPorcentagem_->setBounds(area.removeFromTop(20));
-
+    // Tudo na mesma coluna central, margens iguais (32 px), cada bloco com a sua faixa: título, detalhe, barra, porcentagem e
+    // botão nunca se sobrepõem (a barra de paint() e os rótulos usam as mesmas coordenadas).
+    const int x = 32, w = getWidth() - 64;
+    lblTitulo_->setBounds(x, 22, w, 28);
+    lblDetalhe_->setBounds(x, 56, w, 22);
+    lblPorcentagem_->setBounds(x, areaBarra().getBottom() + 6, w, 20);
     if (btnCancelar_->isVisible()) {
-        int btnW = 110, btnH = 30;
-        btnCancelar_->setBounds((getWidth() - btnW) / 2, getHeight() - btnH - 16, btnW, btnH);
+        const int btnW = 120, btnH = 34;
+        btnCancelar_->setBounds((getWidth() - btnW) / 2, getHeight() - btnH - 20, btnW, btnH);
     }
+}
+
+juce::Rectangle<int> TarefaGlobalModalDialog::areaBarra() const {
+    return {32, 96, getWidth() - 64, 22};
 }
 
 // ---------------------------------------------------------------------------
