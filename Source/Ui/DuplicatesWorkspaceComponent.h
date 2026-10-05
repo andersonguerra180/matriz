@@ -86,6 +86,7 @@ public:
     };
 private:
     State estado_ = State::Idle;
+    std::atomic<int> faseScan_{0};  // 1 critérios, 2 checksums, 3 pHash, 4 comparação — só para o texto de status
     std::atomic<double> progressoScan_{0.0};  // escrito pela thread do scan, lido pelo timer da UI
 
     std::vector<DuplicateGroup> gruposDetectados_;

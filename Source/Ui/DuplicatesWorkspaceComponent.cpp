@@ -1133,6 +1133,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 void DuplicatesWorkspaceComponent::run() {
     auto& db = projeto_.projeto().registro();
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    faseScan_ = 1;
 
     // 1. Get all candidate items for duplicate detection
     struct ItemInfo {
@@ -1505,6 +1506,7 @@ void DuplicatesWorkspaceComponent::run() {
             grupoExistente[chavePar(gruposDetectados_[g].original.itemId, gruposDetectados_[g].duplicata.itemId)] = g;
 
         // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
+        faseScan_ = 2;
         std::vector<std::pair<std::string, std::pair<std::string, std::string>>> paraGravar;  // arquivoId -> (md5, sha256)
         auto gravarChecksums = [&]() {
             if (paraGravar.empty()) return;
@@ -1573,6 +1575,7 @@ void DuplicatesWorkspaceComponent::run() {
         }
 
         // ---- B3: PROBABLE — pHash de imagens (só o que falta), com cancelamento e progresso
+        faseScan_ = 3;
         std::vector<size_t> imagens;
         for (size_t i = 0; i < items.size(); ++i)
             if (matriz::ingest::categoriaPorExtensao(items[i].ext) == matriz::ingest::CategoriaMidia::Imagem && !items[i].arquivoId.empty())
@@ -1610,7 +1613,11 @@ void DuplicatesWorkspaceComponent::run() {
             if (phashDe.count(items[i].arquivoId)) continue;
             progressoScan_ = 0.6 + 0.3 * static_cast<double>(calculados) / static_cast<double>(std::max<size_t>(1, faltam));  // 60..90%
             ++calculados;
-            const juce::File f(juce::String::fromUTF8(items[i].fullPath.c_str()));
+            // Usa a MINIATURA do projeto (pequena, decodifica em ms) em vez de decodificar o original inteiro (foto de
+            // vários MB): o pHash redimensiona para 32x32 de qualquer jeito. Sem miniatura: cai no original.
+            juce::File f;
+            if (auto mini = projeto_.caminhoMiniaturaPrincipal(items[i].itemId)) f = juce::File(*mini);
+            if (!f.existsAsFile()) f = juce::File(juce::String::fromUTF8(items[i].fullPath.c_str()));
             if (!f.existsAsFile()) continue;
             try {
                 const uint64_t h = matriz::ingest::calcularPHashImagem(f, juce::File());
@@ -1621,6 +1628,7 @@ void DuplicatesWorkspaceComponent::run() {
         }
         gravarPHashes();
 
+        faseScan_ = 4;
         // Comparação SEM varrer todos contra todos: 64 bits em 11 faixas (princípio da casa dos pombos: dois hashes a
         // distância <= 10 coincidem exatamente em ao menos uma das 11 faixas) — só se comparam os que caem na mesma faixa.
         constexpr int kLimiar = 10;
@@ -1651,6 +1659,8 @@ void DuplicatesWorkspaceComponent::run() {
                         const auto& b = items[cb.idx];
                         const auto chave = chavePar(a.itemId, b.itemId);
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
+                        // Mesmo SHA-256 = IDENTICAL, nunca PROBABLE (com 3+ cópias o par B-C não está no "em estrela" acima).
+                        if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
                         // Regra de sempre: duas fotos com EXIF DateTimeOriginal diferentes NÃO são duplicata.
                         if (!a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
                         auto [o, d] = ordenado(a, b);
@@ -1693,11 +1703,13 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             resized();
             repaint();
         } else {
-            lblStatus_->setText("Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
+            static const char* kFases[] = {"Scanning", "Matching files", "Computing checksums", "Computing image fingerprints (pHash)", "Comparing images"};
+            const juce::String fase = kFases[juce::jlimit(0, 4, faseScan_.load())];
+            lblStatus_->setText(fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
             repaint();  // barra de progresso da área direita
             ProgressoGlobal::obterInstancia().atualizarFracao(
                 "duplicates_scan", progressoScan_,
-                "Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
+                fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
         }
     }
 }
