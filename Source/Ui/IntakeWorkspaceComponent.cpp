@@ -1565,7 +1565,7 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         { "AUDIO", {
             "Album", "EP", "Single", "Compilation", "Soundtrack",
             "Stems", "Multitracks", "Sample Pack", "Sample", "Preset", "DAW Session",
-            "Field Recording", "Sound FX", "MIDI",
+            "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
             "Artist Catalog", "Artist Backup"
         }},
         { "VIDEO", {
@@ -2215,6 +2215,8 @@ void IntakeWorkspaceComponent::definirModoVisao(ModoVisao modo) {
             btnVisaoIcones_->setAtivo(modoVisao_ == ModoVisao::Icones);
         }
         if (sliderTamanho_) sliderTamanho_->setEnabled(modoVisao_ == ModoVisao::Icones);
+        idNoPainel_.clear();             // ao voltar para as miniaturas o painel relê o item atual
+        atualizarPainelMetadados();
         atualizarVisibilidadeEmptyState();
         resized();
         repaint();
@@ -3394,7 +3396,7 @@ void IntakeWorkspaceComponent::aplicarCliqueSelecao(int pos, const juce::Modifie
 }
 
 void IntakeWorkspaceComponent::atualizarPainelMetadados() {
-    if (!painelMetadados_) return;
+    if (!painelMetadados_ || modoVisao_ != ModoVisao::Icones) return;  // na lista a coluna não existe
     std::string alvo;
     if (!ultimoClicadoId_.empty()) {
         for (int idx : indicesFiltrados_) {
@@ -3827,7 +3829,8 @@ void IntakeWorkspaceComponent::resized() {
 
     // Coluna da direita: metadados do arquivo selecionado (somente leitura), estreita (~280 px). Some em janelas estreitas.
     if (painelMetadados_) {
-        const bool cabe = area.getWidth() >= 760;
+        // Só no modo MINIATURAS: na LISTA os metadados aparecem apenas na janela de preview.
+        const bool cabe = area.getWidth() >= 760 && modoVisao_ == ModoVisao::Icones;
         painelMetadados_->setVisible(cabe);
         if (cabe) painelMetadados_->setBounds(area.removeFromRight(280));
     }
