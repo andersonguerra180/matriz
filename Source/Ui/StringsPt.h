@@ -1275,6 +1275,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.btn_novo_mapa", "+ NOVO FOLDER MAP"},
         {"arvore_backup.sem_pasta_titulo", "SEM PASTA"},
         {"arvore_backup.card_novas", "PASTAS NOVAS"},
+        {"arvore_backup.card_novas_acao", "PASTAS NOVAS - AÇÃO NECESSÁRIA"},
         {"arvore_backup.nova_linha", "{nome} - {n} arquivos"},
         {"arvore_backup.nova_marca", "NOVA"},
         {"arvore_backup.btn_usar_arvore", "USAR ÁRVORE"},

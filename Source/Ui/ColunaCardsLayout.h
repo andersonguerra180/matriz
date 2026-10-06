@@ -26,6 +26,7 @@ public:
         corpo_ = areaColuna.reduced(10, 8);
         cards_.clear();
         titulos_.clear();
+        destaques_.clear();
     }
 
     juce::Rectangle<int>& corpo() { return corpo_; }
@@ -41,7 +42,14 @@ public:
     void finalizarCard() {
         corpo_.removeFromTop(kCardPad);
         cards_.push_back({corpo_.getX() - 4, cardTopo_ - kCardPad, corpo_.getWidth() + 8, corpo_.getY() - cardTopo_ + kCardPad});
+        destaques_.push_back(juce::Colours::transparentBlack);
         corpo_.removeFromTop(kEntreCards);
+    }
+
+    // Card que pede ação do usuário (estilo alertas do INTAKE): fundo e borda grossa na cor dada, título na mesma cor.
+    // Chamar logo depois de finalizarCard(); quem para de chamar (nada pendente) volta ao visual normal.
+    void destacarUltimoCard(juce::Colour cor) {
+        if (!destaques_.empty()) destaques_.back() = cor;
     }
 
     void paint(juce::Graphics& g) const {
@@ -51,15 +59,29 @@ public:
         g.setColour(tk.borda);
         g.fillRect(coluna_.getRight() - 1, coluna_.getY(), 1, coluna_.getHeight());
 
-        for (const auto& c : cards_) {
-            g.setColour(tk.painelAlt.withAlpha(0.25f));
-            g.fillRoundedRectangle(c.toFloat(), tk.raioPequeno);
-            g.setColour(tk.borda.withAlpha(0.7f));
-            g.drawRoundedRectangle(c.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        for (size_t i = 0; i < cards_.size(); ++i) {
+            const auto& c = cards_[i];
+            const bool destaque = i < destaques_.size() && destaques_[i].getAlpha() > 0;
+            if (destaque) {
+                g.setColour(tk.painelAlt.withAlpha(0.25f));
+                g.fillRoundedRectangle(c.toFloat(), tk.raioPequeno);
+                g.setColour(destaques_[i].withAlpha(0.20f));
+                g.fillRoundedRectangle(c.toFloat(), tk.raioPequeno);
+                g.setColour(destaques_[i]);
+                g.drawRoundedRectangle(c.toFloat().reduced(1.0f), tk.raioPequeno, 2.5f);
+            } else {
+                g.setColour(tk.painelAlt.withAlpha(0.25f));
+                g.fillRoundedRectangle(c.toFloat(), tk.raioPequeno);
+                g.setColour(tk.borda.withAlpha(0.7f));
+                g.drawRoundedRectangle(c.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+            }
         }
         g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.setColour(tk.textoPrimario);
-        for (const auto& [titulo, b] : titulos_) g.drawText(titulo, b, juce::Justification::centredLeft);
+        for (size_t i = 0; i < titulos_.size(); ++i) {
+            const bool destaque = i < destaques_.size() && destaques_[i].getAlpha() > 0;
+            g.setColour(destaque ? destaques_[i] : tk.textoPrimario);
+            g.drawText(titulos_[i].first, titulos_[i].second, juce::Justification::centredLeft);
+        }
     }
 
 private:
@@ -68,6 +90,7 @@ private:
     int cardTopo_ = 0;
     std::vector<juce::Rectangle<int>> cards_;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> titulos_;
+    std::vector<juce::Colour> destaques_;  // um por card; transparente = visual normal
 };
 
 } // namespace matriz::ui

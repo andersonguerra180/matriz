@@ -589,6 +589,15 @@ void ArvoreBackupComponent::reconstruirPropostas() {
         l.usar = botao(i18n::t("arvore_backup.btn_usar_arvore"), i18n::t("arvore_backup.usar_dica"));
         l.mesclar = botao(i18n::t("arvore_backup.btn_mesclar"), i18n::t("arvore_backup.mesclar_dica"));
         l.descartar = botao(i18n::t("arvore_backup.btn_descartar"), i18n::t("arvore_backup.descartar_dica"));
+        // Botões coloridos pra ler a ação de longe: verde = usar, acento = mesclar, vermelho = descartar.
+        auto cor = [](juce::TextButton& b, juce::Colour c) {
+            b.setColour(juce::TextButton::buttonColourId, c);
+            b.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        };
+        cor(*l.usar, juce::Colour(0xff22c55e));
+        cor(*l.mesclar, tema().acento);
+        cor(*l.descartar, tema().perigo);
+        l.rotulo->setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
         const std::string id = p.raizId;
         const juce::String nome = p.nome;
         const int arquivos = p.arquivos;
@@ -1781,7 +1790,7 @@ void ArvoreBackupComponent::resized() {
             if (c) c->setVisible(!original);
     }
     if (!original && !propostas_.empty()) {
-        coluna_.iniciarCard(i18n::t("arvore_backup.card_novas"));
+        coluna_.iniciarCard(juce::String::fromUTF8("\xe2\x9a\xa0 ") + i18n::t("arvore_backup.card_novas_acao"));
         for (auto& p : propostas_) {
             if (p.rotulo) p.rotulo->setBounds(corpo.removeFromTop(16));
             corpo.removeFromTop(2);
@@ -1795,6 +1804,7 @@ void ArvoreBackupComponent::resized() {
             corpo.removeFromTop(8);
         }
         coluna_.finalizarCard();
+        coluna_.destacarUltimoCard(tema().alerta);  // chama a atenção até o usuário resolver (some junto com a proposta)
     }
 
     // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
