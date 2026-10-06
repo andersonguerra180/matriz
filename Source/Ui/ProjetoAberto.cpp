@@ -2040,6 +2040,31 @@ std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::
     return projeto_->pasta().getChildFile(relativo).getFullPathName();
 }
 
+std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo, int limite) const {
+    std::vector<ImagemCatalogo> out;
+    if (!projeto_) return out;
+    try {
+        const std::string padrao = "%" + termo + "%";
+        auto stmt = leitura().prepare(
+            "SELECT i.id, i.codigo_acervo, COALESCE(NULLIF(i.titulo, ''), a.caminho_relativo) "
+            "FROM item i JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(a.papel, '') != 'capa_frente' "
+            "AND (LOWER(a.caminho_relativo) LIKE '%.jpg' OR LOWER(a.caminho_relativo) LIKE '%.jpeg' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.png' OR LOWER(a.caminho_relativo) LIKE '%.gif' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.bmp' OR LOWER(a.caminho_relativo) LIKE '%.webp' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.tif' OR LOWER(a.caminho_relativo) LIKE '%.tiff') "
+            "AND (? = '' OR i.titulo LIKE ? OR i.codigo_acervo LIKE ? OR a.caminho_relativo LIKE ?) "
+            "ORDER BY i.criado_em DESC LIMIT ?");
+        stmt.bind(1, matriz::db::Value::of(termo));
+        stmt.bind(2, matriz::db::Value::of(padrao));
+        stmt.bind(3, matriz::db::Value::of(padrao));
+        stmt.bind(4, matriz::db::Value::of(padrao));
+        stmt.bind(5, matriz::db::Value::of(static_cast<long long>(limite)));
+        while (stmt.step()) out.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
+    } catch (const std::exception&) {}
+    return out;
+}
+
 void ProjetoAberto::gerarMiniaturasFaltantes() {
     if (!projeto_) { DBG("gerarMiniaturasFaltantes: projeto_ é nulo"); return; }
     auto& reg = projeto_->registro();

@@ -380,6 +380,11 @@ public:
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
 
+    // Imagens do próprio catálogo (arquivo master com extensão de imagem) cujo código, título ou nome do arquivo contém
+    // `termo` (vazio = as mais recentes). Alimenta o seletor "capa a partir do catálogo".
+    struct ImagemCatalogo { std::string id, codigo, titulo; };
+    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, int limite = 200) const;
+
     void gerarMiniaturasFaltantes();
 
     // Item D.9/10 ("Reload File" / "Replace File" no menu de contexto da

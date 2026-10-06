@@ -220,19 +220,180 @@ void renomear(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, G
     pedirNovoNome(projeto, itemIds, ganchos.aoMudarDados);
 }
 
+namespace {
+
+// Seletor de capa a partir do PRÓPRIO catálogo: busca por código/título/nome do arquivo, lista e prévia da miniatura.
+class SeletorImagemCatalogo : public juce::Component, private juce::ListBoxModel, private juce::Timer {
+public:
+    SeletorImagemCatalogo(ProjetoAberto& projeto, std::function<void(std::string)> aoEscolher)
+        : projeto_(projeto), aoEscolher_(std::move(aoEscolher)) {
+        const auto& tk = tema();
+        busca_.setTextToShowWhenEmpty(matriz::i18n::t("acoes.capa_buscar_dica"), tk.textoTerciario);
+        busca_.onTextChange = [this] { startTimer(250); };  // debounce: não consulta a cada tecla
+        addAndMakeVisible(busca_);
+        lista_.setModel(this);
+        lista_.setRowHeight(22);
+        addAndMakeVisible(lista_);
+        lblContagem_.setColour(juce::Label::textColourId, tk.textoTerciario);
+        lblContagem_.setFont(juce::Font(juce::FontOptions(11.0f)));
+        addAndMakeVisible(lblContagem_);
+        btnUsar_.setButtonText(matriz::i18n::t("acoes.capa_usar"));
+        btnUsar_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnUsar_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnUsar_.setEnabled(false);
+        btnUsar_.onClick = [this] { escolher(true); };
+        addAndMakeVisible(btnUsar_);
+        btnCancelar_.setButtonText(matriz::i18n::t("comum.cancelar"));
+        btnCancelar_.onClick = [this] { escolher(false); };
+        addAndMakeVisible(btnCancelar_);
+        setSize(640, 420);
+        consultar();
+    }
+
+    static void exibir(ProjetoAberto& projeto, std::function<void(std::string)> aoEscolher) {
+        juce::DialogWindow::LaunchOptions opt;
+        opt.dialogTitle = matriz::i18n::t("acoes.capa_do_catalogo");
+        opt.content.setOwned(new SeletorImagemCatalogo(projeto, std::move(aoEscolher)));
+        opt.dialogBackgroundColour = tema().fundo;
+        opt.escapeKeyTriggersCloseButton = true;
+        opt.useNativeTitleBar = true;
+        opt.resizable = false;
+        opt.launchAsync();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        g.fillAll(tk.fundo);
+        g.setColour(tk.painelAlt.withAlpha(0.5f));
+        g.fillRoundedRectangle(areaPrevia_.toFloat(), 6.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(areaPrevia_.toFloat().reduced(0.5f), 6.0f, 1.0f);
+        if (previa_.isValid())
+            g.drawImageWithin(previa_, areaPrevia_.getX() + 6, areaPrevia_.getY() + 6, areaPrevia_.getWidth() - 12,
+                              areaPrevia_.getHeight() - 12, juce::RectanglePlacement::centred, false);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().reduced(14);
+        busca_.setBounds(area.removeFromTop(28));
+        area.removeFromTop(6);
+        auto rodape = area.removeFromBottom(30);
+        btnCancelar_.setBounds(rodape.removeFromRight(110));
+        rodape.removeFromRight(8);
+        btnUsar_.setBounds(rodape.removeFromRight(150));
+        lblContagem_.setBounds(rodape);
+        area.removeFromBottom(8);
+        areaPrevia_ = area.removeFromRight(230);
+        area.removeFromRight(10);
+        lista_.setBounds(area);
+    }
+
+private:
+    int getNumRows() override { return static_cast<int>(resultados_.size()); }
+
+    void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selecionada) override {
+        if (row < 0 || row >= static_cast<int>(resultados_.size())) return;
+        const auto& tk = tema();
+        if (selecionada) g.fillAll(tk.acento.withAlpha(0.35f));
+        const auto& r = resultados_[static_cast<size_t>(row)];
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setColour(tk.textoTerciario);
+        g.drawText(juce::String::fromUTF8(r.codigo.c_str()), 6, 0, 78, h, juce::Justification::centredLeft, true);
+        g.setColour(tk.textoPrimario);
+        g.drawText(juce::String::fromUTF8(r.titulo.c_str()), 88, 0, w - 94, h, juce::Justification::centredLeft, true);
+    }
+
+    void selectedRowsChanged(int linha) override {
+        escolhido_.clear();
+        previa_ = {};
+        if (linha >= 0 && linha < static_cast<int>(resultados_.size())) {
+            escolhido_ = resultados_[static_cast<size_t>(linha)].id;
+            if (auto caminho = projeto_.caminhoMiniaturaPrincipal(escolhido_)) {
+                juce::File f(*caminho);
+                if (f.existsAsFile()) previa_ = juce::ImageFileFormat::loadFrom(f);
+            }
+        }
+        btnUsar_.setEnabled(!escolhido_.empty());
+        repaint();
+    }
+
+    void listBoxItemDoubleClicked(int linha, const juce::MouseEvent&) override {
+        lista_.selectRow(linha);
+        if (!escolhido_.empty()) escolher(true);
+    }
+
+    void timerCallback() override { stopTimer(); consultar(); }
+
+    void consultar() {
+        resultados_ = projeto_.buscarImagensDoCatalogo(busca_.getText().trim().toStdString());
+        lista_.updateContent();
+        lista_.deselectAllRows();
+        selectedRowsChanged(-1);
+        lblContagem_.setText(matriz::i18n::t("acoes.capa_contagem").replace("{n}", juce::String(static_cast<int>(resultados_.size()))),
+                             juce::dontSendNotification);
+    }
+
+    void escolher(bool usar) {
+        auto cb = aoEscolher_;
+        const std::string id = escolhido_;
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(usar ? 1 : 0);
+        if (usar && !id.empty() && cb) juce::MessageManager::callAsync([cb, id] { cb(id); });
+    }
+
+    ProjetoAberto& projeto_;
+    std::function<void(std::string)> aoEscolher_;
+    juce::TextEditor busca_;
+    juce::ListBox lista_;
+    juce::Label lblContagem_;
+    juce::TextButton btnUsar_, btnCancelar_;
+    juce::Rectangle<int> areaPrevia_;
+    juce::Image previa_;
+    std::vector<ProjetoAberto::ImagemCatalogo> resultados_;
+    std::string escolhido_;
+};
+
+} // namespace
+
 void definirCapa(ProjetoAberto& projeto, const std::vector<std::string>& itemIds, Ganchos ganchos) {
     if (itemIds.empty()) return;
-    auto seletor = std::make_shared<juce::FileChooser>(matriz::i18n::t("acoes.definir_capa"), juce::File(),
-                                                        "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp");
     ProjetoAberto* p = &projeto;
     auto ids = itemIds;
-    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                          [seletor, p, ids, ganchos](const juce::FileChooser& fc) {
-                              juce::File imagem = fc.getResult();
-                              if (imagem == juce::File()) return;
-                              p->definirCapa(ids, imagem);
-                              if (ganchos.aoMudarDados) ganchos.aoMudarDados();
-                          });
+
+    // Duas origens: uma imagem que já está no catálogo (busca no banco) ou um arquivo no disco/locações externas.
+    auto doDisco = [p, ids, ganchos] {
+        auto seletor = std::make_shared<juce::FileChooser>(matriz::i18n::t("acoes.definir_capa"), juce::File(),
+                                                            "*.jpg;*.jpeg;*.png;*.gif;*.bmp;*.webp");
+        seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [seletor, p, ids, ganchos](const juce::FileChooser& fc) {
+                                  juce::File imagem = fc.getResult();
+                                  if (imagem == juce::File()) return;
+                                  p->definirCapa(ids, imagem);
+                                  if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                              });
+    };
+    auto doCatalogo = [p, ids, ganchos] {
+        SeletorImagemCatalogo::exibir(*p, [p, ids, ganchos](std::string itemEscolhido) {
+            // O master do item escolhido; se está offline, cai na miniatura (melhor que nada).
+            juce::File origem;
+            if (auto info = p->arquivoPrincipal(itemEscolhido)) origem = juce::File(info->caminhoAbsoluto);
+            if (!origem.existsAsFile())
+                if (auto mini = p->caminhoMiniaturaPrincipal(itemEscolhido)) origem = juce::File(*mini);
+            if (!origem.existsAsFile()) {
+                avisarErroArquivo(matriz::i18n::t("acoes.capa_sem_arquivo"));
+                return;
+            }
+            p->definirCapa(ids, origem);
+            if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+        });
+    };
+
+    juce::PopupMenu menu;
+    menu.addItem(1, matriz::i18n::t("acoes.capa_do_catalogo"));
+    menu.addItem(2, matriz::i18n::t("acoes.capa_do_disco"));
+    menu.showMenuAsync(juce::PopupMenu::Options(), [doCatalogo, doDisco](int resultado) {
+        if (resultado == 1) doCatalogo();
+        else if (resultado == 2) doDisco();
+    });
 }
 
 void recarregarArquivo(ProjetoAberto& projeto, const std::string& itemId, Ganchos ganchos) {
