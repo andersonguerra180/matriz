@@ -852,7 +852,14 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
     if (ext == "bkrgs")
         return "groovesculptor.png";
     if (ext == "veg" || ext == "veg-bak")  // Sony Vegas (ícone genérico próprio, não a marca)
-        return "vegas.png";
+        return "vegas.jpeg";
+    // Modelagem 3D / impressão 3D / CAD: miniatura única 3d.jpg (esses formatos não têm preview no app).
+    if (ext == "stl" || ext == "obj" || ext == "fbx" || ext == "blend" || ext == "blend1" || ext == "3ds" || ext == "dae" ||
+        ext == "gltf" || ext == "glb" || ext == "ply" || ext == "step" || ext == "stp" || ext == "iges" || ext == "igs" ||
+        ext == "3mf" || ext == "amf" || ext == "gcode" || ext == "max" || ext == "c4d" || ext == "ma" || ext == "mb" ||
+        ext == "skp" || ext == "x3d" || ext == "wrl" || ext == "usd" || ext == "usda" || ext == "usdc" || ext == "usdz" ||
+        ext == "abc" || ext == "lwo" || ext == "lws" || ext == "mtl" || ext == "f3d" || ext == "ztl" || ext == "zpr")
+        return "3d.jpg";
     if (ext == "logic" || ext == "logicx")
         return "logic.png";
     if (ext == "lrcat" || ext == "lrcat-journal" || ext == "lrcat-wal" || ext == "lrcat-shm" || ext == "lrtemplate" || ext == "lrsmcol")
