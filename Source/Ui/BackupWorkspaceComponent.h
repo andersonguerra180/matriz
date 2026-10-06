@@ -266,6 +266,12 @@ private:
     std::vector<juce::String> falhasLista_;
     juce::String relatorioErros_;     // texto agrupado por causa, com o que fazer em cada uma
     juce::File arquivoRelatorioErros_;  // Project/relatorios/backup-erros-*.txt
+    std::vector<std::string> idsRemoviveis_;  // itens ausentes/alterados: o conserto é tirá-los do catálogo
+    std::vector<std::string> idsBloqueados_;  // todos os itens que ainda falham
+    juce::String tituloStatus_;
+    bool statusBloqueado_ = false;
+    bool statusPodeFinalizar_ = false;
+    std::unique_ptr<juce::TextButton> btnRebuildStatus_;  // abre a janela de status do Rebuild a qualquer momento
     void prepararRelatorioErros(bool rebuild);
     void mostrarErrosBackup();
 
