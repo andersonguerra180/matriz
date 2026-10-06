@@ -17,6 +17,7 @@ public:
     void lookAndFeelChanged() override;
 
     void aoProgressoAtualizado(const EstadoProgresso& estado) override;
+    void aoDicaAlterada() override { atualizarVisual(); }
 
     static constexpr int kAlturaFixa = 32;
 

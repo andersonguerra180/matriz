@@ -139,6 +139,30 @@ EstadoProgresso ProgressoGlobal::obterEstado() const {
     return estadoAtual_;
 }
 
+void ProgressoGlobal::definirDica(const juce::String& rotulo, const juce::String& texto) {
+    std::vector<ProgressoGlobalListener*> lista;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (dicaRotulo_ == rotulo && dicaTexto_ == texto) return;
+        dicaRotulo_ = rotulo;
+        dicaTexto_ = texto;
+        lista = listeners_;
+    }
+    for (auto* l : lista) {
+        if (l) l->aoDicaAlterada();
+    }
+}
+
+juce::String ProgressoGlobal::obterDicaRotulo() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return dicaRotulo_;
+}
+
+juce::String ProgressoGlobal::obterDicaTexto() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return dicaTexto_;
+}
+
 bool ProgressoGlobal::estaExecutando() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return estadoAtual_.ativo;

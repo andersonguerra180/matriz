@@ -1228,6 +1228,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"arvore_backup.apagar_pasta_menu", "Delete Folder"},
         {"arvore_backup.falha_importar", "Failed to import structure: "},
         {"arvore_backup.zoom", "Zoom:"},
+        {"arvore_backup.dica_pasta", "Folder"},
         {"arvore_backup.items", "items"},
         {"arvore_backup.btn_presets", "PRESETS"},
         {"arvore_backup.slider_tamanho_tooltip", "With folders selected: resizes only them (stops when it touches a neighbor). With none selected: resizes all, keeping the size difference between levels."},

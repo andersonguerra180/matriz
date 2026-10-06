@@ -33,6 +33,8 @@ class ProgressoGlobalListener {
 public:
     virtual ~ProgressoGlobalListener() = default;
     virtual void aoProgressoAtualizado(const EstadoProgresso& estado) = 0;
+    // Dica efêmera do rodapé (hover); só a message thread dispara. Tarefa ativa tem prioridade sobre a dica.
+    virtual void aoDicaAlterada() {}
 };
 
 class ProgressoGlobal {
@@ -67,6 +69,11 @@ public:
     void cancelarTarefa(const juce::String& id);
 
     EstadoProgresso obterEstado() const;
+
+    // Dica efêmera no rodapé (ex.: nome da pasta sob o mouse no Folder Map). Vazio = limpa. Message thread.
+    void definirDica(const juce::String& rotulo, const juce::String& texto);
+    juce::String obterDicaRotulo() const;
+    juce::String obterDicaTexto() const;
     bool estaExecutando() const;
 
 private:
@@ -78,6 +85,7 @@ private:
     mutable std::mutex mutex_;
     EstadoProgresso estadoAtual_;
     std::vector<ProgressoGlobalListener*> listeners_;
+    juce::String dicaRotulo_, dicaTexto_;  // protegidos por mutex_
 };
 
 } // namespace matriz::ui

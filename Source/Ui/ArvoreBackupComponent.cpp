@@ -6,6 +6,7 @@
 #include "HierarquiaEditorComponent.h"
 #include "LayoutArvoreFolderMap.h"
 #include "ModalMitigacao.h"
+#include "ProgressoGlobal.h"
 #include "Tokens.h"
 #include <algorithm>
 #include <cmath>
@@ -392,6 +393,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 
 ArvoreBackupComponent::~ArvoreBackupComponent() {
     autoRolagem_.stopTimer();
+    limparDicaPasta();
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
@@ -1830,7 +1832,41 @@ void ArvoreBackupComponent::resized() {
     }
 }
 
+void ArvoreBackupComponent::limparDicaPasta() {
+    dicaPasta_.stopTimer();
+    dicaPastaId_.clear();
+    ProgressoGlobal::obterInstancia().definirDica({}, {});
+}
+
+void ArvoreBackupComponent::mouseMove(const juce::MouseEvent& e) {
+    std::string idSob;
+    if (areaCanvas().contains(e.getPosition())) {
+        const auto p = screenToCanvas(e.getPosition());
+        for (const auto& n : nodes_)
+            if (n.bounds.toFloat().contains(p)) { idSob = n.id; break; }
+    }
+    if (idSob == dicaPastaId_) return;  // mesmo alvo: o timer de 1 s segue contando (ou a dica já está no rodapé)
+    limparDicaPasta();
+    if (idSob.empty()) return;
+    dicaPastaId_ = idSob;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    dicaPasta_.aoTick = [safeThis] {
+        if (!safeThis) return;
+        for (const auto& n : safeThis->nodes_)
+            if (n.id == safeThis->dicaPastaId_) {
+                ProgressoGlobal::obterInstancia().definirDica(i18n::t("arvore_backup.dica_pasta"), n.nome);
+                return;
+            }
+    };
+    dicaPasta_.startTimer(1000);
+}
+
+void ArvoreBackupComponent::mouseExit(const juce::MouseEvent&) {
+    limparDicaPasta();
+}
+
 void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
+    limparDicaPasta();  // clicou: a dica de hover não vale mais
     grabKeyboardFocus(); // garante que ESC (e os atalhos +/-/F2 já existentes) cheguem a este canvas
     if (!destaqueNovaPastaId_.empty()) { // S4/15 — qualquer clique encerra o destaque da pasta nova
         destaqueNovaPastaId_.clear();

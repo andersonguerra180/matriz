@@ -56,6 +56,8 @@ public:
     void lookAndFeelChanged() override;
 
     void mouseDown(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
@@ -118,6 +120,13 @@ private:
         std::function<void()> aoTick;
         void timerCallback() override { if (aoTick) aoTick(); }
     } autoRolagem_;
+    // Dica no rodapé: o mouse parado mais de 1 s sobre uma pasta (sem clicar) mostra o nome dela no footer do app.
+    struct TimerDicaPasta : juce::Timer {
+        std::function<void()> aoTick;
+        void timerCallback() override { stopTimer(); if (aoTick) aoTick(); }
+    } dicaPasta_;
+    std::string dicaPastaId_;  // pasta sob o mouse (candidata ou já mostrada); vazio = nenhuma
+    void limparDicaPasta();
     void moverArrastoPara(juce::Point<int> mouseTela);
     void tickAutoRolagem();
 

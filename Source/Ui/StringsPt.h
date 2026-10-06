@@ -1240,6 +1240,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"arvore_backup.apagar_pasta_menu", "Excluir Pasta"},
         {"arvore_backup.falha_importar", "Falha ao importar estrutura: "},
         {"arvore_backup.zoom", "Zoom:"},
+        {"arvore_backup.dica_pasta", "Pasta"},
         {"arvore_backup.items", "itens"},
         {"arvore_backup.btn_presets", "PRESETS"},
         {"arvore_backup.slider_tamanho_tooltip", "Com pastas selecionadas: muda só o tamanho delas (para ao encostar num vizinho). Sem seleção: muda todas, mantendo a diferença de tamanho entre os níveis."},

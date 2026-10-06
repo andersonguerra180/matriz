@@ -97,7 +97,14 @@ void BarraProgressoGlobalComponent::atualizarVisual() {
     } else {
         btnCancelar_->setVisible(false);
 
-        if (estado_.mensagemConclusao.isNotEmpty()) {
+        const auto dicaTexto = ProgressoGlobal::obterInstancia().obterDicaTexto();
+        if (dicaTexto.isNotEmpty()) {
+            // Dica de hover (ex.: nome da pasta no Folder Map): some ao tirar o mouse.
+            lblTitulo_->setText(ProgressoGlobal::obterInstancia().obterDicaRotulo().toUpperCase(), juce::dontSendNotification);
+            lblTitulo_->setColour(juce::Label::textColourId, tk.acento);
+            lblDetalhe_->setText(dicaTexto, juce::dontSendNotification);
+            lblDetalhe_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        } else if (estado_.mensagemConclusao.isNotEmpty()) {
             lblTitulo_->setText("COMPLETED", juce::dontSendNotification);
             lblTitulo_->setColour(juce::Label::textColourId, juce::Colour(0xff22c55e));
             lblDetalhe_->setText(estado_.mensagemConclusao, juce::dontSendNotification);
