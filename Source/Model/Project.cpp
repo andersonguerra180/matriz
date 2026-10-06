@@ -933,33 +933,42 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
         "CREATE INDEX IF NOT EXISTS idx_geo_country_state_city ON asset_geolocation(country, state_province, city);"
     );
 
-    // Migrate existing item_campo values to new columns if they exist
+    // Migrate existing item_campo values to new columns if they exist.
+    // Uma única leitura sequencial de item_campo (só leitura, sem trava de escrita) em vez de 5 UPDATEs com
+    // subconsulta correlacionada por item: num HD frio cada UPDATE era ~15 mil buscas aleatórias no índice
+    // (14-25 s por abertura, mesmo sem nada a migrar). Só grava se houver o que migrar. Mesmas regras de antes:
+    // preenche a coluna de `item` apenas quando está NULL e existe item_campo raiz/0 do campo.
     try {
-        registro.run(
-            "UPDATE item SET ano = (SELECT valor FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'ano' AND nivel = 'raiz' AND nivel_indice = 0) "
-            "WHERE ano IS NULL AND EXISTS (SELECT 1 FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'ano' AND nivel = 'raiz' AND nivel_indice = 0)", {});
-        registro.run(
-            "UPDATE item SET isrc = (SELECT valor FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'isrc' AND nivel = 'raiz' AND nivel_indice = 0) "
-            "WHERE isrc IS NULL AND EXISTS (SELECT 1 FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'isrc' AND nivel = 'raiz' AND nivel_indice = 0)", {});
-        registro.run(
-            "UPDATE item SET content_type = (SELECT valor FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'content_type' AND nivel = 'raiz' AND nivel_indice = 0) "
-            "WHERE content_type IS NULL AND EXISTS (SELECT 1 FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'content_type' AND nivel = 'raiz' AND nivel_indice = 0)", {});
-        registro.run(
-            "UPDATE item SET source_media = (SELECT valor FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'source_media' AND nivel = 'raiz' AND nivel_indice = 0) "
-            "WHERE source_media IS NULL AND EXISTS (SELECT 1 FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'source_media' AND nivel = 'raiz' AND nivel_indice = 0)", {});
-        registro.run(
-            "UPDATE item SET collection_type = (SELECT valor FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'collection_type' AND nivel = 'raiz' AND nivel_indice = 0) "
-            "WHERE collection_type IS NULL AND EXISTS (SELECT 1 FROM item_campo WHERE item_id = item.id "
-            "AND campo_id = 'collection_type' AND nivel = 'raiz' AND nivel_indice = 0)", {});
+        struct Migrar { std::string itemId; const char* coluna; std::string valor; };
+        std::vector<Migrar> pendentes;
+        {
+            static const char* const kCampos[] = {"ano", "isrc", "content_type", "source_media", "collection_type"};
+            auto sel = registro.prepare(
+                "SELECT c.item_id, c.campo_id, c.valor FROM item_campo c JOIN item i ON i.id = c.item_id "
+                "WHERE c.nivel = 'raiz' AND c.nivel_indice = 0 "
+                "AND c.campo_id IN ('ano', 'isrc', 'content_type', 'source_media', 'collection_type') "
+                "AND CASE c.campo_id WHEN 'ano' THEN i.ano WHEN 'isrc' THEN i.isrc "
+                "WHEN 'content_type' THEN i.content_type WHEN 'source_media' THEN i.source_media "
+                "ELSE i.collection_type END IS NULL");
+            while (sel.step()) {
+                if (sel.columnIsNull(2)) continue;  // UPDATE antigo: valor NULL deixava a coluna NULL
+                const std::string campo = sel.columnText(1);
+                for (const char* col : kCampos)
+                    if (campo == col) { pendentes.push_back({sel.columnText(0), col, sel.columnText(2)}); break; }
+            }
+        }
+        if (!pendentes.empty()) {
+            registro.run("BEGIN TRANSACTION", {});
+            try {
+                for (const auto& m : pendentes)
+                    registro.run(std::string("UPDATE item SET ") + m.coluna + " = ? WHERE id = ? AND " + m.coluna + " IS NULL",
+                                 {matriz::db::Value::of(m.valor), matriz::db::Value::of(m.itemId)});
+                registro.run("COMMIT", {});
+            } catch (...) {
+                registro.run("ROLLBACK", {});
+                throw;
+            }
+        }
     } catch (...) {
         // Migration from old campos is best-effort — may not exist
     }
