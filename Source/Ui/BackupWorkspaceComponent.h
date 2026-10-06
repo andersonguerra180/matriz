@@ -264,6 +264,10 @@ private:
     int verificadoCount_ = 0;
     int falhasCount_ = 0;
     std::vector<juce::String> falhasLista_;
+    juce::String relatorioErros_;     // texto agrupado por causa, com o que fazer em cada uma
+    juce::File arquivoRelatorioErros_;  // Project/relatorios/backup-erros-*.txt
+    void prepararRelatorioErros(bool rebuild);
+    void mostrarErrosBackup();
 
     // UI elements — ALL visible at once in Config state
     std::unique_ptr<juce::Label> labelTitulo_;
@@ -378,6 +382,7 @@ private:
     std::unique_ptr<juce::TextButton> btnLimparWatermark_;
     std::unique_ptr<juce::TextButton> btnCancelarExecucao_;
     std::unique_ptr<juce::TextButton> btnDone_;
+    std::unique_ptr<juce::TextButton> btnVerErros_;  // reabre o resultado detalhado quando o backup terminou com erros
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;
     std::unique_ptr<juce::TextButton> btnExportXls_;
     std::unique_ptr<juce::TextButton> btnExportCsv_;

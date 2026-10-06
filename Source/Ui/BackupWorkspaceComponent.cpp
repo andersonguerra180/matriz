@@ -32,6 +32,82 @@ namespace matriz::ui {
 
 namespace {
 
+// Resultado detalhado de um backup que terminou com erros: lista completa (agrupada por causa, com o que fazer
+// em cada uma), cópia para a área de transferência e abertura do relatório gravado em Project/relatorios/.
+class ErrosBackupDialog : public juce::Component {
+public:
+    ErrosBackupDialog(const juce::String& titulo, const juce::String& texto, const juce::File& relatorio)
+        : texto_(texto), relatorio_(relatorio) {
+        const auto& tk = tema();
+        lblTitulo_.setText(titulo, juce::dontSendNotification);
+        lblTitulo_.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+        lblTitulo_.setColour(juce::Label::textColourId, tk.perigo);
+        addAndMakeVisible(lblTitulo_);
+
+        editor_.setMultiLine(true, true);
+        editor_.setReadOnly(true);
+        editor_.setScrollbarsShown(true);
+        editor_.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
+        editor_.setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+        editor_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        editor_.setColour(juce::TextEditor::outlineColourId, tk.borda);
+        editor_.setText(texto, false);
+        addAndMakeVisible(editor_);
+
+        btnCopiar_.setButtonText(matriz::i18n::t("backup.erros_copiar"));
+        btnCopiar_.onClick = [this] { juce::SystemClipboard::copyTextToClipboard(texto_); };
+        addAndMakeVisible(btnCopiar_);
+        btnAbrir_.setButtonText(matriz::i18n::t("backup.erros_abrir"));
+        btnAbrir_.setEnabled(relatorio_.existsAsFile());
+        btnAbrir_.onClick = [this] {
+            if (!relatorio_.startAsProcess()) relatorio_.revealToUser();
+        };
+        addAndMakeVisible(btnAbrir_);
+        btnFechar_.setButtonText(matriz::i18n::t("backup.erros_fechar"));
+        btnFechar_.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        addAndMakeVisible(btnFechar_);
+        setSize(820, 560);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(20);
+        lblTitulo_.setBounds(r.removeFromTop(26));
+        r.removeFromTop(8);
+        auto baixo = r.removeFromBottom(34);
+        btnFechar_.setBounds(baixo.removeFromRight(110));
+        baixo.removeFromRight(10);
+        btnAbrir_.setBounds(baixo.removeFromRight(150));
+        baixo.removeFromRight(10);
+        btnCopiar_.setBounds(baixo.removeFromRight(140));
+        r.removeFromBottom(10);
+        editor_.setBounds(r);
+    }
+
+    static void mostrar(const juce::String& titulo, const juce::String& texto, const juce::File& relatorio, juce::Component* centrarEm) {
+        juce::DialogWindow::LaunchOptions opts;
+        opts.content.setOwned(new ErrosBackupDialog(titulo, texto, relatorio));
+        opts.dialogTitle = titulo;
+        opts.dialogBackgroundColour = tema().painel;
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar = true;
+        opts.resizable = true;
+        opts.componentToCentreAround = centrarEm;
+        opts.launchAsync();
+    }
+
+private:
+    juce::String texto_;
+    juce::File relatorio_;
+    juce::Label lblTitulo_;
+    juce::TextEditor editor_;
+    juce::TextButton btnCopiar_, btnAbrir_, btnFechar_;
+};
+
+
 // EXPORT (etapa 6): opções livres — não afetam nada no MAIN.
 struct OpcoesExport {
     juce::File destino;
@@ -1997,6 +2073,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnDone_);
 
+    btnVerErros_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.erros_btn"));
+    aplicarEstiloBotao(*btnVerErros_, false);
+    btnVerErros_->onClick = [this] { mostrarErrosBackup(); };
+    addChildComponent(*btnVerErros_);
+
     btnOpenCatalog_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
     aplicarEstiloBotao(*btnOpenCatalog_, true);
     btnOpenCatalog_->setTooltip(isPt ? juce::String::fromUTF8("Abrir pasta do backup no Finder") : "Open backup folder in Finder");
@@ -2286,6 +2367,10 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
     if (btnDone_) {
         btnDone_->setButtonText(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
         aplicarEstiloBotao(*btnDone_, false);
+    }
+    if (btnVerErros_) {
+        btnVerErros_->setButtonText(matriz::i18n::t("backup.erros_btn"));
+        aplicarEstiloBotao(*btnVerErros_, false);
     }
     if (btnOpenCatalog_) {
         btnOpenCatalog_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
@@ -3879,6 +3964,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
         safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
         safeThis->falhasLista_.clear();
+        safeThis->relatorioErros_.clear();
         for (const auto& f : movs.falhas) safeThis->falhasLista_.push_back("move: " + f);
         safeThis->falhasCount_ += static_cast<int>(movs.falhas.size());
         for (const auto& f : resultado.falhas)
@@ -4033,17 +4119,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                                 : matriz::i18n::t("backup.aviso_source_dependem")
                                                       .replace("{n}", juce::String(dependem)));
         }
-        if (houveFalha) {
-            finalMsg << "\n";
-            int mostradas = 0;
-            for (const auto& f : safeThis->falhasLista_) {
-                if (mostradas++ >= 4) break;
-                finalMsg << "\n" << f;
-            }
-            if (safeThis->falhasLista_.size() > 4)
-                finalMsg << "\n... and " << static_cast<int>(safeThis->falhasLista_.size()) - 4 << " more.";
-        }
+        if (houveFalha)
+            finalMsg << "\n\n" << matriz::i18n::t("backup.erros_pointer").replace("{n}", juce::String(safeThis->falhasCount_));
         safeThis->labelResumo_->setText(finalMsg, juce::dontSendNotification);
+        // Backup com erros: abre já o resultado detalhado (o que falhou, por quê e onde resolver) em vez de
+        // deixar o usuário procurar no log.md.
+        if (houveFalha && !resultado.cancelado && !safeThis->falhasLista_.empty()) {
+            safeThis->prepararRelatorioErros(rebuild);
+            safeThis->mostrarErrosBackup();
+        }
 
         safeThis->labelTitulo_->setText(resultado.cancelado ? "Backup Cancelled" : "Backup Complete",
                                          juce::dontSendNotification);
@@ -4054,6 +4138,87 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (!resultado.cancelado && !rebuild) safeThis->perguntarSincronizarClones();
         });
     });
+}
+
+void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
+    struct Grupo { juce::String chave, motivo, acao; std::vector<juce::String> linhas; };
+    std::vector<Grupo> grupos;
+    auto obter = [&](const juce::String& chave, const char* kMotivo, const char* kAcao) -> Grupo& {
+        for (auto& g : grupos) if (g.chave == chave) return g;
+        grupos.push_back({chave, matriz::i18n::t(kMotivo), matriz::i18n::t(kAcao), {}});
+        return grupos.back();
+    };
+
+    int consultas = 0;
+    constexpr int kMaxConsultas = 300;  // caminho original de cada código; depois disso só o código
+    for (const auto& f : falhasLista_) {
+        juce::String resto = f;
+        const bool mover = resto.startsWith("move: ");
+        if (mover) resto = resto.substring(6);
+        juce::String codigo, motivo = resto;
+        const int sep = resto.indexOf(": ");
+        if (sep > 0 && sep <= 40) {
+            codigo = resto.substring(0, sep);
+            motivo = resto.substring(sep + 2);
+            if (motivo.endsWith(": " + codigo)) motivo = motivo.dropLastCharacters(codigo.length() + 2);
+        }
+
+        Grupo* g = nullptr;
+        if (motivo.contains("ausente no MAIN antigo")) g = &obter("ausente", "backup.erro_ausente", "backup.erro_ausente_acao");
+        else if (motivo.contains("difere do hash")) g = &obter("hash", "backup.erro_hash", "backup.erro_hash_acao");
+        else if (motivo.contains("name conflict")) g = &obter("nome", "backup.erro_nome", "backup.erro_nome_acao");
+        else if (mover) g = &obter("move", "backup.erro_move", "backup.erro_move_acao");
+        else g = &obter("outro", "backup.erro_outro", "backup.erro_outro_acao");
+
+        juce::String caminho;
+        if (codigo.isNotEmpty() && consultas < kMaxConsultas) {
+            ++consultas;
+            try {
+                auto st = projeto_.projeto().registro().prepare(
+                    "SELECT COALESCE(NULLIF(a.caminho_absoluto_origem, ''), a.caminho_relativo) FROM item i "
+                    "JOIN arquivo a ON a.item_id = i.id WHERE i.codigo_acervo = ? ORDER BY a.eh_master DESC LIMIT 1");
+                st.bind(1, matriz::db::Value::of(codigo.toStdString()));
+                if (st.step()) caminho = juce::String::fromUTF8(st.columnText(0).c_str());
+            } catch (...) {}
+        }
+        juce::String linha = "    " + codigo.paddedRight(' ', 12) + caminho;
+        if (g->chave == "outro" || g->chave == "move") linha += (caminho.isEmpty() ? "" : "   ") + motivo;
+        g->linhas.push_back(linha.trimEnd());
+    }
+
+    // Ordem fixa: o que mais bloqueia o usuário primeiro.
+    const char* ordem[] = {"ausente", "hash", "nome", "move", "outro"};
+    juce::String texto;
+    texto << matriz::i18n::t("backup.erros_intro") << "\n";
+    if (rebuild) texto << matriz::i18n::t("backup.erros_rebuild") << "\n";
+    texto << "\n";
+    for (const char* chave : ordem) {
+        for (const auto& g : grupos) {
+            if (g.chave != chave) continue;
+            texto << matriz::i18n::t("backup.erros_grupo").replace("{n}", juce::String((int) g.linhas.size())).replace("{motivo}", g.motivo) << "\n";
+            texto << "  " << matriz::i18n::t("backup.erros_onde") << g.acao << "\n";
+            for (const auto& l : g.linhas) texto << l << "\n";
+            texto << "\n";
+        }
+    }
+
+    arquivoRelatorioErros_ = juce::File();
+    try {
+        const juce::File dir = projeto_.projeto().pasta().getChildFile("relatorios");
+        dir.createDirectory();
+        const juce::File arq = dir.getChildFile("backup-erros-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
+        const juce::String titulo = matriz::i18n::t("backup.erros_titulo").replace("{n}", juce::String(falhasCount_));
+        if (arq.replaceWithText(titulo + "\n\n" + texto)) arquivoRelatorioErros_ = arq;
+    } catch (...) {}
+    if (arquivoRelatorioErros_ != juce::File())
+        texto << matriz::i18n::t("backup.erros_relatorio") << "\n" << arquivoRelatorioErros_.getFullPathName() << "\n";
+    relatorioErros_ = texto;
+}
+
+void BackupWorkspaceComponent::mostrarErrosBackup() {
+    if (relatorioErros_.isEmpty()) return;
+    ErrosBackupDialog::mostrar(matriz::i18n::t("backup.erros_titulo").replace("{n}", juce::String(falhasCount_)), relatorioErros_,
+                               arquivoRelatorioErros_, this);
 }
 
 // ---------------------------------------------------------------- REBUILD DO MAIN
@@ -5520,11 +5685,20 @@ void BackupWorkspaceComponent::resized() {
         if (btnLimparWatermark_) btnLimparWatermark_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
+        if (btnVerErros_) {
+            const bool comErros = falhasCount_ > 0 && relatorioErros_.isNotEmpty();
+            btnVerErros_->setVisible(comErros);
+            if (comErros) {
+                btnVerErros_->setBounds(botoes.removeFromRight(150));
+                botoes.removeFromRight(tk.espacoPainel);
+            }
+        }
         if (btnOpenCatalog_) {
             btnOpenCatalog_->setBounds(botoes.removeFromRight(200));
             btnOpenCatalog_->setVisible(true);
         }
     } else {
+        if (btnVerErros_) btnVerErros_->setVisible(false);
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
         btnDone_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
@@ -5650,6 +5824,8 @@ void BackupWorkspaceComponent::voltarParaConfiguracao() {
     verificadoCount_ = 0;
     falhasCount_ = 0;
     falhasLista_.clear();
+    relatorioErros_.clear();
+    if (btnVerErros_) btnVerErros_->setVisible(false);
     barraProgresso_->setVisible(false);
     labelProgressoStatus_->setVisible(false);
     labelProgressoStatus_->setText({}, juce::dontSendNotification);
