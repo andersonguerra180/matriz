@@ -1735,7 +1735,9 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     // coluna esquerda funilam dentro dela; só ALL ASSETS (limparTodosOsFiltros,
     // acima) a desliga.
 
-    if (indice < indiceInicioMediaType_) {
+    // "Merge conflicts" fica visualmente no card MEDIA TYPE mas é categoria de coleção (como All/Selected): tratá-lo
+    // como chip de tipo de mídia gravava tipoMidiaSelecionado_="merge_conflitos", que nenhum item casa -> grade vazia.
+    if (indice < indiceInicioMediaType_ || chave == "merge_conflitos") {
         categoriaSelecionada_ = indice;
     } else {
         if (tipoMidiaSelecionado_.has_value() && *tipoMidiaSelecionado_ == chave)
@@ -1768,7 +1770,7 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
         int idx = static_cast<int>(i);
         const auto& ch = categorias_[i].chave;
         bool ativo = false;
-        if (idx < indiceInicioMediaType_)
+        if (idx < indiceInicioMediaType_ || ch == "merge_conflitos")
             ativo = (idx == categoriaSelecionada_);
         else
             ativo = (tipoMidiaSelecionado_.has_value() && *tipoMidiaSelecionado_ == ch);
