@@ -128,9 +128,11 @@ MainEditPanel::MainEditPanel(ProjetoAberto& projeto) : projeto_(projeto) {
     resumoQuarentena_.setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(resumoQuarentena_);
 
+    // Rebuild do MAIN: o MAIN antigo é só fonte — as operações diretas de arquivo e pasta ficam escondidas
+    // (o código segue aí, o motor do MAIN ainda o usa); só a aba QUARENTENA é útil.
+    btnAbaArquivos_.setVisible(false);
     setSize(880, 580);
-    mostrarAba(true);
-    carregarArquivos();
+    mostrarAba(false);
     carregarQuarentena();
 }
 
@@ -144,8 +146,10 @@ void MainEditPanel::paint(juce::Graphics& g) { g.fillAll(tema().fundo); }
 void MainEditPanel::resized() {
     auto r = getLocalBounds().reduced(12);
     auto abas = r.removeFromTop(30);
-    btnAbaArquivos_.setBounds(abas.removeFromLeft(140));
-    abas.removeFromLeft(6);
+    if (btnAbaArquivos_.isVisible()) {
+        btnAbaArquivos_.setBounds(abas.removeFromLeft(140));
+        abas.removeFromLeft(6);
+    }
     btnAbaQuarentena_.setBounds(abas.removeFromLeft(140));
     r.removeFromTop(8);
 

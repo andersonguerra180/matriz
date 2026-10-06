@@ -686,7 +686,22 @@ public:
     bool reavaliarSomenteLeitura();
     // Aviso único (com trava de tempo) usado por todo guarda de escrita.
     static void avisarSomenteLeitura();
+    // MAIN EDIT MODE = REBUILD DO MAIN: o MAIN antigo (papel FONTE_REBUILD) vira só leitura, o
+    // projeto fica sem MAIN e o próximo Make Backup gera um novo do zero. Persiste no banco
+    // (papel do destino) até o rebuild terminar. editandoMain() == "rebuild em andamento".
     bool editandoMain() const { return editandoMain_; }
+    bool emRebuild() const { return editandoMain_; }
+    struct FonteRebuild {
+        std::string destinoId;
+        juce::File raiz;  // raiz do MAIN antigo (contém Media/ e Project/)
+    };
+    std::optional<FonteRebuild> fonteRebuild() const;
+    // Pasta escolhida para o MAIN novo ("" = ainda não escolhida); persiste pra retomar.
+    juce::File rebuildDestino() const;
+    void definirRebuildDestino(const juce::File& raiz);
+    // Fim bem-sucedido: o destino novo vira ORIGINAL, o antigo sai da lista, os clones antigos
+    // ficam desatualizados e o modo termina. Devolve "" ou a mensagem de erro.
+    juce::String concluirRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId);
     // MAIN existe e é este projeto (não CLONE) — condição pra oferecer o modo.
     bool podeEditarMain() const;
     // Só compara o texto com o nome atual; false = barreira não passou.

@@ -180,6 +180,8 @@ ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : 
     juce::File pastaProjeto = projeto_->pasta();
     // Fase 5: destino com papel CLONE abre somente leitura.
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
+    // Rebuild do MAIN em andamento (persistido: destino com papel FONTE_REBUILD) — o modo sobrevive ao fechar/reabrir.
+    editandoMain_ = !somenteLeitura_ && projeto_->modo() != matriz::model::Modo::Catalogo && fonteRebuild().has_value();
     poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
     poolMarcas_.addJob([this]() { carregarMarcacoesDoBanco(); }); // P/W/K/HTML: idem
     poolMarcas_.addJob([this]() { carregarSessoesPrintDoBanco(); }); // histórico de impressão: idem
@@ -2667,6 +2669,7 @@ std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::
 
 bool ProjetoAberto::mainExiste() const {
     if (!projeto_) return false;
+    if (editandoMain_) return false;  // rebuild: o MAIN antigo é só fonte; o projeto está sem MAIN
     try {
         auto st = leitura().prepare("SELECT 1 FROM consolidacao_registro LIMIT 1");
         return st.step();
@@ -2702,6 +2705,7 @@ juce::String ProjetoAberto::nomeDoMapaDoMain() const {
 
 bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
     if (!projeto_) return false;
+    if (editandoMain_) return false;  // rebuild: estrutura livre, nada travado pelo MAIN antigo
     try {
         // Fase 2: as travas valem só pro mapa do MAIN; os outros mapas do
         // usuário ficam sempre livres. Sem mapa_id gravado, MAIN por regra
@@ -5865,6 +5869,7 @@ std::vector<ProjetoAberto::VaultResumo> ProjetoAberto::listarVaults() const {
 ProjetoAberto::SituacaoMain ProjetoAberto::normalizarPapelMain() {
     SituacaoMain sit;
     if (!projeto_) return sit;
+    if (editandoMain_) { sit.tipo = SituacaoMain::Tipo::Ok; return sit; }  // rebuild: sem MAIN de propósito
     auto& db = projeto_->registro();
     struct Linha { std::string id, destinationId, papel; juce::String rotulo, caminho; };
     std::vector<Linha> linhas;
@@ -7133,31 +7138,136 @@ bool ProjetoAberto::nomeConfereComProjeto(const juce::String& digitado) const {
     return atual.isNotEmpty() && digitado.trim() == atual;
 }
 
+std::optional<ProjetoAberto::FonteRebuild> ProjetoAberto::fonteRebuild() const {
+    if (!projeto_) return std::nullopt;
+    try {
+        auto st = projeto_->registro().prepare(
+            "SELECT COALESCE(destination_id, id), destino_path FROM backup_destino WHERE papel = 'FONTE_REBUILD' LIMIT 1");
+        if (!st.step()) return std::nullopt;
+        FonteRebuild f;
+        f.destinoId = st.columnText(0);
+        f.raiz = juce::File(juce::String::fromUTF8(st.columnText(1).c_str()));
+        return f;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+juce::File ProjetoAberto::rebuildDestino() const {
+    if (!projeto_) return {};
+    try {
+        auto st = projeto_->registro().prepare("SELECT COALESCE(rebuild_destino, '') FROM projeto LIMIT 1");
+        if (st.step() && !st.columnText(0).empty()) return juce::File(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    return {};
+}
+
+void ProjetoAberto::definirRebuildDestino(const juce::File& raiz) {
+    if (!projeto_) return;
+    projeto_->registro().run("UPDATE projeto SET rebuild_destino = ?",
+                             {matriz::db::Value::of(raiz.getFullPathName().toStdString())});
+}
+
+// Entrar no modo = o MAIN atual vira fonte de leitura e o projeto fica sem MAIN. Só o banco muda;
+// a pasta do MAIN antigo não é tocada. Itens, IDs, metadados e histórico seguem os mesmos.
 bool ProjetoAberto::entrarModoEdicaoMain(const juce::String& nomeDigitado) {
     if (editandoMain_) return true;
     if (!podeEditarMain() || !nomeConfereComProjeto(nomeDigitado)) return false;
+    auto& db = projeto_->registro();
+    juce::String configAntiga;
+    try {
+        db.run("BEGIN IMMEDIATE", {});
+        std::string idMain;
+        {
+            auto st = db.prepare("SELECT id FROM backup_destino WHERE papel = 'ORIGINAL' AND ativo = 1 LIMIT 1");
+            if (st.step()) idMain = st.columnText(0);
+        }
+        if (!idMain.empty()) {
+            db.run("UPDATE backup_destino SET papel = 'FONTE_REBUILD', ativo = 1 WHERE id = ?", {matriz::db::Value::of(idMain)});
+        } else {
+            // MAIN na raiz do projeto, nunca registrado como destino: registra já como fonte.
+            const std::string agora = matriz::model::agoraIso8601();
+            const std::string novoId = matriz::model::novoUuid();
+            db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em) "
+                   "VALUES (?, ?, ?, ?, 'FONTE_REBUILD', 1, ?)",
+                   {matriz::db::Value::of(novoId), matriz::db::Value::of(projeto_->destinationId()),
+                    matriz::db::Value::of(projeto_->raiz().getFullPathName().toStdString()),
+                    matriz::db::Value::of(projeto_->raiz().getFileName().toStdString()), matriz::db::Value::of(agora)});
+        }
+        {
+            auto sc = db.prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            if (sc.step()) configAntiga = juce::String::fromUTF8(sc.columnText(0).c_str());
+        }
+        // A estrutura do MAIN novo é decidida no Make Backup (como no primeiro backup).
+        db.run("UPDATE projeto SET backup_config_main = NULL, rebuild_destino = ''", {});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return false;
+    }
     editandoMain_ = true;
-    tocarAtividadeMain();
-    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: entered", {"The MAIN is now editable through Matriz."}); } catch (...) {}
+    try {
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+            "REBUILD DO MAIN: entered",
+            {"The old MAIN is now read-only (FONTE_REBUILD): " + projeto_->raiz().getFullPathName(),
+             "Old MAIN settings: " + configAntiga});
+    } catch (...) {}
     if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
     return true;
 }
 
-void ProjetoAberto::sairModoEdicaoMain(const juce::String& motivo) {
-    if (!editandoMain_) return;
+// Não há saída sem concluir o rebuild (o modo persiste até o Make Backup terminar sem falhas).
+void ProjetoAberto::sairModoEdicaoMain(const juce::String&) {}
+
+juce::String ProjetoAberto::concluirRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId) {
+    if (!projeto_ || !editandoMain_) return "rebuild is not active";
+    const auto fonte = fonteRebuild();
+    if (!fonte) return "old MAIN (FONTE_REBUILD) not found";
+    auto& db = projeto_->registro();
+    const std::string chaveNova = matriz::consolidacao::chaveDestino(novaRaiz.getChildFile("Media"));
+    const std::string agora = matriz::model::agoraIso8601();
+    try {
+        db.run("BEGIN IMMEDIATE", {});
+        // Os registros do MAIN antigo (destino_id dele, ou legados sem destino) saem; ficam só os do novo.
+        db.run("DELETE FROM consolidacao_registro WHERE COALESCE(destino_path, '') <> ? "
+               "AND (COALESCE(destino_id, '') IN ('', ?))",
+               {matriz::db::Value::of(chaveNova), matriz::db::Value::of(fonte->destinoId)});
+        db.run("DELETE FROM backup_destino WHERE papel = 'FONTE_REBUILD'", {});
+        auto st = db.prepare("SELECT id FROM backup_destino WHERE destino_path = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(novaRaiz.getFullPathName().toStdString()));
+        if (st.step()) {
+            db.run("UPDATE backup_destino SET papel = 'ORIGINAL', ativo = 1, destination_id = ?, desatualizado_rebuild = 0 WHERE id = ?",
+                   {matriz::db::Value::of(novoDestinationId), matriz::db::Value::of(st.columnText(0))});
+        } else {
+            db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+                   "ultima_revisao_conhecida) VALUES (?, ?, ?, ?, 'ORIGINAL', 1, ?, ?)",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(novoDestinationId),
+                    matriz::db::Value::of(novaRaiz.getFullPathName().toStdString()),
+                    matriz::db::Value::of(novaRaiz.getFileName().toStdString()), matriz::db::Value::of(agora),
+                    matriz::db::Value::of(static_cast<int64_t>(projeto_->revisao()))});
+        }
+        // Clones do MAIN antigo: desatualizados, sem sincronizar (criar clones novos do MAIN novo).
+        db.run("UPDATE backup_destino SET desatualizado_rebuild = 1 WHERE papel = 'CLONE'", {});
+        db.run("UPDATE projeto SET rebuild_destino = ''", {});
+        db.run("COMMIT", {});
+    } catch (const std::exception& e) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return juce::String::fromUTF8(e.what());
+    }
     editandoMain_ = false;
-    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: left", {"Reason: " + motivo}); } catch (...) {}
+    try {
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+            "REBUILD DO MAIN: completed",
+            {"New MAIN: " + novaRaiz.getFullPathName(), "Old MAIN (now unlinked): " + fonte->raiz.getFullPathName(),
+             "Clones of the old MAIN are stale: create new clones from the new MAIN."});
+    } catch (...) {}
     if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+    return {};
 }
 
 void ProjetoAberto::tocarAtividadeMain() { ultimaAtividadeMainMs_ = juce::Time::currentTimeMillis(); }
 
-bool ProjetoAberto::verificarTimeoutEdicaoMain() {
-    if (!editandoMain_ || operacaoMainEmCurso_.load()) return false;
-    if (juce::Time::currentTimeMillis() - ultimaAtividadeMainMs_ < kTimeoutEdicaoMainMs) return false;
-    sairModoEdicaoMain("no operations for 15 minutes");
-    return true;
-}
+bool ProjetoAberto::verificarTimeoutEdicaoMain() { return false; }  // rebuild não expira: só termina concluído
 
 int ProjetoAberto::contarArquivosDaPastaNoMain(const std::string& pastaId) const {
     if (!projeto_) return 0;

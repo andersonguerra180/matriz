@@ -1,6 +1,7 @@
 #include "BackupWorkspaceComponent.h"
 #include <unordered_map>
 #include "../App/SemSono.h"
+#include "MainEditPanel.h"
 #include "GoogleDriveContas.h"
 #include "BackupFileSelectorDialog.h"
 #include "BackupSyncDialog.h"
@@ -3080,17 +3081,19 @@ void BackupWorkspaceComponent::atualizarResumo() {
     auto* registro = &projeto_.projeto().registro();
     const juce::File pastaProjeto = projeto_.projeto().pasta();
     const juce::File raizProjeto = projeto_.projeto().raiz();
-    const juce::File destinoEscolhido = resolvedDestFolder_;
+    // Rebuild: o plano é sempre do destino novo (nunca de um destino clicado na lista).
+    const juce::File destinoEscolhido = projeto_.emRebuild() ? projeto_.rebuildDestino() : resolvedDestFolder_;
     const auto modoPrefixo = modoPrefixo_;
     const juce::String prefixo = prefixoCustomizado_;
     const bool organizarPorSource = organizarPorSource_;
     const std::string mapaId = mapaParaBackup();
     const bool soPendentes = (whatOption_ == WhatOption::NeedsBackup);
+    const bool rebuild = projeto_.emRebuild();
     auto geracaoAtomica = geracaoPlano_;
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
     poolPlano_.addJob([safeThis, geracao, geracaoAtomica, registro, pastaProjeto, raizProjeto, destinoEscolhido, h,
-                       modoPrefixo, prefixo, autoResolver, forcarRebackup, organizarPorSource, mapaId, soPendentes,
+                       modoPrefixo, prefixo, autoResolver, forcarRebackup, organizarPorSource, mapaId, soPendentes, rebuild,
                        itemIds = std::move(itemIds)]() {
         if (geracaoAtomica->load() != geracao) return;  // superado antes de começar
 
@@ -3100,12 +3103,16 @@ void BackupWorkspaceComponent::atualizarResumo() {
         // rodar (ou qualquer outro erro de SQL) não pode derrubar o app inteiro
         // só por abrir a aba BACKUP; melhor mostrar o motivo no resumo.
         try {
-            const juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
-                destinoEscolhido.isDirectory() ? destinoEscolhido : raizProjeto);
+            // Rebuild: o plano é do destino NOVO (ainda não escolhido = pasta fictícia que não existe):
+            // nada conta como "já consolidado" a não ser o que já foi copiado pra lá.
+            const juce::File destinoRaiz = rebuild
+                ? (destinoEscolhido != juce::File() ? destinoEscolhido
+                                                    : juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bkr_rebuild_novo_main"))
+                : matriz::model::normalizarParaRaizDestino(destinoEscolhido.isDirectory() ? destinoEscolhido : raizProjeto);
             const juce::File destinoMedia = destinoRaiz.getChildFile("Media");
             r.plano = matriz::consolidacao::planejarConsolidacao(
                 *registro, pastaProjeto, destinoMedia, h, {}, modoPrefixo, prefixo,
-                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId);
+                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId, /*estritoAoDestino*/ rebuild);
 
             std::vector<matriz::consolidacao::ItemPlanejado> mv;
             for (auto& m : r.plano.movimentosSemPasta)
@@ -3278,7 +3285,7 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         auto st = projeto_.projeto().registro().prepare(
             "SELECT 1 FROM consolidacao_registro WHERE COALESCE(destino_id, '') = '' OR destino_id = ? LIMIT 1");
         st.bind(1, matriz::db::Value::of(destinoIdDoMain()));
-        mainSelado_ = st.step();
+        mainSelado_ = st.step() && !projeto_.emRebuild();  // rebuild: projeto sem MAIN (o antigo só é fonte)
         if (mainSelado_) {
             auto sc = projeto_.projeto().registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
             if (sc.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str()));
@@ -3550,6 +3557,40 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
     if (!isCatalogMode && !destacadoEhMain()) return;
 
+    // REBUILD DO MAIN: a pasta nova é escolhida (e validada) aqui, uma vez; retomar reaproveita a mesma.
+    const bool rebuild = !isCatalogMode && projeto_.emRebuild();
+    std::optional<matriz::consolidacao::OpcoesRebuild> opcoesRebuild;
+    if (rebuild) {
+        const juce::File novo = projeto_.rebuildDestino();
+        if (novo == juce::File()) { pedirDestinoRebuild(); return; }
+        const auto fonte = projeto_.fonteRebuild();
+        juce::String motivo;
+        if (!fonte || !validarDestinoRebuild(novo, motivo)) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                   fonte ? motivo : juce::String("old MAIN (FONTE_REBUILD) not found"));
+            return;
+        }
+        novo.createDirectory();
+        // O acervo inteiro (o que ainda falta copiar) precisa caber no destino novo.
+        const juce::int64 livre = novo.getBytesFreeOnVolume();
+        if (!novo.isDirectory() || (livre > 0 && livre < plano_.espacoNecessarioBytes)) {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                matriz::i18n::t("rebuild.sem_espaco")
+                    .replace("{preciso}", juce::File::descriptionOfSizeInBytes(plano_.espacoNecessarioBytes))
+                    .replace("{livre}", juce::File::descriptionOfSizeInBytes(std::max<juce::int64>(0, livre))));
+            return;
+        }
+        resolvedDestFolder_ = novo;
+        customDestFolder_ = novo;
+        matriz::consolidacao::OpcoesRebuild o;
+        o.fonteMedia = fonte->raiz.getChildFile("Media");
+        o.fonteDestinoId = fonte->destinoId;
+        o.descricaoFonte = fonte->raiz.getFullPathName().toStdString();
+        opcoesRebuild = o;
+        relatorioRebuild_.clear();
+    }
+
     // Fase 2: itens de _SEM_PASTA que ganharam pasta no mapa do MAIN — oferece
     // mover (lista + confirmação) antes de qualquer cópia.
     if (!isCatalogMode && !movimentosDecididos_ && !plano_.movimentosSemPasta.empty()) {
@@ -3616,7 +3657,22 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // Garante destination.json e Project/ com SQLite no backup
     juce::File destJsonBackup = pastaBackupRaiz.getChildFile("destination.json");
     juce::File destJsonOrig = projeto.projeto().raiz().getChildFile("destination.json");
-    if (destJsonOrig.existsAsFile()) {
+    if (rebuild) {
+        // MAIN novo = destino NOVO (identidade própria; nunca copia o destination.json do MAIN antigo).
+        auto existente = matriz::model::DestinationInfo::lerDeArquivo(destJsonBackup);
+        if (!existente || existente->projetoId != projeto.projeto().projetoId() || existente->papel != "ORIGINAL") {
+            matriz::model::DestinationInfo dInfo;
+            dInfo.formato = 1;
+            dInfo.destinationId = matriz::model::novoUuid();
+            dInfo.projetoId = projeto.projeto().projetoId();
+            dInfo.papel = "ORIGINAL";
+            dInfo.rotulo = pastaBackupRaiz.getFileName().toStdString();
+            dInfo.revisao = projeto.projeto().revisao();
+            dInfo.ultimaEdicaoUtc = matriz::model::agoraIso8601();
+            dInfo.criadoEm = matriz::model::agoraIso8601();
+            dInfo.gravarEmArquivo(destJsonBackup);
+        }
+    } else if (destJsonOrig.existsAsFile()) {
         destJsonOrig.copyFileTo(destJsonBackup);
     } else {
         matriz::model::DestinationInfo dInfo;
@@ -3745,7 +3801,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // checado entre os blocos de cada arquivo. O resto (catálogo, relatórios, resumo) volta pra
     // message thread no fim.
     poolBackup_.addJob([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto, gerarCatalogo, embutirMeta,
-                        moverAgora]() {
+                        moverAgora, opcoesRebuild]() {
         matriz::app::SemSono semSono("BKR Matriz: Make Backup");
         matriz::consolidacao::limparTemporariosDeCopia(destinoMedia);
 
@@ -3785,10 +3841,28 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 return !cancelamento->pedido();
             },
             {}, embutirMeta,
-            [cancelamento]() { return !cancelamento->pedido(); });
+            [cancelamento]() { return !cancelamento->pedido(); },
+            opcoesRebuild ? &*opcoesRebuild : nullptr);
+
+        // Rebuild: o projeto já usava sidecars XMP (o MAIN antigo tinha) => o MAIN novo os recebe, refletindo
+        // os metadados ATUAIS do projeto.
+        if (opcoesRebuild && !resultado.cancelado && resultado.falhas.empty()) {
+            try {
+                bool usavaSidecars = false;
+                {
+                    auto st = projeto.projeto().registro().prepare("SELECT 1 FROM sidecar_registro LIMIT 1");
+                    usavaSidecars = st.step();
+                }
+                if (usavaSidecars)
+                    matriz::consolidacao::atualizarSidecarsNoMain(
+                        projeto.projeto().registro(), destinoMedia, matriz::vault::destinationIdDaRaiz(destinoRaiz),
+                        /*sobrescreverEditados*/ true, [cancelamento](int, int) { return !cancelamento->pedido(); });
+            } catch (...) {}
+        }
 
         juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto, gerarCatalogo,
-                                         movs = std::move(movs), resultado = std::move(resultado)]() mutable {
+                                         rebuild = opcoesRebuild.has_value(), movs = std::move(movs),
+                                         resultado = std::move(resultado)]() mutable {
         if (!safeThis) return;
 
         safeThis->copiadoCount_ = resultado.consolidados;
@@ -3890,7 +3964,34 @@ void BackupWorkspaceComponent::iniciarBackup() {
         juce::String rotuloSugerido = safeThis->selectedDestinoIdx_ >= 0 && safeThis->selectedDestinoIdx_ < static_cast<int>(safeThis->destinosBackup_.size())
             ? safeThis->destinosBackup_[static_cast<size_t>(safeThis->selectedDestinoIdx_)].rotulo
             : (safeThis->googleDriveComoDestino_ ? juce::String("Google Drive") : destinoRaiz.getFileName());
-        safeThis->registrarDestinoBackup(destinoRaiz, rotuloSugerido, safeThis->copiadoCount_, resultado.pulados, safeThis->falhasCount_, resultado.cancelado);
+        if (!rebuild)
+            safeThis->registrarDestinoBackup(destinoRaiz, rotuloSugerido, safeThis->copiadoCount_, resultado.pulados, safeThis->falhasCount_, resultado.cancelado);
+
+        // REBUILD: relatório próprio e, sem falhas e sem cancelar, o fim do modo (o destino novo vira o MAIN).
+        juce::String linhasRebuild;
+        const bool rebuildOk = rebuild && !resultado.cancelado && safeThis->falhasCount_ == 0;
+        if (rebuild) {
+            linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_copiados").replace("{n}", juce::String(safeThis->verificadoCount_));
+            if (resultado.copiadosDaSourcePorDivergencia > 0)
+                linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_da_source").replace("{n}", juce::String(resultado.copiadosDaSourcePorDivergencia));
+            if (!resultado.mantidosDoMainAntigo.empty()) {
+                linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_mantidos").replace("{n}", juce::String((int) resultado.mantidosDoMainAntigo.size()));
+                for (size_t i = 0; i < resultado.mantidosDoMainAntigo.size() && i < 6; ++i)
+                    linhasRebuild << "\n  - " << juce::String::fromUTF8(resultado.mantidosDoMainAntigo[i].c_str());
+            }
+            try {
+                juce::StringArray det;
+                det.add("Copied and verified: " + juce::String(safeThis->verificadoCount_));
+                det.add("Copied from SOURCE (old MAIN differed): " + juce::String(resultado.copiadosDaSourcePorDivergencia));
+                det.add("Kept from old MAIN, differs from SOURCE (SOURCE unavailable): " + juce::String((int) resultado.mantidosDoMainAntigo.size()));
+                det.add("Failures: " + juce::String(safeThis->falhasCount_));
+                for (const auto& m : resultado.mantidosDoMainAntigo) det.add("  " + juce::String::fromUTF8(m.c_str()));
+                for (const auto& f : safeThis->falhasLista_) det.add("  failed: " + f);
+                matriz::model::ProjectLog(projeto.projeto().pasta()).appendEntry("REBUILD DO MAIN: Make Backup finished", det);
+            } catch (...) {}
+            if (rebuildOk)
+                safeThis->finalizarRebuild(destinoRaiz, matriz::vault::destinationIdDaRaiz(destinoRaiz), safeThis->copiadoCount_);
+        }
 
         juce::String msgFinal = resultado.cancelado ? "Backup cancelled"
                                                    : (houveFalha ? "Backup finished with " + juce::String(safeThis->falhasCount_) + " errors"
@@ -3913,7 +4014,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
         finalMsg << safeThis->copiadoCount_ << " copied   |   "
                  << safeThis->verificadoCount_ << " verified";
         if (houveFalha) finalMsg << "   |   " << safeThis->falhasCount_ << " failed";
-        finalMsg << "\n" << destinoRaiz.getFullPathName();
+        finalMsg << "\n" << destinoRaiz.getFullPathName() << linhasRebuild;
+        if (rebuild && !rebuildOk && !resultado.cancelado) finalMsg << "\n" << matriz::i18n::t("rebuild.rerodar");
         // SOURCE: liberado quando todo arquivo já tem cópia verificada no MAIN.
         if (!resultado.cancelado) {
             const int dependem = safeThis->projeto_.arquivosQueDependemDoSource();
@@ -3939,9 +4041,160 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (safeThis->btnCancelarExecucao_) safeThis->btnCancelarExecucao_->setVisible(false);
         safeThis->btnDone_->setVisible(true);
         safeThis->resized();
-        if (!resultado.cancelado) safeThis->perguntarSincronizarClones();
+        if (!resultado.cancelado && !rebuild) safeThis->perguntarSincronizarClones();
         });
     });
+}
+
+// ---------------------------------------------------------------- REBUILD DO MAIN
+
+bool BackupWorkspaceComponent::validarDestinoRebuild(const juce::File& novo, juce::String& motivo) const {
+    const auto fonte = projeto_.fonteRebuild();
+    const juce::File antiga = fonte ? fonte->raiz : projeto_.projeto().raiz();
+    for (const juce::File& ref : {antiga, projeto_.projeto().raiz()}) {
+        if (ref == juce::File()) continue;
+        // Recusa o MAIN antigo, qualquer pasta dentro dele e qualquer pasta que o contenha.
+        if (novo == ref || novo.isAChildOf(ref) || ref.isAChildOf(novo)) {
+            motivo = matriz::i18n::t("rebuild.destino_conflita");
+            return false;
+        }
+    }
+    if (novo.exists() && !novo.isDirectory()) {
+        motivo = matriz::i18n::t("rebuild.destino_conflita");
+        return false;
+    }
+    if (novo.isDirectory() && novo.getNumberOfChildFiles(juce::File::findFilesAndDirectories) > 0) {
+        // Só vale pasta vazia — ou uma que ESTE rebuild já começou (retomar).
+        auto info = matriz::model::DestinationInfo::lerDeArquivo(novo.getChildFile("destination.json"));
+        if (!info || info->projetoId != projeto_.projeto().projetoId()) {
+            motivo = matriz::i18n::t("rebuild.destino_nao_vazio");
+            return false;
+        }
+    }
+    return true;
+}
+
+void BackupWorkspaceComponent::pedirDestinoRebuild() {
+    chooserRebuild_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("rebuild.escolher_titulo"),
+                                                          projeto_.projeto().raiz().getParentDirectory(), "");
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    chooserRebuild_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                 [safeThis](const juce::FileChooser& fc) {
+        if (!safeThis) return;
+        const juce::File escolhida = fc.getResult();
+        if (escolhida == juce::File()) return;
+        juce::String motivo;
+        if (!safeThis->validarDestinoRebuild(escolhida, motivo)) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"), motivo);
+            return;
+        }
+        escolhida.createDirectory();
+        if (!escolhida.isDirectory()) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                   matriz::i18n::t("rebuild.destino_conflita"));
+            return;
+        }
+        safeThis->projeto_.definirRebuildDestino(escolhida);
+        safeThis->resolvedDestFolder_ = escolhida;
+        safeThis->customDestFolder_ = escolhida;
+        safeThis->atualizarResumo();  // o plano passa a ser o do destino novo (espaço necessário incluso)
+        safeThis->aoPlanoPronto([safeThis] { if (safeThis) safeThis->iniciarBackup(); });
+    });
+}
+
+void BackupWorkspaceComponent::finalizarRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId, int) {
+    const auto fonte = projeto_.fonteRebuild();
+    const juce::File raizAntiga = fonte ? fonte->raiz : juce::File();
+    const juce::String erro = projeto_.concluirRebuild(novaRaiz, novoDestinationId);
+    if (erro.isNotEmpty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"), erro);
+        return;
+    }
+    // O MAIN novo precisa abrir sozinho: snapshot consistente do banco (VACUUM INTO) e do resto de Project/.
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto* proj = &projeto_.projeto();
+    const juce::File pastaProjeto = proj->pasta();
+    poolBackup_.addJob([safeThis, proj, pastaProjeto, novaRaiz, raizAntiga]() {
+        juce::String falha;
+        try {
+            const juce::File destProject = novaRaiz.getChildFile("Project");
+            destProject.createDirectory();
+            auto snapshot = [&](matriz::db::Database& db, const juce::String& nome) {
+                const juce::File alvo = destProject.getChildFile(nome);
+                alvo.deleteFile();
+                db.exec("VACUUM INTO '" + alvo.getFullPathName().replace("'", "''").toStdString() + "'");
+            };
+            snapshot(proj->registro(), "registro.sqlite");
+            snapshot(proj->indice(), "indice.sqlite");
+            for (const auto& c : pastaProjeto.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+                const auto nome = c.getFileName();
+                if (nome.startsWith("registro.sqlite") || nome.startsWith("indice.sqlite")) continue;
+                const juce::File d = destProject.getChildFile(nome);
+                if (c.isDirectory()) { d.deleteRecursively(); c.copyDirectoryTo(d); }
+                else c.copyFileTo(d);
+            }
+        } catch (const std::exception& e) {
+            falha = juce::String::fromUTF8(e.what());
+        }
+        juce::MessageManager::callAsync([safeThis, falha, raizAntiga, novaRaiz]() {
+            if (!safeThis) return;
+            if (falha.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                       matriz::i18n::t("rebuild.erro_copiar_projeto") + "\n" + falha);
+            safeThis->perguntarApagarMainAntigo(raizAntiga, novaRaiz);
+        });
+    });
+}
+
+void BackupWorkspaceComponent::perguntarApagarMainAntigo(const juce::File& raizAntiga, const juce::File& novaRaiz) {
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    // Fim: o projeto vivo ainda aponta pra pasta antiga — reabrir pelo MAIN novo.
+    auto avisoFinal = [safeThis, novaRaiz]() {
+        if (!safeThis) return;
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle(matriz::i18n::t("rebuild.titulo"))
+                .withMessage(matriz::i18n::t("rebuild.fim").replace("{novo}", novaRaiz.getFullPathName()))
+                .withButton(matriz::i18n::t("rebuild.reabrir"))
+                .withButton(matriz::i18n::t("rebuild.depois")),
+            juce::ModalCallbackFunction::create([safeThis, novaRaiz](int r) {
+                if (safeThis && r == 1 && safeThis->aoPedirReabrirPasta) safeThis->aoPedirReabrirPasta(novaRaiz);
+            }));
+    };
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle(matriz::i18n::t("rebuild.titulo"))
+            .withMessage(matriz::i18n::t("rebuild.apagar_msg").replace("{antigo}", raizAntiga.getFullPathName()))
+            .withButton(matriz::i18n::t("rebuild.manter"))
+            .withButton(matriz::i18n::t("rebuild.apagar")),
+        juce::ModalCallbackFunction::create([safeThis, raizAntiga, avisoFinal](int r) {
+            if (!safeThis) return;
+            if (r != 2) { avisoFinal(); return; }  // MANTER (padrão): a pasta fica no disco, desvinculada
+            // APAGAR: barreira do nome do projeto. Só Media/ e _QUARENTENA/ — Project/ (o projeto vivo) nunca.
+            MainEditPanel::pedirNomeDoProjeto(
+                safeThis->projeto_, matriz::i18n::t("rebuild.titulo"), matriz::i18n::t("rebuild.apagar_barreira"),
+                matriz::i18n::t("rebuild.apagar"), [safeThis, raizAntiga, avisoFinal](const juce::String& digitado) {
+                    if (!safeThis || !safeThis->projeto_.nomeConfereComProjeto(digitado)) return;
+                    ProgressoGlobal::obterInstancia().iniciarTarefa("rebuild_apagar", "Deleting old MAIN", 0);
+                    safeThis->poolBackup_.addJob([safeThis, raizAntiga, avisoFinal]() {
+                        const bool ok = raizAntiga.getChildFile("Media").deleteRecursively() &&
+                                        raizAntiga.getChildFile("_QUARENTENA").deleteRecursively();
+                        juce::MessageManager::callAsync([safeThis, ok, raizAntiga, avisoFinal]() {
+                            ProgressoGlobal::obterInstancia().concluirTarefa("rebuild_apagar");
+                            if (!safeThis) return;
+                            try {
+                                matriz::model::ProjectLog(safeThis->projeto_.projeto().pasta()).appendEntry(
+                                    "REBUILD DO MAIN: old MAIN deleted", {"Path: " + raizAntiga.getFullPathName(),
+                                                                          juce::String("Media/ and _QUARENTENA/ removed; Project/ kept"),
+                                                                          ok ? "Result: ok" : "Result: some files could not be deleted"});
+                            } catch (...) {}
+                            avisoFinal();
+                        });
+                    });
+                });
+        }));
 }
 
 void BackupWorkspaceComponent::perguntarMoverSemPasta() {
@@ -4331,7 +4584,9 @@ void BackupWorkspaceComponent::carregarDestinosBackup() {
         if (juce::File(d.caminho) == raizProjeto) {
             encontrouRaiz = true;
             d.ativo = true;
-            if (projeto_.projeto().papel() == "ORIGINAL" || d.papel != "CLONE") {
+            if (projeto_.emRebuild()) {
+                d.papel = "FONTE_REBUILD";  // MAIN antigo: só leitura até o rebuild terminar
+            } else if (projeto_.projeto().papel() == "ORIGINAL" || d.papel != "CLONE") {
                 d.papel = "ORIGINAL";
             }
             break;
@@ -4988,6 +5243,7 @@ juce::String BackupWorkspaceComponent::getTooltipForRow(int rowNumber) {
 void BackupWorkspaceComponent::carregarDestinoAtivoInicial() {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     resolvedDestFolder_ = projeto_.projeto().raiz();
+    if (projeto_.emRebuild()) resolvedDestFolder_ = projeto_.rebuildDestino();  // vazio até a pasta nova ser escolhida
     customDestFolder_ = resolvedDestFolder_;
     selectedDestinoIdx_ = -1;
 

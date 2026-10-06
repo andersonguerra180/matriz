@@ -2068,6 +2068,9 @@ void MainComponent::mostrarBackup() {
         backupWorkspace_->aoAbrirCatalogo = [safeThis](const juce::File& pastaBackup) {
             juce::MessageManager::callAsync([safeThis, pastaBackup] { if (safeThis) safeThis->abrirCatalogo(pastaBackup); });
         };
+        backupWorkspace_->aoPedirReabrirPasta = [safeThis](const juce::File& raiz) {
+            juce::MessageManager::callAsync([safeThis, raiz] { if (safeThis && safeThis->aoPedirAbrirPasta) safeThis->aoPedirAbrirPasta(raiz); });
+        };
         backupWorkspace_->aoPedirIrParaDuplicatas = [safeThis] {
             juce::MessageManager::callAsync([safeThis] {
                 if (safeThis) {
@@ -4734,16 +4737,12 @@ void MainComponent::abrirEditorDoMain() {
 
 void MainComponent::alternarModoEdicaoMain() {
     if (!projetoAberto_ || !projetoAberto_->podeEditarMain()) return;
-    if (projetoAberto_->editandoMain()) {
-        projetoAberto_->sairModoEdicaoMain("user left");
-        return;
-    }
+    if (projetoAberto_->editandoMain()) return;  // rebuild: não há saída até concluir o Make Backup
     juce::Component::SafePointer<MainComponent> safeThis(this);
     MainEditPanel::pedirNomeDoProjeto(*projetoAberto_, i18n::t("main_edit.titulo"), i18n::t("main_edit.barreira_msg"),
                                       i18n::t("main_edit.barreira_confirmar"), [safeThis](const juce::String& digitado) {
                                           if (!safeThis || !safeThis->projetoAberto_) return;
-                                          if (!safeThis->projetoAberto_->entrarModoEdicaoMain(digitado)) return;
-                                          safeThis->abrirEditorDoMain();
+                                          safeThis->projetoAberto_->entrarModoEdicaoMain(digitado);
                                       });
 }
 
@@ -4751,10 +4750,7 @@ void MainComponent::atualizarFaixaAviso() {
     if (!faixaAviso_) return;
     juce::Component::SafePointer<MainComponent> safeThis(this);
     if (projetoAberto_ && projetoAberto_->editandoMain()) {
-        faixaAviso_->definir(matriz::i18n::t("main_edit.faixa"), juce::Colour(0xffb91c1c),
-                             matriz::i18n::t("main_edit.faixa_sair"), [safeThis] {
-                                 if (safeThis && safeThis->projetoAberto_) safeThis->projetoAberto_->sairModoEdicaoMain("user left");
-                             });
+        faixaAviso_->definir(matriz::i18n::t("main_edit.faixa"), juce::Colour(0xffb91c1c), {}, nullptr);
         faixaAviso_->setVisible(true);
     } else if (projetoAberto_ && projetoAberto_->somenteLeitura()) {
         // Fase 5: clone abre somente leitura; a única saída é promover a MAIN.

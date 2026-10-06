@@ -756,6 +756,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "backup_destino", "ultima_revisao_conhecida", "INTEGER NOT NULL DEFAULT 0");
     garantirColuna(registro, "backup_destino", "ultimo_visto_em", "TEXT");
     garantirColuna(registro, "backup_destino", "ultima_edicao_conhecida", "TEXT");
+    // Rebuild do MAIN: clone do MAIN antigo fica desatualizado (sync bloqueado) e o destino
+    // novo escolhido para o rebuild persiste entre sessões até o fim.
+    garantirColuna(registro, "backup_destino", "desatualizado_rebuild", "INTEGER NOT NULL DEFAULT 0");
+    garantirColuna(registro, "projeto", "rebuild_destino", "TEXT NOT NULL DEFAULT ''");
     garantirColuna(registro, "colecao_inteligente", "filtros_origem", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "filtros_content_type", "TEXT");
     garantirColuna(registro, "colecao_inteligente", "filtros_collection_type", "TEXT");

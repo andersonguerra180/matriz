@@ -164,7 +164,10 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool paraExport = false,
                                         // Fase 2: folder map do usuário que alimenta PastaManual.
                                         // Vazio = sem filtro (comportamento anterior).
-                                        const std::string& mapaId = {});
+                                        const std::string& mapaId = {},
+                                        // Rebuild do MAIN: só vale como "já consolidado" o registro DESTE destino
+                                        // (os do MAIN antigo e os legados sem destino não contam).
+                                        bool estritoAoDestino = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);
@@ -184,6 +187,19 @@ struct ResultadoConsolidacao {
     // Item 8.3 — quantas cópias receberam os marcadores como metadado
     // embutido (cue/adtl/iXML). Só WAV nesta etapa; ver MetadadoEmbutido.h.
     int arquivosComMarcadorEmbutido = 0;
+
+    // Rebuild do MAIN (OpcoesRebuild): de onde veio cada cópia.
+    int copiadosDaSourcePorDivergencia = 0;       // o MAIN antigo diferia do catálogo; copiado da SOURCE
+    std::vector<std::string> mantidosDoMainAntigo;  // difere da SOURCE, mas a SOURCE não estava disponível
+    std::vector<std::string> divergentesDaSource;   // lista (código) dos copiados da SOURCE por divergência
+};
+
+// Rebuild do MAIN: a origem padrão de cada arquivo é a cópia no MAIN antigo (FONTE_REBUILD),
+// conferida contra o SHA-256 do catálogo; divergiu => SOURCE (se disponível).
+struct OpcoesRebuild {
+    juce::File fonteMedia;        // <raiz do MAIN antigo>/Media
+    std::string fonteDestinoId;   // destination_id do MAIN antigo
+    std::string descricaoFonte;   // texto pro evento PREMIS
 };
 
 // Chamado ANTES de cada arquivo, com quantos já foram processados e o total.
@@ -212,7 +228,8 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             bool embutirNaCopia = false,
                                             // Checado ENTRE OS BLOCOS de cada cópia/verificação (cancelar responde em ~1 s
                                             // mesmo num arquivo de dezenas de GB). Vazio = nunca cancela no meio do arquivo.
-                                            const std::function<bool()>& continuar = {});
+                                            const std::function<bool()>& continuar = {},
+                                            const OpcoesRebuild* rebuild = nullptr);
 
 // Apaga os "<nome>.mtz-tmp" que uma cópia interrompida deixou em Media/ (chamar no início de
 // todo Make Backup — rodar de novo continua de onde parou). Devolve quantos apagou.

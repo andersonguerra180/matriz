@@ -54,6 +54,8 @@ public:
     std::function<void()> aoVoltarHome;
     std::function<void(const juce::File&)> aoAbrirCatalogo;
     std::function<void()> aoPedirIrParaDuplicatas;
+    // Rebuild do MAIN concluído: o projeto vivo ainda está na pasta antiga; reabre pelo MAIN novo.
+    std::function<void(const juce::File& raizDoNovoMain)> aoPedirReabrirPasta;
     std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;
     // Consulta a seleção atual do grid de metadados (item 4) — usada para
     // popular "Selected Files" sem depender do snapshot passado no construtor,
@@ -182,9 +184,17 @@ private:
     // Modelo SOURCE/MAIN/CLONE (etapa 4): backup só vai pro MAIN (a pasta do
     // projeto). Outros destinos só como CLONE ou EXPORT.
     bool destacadoEhMain() const {
+        if (projeto_.emRebuild()) return true;  // rebuild: o destino do MAIN novo é escolhido ao clicar em MAKE BACKUP
         return selectedDestinoIdx_ >= 0 && selectedDestinoIdx_ < static_cast<int>(destinosBackup_.size()) &&
                destinosBackup_[static_cast<size_t>(selectedDestinoIdx_)].papel == "ORIGINAL";
     }
+    // Rebuild do MAIN (ver ProjetoAberto::emRebuild): pasta nova escolhida/validada e fluxo de fim.
+    std::unique_ptr<juce::FileChooser> chooserRebuild_;
+    void pedirDestinoRebuild();
+    bool validarDestinoRebuild(const juce::File& novo, juce::String& motivo) const;
+    void finalizarRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId, int copiados);
+    void perguntarApagarMainAntigo(const juce::File& raizAntiga, const juce::File& novaRaiz);
+    juce::String relatorioRebuild_;  // linhas extras do relatório final (copiados da SOURCE, mantidos do MAIN antigo...)
     bool mainSelado_ = false;  // o MAIN já recebeu o primeiro backup (FAZER BACKUP -> ADICIONAR AO MAIN)
     // Etapa 5: estrutura de pastas e nomes são escolhidos no primeiro backup
     // e ficam travados depois (projeto.backup_config_main). Projeto antigo já

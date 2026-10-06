@@ -218,7 +218,7 @@ void anotarMovePendentePraClones(matriz::db::Database& registro, const char* tip
     if (de == para) return;
     std::vector<std::string> clones;
     try {
-        auto st = registro.prepare("SELECT id FROM backup_destino WHERE ativo = 1 AND papel <> 'ORIGINAL'");
+        auto st = registro.prepare("SELECT id FROM backup_destino WHERE ativo = 1 AND papel NOT IN ('ORIGINAL', 'FONTE_REBUILD')");
         while (st.step()) clones.push_back(st.columnText(0));
     } catch (...) { return; }
     for (const auto& clone : clones) {
@@ -357,7 +357,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool forcarRebackup,
                                         bool organizarPorSource,
                                         bool paraExport,
-                                        const std::string& mapaId) {
+                                        const std::string& mapaId,
+                                        bool estritoAoDestino) {
     MATRIZ_TRACE("consolidacao::planejarConsolidacao");
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
@@ -681,8 +682,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         // ou legados (sem destino gravado). EXPORT não herda nada disso.
         if (!paraExport) {
             auto stmtJa = registro.prepare(
-                "SELECT caminho_relativo_destino, COALESCE(tamanho_bytes, 0) FROM consolidacao_registro WHERE arquivo_id = ? "
-                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
+                std::string("SELECT caminho_relativo_destino, COALESCE(tamanho_bytes, 0) FROM consolidacao_registro WHERE arquivo_id = ? "
+                "AND (destino_path = ? ") +
+                (estritoAoDestino ? "" : "OR destino_path = '' OR destino_path IS NULL ") +
                 "     OR (? != '' AND COALESCE(destino_id, '') = ?)) "
                 "ORDER BY (pasta_id = ?) DESC, (item_id = ?) DESC LIMIT 1");
             stmtJa.bind(1, Value::of(ip.arquivoId));
@@ -1084,7 +1086,8 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const AoProgredir& aoProgredir,
                                             const std::set<std::string>& itensMarcadosWatermark,
                                             bool embutirNaCopia,
-                                            const std::function<bool()>& continuar) {
+                                            const std::function<bool()>& continuar,
+                                            const OpcoesRebuild* rebuild) {
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
@@ -1113,11 +1116,41 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
         }
 
         try {
-            auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
-            if (!resolvido)
-                throw std::runtime_error("master ausente em disco (Vault offline ou arquivo movido/removido): " +
-                                          ip.codigoAcervo);
-            juce::File origem = *resolvido;
+            // Rebuild: as duas origens possíveis (cópia no MAIN antigo e SOURCE) são resolvidas à parte.
+            juce::File arquivoNoMainAntigo, arquivoNaSource;
+            std::string hashDoCatalogo;
+            juce::File origem;
+            if (rebuild) {
+                try {
+                    auto stOld = registro.prepare(
+                        "SELECT caminho_relativo_destino FROM consolidacao_registro WHERE arquivo_id = ? "
+                        "AND COALESCE(destino_path, '') <> ? AND COALESCE(destino_id, '') IN ('', ?) "
+                        "ORDER BY (item_id = ?) DESC LIMIT 1");
+                    stOld.bind(1, Value::of(ip.arquivoId));
+                    stOld.bind(2, Value::of(chaveDestino(destino)));
+                    stOld.bind(3, Value::of(rebuild->fonteDestinoId));
+                    stOld.bind(4, Value::of(ip.itemId));
+                    if (stOld.step()) {
+                        const juce::File f = rebuild->fonteMedia.getChildFile(juce::String::fromUTF8(stOld.columnText(0).c_str()));
+                        if (f.existsAsFile()) arquivoNoMainAntigo = f;
+                    }
+                    auto stH = registro.prepare("SELECT IFNULL(checksum_sha256, '') FROM arquivo WHERE id = ?");
+                    stH.bind(1, Value::of(ip.arquivoId));
+                    if (stH.step()) hashDoCatalogo = stH.columnText(0);
+                } catch (...) {}
+                if (auto src = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                              matriz::vault::Preferencia::Origem))
+                    if (src->existsAsFile()) arquivoNaSource = *src;
+                if (arquivoNoMainAntigo == juce::File() && arquivoNaSource == juce::File())
+                    throw std::runtime_error("ausente no MAIN antigo e na SOURCE: " + ip.codigoAcervo);
+                origem = arquivoNoMainAntigo != juce::File() ? arquivoNoMainAntigo : arquivoNaSource;
+            } else {
+                auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+                if (!resolvido)
+                    throw std::runtime_error("master ausente em disco (Vault offline ou arquivo movido/removido): " +
+                                              ip.codigoAcervo);
+                origem = *resolvido;
+            }
 
             juce::File destinoArquivo = destino.getChildFile(ip.caminhoRelativoDestino);
             // A leitura resolve MAIN primeiro: se a "origem" for o próprio arquivo de destino (cópia
@@ -1172,8 +1205,48 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             } catch (...) {}
 
             std::string hashLidoDaOrigem;
+            juce::File origemUsada = origem;
             if (!movidoLocalmente) {
-                auto copia = copiarVerificado(origem, destinoArquivo, continuar);
+                CopiaVerificada copia;
+                if (rebuild) {
+                    // 1) MAIN antigo (se existir e ler); 2) confere com o hash do catálogo; 3) divergiu => SOURCE.
+                    bool usouSource = false;
+                    if (arquivoNoMainAntigo != juce::File()) {
+                        copia = copiarVerificado(arquivoNoMainAntigo, destinoArquivo, continuar);
+                        origemUsada = arquivoNoMainAntigo;
+                        if (copia.cancelado) { resultado.cancelado = true; break; }
+                        const bool divergeDoCatalogo = copia.ok && !hashDoCatalogo.empty() && copia.sha256 != hashDoCatalogo;
+                        if (!copia.ok || divergeDoCatalogo) {
+                            if (arquivoNaSource != juce::File()) {
+                                destinoArquivo.deleteFile();
+                                copia = copiarVerificado(arquivoNaSource, destinoArquivo, continuar);
+                                origemUsada = arquivoNaSource;
+                                usouSource = true;
+                                if (copia.cancelado) { resultado.cancelado = true; break; }
+                                if (copia.ok && !hashDoCatalogo.empty() && copia.sha256 != hashDoCatalogo) {
+                                    destinoArquivo.deleteFile();
+                                    throw std::runtime_error("a SOURCE difere do hash do catálogo: " + ip.codigoAcervo);
+                                }
+                                if (copia.ok && divergeDoCatalogo) {
+                                    ++resultado.copiadosDaSourcePorDivergencia;
+                                    resultado.divergentesDaSource.push_back(ip.codigoAcervo);
+                                }
+                            } else if (copia.ok && divergeDoCatalogo) {
+                                // SOURCE indisponível: mantém a cópia do MAIN antigo e avisa no relatório.
+                                resultado.mantidosDoMainAntigo.push_back(
+                                    ip.codigoAcervo + ": copiado do MAIN antigo, difere da SOURCE (SOURCE indisponível)");
+                            }
+                        }
+                    } else {
+                        copia = copiarVerificado(arquivoNaSource, destinoArquivo, continuar);
+                        origemUsada = arquivoNaSource;
+                        usouSource = true;
+                        if (copia.cancelado) { resultado.cancelado = true; break; }
+                    }
+                    (void)usouSource;
+                } else {
+                    copia = copiarVerificado(origem, destinoArquivo, continuar);
+                }
                 if (copia.cancelado) { resultado.cancelado = true; break; }
                 if (!copia.ok) throw std::runtime_error(copia.erro);
                 hashVerificado = copia.sha256;
@@ -1181,17 +1254,24 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             }
 
             if (!destinoArquivo.existsAsFile()) throw std::runtime_error("cópia não existe depois de copiar");
-            if (destinoArquivo.getSize() != origem.getSize())
+            if (!movidoLocalmente && destinoArquivo.getSize() != origemUsada.getSize())
                 throw std::runtime_error("tamanho da cópia não bate com o original");
 
             // Capa junto da cópia (item 9) — também copiada com verificação. Falha da capa é falha do
             // item: a cópia principal é desfeita e nada é registrado (o próximo backup refaz os dois).
             {
                 auto stmtCapa = registro.prepare(
-                    "SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
+                    "SELECT id, caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
                 stmtCapa.bind(1, Value::of(ip.itemId));
                 if (stmtCapa.step()) {
                     auto capaResolvida = matriz::vault::resolverArquivo(registro, stmtCapa.columnText(0), pastaProjeto);
+                    // Rebuild com a SOURCE fora do ar: a capa também vem do MAIN antigo (ao lado do arquivo).
+                    if (rebuild && !(capaResolvida && capaResolvida->existsAsFile()) && arquivoNoMainAntigo != juce::File()) {
+                        const auto extCapa = juce::File(juce::String::fromUTF8(stmtCapa.columnText(1).c_str())).getFileExtension();
+                        const juce::File c = arquivoNoMainAntigo.getParentDirectory().getChildFile(
+                            arquivoNoMainAntigo.getFileNameWithoutExtension() + extCapa);
+                        if (extCapa.isNotEmpty() && c.existsAsFile()) capaResolvida = c;
+                    }
                     if (capaResolvida && capaResolvida->existsAsFile()) {
                         juce::File capa = *capaResolvida;
                         juce::File destinoCapa = destinoArquivo.getParentDirectory().getChildFile(
@@ -1346,6 +1426,11 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             + sha256Catalogo + ")"
                                         : std::string(),
                     "bkr-agent-sistema");
+                if (rebuild)
+                    preservation::registrarEvento(
+                        registro, ip.itemId, ip.arquivoId, preservation::EventType::Migration,
+                        "MAIN rebuilt from " + rebuild->descricaoFonte + " | SHA-256: " + hashVerificado,
+                        preservation::Outcome::Success, {}, "bkr-agent-sistema");
                 (void)hashLidoDaOrigem;
             } catch (...) {}
 

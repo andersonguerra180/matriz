@@ -247,10 +247,10 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
         // MAIN EDIT MODE mora aqui (e não como botão no BACKUP) pra não ser acionado sem querer.
         menu.addSeparator();
-        const bool podeEditarMain = temColecao && conteudo_->podeEditarMain();
-        const bool editandoMain = podeEditarMain && conteudo_->editandoMain();
-        menu.addItem(kCmdMainEditModo, matriz::i18n::t(editandoMain ? "main_edit.botao_sair" : "main_edit.botao_entrar"),
-                     podeEditarMain, editandoMain);
+        const bool editandoMain = temColecao && conteudo_->editandoMain();
+        const bool podeEntrar = temColecao && conteudo_->podeEditarMain() && !editandoMain;
+        // Rebuild do MAIN: só entra (marcado enquanto ativo); não há "sair" — termina quando o Make Backup conclui.
+        menu.addItem(kCmdMainEditModo, matriz::i18n::t("main_edit.botao_entrar"), podeEntrar, editandoMain);
         menu.addItem(kCmdMainEditor, matriz::i18n::t("main_edit.botao_editor"), editandoMain);
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         // Language Submenu
@@ -362,6 +362,7 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoPedirIngerirArquivos = [this] { pedirIngerirArquivos(); };
     conteudo_->aoSalvarComo = [this] { pedirSalvarProjetoComo(); };
     conteudo_->aoMudouUndo = [this] { menuItemsChanged(); };
+    conteudo_->aoPedirAbrirPasta = [this](const juce::File& pasta) { abrirPasta(pasta); };
     conteudo_->aoPedirBackup = [this] { pedirConsolidar(); };
     conteudo_->aoMudarEstadoProjeto = [this] {
         menuItemsChanged();
