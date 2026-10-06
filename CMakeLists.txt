@@ -439,6 +439,7 @@ target_sources(matriz PRIVATE
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
     Source/Ui/LoteSelfTest.cpp
+    Source/Ui/BounceSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
     Source/Ui/LogosTipoArquivo.cpp
     Source/Ui/ModalLoopSelfTest.cpp

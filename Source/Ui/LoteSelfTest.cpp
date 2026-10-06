@@ -4247,9 +4247,10 @@ int rodarLoteSelfTest() {
         checar(!bw.mainSelado_ && travados(), "no MAIN: PUBLISH / EXPORT / SPREADSHEET / SYNC locked, with the hint");
         // Pacote de collection (Fase 2): opção nova no dropdown, as de antes seguem lá.
         auto& combo = *bw.comboExportOrigem_;
-        checar(combo.getNumItems() == 7 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
-                   combo.getItemText(6).startsWith("Adobe Bridge") && combo.getItemText(0).startsWith("Selected Files"),
-               "EXPORT dropdown: the 5 options as before + Collection Package + Adobe Bridge");
+        checar(combo.getNumItems() == 8 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
+                   combo.getItemText(6).startsWith("Adobe Bridge") && combo.getItemText(7).startsWith("Bounce List") &&
+                   combo.getItemText(0).startsWith("Selected Files"),
+               "EXPORT dropdown: the 5 options as before + Collection Package + Adobe Bridge + Bounce List");
         combo.setSelectedId(BackupWorkspaceComponent::kExpPacote, juce::sendNotificationSync);
         checar(!bw.btnExportUnificado_->isEnabled(), "no MAIN: Collection Package locked too");
         // FAZER BACKUP criou o MAIN (registro de cópia), ainda sem destino destacado.

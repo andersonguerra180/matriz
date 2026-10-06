@@ -10,6 +10,7 @@
 #include "Ui/MainWindow.h"
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/LoteSelfTest.h"
+#include "Ui/BounceSelfTest.h"
 #include "Ui/ManifestoSelfTest.h"
 #include "Model/CompactacaoRegistro.h"
 #include "Ui/MosaicoStressTest.h"
@@ -275,6 +276,11 @@ public:
         }
         if (commandLine.contains("--selftest-lote")) {
             setApplicationReturnValue(matriz::ui::rodarLoteSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-bounce")) {
+            setApplicationReturnValue(matriz::ui::rodarBounceSelfTest());
             quit();
             return;
         }
