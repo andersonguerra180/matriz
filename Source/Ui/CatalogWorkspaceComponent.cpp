@@ -560,6 +560,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnMostrarRecentes_->setTooltip("Show only files from the most recent ingest batch (ON/OFF)");
     btnMostrarRecentes_->onClick = [this] {
+        // Ligar = ver a leva recém-ingerida: zera antes os outros filtros (mesmo efeito de ALL ASSETS), senão
+        // a interseção com media type/ano/busca/seleção herdada deixa a grade vazia sem explicação.
+        if (!mostrarApenasRecentes_) selecionarFiltroTodos();
         mostrarApenasRecentes_ = !mostrarApenasRecentes_;
         btnMostrarRecentes_->setButtonText(mostrarApenasRecentes_ ? matriz::i18n::t("catwork.mostrar_recentes_on") : matriz::i18n::t("catwork.mostrar_recentes_off"));
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tema().acento : tema().painelAlt);
