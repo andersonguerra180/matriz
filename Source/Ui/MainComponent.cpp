@@ -454,6 +454,8 @@ PapelInfo papelPorCategoria(matriz::ingest::CategoriaMidia categoria) {
 // projeto. Acima do teto, o arquivo falha rápido com erro claro em vez de
 // criar mais uma.
 constexpr int kMaxThreadsOrfaos = 64;
+// Prefixo da exceção lançada quando o lote é cancelado no meio de um arquivo (tratada como "não processado").
+const std::string kMensagemCancelado = "Cancelled by user: ";
 
 // Ponteiros crus do projeto (ex.: *indice) só podem ser tocados pela thread
 // solta enquanto quem a espera não desistiu: a escrita roda sob `m` e só
@@ -478,7 +480,8 @@ auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
                              const std::shared_ptr<std::atomic<int>>& skipToken,
                              const juce::String& nomeArquivoParaErro,
                              const std::shared_ptr<std::atomic<int>>& orfaos = nullptr,
-                             const std::shared_ptr<PermissaoEscrita>& permissao = nullptr) -> decltype(trabalho()) {
+                             const std::shared_ptr<PermissaoEscrita>& permissao = nullptr,
+                             const matriz::app::CancelamentoPtr& cancelamentoLote = nullptr) -> decltype(trabalho()) {
     using Resultado = decltype(trabalho());
     if (orfaos && orfaos->load() >= kMaxThreadsOrfaos) {
         throw std::runtime_error("Too many stuck background reads (" + std::to_string(kMaxThreadsOrfaos) +
@@ -505,6 +508,12 @@ auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
         if (skipToken && skipToken->load() != tokenNoInicio) {
             if (permissao) permissao->revogar();
             throw std::runtime_error("Skipped by user: " + nomeArquivoParaErro.toStdString());
+        }
+        // Cancelar o lote não espera o arquivo em curso (checksum/ffprobe/forma de onda de um vídeo grande levava
+        // minutos, até o prazo de 10 min): abandona a espera; a thread solta só lê e não grava mais (permissao).
+        if (cancelamentoLote && cancelamentoLote->pedido()) {
+            if (permissao) permissao->revogar();
+            throw std::runtime_error(kMensagemCancelado + nomeArquivoParaErro.toStdString());
         }
     }
     if (permissao) permissao->revogar();
@@ -3924,7 +3933,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                 // e fixo aqui — é só um stat, não precisa escalar com um
                 // tamanho que ainda nem se sabe.
                 juce::int64 bytes = executarComPrazoOuSkip([arquivo]() { return arquivo.getSize(); },
-                                                             15, skipToken, arquivo.getFileName() + " (stat)", orfaos);
+                                                             15, skipToken, arquivo.getFileName() + " (stat)", orfaos, nullptr, cancelamento);
 
                 // Prazo proporcional ao tamanho — generoso o bastante pra um
                 // vídeo pesado num HD externo lento terminar (base de 60s +
@@ -3952,7 +3961,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                         r.cache = matriz::ingest::calcularCache(arquivo, r.categoria, pastaProjeto,
                                                                  r.analise.leitura.duracaoSegundos);
                     return r;
-                }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos);
+                }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos, nullptr, cancelamento);
                 auto& analise = resultadoFase1.analise;
                 auto categoria = resultadoFase1.categoria;
                 auto& cache = resultadoFase1.cache;
@@ -4023,7 +4032,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                                                             permissao->executar(escrita);
                                                                         });
                         return 0;
-                    }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos, permissao);
+                    }, prazoSegundos, skipToken, arquivo.getFileName(), orfaos, permissao, cancelamento);
                 }
 
                 auto fim = std::chrono::system_clock::now();
@@ -4031,9 +4040,19 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                                    duplicata ? "ingest_duplicate" : "ingest_success", itemId,
                                                    workerId, inicio, fim, duplicata ? 0 : bytes);
             } catch (const std::exception& e) {
-                erro = arquivo.getFileName() + ": " + juce::String(e.what());
+                // Lote cancelado com este arquivo em curso: conta como "não processado" (igual ao ramo de cancelamento
+                // antes do arquivo), não como erro do arquivo; o item é removido logo abaixo.
+                const bool canceladoNoMeio = juce::String(e.what()).startsWith(juce::String(kMensagemCancelado).trimEnd());
+                if (canceladoNoMeio) {
+                    sucesso = false;  // o item é apagado abaixo; não pode contar como processado (a miniatura vem depois do 'sucesso' do banco)
+                    const juce::ScopedLock sl(estadoLote->lock);
+                    estadoLote->cancelado = true;
+                    estadoLote->naoProcessados.push_back(itemId);
+                } else {
+                    erro = arquivo.getFileName() + ": " + juce::String(e.what());
+                }
                 auto fim = std::chrono::system_clock::now();
-                matriz::app::registrarLogOperacao(pastaProjeto, "ingest_error", itemId, workerId, inicio, fim, 0, e.what());
+                matriz::app::registrarLogOperacao(pastaProjeto, canceladoNoMeio ? "ingest_cancelled" : "ingest_error", itemId, workerId, inicio, fim, 0, e.what());
 
                 // Item novo (hoje): pulado manualmente ou por timeout de I/O
                 // — o operador pediu justamente pra saber qual arquivo
@@ -4084,7 +4103,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                     ++estadoLote->sucessos;
                     estadoLote->processadosComSucesso.push_back(itemId);
                     if (duplicata) ++estadoLote->duplicatas;
-                } else {
+                } else if (erro.isNotEmpty()) {
                     estadoLote->erros.push_back(erro);
                 }
             }
