@@ -411,6 +411,7 @@ target_sources(matriz PRIVATE
     Source/Ui/ProjetoAberto.cpp
     Source/Ui/MainEditPanel.cpp
     Source/Ui/AcoesItem.cpp
+    Source/Ui/PastaPickerWindow.cpp
     Source/Ui/ArvoreComponent.cpp
     Source/Ui/BarraFerramentasComponent.cpp
     Source/Ui/BarraGuiaComponent.cpp

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include "AcoesItem.h"
+#include "PastaPickerWindow.h"
 #include "FichaPanelComponent.h"
 #include "MosaicoComponent.h"
 #include "ProjetoAberto.h"
@@ -2077,29 +2078,10 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     if (itemIds.size() > 1) menu.addItem(600, matriz::i18n::t("menu.nest"));
     if (algumEmNest) menu.addItem(601, matriz::i18n::t("menu.un_nest"));
 
-    juce::PopupMenu subMenuPastas;
-    auto arvore = projeto_.arvoreAcervo();
-    std::vector<std::pair<std::string, juce::String>> pastas;
-
-    std::function<void(const ProjetoAberto::NoArvore&, const juce::String&)> coletarPastas =
-        [&](const ProjetoAberto::NoArvore& n, const juce::String& prefixo) {
-        for (const auto& f : n.filhos) {
-            if (f.id.empty()) continue;
-            juce::String caminho = prefixo.isEmpty() ? f.nome : prefixo + " / " + f.nome;
-            pastas.push_back({f.id, caminho});
-            coletarPastas(f, caminho);
-        }
-    };
-    coletarPastas(arvore, {});
-
-    int pastaIdx = 1000;
-    for (const auto& p : pastas) {
-        subMenuPastas.addItem(pastaIdx++, p.second);
-    }
-    menu.addSubMenu(matriz::i18n::t("menu.mover_para_pasta"), subMenuPastas);
+    menu.addItem(1000, matriz::i18n::t("menu.mover_para_pasta") + "...");
 
     ProjetoAberto* p = &projeto_;
-    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, p, itemIds, ganchos, pastas](int resultado) {
+    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, p, itemIds, ganchos](int resultado) {
         if (!safeThis) return;
         if (resultado == 600) {
             p->criarNest(itemIds);
@@ -2116,10 +2098,13 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
             }
             return;
         }
-        if (resultado >= 1000 && resultado < 1000 + static_cast<int>(pastas.size())) {
-            std::string pastaId = pastas[static_cast<size_t>(resultado - 1000)].first;
-            p->adicionarItensAPasta(itemIds, pastaId);
-            safeThis->recarregar();
+        if (resultado == 1000) {
+            PastaPickerWindow::abrir(matriz::i18n::t("menu.mover_para_pasta"), p->arvoreAcervo(),
+                                     [safeThis, p, itemIds](const std::string& pastaId) {
+                                         if (!safeThis) return;
+                                         p->adicionarItensAPasta(itemIds, pastaId);
+                                         safeThis->recarregar();
+                                     });
             return;
         }
         acoes::executar(resultado, *p, itemIds, ganchos);

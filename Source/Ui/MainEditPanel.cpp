@@ -1,6 +1,7 @@
 #include "MainEditPanel.h"
 
 #include "ModalMitigacao.h"
+#include "PastaPickerWindow.h"
 #include "Tokens.h"
 #include "../I18n/Strings.h"
 
@@ -328,17 +329,16 @@ void MainEditPanel::mover() {
     std::vector<std::pair<std::string, juce::String>> pastas;
     achatarPastas(projeto_.arvoreAcervo(projeto_.mapaDoMainId()), {}, pastas);
     if (pastas.empty()) { avisar(matriz::i18n::t("main_edit.titulo"), matriz::i18n::t("main_edit.mover_sem_pastas")); return; }
-    juce::PopupMenu menu;
-    for (size_t i = 0; i < pastas.size(); ++i) menu.addItem(static_cast<int>(i) + 1, pastas[i].second);
     juce::WeakReference<MainEditPanel> weak(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&btnMover_), [weak, id, pastas](int escolha) {
-        auto* p = weak.get();
-        if (!p || escolha <= 0) return;
-        p->projeto_.editarMainMoverArquivo(id, pastas[static_cast<size_t>(escolha) - 1].first, [weak](const matriz::mainedit::Resultado& r) {
-            if (auto* q = weak.get()) q->concluir(r);
-        });
-        p->atualizarBotoes();
-    });
+    PastaPickerWindow::abrir(matriz::i18n::t("main_edit.mover"), projeto_.arvoreAcervo(projeto_.mapaDoMainId()),
+                             [weak, id](const std::string& pastaId) {
+                                 auto* p = weak.get();
+                                 if (!p) return;
+                                 p->projeto_.editarMainMoverArquivo(id, pastaId, [weak](const matriz::mainedit::Resultado& r) {
+                                     if (auto* q = weak.get()) q->concluir(r);
+                                 });
+                                 p->atualizarBotoes();
+                             });
 }
 
 void MainEditPanel::substituir() {

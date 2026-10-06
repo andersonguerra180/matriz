@@ -1,5 +1,6 @@
 #include "ConflitosMergeDialog.h"
 #include "AcoesItem.h"
+#include "PastaPickerWindow.h"
 #include "../Diag/Watchdog.h"
 
 #include "../Consolidacao/Mascara.h"
@@ -509,20 +510,21 @@ void enviarParaPasta(ProjetoAberto& projeto, const std::vector<std::string>& ite
         menu.showMenuAsync(op, [](int) {});
         return;
     }
-    int id = kPrimeiraPasta;
-    for (auto& [pastaId, caminho] : pastas) menu.addItem(id++, caminho);
-    if (pastas.empty()) menu.addItem(-1, matriz::i18n::t("acoes.sem_pastas"), false);
-
-    auto opcoes = juce::PopupMenu::Options();
-    if (ancora) opcoes = opcoes.withTargetComponent(ancora);
+    if (pastas.empty()) {
+        menu.addItem(-1, matriz::i18n::t("acoes.sem_pastas"), false);
+        auto op = juce::PopupMenu::Options();
+        if (ancora) op = op.withTargetComponent(ancora);
+        menu.showMenuAsync(op, [](int) {});
+        return;
+    }
 
     ProjetoAberto* p = &projeto;
     auto ids = itemIds;
-    menu.showMenuAsync(opcoes, [p, ids, ganchos](int resultado) {
-        // Reaproveita o mesmo despacho do menu de contexto: os ids de pasta
-        // são idênticos, então não existe uma segunda regra pra manter viva.
-        executar(resultado, *p, ids, ganchos);
-    });
+    PastaPickerWindow::abrir(matriz::i18n::t("acoes.enviar_para_pasta"), projeto.arvoreAcervo(),
+                             [p, ids, ganchos](const std::string& pastaId) {
+                                 p->adicionarItensAPasta(ids, pastaId);
+                                 if (ganchos.aoMudarDados) ganchos.aoMudarDados();
+                             });
 }
 
 juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::string>& itemIds,
