@@ -1402,6 +1402,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"export.bounce_embed", "Embed: grava dentro da cópia os metadados do Matriz (subject, event date, content, geo location, tags, people, title, description)"},
         {"export.bounce_clean", "Clean: remove EXIF, IPTC, XMP e GPS da cópia"},
         {"export.bounce_sidecar", "Incluir sidecar (.xmp)"},
+        {"export.bounce_embed_video", "Embutir em arquivos de vídeo (lento: reescreve cada vídeo; desligado = vídeo sai com sidecar .xmp)"},
         {"export.bounce_clean_dica", "O Clean preserva a orientação e o perfil de cor (ICC). Arquivos RAW saem sem limpeza. Vídeo e áudio têm o container limpo sem recodificar."},
         {"export.bounce_sem_pasta", "{n} arquivo(s) da Lista Bounce sem pasta não foram exportados."},
         {"export.bounce_raw", "{n} arquivo(s) RAW exportados sem limpeza."},

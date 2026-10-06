@@ -356,6 +356,10 @@ bool ehArquivoRaw(const juce::File& arquivo) {
                                                "iiq", "raw"});
 }
 
+bool ehArquivoVideo(const juce::File& arquivo) {
+    return estaEm(extensaoMinuscula(arquivo), {"mp4", "m4v", "mov", "mkv", "webm"});
+}
+
 StatusLimpeza limparMetadadosDaCopia(const juce::File& copia, std::string& erro) {
     const juce::String ext = extensaoMinuscula(copia);
     if (!copia.existsAsFile()) { erro = "file not found"; return StatusLimpeza::Falhou; }

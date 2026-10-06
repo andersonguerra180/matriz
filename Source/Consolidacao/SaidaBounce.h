@@ -22,6 +22,7 @@ enum class ModoMetadadosSaida { Padrao, Original, Embed, Clean };
 struct OpcoesMetadadosSaida {
     ModoMetadadosSaida modo = ModoMetadadosSaida::Padrao;  // Padrao = fluxo antigo (embutir/Bridge), sem mexer
     bool sidecar = false;                                  // só Original/Embed
+    bool embedVideo = true;                                // só Embed: false = vídeo não é reescrito (ffmpeg); sai com sidecar .xmp
 };
 
 enum class StatusLimpeza {
@@ -49,5 +50,8 @@ StatusEmbedFicha embutirFichaMatrizNaCopia(matriz::db::Database& registro, const
 bool escreverSidecarFichaMatriz(matriz::db::Database& registro, const std::string& itemId, const juce::File& copia);
 
 bool ehArquivoRaw(const juce::File& arquivo);
+
+// Container de vídeo (o embed reescreve o arquivo inteiro via ffmpeg: lento em arquivo grande).
+bool ehArquivoVideo(const juce::File& arquivo);
 
 } // namespace matriz::consolidacao

@@ -122,6 +122,10 @@ public:
             modoOriginal_.setToggleState(true, juce::dontSendNotification);  // padrão: cópia idêntica à MAIN
             toggleSidecar_.setButtonText(matriz::i18n::t("export.bounce_sidecar"));
             addAndMakeVisible(toggleSidecar_);
+            toggleEmbedVideo_.setButtonText(matriz::i18n::t("export.bounce_embed_video"));
+            toggleEmbedVideo_.setToggleState(true, juce::dontSendNotification);  // padrão = comportamento anterior
+            addAndMakeVisible(toggleEmbedVideo_);
+            atualizarSidecarHabilitado();  // estado inicial (Original): toggle de vídeo desabilitado
             lblModoDica_.setText(matriz::i18n::t("export.bounce_clean_dica"), juce::dontSendNotification);
             lblModoDica_.setColour(juce::Label::textColourId, tk.textoTerciario);
             lblModoDica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
@@ -138,7 +142,7 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
-        setSize(560, bounce ? 600 : 440);
+        setSize(560, bounce ? 632 : 440);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
@@ -175,6 +179,7 @@ public:
             modoClean_.setBounds(r.removeFromTop(26));
             r.removeFromTop(4);
             toggleSidecar_.setBounds(r.removeFromTop(26));
+            toggleEmbedVideo_.setBounds(r.removeFromTop(26));
             lblModoDica_.setBounds(r.removeFromTop(48));
         } else {
             toggleEmbutir_.setBounds(r.removeFromTop(26));
@@ -196,6 +201,9 @@ private:
         auto* janela = new HierarquiaEditorWindow(hierarquiaCustom_, [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
             if (safeThis != nullptr) safeThis->hierarquiaCustom_ = h;
         }, op);
+        // O diálogo de Export pode ser "always on top" (JUCE, quando já há janela assim no app): sem isto o editor abria atrás dele.
+        janela->setAlwaysOnTop(true);
+        janela->toFront(true);
         janela->enterModalState(true, nullptr, false);
     }
 
@@ -204,6 +212,7 @@ private:
         const bool clean = modoClean_.getToggleState();
         if (clean) toggleSidecar_.setToggleState(false, juce::dontSendNotification);
         toggleSidecar_.setEnabled(!clean);
+        toggleEmbedVideo_.setEnabled(modoEmbed_.getToggleState());  // só faz sentido em Embed
     }
 
     void escolherPasta() {
@@ -255,6 +264,7 @@ private:
                              : modoEmbed_.getToggleState() ? ModoMetadadosSaida::Embed
                                                            : ModoMetadadosSaida::Original;
             o.metaSaida.sidecar = o.metaSaida.modo != ModoMetadadosSaida::Clean && toggleSidecar_.getToggleState();
+            o.metaSaida.embedVideo = toggleEmbedVideo_.getToggleState();
         }
         auto cb = aoExportar_;
         fechar();
@@ -278,7 +288,7 @@ private:
     matriz::consolidacao::HierarquiaBackup hierarquiaCustom_ = matriz::consolidacao::hierarquiaPadrao();
     juce::TextButton btnEditorVisual_;
     juce::Label lblModoMeta_, lblModoDica_;
-    juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_;
+    juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_, toggleEmbedVideo_;
 };
 
 // Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.

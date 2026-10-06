@@ -912,12 +912,15 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                 // EXPORT > Bounce List: Original (cópia idêntica) / Embed (ficha dentro da cópia) / Clean (sem EXIF, IPTC, XMP,
                 // GPS). Só a cópia muda. Falha ao embutir/limpar: a cópia é apagada (nunca sai um arquivo "sujo" como limpo).
                 std::string erroMeta;
+                bool videoSemEmbed = false;  // toggle "Embed in video files" desligado: o vídeo não é reescrito, sai só com sidecar
                 if (metaSaida.modo == ModoMetadadosSaida::Embed) {
                     if (destinoArquivo.hasFileExtension("wav")) {
                         auto marcadores = marcadoresDoItem(registro, ip.itemId);
                         if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
                     }
-                    switch (embutirFichaMatrizNaCopia(registro, ip.itemId, destinoArquivo, erroMeta)) {
+                    videoSemEmbed = !metaSaida.embedVideo && ehArquivoVideo(destinoArquivo);
+                    switch (videoSemEmbed ? StatusEmbedFicha::NaoSuportado
+                                          : embutirFichaMatrizNaCopia(registro, ip.itemId, destinoArquivo, erroMeta)) {
                         case StatusEmbedFicha::Embutido: ++resultado.embutidos; break;
                         case StatusEmbedFicha::NaoSuportado: ++resultado.embedNaoSuportado; break;
                         case StatusEmbedFicha::SemDados: break;
@@ -935,7 +938,7 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                             throw std::runtime_error("could not clean metadata: " + erroMeta);
                     }
                 }
-                if (metaSaida.sidecar && metaSaida.modo != ModoMetadadosSaida::Clean &&
+                if ((metaSaida.sidecar || videoSemEmbed) && metaSaida.modo != ModoMetadadosSaida::Clean &&
                     escreverSidecarFichaMatriz(registro, ip.itemId, destinoArquivo))
                     ++resultado.sidecarsGravados;
             } else if (formatoBridge) {
@@ -976,7 +979,8 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
         if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
             const char* modo = metaSaida.modo == ModoMetadadosSaida::Original ? "Original" : metaSaida.modo == ModoMetadadosSaida::Embed ? "Embed" : "Clean";
             matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Bounce List", {
-                juce::String("Metadata mode: ") + modo + ", sidecar .xmp: " + (metaSaida.sidecar ? "yes" : "no"),
+                juce::String("Metadata mode: ") + modo + ", sidecar .xmp: " + (metaSaida.sidecar ? "yes" : "no") +
+                    (metaSaida.modo == ModoMetadadosSaida::Embed ? juce::String(", embed in video: ") + (metaSaida.embedVideo ? "yes" : "no (sidecar only)") : juce::String()),
                 "Cleaned: " + juce::String(resultado.limpos) + ", RAW without cleaning: " + juce::String(resultado.rawSemLimpeza) +
                     ", other types without cleaning: " + juce::String(resultado.tiposSemLimpeza),
                 "Embedded: " + juce::String(resultado.embutidos) + ", format without embed: " + juce::String(resultado.embedNaoSuportado) +
