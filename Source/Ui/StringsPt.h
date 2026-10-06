@@ -226,6 +226,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"catwork.subject_nenhum", "Sem Assunto"},
         {"catwork.lista_todas", "Todas as Listas"},
         {"catwork.lista_nenhuma", "Sem Lista"},
+        {"catwork.sem_resultados_filtros", "Nenhum arquivo combina com os filtros ativos (Media Type, Date, Content Type, uma pasta escolhida no Structure...). Clique em ALL ASSETS para limpá-los."},
         {"catwork.sem_leva_recente", "Nenhuma leva recente do Intake"},
         {"ficha.alerta_rotulo", "Atenção"},
         {"ficha.alternar", "Detalhes"},

@@ -1178,6 +1178,11 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         filteredIds.insert(item.id);
     }
 
+    // Resultado vazio por causa de filtro(s) ativo(s) (inclusive um herdado do Structure, que a coluna esquerda não
+    // mostra): diz isso na grade em vez de cair no "arraste aqui". O caso "recentes sem leva" já tem aviso próprio.
+    if (anyFilter && filteredIds.empty() && !(mostrarApenasRecentes_ && recentesIds.empty()))
+        mosaico_->definirMensagemVazia(matriz::i18n::t("catwork.sem_resultados_filtros"));
+
     if (anyFilter) {
         mosaico_->definirFiltroItens(std::move(filteredIds));
     } else {

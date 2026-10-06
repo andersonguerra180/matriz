@@ -929,6 +929,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"catwork.subject_nenhum", "No Subject"},
         {"catwork.lista_todas", "All Lists"},
         {"catwork.lista_nenhuma", "No List"},
+        {"catwork.sem_resultados_filtros", "No files match the active filters (Media Type, Date, Content Type, a folder picked in Structure...). Click ALL ASSETS to clear them."},
         {"catwork.sem_leva_recente", "No recent intake batch"},
         {"catwork.content_type_desconhecido", "No Content Type"},
         {"catwork.data_from", "FROM"},
