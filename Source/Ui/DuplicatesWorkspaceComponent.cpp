@@ -1101,6 +1101,13 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnDismissSelected_->setEnabled(false);
     addChildComponent(*btnDismissSelected_);
 
+    btnReset_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_reset"));
+    btnReset_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnReset_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnReset_->setTooltip(matriz::i18n::t("duplicatas.btn_reset_dica"));
+    btnReset_->onClick = [this] { resetarAba(); };
+    addChildComponent(*btnReset_);
+
     viewport_ = std::make_unique<juce::Viewport>();
     // Item 6 (lista nova de hoje): 10px cortava o knob redondo do
     // MatrizLookAndFeel (pensado pra a espessura default de 16px) — sem
@@ -1238,6 +1245,12 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         btnDismissSelected_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
         btnDismissSelected_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         btnDismissSelected_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss_selected"));
+    }
+    if (btnReset_) {
+        btnReset_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnReset_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        btnReset_->setButtonText(matriz::i18n::t("duplicatas.btn_reset"));
+        btnReset_->setTooltip(matriz::i18n::t("duplicatas.btn_reset_dica"));
     }
     if (listaComponent_) {
         listaComponent_->updateButtonsI18n();
@@ -2094,6 +2107,20 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     });
 }
 
+void DuplicatesWorkspaceComponent::resetarAba() {
+    if (estado_ != State::Results) return;
+    // Nada foi gravado pela detecção em si: só o que o usuário já resolveu fica no banco. Os pares que estavam na
+    // lista voltam a ser "não resolvidos" e reaparecem num próximo SCAN.
+    gruposDetectados_.clear();
+    if (listaComponent_) listaComponent_->updateList(gruposDetectados_);
+    estado_ = State::Idle;
+    lblStatus_->setText("", juce::dontSendNotification);
+    if (viewport_) viewport_->setVisible(false);
+    atualizarBotoesSelecionados();
+    resized();
+    repaint();
+}
+
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
     if (gruposDetectados_.empty()) return;
 
@@ -2520,7 +2547,7 @@ void DuplicatesWorkspaceComponent::resized() {
     coluna_.finalizarCard();
 
     // AÇÕES — só com resultados.
-    for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()})
+    for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get(), btnReset_.get()})
         b->setVisible(emResultados);
     if (emResultados) {
         coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_acoes"));
@@ -2528,6 +2555,9 @@ void DuplicatesWorkspaceComponent::resized() {
             b->setBounds(corpo.removeFromTop(28));
             corpo.removeFromTop(4);
         }
+        corpo.removeFromTop(6);  // RESET fica separado: não resolve nada, só limpa o recorte atual
+        btnReset_->setBounds(corpo.removeFromTop(28));
+        corpo.removeFromTop(4);
         coluna_.finalizarCard();
     }
 

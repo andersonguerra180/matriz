@@ -110,6 +110,12 @@ private:
     } activeFilters_;
 
     void resolverTudo(bool ehDuplicataReal);
+
+    // RESET: esvazia a lista atual SEM resolver nada (os pares continuam não resolvidos no banco) e volta ao estado
+
+    // inicial, pra o usuário mudar os filtros e rodar outro recorte.
+
+    void resetarAba();
     void resolverSelecionados(bool ehDuplicataReal);
     // item (VALIDATE ALL em lote): uma escolha só (manter arquivo 1 / 2 /
     // ambos), aplicada de uma vez a TODOS os grupos detectados — não apaga
@@ -129,6 +135,7 @@ private:
     std::unique_ptr<juce::TextButton> btnDismissAll_;
     std::unique_ptr<juce::TextButton> btnValidateSelected_;
     std::unique_ptr<juce::TextButton> btnDismissSelected_;
+    std::unique_ptr<juce::TextButton> btnReset_;
 
     // Filter Bar UI Elements
     std::unique_ptr<juce::Label> lblScope_;

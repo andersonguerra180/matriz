@@ -1175,6 +1175,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.btn_dismiss", "NOT A DUPLICATE (DISMISS)"},
         {"duplicatas.btn_validate_selected", "VALIDATE SELECTED"},
         {"duplicatas.btn_dismiss_selected", "DISMISS SELECTED"},
+        {"duplicatas.btn_reset", "RESET"},
+        {"duplicatas.btn_reset_dica", "Clear this list without resolving anything. The pairs stay unresolved and come back on the next scan, so you can change the filters and scan a different slice."},
         {"duplicatas.selected_dialog_titulo", "Resolve Selected Duplicates"},
         {"duplicatas.selected_dialog_intro", "Choose how to resolve each selected duplicate pair. Files marked \"Keep Both\" are set to state 'duplicata' and never deleted."},
         {"duplicatas.action_keep1", "KEEP FILE 1"},

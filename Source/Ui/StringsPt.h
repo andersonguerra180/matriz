@@ -1188,6 +1188,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.btn_dismiss", "NÃO É DUPLICATA (IGNORAR)"},
         {"duplicatas.btn_validate_selected", "VALIDAR SELECIONADAS"},
         {"duplicatas.btn_dismiss_selected", "IGNORAR SELECIONADAS"},
+        {"duplicatas.btn_reset", "RESETAR"},
+        {"duplicatas.btn_reset_dica", "Limpa esta lista sem resolver nada. Os pares continuam não resolvidos e voltam no próximo SCAN, então você pode mudar os filtros e varrer outro recorte."},
         {"duplicatas.selected_dialog_titulo", "Resolver Duplicatas Selecionadas"},
         {"duplicatas.selected_dialog_intro", "Escolha como resolver cada par de duplicata selecionado. Arquivos marcados \"Manter Ambos\" ficam com estado 'duplicata' e nunca são apagados."},
         {"duplicatas.action_keep1", "MANTER ARQUIVO 1"},
