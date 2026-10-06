@@ -142,8 +142,11 @@ void ProjectLoadingModalDialog::timerCallback() {
     double target = targetProgress_;
     lock.unlock();
 
-    if (!avisoMostrado_ && !cancelando_ && !aguardandoApenas_ && text.isNotEmpty() && lblStatus_.getText() != text) {
-        lblStatus_.setText(text, juce::dontSendNotification);
+    if (!avisoMostrado_ && !cancelando_ && !aguardandoApenas_ && text.isNotEmpty()) {
+        // Passados 3 s de abertura, mostra o tempo decorrido junto da etapa: etapa lenta (HD frio) não parece travada.
+        const int seg = estado_ ? estado_->segundosDecorridos() : 0;
+        const auto exibido = seg >= 3 ? text + juce::String::fromUTF8(" \xe2\x80\x94 ") + formatarDuracao(seg) : text;
+        if (lblStatus_.getText() != exibido) lblStatus_.setText(exibido, juce::dontSendNotification);
     }
 
     if (estado_ && !cancelando_) {
@@ -292,7 +295,11 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
                 ~Liberar() { e->terminou.store(true); carregamentoEmVoo().store(false); }
             } liberar{estado};
             try {
-                projeto = matriz::model::Project::abrir(pasta, estado->cancel.get());
+                projeto = matriz::model::Project::abrir(
+                    pasta, estado->cancel.get(), [safeDialog](const juce::String& rotulo, double fracao) {
+                        // 25% -> 55%: a faixa da barra reservada a Project::abrir() (passo 2 começa em 0.55).
+                        if (safeDialog) safeDialog->setStatus(rotulo, 0.25 + 0.30 * fracao);
+                    });
             } catch (const matriz::model::AberturaCancelada&) {
                 cancelado = true;
             } catch (const std::exception& e) {

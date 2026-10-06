@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -90,8 +91,11 @@ public:
     // `cancelamento` (opcional): ver CancelamentoAbertura; cancelado, lança AberturaCancelada
     // depois de fechar os bancos. Só faz o essencial pra abrir com segurança — as autocorreções
     // que varrem tabelas/disco rodam em iniciarAutocorrecoesEmBackground().
+    // `aoEtapa` (opcional, chamado da thread que abre): rótulo da etapa que está começando e a
+    // fração concluída (0..1) — alimenta a barra do diálogo de abertura.
     static std::unique_ptr<Project> abrir(const juce::File& qualquerPasta,
-                                          CancelamentoAbertura* cancelamento = nullptr);
+                                          CancelamentoAbertura* cancelamento = nullptr,
+                                          const std::function<void(const juce::String& rotulo, double fracao)>& aoEtapa = nullptr);
 
     // Autocorreções que não precisam bloquear a abertura (tipo_midia ausente, caminho de origem
     // ausente, marcas R órfãs). Roda numa thread própria, em blocos transacionais; cancelada e

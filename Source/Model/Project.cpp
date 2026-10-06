@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <algorithm>
 #include <functional>
+#include <iterator>
 
 #include "BinaryData.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -1361,15 +1363,32 @@ void CancelamentoAbertura::remover(sqlite3* h) {
     handles_.erase(std::remove(handles_.begin(), handles_.end(), h), handles_.end());
 }
 
-std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, CancelamentoAbertura* cancelamento) {
+std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, CancelamentoAbertura* cancelamento,
+                                        const std::function<void(const juce::String& rotulo, double fracao)>& aoEtapa) {
     const auto inicioTotal = std::chrono::steady_clock::now();
     auto ultimaEtapa = inicioTotal;
     const juce::String nomeLog = qualquerPasta.getFileName();
+    // Rótulos na ordem exata das chamadas etapa(...) abaixo; ao concluir uma, anuncia a próxima.
+    static const char* const kRotulosEtapas[] = {
+        "Opening databases", "Checking database schema", "Linking backup destination", "Checking folder structure",
+        "Self-check 1/5", "Self-check 2/5", "Self-check 3/5", "Self-check 4/5", "Self-check 5/5", "Writing project file"};
+    constexpr int kTotalEtapas = static_cast<int>(std::size(kRotulosEtapas));
+    int etapasConcluidas = 0;
+    auto anunciar = [&] {
+        if (!aoEtapa) return;
+        const int i = std::min(etapasConcluidas, kTotalEtapas - 1);
+        aoEtapa(juce::String(kRotulosEtapas[i]) + " (" + juce::String(std::min(etapasConcluidas + 1, kTotalEtapas)) + "/" +
+                    juce::String(kTotalEtapas) + ")",
+                static_cast<double>(etapasConcluidas) / kTotalEtapas);
+    };
+    anunciar();
     auto etapa = [&](const char* nome) {
         const auto agora = std::chrono::steady_clock::now();
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(agora - ultimaEtapa).count();
         ultimaEtapa = agora;
         matriz::diag::logarWatchdog("[Abrir] " + nomeLog + " etapa=" + nome + " " + juce::String(static_cast<juce::int64>(ms)) + " ms");
+        ++etapasConcluidas;
+        anunciar();
         if (cancelamento) cancelamento->verificar();
     };
     juce::File pastaProjeto = resolverPastaProjeto(qualquerPasta);
