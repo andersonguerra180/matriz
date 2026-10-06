@@ -73,11 +73,18 @@ public:
         comboEstrutura_.addItem(matriz::i18n::t("export.por_tipo_ano"), 4);
         comboEstrutura_.addItem(matriz::i18n::t("backup.preservar_estrutura"), 6);
         if (!mapas_.empty()) comboEstrutura_.addItem(matriz::i18n::t("export.por_mapa"), 7);
+        if (bounce) comboEstrutura_.addItem(matriz::i18n::t("export.por_editor_visual"), 8);  // monta a hierarquia no Visual Editor
         comboEstrutura_.setSelectedId(1, juce::dontSendNotification);
         comboEstrutura_.onChange = [this] {
             comboMapa_.setVisible(comboEstrutura_.getSelectedId() == 7);
+            btnEditorVisual_.setVisible(bounce_ && comboEstrutura_.getSelectedId() == 8);
             resized();
         };
+        btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
+        addChildComponent(btnEditorVisual_);
         addAndMakeVisible(comboEstrutura_);
         for (size_t i = 0; i < mapas_.size(); ++i) comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
         if (!mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
@@ -129,7 +136,7 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
-        setSize(560, bounce ? 560 : 440);
+        setSize(560, bounce ? 600 : 440);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
@@ -148,6 +155,10 @@ public:
         if (comboMapa_.isVisible()) {
             r.removeFromTop(4);
             comboMapa_.setBounds(r.removeFromTop(28));
+        }
+        if (btnEditorVisual_.isVisible()) {
+            r.removeFromTop(4);
+            btnEditorVisual_.setBounds(r.removeFromTop(28));
         }
         r.removeFromTop(10);
         lblNomes_.setBounds(r.removeFromTop(20));
@@ -174,6 +185,18 @@ public:
     }
 
 private:
+    // Mesmo Visual Editor do BACKUP ("ABRIR EDITOR VISUAL"); modal pra não ficar bloqueado atrás deste diálogo.
+    void abrirEditorVisual() {
+        juce::Component::SafePointer<ConteudoExport> safeThis(this);
+        HierarquiaEditorOpcoes op;
+        op.titulo = matriz::i18n::t("export.editor_titulo");
+        op.raizPreview = "/Export";
+        auto* janela = new HierarquiaEditorWindow(hierarquiaCustom_, [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
+            if (safeThis != nullptr) safeThis->hierarquiaCustom_ = h;
+        }, op);
+        janela->enterModalState(true, nullptr, false);
+    }
+
     // Sidecar (.xmp) só em Original e Embed; em Clean fica desligado e desabilitado.
     void atualizarSidecarHabilitado() {
         const bool clean = modoClean_.getToggleState();
@@ -209,6 +232,10 @@ private:
                 if (idx >= 0 && idx < static_cast<int>(mapas_.size())) o.mapaId = mapas_[static_cast<size_t>(idx)].first;
                 break;
             }
+            case 8:  // Personalizado (editor visual): a hierarquia montada no Visual Editor (vazia = mantém a organização)
+                o.hierarquia = hierarquiaCustom_.empty() ? matriz::consolidacao::HierarquiaBackup{NivelHierarquia::PastaManual}
+                                                         : hierarquiaCustom_;
+                break;
             default: o.hierarquia = {NivelHierarquia::PastaManual}; break;
         }
         const int n = comboNomes_.getSelectedId();
@@ -246,6 +273,8 @@ private:
     juce::TextEditor editPrefixo_;
     juce::ToggleButton toggleEmbutir_, toggleMarca_;
     bool bounce_ = false;
+    matriz::consolidacao::HierarquiaBackup hierarquiaCustom_ = matriz::consolidacao::hierarquiaPadrao();
+    juce::TextButton btnEditorVisual_;
     juce::Label lblModoMeta_, lblModoDica_;
     juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_;
 };
