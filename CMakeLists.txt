@@ -212,6 +212,8 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Consolidacao/BridgeXmp.cpp
@@ -305,6 +307,8 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Vault/AssetRelinkEngine.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
     Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/Mascara.cpp
@@ -518,6 +522,8 @@ target_sources(matriz PRIVATE
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/MainEdit.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp

@@ -216,7 +216,7 @@ private:
     // Sidecars XMP (etapa 8): no lugar do embed depois que o MAIN existe.
     std::unique_ptr<juce::TextButton> btnAtualizarSidecars_;
     void atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar = {});
-    void abrirExport(bool formatoBridge = false);
+    void abrirExport(bool formatoBridge = false, bool bounce = false);  // bounce: a fonte são os arquivos com tag B
     // Pacote de collection (EXPORT -> INTAKE de outra collection): seleção +
     // folder map + matriz-pacote.json, sempre do MAIN, em background.
     void abrirPacote();
@@ -224,7 +224,8 @@ private:
                        const juce::String& nomeMapa);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
-                       bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false);
+                       bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false, bool bounce = false,
+                       matriz::consolidacao::OpcoesMetadadosSaida metaSaida = {});
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 
@@ -376,12 +377,13 @@ private:
     // EXPORT unificado (Fase 6): um botão + dropdown de origem no lugar dos 4 botões de saída.
     // Os botões antigos continuam existindo (escondidos): cada opção dispara o onClick do antigo,
     // então a ação e o diálogo são exatamente os de antes.
-    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote, kExpBridge };
+    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote, kExpBridge, kExpBounce };
     ComboAbrePraCimaLookAndFeel comboExportLf_;  // antes do combo: o combo o usa até ser destruído
     std::unique_ptr<juce::ComboBox> comboExportOrigem_;
     std::unique_ptr<juce::TextButton> btnExportUnificado_;
     int contagemSelecionados_ = 0;
     void atualizarExportUnificado();
+    void aplicarIconeBounceNoCombo();
     void executarExportUnificado();
     juce::File arquivoExportOrigem() const;
 

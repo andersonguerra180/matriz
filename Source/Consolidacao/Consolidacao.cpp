@@ -857,7 +857,7 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir, bool formatoBridge) {
+                               bool embutir, bool formatoBridge, const OpcoesMetadadosSaida& metaSaida) {
     ResultadoExport resultado;
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensComMarcaDagua;
@@ -900,7 +900,37 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     ++resultado.comMarcaDagua;
             }
 #endif
-            if (formatoBridge) {
+            if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
+                // EXPORT > Bounce List: Original (cópia idêntica) / Embed (ficha dentro da cópia) / Clean (sem EXIF, IPTC, XMP,
+                // GPS). Só a cópia muda. Falha ao embutir/limpar: a cópia é apagada (nunca sai um arquivo "sujo" como limpo).
+                std::string erroMeta;
+                if (metaSaida.modo == ModoMetadadosSaida::Embed) {
+                    if (destinoArquivo.hasFileExtension("wav")) {
+                        auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                        if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                    }
+                    switch (embutirFichaMatrizNaCopia(registro, ip.itemId, destinoArquivo, erroMeta)) {
+                        case StatusEmbedFicha::Embutido: ++resultado.embutidos; break;
+                        case StatusEmbedFicha::NaoSuportado: ++resultado.embedNaoSuportado; break;
+                        case StatusEmbedFicha::SemDados: break;
+                        case StatusEmbedFicha::Falhou:
+                            destinoArquivo.deleteFile();
+                            throw std::runtime_error("could not embed metadata: " + erroMeta);
+                    }
+                } else if (metaSaida.modo == ModoMetadadosSaida::Clean) {
+                    switch (limparMetadadosDaCopia(destinoArquivo, erroMeta)) {
+                        case StatusLimpeza::Limpo: ++resultado.limpos; break;
+                        case StatusLimpeza::RawSemLimpeza: ++resultado.rawSemLimpeza; break;
+                        case StatusLimpeza::TipoSemSuporte: ++resultado.tiposSemLimpeza; break;
+                        case StatusLimpeza::Falhou:
+                            destinoArquivo.deleteFile();
+                            throw std::runtime_error("could not clean metadata: " + erroMeta);
+                    }
+                }
+                if (metaSaida.sidecar && metaSaida.modo != ModoMetadadosSaida::Clean &&
+                    escreverSidecarFichaMatriz(registro, ip.itemId, destinoArquivo))
+                    ++resultado.sidecarsGravados;
+            } else if (formatoBridge) {
                 // EXPORT > Adobe Bridge: só a cópia recebe metadado, em XMP no formato que o Bridge lê.
                 if (destinoArquivo.hasFileExtension("wav")) {
                     auto marcadores = marcadoresDoItem(registro, ip.itemId);
@@ -935,6 +965,15 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                 juce::String(resultado.foraDoMain) + ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
             juce::String("Embedded metadata: ") + (formatoBridge ? "Adobe Bridge XMP" : (embutir ? "yes" : "no")) +
                 ", watermarked: " + juce::String(resultado.comMarcaDagua)});
+        if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
+            const char* modo = metaSaida.modo == ModoMetadadosSaida::Original ? "Original" : metaSaida.modo == ModoMetadadosSaida::Embed ? "Embed" : "Clean";
+            matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Bounce List", {
+                juce::String("Metadata mode: ") + modo + ", sidecar .xmp: " + (metaSaida.sidecar ? "yes" : "no"),
+                "Cleaned: " + juce::String(resultado.limpos) + ", RAW without cleaning: " + juce::String(resultado.rawSemLimpeza) +
+                    ", other types without cleaning: " + juce::String(resultado.tiposSemLimpeza),
+                "Embedded: " + juce::String(resultado.embutidos) + ", format without embed: " + juce::String(resultado.embedNaoSuportado) +
+                    ", sidecars: " + juce::String(resultado.sidecarsGravados)});
+        }
         if (formatoBridge) {
             juce::StringArray linhas{"Embedded XMP: " + juce::String(resultado.bridgeEmbutidos) +
                                      ", sidecars: " + juce::String(resultado.bridgeSidecars) +

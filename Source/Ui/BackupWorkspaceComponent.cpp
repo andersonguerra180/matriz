@@ -40,14 +40,15 @@ struct OpcoesExport {
     bool marcaDagua = false;
     std::string mapaId;  // Fase 2: folder map do usuário que estrutura o export ("" = mapa padrão)
     bool porMapa = false;
+    matriz::consolidacao::OpcoesMetadadosSaida metaSaida;  // só Bounce List: Original / Embed / Clean + sidecar
 };
 
 class ConteudoExport : public juce::Component {
 public:
     ConteudoExport(int marcadosW, bool marcaDaguaConfigurada, const juce::String& prefixoPadrao,
                    std::vector<std::pair<std::string, juce::String>> mapas,
-                   std::function<void(OpcoesExport)> aoExportar, bool formatoBridge = false)
-        : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)) {
+                   std::function<void(OpcoesExport)> aoExportar, bool formatoBridge = false, bool bounce = false)
+        : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)), bounce_(bounce) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
             l.setText(t, juce::dontSendNotification);
@@ -55,7 +56,7 @@ public:
             l.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             addAndMakeVisible(l);
         };
-        rotulo(lblIntro_, matriz::i18n::t("export.intro"));
+        rotulo(lblIntro_, matriz::i18n::t(bounce ? "export.bounce_intro" : "export.intro"));
         lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         rotulo(lblPasta_, matriz::i18n::t("export.pasta"));
         lblCaminho_.setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -95,11 +96,31 @@ public:
         toggleEmbutir_.setButtonText(matriz::i18n::t(formatoBridge ? "export.embutir_bridge" : "export.embutir"));
         toggleEmbutir_.setToggleState(true, juce::dontSendNotification);
         toggleEmbutir_.setEnabled(!formatoBridge);  // no Adobe Bridge o XMP é o próprio objetivo do export
-        addAndMakeVisible(toggleEmbutir_);
         toggleMarca_.setButtonText(matriz::i18n::t("export.marca_dagua").replace("{n}", juce::String(marcadosW)));
         toggleMarca_.setEnabled(marcadosW > 0 && marcaDaguaConfigurada);
         toggleMarca_.setToggleState(marcadosW > 0 && marcaDaguaConfigurada, juce::dontSendNotification);
-        addAndMakeVisible(toggleMarca_);
+        if (bounce_) {
+            // Bounce List: três modos exclusivos de metadados na saída (a marca d'água sairia do "Original": não existe aqui).
+            rotulo(lblModoMeta_, matriz::i18n::t("export.bounce_metadados"));
+            const char* chaves[3] = {"export.bounce_original", "export.bounce_embed", "export.bounce_clean"};
+            juce::ToggleButton* modos[3] = {&modoOriginal_, &modoEmbed_, &modoClean_};
+            for (int i = 0; i < 3; ++i) {
+                modos[i]->setButtonText(matriz::i18n::t(chaves[i]));
+                modos[i]->setRadioGroupId(7421);
+                modos[i]->onClick = [this] { atualizarSidecarHabilitado(); };
+                addAndMakeVisible(*modos[i]);
+            }
+            modoOriginal_.setToggleState(true, juce::dontSendNotification);  // padrão: cópia idêntica à MAIN
+            toggleSidecar_.setButtonText(matriz::i18n::t("export.bounce_sidecar"));
+            addAndMakeVisible(toggleSidecar_);
+            lblModoDica_.setText(matriz::i18n::t("export.bounce_clean_dica"), juce::dontSendNotification);
+            lblModoDica_.setColour(juce::Label::textColourId, tk.textoTerciario);
+            lblModoDica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            addAndMakeVisible(lblModoDica_);
+        } else {
+            addAndMakeVisible(toggleEmbutir_);
+            addAndMakeVisible(toggleMarca_);
+        }
 
         btnExportar_.setButtonText(matriz::i18n::t("export.btn"));
         btnExportar_.setEnabled(false);
@@ -108,14 +129,14 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
-        setSize(560, 440);
+        setSize(560, bounce ? 560 : 440);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
 
     void resized() override {
         auto r = getLocalBounds().reduced(16);
-        lblIntro_.setBounds(r.removeFromTop(40));
+        lblIntro_.setBounds(r.removeFromTop(bounce_ ? 56 : 40));
         r.removeFromTop(6);
         lblPasta_.setBounds(r.removeFromTop(20));
         auto linha = r.removeFromTop(28);
@@ -134,8 +155,18 @@ public:
         comboNomes_.setBounds(linha.removeFromLeft(linha.getWidth() * 2 / 3));
         editPrefixo_.setBounds(linha.withTrimmedLeft(8));
         r.removeFromTop(10);
-        toggleEmbutir_.setBounds(r.removeFromTop(26));
-        toggleMarca_.setBounds(r.removeFromTop(26));
+        if (bounce_) {
+            lblModoMeta_.setBounds(r.removeFromTop(20));
+            modoOriginal_.setBounds(r.removeFromTop(26));
+            modoEmbed_.setBounds(r.removeFromTop(26));
+            modoClean_.setBounds(r.removeFromTop(26));
+            r.removeFromTop(4);
+            toggleSidecar_.setBounds(r.removeFromTop(26));
+            lblModoDica_.setBounds(r.removeFromTop(48));
+        } else {
+            toggleEmbutir_.setBounds(r.removeFromTop(26));
+            toggleMarca_.setBounds(r.removeFromTop(26));
+        }
         auto botoes = r.removeFromBottom(32);
         btnExportar_.setBounds(botoes.removeFromRight(130));
         botoes.removeFromRight(8);
@@ -143,6 +174,13 @@ public:
     }
 
 private:
+    // Sidecar (.xmp) só em Original e Embed; em Clean fica desligado e desabilitado.
+    void atualizarSidecarHabilitado() {
+        const bool clean = modoClean_.getToggleState();
+        if (clean) toggleSidecar_.setToggleState(false, juce::dontSendNotification);
+        toggleSidecar_.setEnabled(!clean);
+    }
+
     void escolherPasta() {
         chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("export.pasta"), juce::File(), "");
         juce::Component::SafePointer<ConteudoExport> safeThis(this);
@@ -180,6 +218,15 @@ private:
         o.prefixo = editPrefixo_.getText().trim();
         o.embutir = toggleEmbutir_.getToggleState();
         o.marcaDagua = toggleMarca_.isEnabled() && toggleMarca_.getToggleState();
+        if (bounce_) {
+            using matriz::consolidacao::ModoMetadadosSaida;
+            o.embutir = false;
+            o.marcaDagua = false;
+            o.metaSaida.modo = modoClean_.getToggleState() ? ModoMetadadosSaida::Clean
+                             : modoEmbed_.getToggleState() ? ModoMetadadosSaida::Embed
+                                                           : ModoMetadadosSaida::Original;
+            o.metaSaida.sidecar = o.metaSaida.modo != ModoMetadadosSaida::Clean && toggleSidecar_.getToggleState();
+        }
         auto cb = aoExportar_;
         fechar();
         if (cb) cb(o);
@@ -198,6 +245,9 @@ private:
     std::vector<std::pair<std::string, juce::String>> mapas_;
     juce::TextEditor editPrefixo_;
     juce::ToggleButton toggleEmbutir_, toggleMarca_;
+    bool bounce_ = false;
+    juce::Label lblModoMeta_, lblModoDica_;
+    juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_;
 };
 
 // Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.
@@ -1948,20 +1998,21 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
-        for (int id = kExpSelecionados; id <= kExpBridge; ++id) comboExportOrigem_->addItem("-", id);
+        for (int id = kExpSelecionados; id <= kExpBounce; ++id) comboExportOrigem_->addItem("-", id);
         // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá);
         // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpBridge, !catalogo);
+        comboExportOrigem_->setItemEnabled(kExpBounce, !catalogo);
         // Coleção sempre abre em SELECTED FILES; só o Catálogo (sem essa opção)
         // lembra a última escolha.
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
         if (catalogo && arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
-            if (lembrado >= kExpSelecionados && lembrado <= kExpBridge &&
-                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge)
+            if (lembrado >= kExpSelecionados && lembrado <= kExpBounce &&
+                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge && lembrado != kExpBounce)
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -2361,6 +2412,7 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     const int nZip = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip));
     const int nPrint = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print));
     const int nWm = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
+    const int nBounce = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce));
     auto opcao = [&](int id, const char* chave, int n) {
         comboExportOrigem_->changeItemText(id, matriz::i18n::t(chave).replace("{n}", juce::String(n)));
     };
@@ -2371,6 +2423,8 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
     opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
     opcao(kExpBridge, "export.op_bridge", contagemSelecionados_);
+    opcao(kExpBounce, "export.op_bounce", nBounce);
+    aplicarIconeBounceNoCombo();
 
     // changeItemText() não atualiza o texto já exibido no combo (ficava "-"):
     // reselecionar o mesmo id força o rótulo a acompanhar o item.
@@ -2390,10 +2444,11 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
                                                  : mainSelado_; break;
         case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         case kExpBridge: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
+        case kExpBounce: habilitado = !catalogo && mainSelado_ && !exportando_ && nBounce > 0; break;  // mesma regra dos outros: só com MAIN
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
-    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge)
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge || id == kExpBounce)
                                         ? matriz::i18n::t("backup.saida_sem_main")
                                         : matriz::i18n::t("export.unificado_dica"));
 
@@ -2402,6 +2457,30 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     mostrarLimpar(btnLimparZip_.get(), id == kExpZip && estado_ == Estado::Config);
     mostrarLimpar(btnLimparPrint_.get(), id == kExpPrint && estado_ == Estado::Config);
     mostrarLimpar(btnLimparWatermark_.get(), id == kExpWatermark && estado_ == Estado::Config);
+}
+
+// "B" roxo ao lado de "Bounce List" no dropdown do EXPORT (o ComboBox não tem ícone por item: pega o item do menu).
+void BackupWorkspaceComponent::aplicarIconeBounceNoCombo() {
+    if (!comboExportOrigem_) return;
+    juce::Image img(juce::Image::ARGB, 32, 32, true);
+    {
+        juce::Graphics g(img);
+        g.setColour(juce::Colour(0xff9333ea));
+        g.fillRoundedRectangle(2.0f, 2.0f, 28.0f, 28.0f, 6.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+        g.drawText("B", 0, 0, 32, 32, juce::Justification::centred);
+    }
+    auto* menu = comboExportOrigem_->getRootMenu();
+    juce::PopupMenu::MenuItemIterator it(*menu, true);
+    while (it.next()) {
+        auto& item = it.getItem();
+        if (item.itemID == kExpBounce) {
+            auto d = std::make_unique<juce::DrawableImage>();
+            d->setImage(img);
+            item.setImage(std::move(d));
+        }
+    }
 }
 
 void BackupWorkspaceComponent::executarExportUnificado() {
@@ -2415,6 +2494,7 @@ void BackupWorkspaceComponent::executarExportUnificado() {
         case kExpPlanilha: alvo = btnExportJanela_.get(); break;
         case kExpPacote: abrirPacote(); return;
         case kExpBridge: abrirExport(true); return;  // mesmo recorte do EXPORT de selecionados, com XMP do Bridge
+        case kExpBounce: abrirExport(false, true); return;  // mesmo diálogo/fluxo do EXPORT, fonte = tag B
         default: break;
     }
     // Exatamente a ação e o diálogo do botão antigo correspondente.
@@ -3871,7 +3951,7 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
     return projeto_.projeto().destinationId();
 }
 
-void BackupWorkspaceComponent::abrirExport(bool formatoBridge) {
+void BackupWorkspaceComponent::abrirExport(bool formatoBridge, bool bounce) {
     if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     if (exportando_) return;
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
@@ -3880,13 +3960,14 @@ void BackupWorkspaceComponent::abrirExport(bool formatoBridge) {
     std::vector<std::pair<std::string, juce::String>> mapas;
     for (auto& m : projeto_.listarFolderMaps())
         if (!m.original) mapas.emplace_back(m.id, m.nome);
-    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis, formatoBridge](OpcoesExport o) {
+    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis, formatoBridge, bounce](OpcoesExport o) {
         if (safeThis != nullptr) safeThis->iniciarExport(o.destino, o.hierarquia, o.modoPrefixo, o.prefixo, o.embutir,
-                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string(), formatoBridge);
-    }, formatoBridge);
+                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string(), formatoBridge,
+                                                          bounce, o.metaSaida);
+    }, formatoBridge, bounce);
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
-    opts.dialogTitle = matriz::i18n::t(formatoBridge ? "export.titulo_bridge" : "export.titulo");
+    opts.dialogTitle = matriz::i18n::t(bounce ? "export.titulo_bounce" : formatoBridge ? "export.titulo_bridge" : "export.titulo");
     opts.dialogBackgroundColour = tema().painel;
     opts.escapeKeyTriggersCloseButton = true;
     opts.useNativeTitleBar = true;
@@ -3899,7 +3980,8 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                              const matriz::consolidacao::HierarquiaBackup& hierarquia,
                                              matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo,
                                              bool embutir, bool marcaDagua, const std::string& mapaIdPedido,
-                                             bool formatoBridge) {
+                                             bool formatoBridge, bool bounce,
+                                             matriz::consolidacao::OpcoesMetadadosSaida metaSaida) {
     if (exportando_ || !destino.isDirectory()) return;
     // "Manter organização" (PastaManual sem mapa escolhido) usa o mapa do MAIN
     // ou o mapa aberto — sem isso um item em pastas de dois mapas sairia duas vezes.
@@ -3912,16 +3994,22 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
     resized();
     cancelarExport_->store(false);
     auto cancelado = cancelarExport_;
-    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.titulo"), 0,
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t(bounce ? "export.titulo_bounce" : "export.titulo"), 0,
                                                     [cancelado] { cancelado->store(true); });
     // Tudo que toca banco/disco roda fora da message thread.
-    const std::set<std::string> itens = obterItensSelecionadosPeloCriterio();
+    // Bounce List: a fonte são os arquivos com tag B (a seleção do grid não entra); a tag continua depois do export.
+    std::set<std::string> itens;
+    if (bounce) {
+        for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce)) itens.insert(id);
+    } else {
+        itens = obterItensSelecionadosPeloCriterio();
+    }
     std::set<std::string> comW;
-    if (marcaDagua)
+    if (marcaDagua && !bounce)
         for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) comW.insert(id);
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId, formatoBridge] {
+    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId, formatoBridge, bounce, metaSaida] {
         int semPasta = 0;
         matriz::consolidacao::ResultadoExport r;
         try {
@@ -3944,11 +4032,11 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                     });
                     return !cancelado->load();
                 },
-                comW, embutir, formatoBridge);
+                comW, embutir, formatoBridge, metaSaida);
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r, destino, semPasta] {
+        juce::MessageManager::callAsync([safeThis, r, destino, semPasta, bounce, metaSaida] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
@@ -3957,9 +4045,20 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                    .replace("{n}", juce::String(r.copiados))
                                    .replace("{pasta}", destino.getFullPathName());
             if (semPasta > 0)
-                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(semPasta));
+                msg << "\n\n" << matriz::i18n::t(bounce ? "export.bounce_sem_pasta" : "export.mapa_sem_pasta_aviso").replace("{n}", juce::String(semPasta));
             if (r.foraDoMain > 0)
                 msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
+            if (bounce) {
+                using matriz::consolidacao::ModoMetadadosSaida;
+                if (metaSaida.modo == ModoMetadadosSaida::Clean) {
+                    if (r.rawSemLimpeza > 0)
+                        msg << "\n\n" << matriz::i18n::t("export.bounce_raw").replace("{n}", juce::String(r.rawSemLimpeza));
+                    if (r.tiposSemLimpeza > 0)
+                        msg << "\n\n" << matriz::i18n::t("export.bounce_tipos").replace("{n}", juce::String(r.tiposSemLimpeza));
+                } else if (metaSaida.modo == ModoMetadadosSaida::Embed && r.embedNaoSuportado > 0) {
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_embed_nao").replace("{n}", juce::String(r.embedNaoSuportado));
+                }
+            }
             if (!r.falhas.empty()) {
                 msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
                 for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
@@ -3971,7 +4070,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                 if (r.avisos.size() > 5) msg << "\n... +" << (int) (r.avisos.size() - 5);
             }
             if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t(bounce ? "export.titulo_bounce" : "export.titulo"), msg, {},
                                                    nullptr, juce::ModalCallbackFunction::create([](int) {}));
         });
     });

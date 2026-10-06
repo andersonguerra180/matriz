@@ -28,6 +28,8 @@
 //   por não haver nada embutido — a verificação aqui é existência, tamanho
 //   e checksum.
 
+#include "SaidaBounce.h"
+
 namespace matriz::consolidacao {
 
 // Organização de pastas do backup (item 5). A estrutura padrão é
@@ -238,11 +240,19 @@ struct ResultadoExport {
     int bridgeEmbutidos = 0;
     int bridgeSidecars = 0;
     std::vector<std::string> avisos;  // colisões de nome de sidecar etc. (também vão pro log do export)
+    // EXPORT > Bounce List (modos Original/Embed/Clean)
+    int limpos = 0;             // Clean: metadados removidos
+    int rawSemLimpeza = 0;      // Clean: RAW, copiado sem limpeza
+    int tiposSemLimpeza = 0;    // Clean: formato sem limpeza implementada (PDF, HEIC...), copiado sem alteração
+    int embutidos = 0;          // Embed: ficha gravada dentro da cópia
+    int embedNaoSuportado = 0;  // Embed: formato não aceita metadado embutido
+    int sidecarsGravados = 0;   // sidecar .xmp ao lado da cópia
 };
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir, bool formatoBridge = false);
+                               bool embutir, bool formatoBridge = false,
+                               const OpcoesMetadadosSaida& metaSaida = {});
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
 // para referência — não chamar a partir do fluxo de backup.
