@@ -1,4 +1,5 @@
 #include "CartoesAnalyticsComponent.h"
+#include "ProgressoGlobal.h"
 
 #include "ProjetoAberto.h"
 #include "Tokens.h"
@@ -47,6 +48,9 @@ void CartoesAnalyticsComponent::aoItemAlterado(const EventoItemAlterado&) {
 }
 void CartoesAnalyticsComponent::timerCallback() {
     stopTimer();
+    // Agora os cards existem em todas as abas: durante ingest/backup/lote (eventos a cada item) a releitura completa
+    // do registro competiria com a tarefa; espera ela acabar e relê uma vez.
+    if (ProgressoGlobal::obterInstancia().estaExecutando()) { startTimer(3000); return; }
     if (isShowing()) recarregar();
 }
 

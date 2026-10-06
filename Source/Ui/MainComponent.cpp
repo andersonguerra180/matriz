@@ -1869,6 +1869,33 @@ void MainComponent::mostrarDuplicates() {
 // e SPACE MAP (ex-storage). mostrarAnalytics()/mostrarTree() continuam
 // existindo como atalhos finos pra esta função, pra todo call site antigo
 // (ex.: "group and go to tree" do grid) continuar funcionando sem mudança.
+// Os 6 cards de analytics (TOTAL ASSETS ... NO FOLDER) ficam fixos no mesmo lugar, logo abaixo da barra de abas, de
+// INTAKE a BACKUP. Criados uma vez por projeto aberto.
+void MainComponent::garantirCartoesAnalytics() {
+    if (cartoesAnalytics_ || !projetoAberto_) return;
+    cartoesAnalytics_ = std::make_unique<CartoesAnalyticsComponent>(*projetoAberto_);
+    cartoesAnalytics_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
+        mostrarGrid();
+        if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
+    };
+    cartoesAnalytics_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
+        mostrarGrid();
+        if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
+    };
+    // Mesmo caminho do clique no nó SEM PASTA do Folder Map (atualiza a ficha e escopa as contagens).
+    cartoesAnalytics_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
+        mostrarGrid();
+        if (catalogWorkspace_) {
+            catalogWorkspace_->definirSelecaoItens(itemIds);
+        } else if (mosaico_) {
+            mosaico_->definirFiltroItens(itemIds);
+            mosaico_->definirSelecao(itemIds);
+        }
+    };
+    addAndMakeVisible(*cartoesAnalytics_);
+    cartoesAnalytics_->recarregar();
+}
+
 void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
     if (!projetoAberto_) return;
     telaAtiva_ = TelaAtiva::Catalog;
@@ -1902,29 +1929,8 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
     subAbasEstrutura_->setVisible(true);
     subAbasEstrutura_->selecionar(folderAtivo ? 0 : 1);
 
-    // Os 6 cards de analytics vivem acima da faixa de sub-abas e valem para as DUAS abas.
-    if (!cartoesAnalytics_) {
-        cartoesAnalytics_ = std::make_unique<CartoesAnalyticsComponent>(*projetoAberto_);
-        cartoesAnalytics_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
-            mostrarGrid();
-            if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
-        };
-        cartoesAnalytics_->aoClicarNeedsAttention = [this](const std::set<std::string>& ids) {
-            mostrarGrid();
-            if (catalogWorkspace_) catalogWorkspace_->filtrarPorIds(ids);
-        };
-        // Mesmo caminho do clique no nó SEM PASTA do Folder Map (atualiza a ficha e escopa as contagens).
-        cartoesAnalytics_->aoAbrirSemPasta = [this](const std::set<std::string>& itemIds) {
-            mostrarGrid();
-            if (catalogWorkspace_) {
-                catalogWorkspace_->definirSelecaoItens(itemIds);
-            } else if (mosaico_) {
-                mosaico_->definirFiltroItens(itemIds);
-                mosaico_->definirSelecao(itemIds);
-            }
-        };
-        addAndMakeVisible(*cartoesAnalytics_);
-    }
+    // Os 6 cards de analytics são globais (todas as abas, mesmo lugar): ver garantirCartoesAnalytics().
+    garantirCartoesAnalytics();
     cartoesAnalytics_->setVisible(true);
     cartoesAnalytics_->recarregar();
 
@@ -4791,7 +4797,20 @@ void MainComponent::resized() {
     bool estruturaVisivel = (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) ||
                              (treeWorkspace_ && treeWorkspace_->isVisible());
     if (subAbasEstrutura_) subAbasEstrutura_->setVisible(estruturaVisivel);
-    if (cartoesAnalytics_) cartoesAnalytics_->setVisible(estruturaVisivel);
+    // Cards de analytics: constantes de INTAKE a BACKUP (não na tela inicial, no Home nem no hub).
+    const bool cartoesVisiveis = projetoAberto_ && telaAtiva_ != TelaAtiva::Inicial &&
+        ((intakeWorkspace_ && intakeWorkspace_->isVisible()) || (catalogWorkspace_ && catalogWorkspace_->isVisible()) ||
+         (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible()) || estruturaVisivel ||
+         (backupWorkspace_ && backupWorkspace_->isVisible()) || (storageWorkspace_ && storageWorkspace_->isVisible()));
+    if (cartoesVisiveis) {
+        garantirCartoesAnalytics();
+        if (cartoesAnalytics_ && !cartoesAnalytics_->isVisible()) {
+            cartoesAnalytics_->setVisible(true);
+            cartoesAnalytics_->recarregar();  // pode ter mudado enquanto outra aba estava na frente
+        }
+    } else if (cartoesAnalytics_) {
+        cartoesAnalytics_->setVisible(false);
+    }
 
     if (catalogo_) {
         auto cabecalho = area.removeFromTop(BarraFerramentasComponent::kAltura).reduced(tema().espacoMedio, 8);
@@ -4833,6 +4852,9 @@ void MainComponent::resized() {
         }
     }
 
+    if (cartoesVisiveis && cartoesAnalytics_)
+        cartoesAnalytics_->setBounds(area.removeFromTop(cartoesAnalytics_->alturaPara(area.getWidth())));
+
     if (catalogHubWorkspace_ && catalogHubWorkspace_->isVisible()) {
         catalogHubWorkspace_->setBounds(area);
         return;
@@ -4862,7 +4884,6 @@ void MainComponent::resized() {
     // numa faixa fixa acima de qual dos dois workspaces estiver visível
     // (a visibilidade delas já foi decidida lá no topo desta função).
     if (estruturaVisivel) {
-        if (cartoesAnalytics_) cartoesAnalytics_->setBounds(area.removeFromTop(cartoesAnalytics_->alturaPara(area.getWidth())));
         if (subAbasEstrutura_) subAbasEstrutura_->setBounds(area.removeFromTop(SubAbasEstruturaComponent::kAltura));
 
         if (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) {

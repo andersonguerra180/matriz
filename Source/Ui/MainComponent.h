@@ -122,6 +122,7 @@ public:
     // "Structure", com a barra de sub-abas FOLDER MAP/SPACE MAP por cima do
     // workspace escolhido.
     void mostrarStructure(SubTabEstrutura subTab);
+    void garantirCartoesAnalytics();
 
     void abrirColecaoDoCatalogo(const juce::File& pastaColecao);
     void retornarAoCatalogo();
