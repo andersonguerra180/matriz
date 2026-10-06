@@ -3531,8 +3531,8 @@ int rodarLoteSelfTest() {
         bw.atualizarTravasDoMain();
         checar(bw.mainSelado_ && !bw.configTravada_,
                "old MAIN without saved settings: not locked yet (locks on the next backup)");
-        checar(!bw.toggleEmbutirMetadados_->isVisible() && !bw.toggleForcarRebackup_->isVisible(),
-               "with a MAIN, embed and force-full-backup are gone from the add flow");
+        checar(!bw.toggleForcarRebackup_->isVisible(),
+               "with a MAIN, force-full-backup is gone from the add flow");
         bw.comboOrg_->setSelectedId(3, juce::dontSendNotification);
         bw.comboModoPrefixo_->setSelectedId(2, juce::dontSendNotification);
         bw.gravarConfigDoMain();

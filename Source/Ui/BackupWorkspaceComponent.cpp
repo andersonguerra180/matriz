@@ -1,5 +1,6 @@
 #include "BackupWorkspaceComponent.h"
 #include <unordered_map>
+#include "../App/SemSono.h"
 #include "GoogleDriveContas.h"
 #include "BackupFileSelectorDialog.h"
 #include "BackupSyncDialog.h"
@@ -1108,9 +1109,6 @@ public:
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (!isCatalogMode) {
-                if (owner_.toggleEmbutirMetadados_ && owner_.toggleEmbutirMetadados_->isVisible()) {
-                    owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
-                }
                 if (owner_.btnAtualizarSidecars_ && owner_.btnAtualizarSidecars_->isVisible()) {
                     owner_.btnAtualizarSidecars_->setBounds(
                         dentro.removeFromTop(alturaLinhaToggle).reduced(0, 3).removeFromLeft(220));
@@ -1826,13 +1824,6 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     toggleGerarCatalogo_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleGerarCatalogo_);
 
-    toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.embutir_metadados"));
-    toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
-    toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
-    toggleEmbutirMetadados_->setTooltip("Enable embedding Dublin Core and technical tags directly into media headers");
-    toggleEmbutirMetadados_->setToggleState(true, juce::dontSendNotification);
-    configContainer_->addAndMakeVisible(*toggleEmbutirMetadados_);
-
     toggleAutoResolverConflitos_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.auto_resolver_conflitos"));
     toggleAutoResolverConflitos_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     toggleAutoResolverConflitos_->setColour(juce::ToggleButton::tickColourId, tk.acento);
@@ -2080,6 +2071,9 @@ BackupWorkspaceComponent::~BackupWorkspaceComponent() {
     poolCatalogoBackup_.removeAllJobs(true, 2000);
     ++*geracaoPlano_;  // job de plano ainda na fila nem começa
     poolPlano_.removeAllJobs(true, 30000);
+    // A cópia do backup usa o Project: cancela entre os blocos e espera o arquivo em curso.
+    cancelamento_->pedir();
+    poolBackup_.removeAllJobs(true, 60000);
     ++geracaoDestinos_;
     poolDestinos_.removeAllJobs(true, 2000);
     // O job de EXPORT usa o Project: cancela entre arquivos e espera o
@@ -2245,11 +2239,6 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         toggleGerarCatalogo_->setButtonText(matriz::i18n::t("backup.gerar_banco_sqlite"));
         toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
-    }
-    if (toggleEmbutirMetadados_) {
-        toggleEmbutirMetadados_->setButtonText(matriz::i18n::t("backup.embutir_metadados"));
-        toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
-        toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
     if (toggleAutoResolverConflitos_) {
         toggleAutoResolverConflitos_->setButtonText(matriz::i18n::t("backup.auto_resolver_conflitos"));
@@ -3343,7 +3332,7 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         btnAtualizarSidecars_->setVisible(mainSelado_);
         if (configContainer_) configContainer_->resized();
     }
-    for (auto* t : {toggleEmbutirMetadados_.get(), toggleForcarRebackup_.get()}) {
+    for (auto* t : {toggleForcarRebackup_.get()}) {
         if (!t) continue;
         if (!mostrarOpcoesPrimeiroBackup) t->setToggleState(false, juce::dontSendNotification);
         if (t->isVisible() != mostrarOpcoesPrimeiroBackup) {
@@ -3585,8 +3574,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
     auto plano = plano_;
     auto& projeto = projeto_;
     bool gerarCatalogo = toggleGerarCatalogo_->getToggleState();
-    // Embed dentro da cópia só no primeiro backup (MAIN ainda não existe).
-    bool embutirMeta = !isCatalogMode && !mainSelado_ && toggleEmbutirMetadados_->getToggleState();
+    // O MAIN é fiel à SOURCE: o backup nunca embute metadados/marcadores (isso é só do EXPORT).
+    const bool embutirMeta = false;
     if (!isCatalogMode) gravarConfigDoMain();  // estas escolhas passam a valer pra todo arquivo novo
 
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
@@ -3752,44 +3741,54 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
-    juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto,
-                                      gerarCatalogo, embutirMeta, moverAgora]() {
-        if (!safeThis) return;
+    // A cópia (e a verificação) roda numa thread de fundo: a UI só mostra o progresso. Cancelar é
+    // checado entre os blocos de cada arquivo. O resto (catálogo, relatórios, resumo) volta pra
+    // message thread no fim.
+    poolBackup_.addJob([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto, gerarCatalogo, embutirMeta,
+                        moverAgora]() {
+        matriz::app::SemSono semSono("BKR Matriz: Make Backup");
+        matriz::consolidacao::limparTemporariosDeCopia(destinoMedia);
+
+        auto ultimoPost = std::make_shared<std::atomic<juce::uint32>>(0);
+        auto postar = [safeThis, ultimoPost](const juce::String& rotulo, int feito, int total) {
+            const juce::uint32 agoraMs = juce::Time::getMillisecondCounter();
+            if (feito < total && agoraMs - ultimoPost->load() < 150) return;
+            ultimoPost->store(agoraMs);
+            juce::MessageManager::callAsync([safeThis, rotulo, feito, total]() {
+                if (!safeThis) return;
+                safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
+                const juce::String texto = rotulo + " " + juce::String(feito) + " of " + juce::String(total) + "...";
+                safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
+            });
+        };
 
         // Fase 2: moves de _SEM_PASTA primeiro (rename no mesmo volume, sem recópia).
         matriz::consolidacao::ResultadoMovimentos movs;
         if (moverAgora) {
             movs = matriz::consolidacao::executarMovimentosSemPasta(
                 projeto.projeto().registro(), projeto.projeto().pasta(), destinoMedia, plano.movimentosSemPasta,
-                [safeThis, cancelamento](int feito, int total) {
-                    if (!safeThis) return false;
-                    safeThis->labelProgressoStatus_->setText("Moving from _SEM_PASTA: " + juce::String(feito) + " of " + juce::String(total) + "...", juce::dontSendNotification);
-                    ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Moving " + juce::String(feito) + " of " + juce::String(total) + " out of _SEM_PASTA...");
-                    juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                    return !cancelamento->pedido() && safeThis != nullptr;
+                [&](int feito, int total) {
+                    postar("Moving from _SEM_PASTA:", feito, total);
+                    return !cancelamento->pedido();
                 });
-            if (!safeThis) return;
         }
 
-        // Marca d'água nunca vai pro MAIN (só EXPORT): nenhum id marcado com W
-        // é passado; embed só no primeiro backup (embutirMeta).
+        // Marca d'água nunca vai pro MAIN (só EXPORT) e o MAIN é fiel à SOURCE: sem embed.
         auto resultado = matriz::consolidacao::executarConsolidacao(
             projeto.projeto().registro(),
             projeto.projeto().pasta(),
             destinoMedia,
             plano,
-            [safeThis, cancelamento](int feito, int total) {
-                if (!safeThis) return false;
-                safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
-                safeThis->labelProgressoStatus_->setText("Copying: " + juce::String(feito) + " of " + juce::String(total) + " assets...", juce::dontSendNotification);
-                ProgressoGlobal::obterInstancia().atualizarProgresso(
-                    "backup", feito, "Copying " + juce::String(feito) + " of " + juce::String(total) + " assets...");
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
-                return !cancelamento->pedido() && safeThis != nullptr;
+            [&](int feito, int total) {
+                postar("Copying:", feito, total);
+                return !cancelamento->pedido();
             },
-            {}, embutirMeta
-        );
+            {}, embutirMeta,
+            [cancelamento]() { return !cancelamento->pedido(); });
 
+        juce::MessageManager::callAsync([safeThis, cancelamento, plano, destinoRaiz, destinoMedia, &projeto, gerarCatalogo,
+                                         movs = std::move(movs), resultado = std::move(resultado)]() mutable {
         if (!safeThis) return;
 
         safeThis->copiadoCount_ = resultado.consolidados;
@@ -3941,6 +3940,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         safeThis->btnDone_->setVisible(true);
         safeThis->resized();
         if (!resultado.cancelado) safeThis->perguntarSincronizarClones();
+        });
     });
 }
 

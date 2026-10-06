@@ -98,8 +98,9 @@ struct ItemPlanejado {
     juce::String nomeOriginal;             // só pro display na prévia (original vs final)
     juce::String caminhoRelativoDestino;   // relativo à raiz de destino escolhida
     juce::int64 tamanhoBytes = 0;
-    bool jaConsolidado = false;            // incremental — já tem registro com o mesmo checksum, não precisa copiar de novo
+    bool jaConsolidado = false;            // incremental — arquivo existe no MAIN E o tamanho bate com o registrado (senão recopia)
     bool emConflito = false;               // caminhoRelativoDestino colide com outro item do plano
+    bool registradoDivergente = false;     // há registro e o arquivo existe, mas o tamanho não bate com o registrado (truncado/alterado)
     // Fase 2 — item que está em _SEM_PASTA no MAIN e agora tem pasta no mapa
     // do MAIN: caminho atual no MAIN (a ser movido pra caminhoRelativoDestino,
     // nunca recopiado). Vazio = sem movimento.
@@ -208,7 +209,14 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir = {},
                                             const std::set<std::string>& itensMarcadosWatermark = {},
-                                            bool embutirNaCopia = false);
+                                            bool embutirNaCopia = false,
+                                            // Checado ENTRE OS BLOCOS de cada cópia/verificação (cancelar responde em ~1 s
+                                            // mesmo num arquivo de dezenas de GB). Vazio = nunca cancela no meio do arquivo.
+                                            const std::function<bool()>& continuar = {});
+
+// Apaga os "<nome>.mtz-tmp" que uma cópia interrompida deixou em Media/ (chamar no início de
+// todo Make Backup — rodar de novo continua de onde parou). Devolve quantos apagou.
+int limparTemporariosDeCopia(const juce::File& destinoMedia);
 
 // Fase 2 — move (nunca recopia) os itens de _SEM_PASTA pra pasta nova do mapa
 // do MAIN, dentro do MAIN. Não sobrescreve: destino já existente vira falha.

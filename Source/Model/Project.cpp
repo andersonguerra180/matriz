@@ -738,6 +738,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     // disco monta com outro nome). Vazio = registro legado — o resolvedor o
     // tenta no MAIN e depois nos CLONEs.
     garantirColuna(registro, "consolidacao_registro", "destino_id", "TEXT NOT NULL DEFAULT ''");
+    // Tamanho do arquivo como ficou no MAIN (0 = registro antigo, só confere a existência).
+    garantirColuna(registro, "consolidacao_registro", "tamanho_bytes", "INTEGER NOT NULL DEFAULT 0");
     registro.exec(
         "CREATE TABLE IF NOT EXISTS backup_destino ("
         "id            TEXT PRIMARY KEY, "

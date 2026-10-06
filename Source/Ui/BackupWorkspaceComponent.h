@@ -121,6 +121,7 @@ private:
     // atrasada de um cálculo já superado é descartada. Atômico + compartilhado
     // porque o job também lê (cancela antes de começar se já foi superado).
     juce::ThreadPool poolPlano_{1};
+    juce::ThreadPool poolBackup_{1};  // cópia verificada do Make Backup, fora da message thread
     std::shared_ptr<std::atomic<int>> geracaoPlano_ = std::make_shared<std::atomic<int>>(0);
     // Prévia calculada UMA vez por visita: dentro de recarregar() (e do
     // construtor) as chamadas a atualizarResumo() só marcam pendente.
@@ -340,7 +341,6 @@ private:
     // === OPTIONS section ===
     std::unique_ptr<juce::Label> labelOpcoes_;
     std::unique_ptr<juce::ToggleButton> toggleGerarCatalogo_;
-    std::unique_ptr<juce::ToggleButton> toggleEmbutirMetadados_;
     std::unique_ptr<juce::ToggleButton> toggleVerificarChecksum_;
     std::unique_ptr<juce::ToggleButton> toggleAutoResolverConflitos_;
     std::unique_ptr<juce::ToggleButton> toggleForcarRebackup_;

@@ -553,6 +553,7 @@ target_sources(matriz PRIVATE
 if(APPLE)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard.mm
+        Source/App/SemSono_mac.mm
         Source/Vault/DiskIdentity_mac.mm
         Source/Ingest/MiniaturaPsd.mm
         Source/Ui/VideoPlayerBridge.mm
@@ -560,6 +561,7 @@ if(APPLE)
 elseif(WIN32)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard_win.cpp
+        Source/App/SemSono_win.cpp
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
