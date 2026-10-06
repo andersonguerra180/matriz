@@ -3255,6 +3255,19 @@ int ProjetoAberto::gerarPropostasDeNovasPastas(const std::string& mapaId) {
     std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
     for (const auto& raiz : raizes) {
         try {
+            // Mesma pasta ingerida de novo (cada ingest grava uma linha em ingest_pasta_raiz): se este mapa já tem uma
+            // proposta ABERTA para esse caminho, não cria a gêmea — ela ficaria vazia depois de USE TREE/MERGE na outra.
+            {
+                auto aberta = db.prepare("SELECT 1 FROM acervo_pasta WHERE projeto_id = ? AND mapa_id = ? "
+                                         "AND proposta_id = id AND origem_caminho = ? LIMIT 1");
+                aberta.bind(1, Value::of(projeto_->projetoId()));
+                aberta.bind(2, Value::of(mapaId));
+                aberta.bind(3, Value::of(raiz.caminho));
+                if (aberta.step()) {
+                    db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+                    continue;
+                }
+            }
             const auto itens = itensSoltosDoDiretorio(db, mapaId, raiz.caminho, true);
             const std::string agora = matriz::model::agoraIso8601();
             if (itens.empty()) {
