@@ -1379,6 +1379,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             contagensAguardandoSnapshot_ = true;
             return;
         }
+        if (mosaico_->versaoSnapshot() == 0) {
+            // Nenhum snapshot chegou ainda (abertura: construirSidebar() roda antes do primeiro
+            // mosaico_->recarregar()). Cair no listarItens() abaixo duplicava a mesma consulta completa
+            // em paralelo ao snapshot, as duas disputando o HD. Espera o snapshot e reconta quando chegar.
+            contagensAguardandoSnapshot_ = true;
+            return;
+        }
         if (mosaico_->totalItensCarregados() > 0)
             itensCopia = mosaico_->todosItensEmMemoria();
     }
