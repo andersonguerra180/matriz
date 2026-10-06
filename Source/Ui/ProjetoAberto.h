@@ -94,6 +94,7 @@ struct ItemResumo {
     bool marcadoPrint = false;
     bool impresso = false;        // já saiu em alguma sessão de impressão (SEND TO PRINT)
     bool marcadoWatermark = false;
+    bool marcadoBounce = false;   // tag B (Bounce List): lista persistente de arquivos marcados para exportar
     bool metadadosEditados = false;
     bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
     bool pastaAtiva = true;
@@ -1080,7 +1081,8 @@ public:
         Html,
         Zip,
         Print,
-        Watermark
+        Watermark,
+        Bounce  // tag B: Bounce List (EXPORT > Bounce List). Interna: nunca vai pra XMP/sidecar/EXPORT METADATA
     };
 
     // Operações sobre conjuntos de marcação de sessão
@@ -1198,6 +1200,7 @@ private:
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
     std::set<std::string> marcadosWatermark_;
+    std::set<std::string> marcadosBounce_;
     // Marcas R do INTAKE (espelho de intake_marca_r só dos itens em quarentena); também sob marcacoesMutex_.
     std::set<std::string> marcadosR_;
     std::uint64_t versaoMarcasR_ = 0;          // sobe a cada alteração em memória

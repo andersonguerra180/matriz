@@ -169,6 +169,9 @@ public:
         // 5. E - Tag as Edited (marcação manual, ver item 6)
         drawLegendItem('E', "E", juce::Colour(0xffFFEE00), juce::Colours::black, isPt ? juce::String::fromUTF8("Marcar como Editado") : "Tag as Edited");
 
+        // 6. B - Bounce List (marcação persistente para EXPORT > Bounce List)
+        drawLegendItem('B', "B", juce::Colour(0xff9333ea), juce::Colours::white, isPt ? juce::String::fromUTF8("Lista Bounce") : "Bounce List");
+
         float helpSize = 16.0f;
         if (helpCircle_)
             helpCircle_->setBounds((int)std::round(x), (int)std::round(cy - helpSize * 0.5f), (int)helpSize, (int)helpSize);
@@ -589,6 +592,19 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnIncluirOcultosSelecao_);
 
+    // Bounce List: mostra só os arquivos com tag B; soma com media type/ano/etc. Aceso (roxo) com a contagem quando ON.
+    btnMostrarBounce_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.bounce_off"));
+    btnMostrarBounce_->setLookAndFeel(&sidebarButtonLf_);
+    btnMostrarBounce_->setTooltip(matriz::i18n::t("catwork.bounce_tooltip"));
+    btnMostrarBounce_->onClick = [this] {
+        mostrarApenasBounce_ = !mostrarApenasBounce_;
+        atualizarBotaoBounce();
+        aplicarFiltrosAdicionais();
+        atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a lista
+    };
+    atualizarBotaoBounce();
+    addAndMakeVisible(*btnMostrarBounce_);
+
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -640,6 +656,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             case 'K': tipo = ProjetoAberto::TipoMarcacao::Zip;       break;
             case 'P': tipo = ProjetoAberto::TipoMarcacao::Print;     break;
             case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
+            case 'B': tipo = ProjetoAberto::TipoMarcacao::Bounce;    break;
             default: return;
         }
         projeto_.definirMarcacao(tipo, ids, false);
@@ -718,6 +735,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
     if (btnIncluirOcultosSelecao_) btnIncluirOcultosSelecao_->setLookAndFeel(nullptr);
+    if (btnMostrarBounce_) btnMostrarBounce_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
 }
@@ -775,6 +793,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tk.textoSobreAcento : tk.textoSecundario);
         btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
     }
+    atualizarBotaoBounce();
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tk.acento : tk.painelAlt);
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tk.textoSobreAcento : tk.textoSecundario);
@@ -975,6 +994,19 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
 }
 
 void CatalogWorkspaceComponent::EscutaEventos::aoItemAlterado(const EventoItemAlterado& e) {
+    if (e.tipoAlteracao == "marcacao" && dono.btnMostrarBounce_) {
+        // Tag B ligada/desligada (ou qualquer marca): a contagem do botão acompanha e, com a Bounce List ativa, o
+        // arquivo desmarcado sai da grade. Um evento em lote vira uma refiltragem só.
+        if (dono.refreshBouncePendente_) return;
+        dono.refreshBouncePendente_ = true;
+        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<CatalogWorkspaceComponent>(&dono)] {
+            if (safe == nullptr) return;
+            safe->refreshBouncePendente_ = false;
+            safe->atualizarBotaoBounce();
+            if (safe->mostrarApenasBounce_) safe->aplicarFiltrosAdicionais();
+        });
+        return;
+    }
     if (e.tipoAlteracao != "metadado_data") return;
     // Uma aplicação em lote grava um EVENT DATE por item; sem este guard,
     // cada item da seleção dispararia uma refiltragem completa.
@@ -1077,6 +1109,13 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         vulneraveisIds.insert(ids.begin(), ids.end());
     }
 
+    std::set<std::string> bounceIds;
+    if (mostrarApenasBounce_) {
+        anyFilter = true;
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
+        bounceIds.insert(ids.begin(), ids.end());
+    }
+
     std::set<std::string> recentesIds;
     if (mostrarApenasRecentes_) {
         anyFilter = true;
@@ -1115,6 +1154,10 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
         if (libChave == "vulneraveis" || libChave == "merge_conflitos") {
             if (vulneraveisIds.find(item.id) == vulneraveisIds.end()) continue;
+        }
+
+        if (mostrarApenasBounce_) {
+            if (bounceIds.find(item.id) == bounceIds.end()) continue;
         }
 
         if (mostrarApenasRecentes_) {
@@ -1339,6 +1382,13 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             itensCopia = mosaico_->todosItensEmMemoria();
     }
 
+    // "Show Bounce List" ligado: as contagens da sidebar são só da lista B.
+    std::optional<std::set<std::string>> soBounce;
+    if (mostrarApenasBounce_) {
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
+        soBounce = std::set<std::string>(ids.begin(), ids.end());
+    }
+
     // "Show Recently Ingested" ligado: as contagens da sidebar são da leva.
     std::optional<std::set<std::string>> soRecentes;
     if (mostrarApenasRecentes_) {
@@ -1358,7 +1408,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     const std::optional<std::string> listaSel = listaSelecionada_;
     const int geracao = ++geracaoContagens_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, filtroHerdado,
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1366,6 +1416,11 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             if (soRecentes) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
+                            itens.end());
+            }
+            if (soBounce) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !soBounce->count(r.id); }),
                             itens.end());
             }
             if (filtroHerdado) {
@@ -1665,6 +1720,18 @@ void CatalogWorkspaceComponent::executarBusca() {
     resized();
 }
 
+void CatalogWorkspaceComponent::atualizarBotaoBounce() {
+    if (!btnMostrarBounce_) return;
+    const auto& tk = tema();
+    const juce::Colour roxo(0xff9333ea);
+    btnMostrarBounce_->setButtonText(mostrarApenasBounce_
+        ? matriz::i18n::t("catwork.bounce_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce))))
+        : matriz::i18n::t("catwork.bounce_off"));
+    btnMostrarBounce_->setColour(juce::TextButton::buttonColourId, mostrarApenasBounce_ ? roxo : tk.painelAlt);
+    btnMostrarBounce_->setColour(juce::TextButton::textColourOffId, mostrarApenasBounce_ ? juce::Colours::white : tk.textoSecundario);
+    btnMostrarBounce_->repaint();
+}
+
 void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
@@ -1691,6 +1758,9 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     }
+
+    mostrarApenasBounce_ = false;  // ALL ASSETS zera tudo, inclusive a Bounce List
+    atualizarBotaoBounce();
 
     mostrarApenasRecentes_ = false;
     if (btnMostrarRecentes_) {
@@ -2248,7 +2318,7 @@ void CatalogWorkspaceComponent::resized() {
     totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
     if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
     totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (4 * (20 + 1)) + 6; // 4 toggle buttons
+    totalRequiredH += (5 * (20 + 1)) + 6; // 5 toggle buttons (incl. Show Bounce List)
     // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
     // MEDIA TYPE e DATE continuam sendo cards.
     totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
@@ -2353,6 +2423,10 @@ void CatalogWorkspaceComponent::resized() {
     }
     if (btnIncluirOcultosSelecao_) {
         btnIncluirOcultosSelecao_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
+        sidebar.removeFromTop(1);
+    }
+    if (btnMostrarBounce_) {  // entre INCLUDE HIDDEN e o card MEDIA TYPE
+        btnMostrarBounce_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
         sidebar.removeFromTop(1);
     }
     sidebar.removeFromTop(sectionSpacing);

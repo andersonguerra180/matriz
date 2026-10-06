@@ -148,12 +148,14 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
             // que H/K/P, então precisa do mesmo tratamento aqui — sem isso
             // ficava sem sync ao vivo entre a janela de Preview e a grade.
             bool marcadoW = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id);
+            bool marcadoB = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, id);
             for (ItemResumo* item : {itemEmTodos(id), itemEmFiltrados(id)}) {
                 if (item == nullptr) continue;
                 item->marcadoPublicacao = marcadoH;
                 item->marcadoZip = marcadoK;
                 item->marcadoPrint = marcadoP;
                 item->marcadoWatermark = marcadoW;
+                item->marcadoBounce = marcadoB;
                 item->impresso = projeto_.itemImpresso(id);
             }
         };
@@ -387,6 +389,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (auto resumo = projeto_.obterItemResumo(itemId)) {
         it->marcadoRevisado = resumo->marcadoRevisado;
         it->marcadoWatermark = resumo->marcadoWatermark;
+        it->marcadoBounce = resumo->marcadoBounce;
     }
 
     // Nome/ano/etc. mudaram: refaz os textos de exibição deste item.
@@ -761,7 +764,7 @@ int MosaicoComponent::compararPorColunaDaLista(const ItemResumo& a, const ItemRe
     auto nome = [](const ItemResumo& i) { return i.titulo.empty() ? i.nomeOriginalArquivo : i.titulo; };
     auto data = [](const ItemResumo& i) { return i.dataCriacao.empty() ? i.criadoEm : i.dataCriacao; };
     auto marcas = [](const ItemResumo& i) {
-        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark);
+        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark) + int(i.marcadoBounce);
     };
     switch (coluna) {
         case 1: return categoriaDaLista(a.extensaoArquivo).compare(categoriaDaLista(b.extensaoArquivo));
@@ -1887,6 +1890,24 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         }
     }
 
+    // B = Bounce List: liga/desliga a marca nos selecionados (qualquer tipo de arquivo). Só no grid: no INTAKE
+    // (modo quarentena) o item ainda nem entrou no catálogo, e a marca nunca é gravada aqui.
+    if ((tecla.getKeyCode() == 'B' || c == 'b' || c == 'B') && semModificadores && !modoQuarentena_) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Bounce, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_)
+                if (alvosSet.count(item.id)) item.marcadoBounce = novoEstado;
+            for (auto& item : itensFiltrados_)
+                if (alvosSet.count(item.id)) item.marcadoBounce = novoEstado;
+            repaint();
+            return true;
+        }
+    }
+
     // P (Send to Print) e W (Watermark) só fazem sentido pra fotos — filtra
     // a seleção antes de marcar, ignorando silenciosamente áudio/vídeo/
     // documentos/sessões que estejam junto. Baseado em extensaoArquivo,
@@ -2604,6 +2625,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     selo(item.marcadoZip, "K", juce::Colour(0xff0077ff), juce::Colours::white);
                     selo(item.marcadoPrint, "P", juce::Colour(0xffff6b00), juce::Colours::white);
                     selo(item.marcadoWatermark, "W", juce::Colour(0xffffcc00), juce::Colours::black);
+                    selo(item.marcadoBounce, "B", juce::Colour(0xff9333ea), juce::Colours::white);
                 }
 
                 continue;
@@ -2740,6 +2762,15 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::black);
                 g.setFont(font9Bold);
                 g.drawText("W", stampW, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoBounce) {
+                juce::Rectangle<int> stampB(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(juce::Colour(0xff9333ea));
+                g.fillRoundedRectangle(stampB.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("B", stampB, juce::Justification::centred);
                 stampRight -= 19;
             }
 

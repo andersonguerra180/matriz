@@ -216,6 +216,7 @@ private:
     std::unique_ptr<juce::TextButton> btnOcultarEditados_;
     std::unique_ptr<juce::TextButton> btnOcultarNaoSelecionados_;
     std::unique_ptr<juce::TextButton> btnMostrarRecentes_;
+    std::unique_ptr<juce::TextButton> btnMostrarBounce_;          // toggle: só os arquivos com tag B (Bounce List)
     std::unique_ptr<juce::TextButton> btnIncluirOcultosSelecao_;  // override: seleção também vale para o que o filtro esconde
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
@@ -223,6 +224,9 @@ private:
     bool ocultarEditados_ = false;
     bool ocultarNaoSelecionados_ = false;
     bool mostrarApenasRecentes_ = false;
+    bool mostrarApenasBounce_ = false;     // soma com os outros filtros (não zera nada)
+    bool refreshBouncePendente_ = false;   // agrupa eventos de marcação B numa única refiltragem
+    void atualizarBotaoBounce();           // rótulo/cor: OFF, ou ON com a contagem "(n)"
     bool incluirOcultosNaSelecao_ = false;  // OFF (padrão): edição em lote só nos itens visíveis na grade
     std::set<std::string> selecaoEfetivaVista_;  // última seleção efetiva que a ficha recebeu
     void atualizarRotuloSelecionados();

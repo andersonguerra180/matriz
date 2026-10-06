@@ -677,6 +677,8 @@ private:
                 desenharSelo("H", juce::Colour(0xff39ff14), juce::Colours::black);
             if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemId_))
                 desenharSelo("W", juce::Colour(0xffffcc00), juce::Colours::black);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, itemId_))
+                desenharSelo("B", juce::Colour(0xff9333ea), juce::Colours::white);
             // E: fundo preto e letra amarela zebra, pra não confundir com o W amarelo.
             if (revisado)
                 desenharSelo("E", juce::Colours::black, juce::Colour(0xffFFEE00));
