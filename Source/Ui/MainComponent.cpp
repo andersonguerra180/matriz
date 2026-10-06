@@ -4797,9 +4797,11 @@ void MainComponent::resized() {
     bool estruturaVisivel = (analyticsWorkspace_ && analyticsWorkspace_->isVisible()) ||
                              (treeWorkspace_ && treeWorkspace_->isVisible());
     if (subAbasEstrutura_) subAbasEstrutura_->setVisible(estruturaVisivel);
-    // Cards de analytics: constantes de INTAKE a BACKUP (não na tela inicial, no Home nem no hub).
+    // Cards de analytics: constantes de CATALOG a BACKUP. Fora da tela inicial, do Home, do hub e do INTAKE (que usa a
+    // altura toda e já tem os próprios contadores).
     const bool cartoesVisiveis = projetoAberto_ && telaAtiva_ != TelaAtiva::Inicial &&
-        ((intakeWorkspace_ && intakeWorkspace_->isVisible()) || (catalogWorkspace_ && catalogWorkspace_->isVisible()) ||
+        !(intakeWorkspace_ && intakeWorkspace_->isVisible()) &&
+        ((catalogWorkspace_ && catalogWorkspace_->isVisible()) ||
          (duplicatesWorkspace_ && duplicatesWorkspace_->isVisible()) || estruturaVisivel ||
          (backupWorkspace_ && backupWorkspace_->isVisible()) || (storageWorkspace_ && storageWorkspace_->isVisible()));
     if (cartoesVisiveis) {
