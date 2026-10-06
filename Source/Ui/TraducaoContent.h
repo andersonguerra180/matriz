@@ -24,6 +24,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Preset", juce::String::fromUTF8("Preset / Predefinição")},
         {"DAW Session", juce::String::fromUTF8("Sessão de DAW")},
         {"Field Recording", juce::String::fromUTF8("Gravação de Campo")},
+        {"Ambience Recording", juce::String::fromUTF8("Gravação de Ambiente")},
         {"Voiceover", juce::String::fromUTF8("Locução")},
         {"Speech", "Depoimento"},
         {"Sound FX", "Efeitos Sonoros (SFX)"},

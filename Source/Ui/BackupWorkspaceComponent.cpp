@@ -1309,7 +1309,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
     static const std::vector<std::string> kPadroesContent = {
         // Audio
         "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-        "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
+        "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
         "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master",
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
