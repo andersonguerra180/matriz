@@ -1324,14 +1324,16 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // Fase 3c: reutilizar itens já em memória no Mosaico — evita segunda query
     // completa para o mesmo evento. Cópia feita aqui na message thread; se o
     // Mosaico ainda estiver vazio (snapshot não chegou) cai no listarItens().
-    // Snapshot em voo: conta com o que há (se houver) e reconta quando
-    // chegar; vazio + em voo não conta nada agora (evita 2ª listarItens()).
+    // Snapshot em voo: não conta agora (ver abaixo) e reconta quando chegar.
     std::vector<ItemResumo> itensCopia;
     if (mosaico_ && !mosaico_->modoQuarentenaAtual()) {
         versaoSnapshotContada_ = mosaico_->versaoSnapshot();
         if (mosaico_->snapshotPendente()) {
+            // Snapshot em voo: não conta agora nem com o que havia em memória — listarColecoesEmbutidas() e o
+            // snapshot disputavam o mesmo banco (HD externo) e o refresh pós-ingest levava dezenas de segundos.
+            // Reconta sozinho quando o snapshot chega (contagensAguardandoSnapshot_, ver aoSnapshot acima).
             contagensAguardandoSnapshot_ = true;
-            if (mosaico_->totalItensCarregados() == 0) return;
+            return;
         }
         if (mosaico_->totalItensCarregados() > 0)
             itensCopia = mosaico_->todosItensEmMemoria();
