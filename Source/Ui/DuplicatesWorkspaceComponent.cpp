@@ -105,6 +105,26 @@ namespace {
     constexpr int kAlturaFechado = kAlturaSubCard + 22;
     constexpr int kAlturaAberto = kAlturaSubCard + 360;
 
+    // PROBABLE/SIMILAR (pHash) nunca entram em decisão em lote: só um a um, olhando.
+    template <class G> bool ehPrevisto(const G& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }
+    template <class V> int contarPrevistos(const V& gs) {
+        return static_cast<int>(std::count_if(gs.begin(), gs.end(), [](const auto& g) { return ehPrevisto(g); }));
+    }
+    constexpr int kAlturaBannerRisco = 52;
+    // A resolução em background desfaz tudo (rollback) se algo falha; sem isto o clique parecia "não fazer nada".
+    void avisarFalhaResolucao() {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.falha_titulo"),
+                                               matriz::i18n::t("duplicatas.falha_corpo"), {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+    }
+    // Texto do que sobrou depois de uma decisão em lote: parecidos (pHash) são decisão olhando; empate/sem backup é outro motivo.
+    template <class V> juce::String textoManuais(const V& gs) {
+        const int previstos = contarPrevistos(gs);
+        if (previstos == static_cast<int>(gs.size()))
+            return matriz::i18n::t("duplicatas.manuais_previstos").replace("{n}", juce::String(previstos));
+        return matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String((int) gs.size()));
+    }
+
     // Notas nunca são sobrescritas pela resolução de duplicatas: acrescenta.
     const char* const kSqlAcrescentarNota =
         "UPDATE item SET notas_livres = CASE WHEN TRIM(COALESCE(notas_livres, '')) = '' THEN ? "
@@ -533,7 +553,9 @@ private:
             : owner_(owner), index_(index), grupo_(grupo), parent_(parent) {
             
             btnValidate_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate"));
-            btnValidate_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
+            btnValidate_->setColour(juce::TextButton::buttonColourId,  // verde = idêntico/seguro; âmbar = parecido, decidir olhando
+                                    (grupo.criterio == "PROBABLE" || grupo.criterio == "SIMILAR") ? juce::Colour(0xfff59e0b)
+                                                                                                 : juce::Colour(0xff22c55e));
             btnValidate_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
             btnValidate_->onClick = [this] {
                 owner_.resolverDuplicata(static_cast<int>(index_), true);
@@ -671,10 +693,23 @@ private:
             const auto& tk = tema();
             
             // Outer container box
+            // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
+            const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
+            const juce::Colour corAmbar(0xfff59e0b), corSeguro(0xff22c55e);
             g.setColour(tk.painel);
             g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
-            g.setColour(tk.borda);
-            g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
+            if (ehPrevisto) {
+                g.setColour(corAmbar.withAlpha(0.07f));
+                g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
+                g.setColour(corAmbar);
+                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
+            } else if (grupo_.criterio == "IDENTICAL") {
+                g.setColour(corSeguro.withAlpha(0.75f));
+                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
+            } else {
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
+            }
 
             int w = getWidth();
             int btnW = 160;
@@ -716,8 +751,8 @@ private:
                     headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
                 }
                 if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
-                else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE";
-                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT";
+                else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE \u00B7 REVIEW";
+                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT \u00B7 REVIEW";
                 // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
                 int larguraSelo = 0;
                 if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
@@ -838,6 +873,37 @@ private:
             // Draw Duplicate sub-card
             drawSubCard(g, 14 + subW + 14, 10, subW, subH, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
             
+            // Nota de risco sob os botões (painel direito): âmbar = decida olhando, verde = byte a byte igual.
+            {
+                const juce::Rectangle<int> nota(w - btnW - 14, 105, btnW, subH - 95);
+                if (ehPrevisto) {
+                    g.setColour(corAmbar.withAlpha(0.16f));
+                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
+                    g.setColour(corAmbar);
+                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
+                    auto in = nota.reduced(7, 5);
+                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.drawText(juce::String::fromUTF8("\u26A0 NOT BYTE-IDENTICAL"), in.removeFromTop(14), juce::Justification::centredLeft, true);
+                    g.setColour(tk.textoSecundario);
+                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                    g.drawFittedText(grupo_.criterio == "SIMILAR"
+                                         ? "Looks alike but may be a different shot. Compare both before choosing."
+                                         : "Looks alike but may be an edit or a different file. Compare both before choosing.",
+                                     in, juce::Justification::topLeft, 4, 1.0f);
+                } else if (grupo_.criterio == "IDENTICAL") {
+                    g.setColour(corSeguro.withAlpha(0.14f));
+                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
+                    g.setColour(corSeguro);
+                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
+                    auto in = nota.reduced(7, 5);
+                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.drawText(juce::String::fromUTF8("\u2713 IDENTICAL FILES"), in.removeFromTop(14), juce::Justification::centredLeft, true);
+                    g.setColour(tk.textoSecundario);
+                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                    g.drawFittedText("Same SHA-256: safe to validate.", in, juce::Justification::topLeft, 3, 1.0f);
+                }
+            }
+
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
@@ -1951,7 +2017,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         // somada à do mantido.
         const std::string idOriginal = group.original.itemId, idDuplicata = group.duplicata.itemId;
         auto aoResolver = [safeThis, idOriginal, idDuplicata, isPt](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-            if (!safeThis || !ok) return;
+            if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
             publicarSanitizacoes(safeThis->projeto_, resultados, {idOriginal, idDuplicata});
             // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
             auto& grupos = safeThis->gruposDetectados_;
@@ -2064,7 +2131,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
                                 gruposDetectados_.end());
         if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
             listaComponent_->updateList(gruposDetectados_);
-            lblStatus_->setText(matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String((int) gruposDetectados_.size())), juce::dontSendNotification);
+            lblStatus_->setText(textoManuais(gruposDetectados_), juce::dontSendNotification);
             resized();
             repaint();
             return;
@@ -2117,7 +2184,12 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
     // PROVÁVEIS (pHash) nunca entram em decisão em lote: ficam na lista para decisão manual, um a um.
     std::vector<DuplicateGroup> grupos, provaveis;
     for (const auto& g : gruposDetectados_) ((g.criterio == "PROBABLE" || g.criterio == "SIMILAR") ? provaveis : grupos).push_back(g);
-    if (grupos.empty()) return;
+    if (grupos.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.aviso_lote_titulo"),
+                                               matriz::i18n::t("duplicatas.aviso_lote_corpo").replace("{n}", juce::String((int) provaveis.size())),
+                                               {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
     std::vector<std::string> ids;
     for (const auto& g : grupos) {
         ids.push_back(g.original.itemId);
@@ -2159,15 +2231,14 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
         }
         return resultados;
     }, [safeThis, ids, paraDecisaoManual, provaveis](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-        if (!safeThis || !ok) return;
+        if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
         publicarSanitizacoes(safeThis->projeto_, resultados, ids);
         safeThis->gruposDetectados_ = *paraDecisaoManual;
         safeThis->gruposDetectados_.insert(safeThis->gruposDetectados_.end(), provaveis.begin(), provaveis.end());
         if (!safeThis->gruposDetectados_.empty()) {
             // Sinalizados no resultado: continuam na lista pra decisão manual.
-            safeThis->lblStatus_->setText(matriz::i18n::t("duplicatas.manuais")
-                                              .replace("{n}", juce::String((int) safeThis->gruposDetectados_.size())),
-                                          juce::dontSendNotification);
+            safeThis->lblStatus_->setText(textoManuais(safeThis->gruposDetectados_), juce::dontSendNotification);
             safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
             safeThis->resized();
             safeThis->repaint();
@@ -2313,7 +2384,8 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                 }
                 return resultados;
             }, [safeThis, ids, escolhas](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-                if (!safeThis || !ok) return;
+                if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
                 publicarSanitizacoes(safeThis->projeto_, resultados, ids);
                 // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
                 auto& grupos = safeThis->gruposDetectados_;
@@ -2381,6 +2453,22 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
             g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
                        direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
+            if (const int previstos = contarPrevistos(gruposDetectados_); previstos > 0) {
+                const juce::Colour ambar(0xfff59e0b);
+                auto banner = direita.removeFromTop(kAlturaBannerRisco - 6);
+                g.setColour(ambar.withAlpha(0.16f));
+                g.fillRoundedRectangle(banner.toFloat(), 6.0f);
+                g.setColour(ambar);
+                g.drawRoundedRectangle(banner.toFloat().reduced(1.0f), 6.0f, 2.0f);
+                auto in = banner.reduced(12, 6);
+                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.drawText(juce::String::fromUTF8("\u26A0  ") +
+                               matriz::i18n::t("duplicatas.aviso_titulo").replace("{n}", juce::String(previstos)),
+                           in.removeFromTop(16), juce::Justification::centredLeft, true);
+                g.setColour(tk.textoPrimario);
+                g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                g.drawFittedText(matriz::i18n::t("duplicatas.aviso_corpo"), in, juce::Justification::topLeft, 2, 1.0f);
+            }
             break;
     }
 }
@@ -2446,7 +2534,7 @@ void DuplicatesWorkspaceComponent::resized() {
     // Área da direita.
     auto direita = area.reduced(20);
     if (emResultados) {
-        direita.removeFromTop(kAlturaResumo);
+        direita.removeFromTop(kAlturaResumo + (contarPrevistos(gruposDetectados_) > 0 ? kAlturaBannerRisco : 0));
         viewport_->setBounds(direita);
         viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());
