@@ -1380,7 +1380,7 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, Cancela
     // Rótulos na ordem exata das chamadas etapa(...) abaixo; ao concluir uma, anuncia a próxima.
     static const char* const kRotulosEtapas[] = {
         "Opening databases", "Checking database schema", "Linking backup destination", "Checking folder structure",
-        "Self-check 1/5", "Self-check 2/5", "Self-check 3/5", "Self-check 4/5", "Self-check 5/5", "Writing project file"};
+        "Self-check 1/3", "Self-check 2/3", "Self-check 3/3", "Writing project file"};
     constexpr int kTotalEtapas = static_cast<int>(std::size(kRotulosEtapas));
     int etapasConcluidas = 0;
     auto anunciar = [&] {
@@ -1570,28 +1570,9 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, Cancela
 
     etapa("autocorrecao_2_itens_zumbi");
 
-    // 3. Ensure master flag is set if an item has files but no eh_master = 1
-    try {
-        registro->run(
-            "UPDATE arquivo SET eh_master = 1 WHERE id IN ("
-            "  SELECT a.id FROM arquivo a "
-            "  JOIN (SELECT item_id FROM arquivo GROUP BY item_id HAVING SUM(eh_master) = 0) sub "
-            "  ON sub.item_id = a.item_id "
-            "  GROUP BY a.item_id"
-            ")", {});
-    } catch (...) {}
-
-    etapa("autocorrecao_3_eh_master");
-
-    // 4. Ensure all primary files for images and documents are marked as eh_master = 1
-    try {
-        registro->run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
-    } catch (...) {}
-
-    etapa("autocorrecao_4_eh_master_papel");
-
-    // Passos 5 (tipo_midia ausente) e 6 (caminho_absoluto_origem ausente) varrem a tabela
-    // inteira e o disco: rodam em background depois da abertura — Project::executarAutocorrecoes.
+    // Passos 3 (eh_master), 4 (eh_master por papel), 5 (tipo_midia ausente) e 6 (caminho_absoluto_origem
+    // ausente) varrem a tabela inteira e o disco: rodam em background depois da abertura —
+    // Project::executarAutocorrecoes.
 
     // Garante que o arquivo de projeto auto-contido (.mtz ou .bkm) existe na raiz do projeto/backup (Tarefa 11)
     try {
@@ -1692,6 +1673,36 @@ void Project::executarAutocorrecoes(CancelamentoAbertura* cancel) {
         }
         return true;
     };
+
+    // 3/4. (movidos de abrir(): cada UPDATE varria `arquivo` inteira — ~10 s em HD frio — a cada abertura.)
+    // Pré-checagem só de leitura (LIMIT 1): o UPDATE, que pega a trava de escrita, só roda se houver o que corrigir.
+    // 3. Ensure master flag is set if an item has files but no eh_master = 1
+    try {
+        const bool precisa = reg.prepare(
+            "SELECT 1 FROM arquivo a JOIN (SELECT item_id FROM arquivo GROUP BY item_id HAVING SUM(eh_master) = 0) sub "
+            "ON sub.item_id = a.item_id LIMIT 1").step();
+        if (precisa && !cancelado()) {
+            reg.run(
+                "UPDATE arquivo SET eh_master = 1 WHERE id IN ("
+                "  SELECT a.id FROM arquivo a "
+                "  JOIN (SELECT item_id FROM arquivo GROUP BY item_id HAVING SUM(eh_master) = 0) sub "
+                "  ON sub.item_id = a.item_id "
+                "  GROUP BY a.item_id"
+                ")", {});
+        }
+        etapa("3_eh_master", precisa ? 1 : 0);
+    } catch (...) {}
+    if (cancelado()) return;
+
+    // 4. Ensure all primary files for images and documents are marked as eh_master = 1
+    try {
+        const bool precisa = reg.prepare(
+            "SELECT 1 FROM arquivo WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0 LIMIT 1").step();
+        if (precisa && !cancelado())
+            reg.run("UPDATE arquivo SET eh_master = 1 WHERE papel IN ('foto_suporte', 'documento') AND eh_master = 0", {});
+        etapa("4_eh_master_papel", precisa ? 1 : 0);
+    } catch (...) {}
+    if (cancelado()) return;
 
     // 5. Self-heal missing/unknown tipo_midia based on file extension
     try {
