@@ -21,7 +21,7 @@ public:
     // Saves new content to log.md (used when user edits notes)
     bool saveContent(const juce::String& newContent);
 
-    // Appends an automated action entry with an ISO 8601 timestamp
+    // Adds an automated action entry with an ISO 8601 timestamp at the TOP of the log (newest first)
     void appendEntry(const juce::String& actionTitle,
                      const juce::StringArray& details,
                      const juce::String& author = "System");
@@ -31,6 +31,7 @@ private:
     juce::File logFile_;
 
     void ensureInitialized();
+    void ensureNewestFirst();
 };
 
 } // namespace matriz::model
