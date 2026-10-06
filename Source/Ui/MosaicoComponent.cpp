@@ -12,6 +12,9 @@
 #include "SendToPrintDialog.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <iterator>
 #include <map>
 
@@ -263,6 +266,27 @@ void MosaicoComponent::agendarRefiltroCoalescido() {
     });
 }
 
+namespace {
+// Enquanto a consulta SQL do catálogo roda (fase < 2) não há contagem de itens para mostrar; sem isto a barra
+// fica parada em "Reading catalog index..." por minutos num HD frio. Só captura estado compartilhado (nunca
+// `this`) — encerra sozinho quando a fase passa de 1.
+void agendarRelogioCatalogo(std::shared_ptr<std::atomic<int>> fase, std::shared_ptr<std::atomic<int>> total,
+                            std::chrono::steady_clock::time_point inicio) {
+    juce::Timer::callAfterDelay(1000, [fase, total, inicio] {
+        if (fase->load() >= 2) return;
+        const auto seg = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - inicio).count();
+        const int n = total->load();
+        ProgressoGlobal::obterInstancia().atualizarDetalhe(
+            "catalog_assets",
+            (fase->load() == 0 ? juce::String("Counting items...")
+                               : (n > 0 ? "Reading catalog index (" + juce::String(n) + " items)..."
+                                        : juce::String("Reading catalog index..."))) +
+                " " + juce::String(static_cast<juce::int64>(seg)) + " s");
+        agendarRelogioCatalogo(fase, total, inicio);
+    });
+}
+} // namespace
+
 void MosaicoComponent::recarregar() {
     MATRIZ_TRACE("MosaicoComponent::recarregar");
     if (editorInline_) cancelarEdicaoInline();
@@ -296,11 +320,37 @@ void MosaicoComponent::recarregar() {
     ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...",
                                                    /*temModalProprio*/ false, /*somenteBarra*/ true);
 
-    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
+    // Progresso real do "Loading Catalog": fase 0 = contando, 1 = consulta SQL (um único step, sem contagem
+    // possível — só o tempo decorrido), 2 = montando linhas (miniatura/tags por item, com contagem), 3 = fim.
+    auto fase = std::make_shared<std::atomic<int>>(0);
+    auto totalLinhas = std::make_shared<std::atomic<int>>(0);
+    if (isQuarentena) fase->store(1);  // sem contagem prévia no modo quarentena
+    agendarRelogioCatalogo(fase, totalLinhas, std::chrono::steady_clock::now());
+
+    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena, fase, totalLinhas]() {
         std::vector<ItemResumo> itens;
         std::vector<TextosCelula> textos;
+        struct FimDeFase {
+            std::shared_ptr<std::atomic<int>> f;
+            ~FimDeFase() { f->store(3); }
+        } fimDeFase{fase};
         try {
-            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens();
+            const auto aoProgredir = [fase, totalLinhas](int feitos, int total) {
+                auto& pg = ProgressoGlobal::obterInstancia();
+                if (feitos < 0) {
+                    totalLinhas->store(total);
+                    fase->store(1);
+                    pg.atualizarFracao("catalog_assets", 0.05,
+                                       "Reading catalog index (" + juce::String(total) + " items)...");
+                    return;
+                }
+                fase->store(2);
+                pg.atualizarFracao("catalog_assets", 0.1 + 0.8 * (total > 0 ? static_cast<double>(feitos) / total : 0.0),
+                                   "Reading thumbnails and tags: " + juce::String(feitos) + " / " + juce::String(total));
+            };
+            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens(aoProgredir);
+            fase->store(3);
+            ProgressoGlobal::obterInstancia().atualizarFracao("catalog_assets", 0.92, "Preparing grid...");
             // Textos de exibição aqui, no job (não no paint, por célula, a cada quadro).
             textos.reserve(itens.size());
             for (const auto& item : itens) textos.push_back(calcularTextos(item));

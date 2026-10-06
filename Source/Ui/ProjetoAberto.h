@@ -136,7 +136,11 @@ public:
                                                         // nullptr = verifica todo item em disco (coleção
                                                         // que não é a aberta); senão só re-verifica os ids
                                                         // do cache (podem ter voltado online via relink).
-                                                        const std::set<std::string>* itensOffline = nullptr);
+                                                        const std::set<std::string>* itensOffline = nullptr,
+                                                        // Progresso (opcional, chamado da thread que lista): feitos < 0 = a consulta
+                                                        // SQL está rodando (um único step, sem contagem possível); feitos >= 0 = linhas
+                                                        // já montadas, de `total`.
+                                                        const std::function<void(int feitos, int total)>& aoProgredir = nullptr);
     std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
 
     // Duplicates — "sanitizar": o operador escolheu `manterId`; `descartarId`
@@ -232,7 +236,7 @@ public:
     // MAIN — ainda dependem do SOURCE. 0 = SOURCE pode ser desconectado.
     int arquivosQueDependemDoSource();
 
-    std::vector<ItemResumo> listarItens() const;
+    std::vector<ItemResumo> listarItens(const std::function<void(int feitos, int total)>& aoProgredir = nullptr) const;
     // COUNT(*) no banco — nunca listarItens() (que confere no disco se cada
     // arquivo existe: com a origem no Google Drive travado, a abertura do
     // projeto congelava na message thread).

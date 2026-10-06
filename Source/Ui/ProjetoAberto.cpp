@@ -304,8 +304,17 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                                                             matriz::db::Database& indice,
                                                             const juce::File& pastaProjeto,
                                                             const std::map<std::string, std::string>& inMemoryRelinks,
-                                                            const std::set<std::string>* itensOffline) {
+                                                            const std::set<std::string>* itensOffline,
+                                                            const std::function<void(int feitos, int total)>& aoProgredir) {
     std::vector<ItemResumo> out;
+    int totalLinhas = 0;
+    if (aoProgredir) {
+        try {
+            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+            if (st.step()) totalLinhas = static_cast<int>(st.columnInt(0));
+        } catch (...) {}
+        aoProgredir(-1, totalLinhas);
+    }
     std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
     // Uma consulta com JOIN em vez de N+1 (arquivo e vault resolvidos num único join
@@ -358,6 +367,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('tags', 'genero', 'estilo', 'palavras_chave') AND valor IS NOT NULL AND valor != ''");
 
     while (stmt.step()) {
+        // O ORDER BY força o SQLite a resolver todas as linhas dentro do primeiro step();
+        // daqui em diante o custo é miniatura/tags por item — esse sim dá pra contar.
+        if (aoProgredir && (out.size() % 200 == 0)) aoProgredir(static_cast<int>(out.size()), totalLinhas);
         ItemResumo r;
         r.id = stmt.columnText(0);
         r.codigoAcervo = stmt.columnText(1);
@@ -483,7 +495,7 @@ int ProjetoAberto::contarItens() const {
     return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
 }
 
-std::vector<ItemResumo> ProjetoAberto::listarItens() const {
+std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int feitos, int total)>& aoProgredir) const {
     if (!projeto_) return {};
     // Cópia das marcações/relinks em memória sob marcacoesMutex_ (comentário
     // no membro, ProjetoAberto.h) -- este método roda em background
@@ -503,7 +515,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia);
+    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia, aoProgredir);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
