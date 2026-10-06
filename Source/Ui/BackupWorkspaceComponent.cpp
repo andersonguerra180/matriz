@@ -1320,7 +1320,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         "Graphics", "Logo", "3D",
         // Docs
         "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
-        "Sheet", "Zip", "Rar"
+        "Sheet", "Zip", "Rar", "PDF", "Markdown"
     };
 
     std::map<std::string, int> contagens;

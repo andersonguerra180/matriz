@@ -79,7 +79,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Sheet", "Planilha"},
         {"Spreadsheet", "Planilha"},  // valor antigo: lido como Sheet
         {"Zip", "Zip"},
-        {"Rar", "Rar"}
+        {"Rar", "Rar"},
+        {"PDF", "PDF"},
+        {"Markdown", "Markdown"}
     };
     return mapa;
 }
