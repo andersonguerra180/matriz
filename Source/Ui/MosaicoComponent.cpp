@@ -278,9 +278,9 @@ void agendarRelogioCatalogo(std::shared_ptr<std::atomic<int>> fase, std::shared_
         const int n = total->load();
         ProgressoGlobal::obterInstancia().atualizarDetalhe(
             "catalog_assets",
-            (fase->load() == 0 ? juce::String("Counting items...")
-                               : (n > 0 ? "Reading catalog index (" + juce::String(n) + " items)..."
-                                        : juce::String("Reading catalog index..."))) +
+            (fase->load() == 0 ? matriz::i18n::t("catalogo.carregando_contando")
+                               : (n > 0 ? matriz::i18n::t("catalogo.carregando_indice_n").replace("{n}", juce::String(n))
+                                        : matriz::i18n::t("catalogo.carregando_indice"))) +
                 " " + juce::String(static_cast<juce::int64>(seg)) + " s");
         agendarRelogioCatalogo(fase, total, inicio);
     });
@@ -317,7 +317,7 @@ void MosaicoComponent::recarregar() {
     ProjetoAberto* projeto = &projeto_;
     bool isQuarentena = modoQuarentena_;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...",
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", matriz::i18n::t("catalogo.carregando_titulo"), 100, nullptr, matriz::i18n::t("catalogo.carregando_indice"),
                                                    /*temModalProprio*/ false, /*somenteBarra*/ true);
 
     // Progresso real do "Loading Catalog": fase 0 = contando, 1 = consulta SQL (um único step, sem contagem
@@ -341,16 +341,16 @@ void MosaicoComponent::recarregar() {
                     totalLinhas->store(total);
                     fase->store(1);
                     pg.atualizarFracao("catalog_assets", 0.05,
-                                       "Reading catalog index (" + juce::String(total) + " items)...");
+                                       matriz::i18n::t("catalogo.carregando_indice_n").replace("{n}", juce::String(total)));
                     return;
                 }
                 fase->store(2);
                 pg.atualizarFracao("catalog_assets", 0.1 + 0.8 * (total > 0 ? static_cast<double>(feitos) / total : 0.0),
-                                   "Reading thumbnails and tags: " + juce::String(feitos) + " / " + juce::String(total));
+                                   matriz::i18n::t("catalogo.carregando_miniaturas").replace("{a}", juce::String(feitos)).replace("{b}", juce::String(total)));
             };
             itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens(aoProgredir);
             fase->store(3);
-            ProgressoGlobal::obterInstancia().atualizarFracao("catalog_assets", 0.92, "Preparing grid...");
+            ProgressoGlobal::obterInstancia().atualizarFracao("catalog_assets", 0.92, matriz::i18n::t("catalogo.carregando_montando"));
             // Textos de exibição aqui, no job (não no paint, por célula, a cada quadro).
             textos.reserve(itens.size());
             for (const auto& item : itens) textos.push_back(calcularTextos(item));

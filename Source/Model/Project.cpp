@@ -1,4 +1,5 @@
 #include "Project.h"
+#include "../I18n/Strings.h"
 #include "ProjectLog.h"
 
 #include <algorithm>
@@ -1378,15 +1379,14 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, Cancela
     auto ultimaEtapa = inicioTotal;
     const juce::String nomeLog = qualquerPasta.getFileName();
     // Rótulos na ordem exata das chamadas etapa(...) abaixo; ao concluir uma, anuncia a próxima.
-    static const char* const kRotulosEtapas[] = {
-        "Opening databases", "Checking database schema", "Linking backup destination", "Checking folder structure",
-        "Self-check 1/3", "Self-check 2/3", "Self-check 3/3", "Writing project file"};
+    static const char* const kRotulosEtapas[] = {"abrir.etapa_0", "abrir.etapa_1", "abrir.etapa_2", "abrir.etapa_3",
+                                                 "abrir.etapa_4", "abrir.etapa_5", "abrir.etapa_6", "abrir.etapa_7"};
     constexpr int kTotalEtapas = static_cast<int>(std::size(kRotulosEtapas));
     int etapasConcluidas = 0;
     auto anunciar = [&] {
         if (!aoEtapa) return;
         const int i = std::min(etapasConcluidas, kTotalEtapas - 1);
-        aoEtapa(juce::String(kRotulosEtapas[i]) + " (" + juce::String(std::min(etapasConcluidas + 1, kTotalEtapas)) + "/" +
+        aoEtapa(matriz::i18n::t(kRotulosEtapas[i]) + " (" + juce::String(std::min(etapasConcluidas + 1, kTotalEtapas)) + "/" +
                     juce::String(kTotalEtapas) + ")",
                 static_cast<double>(etapasConcluidas) / kTotalEtapas);
     };
