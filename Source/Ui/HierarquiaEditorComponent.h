@@ -86,6 +86,12 @@ public:
 
     void closeButtonPressed() override { delete this; }
 
+    // Abre o editor como DialogWindow (modal) em vez de DocumentWindow solto: dentro de outro diálogo (EXPORT) o
+    // JUCE dá a todo DialogWindow o mesmo nível de janela, então o editor nunca fica ATRÁS do diálogo de origem.
+    static void abrirComoDialogo(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
+                                 std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar,
+                                 const HierarquiaEditorOpcoes& opcoes, juce::Component* centrarEm);
+
 private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HierarquiaEditorWindow)
 };

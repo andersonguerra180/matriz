@@ -429,4 +429,30 @@ HierarquiaEditorWindow::HierarquiaEditorWindow(
     toFront(true);
 }
 
+void HierarquiaEditorWindow::abrirComoDialogo(const matriz::consolidacao::HierarquiaBackup& hierarquiaAtual,
+                                              std::function<void(const matriz::consolidacao::HierarquiaBackup&)> aoConfirmar,
+                                              const HierarquiaEditorOpcoes& opcoes, juce::Component* centrarEm) {
+    auto* editor = new HierarquiaEditorComponent(hierarquiaAtual, opcoes);
+    juce::Component::SafePointer<HierarquiaEditorComponent> seguro(editor);
+    auto fechar = [seguro] {
+        if (seguro == nullptr) return;
+        if (auto* dw = seguro->findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    };
+    editor->aoConfirmar = [aoConfirmar, fechar](const matriz::consolidacao::HierarquiaBackup& h) {
+        if (aoConfirmar) aoConfirmar(h);
+        fechar();
+    };
+    editor->aoCancelar = fechar;
+
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(editor);
+    opts.dialogTitle = opcoes.titulo.isNotEmpty() ? opcoes.titulo : juce::String("Backup Folder Hierarchy");
+    opts.dialogBackgroundColour = tema().fundo;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = centrarEm;
+    opts.launchAsync();
+}
+
 } // namespace matriz::ui

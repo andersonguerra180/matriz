@@ -307,13 +307,10 @@ private:
         HierarquiaEditorOpcoes op;
         op.titulo = matriz::i18n::t("export.editor_titulo");
         op.raizPreview = "/Export";
-        auto* janela = new HierarquiaEditorWindow(hierarquiaCustom_, [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
+        // DialogWindow (não DocumentWindow): mesmo nível de janela do diálogo de EXPORT, então abre NA FRENTE dele.
+        HierarquiaEditorWindow::abrirComoDialogo(hierarquiaCustom_, [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
             if (safeThis != nullptr) safeThis->hierarquiaCustom_ = h;
-        }, op);
-        // O diálogo de Export pode ser "always on top" (JUCE, quando já há janela assim no app): sem isto o editor abria atrás dele.
-        janela->setAlwaysOnTop(true);
-        janela->toFront(true);
-        janela->enterModalState(true, nullptr, false);
+        }, op, this);
     }
 
     // Sidecar (.xmp) só em Original e Embed; em Clean fica desligado e desabilitado.
