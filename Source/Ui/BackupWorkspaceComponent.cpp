@@ -4588,6 +4588,11 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId, formatoBridge, bounce, metaSaida] {
         int semPasta = 0;
+        int duplicatas = 0;  // marcados que são duplicata: o plano os exclui de propósito, mas o usuário precisa saber
+        try {
+            auto st = projeto->registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
+            while (st.step()) if (itens.count(st.columnText(0))) ++duplicatas;
+        } catch (...) {}
         matriz::consolidacao::ResultadoExport r;
         try {
             auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), projeto->pasta(), destino,
@@ -4613,18 +4618,15 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r, destino, semPasta, bounce, metaSaida] {
+        juce::MessageManager::callAsync([safeThis, r, destino, semPasta, duplicatas, bounce, metaSaida] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
             safeThis->resized();
-            juce::String msg = matriz::i18n::t("export.fim")
-                                   .replace("{n}", juce::String(r.copiados))
-                                   .replace("{pasta}", destino.getFullPathName());
-            if (semPasta > 0)
-                msg << "\n\n" << matriz::i18n::t(bounce ? "export.bounce_sem_pasta" : "export.mapa_sem_pasta_aviso").replace("{n}", juce::String(semPasta));
-            if (r.foraDoMain > 0)
-                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
+            const juce::String resumo = matriz::i18n::t("export.fim")
+                                            .replace("{n}", juce::String(r.copiados))
+                                            .replace("{pasta}", destino.getFullPathName());
+            juce::String msg;
             if (bounce) {
                 using matriz::consolidacao::ModoMetadadosSaida;
                 if (metaSaida.modo == ModoMetadadosSaida::Clean) {
@@ -4636,21 +4638,107 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                     msg << "\n\n" << matriz::i18n::t("export.bounce_embed_nao").replace("{n}", juce::String(r.embedNaoSuportado));
                 }
             }
-            if (!r.falhas.empty()) {
-                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
-                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
-            }
             if (r.bridgeEmbutidos > 0 || r.bridgeSidecars > 0 || !r.avisos.empty()) {
-                msg << "\n\n" << matriz::i18n::t("export.bridge_resumo")
+                if (msg.isNotEmpty()) msg << "\n\n";
+                msg << matriz::i18n::t("export.bridge_resumo")
                            .replace("{e}", juce::String(r.bridgeEmbutidos)).replace("{s}", juce::String(r.bridgeSidecars));
                 for (size_t i = 0; i < r.avisos.size() && i < 5; ++i) msg << "\n- " << juce::String::fromUTF8(r.avisos[i].c_str());
                 if (r.avisos.size() > 5) msg << "\n... +" << (int) (r.avisos.size() - 5);
             }
-            if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t(bounce ? "export.titulo_bounce" : "export.titulo"), msg, {},
-                                                   nullptr, juce::ModalCallbackFunction::create([](int) {}));
+            safeThis->mostrarResultadoExport(bounce ? "export.titulo_bounce" : "export.titulo", resumo, r.jaExistiam, r.foraDoMain, semPasta,
+                                             bounce ? "export.bounce_sem_pasta" : "export.mapa_sem_pasta_aviso", duplicatas, r.falhas,
+                                             r.jaExistiamDiferentes, msg, r.cancelado);
         });
     });
+}
+
+void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam,
+                                                      int foraDoMain, int semPasta, const juce::String& semPastaKey, int duplicatas,
+                                                      const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
+                                                      const juce::String& extras, bool cancelado) {
+    const bool algoParaEntender = !falhas.empty() || !jaDiferentes.empty() || jaExistiam > 0 || duplicatas > 0 || foraDoMain > 0 ||
+                                  semPasta > 0;
+    if (!algoParaEntender) {
+        juce::String msg = linhaResumo;
+        if (extras.trim().isNotEmpty()) msg << "\n\n" << extras.trim();
+        if (cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t(tituloKey), msg, {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+
+    auto& registro = projeto_.projeto().registro();
+    struct Grupo { juce::String motivo, acao; std::vector<juce::String> linhas; };
+    Grupo conflito{matriz::i18n::t("export.res_f_conflito"), matriz::i18n::t("export.res_f_conflito_acao"), {}};
+    Grupo outro{matriz::i18n::t("export.res_f_outro"), matriz::i18n::t("export.res_f_outro_acao"), {}};
+    std::vector<std::string> idsComFalha;
+    int comCaminho = 0;
+    for (const auto& f : falhas) {
+        const juce::String s = juce::String::fromUTF8(f.c_str());
+        juce::String codigo, motivo = s;
+        const int sep = s.indexOf(": ");
+        if (sep > 0 && sep <= 40) { codigo = s.substring(0, sep); motivo = s.substring(sep + 2); }
+        juce::String caminho;
+        if (codigo.isNotEmpty()) {
+            try {
+                auto st = registro.prepare(
+                    "SELECT i.id, COALESCE(NULLIF(a.caminho_absoluto_origem, ''), a.caminho_relativo) FROM item i "
+                    "LEFT JOIN arquivo a ON a.item_id = i.id WHERE i.codigo_acervo = ? ORDER BY a.eh_master DESC LIMIT 1");
+                st.bind(1, matriz::db::Value::of(codigo.toStdString()));
+                if (st.step()) {
+                    idsComFalha.push_back(st.columnText(0));
+                    if (comCaminho++ < 300 && !st.columnIsNull(1)) caminho = juce::String::fromUTF8(st.columnText(1).c_str());
+                }
+            } catch (...) {}
+        }
+        const bool ehConflito = motivo.contains("name conflict");
+        juce::String linha = "    " + codigo.paddedRight(' ', 12) + caminho;
+        if (!ehConflito) linha += (caminho.isEmpty() ? "" : "   ") + motivo;
+        (ehConflito ? conflito : outro).linhas.push_back(linha.trimEnd());
+    }
+
+    juce::String texto = linhaResumo + "\n";
+    if (cancelado) texto << "\n" << matriz::i18n::t("export.cancelado") << "\n";
+    if (jaExistiam > 0) texto << "\n" << matriz::i18n::t("export.res_ja").replace("{n}", juce::String(jaExistiam)) << "\n";
+    if (duplicatas > 0) texto << "\n" << matriz::i18n::t("export.res_dup").replace("{n}", juce::String(duplicatas)) << "\n";
+    if (foraDoMain > 0) texto << "\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(foraDoMain)) << "\n";
+    if (semPasta > 0) texto << "\n" << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)) << "\n";
+    if (extras.trim().isNotEmpty()) texto << "\n" << extras.trim() << "\n";
+    if (!jaDiferentes.empty()) {
+        texto << "\n" << matriz::i18n::t("export.res_diferentes").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
+        for (size_t i = 0; i < jaDiferentes.size() && i < 300; ++i) texto << "    " << juce::String::fromUTF8(jaDiferentes[i].c_str()) << "\n";
+    }
+    for (const Grupo* g : {&conflito, &outro}) {
+        if (g->linhas.empty()) continue;
+        texto << "\n" << matriz::i18n::t("backup.erros_grupo").replace("{n}", juce::String((int) g->linhas.size())).replace("{motivo}", g->motivo) << "\n";
+        texto << "  " << matriz::i18n::t("backup.erros_onde") << g->acao << "\n";
+        for (const auto& l : g->linhas) texto << l << "\n";
+    }
+
+    const juce::String titulo = matriz::i18n::t(tituloKey) + " - " +
+        (falhas.empty() ? matriz::i18n::t("export.res_titulo_ok")
+                        : matriz::i18n::t("export.res_titulo_falhas").replace("{n}", juce::String((int) falhas.size())));
+    juce::File relatorio;
+    try {
+        const juce::File dir = projeto_.projeto().pasta().getChildFile("relatorios");
+        dir.createDirectory();
+        const juce::File arq = dir.getChildFile("export-resultado-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
+        if (arq.replaceWithText(titulo + "\n\n" + texto)) relatorio = arq;
+    } catch (...) {}
+    if (relatorio != juce::File()) texto << "\n" << matriz::i18n::t("backup.erros_relatorio") << "\n" << relatorio.getFullPathName() << "\n";
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    DadosStatusBackup d;
+    d.titulo = titulo;
+    d.texto = texto;
+    d.relatorio = relatorio;
+    d.bloqueado = !falhas.empty();
+    d.nBloqueados = static_cast<int>(idsComFalha.size());
+    d.rebuild = false;
+    d.aoMostrarNoGrid = [safeThis, idsComFalha] {
+        if (safeThis && safeThis->aoAbrirNoGrid) safeThis->aoAbrirNoGrid(std::set<std::string>(idsComFalha.begin(), idsComFalha.end()));
+    };
+    ErrosBackupDialog::mostrar(std::move(d), this);
 }
 
 void BackupWorkspaceComponent::abrirPacote() {
@@ -4698,6 +4786,11 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     // Tudo que toca banco/disco roda fora da message thread; o projeto só é lido.
     poolExport_.addJob([safeThis, projeto, destino, nome, mapaId, nomeMapa, nomeColecao, itens, cancelado] {
+        int duplicatas = 0;  // marcados que são duplicata: ficam de fora de propósito, o usuário precisa saber
+        try {
+            auto st = projeto->registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
+            while (st.step()) if (itens.count(st.columnText(0))) ++duplicatas;
+        } catch (...) {}
         matriz::consolidacao::pacote::ResultadoPacote r;
         try {
             r = matriz::consolidacao::pacote::gerarPacote(
@@ -4713,26 +4806,18 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r] {
+        juce::MessageManager::callAsync([safeThis, r, duplicatas] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
             safeThis->resized();
-            juce::String msg = r.cancelado ? matriz::i18n::t("export.cancelado")
-                             : r.copiados == 0 ? matriz::i18n::t("export.pacote_vazio")
-                                               : matriz::i18n::t("export.pacote_fim")
-                                                     .replace("{n}", juce::String(r.copiados))
-                                                     .replace("{pasta}", r.pasta.getFullPathName());
-            if (r.semPasta > 0)
-                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(r.semPasta));
-            if (r.foraDoMain > 0)
-                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
-            if (!r.falhas.empty()) {
-                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
-                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
-            }
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_titulo"), msg,
-                                                   {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+            const juce::String resumo = r.cancelado ? matriz::i18n::t("export.cancelado")
+                                      : r.copiados == 0 ? matriz::i18n::t("export.pacote_vazio")
+                                                        : matriz::i18n::t("export.pacote_fim")
+                                                              .replace("{n}", juce::String(r.copiados))
+                                                              .replace("{pasta}", r.pasta.getFullPathName());
+            safeThis->mostrarResultadoExport("export.pacote_titulo", resumo, 0, r.foraDoMain, r.semPasta, "export.mapa_sem_pasta_aviso",
+                                             duplicatas, r.falhas, {}, juce::String(), false);
         });
     });
 }

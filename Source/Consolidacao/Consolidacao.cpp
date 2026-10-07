@@ -894,9 +894,18 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                 continue;
             }
             juce::File destinoArquivo = destinoExport.getChildFile(ip.caminhoRelativoDestino);
-            if (destinoArquivo.existsAsFile())
-                throw std::runtime_error("already exists in the export folder: " +
-                                         destinoArquivo.getFullPathName().toStdString());
+            if (destinoArquivo.existsAsFile()) {
+                // Já exportado (rodada anterior): pula sem sobrescrever e sem contar como falha — senão rodar o
+                // export de novo para completar o que faltou listava TODO arquivo como "falha". Cópia simples
+                // com tamanho diferente do original merece aviso (pode ter sido editada); com embed/limpeza/
+                // marca d'água o tamanho muda por natureza.
+                ++resultado.jaExistiam;
+                const bool copiaSimples = !formatoBridge && !embutir && itensComMarcaDagua.count(ip.itemId) == 0 &&
+                                          metaSaida.modo != ModoMetadadosSaida::Embed && metaSaida.modo != ModoMetadadosSaida::Clean;
+                if (copiaSimples && noBackup->getSize() != destinoArquivo.getSize())
+                    resultado.jaExistiamDiferentes.push_back(ip.codigoAcervo + ": " + destinoArquivo.getFullPathName().toStdString());
+                continue;
+            }
             destinoArquivo.getParentDirectory().createDirectory();
             if (!noBackup->copyFileTo(destinoArquivo) || destinoArquivo.getSize() != noBackup->getSize())
                 throw std::runtime_error("copy failed: " + destinoArquivo.getFullPathName().toStdString());
@@ -970,12 +979,18 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
         }
     }
     try {
-        matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Created", {
+        juce::StringArray linhasExport{
             "Destination: " + destinoExport.getFullPathName(),
             "Files: " + juce::String(resultado.copiados) + " (not yet in MAIN, skipped: " +
-                juce::String(resultado.foraDoMain) + ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
+                juce::String(resultado.foraDoMain) + ", already in the folder, skipped: " + juce::String(resultado.jaExistiam) +
+                ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
             juce::String("Embedded metadata: ") + (formatoBridge ? "Adobe Bridge XMP" : (embutir ? "yes" : "no")) +
-                ", watermarked: " + juce::String(resultado.comMarcaDagua)});
+                ", watermarked: " + juce::String(resultado.comMarcaDagua)};
+        // A causa de cada falha fica no log (antes só a contagem), com teto para não inflar o arquivo.
+        for (size_t i = 0; i < resultado.falhas.size() && i < 50; ++i)
+            linhasExport.add("  failed: " + juce::String::fromUTF8(resultado.falhas[i].c_str()));
+        if (resultado.falhas.size() > 50) linhasExport.add("  ... +" + juce::String((int) resultado.falhas.size() - 50) + " more failures");
+        matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Created", linhasExport);
         if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
             const char* modo = metaSaida.modo == ModoMetadadosSaida::Original ? "Original" : metaSaida.modo == ModoMetadadosSaida::Embed ? "Embed" : "Clean";
             matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Bounce List", {

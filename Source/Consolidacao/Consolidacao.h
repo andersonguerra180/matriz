@@ -258,6 +258,8 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 struct ResultadoExport {
     int copiados = 0;
     int foraDoMain = 0;       // ainda não entraram no MAIN: não exportados
+    int jaExistiam = 0;       // já estavam na pasta de destino: pulados, nunca sobrescritos (rodar o export de novo é seguro)
+    std::vector<std::string> jaExistiamDiferentes;  // cópia simples com tamanho diferente do original: avisa, não sobrescreve
     int comMarcaDagua = 0;
     std::vector<std::string> falhas;
     bool cancelado = false;

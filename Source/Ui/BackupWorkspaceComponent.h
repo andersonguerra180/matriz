@@ -273,6 +273,12 @@ private:
     bool statusPodeFinalizar_ = false;
     std::unique_ptr<juce::TextButton> btnRebuildStatus_;  // abre a janela de status do Rebuild a qualquer momento
     void prepararRelatorioErros(bool rebuild);
+    // Resultado de EXPORT / pacote: se houve qualquer coisa que o usuário precise entender (falhas, arquivos já
+    // existentes, duplicatas de fora, fora do MAIN...), abre a janela detalhada; senão, o aviso simples.
+    void mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam, int foraDoMain,
+                                int semPasta, const juce::String& semPastaKey, int duplicatas,
+                                const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
+                                const juce::String& extras, bool cancelado);
     void mostrarErrosBackup();
 
     // UI elements — ALL visible at once in Config state
