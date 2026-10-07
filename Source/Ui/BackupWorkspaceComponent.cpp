@@ -4416,8 +4416,11 @@ void BackupWorkspaceComponent::finalizarRebuild(const juce::File& novaRaiz, cons
                 alvo.deleteFile();
                 db.exec("VACUUM INTO '" + alvo.getFullPathName().replace("'", "''").toStdString() + "'");
             };
-            snapshot(proj->registro(), "registro.sqlite");
-            snapshot(proj->indice(), "indice.sqlite");
+            // Conexões SÓ DE LEITURA (uma por thread): o VACUUM INTO na conexão de escrita falhava com
+            // "cannot VACUUM - SQL statements in progress" sempre que a UI (plano do backup recalculado ao
+            // concluir) tinha uma consulta aberta nela. Leitor em WAL tira o snapshot sem esbarrar nisso.
+            snapshot(proj->registroLeitura(), "registro.sqlite");
+            snapshot(proj->indiceLeitura(), "indice.sqlite");
             for (const auto& c : pastaProjeto.findChildFiles(juce::File::findFilesAndDirectories, false)) {
                 const auto nome = c.getFileName();
                 if (nome.startsWith("registro.sqlite") || nome.startsWith("indice.sqlite")) continue;
