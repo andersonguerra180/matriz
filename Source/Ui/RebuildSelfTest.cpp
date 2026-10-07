@@ -266,8 +266,8 @@ int rodarRebuildSelfTest() {
             escreverArquivo(fora, 10, 90000);
             dentro.getSiblingFile("novo.wav.xmp").replaceWithText("<x:xmpmeta/>");
             inbox.getChildFile("Vazia/Sub").createDirectory();
-            inserirItem(regb, projetoId2, "INB-1", dentro);
-            inserirItem(regb, projetoId2, "INB-2", fora);
+            const std::string idDentro = inserirItem(regb, projetoId2, "INB-1", dentro);
+            const std::string idFora = inserirItem(regb, projetoId2, "INB-2", fora);
             const std::string hashDentro = sha(dentro), hashFora = sha(fora);
             const juce::File mediaB = pb.projeto().pastaMedia();
             auto planoB = cons::planejarConsolidacao(regb, pb.projeto().pasta(), mediaB, hier, {}, cons::ModoPrefixoArquivo::Nenhum, {}, true,
@@ -282,6 +282,26 @@ int rodarRebuildSelfTest() {
             checar(inbox.isDirectory() && !inbox.getChildFile("Show X").exists() && !inbox.getChildFile("Vazia").exists(),
                    "inbox: empty subfolders removed, the INBOX itself stays");
             checar(fora.existsAsFile() && sha(arquivoNoMain(mediaB, "fora")) == hashFora, "inbox: a file outside the INBOX is still COPIED, not moved");
+
+            // ---- LIST a partir do Folder Map (cadeia de pastas, prévia, aplicar)
+            const std::string pShows = pb.criarPastaAcervo("Shows", std::nullopt);
+            const std::string p2027 = pb.criarPastaAcervo("2027", pShows);
+            const std::string pCayena = pb.criarPastaAcervo("Cayena", p2027);
+            pb.adicionarItemAPastaSemRemoverOutras(idDentro, pCayena);
+            const auto cadeia = pb.cadeiaDePastasDoItem(idDentro);
+            checar(cadeia.size() == 3 && cadeia[0] == "Cayena" && cadeia[1] == "2027" && cadeia[2] == "Shows",
+                   "list-from-folder: the folder chain goes from the item's folder up to the root");
+            checar(pb.cadeiaDePastasDoItem(idFora).empty(), "list-from-folder: an item outside any folder has an empty chain");
+            auto previa = pb.previaListaPelasPastas({idDentro, idFora}, 0, true);
+            checar(previa.itemEValor.size() == 1 && previa.itemEValor[0].second == "Cayena" && previa.semPasta == 1,
+                   "list-from-folder: preview = 1 file gets 'Cayena', 1 is outside any folder");
+            pb.aplicarListaPelasPastas(previa.itemEValor);
+            checar(pb.lerMetadado(idDentro, "lista").value_or("") == "Cayena", "list-from-folder: LIST was written");
+            checar(pb.previaListaPelasPastas({idDentro}, 1, true).jaPreenchidos == 1,
+                   "list-from-folder: 'fill only the empty ones' keeps the value that is already there");
+            auto prev2 = pb.previaListaPelasPastas({idDentro}, 1, false);
+            checar(prev2.itemEValor.size() == 1 && prev2.itemEValor[0].second == "2027", "list-from-folder: 'replace all' at level 2 gives the parent folder");
+            checar(pb.previaListaPelasPastas({idDentro}, 5, false).semNivel == 1, "list-from-folder: a level above the root is reported, not invented");
         }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";

@@ -446,6 +446,41 @@ inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory ca
     return res;
 }
 
+// Ícone de pasta (vetor, sem depender de emoji/fonte) ao lado do rótulo LIST: preenche o campo com o nome de uma
+// pasta do Folder Map. Filho do próprio rótulo, então some/aparece junto com a linha.
+class BotaoPastaIcone : public juce::Button {
+public:
+    BotaoPastaIcone() : juce::Button("pasta") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paintButton(juce::Graphics& g, bool sobre, bool apertado) override {
+        const auto r = getLocalBounds().toFloat().reduced(2.0f, 2.5f);
+        const float abaW = r.getWidth() * 0.45f, abaH = r.getHeight() * 0.25f;
+        juce::Path p;
+        p.addRoundedRectangle(r.getX(), r.getY(), abaW, abaH + 2.0f, 1.5f);
+        p.addRoundedRectangle(r.getX(), r.getY() + abaH, r.getWidth(), r.getHeight() - abaH, 2.0f);
+        g.setColour(tema().textoSecundario.withAlpha(apertado ? 1.0f : (sobre ? 0.95f : 0.65f)));
+        g.fillPath(p);
+    }
+};
+
+// Troca por um instante o texto de um rótulo (ex.: o badge [EDITÁVEL]) para dar retorno do que o clique fez,
+// e devolve o texto original; cliques seguidos não deixam o texto "preso".
+void avisoRapidoNoRotulo(juce::Label* rotulo, const juce::String& texto) {
+    if (rotulo == nullptr) return;
+    auto& props = rotulo->getProperties();
+    if (!props.contains("textoOriginal")) props.set("textoOriginal", rotulo->getText());
+    const int geracao = static_cast<int>(props.getWithDefault("geracaoAviso", 0)) + 1;
+    props.set("geracaoAviso", geracao);
+    rotulo->setText(texto, juce::dontSendNotification);
+    juce::Component::SafePointer<juce::Label> seguro(rotulo);
+    juce::Timer::callAfterDelay(1800, [seguro, geracao] {
+        if (seguro == nullptr) return;
+        auto& pr = seguro->getProperties();
+        if (static_cast<int>(pr.getWithDefault("geracaoAviso", 0)) != geracao) return;
+        seguro->setText(pr.getWithDefault("textoOriginal", juce::String()).toString(), juce::dontSendNotification);
+        pr.remove("textoOriginal");
+    });
+}
+
 class FichaConteudo : public juce::Component {
 public:
     explicit FichaConteudo(ProjetoAberto& projeto) : projeto_(projeto) {
@@ -1874,6 +1909,7 @@ private:
         std::unique_ptr<juce::Label> rotulo;
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Component> editor;
+        std::unique_ptr<juce::Component> btnPasta;  // LIST: ícone "preencher pela pasta do Folder Map" (filho do rótulo)
         std::function<void()> onCommit;
         // Valor com que o editor foi semeado (ou o último valor salvo) —
         // permite ao flush (comitarPendencias) saber se há texto digitado
@@ -1881,6 +1917,57 @@ private:
         juce::String valorSeed;
     };
     std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
+
+    // LIST a partir do Folder Map (item único). Clique: nome da pasta do item; novo clique em até 2 s sobe um nível;
+    // Option-clique (ou botão direito) abre a lista dos níveis. Grava pelo mesmo caminho do campo digitado.
+    struct EstadoCliquePasta { int nivel = -1; juce::int64 quando = 0; juce::String ultimoValor; };
+    void instalarBotaoPastaDaLista(LinhaUnificada& linha, const std::string& itemId) {
+        if (!linha.rotulo || !linha.editor) return;
+        auto* ed = dynamic_cast<juce::TextEditor*>(linha.editor.get());
+        if (ed == nullptr) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.lista_pasta_dica"));
+        botao->setBounds(46, 0, 22, 16);
+        auto estado = std::make_shared<EstadoCliquePasta>();
+        juce::Component::SafePointer<juce::TextEditor> edSeguro(ed);
+        juce::Label* badge = linha.badge.get();
+        auto commit = linha.onCommit;  // por valor: a linha pode ser reconstruída antes do menu fechar
+        auto aplicar = [edSeguro, badge, estado, commit](const std::vector<std::string>& cadeia, int nivel) {
+            if (edSeguro == nullptr || nivel < 0 || static_cast<size_t>(nivel) >= cadeia.size()) return;
+            const juce::String valor = juce::String::fromUTF8(cadeia[static_cast<size_t>(nivel)].c_str());
+            edSeguro->setText(valor, false);
+            estado->nivel = nivel;
+            estado->quando = juce::Time::currentTimeMillis();
+            estado->ultimoValor = valor;
+            if (commit) commit();
+            avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_nivel").replace("{n}", juce::String(nivel + 1)));
+        };
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, itemId, edSeguro, badge, estado, aplicar, botaoRaw] {
+            const auto cadeia = projeto_.cadeiaDePastasDoItem(itemId);
+            if (cadeia.empty()) {
+                avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_sem_pasta"));
+                return;
+            }
+            if (juce::ModifierKeys::currentModifiers.isAltDown() || juce::ModifierKeys::currentModifiers.isPopupMenu()) {
+                juce::PopupMenu menu;
+                for (size_t i = 0; i < cadeia.size(); ++i)
+                    menu.addItem(static_cast<int>(i) + 1, juce::String(static_cast<int>(i) + 1) + " - " + juce::String::fromUTF8(cadeia[i].c_str()));
+                menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [aplicar, cadeia](int escolha) {
+                    if (escolha > 0) aplicar(cadeia, escolha - 1);
+                });
+                return;
+            }
+            const auto agora = juce::Time::currentTimeMillis();
+            const bool seguido = estado->nivel >= 0 && agora - estado->quando < 2000 && edSeguro != nullptr &&
+                                 edSeguro->getText() == estado->ultimoValor;
+            int nivel = seguido ? estado->nivel + 1 : 0;
+            if (static_cast<size_t>(nivel) >= cadeia.size()) nivel = 0;  // passou do topo da hierarquia: volta à pasta do item
+            aplicar(cadeia, nivel);
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
     std::unique_ptr<juce::Label> secHeaderDublinCore_;
     std::unique_ptr<juce::TextButton> btnAjudaDublinCore_;
     std::unique_ptr<juce::TextButton> btnCollapseDublinCore_;
@@ -2488,6 +2575,7 @@ private:
             ed->onReturnKey = linha->onCommit;
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
+            if (dbColuna == "lista") instalarBotaoPastaDaLista(*linhaRaw, itemId);
 
             camposUnificados_.push_back(std::move(linha));
         };
@@ -4189,10 +4277,106 @@ private:
         bool ehDropdown = false;
         bool ehOriginalSourceMedium = false;
         std::vector<std::string> opcoes;
+        std::unique_ptr<juce::Component> btnPasta;  // LIST: ícone "preencher pelas pastas do Folder Map" (filho do rótulo)
         // Último valor semeado/aplicado — usado pelo flush (comitarPendencias)
         // pra saber se há texto digitado e ainda não aplicado nesta linha.
         juce::String valorSeed;
     };
+
+    // LIST a partir do Folder Map, em lote: cada arquivo recebe o nome da pasta DELE no nível escolhido (1 = pasta
+    // imediata). Só preenche os vazios, ou substitui tudo; mostra a prévia (quantos, valores distintos, o que será
+    // pulado) e só então grava. Um Undo para o lote todo.
+    void instalarBotaoPastaDaListaLote(LinhaLote& linha) {
+        if (!linha.rotulo || !linha.editor) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.lista_pasta_dica_lote"));
+        botao->setBounds(46, 0, 22, 16);
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        LinhaLote* linhaPtr = &linha;
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, seguro, linhaPtr, botaoRaw] {
+            if (itemIds_.empty()) return;
+            // Quantos níveis existem (até 5) e um exemplo de cada, para o menu mostrar o que cada escolha vai gravar.
+            std::vector<std::string> exemplos(5);
+            size_t niveis = 0;
+            for (const auto& id : itemIds_) {
+                const auto cadeia = projeto_.cadeiaDePastasDoItem(id);
+                niveis = std::max(niveis, std::min<size_t>(cadeia.size(), 5));
+                for (size_t n = 0; n < std::min<size_t>(cadeia.size(), 5); ++n)
+                    if (exemplos[n].empty()) exemplos[n] = cadeia[n];
+            }
+            if (niveis == 0) {
+                if (resultado_) resultado_->setText(matriz::i18n::t("ficha.lista_pasta_lote_sem_pasta"), juce::dontSendNotification);
+                return;
+            }
+            juce::PopupMenu menu;
+            for (size_t n = 0; n < niveis; ++n) {
+                const juce::String ex = juce::String::fromUTF8(exemplos[n].c_str());
+                const juce::String base = matriz::i18n::t("ficha.lista_pasta_lote_nivel").replace("{n}", juce::String(static_cast<int>(n) + 1)).replace("{ex}", ex);
+                menu.addItem(static_cast<int>(n) * 2 + 1, base + " - " + matriz::i18n::t("ficha.lista_pasta_lote_vazios"));
+                menu.addItem(static_cast<int>(n) * 2 + 2, base + " - " + matriz::i18n::t("ficha.lista_pasta_lote_todos"));
+                if (n + 1 < niveis) menu.addSeparator();
+            }
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [this, seguro, linhaPtr](int escolha) {
+                if (escolha <= 0 || seguro == nullptr) return;
+                const int nivel = (escolha - 1) / 2;
+                const bool soVazios = ((escolha - 1) % 2) == 0;
+                auto previa = std::make_shared<ProjetoAberto::ListaPorPastaPrevia>(projeto_.previaListaPelasPastas(itemIds_, nivel, soVazios));
+                juce::String msg;
+                if (previa->itemEValor.empty()) {
+                    msg << matriz::i18n::t("ficha.lista_pasta_lote_nada");
+                } else {
+                    msg << matriz::i18n::t("ficha.lista_pasta_lote_conf")
+                               .replace("{a}", juce::String(static_cast<int>(previa->itemEValor.size())))
+                               .replace("{v}", juce::String(static_cast<int>(previa->valoresDistintos.size())))
+                               .replace("{ex}", juce::String::fromUTF8(previa->valoresDistintos.begin()->c_str()));
+                }
+                auto linhaExtra = [&](int n, const char* chave) {
+                    if (n > 0) msg << "\n- " << matriz::i18n::t(chave).replace("{n}", juce::String(n));
+                };
+                linhaExtra(previa->jaPreenchidos, "ficha.lista_pasta_lote_ja_tinha");
+                linhaExtra(previa->jaIguais, "ficha.lista_pasta_lote_ja_igual");
+                linhaExtra(previa->semPasta, "ficha.lista_pasta_lote_sem_pasta_n");
+                linhaExtra(previa->semNivel, "ficha.lista_pasta_lote_sem_nivel");
+                if (previa->itemEValor.empty()) {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("ficha.lista_pasta_lote_titulo"), msg, {},
+                                                           nullptr, juce::ModalCallbackFunction::create([](int) {}));
+                    return;
+                }
+                msg << "\n\n" << matriz::i18n::t("ficha.lista_pasta_lote_aplicar_pergunta");
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon, matriz::i18n::t("ficha.lista_pasta_lote_titulo"), msg,
+                    matriz::i18n::t("ficha.lista_pasta_lote_aplicar"), matriz::i18n::t("comum.cancelar"), nullptr,
+                    juce::ModalCallbackFunction::create([this, seguro, linhaPtr, previa](int ok) {
+                        if (ok == 0 || seguro == nullptr) return;
+                        EscopoLoteAtualizacao escopoLote(*this);
+                        projeto_.aplicarListaPelasPastas(previa->itemEValor);
+                        for (const auto& v : previa->valoresDistintos)
+                            matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), "lista", v);
+                        // O campo passa a mostrar o valor comum (ou "valores múltiplos") e não conta como pendência.
+                        if (auto* ed = dynamic_cast<juce::TextEditor*>(linhaPtr->editor.get())) {
+                            std::string comum;
+                            bool iguais = true, primeiro = true;
+                            for (const auto& id : itemIds_) {
+                                const std::string v = projeto_.lerMetadado(id, "lista").value_or("");
+                                if (primeiro) { comum = v; primeiro = false; }
+                                else if (v != comum) { iguais = false; break; }
+                            }
+                            ed->setText(iguais ? juce::String::fromUTF8(comum.c_str()) : juce::String(), false);
+                            ed->setTextToShowWhenEmpty(iguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
+                            linhaPtr->valorSeed = ed->getText();
+                            piscarBordaSalvo(ed);
+                        }
+                        if (resultado_)
+                            resultado_->setText(matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(static_cast<int>(previa->itemEValor.size()))),
+                                                juce::dontSendNotification);
+                        if (aoAplicarEmLote) aoAplicarEmLote();
+                    }));
+            });
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
 
     struct SnapshotItem {
         std::string ano;
@@ -4454,6 +4638,7 @@ private:
             };
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
+            if (dbColuna == "lista") instalarBotaoPastaDaListaLote(*linha);
         };
 
         auto addDropdownLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, const std::vector<std::string>& opcoes) {

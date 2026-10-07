@@ -781,6 +781,24 @@ public:
     // pastas (N:N) ao mesmo tempo.
     void adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId);
 
+    // --- LIST a partir do Folder Map ---------------------------------------------------------------
+    // Nomes das pastas do item, da mais próxima para cima: [0] = pasta do item, [1] = a pasta pai, ...
+    // Usa o mapa do MAIN (a estrutura que o usuário curou e que vira disco), senão o mapa ativo, senão o
+    // primeiro que tiver o item. Vazio = o item não está em nenhuma pasta.
+    std::vector<std::string> cadeiaDePastasDoItem(const std::string& itemId) const;
+    struct ListaPorPastaPrevia {
+        std::vector<std::pair<std::string, std::string>> itemEValor;  // o que seria gravado
+        int jaPreenchidos = 0;  // pulados: já tinham LIST e só-vazios estava ligado
+        int jaIguais = 0;       // já tinham exatamente esse valor
+        int semPasta = 0;       // item fora de qualquer pasta
+        int semNivel = 0;       // a hierarquia do item não chega nesse nível
+        std::set<std::string> valoresDistintos;
+    };
+    // nivel 0 = pasta imediata do item, 1 = a de cima, ... Não grava nada.
+    ListaPorPastaPrevia previaListaPelasPastas(const std::vector<std::string>& itemIds, int nivel, bool soVazios) const;
+    // Grava (item, valor) como LIST: uma transação por valor distinto e UM Undo para o lote todo.
+    void aplicarListaPelasPastas(const std::vector<std::pair<std::string, std::string>>& itemEValor);
+
     // Reencontra um item pelo código de acervo (usado ao importar um preset
     // de pastas de OUTRO projeto, onde o item_id original não existe aqui).
     // nullopt se não achar nenhum item com esse código.

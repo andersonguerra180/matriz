@@ -3839,6 +3839,90 @@ void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& idsPedi
     }
 }
 
+namespace {
+// Pasta onde o item está, na ordem de preferência dos mapas; vazio se o item não está em pasta nenhuma.
+std::string pastaDoItemNosMapas(matriz::db::Database& db, const std::string& itemId, const std::vector<std::string>& mapas) {
+    for (const auto& mapa : mapas) {
+        auto st = db.prepare(
+            "SELECT aip.pasta_id FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+            "WHERE aip.item_id = ? AND ap.mapa_id = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(itemId));
+        st.bind(2, matriz::db::Value::of(mapa));
+        if (st.step()) return st.columnText(0);
+    }
+    auto st = db.prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? LIMIT 1");
+    st.bind(1, matriz::db::Value::of(itemId));
+    return st.step() ? st.columnText(0) : std::string();
+}
+
+std::vector<std::string> cadeiaDaPasta(matriz::db::Database& db, std::string pastaId) {
+    std::vector<std::string> cadeia;
+    for (int guarda = 0; !pastaId.empty() && guarda < 64; ++guarda) {
+        auto st = db.prepare("SELECT nome, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(pastaId));
+        if (!st.step()) break;
+        cadeia.push_back(st.columnText(0));
+        pastaId = st.columnIsNull(1) ? std::string() : st.columnText(1);
+    }
+    return cadeia;
+}
+}  // namespace
+
+std::vector<std::string> ProjetoAberto::cadeiaDePastasDoItem(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return {};
+    try {
+        std::vector<std::string> mapas;
+        const std::string doMain = mapaDoMainId();
+        if (!doMain.empty()) mapas.push_back(doMain);
+        const std::string ativo = mapaAtivoPadrao();
+        if (!ativo.empty() && ativo != doMain) mapas.push_back(ativo);
+        return cadeiaDaPasta(leitura(), pastaDoItemNosMapas(leitura(), itemId, mapas));
+    } catch (...) {
+        return {};
+    }
+}
+
+ProjetoAberto::ListaPorPastaPrevia ProjetoAberto::previaListaPelasPastas(const std::vector<std::string>& itemIds, int nivel,
+                                                                         bool soVazios) const {
+    ListaPorPastaPrevia r;
+    if (!projeto_ || nivel < 0) return r;
+    std::vector<std::string> mapas;
+    try {
+        const std::string doMain = mapaDoMainId();
+        if (!doMain.empty()) mapas.push_back(doMain);
+        const std::string ativo = mapaAtivoPadrao();
+        if (!ativo.empty() && ativo != doMain) mapas.push_back(ativo);
+    } catch (...) {}
+    std::map<std::string, std::vector<std::string>> cachePorPasta;  // milhares de itens costumam dividir poucas pastas
+    for (const auto& id : itemIds) {
+        try {
+            const std::string pastaId = pastaDoItemNosMapas(leitura(), id, mapas);
+            if (pastaId.empty()) { ++r.semPasta; continue; }
+            auto it = cachePorPasta.find(pastaId);
+            if (it == cachePorPasta.end()) it = cachePorPasta.emplace(pastaId, cadeiaDaPasta(leitura(), pastaId)).first;
+            const auto& cadeia = it->second;
+            if (static_cast<size_t>(nivel) >= cadeia.size()) { ++r.semNivel; continue; }
+            const std::string& valor = cadeia[static_cast<size_t>(nivel)];
+            const std::string atual = lerMetadado(id, "lista").value_or("");
+            if (soVazios && !juce::String(atual).trim().isEmpty()) { ++r.jaPreenchidos; continue; }
+            if (atual == valor) { ++r.jaIguais; continue; }
+            r.itemEValor.emplace_back(id, valor);
+            r.valoresDistintos.insert(valor);
+        } catch (...) {}
+    }
+    return r;
+}
+
+void ProjetoAberto::aplicarListaPelasPastas(const std::vector<std::pair<std::string, std::string>>& itemEValor) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (itemEValor.empty()) return;
+    std::map<std::string, std::vector<std::string>> porValor;
+    for (const auto& [id, valor] : itemEValor) porValor[valor].push_back(id);
+    iniciarGrupoUndo("Edit LIST (from Folder Map)");
+    for (const auto& [valor, ids] : porValor) salvarMetadadoEmLote(ids, {{"lista", valor}});
+    finalizarGrupoUndo();
+}
+
 void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemId.empty() || pastaId.empty()) return;
