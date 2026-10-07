@@ -1442,14 +1442,27 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, Cancela
 
     if (destOpt && destOpt->projetoId == projetoId) {
         destInfo = *destOpt;
-        // Update backup_destino row
+        // Update backup_destino row. A linha deste destino pode ter um `id` diferente do destination_id
+        // (o Rebuild do MAIN registra o destino novo com id próprio): o upsert por id não a encontrava e o
+        // INSERT estourava "UNIQUE constraint failed: backup_destino.destino_path" — projeto que não abria.
+        // Reaproveita o id da linha que já tem este caminho (ou este destination_id).
+        std::string idLinhaDestino = destInfo.destinationId;
+        {
+            auto stmtLinha = registro->prepare(
+                "SELECT id FROM backup_destino WHERE destino_path = ? OR destination_id = ? "
+                "ORDER BY (destino_path = ?) DESC LIMIT 1");
+            stmtLinha.bind(1, matriz::db::Value::of(raiz.getFullPathName().toStdString()));
+            stmtLinha.bind(2, matriz::db::Value::of(destInfo.destinationId));
+            stmtLinha.bind(3, matriz::db::Value::of(raiz.getFullPathName().toStdString()));
+            if (stmtLinha.step()) idLinhaDestino = stmtLinha.columnText(0);
+        }
         registro->run(
             "INSERT INTO backup_destino (id, destino_path, rotulo, ativo, criado_em, destination_id, papel, ultima_revisao_conhecida, ultimo_visto_em, ultima_edicao_conhecida) "
             "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET destino_path = excluded.destino_path, ultimo_visto_em = excluded.ultimo_visto_em, "
             "ultima_edicao_conhecida = excluded.ultima_edicao_conhecida, ultima_revisao_conhecida = excluded.ultima_revisao_conhecida",
             {
-                matriz::db::Value::of(destInfo.destinationId),
+                matriz::db::Value::of(idLinhaDestino),
                 matriz::db::Value::of(raiz.getFullPathName().toStdString()),
                 matriz::db::Value::of(destInfo.rotulo.empty() ? raiz.getFileName().toStdString() : destInfo.rotulo),
                 matriz::db::Value::of(destInfo.criadoEm.empty() ? agora : destInfo.criadoEm),
