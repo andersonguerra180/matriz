@@ -244,6 +244,45 @@ int rodarRebuildSelfTest() {
                    "rebuild end: the old MAIN's registrations are gone and the new MAIN's 4 remain");
             checar(pa.mainExiste() && !pa.podeEditarMain() == false, "rebuild end: the project has a MAIN again");
         }
+
+        // ---- 5) INBOX: o projeto nasce com INBOX + README; arquivo da INBOX é MOVIDO para o MAIN (copiado, verificado,
+        // removido da INBOX), o .xmp vai junto, subpastas vazias somem; arquivo de fora da INBOX continua sendo COPIADO.
+        {
+            matriz::model::NovoProjetoParams params2;
+            params2.nome = "Inbox";
+            params2.prefixoNomenclatura = "INB";
+            auto projeto2 = matriz::model::Project::criar(raiz.getChildFile("P2"), params2);
+            const std::string projetoId2 = projeto2->projetoId();
+            ProjetoAberto pb(std::move(projeto2));
+            auto& regb = pb.projeto().registro();
+            const juce::File raizMain = pb.projeto().raiz();
+            const juce::File inbox = raizMain.getChildFile("INBOX");
+            checar(inbox.isDirectory() && raizMain.getChildFile("README - LEIA-ME.txt").existsAsFile(),
+                   "inbox: a new project is created with INBOX and the README");
+
+            const juce::File dentro = inbox.getChildFile("Show X/2027/novo.wav");
+            const juce::File fora = src.getChildFile("fora.wav");
+            escreverArquivo(dentro, 9, 150000);
+            escreverArquivo(fora, 10, 90000);
+            dentro.getSiblingFile("novo.wav.xmp").replaceWithText("<x:xmpmeta/>");
+            inbox.getChildFile("Vazia/Sub").createDirectory();
+            inserirItem(regb, projetoId2, "INB-1", dentro);
+            inserirItem(regb, projetoId2, "INB-2", fora);
+            const std::string hashDentro = sha(dentro), hashFora = sha(fora);
+            const juce::File mediaB = pb.projeto().pastaMedia();
+            auto planoB = cons::planejarConsolidacao(regb, pb.projeto().pasta(), mediaB, hier, {}, cons::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                     false, false, false, {}, false);
+            auto resB = cons::executarConsolidacao(regb, pb.projeto().pasta(), mediaB, planoB);
+            checar(resB.consolidados == 2 && resB.falhas.empty(), "inbox: both files consolidated, no failures");
+            checar(resB.movidosDaInbox == 1 && !dentro.existsAsFile(), "inbox: the INBOX file was MOVED (it left the INBOX)");
+            const auto noMainB = arquivoNoMain(mediaB, "novo");
+            checar(noMainB.existsAsFile() && sha(noMainB) == hashDentro, "inbox: the MAIN copy has the same SHA-256");
+            checar(noMainB.getSiblingFile("novo.wav.xmp").existsAsFile() && !dentro.getSiblingFile("novo.wav.xmp").existsAsFile(),
+                   "inbox: the .xmp sidecar went along");
+            checar(inbox.isDirectory() && !inbox.getChildFile("Show X").exists() && !inbox.getChildFile("Vazia").exists(),
+                   "inbox: empty subfolders removed, the INBOX itself stays");
+            checar(fora.existsAsFile() && sha(arquivoNoMain(mediaB, "fora")) == hashFora, "inbox: a file outside the INBOX is still COPIED, not moved");
+        }
     } catch (const std::exception& e) {
         std::cout << "  FAIL exception: " << e.what() << "\n";
         ++falhas;

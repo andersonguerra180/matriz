@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "../Model/Inbox.h"
 #include "../Consolidacao/BridgeXmp.h"
 #include "MainEditPanel.h"
 #include "BackupVersionsComponent.h"
@@ -2860,6 +2861,52 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
     resolverDuplicatasIntakeEEnfileirar(std::move(arquivos));
+}
+
+void MainComponent::escanearInbox() {
+    if (!projetoAberto_) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
+    if (projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) return;
+
+    const juce::File raiz = projetoAberto_->projeto().raiz();
+    const juce::File inbox = matriz::model::inbox::pasta(raiz);
+    matriz::model::inbox::garantir(raiz);  // projeto antigo / pasta apagada: recria INBOX e README
+
+    juce::Component::SafePointer<MainComponent> safeThis(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    // Só metadados de disco (nenhum arquivo é lido), fora da message thread.
+    juce::Thread::launch([safeThis, proj, inbox] {
+        const auto v = matriz::model::inbox::varrer(inbox);
+        juce::MessageManager::callAsync([safeThis, proj, inbox, v] {
+            if (!safeThis || safeThis->projetoAberto_.get() != proj) return;
+            const auto titulo = matriz::i18n::t("inbox.titulo");
+            auto aviso = [&](const juce::String& msg) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, titulo, msg, {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+            };
+            if (v.arquivos == 0) {
+                aviso(matriz::i18n::t("inbox.vazia").replace("{pasta}", inbox.getFullPathName()));
+                return;
+            }
+            if (v.recentes > 0) {
+                juce::String exemplos;
+                for (const auto& e : v.exemplosRecentes) exemplos << "\n  " << e;
+                aviso(matriz::i18n::t("inbox.recentes").replace("{n}", juce::String(v.recentes)) + exemplos);
+                return;
+            }
+            auto* janela = new juce::AlertWindow(titulo,
+                matriz::i18n::t("inbox.confirmar").replace("{n}", juce::String(v.arquivos))
+                                                  .replace("{tam}", juce::File::descriptionOfSizeInBytes(v.bytes)),
+                juce::MessageBoxIconType::QuestionIcon);
+            janela->addButton(matriz::i18n::t("inbox.btn_importar"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+            janela->addButton(matriz::i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            janela->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, proj, inbox](int escolha) {
+                if (escolha != 1 || !safeThis || safeThis->projetoAberto_.get() != proj) return;
+                // Cada subpasta da INBOX vira proposta de pasta no Folder Map (como arrastar uma pasta); "INBOX" não é nível.
+                safeThis->ingerirArquivos(matriz::model::inbox::entradasParaIntake(inbox));
+            }), true);
+        });
+    });
 }
 
 void MainComponent::ingerirPacote(const juce::File& pasta) {

@@ -188,6 +188,10 @@ struct ResultadoConsolidacao {
     // embutido (cue/adtl/iXML). Só WAV nesta etapa; ver MetadadoEmbutido.h.
     int arquivosComMarcadorEmbutido = 0;
 
+    // INBOX: arquivos que estavam na INBOX do MAIN e foram MOVIDOS para Media/ (copiados, verificados e só então
+    // removidos da INBOX). Vale só quando o destino é o próprio MAIN do projeto.
+    int movidosDaInbox = 0;
+
     // Rebuild do MAIN (OpcoesRebuild): de onde veio cada cópia.
     int copiadosDaSourcePorDivergencia = 0;       // o MAIN antigo diferia do catálogo; copiado da SOURCE
     std::vector<std::string> mantidosDoMainAntigo;  // difere da SOURCE, mas a SOURCE não estava disponível

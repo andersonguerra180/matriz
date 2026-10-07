@@ -4,6 +4,7 @@
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
+#include "../Model/Inbox.h"
 #include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
@@ -1112,6 +1113,7 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
     std::string agora = matriz::model::agoraIso8601();
     // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
     const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
+    const juce::File raizDoMain = pastaProjeto.getParentDirectory();  // <raiz>/Project -> <raiz>
     // Código do SOURCE fica fixo quando o primeiro arquivo dele entra no MAIN.
     const auto codigosAtuais = codigosDeSource(registro);
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
@@ -1453,10 +1455,42 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                 (void)hashLidoDaOrigem;
             } catch (...) {}
 
+            // INBOX -> MAIN: o arquivo veio da INBOX do próprio MAIN, então é MOVIDO (a cópia acima já foi
+            // verificada por SHA-256 e registrada; só agora a original sai da INBOX). Se o hash da cópia não
+            // bate com o do catálogo, a original fica onde está. Sidecar .xmp acompanha a mídia.
+            if (!rebuild && !movidoLocalmente && destino.getParentDirectory() == raizDoMain &&
+                matriz::model::inbox::arquivoEstaNaInbox(origemUsada, raizDoMain)) {
+                std::string shaCatalogo;
+                try {
+                    auto stSha = registro.prepare("SELECT IFNULL(checksum_sha256, '') FROM arquivo WHERE id = ?");
+                    stSha.bind(1, Value::of(ip.arquivoId));
+                    if (stSha.step()) shaCatalogo = stSha.columnText(0);
+                } catch (...) {}
+                if (shaCatalogo.empty() || shaCatalogo == hashVerificado) {
+                    for (const juce::File& sidecar : {origemUsada.getSiblingFile(origemUsada.getFileName() + ".xmp"),
+                                                      origemUsada.getSiblingFile(origemUsada.getFileNameWithoutExtension() + ".xmp")}) {
+                        if (!sidecar.existsAsFile()) continue;
+                        const juce::File alvoXmp = destinoArquivo.getSiblingFile(destinoArquivo.getFileName() + ".xmp");
+                        if (alvoXmp.existsAsFile() || sidecar.copyFileTo(alvoXmp)) sidecar.deleteFile();
+                    }
+                    if (origemUsada.deleteFile()) ++resultado.movidosDaInbox;
+                }
+            }
+
             ++resultado.consolidados;
         } catch (const std::exception& e) {
             resultado.falhas.push_back(ip.codigoAcervo + ": " + e.what());
         }
+    }
+
+    if (resultado.movidosDaInbox > 0) {
+        const int pastasVazias = matriz::model::inbox::removerSubpastasVazias(matriz::model::inbox::pasta(raizDoMain));
+        try {
+            matriz::model::ProjectLog(pastaProjeto).appendEntry(
+                "INBOX moved into the MAIN",
+                {"Files moved (copied, SHA-256 verified, then removed from the INBOX): " + juce::String(resultado.movidosDaInbox),
+                 "Empty INBOX subfolders removed: " + juce::String(pastasVazias)});
+        } catch (...) {}
     }
 
     return resultado;

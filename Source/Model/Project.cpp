@@ -1,5 +1,6 @@
 #include "Project.h"
 #include "../I18n/Strings.h"
+#include "Inbox.h"
 #include "ProjectLog.h"
 
 #include <algorithm>
@@ -1270,6 +1271,8 @@ std::unique_ptr<Project> Project::criar(const juce::File& pastaRaiz, const NovoP
         throw ProjectError("could not create Project directory: " + pastaProject.getFullPathName().toStdString());
     if (!pastaMedia.exists() && !pastaMedia.createDirectory())
         throw ProjectError("could not create Media directory: " + pastaMedia.getFullPathName().toStdString());
+    // INBOX (material novo, com ou sem o app) + README explicando o ambiente. Só em Coleção; catálogo não tem MAIN.
+    if (params.modo != Modo::Catalogo) matriz::model::inbox::garantir(pastaRaiz);
 
     juce::File registroFile = pastaProject.getChildFile("registro.sqlite");
     juce::File indiceFile = pastaProject.getChildFile("indice.sqlite");
@@ -1595,6 +1598,9 @@ std::unique_ptr<Project> Project::abrir(const juce::File& qualquerPasta, Cancela
             auto stmtModo = registro->prepare("SELECT modo FROM projeto LIMIT 1");
             if (stmtModo.step()) modoStr = stmtModo.columnText(0);
         }
+        // INBOX + README no MAIN (projeto antigo ganha na primeira abertura; nunca sobrescreve README editado).
+        // Clone/destino que não é o MAIN não ganha.
+        if (modoStr != "catalogo" && destInfo.papel == "ORIGINAL") matriz::model::inbox::garantir(pastaRaiz);
         juce::String ext = (modoStr == "catalogo" ? ".bkm" : ".mtz");
         // Rename Project (item 5, 2026-09-28): o nome pode não bater mais
         // com o arquivo já existente. Acha por extensão na raiz antes de
