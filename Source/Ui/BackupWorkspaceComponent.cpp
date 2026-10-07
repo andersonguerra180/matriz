@@ -3746,7 +3746,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
     btnStartBackup_->setEnabled(false);
     barraProgresso_->setVisible(true);
     labelProgressoStatus_->setVisible(true);
-    labelProgressoStatus_->setText("Preparing copy operations...", juce::dontSendNotification);
+    labelProgressoStatus_->setText(matriz::i18n::t("backup.progresso_preparando"), juce::dontSendNotification);
 
     auto cancelamento = cancelamento_;
     auto plano = plano_;
@@ -3837,10 +3837,11 @@ void BackupWorkspaceComponent::iniciarBackup() {
         auto colecoes = projeto.listarColecoesLinkadas();
         ProgressoGlobal::obterInstancia().iniciarTarefa(
             "backup",
-            "Consolidating Catalog Collections",
+            matriz::i18n::t("backup.progresso_titulo_catalogo"),
             static_cast<int>(colecoes.size()),
             [cancelamento] { cancelamento->pedir(); },
-            "Preparing catalog backup...");
+            matriz::i18n::t("backup.progresso_preparando_catalogo"),
+            /*temModalProprio*/ true);
 
         resized();
         repaint();
@@ -3922,12 +3923,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
         return;
     }
 
+    // temModalProprio: esta aba já mostra a própria barra (e o CANCEL); o modal global duplicava a barra e
+    // ficava parado em 0% por cima do "Backup completed".
     ProgressoGlobal::obterInstancia().iniciarTarefa(
         "backup",
-        "Consolidating Backup",
+        matriz::i18n::t("backup.progresso_titulo"),
         static_cast<int>(plano.itens.size()),
         [cancelamento] { cancelamento->pedir(); },
-        "Preparing copy operations...");
+        matriz::i18n::t("backup.progresso_preparando"),
+        /*temModalProprio*/ true);
 
     resized();
     repaint();
