@@ -385,6 +385,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*detailViewport_);
 
     setWantsKeyboardFocus(true);
+    setOpaque(true);  // o paint faz fillAll do fundo inteiro
 
     migrarPresetsAntigosSeNecessario();
     mapaAtivoId_ = projeto_.mapaInicialDoFolderMap();
@@ -1676,16 +1677,20 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     g.reduceClipRegion(canvas);
 
     // Canvas background grid pattern (n8n style dots) — in screen space
+    // Zoom afastado: os pontos ficam mais espaçados (nunca milhares); todos numa chamada só.
     g.setColour(tema().painelAlt.withAlpha(0.4f));
-    float dotStep = 24.0f * zoom_;
-    if (dotStep > 4.0f) {
+    {
+        float dotStep = 24.0f * zoom_;
+        while (dotStep < 12.0f) dotStep *= 2.0f;
         float startX = std::fmod(panOffset_.x, dotStep);
         float startY = std::fmod(panOffset_.y, dotStep);
         if (startX < 0) startX += dotStep;
         if (startY < 0) startY += dotStep;
+        juce::RectangleList<float> pontos;
         for (float x = static_cast<float>(canvas.getX()) + startX; x < static_cast<float>(canvas.getRight()); x += dotStep)
             for (float y = static_cast<float>(canvas.getY()) + startY; y < static_cast<float>(canvas.getBottom()); y += dotStep)
-                g.fillEllipse(x, y, 2.0f, 2.0f);
+                pontos.addWithoutMerging({x, y, 2.0f, 2.0f});
+        g.fillRectList(pontos);
     }
 
     if (nodes_.empty()) {
@@ -1716,9 +1721,16 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
                                                   static_cast<float>(node.bounds.getCentreY()));
     }
 
+    // Culling: só desenha o que cai na área visível do canvas (em coordenadas do canvas, com folga de 40 px).
+    // As portas acima continuam montadas para todos.
+    const juce::Rectangle<float> visivel =
+        juce::Rectangle<float>(screenToCanvas(canvas.getTopLeft()), screenToCanvas(canvas.getBottomRight())).expanded(40.0f);
+
     for (const auto& node : nodes_) {
         if (!node.pastaPaiId.empty() && outputPorts.count(node.pastaPaiId) && inputPorts.count(node.id)) {
-            desenharLinhaConexaoN8n(g, outputPorts[node.pastaPaiId], inputPorts[node.id], node.ativo, false);
+            const auto p1 = outputPorts[node.pastaPaiId], p2 = inputPorts[node.id];
+            if (!juce::Rectangle<float>(p1, p2).expanded(40.0f).intersects(visivel)) continue;
+            desenharLinhaConexaoN8n(g, p1, p2, node.ativo, false);
         }
     }
 
@@ -1728,7 +1740,9 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     }
 
     // Node cards
+    const bool arrastando = nodeDragIndice_ >= 0 || panning_;
     for (const auto& node : nodes_) {
+        if (!node.bounds.toFloat().intersects(visivel)) continue;
         auto b = node.bounds.toFloat();
 
         g.setColour(node.ativo ? tema().painel : tema().painelAlt);
@@ -1743,7 +1757,11 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.fillRoundedRectangle(b, 8.0f);
         }
 
-        if (node.selecionado) {
+        if (node.selecionado && arrastando) {
+            // Durante o arrasto/pan: traço sólido simples (o tracejado custa caro a cada frame).
+            g.setColour(juce::Colours::white);
+            g.drawRoundedRectangle(b, 8.0f, 2.5f);
+        } else if (node.selecionado) {
             // Zebra (marching-ants) selection border: solid white base stroke
             // with a dashed black stroke on top, instead of tinting the fill.
             g.setColour(juce::Colours::white);
@@ -1763,22 +1781,25 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
         // A fonte acompanha o tamanho do folder (slider, escala por pasta, nível): 190x84 = 100%.
         const float fs = juce::jlimit(0.4f, 4.0f, std::min(b.getWidth() / 190.0f, b.getHeight() / 84.0f));
-        auto header = b.removeFromTop(24.0f * fs);
-        g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
-        g.fillRoundedRectangle(header, 8.0f);
-        g.fillRect(header.withTrimmedTop(16.0f * fs));
+        // Texto que sairia com menos de 5 px na tela: nem desenha (só retângulo, borda e portas).
+        if (12.0f * fs * zoom_ >= 5.0f) {
+            auto header = b.removeFromTop(24.0f * fs);
+            g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
+            g.fillRoundedRectangle(header, 8.0f);
+            g.fillRect(header.withTrimmedTop(16.0f * fs));
 
-        desenharCabecalhoNo(g, node, header);
+            desenharCabecalhoNo(g, node, header);
 
-        auto content = b.reduced(10.0f * fs, 6.0f * fs);
-        g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f * fs, juce::Font::bold)));
-        g.drawText(node.nome, content.removeFromTop(18.0f * fs), juce::Justification::centredLeft, true);
+            auto content = b.reduced(10.0f * fs, 6.0f * fs);
+            g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
+            g.setFont(juce::Font(juce::FontOptions(12.0f * fs, juce::Font::bold)));
+            g.drawText(node.nome, content.removeFromTop(18.0f * fs), juce::Justification::centredLeft, true);
 
-        g.setColour(tema().textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f * fs)));
-        juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
-        g.drawText(desc, content, juce::Justification::centredLeft, true);
+            g.setColour(tema().textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(10.0f * fs)));
+            juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
+            g.drawText(desc, content, juce::Justification::centredLeft, true);
+        }
 
         // Input & Output socket handles
         float portRadius = 6.0f;
@@ -2309,7 +2330,7 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
     if (marqueeSelecting_) {
         auto canvasPos = screenToCanvas(e.getPosition());
         marqueeRectCanvas_ = juce::Rectangle<float>(marqueeStartCanvas_, canvasPos);
-        repaint();
+        repaint(areaCanvas());  // só o canvas: a coluna esquerda não muda durante a interação
         return;
     }
 
@@ -2318,13 +2339,13 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
         panOffset_.x += delta.x;
         panOffset_.y += delta.y;
         panStart_ = e.getPosition();
-        repaint();
+        repaint(areaCanvas());
         return;
     }
 
     if (!socketDragParentId_.empty()) {
         socketDragPos_ = screenToCanvas(e.getPosition());
-        repaint();
+        repaint(areaCanvas());
         return;
     }
 
@@ -2349,7 +2370,7 @@ void ArvoreBackupComponent::moverArrastoPara(juce::Point<int> mouseTela) {
             juce::Point<float> novaPos = posInicial + delta;
             nodes_[static_cast<size_t>(idx)].bounds.setPosition(static_cast<int>(novaPos.x), static_cast<int>(novaPos.y));
         }
-        repaint();
+        repaint(areaCanvas());
     }
 }
 
@@ -2373,7 +2394,7 @@ void ArvoreBackupComponent::tickAutoRolagem() {
     panOffset_.x += dx;
     panOffset_.y += dy;
     moverArrastoPara(mouse);  // o bloco segue o mouse, que agora aponta pra outra região do canvas
-    repaint();
+    repaint(areaCanvas());
 }
 
 void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
@@ -2459,6 +2480,7 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     }
     nodeDragIndice_ = -1;
     arrastoGrupoPosicoesIniciais_.clear();
+    repaint(areaCanvas());  // fim do arrasto/pan: a borda da seleção volta ao tracejado
 }
 
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
