@@ -355,16 +355,20 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
         rotulo->setMinimumHorizontalScale(1.0f);
         addAndMakeVisible(*rotulo);
         slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
-        slider->setRange(100.0, 1000.0, 1.0);
-        slider->setSkewFactorFromMidPoint(300.0);
-        slider->setValue(100.0, juce::dontSendNotification);
-        slider->setDoubleClickReturnValue(true, 100.0);
-        slider->setTextValueSuffix("%");
+        // Começa no MEIO, valendo 0 (= sem espalhar). Direita espalha, esquerda comprime: fator = 10^(v/100),
+        // então +100 = 10x (o antigo máximo de 1000%) e -100 = 0,1x.
+        slider->setRange(-100.0, 100.0, 1.0);
+        slider->setValue(0.0, juce::dontSendNotification);
+        slider->setDoubleClickReturnValue(true, 0.0);
+        slider->textFromValueFunction = [](double v) {
+            const int n = juce::roundToInt(v);
+            return (n > 0 ? "+" : "") + juce::String(n);
+        };
         slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
         slider->setTooltip(i18n::t(chaveDica));
         auto* s = slider.get();
         slider->onValueChange = [this, s, &fator] {
-            fator = static_cast<float>(s->getValue() / 100.0);
+            fator = static_cast<float>(std::pow(10.0, s->getValue() / 100.0));
             aplicarEscalaTamanho(escalaTamanho_);
         };
         addAndMakeVisible(*slider);
