@@ -266,14 +266,9 @@ void IngestProgressModalDialog::finishWithNotice(const juce::String& title, cons
     if (btnDiscard_.isVisible()) btnDiscard_.setVisible(false);
     if (btnResume_.isVisible()) btnResume_.setVisible(false);
 
+    // Sem fechamento automático: o aviso (ex.: "já estão no Intake") sumia em 1,5 s, antes de dar para ler.
+    // Fecha só no DONE.
     resized();
-
-    juce::Component::SafePointer<IngestProgressModalDialog> safeThis(this);
-    juce::Timer::callAfterDelay(1500, [safeThis] {
-        if (safeThis != nullptr && safeThis->isComplete_) {
-            safeThis->closeDialog();
-        }
-    });
 }
 
 void IngestProgressModalDialog::showCancelConfirmation() {
