@@ -4,6 +4,27 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Lista de 11 itens (2026-10-08, branch `rebuild-main`)
+
+Feitos (um commit cada, build Debug `build/` compilando; NÃO testados no app ainda, nem ASan/TSan):
+7 cancelar ingest de pasta, 9 aviso do Intake só fecha no DONE, 11 ingest parado em 0% com duplicatas puladas,
+10 vídeo sem waveform, 4 SPREAD H/V centrados em 0, 5 CONTENT Doc/Docx, 3 progresso no rodapé na edição em
+lote da ficha, 8 `.mtz`/`.bkm` com ícone e abertura pelo Finder. Decisões:
+
+- **CANCEL do modal de ingest**: o modal de scan vira o do lote e o CANCEL é religado a `cancelarLoteIngest`
+  (`setOnCancelChoice`). `cancelarLoteIngest` sem lote rodando (`!loteEmCurso_`, `pendentes_ <= 0`, sem
+  finalização) fecha o modal. Sem isso ele ficava em "rolling back" para sempre.
+- **`finishWithNotice` não fecha sozinho** (era 1,5 s); só no DONE.
+- **Progresso de lote síncrono**: `pintarAgora()` (PinturaImediata_mac.mm/_win.cpp) pinta um componente sem
+  despachar mensagens (setNeedsDisplayInRect + displayIfNeeded + CATransaction flush). A barra do rodapé só usa
+  isso quando o timer dela está parado > 150 ms. NÃO trocar por runDispatchLoopUntil (reentrância).
+- **Tipos de documento**: via `PLIST_TO_MERGE` (UTIs `com.bkr.matriz.collection`/`.catalog`), não
+  `DOCUMENT_EXTENSIONS` do JUCE (aponta o ícone para "Icon", que não existe; o bundle usa AppIcon.icns).
+
+Pendentes (decisões do usuário já tomadas): **2** R em METADATA só marca + filtro SHOW REJECTED abaixo de
+HIDE EDITED (deleta de lá); **6** duplo clique no folder-card abre Folder Map sobreposto (90%) com a pasta
+como raiz, botão SAIR no canto superior direito; **1** app pesado com o uso — medir antes de corrigir.
+
 ## Lote de 19 modificações (2026-10-04/05, branch `windows-port`)
 
 Commits (ver `git log`): Fase 0 `4d604c8` (17), `fabd9fa` (18), `008bf9e` (19) + race do observador de SQL;
