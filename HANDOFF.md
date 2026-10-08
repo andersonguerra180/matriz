@@ -21,9 +21,16 @@ lote da ficha, 8 `.mtz`/`.bkm` com ícone e abertura pelo Finder. Decisões:
 - **Tipos de documento**: via `PLIST_TO_MERGE` (UTIs `com.bkr.matriz.collection`/`.catalog`), não
   `DOCUMENT_EXTENSIONS` do JUCE (aponta o ícone para "Icon", que não existe; o bundle usa AppIcon.icns).
 
-Pendentes (decisões do usuário já tomadas): **2** R em METADATA só marca + filtro SHOW REJECTED abaixo de
-HIDE EDITED (deleta de lá); **6** duplo clique no folder-card abre Folder Map sobreposto (90%) com a pasta
-como raiz, botão SAIR no canto superior direito; **1** app pesado com o uso — medir antes de corrigir.
+Depois, no mesmo dia: **2** R no grid (TipoMarcacao::Rejeitado, `item_marcacao.tipo 'reject'`) só marca +
+SHOW REJECTED logo abaixo de HIDE EDITED (apagar é pelo delete normal, a partir dessa lista); **6** duplo clique
+no folder-card abre o Folder Map sobreposto (raiz = pasta clicada; dentro dele o duplo clique renomeia). No modo
+sobreposto (`sobreposto_`) posições/tamanhos NÃO são gravados (persistirPosicoesEmLote/persistirEscalas/fator do
+AJUSTAR/posição de pasta nova) — senão o layout do mapa principal era sobrescrito com coordenadas da sobreposição.
+**1** app pesado: medido com `sample` no app em uso — custo de CPU na thread principal do Folder Map (COUNT(*) no
+banco a cada paint em desenharSemPasta; coletarDescendentesIndices quadrático no clique), ambos corrigidos.
+Memória estável (footprint ~234 MB em 50 min), sem sinal de vazamento. Próximos suspeitos, se continuar pesado:
+o refresh do Intake a cada 1,5 s durante ingest (IntakeWorkspaceComponent::aplicarSnapshot ~150 ms com Intake
+grande, ver perf.log de 2026-10-07 23:13) e atualizarPainelDetalhe (consulta por clique).
 
 ## Lote de 19 modificações (2026-10-04/05, branch `windows-port`)
 
