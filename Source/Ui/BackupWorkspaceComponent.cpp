@@ -1514,7 +1514,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         "Graphics", "Logo", "3D",
         // Docs
         "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
-        "Sheet", "Zip", "Rar", "PDF", "Markdown"
+        "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown"
     };
 
     std::map<std::string, int> contagens;

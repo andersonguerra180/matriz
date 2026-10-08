@@ -384,6 +384,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Zip", "Zip"},
         {"Rar", "Rar"},
         {"PDF", "PDF"},
+        {"Doc/Docx", "Doc/Docx"},
         {"Markdown", "Markdown"},
         {"Hidden", juce::String::fromUTF8("Invisível")}
     };
@@ -418,7 +419,7 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
                 "Graphics", "Logo", "3D", "Document"};
     } else if (cat == MediaCategory::Docs) {
         keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
-                "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Markdown"};
+                "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown"};
     } else {
         std::vector<juce::String> res;
         for (auto c : {MediaCategory::Audio, MediaCategory::Video, MediaCategory::Image, MediaCategory::Docs}) {

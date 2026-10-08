@@ -81,6 +81,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Zip", "Zip"},
         {"Rar", "Rar"},
         {"PDF", "PDF"},
+        {"Doc/Docx", "Doc/Docx"},
         {"Markdown", "Markdown"}
     };
     return mapa;
