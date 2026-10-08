@@ -319,6 +319,7 @@ public:
                 janela_->toFront(true);
 
                 matriz::ui::TrialNagDialog::exibirSeNecessario(janela_.get());
+                if (arquivoPendente_ != juce::File()) janela_->abrirArquivoDoSistema(std::exchange(arquivoPendente_, {}));
             }
             splash_.reset();
         };
@@ -342,7 +343,20 @@ public:
 
     void systemRequestedQuit() override { quit(); }
 
+    // Duplo clique num .mtz/.bkm no Finder (o macOS entrega o caminho aqui, com o app já rodando ou
+    // acabando de abrir). Durante a splash, guarda e abre quando a janela aparecer.
+    void anotherInstanceStarted(const juce::String& commandLine) override {
+        for (auto token : juce::StringArray::fromTokens(commandLine, true)) {
+            const juce::File arquivo(token.unquoted());
+            if (!arquivo.hasFileExtension("mtz;bkm") || !arquivo.existsAsFile()) continue;
+            if (splash_ != nullptr || janela_ == nullptr) arquivoPendente_ = arquivo;
+            else janela_->abrirArquivoDoSistema(arquivo);
+            return;
+        }
+    }
+
 private:
+    juce::File arquivoPendente_;
     std::unique_ptr<matriz::ui::MatrizLookAndFeel> lookAndFeel_;
     std::unique_ptr<matriz::diag::MessageLoopMonitor> monitorLoop_;
     std::unique_ptr<SplashWindow> splash_;

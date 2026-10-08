@@ -374,8 +374,49 @@ else()
     set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=0")
 endif()
 
+# .mtz (Coleção) e .bkm (Catálogo) com o ícone do Matriz no Finder; duplo clique abre no app
+# (MatrizApplication::anotherInstanceStarted). Não usa DOCUMENT_EXTENSIONS do JUCE: ele aponta o ícone para
+# "Icon", que não existe no bundle (o ícone é AppIcon.icns, copiado no POST_BUILD abaixo).
+set(MATRIZ_PLIST_DOCUMENTOS [=[<plist><dict>
+<key>CFBundleDocumentTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeName</key><string>BKR Matriz Collection</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Owner</string>
+    <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+    <key>LSItemContentTypes</key><array><string>com.bkr.matriz.collection</string></array>
+  </dict>
+  <dict>
+    <key>CFBundleTypeName</key><string>BKR Matriz Catalog</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Owner</string>
+    <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+    <key>LSItemContentTypes</key><array><string>com.bkr.matriz.catalog</string></array>
+  </dict>
+</array>
+<key>UTExportedTypeDeclarations</key>
+<array>
+  <dict>
+    <key>UTTypeIdentifier</key><string>com.bkr.matriz.collection</string>
+    <key>UTTypeDescription</key><string>BKR Matriz Collection</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    <key>UTTypeIconFile</key><string>AppIcon</string>
+    <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>mtz</string></array></dict>
+  </dict>
+  <dict>
+    <key>UTTypeIdentifier</key><string>com.bkr.matriz.catalog</string>
+    <key>UTTypeDescription</key><string>BKR Matriz Catalog</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    <key>UTTypeIconFile</key><string>AppIcon</string>
+    <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>bkm</string></array></dict>
+  </dict>
+</array>
+</dict></plist>]=])
+
 juce_add_gui_app(matriz
     PRODUCT_NAME "${MATRIZ_PRODUCT_NAME}"
+    PLIST_TO_MERGE "${MATRIZ_PLIST_DOCUMENTOS}"
     VERSION 1.5.0
     COMPANY_NAME "BKR"
     BUNDLE_ID "${MATRIZ_BUNDLE_ID}"

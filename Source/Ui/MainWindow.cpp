@@ -420,6 +420,12 @@ void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
     });
 }
 
+void MainWindow::abrirArquivoDoSistema(const juce::File& arquivo) {
+    toFront(true);
+    if (conteudo_->ingestEmAndamento()) return;
+    abrirPasta(arquivo);
+}
+
 void MainWindow::abrirPasta(const juce::File& pasta) {
     juce::Component::SafePointer<MainWindow> safeThis(this);
 
