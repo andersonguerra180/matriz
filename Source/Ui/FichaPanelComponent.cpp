@@ -5330,6 +5330,18 @@ private:
         projeto_.iniciarGrupoUndo("Batch edit: " + linha->campoId);
         EscopoLoteAtualizacao escopoLote(*this);
         int sucessos = 0, falhas = 0;
+        // Barra do rodapé "3 / 580" enquanto o lote roda (continua síncrono, numa transação só; a barra se
+        // pinta sozinha com o loop parado — ver BarraProgressoGlobalComponent). Não toma o lugar de outra
+        // tarefa em andamento (ex.: ingest).
+        const juce::String kIdTarefa = "batch_metadata";
+        const bool comProgresso = itemIds_.size() > 1 && !ProgressoGlobal::obterInstancia().estaExecutando();
+        if (comProgresso) {
+            const juce::String campo = linha->rotulo ? linha->rotulo->getText() : juce::String(linha->campoId);
+            ProgressoGlobal::obterInstancia().iniciarTarefa(
+                kIdTarefa, matriz::i18n::t("ficha.lote_progresso_titulo").replace("{campo}", campo),
+                static_cast<int>(itemIds_.size()), nullptr, "", false, true);
+        }
+        int concluidos = 0;
         // Fase 2b (freeze de edição em lote): uma transação só pros N itens
         // em vez de uma implícita por INSERT/UPDATE (salvarMetadado/
         // adicionarTag/removerTag chamados por item, dentro do loop
@@ -5400,6 +5412,7 @@ private:
                                           juce::Time::getCurrentTime().toISO8601(true) +
                                           " erro=" + juce::String(e.what()));
             }
+            if (comProgresso) ProgressoGlobal::obterInstancia().atualizarProgresso(kIdTarefa, ++concluidos);
         }
         if (emTransacao && !commitOuReverter(dbLote, itemIds_)) {
             sucessos = 0;
@@ -5435,6 +5448,7 @@ private:
         juce::String texto = matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(sucessos));
         if (falhas > 0) texto += matriz::i18n::t("ficha.lote_resultado_falhas").replace("{falhas}", juce::String(falhas));
         if (resultado_) resultado_->setText(texto, juce::dontSendNotification);
+        if (comProgresso) ProgressoGlobal::obterInstancia().concluirTarefa(kIdTarefa, texto);
 
         if (sucessos > 0) piscarBordaSalvo(dynamic_cast<juce::TextEditor*>(linha->editor.get()));
         if (aoAplicarEmLote) aoAplicarEmLote();

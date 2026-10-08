@@ -1,4 +1,5 @@
 #include "BarraProgressoGlobalComponent.h"
+#include "PinturaImediata.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
@@ -45,6 +46,14 @@ void BarraProgressoGlobalComponent::aoProgressoAtualizado(const EstadoProgresso&
     estado_ = estado;
     progressoSuavizado_ = (estado_.fracao >= 0.0) ? estado_.fracao : 0.0;
     atualizarVisual();
+
+    // Lote síncrono na message thread (ex.: edição de metadados em lote, "3 / 580"): sem o loop de
+    // mensagens a barra só aparecia no fim. Só age com o timer de 30 Hz parado há mais de 150 ms.
+    const auto agora = juce::Time::getMillisecondCounter();
+    if (estado_.ativo && agora - ultimoTimerMs_ > 150 && agora - ultimaPinturaImediataMs_ >= 100) {
+        ultimaPinturaImediataMs_ = agora;
+        pintarAgora(*this);
+    }
 }
 
 void BarraProgressoGlobalComponent::lookAndFeelChanged() {
@@ -57,6 +66,7 @@ void BarraProgressoGlobalComponent::lookAndFeelChanged() {
 }
 
 void BarraProgressoGlobalComponent::timerCallback() {
+    ultimoTimerMs_ = juce::Time::getMillisecondCounter();
     bool precisaRepaint = false;
 
     if (estado_.ativo) {

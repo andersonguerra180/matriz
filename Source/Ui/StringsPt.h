@@ -244,6 +244,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"ficha.lote_nenhum_campo_tocado", "Edite um campo acima, depois aplique pra seleção inteira."},
         {"ficha.lote_previa", "{n} materiais serão alterados: {campos}"},
         {"ficha.lote_resultado", "{sucessos} alterados"},
+        {"ficha.lote_progresso_titulo", "Aplicando {campo}"},
         {"ficha.lote_resultado_desfeito", "{n} restaurados"},
         {"ficha.lote_resultado_falhas", ", {falhas} falharam"},
         {"ficha.lote_tipo_misto", "A seleção tem tipos de mídia diferentes. Selecione itens do mesmo tipo pra editar a ficha em lote."},

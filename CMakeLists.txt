@@ -558,7 +558,8 @@ if(APPLE)
         Source/Vault/DiskIdentity_mac.mm
         Source/Ingest/MiniaturaPsd.mm
         Source/Ui/VideoPlayerBridge.mm
-        Source/Ui/DocumentPreviewBridge.mm)
+        Source/Ui/DocumentPreviewBridge.mm
+        Source/Ui/PinturaImediata_mac.mm)
 elseif(WIN32)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard_win.cpp
@@ -566,7 +567,8 @@ elseif(WIN32)
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
-        Source/Ui/DocumentPreviewBridge_win.cpp)
+        Source/Ui/DocumentPreviewBridge_win.cpp
+        Source/Ui/PinturaImediata_win.cpp)
 endif()
 
 target_include_directories(matriz PRIVATE Source)

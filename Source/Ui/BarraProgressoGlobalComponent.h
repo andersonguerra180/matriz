@@ -33,6 +33,10 @@ private:
 
     float animOffset_ = 0.0f;
     double progressoSuavizado_ = 0.0;
+    // Loop de mensagens parado (lote síncrono na message thread): o timer não roda, então a barra se pinta
+    // na hora a cada atualização (ver aoProgressoAtualizado), no máximo a cada 100 ms.
+    juce::uint32 ultimoTimerMs_ = 0;
+    juce::uint32 ultimaPinturaImediataMs_ = 0;
 };
 
 } // namespace matriz::ui
