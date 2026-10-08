@@ -58,6 +58,9 @@ public:
     // callback decide o que "atual" significa (ver MainComponent), esta
     // classe só repassa o clique.
     void setOnSkipCurrent(std::function<void()> onSkipCurrent) { onSkipCurrent_ = std::move(onSkipCurrent); }
+    // O modal de scan vira o modal do lote (pasta): o CANCEL tem de passar a cancelar o LOTE, não o scan
+    // que já acabou — senão ficava em "rolling back" para sempre com o lote rodando por trás.
+    void setOnCancelChoice(std::function<void(bool manterArquivos)> onCancelChoice) { onCancelChoice_ = std::move(onCancelChoice); }
 
     // Fase 3: finalização do lote. beginFinalizing() troca o modo, desliga
     // o auto-fechamento e reinicia a barra para medir `totalPassos` etapas;

@@ -3715,6 +3715,9 @@ void MainComponent::expandirArquivosAsync(
                 } else {
                     safeThis->ingestModalDialog_ = safeDialog.getComponent();
                     safeDialog->startIngestMode(static_cast<int>(novosArquivos.size()), skippedCount);
+                    safeDialog->setOnCancelChoice([safeThis](bool manter) {
+                        if (safeThis) safeThis->cancelarLoteIngest(manter);
+                    });
                 }
             }
 
@@ -3901,6 +3904,9 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
     if (ingestModalDialog_) {
         ingestModalDialog_->setOnSkipCurrent([safeThis] {
             if (safeThis) safeThis->pularArquivoAtualDoLote();
+        });
+        ingestModalDialog_->setOnCancelChoice([safeThis](bool manter) {
+            if (safeThis) safeThis->cancelarLoteIngest(manter);
         });
         // Lote reaproveitando o modal já aberto (loteEmCurso_ já era true
         // acima, contadores somados em vez de zerados): o total baked no
@@ -4553,6 +4559,15 @@ void MainComponent::aguardarPassoFinalizacao(std::shared_ptr<std::vector<PassoFi
 void MainComponent::cancelarLoteIngest(bool manterArquivosCarregados) {
     if (cancelamentoScan_) cancelamentoScan_->pedir();
     if (resolvendoDuplicatas_ > 0) descartarLotesEmResolucao_ = true;
+    // Nenhum lote de fato rodando (ainda na checagem de duplicatas, ou o lote nem começou): não há o que
+    // reverter nem finalização que feche o modal depois — fecha agora, senão fica em "rolling back" para sempre.
+    if (!loteEmCurso_ && pendentes_->load() <= 0 && !finalizandoLote_) {
+        if (ingestModalDialog_) {
+            ingestModalDialog_->closeDialog();
+            ingestModalDialog_ = nullptr;
+        }
+        return;
+    }
     if (!cancelamentoLote_ || !ingestEmAndamento()) return;
     if (estadoLoteAtual_) {
         const juce::ScopedLock sl(estadoLoteAtual_->lock);
