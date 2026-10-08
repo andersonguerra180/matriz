@@ -692,13 +692,14 @@ void migrarMapaDoMain(matriz::db::Database& registro) {
     } catch (...) {}
 }
 
-// Tag B (Bounce List): `item_marcacao.tipo` nasceu com CHECK de 4 tipos e o SQLite não altera CHECK — projeto já
-// existente precisa da tabela recriada (as linhas H/K/P/W são copiadas como estão). Banco novo ou já migrado: nada a fazer.
+// Tag B (Bounce List) e tag R do grid ('reject'): `item_marcacao.tipo` nasceu com CHECK de 4 tipos e o SQLite não
+// altera CHECK — projeto já existente precisa da tabela recriada (as linhas existentes são copiadas como estão). Banco
+// novo ou já migrado: nada a fazer.
 void migrarItemMarcacaoParaBounce(matriz::db::Database& registro) {
     {
         auto st = registro.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'item_marcacao'");
-        if (!st.step()) return;  // ainda não existe: o execScript cria já com 'bounce'
-        if (st.columnText(0).find("'bounce'") != std::string::npos) return;
+        if (!st.step()) return;  // ainda não existe: o execScript cria já com todos os tipos
+        if (st.columnText(0).find("'reject'") != std::string::npos) return;
     }
     registro.exec("PRAGMA foreign_keys = OFF");
     registro.run("BEGIN TRANSACTION", {});
@@ -706,7 +707,7 @@ void migrarItemMarcacaoParaBounce(matriz::db::Database& registro) {
         registro.exec(
             "CREATE TABLE item_marcacao_migracao_tmp ("
             "  item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,"
-            "  tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark', 'bounce')),"
+            "  tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark', 'bounce', 'reject')),"
             "  PRIMARY KEY (item_id, tipo))");
         registro.exec("INSERT INTO item_marcacao_migracao_tmp (item_id, tipo) SELECT item_id, tipo FROM item_marcacao");
         registro.exec("DROP TABLE item_marcacao");

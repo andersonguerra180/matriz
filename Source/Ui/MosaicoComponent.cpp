@@ -152,6 +152,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
             // ficava sem sync ao vivo entre a janela de Preview e a grade.
             bool marcadoW = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id);
             bool marcadoB = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, id);
+            bool marcadoRj = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, id);
             for (ItemResumo* item : {itemEmTodos(id), itemEmFiltrados(id)}) {
                 if (item == nullptr) continue;
                 item->marcadoPublicacao = marcadoH;
@@ -159,6 +160,7 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
                 item->marcadoPrint = marcadoP;
                 item->marcadoWatermark = marcadoW;
                 item->marcadoBounce = marcadoB;
+                item->marcadoRejeitado = marcadoRj;
                 item->impresso = projeto_.itemImpresso(id);
             }
         };
@@ -440,6 +442,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
         it->marcadoRevisado = resumo->marcadoRevisado;
         it->marcadoWatermark = resumo->marcadoWatermark;
         it->marcadoBounce = resumo->marcadoBounce;
+        it->marcadoRejeitado = resumo->marcadoRejeitado;
     }
 
     // Nome/ano/etc. mudaram: refaz os textos de exibição deste item.
@@ -814,7 +817,7 @@ int MosaicoComponent::compararPorColunaDaLista(const ItemResumo& a, const ItemRe
     auto nome = [](const ItemResumo& i) { return i.titulo.empty() ? i.nomeOriginalArquivo : i.titulo; };
     auto data = [](const ItemResumo& i) { return i.dataCriacao.empty() ? i.criadoEm : i.dataCriacao; };
     auto marcas = [](const ItemResumo& i) {
-        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark) + int(i.marcadoBounce);
+        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark) + int(i.marcadoBounce) + int(i.marcadoRejeitado);
     };
     switch (coluna) {
         case 1: return categoriaDaLista(a.extensaoArquivo).compare(categoriaDaLista(b.extensaoArquivo));
@@ -1958,6 +1961,24 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         }
     }
 
+    // R = Reject no grid (METADATA): liga/desliga a marca nos selecionados. Só marca — nada sai do projeto; apagar é
+    // pelo SHOW REJECTED. No INTAKE (modo quarentena) o R é o do próprio Intake (outro conjunto).
+    if ((tecla.getKeyCode() == 'R' || c == 'r' || c == 'R') && semModificadores && !modoQuarentena_) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_)
+                if (alvosSet.count(item.id)) item.marcadoRejeitado = novoEstado;
+            for (auto& item : itensFiltrados_)
+                if (alvosSet.count(item.id)) item.marcadoRejeitado = novoEstado;
+            repaint();
+            return true;
+        }
+    }
+
     // P (Send to Print) e W (Watermark) só fazem sentido pra fotos — filtra
     // a seleção antes de marcar, ignorando silenciosamente áudio/vídeo/
     // documentos/sessões que estejam junto. Baseado em extensaoArquivo,
@@ -2676,6 +2697,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     selo(item.marcadoPrint, "P", juce::Colour(0xffff6b00), juce::Colours::white);
                     selo(item.marcadoWatermark, "W", juce::Colour(0xffffcc00), juce::Colours::black);
                     selo(item.marcadoBounce, "B", juce::Colour(0xff9333ea), juce::Colours::white);
+                    selo(item.marcadoRejeitado, "R", tema().perigo, juce::Colours::white);
                 }
 
                 continue;
@@ -2821,6 +2843,18 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText("B", stampB, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoRejeitado) {
+                // Igual ao R do INTAKE: véu vermelho na miniatura + selo R.
+                g.setColour(tema().perigo.withAlpha(0.22f));
+                g.fillRect(areaImagem);
+                juce::Rectangle<int> stampR(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(tema().perigo);
+                g.fillRoundedRectangle(stampR.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("R", stampR, juce::Justification::centred);
                 stampRight -= 19;
             }
 

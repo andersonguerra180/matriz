@@ -173,6 +173,9 @@ public:
         // 6. B - Bounce List (marcação persistente para EXPORT > Bounce List)
         drawLegendItem('B', "B", juce::Colour(0xff9333ea), juce::Colours::white, isPt ? juce::String::fromUTF8("Lista Bounce") : "Bounce List");
 
+        // 7. R - Reject (só marca; apagar pelo SHOW REJECTED)
+        drawLegendItem('R', "R", tk.perigo, juce::Colours::white, isPt ? juce::String::fromUTF8("Rejeitar") : "Reject");
+
         float helpSize = 16.0f;
         if (helpCircle_)
             helpCircle_->setBounds((int)std::round(x), (int)std::round(cy - helpSize * 0.5f), (int)helpSize, (int)helpSize);
@@ -606,6 +609,20 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     atualizarBotaoBounce();
     addAndMakeVisible(*btnMostrarBounce_);
 
+    // SHOW REJECTED (logo abaixo de HIDE EDITED): mostra só os arquivos com tag R; soma com os outros filtros. O R no
+    // grid só marca — apagar é o operador quem decide, a partir desta lista.
+    btnMostrarRejeitados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.rejeitados_off"));
+    btnMostrarRejeitados_->setLookAndFeel(&sidebarButtonLf_);
+    btnMostrarRejeitados_->setTooltip(matriz::i18n::t("catwork.rejeitados_tooltip"));
+    btnMostrarRejeitados_->onClick = [this] {
+        mostrarApenasRejeitados_ = !mostrarApenasRejeitados_;
+        atualizarBotaoRejeitados();
+        aplicarFiltrosAdicionais();
+        atualizarContagens();
+    };
+    atualizarBotaoRejeitados();
+    addAndMakeVisible(*btnMostrarRejeitados_);
+
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
     btnSelecionarTodos_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
@@ -658,6 +675,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             case 'P': tipo = ProjetoAberto::TipoMarcacao::Print;     break;
             case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
             case 'B': tipo = ProjetoAberto::TipoMarcacao::Bounce;    break;
+            case 'R': tipo = ProjetoAberto::TipoMarcacao::Rejeitado; break;
             default: return;
         }
         projeto_.definirMarcacao(tipo, ids, false);
@@ -737,6 +755,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
     if (btnIncluirOcultosSelecao_) btnIncluirOcultosSelecao_->setLookAndFeel(nullptr);
     if (btnMostrarBounce_) btnMostrarBounce_->setLookAndFeel(nullptr);
+    if (btnMostrarRejeitados_) btnMostrarRejeitados_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
 }
@@ -795,6 +814,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
     }
     atualizarBotaoBounce();
+    atualizarBotaoRejeitados();
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tk.acento : tk.painelAlt);
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tk.textoSobreAcento : tk.textoSecundario);
@@ -1004,7 +1024,8 @@ void CatalogWorkspaceComponent::EscutaEventos::aoItemAlterado(const EventoItemAl
             if (safe == nullptr) return;
             safe->refreshBouncePendente_ = false;
             safe->atualizarBotaoBounce();
-            if (safe->mostrarApenasBounce_) safe->aplicarFiltrosAdicionais();
+            safe->atualizarBotaoRejeitados();
+            if (safe->mostrarApenasBounce_ || safe->mostrarApenasRejeitados_) safe->aplicarFiltrosAdicionais();
         });
         return;
     }
@@ -1116,6 +1137,12 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
         bounceIds.insert(ids.begin(), ids.end());
     }
+    std::set<std::string> rejeitadosIds;
+    if (mostrarApenasRejeitados_) {
+        anyFilter = true;
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Rejeitado);
+        rejeitadosIds.insert(ids.begin(), ids.end());
+    }
 
     std::set<std::string> recentesIds;
     if (mostrarApenasRecentes_) {
@@ -1159,6 +1186,9 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
         if (mostrarApenasBounce_) {
             if (bounceIds.find(item.id) == bounceIds.end()) continue;
+        }
+        if (mostrarApenasRejeitados_) {
+            if (rejeitadosIds.find(item.id) == rejeitadosIds.end()) continue;
         }
 
         if (mostrarApenasRecentes_) {
@@ -1396,6 +1426,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
         const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
         soBounce = std::set<std::string>(ids.begin(), ids.end());
     }
+    // "Show Rejected" ligado: idem, só os com tag R.
+    std::optional<std::set<std::string>> soRejeitados;
+    if (mostrarApenasRejeitados_) {
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Rejeitado);
+        soRejeitados = std::set<std::string>(ids.begin(), ids.end());
+    }
 
     // "Show Recently Ingested" ligado: as contagens da sidebar são da leva.
     std::optional<std::set<std::string>> soRecentes;
@@ -1416,7 +1452,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     const std::optional<std::string> listaSel = listaSelecionada_;
     const int geracao = ++geracaoContagens_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, filtroHerdado,
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1429,6 +1465,11 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             if (soBounce) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soBounce->count(r.id); }),
+                            itens.end());
+            }
+            if (soRejeitados) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !soRejeitados->count(r.id); }),
                             itens.end());
             }
             if (filtroHerdado) {
@@ -1728,6 +1769,17 @@ void CatalogWorkspaceComponent::executarBusca() {
     resized();
 }
 
+void CatalogWorkspaceComponent::atualizarBotaoRejeitados() {
+    if (!btnMostrarRejeitados_) return;
+    const auto& tk = tema();
+    btnMostrarRejeitados_->setButtonText(mostrarApenasRejeitados_
+        ? matriz::i18n::t("catwork.rejeitados_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Rejeitado))))
+        : matriz::i18n::t("catwork.rejeitados_off"));
+    btnMostrarRejeitados_->setColour(juce::TextButton::buttonColourId, mostrarApenasRejeitados_ ? tk.perigo : tk.painelAlt);
+    btnMostrarRejeitados_->setColour(juce::TextButton::textColourOffId, mostrarApenasRejeitados_ ? juce::Colours::white : tk.textoSecundario);
+    btnMostrarRejeitados_->repaint();
+}
+
 void CatalogWorkspaceComponent::atualizarBotaoBounce() {
     if (!btnMostrarBounce_) return;
     const auto& tk = tema();
@@ -1769,6 +1821,8 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
 
     mostrarApenasBounce_ = false;  // ALL ASSETS zera tudo, inclusive a Bounce List
     atualizarBotaoBounce();
+    mostrarApenasRejeitados_ = false;
+    atualizarBotaoRejeitados();
 
     mostrarApenasRecentes_ = false;
     if (btnMostrarRecentes_) {
@@ -2310,7 +2364,7 @@ void CatalogWorkspaceComponent::resized() {
     totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
     if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
     totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (5 * (20 + 1)) + 6; // 5 toggle buttons (incl. Show Bounce List)
+    totalRequiredH += (6 * (20 + 1)) + 6; // 6 toggle buttons (incl. Show Bounce List e Show Rejected)
     // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
     // MEDIA TYPE e DATE continuam sendo cards.
     totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
@@ -2403,6 +2457,10 @@ void CatalogWorkspaceComponent::resized() {
     }
     if (btnOcultarEditados_) {
         btnOcultarEditados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
+        sidebar.removeFromTop(1);
+    }
+    if (btnMostrarRejeitados_) {  // logo abaixo de HIDE EDITED
+        btnMostrarRejeitados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
         sidebar.removeFromTop(1);
     }
     if (btnOcultarNaoSelecionados_) {

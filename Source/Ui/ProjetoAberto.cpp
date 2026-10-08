@@ -503,7 +503,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int 
     // "MatrizSnapshot") enquanto a message thread pode estar escrevendo
     // nesses mesmos sets/map ao mesmo tempo (H/K/P/W, relink).
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, offlineCopia, impressosCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, rejeitadoCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -512,6 +512,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int 
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
         bounceCopia = marcadosBounce_;
+        rejeitadoCopia = marcadosRejeitado_;
         for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
@@ -522,6 +523,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int 
         item.marcadoPrint = printCopia.count(item.id) > 0;
         item.marcadoWatermark = watermarkCopia.count(item.id) > 0;
         item.marcadoBounce = bounceCopia.count(item.id) > 0;
+        item.marcadoRejeitado = rejeitadoCopia.count(item.id) > 0;
         item.impresso = impressosCopia.count(item.id) > 0;
     }
     return items;
@@ -914,6 +916,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
                 item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
                 item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
                 item.marcadoBounce = marcadosBounce_.count(item.id) > 0;
+                item.marcadoRejeitado = marcadosRejeitado_.count(item.id) > 0;
                 item.impresso = sessoesPrintPorItem_.count(item.id) > 0;
             }
         }
@@ -932,7 +935,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, offlineCopia, impressosCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, rejeitadoCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -941,6 +944,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
         bounceCopia = marcadosBounce_;
+        rejeitadoCopia = marcadosRejeitado_;
         for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
@@ -1004,6 +1008,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.marcadoPrint = printCopia.count(r.id) > 0;
                 r.marcadoWatermark = watermarkCopia.count(r.id) > 0;
                 r.marcadoBounce = bounceCopia.count(r.id) > 0;
+                r.marcadoRejeitado = rejeitadoCopia.count(r.id) > 0;
                 r.impresso = impressosCopia.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
@@ -5812,6 +5817,7 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
     r.marcadoPrint = contemMarcacao(TipoMarcacao::Print, itemId);
     r.marcadoWatermark = contemMarcacao(TipoMarcacao::Watermark, itemId);
     r.marcadoBounce = contemMarcacao(TipoMarcacao::Bounce, itemId);
+    r.marcadoRejeitado = contemMarcacao(TipoMarcacao::Rejeitado, itemId);
     r.impresso = itemImpresso(itemId);
 
     return r;
@@ -6838,6 +6844,7 @@ std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao tipo) {
         case TipoMarcacao::Print: return marcadosPrint_;
         case TipoMarcacao::Watermark: return marcadosWatermark_;
         case TipoMarcacao::Bounce: return marcadosBounce_;
+        case TipoMarcacao::Rejeitado: return marcadosRejeitado_;
     }
     return marcadosHtml_;
 }
@@ -6849,6 +6856,7 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
         case TipoMarcacao::Print: return marcadosPrint_;
         case TipoMarcacao::Watermark: return marcadosWatermark_;
         case TipoMarcacao::Bounce: return marcadosBounce_;
+        case TipoMarcacao::Rejeitado: return marcadosRejeitado_;
     }
     return marcadosHtml_;
 }
@@ -6924,7 +6932,7 @@ void ProjetoAberto::limparTodasMarcacoes() {
     std::set<std::string> afetados;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
-        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce }) {
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce, TipoMarcacao::Rejeitado }) {
             auto& s = obterConjuntoMarcacao(tipo);
             afetados.insert(s.begin(), s.end());
             s.clear();
@@ -6945,7 +6953,7 @@ void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std:
     if (oldItemId.empty() || newItemId.empty() || oldItemId == newItemId) return;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
-        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce }) {
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce, TipoMarcacao::Rejeitado }) {
             auto& s = obterConjuntoMarcacao(tipo);
             if (s.erase(oldItemId) > 0) {
                 s.insert(newItemId);
@@ -6965,6 +6973,7 @@ const char* nomeTipoMarcacao(int t) {
         case 2: return "print";
         case 3: return "watermark";
         case 4: return "bounce";
+        case 5: return "reject";
     }
     return "html";
 }
@@ -7138,7 +7147,7 @@ void ProjetoAberto::carregarMarcacoesDoBanco() {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         versaoAntes = versaoMarcacoes_;
     }
-    std::set<std::string> h, z, p, w, b;
+    std::set<std::string> h, z, p, w, b, rj;
     try {
         auto st = leitura().prepare("SELECT item_id, tipo FROM item_marcacao");
         while (st.step()) {
@@ -7148,11 +7157,13 @@ void ProjetoAberto::carregarMarcacoesDoBanco() {
             else if (tipo == "print") p.insert(st.columnText(0));
             else if (tipo == "watermark") w.insert(st.columnText(0));
             else if (tipo == "bounce") b.insert(st.columnText(0));
+            else if (tipo == "reject") rj.insert(st.columnText(0));
         }
     } catch (...) { return; }
     std::set<std::string> todos;
     todos.insert(h.begin(), h.end()); todos.insert(z.begin(), z.end());
     todos.insert(p.begin(), p.end()); todos.insert(w.begin(), w.end()); todos.insert(b.begin(), b.end());
+    todos.insert(rj.begin(), rj.end());
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         if (versaoMarcacoes_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;  // a memória manda
@@ -7161,6 +7172,7 @@ void ProjetoAberto::carregarMarcacoesDoBanco() {
         marcadosPrint_ = std::move(p);
         marcadosWatermark_ = std::move(w);
         marcadosBounce_ = std::move(b);
+        marcadosRejeitado_ = std::move(rj);
     }
     if (todos.empty()) return;
     std::weak_ptr<bool> vivo = vivo_;

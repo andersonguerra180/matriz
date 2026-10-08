@@ -1053,7 +1053,7 @@ CREATE INDEX IF NOT EXISTS idx_print_sessao_item_item ON print_sessao_item(item_
 
 CREATE TABLE IF NOT EXISTS item_marcacao (
     item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
-    tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark', 'bounce')),
+    tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark', 'bounce', 'reject')),
     PRIMARY KEY (item_id, tipo)
 );
 CREATE INDEX IF NOT EXISTS idx_item_marcacao_tipo ON item_marcacao(tipo);

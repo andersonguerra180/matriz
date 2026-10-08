@@ -227,6 +227,9 @@ private:
     bool mostrarApenasBounce_ = false;     // soma com os outros filtros (não zera nada)
     bool refreshBouncePendente_ = false;   // agrupa eventos de marcação B numa única refiltragem
     void atualizarBotaoBounce();           // rótulo/cor: OFF, ou ON com a contagem "(n)"
+    std::unique_ptr<juce::TextButton> btnMostrarRejeitados_;      // toggle: só os arquivos com tag R (SHOW REJECTED)
+    bool mostrarApenasRejeitados_ = false;
+    void atualizarBotaoRejeitados();
     bool incluirOcultosNaSelecao_ = false;  // OFF (padrão): edição em lote só nos itens visíveis na grade
     std::set<std::string> selecaoEfetivaVista_;  // última seleção efetiva que a ficha recebeu
     void atualizarRotuloSelecionados();
