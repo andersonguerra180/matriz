@@ -451,7 +451,9 @@ void TimelineComponent::paint(juce::Graphics& g) {
     auto onda = areaOnda();
     g.setColour(tk.fundo);
     g.fillRect(onda);
-    if (onda_ != nullptr && onda_->getTotalLength() > 0.0) {
+    if (!mostrarOnda_) {
+        // vídeo: só a tira de posicionamento, sem onda nem aviso
+    } else if (onda_ != nullptr && onda_->getTotalLength() > 0.0) {
         g.setColour(tk.acento.withAlpha(0.85f));
         onda_->drawChannels(g, onda.reduced(0, 2), inicioVisivel_, fimVisivel_, 1.0f);
     } else {

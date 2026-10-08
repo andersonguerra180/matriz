@@ -351,6 +351,7 @@ void PreviewComponent::construirParaItem() {
             } else {
                 timeline_ = std::make_unique<TimelineComponent>(projeto_);
                 timeline_->mostrarBotaoZoom(false);
+                timeline_->mostrarOnda(false);  // vídeo nunca mostra forma de onda
                 timeline_->aoMudarMarcadores = [this] { if (aoMudarMarcadores) aoMudarMarcadores(); };
                 timeline_->aoMedirNivel = [this](float e, float d) { if (aoMedirNivel) aoMedirNivel(e, d); };
                 addAndMakeVisible(*timeline_);
@@ -546,7 +547,12 @@ void PreviewComponent::resized() {
 
     juce::Rectangle<int> videoArea = area;
     if (timeline_) {
-        auto areaTimeline = area.removeFromBottom(145).reduced(tema().espacoMedio, tema().espacoPequeno);
+        // Vídeo: sem a faixa de onda, a timeline encolhe e o vídeo fica com a altura.
+        const int alturaTimeline = videoPlayer_ != nullptr
+            ? TimelineComponent::kAlturaRegua + TimelineComponent::kAlturaFaixaMarcadores + TimelineComponent::kAlturaTransporte
+                  + TimelineComponent::kAlturaTiraSemOnda + 2 * tema().espacoPequeno
+            : 145;
+        auto areaTimeline = area.removeFromBottom(alturaTimeline).reduced(tema().espacoMedio, tema().espacoPequeno);
         timeline_->setBounds(areaTimeline);
         videoArea = area;
     }
