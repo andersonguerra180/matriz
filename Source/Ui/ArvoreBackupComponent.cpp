@@ -403,6 +403,113 @@ ArvoreBackupComponent::~ArvoreBackupComponent() {
     detailViewport_->setViewedComponent(nullptr, false);
 }
 
+// ---- Folder Map SOBREPOSTO (duplo clique num folder-card) --------------------------------------------------------
+namespace {
+// Camada sobre o content da janela: fundo escurecido (bloqueia cliques no resto do app), painel de 90% com o título
+// e o botão SAIR no canto superior direito, e um ArvoreBackupComponent em modo sobreposto.
+class SobreposicaoFolderMap : public juce::Component, private juce::ComponentListener {
+public:
+    SobreposicaoFolderMap(ProjetoAberto& projeto, juce::Component& host, const std::string& mapaId, const std::string& pastaId,
+                          const juce::String& nome, std::function<void()> aoSair)
+        : host_(&host), aoSair_(std::move(aoSair)) {
+        mapa_ = std::make_unique<ArvoreBackupComponent>(projeto);
+        addAndMakeVisible(*mapa_);
+        titulo_.setText(i18n::t("arvore_backup.sobreposto_titulo").replace("{nome}", nome), juce::dontSendNotification);
+        titulo_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        titulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
+        addAndMakeVisible(titulo_);
+        btnSair_.setButtonText(i18n::t("arvore_backup.sobreposto_sair"));
+        btnSair_.setColour(juce::TextButton::buttonColourId, tema().acento);
+        btnSair_.setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
+        btnSair_.onClick = [this] { if (aoSair_) aoSair_(); };
+        addAndMakeVisible(btnSair_);
+        host.addComponentListener(this);
+        setBounds(host.getLocalBounds());
+        mapa_->definirModoSobreposto(mapaId, pastaId, nome);
+    }
+    ~SobreposicaoFolderMap() override {
+        if (host_ != nullptr) host_->removeComponentListener(this);
+    }
+    void paint(juce::Graphics& g) override {
+        g.fillAll(juce::Colours::black.withAlpha(0.55f));
+        const auto& tk = tema();
+        g.setColour(tk.fundo);
+        g.fillRoundedRectangle(painel().toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(painel().toFloat(), tk.raioMedio, 1.0f);
+    }
+    void resized() override {
+        auto p = painel().reduced(8);
+        auto topo = p.removeFromTop(32);
+        btnSair_.setBounds(topo.removeFromRight(110).reduced(0, 2));
+        titulo_.setBounds(topo);
+        p.removeFromTop(6);
+        mapa_->setBounds(p);
+    }
+
+private:
+    juce::Rectangle<int> painel() const {
+        auto r = getLocalBounds();
+        return r.withSizeKeepingCentre(juce::roundToInt(r.getWidth() * 0.9f), juce::roundToInt(r.getHeight() * 0.9f));
+    }
+    void componentMovedOrResized(juce::Component& c, bool, bool) override { setBounds(c.getLocalBounds()); }
+
+    juce::Component::SafePointer<juce::Component> host_;
+    std::function<void()> aoSair_;
+    std::unique_ptr<ArvoreBackupComponent> mapa_;
+    juce::Label titulo_;
+    juce::TextButton btnSair_;
+};
+}  // namespace
+
+void ArvoreBackupComponent::abrirSobreposicao(const std::string& pastaId, const juce::String& nomePasta) {
+    if (sobreposto_ || sobreposicao_ != nullptr) return;
+    finalizarEdicaoInline();
+    juce::Component* host = getTopLevelComponent();
+    if (auto* janela = dynamic_cast<juce::ResizableWindow*>(host))
+        if (auto* conteudo = janela->getContentComponent()) host = conteudo;
+    if (host == nullptr) return;
+    persistirEscalas();  // tamanhos ajustados aqui antes de abrir
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    sobreposicao_ = std::make_unique<SobreposicaoFolderMap>(projeto_, *host, mapaAtivoId_, pastaId, nomePasta, [safeThis] {
+        // Fora do clique do próprio botão SAIR (ele é filho do que vai ser destruído).
+        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->fecharSobreposicao(); });
+    });
+    host->addAndMakeVisible(*sobreposicao_);
+    sobreposicao_->toFront(true);
+}
+
+void ArvoreBackupComponent::fecharSobreposicao() {
+    sobreposicao_.reset();
+    recarregar();  // o que mudou lá dentro (pastas novas, nomes, conexões) aparece aqui
+    grabKeyboardFocus();
+}
+
+void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId,
+                                                  const juce::String& nomePasta) {
+    sobreposto_ = true;
+    raizSobreposicaoId_ = pastaRaizId;
+    if (mapaId != mapaAtivoId_) {  // o mesmo mapa aberto na tela principal
+        mapaAtivoId_ = mapaId;
+        projeto_.definirMapaAtivo(mapaId);
+        recarregarComboMapas();
+        atualizarEstadoBotoesParaMapa();
+    }
+    // Mesma filtragem das abas (pasta + descendentes), sem a barra de abas.
+    AbaEstrutura aba;
+    aba.pastaRaizId = pastaRaizId;
+    aba.titulo = nomePasta;
+    abas_.push_back(aba);
+    abaAtiva_ = static_cast<int>(abas_.size()) - 1;
+    // Trocar de mapa aqui dentro não faz sentido: a raiz é uma pasta do mapa aberto.
+    for (juce::Component* c : {static_cast<juce::Component*>(comboMapas_.get()), static_cast<juce::Component*>(btnMenuMapa_.get()),
+                               static_cast<juce::Component*>(btnNovoMapa_.get())})
+        if (c) c->setEnabled(false);
+    enquadrarPendente_ = true;
+    resized();
+    recarregar();
+}
+
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
     if (e.tipoAlteracao != "titulo") return;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
@@ -776,12 +883,12 @@ void ArvoreBackupComponent::recalcularNodes() {
 
     // Mapa sem nada salvo (o ORIGINAL sempre, ou um mapa que nunca foi arranjado): já abre arranjado —
     // maior tamanho de cartão que cabe na área, sem sobreposição nem linhas cruzadas.
-    if ((original || !algumaPosicaoSalva) && canvasPronto && calcularEAplicarAutoArranjo()) {
+    if ((original || !algumaPosicaoSalva || sobreposto_) && canvasPronto && calcularEAplicarAutoArranjo()) {
         recalcularPivot();
         aplicarEscalaTamanho(escalaTamanho_);
         return;
     }
-    if (original || !algumaPosicaoSalva) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
+    if (original || !algumaPosicaoSalva || sobreposto_) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
 
     // Mapa com posições salvas: tamanho vem do fator do mapa (ou o tamanho único antigo) x multiplicador.
     layoutarvore::ParametrosAuto pa;
@@ -915,11 +1022,12 @@ void ArvoreBackupComponent::tentarEnquadrar() {
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
+    if (sobreposto_) return {};  // a sobreposição não tem abas
     return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).removeFromTop(kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
-    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(kAlturaBarraAbas);
+    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(sobreposto_ ? 0 : kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::boundsDaAba(int indice) const {
@@ -992,6 +1100,7 @@ void ArvoreBackupComponent::fecharAba(int indice) {
 }
 
 void ArvoreBackupComponent::desenharBarraDeAbas(juce::Graphics& g) {
+    if (sobreposto_) return;
     const auto& tk = tema();
     auto area = areaBarraAbas();
     g.setColour(tk.painelAlt);
@@ -1103,8 +1212,11 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
         pivotEscala_.x + (centroVista.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
         pivotEscala_.y + (centroVista.y - pivotEscala_.y) / (g * std::max(0.05f, espalharY_)));
     pos = {juce::roundToInt(centroOriginal.x - 95.0f), juce::roundToInt(centroOriginal.y - 42.0f)};
-    std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
-    projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
+    // Sobreposição: pasta nova sem pai vai para dentro da raiz (senão nasceria fora da vista), e sem posição
+    // gravada — o mapa principal a coloca pelo layout.
+    const auto pai = (sobreposto_ && !pastaPaiId) ? std::optional<std::string>(raizSobreposicaoId_) : pastaPaiId;
+    std::string novoId = projeto_.criarPastaAcervo(nome, pai, mapaAtivoId_);
+    if (!sobreposto_) projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
     destaqueNovaPastaId_ = novoId;
     inicioPulsoMs_ = juce::Time::getMillisecondCounter();
@@ -1274,6 +1386,7 @@ void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<i
 
 void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
     if (indices.empty()) return;
+    if (sobreposto_) return;  // sobreposição: posições só em memória (não mexem no layout do mapa principal)
     if (!mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
     auto& db = projeto_.projeto().registro();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
@@ -1363,7 +1476,7 @@ void ArvoreBackupComponent::autoArranjar() {
     for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
     recalcularPivot();
     persistirPosicoesEmLote(indices);  // uma transação só
-    if (!mapaAtivoEhOriginal()) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
+    if (!mapaAtivoEhOriginal() && !sobreposto_) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
 
     zoom_ = 1.0f;
     panOffset_ = {0.0f, 0.0f};
@@ -2033,7 +2146,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                     aoMostrarConteudoNaGrade(allItemIds);
                 }
             });
-            if (!batch) {
+            if (!batch && !sobreposto_) {
                 menu.addItem(i18n::t("arvore_backup.abrir_em_aba"), [this, pId, nomeNo = hitNodeRef.nome] {
                     abrirAbaParaPasta(pId, nomeNo);
                 });
@@ -2334,7 +2447,9 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
     auto canvasClick = screenToCanvas(e.getPosition());
     for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
         if (nodes_[static_cast<size_t>(i)].bounds.toFloat().contains(canvasClick)) {
-            iniciarEdicaoInline(i);
+            // Mapa principal: abre a pasta num Folder Map sobreposto. Dentro da sobreposição: renomeia, como antes.
+            if (sobreposto_) iniciarEdicaoInline(i);
+            else abrirSobreposicao(nodes_[static_cast<size_t>(i)].id, nodes_[static_cast<size_t>(i)].nome);
             return;
         }
     }
@@ -2652,6 +2767,7 @@ void ArvoreBackupComponent::aplicarSlider() {
 void ArvoreBackupComponent::persistirEscalas() {
     if (!escalasSujas_) return;
     escalasSujas_ = false;
+    if (sobreposto_) return;  // idem: tamanhos da sobreposição não são gravados
     if (mapaAtivoEhOriginal()) return;  // virtual: só em memória
     projeto_.iniciarGrupoUndo("Resize Folders");
     projeto_.registrarUndoVisualMapa("Resize Folders", mapaAtivoId_);

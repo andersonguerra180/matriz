@@ -1285,6 +1285,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         // Fase 1 — Folder Maps múltiplos
         {"mapa.original", "ORIGINAL"},
         {"arvore_backup.btn_novo_mapa", "+ NOVO FOLDER MAP"},
+        {"arvore_backup.sobreposto_titulo", "PASTA: {nome}"},
+        {"arvore_backup.sobreposto_sair", "SAIR"},
         {"arvore_backup.sem_pasta_titulo", "SEM PASTA"},
         {"arvore_backup.card_novas", "PASTAS NOVAS"},
         {"arvore_backup.card_novas_acao", "PASTAS NOVAS - AÇÃO NECESSÁRIA"},

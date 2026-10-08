@@ -66,6 +66,15 @@ public:
 
     std::vector<juce::String> obterListaPastas() const;
 
+    // Folder Map SOBREPOSTO (duplo clique num folder-card): janela por cima do app (90%) com um Folder Map cuja raiz
+    // é a pasta clicada, sempre auto-arranjado. Edições de dados (criar/renomear/conectar/apagar/mover/cor) valem no
+    // mapa de verdade; posição e tamanho dos cards ali são só da sobreposição (não mexem no layout do mapa principal).
+    // SAIR fecha e recarrega este mapa.
+    void abrirSobreposicao(const std::string& pastaId, const juce::String& nomePasta);
+    void fecharSobreposicao();
+    // Chamado na instância DENTRO da sobreposição, logo depois de construída.
+    void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
+
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
 
     // Fase 1 (Folder Maps múltiplos) — SEM PASTA (NO FOLDER) só aceita
@@ -232,6 +241,10 @@ private:
     std::vector<int> indicesSelecionados() const;
     // S4/15 — pasta recém-criada, com destaque pulsante até o próximo clique
     std::string destaqueNovaPastaId_;
+
+    bool sobreposto_ = false;           // esta instância é a do Folder Map sobreposto
+    std::string raizSobreposicaoId_;    // raiz da sobreposição (pasta clicada)
+    std::unique_ptr<juce::Component> sobreposicao_;  // a camada aberta por esta instância (no content da janela)
 
     std::unique_ptr<juce::TextEditor> inlineEditor_;
     std::string editingNodeId_;

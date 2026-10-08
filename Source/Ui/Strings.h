@@ -1273,6 +1273,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         // Fase 1 — Folder Maps múltiplos
         {"mapa.original", "ORIGINAL"},
         {"arvore_backup.btn_novo_mapa", "+ NEW FOLDER MAP"},
+        {"arvore_backup.sobreposto_titulo", "FOLDER: {nome}"},
+        {"arvore_backup.sobreposto_sair", "EXIT"},
         {"arvore_backup.sem_pasta_titulo", "NO FOLDER"},
         {"arvore_backup.card_novas", "NEW FOLDERS"},
         {"arvore_backup.card_novas_acao", "NEW FOLDERS - ACTION NEEDED"},

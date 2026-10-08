@@ -4702,6 +4702,54 @@ int rodarLoteSelfTest() {
             antigo.setBounds(0, 0, 1400, 900);
             bombear(150);
             checar(pa.fatorCardsDoMapa(grande) == 0.0 && antigo.fatorCards_ >= 1.0, "an old arrangement with cards shrunk below 100% is discarded and re-arranged");
+
+            // Folder Map SOBREPOSTO (duplo clique): raiz = a pasta clicada; posições/tamanhos de lá não são gravados.
+            antigo.autoArranjar();  // grava posições, para comparar depois
+            const auto posicoesGravadas = [&] {
+                std::map<std::string, std::pair<int, int>> m;
+                std::function<void(const ProjetoAberto::NoArvore&)> visitar = [&](const ProjetoAberto::NoArvore& no) {
+                    if (!no.id.empty()) m[no.id] = {no.posicaoX, no.posicaoY};
+                    for (const auto& f : no.filhos) visitar(f);
+                };
+                visitar(pa.arvoreAcervo(grande));
+                return m;
+            };
+            const auto antes = posicoesGravadas();
+            int idxPai = -1;
+            for (size_t i = 0; i < antigo.nodes_.size() && idxPai < 0; ++i)
+                for (const auto& n : antigo.nodes_)
+                    if (n.pastaPaiId == antigo.nodes_[i].id) { idxPai = static_cast<int>(i); break; }
+            checar(idxPai >= 0, "overlay: the test map has a folder with subfolders");
+            if (idxPai >= 0) {
+                const auto raiz = antigo.nodes_[static_cast<size_t>(idxPai)];
+                std::set<int> desc;
+                antigo.coletarDescendentesIndices(idxPai, desc);
+                antigo.abrirSobreposicao(raiz.id, raiz.nome);
+                bombear(150);
+                ArvoreBackupComponent* dentro = nullptr;
+                if (antigo.sobreposicao_)
+                    for (auto* filho : antigo.sobreposicao_->getChildren())
+                        if (auto* a = dynamic_cast<ArvoreBackupComponent*>(filho)) dentro = a;
+                checar(dentro != nullptr && dentro->sobreposto_, "double-click on a folder card opens the Folder Map overlay");
+                if (dentro != nullptr) {
+                    checar(dentro->nodes_.size() == desc.size() + 1 && dentro->mapaAtivoId_ == antigo.mapaAtivoId_,
+                           "overlay shows only the clicked folder + its subfolders, on the same map (" +
+                               juce::String((int) dentro->nodes_.size()) + " of " + juce::String((int) desc.size() + 1) + ")");
+                    std::vector<int> todos;
+                    for (size_t i = 0; i < dentro->nodes_.size(); ++i) todos.push_back(static_cast<int>(i));
+                    dentro->autoArranjar();
+                    dentro->persistirPosicoesEmLote(todos);
+                    checar(posicoesGravadas() == antes, "overlay: arranging/moving cards there does not change the main map layout");
+                    dentro->criarNovaPasta("OVERLAY_NOVA", std::nullopt);
+                    bool sobARaiz = false;
+                    for (const auto& n : dentro->nodes_) sobARaiz |= n.nome == "OVERLAY_NOVA" && n.pastaPaiId == raiz.id;
+                    checar(sobARaiz, "overlay: a new folder is created inside the overlay's root folder");
+                }
+                antigo.fecharSobreposicao();
+                bool apareceu = false;
+                for (const auto& n : antigo.nodes_) apareceu |= n.nome == "OVERLAY_NOVA";
+                checar(antigo.sobreposicao_ == nullptr && apareceu, "EXIT closes the overlay and the main map shows what changed there");
+            }
             pa.definirMapaAtivo(mapa);
         }
 
