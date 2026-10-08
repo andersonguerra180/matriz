@@ -214,6 +214,11 @@ private:
     // aparece com o ORIGINAL ativo (S4/13: "Não aparece no ORIGINAL").
     juce::Rectangle<int> boundsSemPasta() const;
     void desenharSemPasta(juce::Graphics& g) const;
+    // Contagem do SEM PASTA: era um COUNT(*) no banco A CADA paint (o maior custo do Folder Map, medido com
+    // `sample`). Guardada aqui; refeita no máximo 1x/s e zerada a cada recalcularNodes().
+    mutable int contagemSemPasta_ = -1;
+    mutable juce::uint32 contagemSemPastaMs_ = 0;
+    mutable std::string contagemSemPastaMapa_;
     bool semPastaHover_ = false;
 
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);

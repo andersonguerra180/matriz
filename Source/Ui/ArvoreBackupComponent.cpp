@@ -10,6 +10,7 @@
 #include "Tokens.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace matriz::ui {
 
@@ -783,6 +784,7 @@ void ArvoreBackupComponent::recarregar() {
 
 void ArvoreBackupComponent::recalcularNodes() {
     nodes_.clear();
+    contagemSemPasta_ = -1;  // o próximo paint reconta (itens podem ter entrado/saído de pastas)
     const bool original = mapaAtivoEhOriginal();
     // Um AJUSTAR de uma versão anterior encolhia os cartões abaixo do tamanho legível (fator < 1) e gravou
     // posições compactas para isso. Esse arranjo não serve mais: descarta e deixa o mapa abrir arranjado de novo.
@@ -1376,11 +1378,22 @@ bool ArvoreBackupComponent::ehDescendente(const std::string& noPaiId, const std:
 
 void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<int>& acc) const {
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) return;
-    const std::string& parentId = nodes_[static_cast<size_t>(nodeIndex)].id;
-    for (size_t i = 0; i < nodes_.size(); ++i) {
-        if (nodes_[i].pastaPaiId != parentId) continue;
-        int idx = static_cast<int>(i);
-        if (acc.insert(idx).second) coletarDescendentesIndices(idx, acc);
+    // Índice pai -> filhos montado uma vez: a versão recursiva varria TODAS as pastas para cada descendente
+    // (quadrático; aparecia no `sample` de cada clique num mapa grande).
+    std::unordered_map<std::string, std::vector<int>> filhos;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (!nodes_[i].pastaPaiId.empty()) filhos[nodes_[i].pastaPaiId].push_back(static_cast<int>(i));
+    std::set<int> visitados{nodeIndex};
+    std::vector<int> pendentes{nodeIndex};
+    while (!pendentes.empty()) {
+        const int atual = pendentes.back();
+        pendentes.pop_back();
+        auto it = filhos.find(nodes_[static_cast<size_t>(atual)].id);
+        if (it == filhos.end()) continue;
+        for (int idx : it->second) {
+            acc.insert(idx);
+            if (visitados.insert(idx).second) pendentes.push_back(idx);
+        }
     }
 }
 
@@ -1547,7 +1560,13 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
         g.setColour(tk.acento);
         g.drawRoundedRectangle(card.reduced(0.5f), tk.raioPequeno, 2.0f);
     }
-    int n = projeto_.contarItensSemPasta(mapaAtivoId_);
+    const auto agora = juce::Time::getMillisecondCounter();
+    if (contagemSemPasta_ < 0 || contagemSemPastaMapa_ != mapaAtivoId_ || agora - contagemSemPastaMs_ > 1000) {
+        contagemSemPasta_ = projeto_.contarItensSemPasta(mapaAtivoId_);
+        contagemSemPastaMs_ = agora;
+        contagemSemPastaMapa_ = mapaAtivoId_;
+    }
+    const int n = contagemSemPasta_;
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
