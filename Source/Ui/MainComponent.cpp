@@ -3159,7 +3159,18 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                 matriz::i18n::t("intake.duplicate_dialog_intro"),
                 entries, actionLabels,
                 [safeThis, arquivos, coincidencias, pastaProjeto](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) mutable {
-                    if (!safeThis || !confirmado) return; // cancelar = nada é ingerido deste lote
+                    if (!safeThis) return;
+                    // O modal do scan de pasta já está em "INGESTING 0/N" esperando este lote: sem lote nenhum
+                    // ele ficava em 0% para sempre. Só mexe nele se nenhum lote de fato está rodando nele.
+                    const bool modalSemLote = safeThis->ingestModalDialog_ != nullptr && !safeThis->loteEmCurso_
+                                              && safeThis->pendentes_->load() <= 0 && !safeThis->finalizandoLote_;
+                    if (!confirmado) { // cancelar = nada é ingerido deste lote
+                        if (modalSemLote) {
+                            safeThis->ingestModalDialog_->closeDialog();
+                            safeThis->ingestModalDialog_ = nullptr;
+                        }
+                        return;
+                    }
 
                     std::vector<bool> pular(arquivos.size(), false);
                     for (size_t k = 0; k < coincidencias.size(); ++k) {
@@ -3191,6 +3202,11 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                     }
                     if (!arquivosFinais.empty()) {
                         safeThis->processarLoteEmBackground(std::move(arquivosFinais), "", "");
+                    } else if (modalSemLote) {
+                        safeThis->ingestModalDialog_->finishWithNotice(
+                            matriz::i18n::t("intake.duplicate_nada_titulo"),
+                            matriz::i18n::t("intake.duplicate_nada_msg").replace("{n}", juce::String(static_cast<int>(arquivos.size()))));
+                        safeThis->ingestModalDialog_ = nullptr;  // o aviso fica aberto até o DONE; o próximo lote abre outro modal
                     }
                 });
         });

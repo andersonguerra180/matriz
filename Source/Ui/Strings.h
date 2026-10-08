@@ -1945,6 +1945,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"intake.duplicate_action_replace", "REPLACE"},
         {"intake.duplicate_action_new", "CREATE NEW INSTANCE"},
         {"intake.duplicate_match_info", "Matches existing item: {codigo} · {titulo}"},
+        {"intake.duplicate_nada_titulo", "NOTHING TO INGEST"},
+        {"intake.duplicate_nada_msg", "{n} file(s) already exist in this project and were skipped. No new files to ingest."},
         {"geofav.menu_editar", "Edit favorite"},
         {"geofav.menu_apagar", "Delete favorite"},
         {"geofav.editar_titulo", "Edit Favorite Place"},

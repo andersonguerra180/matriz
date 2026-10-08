@@ -1961,6 +1961,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"intake.duplicate_action_replace", "SUBSTITUIR"},
         {"intake.duplicate_action_new", "CRIAR NOVA INSTÂNCIA"},
         {"intake.duplicate_match_info", "Coincide com item existente: {codigo} · {titulo}"},
+        {"intake.duplicate_nada_titulo", "NADA A INGERIR"},
+        {"intake.duplicate_nada_msg", "{n} arquivo(s) já existem neste projeto e foram pulados. Nenhum arquivo novo para ingerir."},
         {"geofav.menu_editar", "Editar favorito"},
         {"geofav.menu_apagar", "Apagar favorito"},
         {"geofav.editar_titulo", "Editar Lugar Favorito"},
