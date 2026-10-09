@@ -1216,28 +1216,23 @@ public:
             bool temEditorHierarquia = (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible());
             bool temEditCustomPrefixo = (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible());
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
+            // Coleção: SELECTION, FOLDER STRUCTURE, OPTIONS e RUN (o BACKUP VERSIONS fica no rodapé, card 6).
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
-            int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + (alturaControle + 4) + padCartaoY * 2;
             int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
             int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
-            int minTotal = minH1 + minH2 + minH3 + minH4;
+            const int hRun = alturaCabecalhoSecao + 4 + 40 + padCartaoY * 2;  // título + botão principal
+            int minTotal = minH1 + minH3 + minH4 + hRun;
 
             if (availableForCards >= minTotal) {
                 int extra = availableForCards - minTotal;
-                int extra1 = static_cast<int>(extra * 0.05f);
-                int extra2 = static_cast<int>(extra * 0.60f); // DESTINATION: 38% → 60%
-                int extra3 = static_cast<int>(extra * 0.08f); // ORGANIZATION: 37% → 8% (mínimo)
-                int extra4 = extra - extra1 - extra2 - extra3;
-                card1H = minH1 + extra1;
-                card2H = minH2 + extra2;
-                card3H = minH3 + extra3;
-                card4H = minH4 + extra4;
+                card1H = minH1 + static_cast<int>(extra * 0.05f);
+                card3H = minH3 + static_cast<int>(extra * 0.10f);
+                card4H = availableForCards - card1H - card3H - hRun;  // OPTIONS fica com a sobra
             } else {
-                float ratio = static_cast<float>(availableForCards) / static_cast<float>(std::max(1, minTotal));
+                float ratio = static_cast<float>(std::max(1, availableForCards - hRun)) / static_cast<float>(std::max(1, minTotal - hRun));
                 card1H = std::max(46, static_cast<int>(minH1 * ratio));
-                card2H = std::max(80, static_cast<int>(minH2 * ratio));
                 card3H = std::max(80, static_cast<int>(minH3 * ratio));
-                card4H = std::max(60, static_cast<int>(minH4 * ratio));  // a sobra vai para BACKUP VERSIONS (último)
+                card4H = std::max(60, availableForCards - hRun - card1H - card3H);
             }
         }
 
@@ -1325,9 +1320,9 @@ public:
             }
         }
 
-        // 5. BACKUP VERSIONS (DESTINATION, ambos os modos) — último na ordem do fluxo; fica com o resto da altura
-        // (a lista de versões é o que mais aproveita espaço).
-        if (owner_.listVaults_) {
+        // BACKUP VERSIONS (DESTINATION) no Catálogo — último da coluna, com o resto da altura. Na Coleção ele é o
+        // card (6), no rodapé (ver BackupWorkspaceComponent::resized).
+        if (owner_.listVaults_ && !fluxo_) {
             auto dentro = abrirCartao(std::max(60, totalH - currY));
             if (owner_.labelDest_) owner_.labelDest_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
@@ -1353,6 +1348,19 @@ public:
             if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
         }
 
+
+        // 5. RUN (Coleção): título + botão principal (e o REBUILD STATUS, quando houver), depois de OPTIONS.
+        if (fluxo_ && owner_.btnStartBackup_) {
+            auto dentro = abrirCartao(std::max(60, totalH - currY));
+            if (owner_.labelAcao_) owner_.labelAcao_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
+            dentro.removeFromTop(4);
+            auto linha = dentro.removeFromTop(std::min(40, dentro.getHeight()));
+            if (owner_.btnRebuildStatus_ && owner_.btnRebuildStatus_->isVisible()) {
+                owner_.btnRebuildStatus_->setBounds(linha.removeFromLeft(std::min(190, linha.getWidth() / 2)));
+                linha.removeFromLeft(tk.espacoPainel);
+            }
+            owner_.btnStartBackup_->setBounds(linha);
+        }
 
         alturaCalculada_ = cartoes_.empty() ? totalH : cartoes_.back().getBottom();
         repaint();
@@ -5948,6 +5956,12 @@ void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
     if (listPreviaViewport_) listPreviaViewport_->setVisible(mostrar);
     if (labelResumo_) labelResumo_->setVisible(mostrar);
     if (labelAssets_) labelAssets_->setVisible(mostrar);
+    if (projeto_.projeto().modo() != matriz::model::Modo::Catalogo) {  // (6) BACKUP VERSIONS fica fora da coluna
+        for (juce::Component* c : {static_cast<juce::Component*>(labelDest_.get()), static_cast<juce::Component*>(listVaults_.get()),
+                                   static_cast<juce::Component*>(btnBrowseVault_.get()), static_cast<juce::Component*>(btnGoogleDriveDest_.get()),
+                                   static_cast<juce::Component*>(labelDestInfo_.get())})
+            if (c) c->setVisible(mostrar);
+    }
     if (barraLegenda_) barraLegenda_->setVisible(mostrar && projeto_.projeto().modo() != matriz::model::Modo::Catalogo);
     if (comboColecoes_) comboColecoes_->setVisible(mostrar && comboSource_->getSelectedId() == 5);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setVisible(mostrar && comboOrg_->getSelectedId() == 5);
@@ -6038,6 +6052,20 @@ void BackupWorkspaceComponent::paintOverChildren(juce::Graphics& g) {
 
 void BackupWorkspaceComponent::resized() {
     const auto& tk = tema();
+    // Coleção: o RUN (5) mora na coluna de configuração e o BACKUP VERSIONS (6) no rodapé; Catálogo: o contrário,
+    // como sempre foi. Só muda o pai dos controles (a visibilidade de cada um é mantida).
+    if (configContainer_) {
+        const bool coluna5Run = projeto_.projeto().modo() != matriz::model::Modo::Catalogo;
+        juce::Component* paraColuna = coluna5Run ? static_cast<juce::Component*>(configContainer_.get()) : this;
+        juce::Component* paraRodape = coluna5Run ? static_cast<juce::Component*>(this) : configContainer_.get();
+        for (juce::Component* c : {static_cast<juce::Component*>(btnStartBackup_.get()), static_cast<juce::Component*>(btnRebuildStatus_.get()),
+                                   static_cast<juce::Component*>(labelAcao_.get())})
+            if (c && c->getParentComponent() != paraColuna) paraColuna->addChildComponent(c);
+        for (juce::Component* c : {static_cast<juce::Component*>(labelDest_.get()), static_cast<juce::Component*>(listVaults_.get()),
+                                   static_cast<juce::Component*>(btnBrowseVault_.get()), static_cast<juce::Component*>(btnGoogleDriveDest_.get()),
+                                   static_cast<juce::Component*>(labelDestInfo_.get())})
+            if (c && c->getParentComponent() != paraRodape) paraRodape->addChildComponent(c);
+    }
     cartaoPrevia_ = {};
     cartaoCentral_ = {};
 
@@ -6116,10 +6144,10 @@ void BackupWorkspaceComponent::resized() {
             btnOpenCatalog_->setVisible(true);
         }
     } else {
-        // ---- Rodapé em dois cards, nas mesmas colunas do corpo: à direita o (6) RUN, na largura da coluna de
-        // configuração, com o botão principal; à esquerda o (7) OUTPUTS, na largura do ASSETS, com PUBLISH ·
-        // BACKUP SYNC · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) apontando para o (7).
-        faixaRodape_ = area.removeFromBottom(96);
+        // ---- Rodapé em dois cards, nas mesmas colunas do corpo. À direita, na largura da coluna de configuração:
+        // Coleção = (6) BACKUP VERSIONS (o RUN é o card 5, na coluna); Catálogo = RUN. À esquerda o (7) OUTPUTS,
+        // na largura do ASSETS, com PUBLISH · BACKUP SYNC · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) para o (7).
+        faixaRodape_ = area.removeFromBottom(fluxo ? 200 : 96);
         auto linha = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
         const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
         cartaoAcao_ = linha.removeFromRight(larguraConfigRodape);
@@ -6131,25 +6159,45 @@ void BackupWorkspaceComponent::resized() {
         btnDone_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
 
-        // (6) RUN — mesmo recuo dos cards da coluna (10 x 8)
-        auto dentroAcao = cartaoAcao_.reduced(10, 8);
-        {
+        auto dentroAcao = cartaoAcao_.reduced(10, 8);  // mesmo recuo dos cards da coluna (10 x 8)
+        if (btnRebuildStatus_) btnRebuildStatus_->setVisible(projeto_.emRebuild());
+        btnStartBackup_->setVisible(true);
+        if (fluxo) {
+            // (6) BACKUP VERSIONS — mesmos controles e arrumação de quando ficava na coluna. O RUN (5) é posicionado
+            // pelo ConfigContainerComponent.
+            if (labelAcao_) labelAcao_->setVisible(true);
             auto linhaTitulo = dentroAcao.removeFromTop(20);
-            if (fluxo) numeroAcao_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
-            if (labelAcao_) { labelAcao_->setBounds(linhaTitulo); labelAcao_->setVisible(true); }
+            numeroAcao_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+            if (labelDest_) labelDest_->setBounds(linhaTitulo);
+            dentroAcao.removeFromTop(2);
+            const int alturaDestInfo = 20, alturaControleDest = 26;
+            const int reservado = alturaControleDest + 4 + alturaDestInfo;
+            if (listVaults_) listVaults_->setBounds(dentroAcao.removeFromTop(std::max(24, dentroAcao.getHeight() - reservado - 4)));
             dentroAcao.removeFromTop(4);
-        }
-        auto linhaAcao = dentroAcao.removeFromTop(alturaBotao);
-        if (btnRebuildStatus_) {
-            const bool emRebuild = projeto_.emRebuild();
-            btnRebuildStatus_->setVisible(emRebuild);
-            if (emRebuild) {
+            {
+                auto linhaBrowse = dentroAcao.removeFromTop(alturaControleDest);
+                if (btnGoogleDriveDest_) {
+                    btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(32));
+                    linhaBrowse.removeFromRight(tk.espacoPequeno);
+                }
+                if (btnBrowseVault_) btnBrowseVault_->setBounds(linhaBrowse);
+            }
+            dentroAcao.removeFromTop(2);
+            if (labelDestInfo_) labelDestInfo_->setBounds(dentroAcao.removeFromTop(std::min(alturaDestInfo, dentroAcao.getHeight())));
+        } else {
+            // RUN (Catálogo) — título + botão principal
+            {
+                auto linhaTitulo = dentroAcao.removeFromTop(20);
+                if (labelAcao_) { labelAcao_->setBounds(linhaTitulo); labelAcao_->setVisible(true); }
+                dentroAcao.removeFromTop(4);
+            }
+            auto linhaAcao = dentroAcao.removeFromTop(alturaBotao);
+            if (btnRebuildStatus_ && btnRebuildStatus_->isVisible()) {
                 btnRebuildStatus_->setBounds(linhaAcao.removeFromLeft(std::min(190, linhaAcao.getWidth() / 2)));
                 linhaAcao.removeFromLeft(tk.espacoPainel);
             }
+            btnStartBackup_->setBounds(linhaAcao);
         }
-        btnStartBackup_->setBounds(linhaAcao);
-        btnStartBackup_->setVisible(true);
 
         // (7) OUTPUTS — mesmo recuo horizontal do card ASSETS
         auto dentroSaidas = cartaoSaidas_.reduced(tk.espacoPainel + 2, 8);
