@@ -8,6 +8,8 @@
 namespace matriz::ui {
 
 class TreeDetailContent;
+class PainelPropostas;
+class ItemPastaExplorador;
 
 class ArvoreBackupComponent : public juce::Component,
                                private juce::Timer,
@@ -65,6 +67,9 @@ public:
     bool keyPressed(const juce::KeyPress& key) override;
 
     std::vector<juce::String> obterListaPastas() const;
+    // Só pro self-test: a janela ACTION NEEDED está visível (e com área)?
+    bool painelPropostasVisivel() const;
+    ArvoreBackupComponent* mapaDaSobreposicao() const;  // idem: o Folder Map dentro da sobreposição aberta (ou nullptr)
 
     // Folder Map SOBREPOSTO (duplo clique num folder-card): janela por cima do app (90%) com um Folder Map cuja raiz
     // é a pasta clicada, sempre auto-arranjado. Edições de dados (criar/renomear/conectar/apagar/mover/cor) valem no
@@ -160,7 +165,28 @@ private:
         std::unique_ptr<juce::TextButton> usar, mesclar, descartar;
     };
     std::vector<LinhaProposta> propostas_;
+    // As propostas moram numa janela flutuante sobre o stage (canto superior esquerdo do canvas): só existe quando há
+    // ação necessária e o usuário pode recolher/expandir pelo cabeçalho.
+    std::unique_ptr<PainelPropostas> painelPropostas_;
+    bool painelPropostasRecolhido_ = false;
+    size_t ultimoTotalPropostas_ = 0;
+    void posicionarPainelPropostas();
+    void usarTodasPropostas();
+    void mesclarTodasPropostas();
+    void mesclarProximaDaFila(std::vector<std::pair<std::string, juce::String>> fila);
+    void confirmarDescarteTodasPropostas();
     void reconstruirPropostas();
+
+    // Card FOLDER EXPLORER (coluna esquerda): só pastas do mapa ativo; FIND seleciona a pasta + descendentes no
+    // stage e enquadra a vista nelas.
+    std::unique_ptr<ItemPastaExplorador> raizExplorador_;
+    std::unique_ptr<juce::TreeView> treeExplorador_;
+    std::unique_ptr<juce::TextButton> btnFind_;
+    std::string pastaExploradorId_;  // pasta selecionada no explorer
+    bool reconstruindoExplorador_ = false;
+    void ajustarVistaExplorador(const std::string& pastaId);
+    void reconstruirExplorador();
+    void localizarPasta(const std::string& pastaId);
     void mostrarDialogoMescla(const std::string& raizId, const juce::String& nome);
     void confirmarDescarteProposta(const std::string& raizId, int arquivos);
 
@@ -255,6 +281,7 @@ private:
     std::string editingNodeId_;
 
     void recalcularNodes();
+    void recalcularNodesInterno();
     void autoArranjar();
     // AJUSTAR com 2+ pastas selecionadas: reorganiza só elas (mesmos tamanhos), na região que já ocupavam.
     void autoArranjarSelecionadas(const std::vector<int>& selecionadas);

@@ -1706,6 +1706,38 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.descartarProposta(props[0].raizId);
             checar(pa.listarPropostas(mp).empty() && soltos(z1), "DISCARD: tree removed, file stays loose in NO FOLDER");
 
+            // 5b) janela flutuante NEW FOLDERS - ACTION NEEDED: no stage principal e dentro do Folder Map sobreposto
+            {
+                const auto base5 = raizAj.getChildFile("Outro5/Flutua");
+                novo(base5.getChildFile("f1.wav"));
+                pa.registrarPastasIngeridas({base5.getFullPathName().toStdString()});
+                checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "fifth proposal (floating window)");
+                const auto raizProposta = pa.listarPropostas(mp)[0].raizId;
+                pa.definirMapaAtivo(mp);
+                juce::Component host;
+                host.setBounds(0, 0, 1400, 900);
+                ArvoreBackupComponent principal(pa);
+                host.addAndMakeVisible(principal);
+                principal.setBounds(0, 0, 1400, 900);
+                checar(principal.painelPropostasVisivel(), "main stage: the ACTION NEEDED window shows when there is a pending proposal");
+                // Folder Map sobreposto pelo caminho real (duplo clique): a janela também aparece lá dentro.
+                principal.abrirSobreposicao(raizProposta, "Flutua");
+                ArvoreBackupComponent* dentro = principal.mapaDaSobreposicao();
+                checar(dentro != nullptr && dentro->painelPropostasVisivel(), "overlay Folder Map: the ACTION NEEDED window shows too");
+                if (const char* dir = std::getenv("MATRIZ_SNAP_DIR")) {  // inspeção visual (opcional)
+                    juce::PNGImageFormat png;
+                    for (auto par : {std::make_pair("acao_principal.png", &principal), std::make_pair("acao_sobreposto.png", dentro)}) {
+                        if (par.second == nullptr) continue;
+                        auto arq = juce::File(dir).getChildFile(par.first);
+                        arq.deleteFile();
+                        if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                            png.writeImageToStream(par.second->createComponentSnapshot(par.second->getLocalBounds()), *out);
+                    }
+                }
+                principal.fecharSobreposicao();
+                pa.descartarProposta(raizProposta);
+            }
+
             // 6) mapa ORIGINAL nunca recebe proposta
             checar(pa.gerarPropostasDeNovasPastas(ProjetoAberto::kMapaOriginal) == 0, "the ORIGINAL map never gets proposals");
         }

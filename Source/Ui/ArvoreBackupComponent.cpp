@@ -259,6 +259,139 @@ void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, 
 
 } // namespace
 
+// ── Janela flutuante NEW FOLDERS - ACTION NEEDED (sobre o stage) ──────────────────────────────────────────────
+// Só é mostrada quando há proposta pendente. O cabeçalho recolhe/expande; as linhas (rótulo + 3 botões) moram
+// no `conteudo()`, dentro de um Viewport (rola se houver muitas propostas).
+class PainelPropostas : public juce::Component {
+public:
+    static constexpr int kAlturaCabecalho = 28;
+
+    static constexpr int kAlturaRodape = 34;
+
+    PainelPropostas() {
+        vp_.setViewedComponent(&conteudo_, false);
+        vp_.setScrollBarsShown(true, false);
+        addAndMakeVisible(vp_);
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) addAndMakeVisible(*b);
+        usarTodas.setButtonText(i18n::t("arvore_backup.btn_usar_todas"));
+        mesclarTodas.setButtonText(i18n::t("arvore_backup.btn_mesclar_todas"));
+        descartarTodas.setButtonText(i18n::t("arvore_backup.btn_descartar_todas"));
+        usarTodas.setTooltip(i18n::t("arvore_backup.usar_todas_dica"));
+        mesclarTodas.setTooltip(i18n::t("arvore_backup.mesclar_todas_dica"));
+        descartarTodas.setTooltip(i18n::t("arvore_backup.descartar_todas_dica"));
+        usarTodas.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e));
+        mesclarTodas.setColour(juce::TextButton::buttonColourId, tema().acento);
+        descartarTodas.setColour(juce::TextButton::buttonColourId, tema().perigo);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) b->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    }
+
+    juce::TextButton usarTodas, mesclarTodas, descartarTodas;
+
+    juce::Component& conteudo() { return conteudo_; }
+    std::function<void()> aoAlternar;
+
+    void definir(const juce::String& titulo, bool recolhido) {
+        titulo_ = titulo;
+        recolhido_ = recolhido;
+        vp_.setVisible(!recolhido);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) b->setVisible(!recolhido);
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(r, tk.raioMedio);
+        g.setColour(tk.alerta.withAlpha(0.18f));
+        g.fillRoundedRectangle(r, tk.raioMedio);
+        g.setColour(tk.alerta);
+        g.drawRoundedRectangle(r.reduced(1.0f), tk.raioMedio, 2.5f);
+        auto cab = getLocalBounds().removeFromTop(kAlturaCabecalho).reduced(10, 0);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText(recolhido_ ? juce::String::fromUTF8("\xe2\x96\xb8") : juce::String::fromUTF8("\xe2\x96\xbe"),
+                   cab.removeFromRight(14), juce::Justification::centred);
+        g.drawText(titulo_, cab, juce::Justification::centredLeft, true);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().withTrimmedTop(kAlturaCabecalho).reduced(8, 4);
+        auto rodape = area.removeFromBottom(kAlturaRodape - 8);
+        area.removeFromBottom(4);
+        vp_.setBounds(area);
+        const int w = (rodape.getWidth() - 8) / 3;
+        usarTodas.setBounds(rodape.removeFromLeft(w));
+        rodape.removeFromLeft(4);
+        mesclarTodas.setBounds(rodape.removeFromLeft(w));
+        rodape.removeFromLeft(4);
+        descartarTodas.setBounds(rodape);
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        if (e.y < kAlturaCabecalho && aoAlternar) aoAlternar();
+    }
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}  // não vaza pro zoom do canvas
+
+    int larguraConteudo() const { return std::max(0, vp_.getMaximumVisibleWidth()); }
+
+private:
+    juce::Viewport vp_;
+    juce::Component conteudo_;
+    juce::String titulo_;
+    bool recolhido_ = false;
+};
+
+// ── Explorer de pastas (só pastas, nunca arquivos) ────────────────────────────────────────────────────────────
+class ItemPastaExplorador : public juce::TreeViewItem {
+public:
+    ItemPastaExplorador(std::string id, juce::String nome, int itens, bool ativo,
+                        std::function<void(const std::string&)> aoSelecionar,
+                        std::function<void(const std::string&)> aoLocalizar,
+                        std::function<void(ItemPastaExplorador&)> aoAbrir = nullptr)
+        : id_(std::move(id)), nome_(std::move(nome)), itens_(itens), ativo_(ativo),
+          aoSelecionar_(std::move(aoSelecionar)), aoLocalizar_(std::move(aoLocalizar)), aoAbrir_(std::move(aoAbrir)) {}
+
+    // Nome inteiro + contagem logo depois dele: a largura do item é a do texto (a árvore ganha rolagem horizontal).
+    juce::String texto() const {
+        return juce::String::fromUTF8("\xf0\x9f\x93\x81 ") + nome_ + (itens_ > 0 ? "   " + juce::String(itens_) : juce::String());
+    }
+    static juce::Font fonte(bool negrito) { return juce::Font(juce::FontOptions(11.0f, negrito ? juce::Font::bold : juce::Font::plain)); }
+    int getItemWidth() const override { return juce::GlyphArrangement::getStringWidthInt(fonte(true), texto()) + 12; }
+    void itemOpennessChanged(bool aberto) override { if (aberto && aoAbrir_) aoAbrir_(*this); }
+
+    const std::string& id() const { return id_; }
+    bool mightContainSubItems() override { return getNumSubItems() > 0; }
+    juce::String getUniqueName() const override { return id_.empty() ? juce::String("raiz") : juce::String(id_); }
+    int getItemHeight() const override { return 20; }
+
+    void paintItem(juce::Graphics& g, int width, int height) override {
+        const auto& tk = tema();
+        if (isSelected()) {
+            g.setColour(tk.acento.withAlpha(0.25f));
+            g.fillRect(0, 0, width, height);
+        }
+        g.setColour(ativo_ ? tk.textoPrimario : tk.textoTerciario);
+        g.setFont(fonte(isSelected()));
+        g.drawText(texto(), juce::Rectangle<int>(0, 0, width, height).reduced(2, 0), juce::Justification::centredLeft, false);
+    }
+
+    void itemSelectionChanged(bool selecionado) override {
+        if (selecionado && aoSelecionar_) aoSelecionar_(id_);
+    }
+    void itemDoubleClicked(const juce::MouseEvent&) override {
+        if (aoLocalizar_) aoLocalizar_(id_);
+    }
+
+private:
+    std::string id_;
+    juce::String nome_;
+    int itens_;
+    bool ativo_;
+    std::function<void(const std::string&)> aoSelecionar_, aoLocalizar_;
+    std::function<void(ItemPastaExplorador&)> aoAbrir_;
+};
+
 ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
 
@@ -384,6 +517,30 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     detailViewport_->setVisible(false);
     addAndMakeVisible(*detailViewport_);
 
+    painelPropostas_ = std::make_unique<PainelPropostas>();
+    painelPropostas_->aoAlternar = [this] {
+        painelPropostasRecolhido_ = !painelPropostasRecolhido_;
+        posicionarPainelPropostas();
+    };
+    painelPropostas_->usarTodas.onClick = [this] { usarTodasPropostas(); };
+    painelPropostas_->mesclarTodas.onClick = [this] { mesclarTodasPropostas(); };
+    painelPropostas_->descartarTodas.onClick = [this] { confirmarDescarteTodasPropostas(); };
+    addChildComponent(*painelPropostas_);
+
+    treeExplorador_ = std::make_unique<juce::TreeView>();
+    treeExplorador_->setRootItemVisible(false);
+    treeExplorador_->setDefaultOpenness(false);
+    treeExplorador_->setIndentSize(14);
+    treeExplorador_->getViewport()->setScrollBarsShown(true, true);
+    treeExplorador_->setColour(juce::TreeView::backgroundColourId, juce::Colours::transparentBlack);
+    addAndMakeVisible(*treeExplorador_);
+
+    btnFind_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_find"));
+    btnFind_->setTooltip(i18n::t("arvore_backup.find_dica"));
+    btnFind_->setEnabled(false);
+    btnFind_->onClick = [this] { if (!pastaExploradorId_.empty()) localizarPasta(pastaExploradorId_); };
+    addAndMakeVisible(*btnFind_);
+
     setWantsKeyboardFocus(true);
     setOpaque(true);  // o paint faz fillAll do fundo inteiro
 
@@ -403,6 +560,7 @@ ArvoreBackupComponent::~ArvoreBackupComponent() {
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
+    if (treeExplorador_) treeExplorador_->setRootItem(nullptr);
 }
 
 // ---- Folder Map SOBREPOSTO (duplo clique num folder-card) --------------------------------------------------------
@@ -696,7 +854,7 @@ void ArvoreBackupComponent::reconstruirPropostas() {
         auto botao = [this](const juce::String& texto, const juce::String& dica) {
             auto b = std::make_unique<juce::TextButton>(texto);
             b->setTooltip(dica);
-            addAndMakeVisible(*b);
+            painelPropostas_->conteudo().addAndMakeVisible(*b);
             return b;
         };
         l.usar = botao(i18n::t("arvore_backup.btn_usar_arvore"), i18n::t("arvore_backup.usar_dica"));
@@ -727,15 +885,116 @@ void ArvoreBackupComponent::reconstruirPropostas() {
         l.descartar->onClick = [safe, id, arquivos] {
             juce::MessageManager::callAsync([safe, id, arquivos] { if (safe) safe->confirmarDescarteProposta(id, arquivos); });
         };
-        addAndMakeVisible(*l.rotulo);
+        painelPropostas_->conteudo().addAndMakeVisible(*l.rotulo);
         propostas_.push_back(std::move(l));
     }
+    if (propostas_.size() > ultimoTotalPropostas_) painelPropostasRecolhido_ = false;  // chegou proposta nova: abre
+    ultimoTotalPropostas_ = propostas_.size();
     resized();
+}
+
+// Janela flutuante: canto superior esquerdo do stage, só com proposta pendente (e nunca no ORIGINAL).
+bool ArvoreBackupComponent::painelPropostasVisivel() const {
+    return painelPropostas_ && painelPropostas_->isVisible() && !painelPropostas_->getBounds().isEmpty();
+}
+
+ArvoreBackupComponent* ArvoreBackupComponent::mapaDaSobreposicao() const {
+    if (sobreposicao_ != nullptr)
+        for (auto* filho : sobreposicao_->getChildren())
+            if (auto* a = dynamic_cast<ArvoreBackupComponent*>(filho)) return a;
+    return nullptr;
+}
+
+void ArvoreBackupComponent::posicionarPainelPropostas() {
+    if (!painelPropostas_) return;
+    const bool visivel = !mapaAtivoEhOriginal() && !propostas_.empty();
+    painelPropostas_->setVisible(visivel);
+    if (!visivel) return;
+
+    constexpr int kMargem = 16, kLinha = 50, kLarguraMax = 340;
+    const auto canvas = areaCanvas();
+    const int largura = std::min(kLarguraMax, std::max(220, canvas.getWidth() - 2 * kMargem));
+    const int alturaConteudo = static_cast<int>(propostas_.size()) * kLinha + 4;
+    const int alturaMax = std::max(PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 60, canvas.getHeight() - 2 * kMargem);
+    const int altura = painelPropostasRecolhido_
+                           ? PainelPropostas::kAlturaCabecalho
+                           : std::min(alturaMax, PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 8 + alturaConteudo);
+    painelPropostas_->setBounds(canvas.getX() + kMargem, canvas.getY() + kMargem, largura, altura);
+    painelPropostas_->definir(juce::String::fromUTF8("\xe2\x9a\xa0 ") + i18n::t("arvore_backup.card_novas_acao") + " (" +
+                                  juce::String(propostas_.size()) + ")",
+                              painelPropostasRecolhido_);
+
+    const int larguraLinhas = std::max(100, painelPropostas_->larguraConteudo());
+    painelPropostas_->conteudo().setSize(larguraLinhas, alturaConteudo);
+    int y = 2;
+    for (auto& p : propostas_) {
+        juce::Rectangle<int> area(0, y, larguraLinhas, kLinha);
+        if (p.rotulo) p.rotulo->setBounds(area.removeFromTop(16));
+        area.removeFromTop(2);
+        auto linha = area.removeFromTop(24);
+        const int w = (linha.getWidth() - 8) / 3;
+        if (p.usar) p.usar->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (p.mesclar) p.mesclar->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (p.descartar) p.descartar->setBounds(linha);
+        y += kLinha;
+    }
 }
 
 void ArvoreBackupComponent::mostrarDialogoMescla(const std::string& raizId, const juce::String& nome) {
     juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
     DialogoMescla::exibir(projeto_, raizId, nome, [safe] { if (safe) safe->recarregar(); });
+}
+
+void ArvoreBackupComponent::usarTodasPropostas() {
+    std::vector<std::string> ids;
+    for (const auto& p : propostas_) ids.push_back(p.raizId);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::MessageManager::callAsync([safe, ids] {
+        if (!safe) return;
+        for (const auto& id : ids) safe->projeto_.usarArvoreProposta(id);
+        safe->recarregar();
+    });
+}
+
+// MERGE ALL: abre a mescla de cada proposta, uma depois da outra (cada uma tem seu destino e seus conflitos).
+// Cancelar numa delas interrompe a fila; as já mescladas ficam.
+void ArvoreBackupComponent::mesclarTodasPropostas() {
+    std::vector<std::pair<std::string, juce::String>> fila;
+    for (const auto& p : projeto_.listarPropostas(mapaAtivoId_)) fila.emplace_back(p.raizId, p.nome);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::MessageManager::callAsync([safe, fila] { if (safe) safe->mesclarProximaDaFila(fila); });
+}
+
+void ArvoreBackupComponent::mesclarProximaDaFila(std::vector<std::pair<std::string, juce::String>> fila) {
+    if (fila.empty()) return;
+    const auto atual = fila.front();
+    fila.erase(fila.begin());
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, atual.first, atual.second, [safe, fila] {
+        if (!safe) return;
+        safe->recarregar();
+        safe->mesclarProximaDaFila(fila);
+    });
+}
+
+void ArvoreBackupComponent::confirmarDescarteTodasPropostas() {
+    int arquivos = 0;
+    std::vector<std::string> ids;
+    for (const auto& p : propostas_) { ids.push_back(p.raizId); arquivos += p.arquivos; }
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                     .withTitle(i18n::t("arvore_backup.descartar_titulo"))
+                                     .withMessage(i18n::t("arvore_backup.descartar_msg").replace("{n}", juce::String(arquivos)))
+                                     .withButton(i18n::t("arvore_backup.btn_descartar_todas"))
+                                     .withButton(i18n::t("mescla.btn_cancelar")),
+                                 juce::ModalCallbackFunction::create([safe, ids](int r) {
+                                     if (r != 1 || !safe) return;
+                                     for (const auto& id : ids) safe->projeto_.descartarProposta(id);
+                                     safe->recarregar();
+                                 }));
 }
 
 void ArvoreBackupComponent::confirmarDescarteProposta(const std::string& raizId, int arquivos) {
@@ -783,7 +1042,124 @@ void ArvoreBackupComponent::recarregar() {
     repaint();
 }
 
+void ArvoreBackupComponent::reconstruirExplorador() {
+    if (!treeExplorador_) return;
+    std::unique_ptr<juce::XmlElement> aberto(treeExplorador_->getOpennessState(true));
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    auto aoSelecionar = [safe](const std::string& id) {
+        if (!safe) return;
+        safe->pastaExploradorId_ = id;
+        if (safe->btnFind_) safe->btnFind_->setEnabled(true);
+    };
+    auto aoLocalizar = [safe](const std::string& id) {
+        if (safe) safe->localizarPasta(id);
+    };
+    auto aoAbrir = [safe](ItemPastaExplorador& item) {
+        if (!safe || safe->reconstruindoExplorador_) return;
+        const std::string id = item.id();
+        juce::MessageManager::callAsync([safe, id] { if (safe) safe->ajustarVistaExplorador(id); });
+    };
+
+    std::set<std::string> ids;
+    for (const auto& n : nodes_) ids.insert(n.id);
+    std::map<std::string, std::vector<const FolderNode*>> filhos;
+    std::vector<const FolderNode*> raizes;
+    for (const auto& n : nodes_) {
+        if (n.pastaPaiId.empty() || !ids.count(n.pastaPaiId)) raizes.push_back(&n);
+        else filhos[n.pastaPaiId].push_back(&n);
+    }
+    auto porNome = [](const FolderNode* a, const FolderNode* b) { return a->nome.compareNatural(b->nome, false) < 0; };
+    std::sort(raizes.begin(), raizes.end(), porNome);
+    for (auto& par : filhos) std::sort(par.second.begin(), par.second.end(), porNome);
+
+    std::function<std::unique_ptr<ItemPastaExplorador>(const FolderNode&)> montar = [&](const FolderNode& n) {
+        auto item = std::make_unique<ItemPastaExplorador>(n.id, n.nome, n.contagemItens, n.ativo, aoSelecionar, aoLocalizar, aoAbrir);
+        auto it = filhos.find(n.id);
+        if (it != filhos.end())
+            for (const auto* f : it->second) item->addSubItem(montar(*f).release());
+        return item;
+    };
+
+    reconstruindoExplorador_ = true;
+    treeExplorador_->setRootItem(nullptr);
+    raizExplorador_ = std::make_unique<ItemPastaExplorador>(std::string(), juce::String(), 0, true, nullptr, nullptr);
+    for (const auto* r : raizes) raizExplorador_->addSubItem(montar(*r).release());
+    treeExplorador_->setRootItem(raizExplorador_.get());
+    if (aberto) treeExplorador_->restoreOpennessState(*aberto, false);
+    reconstruindoExplorador_ = false;
+
+    // Mantém a seleção do explorer se a pasta ainda existe.
+    if (!pastaExploradorId_.empty() && ids.count(pastaExploradorId_)) {
+        if (auto* item = treeExplorador_->findItemFromIdentifierString(juce::String(pastaExploradorId_)))
+            item->setSelected(true, false, juce::dontSendNotification);
+    } else {
+        pastaExploradorId_.clear();
+    }
+    if (btnFind_) btnFind_->setEnabled(!pastaExploradorId_.empty());
+}
+
+// Ao abrir uma pasta no explorer: acha a melhor posição horizontal pra os nomes dos filhos aparecerem inteiros
+// (a árvore rola pro lado só o necessário, sem esconder a seta da pasta aberta) e mantém a pasta visível.
+void ArvoreBackupComponent::ajustarVistaExplorador(const std::string& pastaId) {
+    if (!treeExplorador_) return;
+    auto* item = dynamic_cast<ItemPastaExplorador*>(treeExplorador_->findItemFromIdentifierString(juce::String(pastaId)));
+    if (item == nullptr || !item->isOpen() || item->getNumSubItems() == 0) return;
+    treeExplorador_->scrollToKeepItemVisible(item);
+    auto* vp = treeExplorador_->getViewport();
+    const int larguraVista = vp->getMaximumVisibleWidth();
+    int direita = 0, indentFilho = 0;
+    for (int i = 0; i < item->getNumSubItems(); ++i) {
+        auto* f = item->getSubItem(i);
+        const auto pos = f->getItemPosition(true);  // relativa ao topo-esquerdo da árvore (já com o recuo)
+        indentFilho = pos.getX();
+        direita = std::max(direita, pos.getX() + f->getItemWidth());
+    }
+    const int deslocamento = juce::jlimit(0, std::max(0, indentFilho - 24), std::max(0, direita - larguraVista));
+    vp->setViewPosition(deslocamento, vp->getViewPositionY());
+}
+
+// FIND: seleciona a pasta e todos os descendentes no stage, mostra o card da pasta e enquadra a vista na árvore dela.
+void ArvoreBackupComponent::localizarPasta(const std::string& pastaId) {
+    int indice = -1;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].id == pastaId) { indice = static_cast<int>(i); break; }
+    if (indice < 0) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;
+
+    std::set<int> alvo;
+    alvo.insert(indice);
+    coletarDescendentesIndices(indice, alvo);
+
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        const bool sel = alvo.count(static_cast<int>(i)) > 0;
+        nodes_[i].selecionado = sel;
+        if (!sel) continue;
+        uniao = primeiro ? nodes_[i].bounds : uniao.getUnion(nodes_[i].bounds);
+        primeiro = false;
+    }
+
+    constexpr float kMargem = 60.0f;
+    const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+    const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+    zoom_ = juce::jlimit(0.15f, 1.0f, std::min(zx, zy));
+    const auto centro = uniao.getCentre().toFloat();
+    panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                  static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+    enquadrarPendente_ = false;
+    atualizarPainelDetalhe(pastaId, true);
+    sincronizarSlider();
+    repaint();
+}
+
 void ArvoreBackupComponent::recalcularNodes() {
+    recalcularNodesInterno();
+    reconstruirExplorador();
+}
+
+void ArvoreBackupComponent::recalcularNodesInterno() {
     nodes_.clear();
     contagemSemPasta_ = -1;  // o próximo paint reconta (itens podem ter entrado/saído de pastas)
     const bool original = mapaAtivoEhOriginal();
@@ -1941,28 +2317,20 @@ void ArvoreBackupComponent::resized() {
     if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
 
-    // NEW FOLDERS — árvores propostas por pastas ingeridas inteiras (só mapas do usuário, só enquanto houver).
-    for (auto& p : propostas_) {
-        for (auto* c : std::initializer_list<juce::Component*>{p.rotulo.get(), p.usar.get(), p.mesclar.get(), p.descartar.get()})
-            if (c) c->setVisible(!original);
-    }
-    if (!original && !propostas_.empty()) {
-        coluna_.iniciarCard(juce::String::fromUTF8("\xe2\x9a\xa0 ") + i18n::t("arvore_backup.card_novas_acao"));
-        for (auto& p : propostas_) {
-            if (p.rotulo) p.rotulo->setBounds(corpo.removeFromTop(16));
-            corpo.removeFromTop(2);
-            auto linha = corpo.removeFromTop(24);
-            const int w = (linha.getWidth() - 8) / 3;
-            if (p.usar) p.usar->setBounds(linha.removeFromLeft(w));
-            linha.removeFromLeft(4);
-            if (p.mesclar) p.mesclar->setBounds(linha.removeFromLeft(w));
-            linha.removeFromLeft(4);
-            if (p.descartar) p.descartar->setBounds(linha);
-            corpo.removeFromTop(8);
-        }
+    // FOLDER EXPLORER — só pastas do mapa ativo; FIND seleciona a pasta (e descendentes) no stage. Ocupa o lugar
+    // que era do NEW FOLDERS (agora uma janela flutuante sobre o stage, ver posicionarPainelPropostas).
+    {
+        constexpr int kAlturaFind = 26;
+        const int reservadoSemPasta = original ? 0 : 46;
+        const int sobra = corpo.getHeight() - reservadoSemPasta - (ColunaCardsLayout::kCardPad * 2 + ColunaCardsLayout::kHeaderH + 4) - kAlturaFind - 4;
+        const int alturaTree = juce::jlimit(70, 230, static_cast<int>(sobra * 0.62f));
+        coluna_.iniciarCard(i18n::t("arvore_backup.card_explorador"));
+        if (treeExplorador_) treeExplorador_->setBounds(corpo.removeFromTop(alturaTree));
+        corpo.removeFromTop(4);
+        if (btnFind_) btnFind_->setBounds(corpo.removeFromTop(kAlturaFind));
         coluna_.finalizarCard();
-        coluna_.destacarUltimoCard(tema().alerta);  // chama a atenção até o usuário resolver (some junto com a proposta)
     }
+    posicionarPainelPropostas();
 
     // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
     semPastaBounds_ = {};
