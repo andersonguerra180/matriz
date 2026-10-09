@@ -376,6 +376,7 @@ private:
     class LegendaStatusComponent;
     std::unique_ptr<juce::Label> labelResumo_;
     std::unique_ptr<juce::Label> labelAssets_;  // título do card ASSETS (prévia)
+    std::unique_ptr<juce::Label> labelAcao_, labelSaidas_;  // títulos dos cards (6) RUN e (7) OUTPUTS
     std::unique_ptr<LegendaStatusComponent> barraLegenda_;
     std::unique_ptr<juce::Viewport> listPreviaViewport_;
     std::unique_ptr<PreviaLista> listPrevia_;
@@ -455,8 +456,9 @@ private:
     juce::Rectangle<int> faixaCabecalho_;
     juce::Rectangle<int> faixaRodape_;
     // Layout em fluxo (Config): card inferior (EXPORT + botão principal) e os números 1 (ASSETS) e 6 (botão).
-    juce::Rectangle<int> cartaoRodape_;
-    juce::Rectangle<int> numeroAssets_, numeroBotao_;
+    juce::Rectangle<int> cartaoRodape_;              // rodapé do resultado (Done): card único
+    juce::Rectangle<int> cartaoAcao_, cartaoSaidas_;  // rodapé da configuração: (6) RUN e (7) OUTPUTS
+    juce::Rectangle<int> numeroAssets_, numeroAcao_, numeroSaidas_;
 
     void mostrarPopupConflitoPreservacao();
     PainelOverlay overlay_;

@@ -1088,39 +1088,47 @@ void desenharSetaVazadaSaindoDaDireita(juce::Graphics& g, juce::Rectangle<int> c
     g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
 }
 
-// "Ponta de balão": V na borda de baixo de `cartao`, centrado em x, apontando para baixo.
-void desenharPontaBalao(juce::Graphics& g, juce::Rectangle<int> cartao, float x) {
-    const float b = static_cast<float>(cartao.getBottom()) - kTracoFluxo, meia = 11.0f, prof = 10.0f;
-    juce::Path v;
-    v.startNewSubPath(x - meia, b);
-    v.lineTo(x, b + prof);
-    v.lineTo(x + meia, b);
-    juce::Path preenchimento(v);
+// A mesma seta do ASSETS, saindo da borda ESQUERDA de `cartao` e apontando para a esquerda até xPonta.
+void desenharSetaVazadaSaindoDaEsquerda(juce::Graphics& g, juce::Rectangle<int> cartao, float y, float xPonta) {
+    const float x0 = static_cast<float>(cartao.getX()) + kTracoFluxo;
+    if (x0 - xPonta < 12.0f) return;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (x0 - xPonta) * 0.5f);
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x0, y - haste);
+    contorno.lineTo(xPonta + compCabeca, y - haste);
+    contorno.lineTo(xPonta + compCabeca, y - cabeca);
+    contorno.lineTo(xPonta, y);
+    contorno.lineTo(xPonta + compCabeca, y + cabeca);
+    contorno.lineTo(xPonta + compCabeca, y + haste);
+    contorno.lineTo(x0, y + haste);
+    juce::Path preenchimento(contorno);
     preenchimento.closeSubPath();
     g.setColour(tema().painel);
     g.fillPath(preenchimento);
-    g.fillRect(juce::Rectangle<float>(x - meia + 1.0f, b - kTracoFluxo, (meia - 1.0f) * 2.0f, kTracoFluxo * 2.0f));
     g.setColour(corContornoFluxo());
-    g.strokePath(v, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
 }
 
-// Seta vazada (fechada) apontando para baixo, de y0 até a ponta em y1.
-void desenharSetaVazadaParaBaixo(juce::Graphics& g, float x, float y0, float y1) {
-    if (y1 - y0 < 8.0f) return;
-    const float haste = 5.0f, cabeca = 11.0f, compCabeca = std::min(10.0f, (y1 - y0) * 0.5f);
-    juce::Path p;
-    p.startNewSubPath(x - haste, y0);
-    p.lineTo(x - haste, y1 - compCabeca);
-    p.lineTo(x - cabeca, y1 - compCabeca);
-    p.lineTo(x, y1);
-    p.lineTo(x + cabeca, y1 - compCabeca);
-    p.lineTo(x + haste, y1 - compCabeca);
-    p.lineTo(x + haste, y0);
-    p.closeSubPath();
+// A mesma seta do ASSETS, na vertical: nasce da borda de baixo de `cartao` (o contorno se abre na haste) e aponta
+// para baixo até yPonta.
+void desenharSetaVazadaSaindoDeBaixo(juce::Graphics& g, juce::Rectangle<int> cartao, float x, float yPonta) {
+    const float y0 = static_cast<float>(cartao.getBottom()) - kTracoFluxo;
+    if (yPonta - y0 < 12.0f) return;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (yPonta - y0) * 0.5f);
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x - haste, y0);
+    contorno.lineTo(x - haste, yPonta - compCabeca);
+    contorno.lineTo(x - cabeca, yPonta - compCabeca);
+    contorno.lineTo(x, yPonta);
+    contorno.lineTo(x + cabeca, yPonta - compCabeca);
+    contorno.lineTo(x + haste, yPonta - compCabeca);
+    contorno.lineTo(x + haste, y0);
+    juce::Path preenchimento(contorno);
+    preenchimento.closeSubPath();
     g.setColour(tema().painel);
-    g.fillPath(p);
+    g.fillPath(preenchimento);  // cobre também o trecho do contorno do card onde a haste se abre
     g.setColour(corContornoFluxo());
-    g.strokePath(p, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
 }
 
 void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numero) {
@@ -1149,15 +1157,12 @@ public:
             }
             return;
         }
-        // Fluxo: cards em contorno; entre um e outro, ponta de balão no de cima + seta vazada até o de baixo,
+        // Fluxo: cards em contorno; de um para o outro, a mesma seta vazada do ASSETS saindo da borda de baixo,
         // perto da borda direita (rolam junto). Números 2-5 antes dos títulos.
         for (const auto& cartao : cartoes_) desenharCartaoFluxo(g, cartao);
         const float x = static_cast<float>(getWidth() - 34);
-        for (size_t i = 0; i + 1 < cartoes_.size(); ++i) {
-            desenharPontaBalao(g, cartoes_[i], x);
-            desenharSetaVazadaParaBaixo(g, x, static_cast<float>(cartoes_[i].getBottom()) + 13.0f,
-                                        static_cast<float>(cartoes_[i + 1].getY()) - 2.0f);
-        }
+        for (size_t i = 0; i + 1 < cartoes_.size(); ++i)
+            desenharSetaVazadaSaindoDeBaixo(g, cartoes_[i], x, static_cast<float>(cartoes_[i + 1].getY()) - 2.0f);
         for (size_t i = 0; i < numeros_.size(); ++i) desenharNumeroFluxo(g, numeros_[i], static_cast<int>(i) + 2);
     }
 
@@ -1232,7 +1237,7 @@ public:
                 card1H = std::max(46, static_cast<int>(minH1 * ratio));
                 card2H = std::max(80, static_cast<int>(minH2 * ratio));
                 card3H = std::max(80, static_cast<int>(minH3 * ratio));
-                card4H = std::max(60, availableForCards - card1H - card2H - card3H);
+                card4H = std::max(60, static_cast<int>(minH4 * ratio));  // a sobra vai para BACKUP VERSIONS (último)
             }
         }
 
@@ -1264,33 +1269,6 @@ public:
                 dentro.removeFromTop(4);
                 owner_.btnEditarSelecao_->setBounds(dentro.removeFromTop(alturaControle));
             }
-        }
-
-        // 2. DESTINATION (Both Collection & Catalog Modes)
-        if (owner_.listVaults_) {
-            auto dentro = abrirCartao(card2H);
-            if (owner_.labelDest_) owner_.labelDest_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
-            dentro.removeFromTop(2);
-
-            int alturaDestInfo = 20;
-            int reservedBottom = alturaControle + 4 + alturaDestInfo;
-            int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
-            owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
-            dentro.removeFromTop(4);
-            // (o MAIN EDIT MODE mora no menu Tools — ver MainComponent::alternarModoEdicaoMain)
-
-            // Browse and Google Drive buttons side by side
-            {
-                auto linhaBrowse = dentro.removeFromTop(alturaControle);
-                int btnGdW = 32;
-                if (owner_.btnGoogleDriveDest_) {
-                    owner_.btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(btnGdW));
-                    linhaBrowse.removeFromRight(tk.espacoPequeno);
-                }
-                if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(linhaBrowse);
-            }
-            dentro.removeFromTop(2);
-            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
         }
 
         // 3. ORGANIZATION (Collection Mode only)
@@ -1326,10 +1304,9 @@ public:
             }
         }
 
-        // 4. OPTIONS (Both Collection & Catalog Modes)
+        // 4. OPTIONS (ambos os modos) — antes de BACKUP VERSIONS na ordem do fluxo
         if (owner_.toggleVerificarChecksum_) {
-            int lastCardH = std::max(40, totalH - currY);
-            auto dentro = abrirCartao(lastCardH);
+            auto dentro = abrirCartao(card4H);
             if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
@@ -1347,6 +1324,35 @@ public:
                 }
             }
         }
+
+        // 5. BACKUP VERSIONS (DESTINATION, ambos os modos) — último na ordem do fluxo; fica com o resto da altura
+        // (a lista de versões é o que mais aproveita espaço).
+        if (owner_.listVaults_) {
+            auto dentro = abrirCartao(std::max(60, totalH - currY));
+            if (owner_.labelDest_) owner_.labelDest_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
+            dentro.removeFromTop(2);
+
+            int alturaDestInfo = 20;
+            int reservedBottom = alturaControle + 4 + alturaDestInfo;
+            int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
+            owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
+            dentro.removeFromTop(4);
+            // (o MAIN EDIT MODE mora no menu Tools — ver MainComponent::alternarModoEdicaoMain)
+
+            // Browse and Google Drive buttons side by side
+            {
+                auto linhaBrowse = dentro.removeFromTop(alturaControle);
+                int btnGdW = 32;
+                if (owner_.btnGoogleDriveDest_) {
+                    owner_.btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(btnGdW));
+                    linhaBrowse.removeFromRight(tk.espacoPequeno);
+                }
+                if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(linhaBrowse);
+            }
+            dentro.removeFromTop(2);
+            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
+        }
+
 
         alturaCalculada_ = cartoes_.empty() ? totalH : cartoes_.back().getBottom();
         repaint();
@@ -2086,6 +2092,17 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*labelAssets_);
 
+    // Títulos dos cards do rodapé: (6) RUN e (7) OUTPUTS FROM THE MAIN (texto do (7) definido no resized: Catálogo
+    // usa outro rótulo).
+    labelAcao_ = std::make_unique<juce::Label>();
+    labelAcao_->setText(matriz::i18n::t("backup.secao_executar"), juce::dontSendNotification);
+    labelSaidas_ = std::make_unique<juce::Label>();
+    for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) {
+        l->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        l->setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(*l);
+    }
+
     barraLegenda_ = std::make_unique<LegendaStatusComponent>();
     barraLegenda_->aoMudarFiltro = [this](PreviaLista::ModoPrioridade modo) {
         if (listPrevia_) listPrevia_->definirModoPrioridade(modo);
@@ -2353,6 +2370,12 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelAssets_->setText(matriz::i18n::t("backup.secao_assets"), juce::dontSendNotification);
         labelAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (labelAcao_) labelAcao_->setText(matriz::i18n::t("backup.secao_executar"), juce::dontSendNotification);
+    for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) {
+        if (!l) continue;
+        l->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        l->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (comboSource_) {
         comboSource_->setTooltip(isPt ? juce::String::fromUTF8("Escolha quais itens incluir nesta execução do backup") : "Choose which assets to include in this backup run");
@@ -5942,15 +5965,21 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     if (!faixaCabecalho_.isEmpty())
         g.fillRect(faixaCabecalho_.getX(), faixaCabecalho_.getBottom() - 1, faixaCabecalho_.getWidth(), 1);
     const bool emFluxo = estado_ == Estado::Config && !numeroAssets_.isEmpty();
-    if (!cartaoRodape_.isEmpty() && estado_ != Estado::Running) {
-        if (emFluxo) {
-            desenharCartaoFluxo(g, cartaoRodape_);
-        } else {
-            g.setColour(tk.painel);
-            g.fillRoundedRectangle(cartaoRodape_.toFloat(), tk.raioMedio);
-            g.setColour(tk.borda);
-            g.drawRoundedRectangle(cartaoRodape_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
-        }
+    auto cartaoSimples = [&](juce::Rectangle<int> r) {
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(r.toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+    };
+    if (!cartaoRodape_.isEmpty() && estado_ == Estado::Done) cartaoSimples(cartaoRodape_);
+    for (const auto& r : {cartaoAcao_, cartaoSaidas_}) {
+        if (r.isEmpty()) continue;
+        if (emFluxo) desenharCartaoFluxo(g, r);
+        else cartaoSimples(r);
+    }
+    if (emFluxo && !cartaoAcao_.isEmpty() && !cartaoSaidas_.isEmpty()) {  // (6) -> (7): sai do lado esquerdo do RUN
+        desenharSetaVazadaSaindoDaEsquerda(g, cartaoAcao_, static_cast<float>(numeroAcao_.getCentreY()),
+                                           static_cast<float>(cartaoSaidas_.getRight()) + 2.0f);
     }
 
     if (!cartaoPrevia_.isEmpty() && estado_ == Estado::Config) {
@@ -5968,7 +5997,8 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     // ficam no ConfigContainerComponent (rolam junto); aqui, as que ligam a coluna ao ASSETS e ao botão.
     if (estado_ == Estado::Config && !numeroAssets_.isEmpty()) {
         desenharNumeroFluxo(g, numeroAssets_, 1);
-        desenharNumeroFluxo(g, numeroBotao_, 6);
+        desenharNumeroFluxo(g, numeroAcao_, 6);
+        desenharNumeroFluxo(g, numeroSaidas_, 7);
         if (configViewport_ && configContainer_ && configViewport_->isVisible()) {
             const auto vista = configViewport_->getBounds();
             const auto deslocamento = configViewport_->getPosition() - configViewport_->getViewPosition();
@@ -5991,20 +6021,19 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     }
 }
 
-// OPTIONS -> botão principal: a ponta de balão fica na borda de baixo do card OPTIONS, que é de um filho (a coluna
+// BACKUP VERSIONS (último da coluna) -> card (6) RUN: a seta nasce da borda de baixo do último card, que é de um filho (a coluna
 // no viewport) — por isso por cima dos filhos. Só quando o OPTIONS está à vista; a área coberta é o respiro do card.
 void BackupWorkspaceComponent::paintOverChildren(juce::Graphics& g) {
     if (estado_ != Estado::Config || numeroAssets_.isEmpty() || !configViewport_ || !configContainer_) return;
-    if (!configViewport_->isVisible() || !btnStartBackup_ || !btnStartBackup_->isVisible()) return;
+    if (!configViewport_->isVisible()) return;
     const auto& cartoesColuna = configContainer_->cartoes();
     if (cartoesColuna.size() < 4) return;
     const auto vista = configViewport_->getBounds();
     const auto opcoes = cartoesColuna.back() + (configViewport_->getPosition() - configViewport_->getViewPosition());
     if (opcoes.getBottom() > vista.getBottom() || opcoes.getBottom() <= vista.getY()) return;
-    const float x = static_cast<float>(btnStartBackup_->getBounds().getCentreX());
-    desenharPontaBalao(g, opcoes, x);
-    desenharSetaVazadaParaBaixo(g, x, static_cast<float>(opcoes.getBottom()) + 13.0f,
-                                static_cast<float>(cartaoRodape_.getY()) - 2.0f);
+    if (cartaoAcao_.isEmpty()) return;
+    const float x = static_cast<float>(opcoes.getRight() - 34);  // mesma posição das setas entre os cards da coluna
+    desenharSetaVazadaSaindoDeBaixo(g, opcoes, x, static_cast<float>(cartaoAcao_.getY()) - 2.0f);
 }
 
 void BackupWorkspaceComponent::resized() {
@@ -6029,15 +6058,6 @@ void BackupWorkspaceComponent::resized() {
         labelTitulo_->setBounds(rCabecalho);
     }
 
-    // ---- Rodapé: card único na largura do conteúdo (mesmas bordas do card ASSETS e da coluna de configuração) ----
-    faixaRodape_ = area.removeFromBottom(72);
-    cartaoRodape_ = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
-    auto botoes = cartaoRodape_.reduced(tk.espacoPainel + 2, 0);  // mesmo recuo interno do card ASSETS
-    const int alturaBotao = 40;
-    botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
-    numeroAssets_ = {};
-    numeroBotao_ = {};
-
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
     const bool fluxo = !isCatalogMode;  // setas e números do fluxo (Coleção)
     bool temItens = !plano_.itens.empty();
@@ -6050,8 +6070,21 @@ void BackupWorkspaceComponent::resized() {
             }
         }
     }
+    numeroAssets_ = {};
+    numeroAcao_ = {};
+    numeroSaidas_ = {};
+    cartaoRodape_ = {};
+    cartaoAcao_ = {};
+    cartaoSaidas_ = {};
+    const int alturaBotao = 40;
 
     if (estado_ == Estado::Done) {
+        // ---- Rodapé do resultado: card único na largura do conteúdo ----
+        faixaRodape_ = area.removeFromBottom(72);
+        cartaoRodape_ = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
+        auto botoes = cartaoRodape_.reduced(tk.espacoPainel + 2, 0);
+        botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
+        for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) if (l) l->setVisible(false);
         btnDone_->setBounds(botoes.removeFromRight(110));
         btnDone_->setVisible(true);
         btnStartBackup_->setVisible(false);
@@ -6083,26 +6116,56 @@ void BackupWorkspaceComponent::resized() {
             btnOpenCatalog_->setVisible(true);
         }
     } else {
+        // ---- Rodapé em dois cards, nas mesmas colunas do corpo: à direita o (6) RUN, na largura da coluna de
+        // configuração, com o botão principal; à esquerda o (7) OUTPUTS, na largura do ASSETS, com PUBLISH ·
+        // BACKUP SYNC · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) apontando para o (7).
+        faixaRodape_ = area.removeFromBottom(96);
+        auto linha = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
+        const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
+        cartaoAcao_ = linha.removeFromRight(larguraConfigRodape);
+        linha.removeFromRight(fluxo ? 52 : 28);
+        cartaoSaidas_ = linha;
+
         if (btnVerErros_) btnVerErros_->setVisible(false);
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
         btnDone_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
-        btnStartBackup_->setBounds(botoes.removeFromRight(170));
-        btnStartBackup_->setVisible(true);
-        if (fluxo && estado_ == Estado::Config) {  // número 6 no canto superior esquerdo do botão principal (fora dele)
-            auto slot = botoes.removeFromRight(kLarguraNumeroFluxo + 2);
-            numeroBotao_ = juce::Rectangle<int>(slot.getX(), btnStartBackup_->getY() - 4, kLarguraNumeroFluxo, kLarguraNumeroFluxo);
+
+        // (6) RUN — mesmo recuo dos cards da coluna (10 x 8)
+        auto dentroAcao = cartaoAcao_.reduced(10, 8);
+        {
+            auto linhaTitulo = dentroAcao.removeFromTop(20);
+            if (fluxo) numeroAcao_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+            if (labelAcao_) { labelAcao_->setBounds(linhaTitulo); labelAcao_->setVisible(true); }
+            dentroAcao.removeFromTop(4);
         }
-        botoes.removeFromRight(tk.espacoPainel);
+        auto linhaAcao = dentroAcao.removeFromTop(alturaBotao);
         if (btnRebuildStatus_) {
             const bool emRebuild = projeto_.emRebuild();
             btnRebuildStatus_->setVisible(emRebuild);
             if (emRebuild) {
-                btnRebuildStatus_->setBounds(botoes.removeFromRight(190));
-                botoes.removeFromRight(tk.espacoPainel);
+                btnRebuildStatus_->setBounds(linhaAcao.removeFromLeft(std::min(190, linhaAcao.getWidth() / 2)));
+                linhaAcao.removeFromLeft(tk.espacoPainel);
             }
         }
-        // Grupo de export à esquerda do card, nesta ordem: PUBLISH TO HTML · BACKUP SYNC... · dropdown [×] · EXPORT.
+        btnStartBackup_->setBounds(linhaAcao);
+        btnStartBackup_->setVisible(true);
+
+        // (7) OUTPUTS — mesmo recuo horizontal do card ASSETS
+        auto dentroSaidas = cartaoSaidas_.reduced(tk.espacoPainel + 2, 8);
+        {
+            auto linhaTitulo = dentroSaidas.removeFromTop(20);
+            if (fluxo) numeroSaidas_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+            if (labelSaidas_) {
+                labelSaidas_->setText(isCatalogMode ? matriz::i18n::t("backup.secao_saidas_catalogo")
+                                                    : matriz::i18n::t("backup.secao_saidas"), juce::dontSendNotification);
+                labelSaidas_->setBounds(linhaTitulo);
+                labelSaidas_->setVisible(true);
+            }
+            dentroSaidas.removeFromTop(4);
+        }
+        auto botoes = dentroSaidas.removeFromTop(alturaBotao);
+        // Grupo de export, nesta ordem: PUBLISH TO HTML · BACKUP SYNC... · dropdown [×] · EXPORT.
         // EXPORT unificado: [dropdown][×][EXPORT] no lugar dos 4 botões de saída. Os antigos
         // seguem existindo (escondidos) e são disparados pelas opções do dropdown.
         for (auto* antigo : {btnExportar_.get(), btnExportZip_.get(), btnSendToPrint_.get(), btnExportWatermark_.get(), btnExportJanela_.get()})
