@@ -1131,6 +1131,7 @@ void desenharSetaVazadaSaindoDeBaixo(juce::Graphics& g, juce::Rectangle<int> car
     g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
 }
 
+// Etapa do fluxo identificada por letra: 1 -> A, 2 -> B, ...
 void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numero) {
     if (area.isEmpty()) return;
     const auto c = area.toFloat().withSizeKeepingCentre(18.0f, 18.0f);
@@ -1138,7 +1139,7 @@ void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numer
     g.fillEllipse(c);
     g.setColour(juce::Colours::white);
     g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-    g.drawText(juce::String(numero), c, juce::Justification::centred, false);
+    g.drawText(juce::String::charToString(static_cast<juce::juce_wchar>(L'A' + numero - 1)), c, juce::Justification::centred, false);
 }
 }  // namespace
 
@@ -6146,7 +6147,7 @@ void BackupWorkspaceComponent::resized() {
     } else {
         // ---- Rodapé em dois cards, nas mesmas colunas do corpo. À direita, na largura da coluna de configuração:
         // Coleção = (6) BACKUP VERSIONS (o RUN é o card 5, na coluna); Catálogo = RUN. À esquerda o (7) OUTPUTS,
-        // na largura do ASSETS, com PUBLISH · BACKUP SYNC · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) para o (7).
+        // na largura do ASSETS, com PUBLISH · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) para o (7).
         faixaRodape_ = area.removeFromBottom(fluxo ? 200 : 96);
         auto linha = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
         const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
@@ -6159,6 +6160,14 @@ void BackupWorkspaceComponent::resized() {
         btnDone_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
 
+        // BACKUP SYNC... mora na ponta direita da linha de título do card de baixo/direita.
+        auto posicionarSyncNoTitulo = [this](juce::Rectangle<int>& linhaTitulo) {
+            if (!btnSyncDestino_) return;
+            auto area = linhaTitulo.removeFromRight(124);
+            linhaTitulo.removeFromRight(4);
+            btnSyncDestino_->setBounds(area.withSizeKeepingCentre(area.getWidth(), 22));
+            btnSyncDestino_->setVisible(true);
+        };
         auto dentroAcao = cartaoAcao_.reduced(10, 8);  // mesmo recuo dos cards da coluna (10 x 8)
         if (btnRebuildStatus_) btnRebuildStatus_->setVisible(projeto_.emRebuild());
         btnStartBackup_->setVisible(true);
@@ -6167,6 +6176,7 @@ void BackupWorkspaceComponent::resized() {
             // pelo ConfigContainerComponent.
             if (labelAcao_) labelAcao_->setVisible(true);
             auto linhaTitulo = dentroAcao.removeFromTop(20);
+            posicionarSyncNoTitulo(linhaTitulo);
             numeroAcao_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
             if (labelDest_) labelDest_->setBounds(linhaTitulo);
             dentroAcao.removeFromTop(2);
@@ -6188,6 +6198,7 @@ void BackupWorkspaceComponent::resized() {
             // RUN (Catálogo) — título + botão principal
             {
                 auto linhaTitulo = dentroAcao.removeFromTop(20);
+                posicionarSyncNoTitulo(linhaTitulo);
                 if (labelAcao_) { labelAcao_->setBounds(linhaTitulo); labelAcao_->setVisible(true); }
                 dentroAcao.removeFromTop(4);
             }
@@ -6213,7 +6224,7 @@ void BackupWorkspaceComponent::resized() {
             dentroSaidas.removeFromTop(4);
         }
         auto botoes = dentroSaidas.removeFromTop(alturaBotao);
-        // Grupo de export, nesta ordem: PUBLISH TO HTML · BACKUP SYNC... · dropdown [×] · EXPORT.
+        // Grupo de export, nesta ordem: PUBLISH TO HTML · dropdown [×] · EXPORT (o BACKUP SYNC... mora no título do card de baixo/direita).
         // EXPORT unificado: [dropdown][×][EXPORT] no lugar dos 4 botões de saída. Os antigos
         // seguem existindo (escondidos) e são disparados pelas opções do dropdown.
         for (auto* antigo : {btnExportar_.get(), btnExportZip_.get(), btnSendToPrint_.get(), btnExportWatermark_.get(), btnExportJanela_.get()})
@@ -6224,11 +6235,6 @@ void BackupWorkspaceComponent::resized() {
             if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
         }
         botoes.removeFromLeft(tk.espacoPainel);
-        if (btnSyncDestino_) {
-            btnSyncDestino_->setBounds(botoes.removeFromLeft(190));
-            btnSyncDestino_->setVisible(true);
-            botoes.removeFromLeft(tk.espacoPainel);
-        }
         if (btnExportUnificado_ && comboExportOrigem_) {
             comboExportOrigem_->setBounds(botoes.removeFromLeft(230));
             comboExportOrigem_->setVisible(true);
