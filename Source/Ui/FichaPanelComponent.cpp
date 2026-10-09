@@ -3936,7 +3936,9 @@ public:
                     if (linha->ehNotes)  { linhaNotes = linha;  continue; }
                     if (linha->ehPeople) { linhaPeople = linha; continue; }
                     if (linha->ehTags)   { linhaTags = linha;   continue; }
-                    bool useCol1 = (y1 < y0);
+                    // Lados da ficha individual: EVENT DATE, CREATOR e ORIGINAL SOURCE MEDIUM à direita; SUBJECT, LIST,
+                    // CONTENT, ISRC e AI GENERATED à esquerda (PEOPLE/TAGS seguem à direita, abaixo).
+                    const bool useCol1 = linha->campoId == "year" || linha->campoId == "creator" || linha->campoId == "source_media";
                     layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
                 }
 
@@ -5162,18 +5164,19 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Audio, isPt));
+                addEditableTextLote("isrc", "ISRC", "isrc");  // Áudio: ISRC logo depois do CONTENT, como na ficha individual
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("isrc", "ISRC", "isrc");
                 addNotesLote();
                 addPeopleLote();
                 addTagsLote();
@@ -5189,10 +5192,11 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
@@ -5215,10 +5219,11 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
@@ -5241,10 +5246,11 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
@@ -5268,10 +5274,11 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
                 addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
