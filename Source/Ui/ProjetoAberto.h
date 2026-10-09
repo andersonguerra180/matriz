@@ -665,6 +665,14 @@ public:
                                            const std::map<std::string, bool>& decisoes) const;
     // alvoId vazio = usar a árvore como está. Devolve nº de arquivos colocados; -1 em erro.
     int mesclarProposta(const std::string& raizId, const std::string& alvoId, const std::map<std::string, bool>& decisoes);
+    // MERGE de duas pastas JÁ existentes do mesmo mapa (menu do canvas/explorer): a origem some; os itens e as
+    // subpastas dela vão pro alvo. Mesmo plano de conflitos da mescla de proposta (subpasta de mesmo nome:
+    // mescla ou mantém separada, por decisão). false = bloqueado (ORIGINAL, trava do MAIN, alvo dentro da origem).
+    bool podeMesclarPastas(const std::string& origemId, const std::string& alvoId) const;
+    std::vector<LinhaMescla> planoDeMesclaPastas(const std::string& origemId, const std::string& alvoId,
+                                                 const std::map<std::string, bool>& decisoes) const;
+    // Devolve o nº de itens movidos; -1 em erro/bloqueio.
+    int mesclarPastas(const std::string& origemId, const std::string& alvoId, const std::map<std::string, bool>& decisoes);
     // Fase 2 — ID do folder map gravado em projeto.backup_config_main.mapa_id
     // ("" = MAIN ainda não existe, ou foi criado por regra/estrutura original).
     // Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado.

@@ -187,6 +187,8 @@ private:
     void ajustarVistaExplorador(const std::string& pastaId);
     void reconstruirExplorador();
     void localizarPasta(const std::string& pastaId);
+    void mostrarMenuExplorador(const juce::MouseEvent& e);
+    void iniciarMesclaPastas(const std::string& origemId, const std::string& alvoId);
     void mostrarDialogoMescla(const std::string& raizId, const juce::String& nome);
     void confirmarDescarteProposta(const std::string& raizId, int arquivos);
 

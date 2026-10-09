@@ -348,9 +348,11 @@ public:
     ItemPastaExplorador(std::string id, juce::String nome, int itens, bool ativo,
                         std::function<void(const std::string&)> aoSelecionar,
                         std::function<void(const std::string&)> aoLocalizar,
-                        std::function<void(ItemPastaExplorador&)> aoAbrir = nullptr)
+                        std::function<void(ItemPastaExplorador&)> aoAbrir = nullptr,
+                        std::function<void(const juce::MouseEvent&)> aoMenu = nullptr)
         : id_(std::move(id)), nome_(std::move(nome)), itens_(itens), ativo_(ativo),
-          aoSelecionar_(std::move(aoSelecionar)), aoLocalizar_(std::move(aoLocalizar)), aoAbrir_(std::move(aoAbrir)) {}
+          aoSelecionar_(std::move(aoSelecionar)), aoLocalizar_(std::move(aoLocalizar)), aoAbrir_(std::move(aoAbrir)),
+          aoMenu_(std::move(aoMenu)) {}
 
     // Nome inteiro + contagem logo depois dele: a largura do item é a do texto (a árvore ganha rolagem horizontal).
     juce::String texto() const {
@@ -382,6 +384,9 @@ public:
     void itemDoubleClicked(const juce::MouseEvent&) override {
         if (aoLocalizar_) aoLocalizar_(id_);
     }
+    void itemClicked(const juce::MouseEvent& e) override {
+        if (e.mods.isPopupMenu() && aoMenu_) aoMenu_(e);
+    }
 
 private:
     std::string id_;
@@ -390,6 +395,7 @@ private:
     bool ativo_;
     std::function<void(const std::string&)> aoSelecionar_, aoLocalizar_;
     std::function<void(ItemPastaExplorador&)> aoAbrir_;
+    std::function<void(const juce::MouseEvent&)> aoMenu_;
 };
 
 ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
@@ -529,6 +535,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 
     treeExplorador_ = std::make_unique<juce::TreeView>();
     treeExplorador_->setRootItemVisible(false);
+    treeExplorador_->setMultiSelectEnabled(true);  // shift/cmd+clique: seleciona 2 pastas pro MERGE
     treeExplorador_->setDefaultOpenness(false);
     treeExplorador_->setIndentSize(14);
     treeExplorador_->getViewport()->setScrollBarsShown(true, true);
@@ -694,16 +701,27 @@ namespace {
 // "mesclar com a existente" ou "manter como pasta separada".
 class DialogoMescla : public juce::Component {
 public:
-    DialogoMescla(ProjetoAberto& proj, std::string raizId, juce::String nome, std::function<void()> aoConcluir)
-        : proj_(proj), raizId_(std::move(raizId)), aoConcluir_(std::move(aoConcluir)) {
-        destinos_ = proj_.destinosDeMescla(raizId_);
+    // alvoFixo != "" = MERGE entre duas pastas existentes (menu do canvas/explorer): o destino já está escolhido.
+    DialogoMescla(ProjetoAberto& proj, std::string raizId, juce::String nome, std::function<void()> aoConcluir,
+                  std::string alvoFixo = {}, juce::String alvoCaminho = {})
+        : proj_(proj), raizId_(std::move(raizId)), aoConcluir_(std::move(aoConcluir)), entrePastas_(!alvoFixo.empty()) {
+        if (entrePastas_) {
+            ProjetoAberto::PastaDoMapa d;
+            d.id = alvoFixo;
+            d.caminho = std::move(alvoCaminho);
+            d.mesmoNome = false;
+            destinos_.push_back(std::move(d));
+        } else {
+            destinos_ = proj_.destinosDeMescla(raizId_);
+        }
         lblAlvo_.setText(i18n::t("mescla.alvo").replace("{nome}", nome), juce::dontSendNotification);
         addAndMakeVisible(lblAlvo_);
         comboAlvo_.addItem(i18n::t("mescla.escolha"), 1);
         for (size_t i = 0; i < destinos_.size(); ++i)
             comboAlvo_.addItem((destinos_[i].mesmoNome ? juce::String(juce::CharPointer_UTF8("\xe2\x98\x85 ")) : juce::String()) +
                                    destinos_[i].caminho, static_cast<int>(i) + 2);
-        comboAlvo_.setSelectedId(!destinos_.empty() && destinos_[0].mesmoNome ? 2 : 1, juce::dontSendNotification);
+        comboAlvo_.setSelectedId(!destinos_.empty() && (entrePastas_ || destinos_[0].mesmoNome) ? 2 : 1, juce::dontSendNotification);
+        comboAlvo_.setEnabled(!entrePastas_);
         comboAlvo_.onChange = [this] { reconstruir(); };
         addAndMakeVisible(comboAlvo_);
         addAndMakeVisible(lblResumo_);
@@ -722,7 +740,8 @@ public:
         btnAplicar_.onClick = [this] {
             const auto alvo = alvoId();
             if (alvo.empty()) return;
-            proj_.mesclarProposta(raizId_, alvo, decisoes_);
+            if (entrePastas_) proj_.mesclarPastas(raizId_, alvo, decisoes_);
+            else proj_.mesclarProposta(raizId_, alvo, decisoes_);
             auto cb = aoConcluir_;
             fechar();
             if (cb) juce::MessageManager::callAsync(cb);
@@ -731,10 +750,11 @@ public:
         reconstruir();
     }
 
-    static void exibir(ProjetoAberto& proj, const std::string& raizId, const juce::String& nome, std::function<void()> aoConcluir) {
+    static void exibir(ProjetoAberto& proj, const std::string& raizId, const juce::String& nome, std::function<void()> aoConcluir,
+                       const std::string& alvoFixo = {}, const juce::String& alvoCaminho = {}) {
         juce::DialogWindow::LaunchOptions opt;
-        opt.dialogTitle = i18n::t("mescla.titulo");
-        opt.content.setOwned(new DialogoMescla(proj, raizId, nome, std::move(aoConcluir)));
+        opt.dialogTitle = alvoFixo.empty() ? i18n::t("mescla.titulo") : i18n::t("mescla.titulo_pastas");
+        opt.content.setOwned(new DialogoMescla(proj, raizId, nome, std::move(aoConcluir), alvoFixo, alvoCaminho));
         opt.dialogBackgroundColour = tema().fundo;
         opt.escapeKeyTriggersCloseButton = true;
         opt.useNativeTitleBar = true;
@@ -781,7 +801,7 @@ private:
         linhasUi_.clear();
         linhas_.removeAllChildren();
         const auto alvo = alvoId();
-        plano_ = proj_.planoDeMescla(raizId_, alvo, decisoes_);
+        plano_ = entrePastas_ ? proj_.planoDeMesclaPastas(raizId_, alvo, decisoes_) : proj_.planoDeMescla(raizId_, alvo, decisoes_);
         btnAplicar_.setEnabled(!alvo.empty());
         btnTodosMesclar_.setEnabled(!plano_.empty());
         btnTodosSeparar_.setEnabled(!plano_.empty());
@@ -826,6 +846,7 @@ private:
     ProjetoAberto& proj_;
     std::string raizId_;
     std::function<void()> aoConcluir_;
+    bool entrePastas_ = false;
     std::vector<ProjetoAberto::PastaDoMapa> destinos_;
     std::vector<ProjetoAberto::LinhaMescla> plano_;
     std::map<std::string, bool> decisoes_;
@@ -947,6 +968,31 @@ void ArvoreBackupComponent::mostrarDialogoMescla(const std::string& raizId, cons
     DialogoMescla::exibir(projeto_, raizId, nome, [safe] { if (safe) safe->recarregar(); });
 }
 
+// MERGE entre duas pastas existentes: a origem some e o conteúdo dela vai pro alvo (mesmo diálogo de conflitos da mescla
+// de pasta nova do INTAKE).
+void ArvoreBackupComponent::iniciarMesclaPastas(const std::string& origemId, const std::string& alvoId) {
+    if (mapaAtivoEhOriginal() || !projeto_.podeMesclarPastas(origemId, alvoId)) {
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                         .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                         .withTitle(i18n::t("mescla.titulo_pastas"))
+                                         .withMessage(i18n::t("mescla.pastas_invalido"))
+                                         .withButton(i18n::t("dialogo.ok")),
+                                     nullptr);
+        return;
+    }
+    juce::String nomeOrigem, caminhoAlvo;
+    for (const auto& n : nodes_)
+        if (n.id == origemId) nomeOrigem = n.nome;
+    std::function<juce::String(const std::string&)> caminho = [&](const std::string& id) -> juce::String {
+        for (const auto& n : nodes_)
+            if (n.id == id) return n.pastaPaiId.empty() ? n.nome : caminho(n.pastaPaiId) + " / " + n.nome;
+        return {};
+    };
+    caminhoAlvo = caminho(alvoId);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, origemId, nomeOrigem, [safe] { if (safe) safe->recarregar(); }, alvoId, caminhoAlvo);
+}
+
 void ArvoreBackupComponent::usarTodasPropostas() {
     std::vector<std::string> ids;
     for (const auto& p : propostas_) ids.push_back(p.raizId);
@@ -1054,6 +1100,9 @@ void ArvoreBackupComponent::reconstruirExplorador() {
     auto aoLocalizar = [safe](const std::string& id) {
         if (safe) safe->localizarPasta(id);
     };
+    auto aoMenu = [safe](const juce::MouseEvent& e) {
+        if (safe) safe->mostrarMenuExplorador(e);
+    };
     auto aoAbrir = [safe](ItemPastaExplorador& item) {
         if (!safe || safe->reconstruindoExplorador_) return;
         const std::string id = item.id();
@@ -1073,7 +1122,7 @@ void ArvoreBackupComponent::reconstruirExplorador() {
     for (auto& par : filhos) std::sort(par.second.begin(), par.second.end(), porNome);
 
     std::function<std::unique_ptr<ItemPastaExplorador>(const FolderNode&)> montar = [&](const FolderNode& n) {
-        auto item = std::make_unique<ItemPastaExplorador>(n.id, n.nome, n.contagemItens, n.ativo, aoSelecionar, aoLocalizar, aoAbrir);
+        auto item = std::make_unique<ItemPastaExplorador>(n.id, n.nome, n.contagemItens, n.ativo, aoSelecionar, aoLocalizar, aoAbrir, aoMenu);
         auto it = filhos.find(n.id);
         if (it != filhos.end())
             for (const auto* f : it->second) item->addSubItem(montar(*f).release());
@@ -1116,6 +1165,30 @@ void ArvoreBackupComponent::ajustarVistaExplorador(const std::string& pastaId) {
     }
     const int deslocamento = juce::jlimit(0, std::max(0, indentFilho - 24), std::max(0, direita - larguraVista));
     vp->setViewPosition(deslocamento, vp->getViewPositionY());
+}
+
+// Botão direito no explorer: com 2 pastas selecionadas (shift/cmd+clique), MERGE em qualquer direção.
+void ArvoreBackupComponent::mostrarMenuExplorador(const juce::MouseEvent&) {
+    if (!treeExplorador_ || mapaAtivoEhOriginal()) return;
+    std::vector<std::pair<std::string, juce::String>> sel;
+    for (int i = 0; i < treeExplorador_->getNumSelectedItems(); ++i)
+        if (auto* it = dynamic_cast<ItemPastaExplorador*>(treeExplorador_->getSelectedItem(i)))
+            for (const auto& n : nodes_)
+                if (n.id == it->id()) sel.emplace_back(n.id, n.nome);
+    juce::PopupMenu menu;
+    if (sel.size() == 2) {
+        juce::PopupMenu sub;
+        const bool editavel = !projeto_.somenteLeitura();
+        sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", sel[0].second).replace("{b}", sel[1].second), editavel, false,
+                    [this, a = sel[0].first, b = sel[1].first] { iniciarMesclaPastas(a, b); });
+        sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", sel[1].second).replace("{b}", sel[0].second), editavel, false,
+                    [this, a = sel[0].first, b = sel[1].first] { iniciarMesclaPastas(b, a); });
+        menu.addSubMenu(i18n::t("arvore_backup.mesclar_menu"), sub);
+    } else {
+        menu.addItem(i18n::t("arvore_backup.mesclar_menu"), false, false, [] {});
+        menu.addItem(i18n::t("arvore_backup.mesclar_dica_sel"), false, false, [] {});
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options());
 }
 
 // FIND: seleciona a pasta e todos os descendentes no stage, mostra o card da pasta e enquadra a vista na árvore dela.
@@ -2481,7 +2554,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         // Cmd (macOS) / Ctrl: seleção múltipla incremental — cada clique
         // acrescenta (ou tira) uma pasta da seleção, sem zerar as demais,
         // alimentando a mesma seleção que o marquee já produzia.
-        bool selecaoIncremental = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        bool selecaoIncremental = e.mods.isCommandDown() || e.mods.isCtrlDown() || e.mods.isShiftDown();
 
         if (selecaoIncremental && !e.mods.isPopupMenu()) {
             hitNodeRef.selecionado = !hitNodeRef.selecionado;
@@ -2626,6 +2699,22 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addItem(i18n::t("arvore_backup.renomear_pasta_menu"), [this, pId, idx] {
                     iniciarEdicaoInline(idx);
                 });
+            }
+
+            if (selectedIds.size() == 2 && !mapaAtivoEhOriginal()) {
+                // MERGE de duas pastas: escolhe quem some (a outra recebe o conteúdo).
+                juce::PopupMenu sub;
+                juce::String nomeA, nomeB;
+                for (const auto& n : nodes_) {
+                    if (n.id == selectedIds[0]) nomeA = n.nome;
+                    if (n.id == selectedIds[1]) nomeB = n.nome;
+                }
+                const bool editavel = !projeto_.somenteLeitura();
+                sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", nomeA).replace("{b}", nomeB), editavel, false,
+                            [this, a = selectedIds[0], b = selectedIds[1]] { iniciarMesclaPastas(a, b); });
+                sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", nomeB).replace("{b}", nomeA), editavel, false,
+                            [this, a = selectedIds[0], b = selectedIds[1]] { iniciarMesclaPastas(b, a); });
+                menu.addSubMenu(i18n::t("arvore_backup.mesclar_menu"), sub);
             }
 
             menu.addItem(i18n::t("arvore_backup.alternar_ativo"), [this, selectedIds] {

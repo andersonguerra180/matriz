@@ -332,6 +332,50 @@ std::string retratoDoRegistro(matriz::db::Database& reg) {
     return s;
 }
 
+// Só inspeção visual (MATRIZ_SNAP_DIR): ficha individual x ficha em lote, em PNG.
+void rodarSnapshotsFicha() {
+    const char* dir = std::getenv("MATRIZ_SNAP_DIR");
+    if (dir == nullptr) return;
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_ficha_snap_" + juce::Uuid().toDashedString());
+    try {
+        std::vector<juce::File> fontes;
+        for (int i = 0; i < 3; ++i) {
+            fontes.push_back(raiz.getChildFile("S").getChildFile("faixa" + juce::String(i + 1) + ".wav"));
+            escreverWavTeste(fontes.back(), 5 * (i + 1));
+        }
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Snap";
+        params.prefixoNomenclatura = "SNP";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        std::vector<std::string> ids;
+        for (int i = 0; i < 3; ++i) ids.push_back(inserirItemComArquivo(reg, projetoId, "SNP-" + std::to_string(i + 1), fontes[static_cast<size_t>(i)]));
+        juce::PNGImageFormat png;
+        auto gravar = [&](FichaPanelComponent& f, const char* nome) {
+            auto arq = juce::File(dir).getChildFile(nome);
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(f.createComponentSnapshot(f.getLocalBounds()), *out);
+        };
+        FichaPanelComponent unica(pa);
+        unica.setSize(900, 1100);
+        unica.mostrarItem(ids[0]);
+        unica.setSize(900, 1100);
+        gravar(unica, "ficha_individual.png");
+        FichaPanelComponent lote(pa);
+        lote.setSize(900, 1100);
+        lote.mostrarSelecao(ids);
+        lote.setSize(900, 1100);
+        gravar(lote, "ficha_lote.png");
+    } catch (const std::exception& e) {
+        std::cout << "snapshots ficha: " << e.what() << "\n";
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesPacote(const Checar& checar) {
     namespace pk = matriz::consolidacao::pacote;
     using matriz::db::Value;
@@ -1736,6 +1780,51 @@ void rodarTestesLoteAjustes(const Checar& checar) {
                 }
                 principal.fecharSobreposicao();
                 pa.descartarProposta(raizProposta);
+            }
+
+            // 5c) MERGE entre duas pastas existentes (menu do canvas/explorer)
+            {
+                const std::string mm = pa.criarFolderMap("MergeFolders", std::nullopt);
+                const auto fA = pa.criarPastaAcervo("A", std::nullopt, mm);
+                const auto fB = pa.criarPastaAcervo("B", std::nullopt, mm);
+                const auto aLogo = pa.criarPastaAcervo("Logo", fA, mm);
+                const auto bLogo = pa.criarPastaAcervo("Logo", fB, mm);
+                const auto aSolta = pa.criarPastaAcervo("Solta", fA, mm);
+                const auto m1 = novo(raizAj.getChildFile("merge/m1.wav"));
+                const auto m2 = novo(raizAj.getChildFile("merge/m2.wav"));
+                const auto m3 = novo(raizAj.getChildFile("merge/m3.wav"));
+                const auto m4 = novo(raizAj.getChildFile("merge/m4.wav"));
+                pa.adicionarItensAPasta({m1}, fA);
+                pa.adicionarItensAPasta({m2}, aLogo);
+                pa.adicionarItensAPasta({m3}, bLogo);
+                pa.adicionarItensAPasta({m4}, aSolta);
+                auto pastaNoMapa = [&](const std::string& item) {
+                    auto st = reg.prepare("SELECT p.id, p.nome, COALESCE(p.pasta_pai_id, '') FROM acervo_item_pasta aip "
+                                          "JOIN acervo_pasta p ON p.id = aip.pasta_id WHERE aip.item_id = ? AND aip.mapa_id = ?");
+                    st.bind(1, Value::of(item));
+                    st.bind(2, Value::of(mm));
+                    struct R { std::string id, nome, pai; };
+                    R r;
+                    if (st.step()) r = {st.columnText(0), st.columnText(1), st.columnText(2)};
+                    return r;
+                };
+                checar(pa.podeMesclarPastas(fA, fB) && !pa.podeMesclarPastas(fA, aLogo) && !pa.podeMesclarPastas(fA, fA),
+                       "folder MERGE: allowed between siblings; blocked into its own subfolder or itself");
+                const auto planoPastas = pa.planoDeMesclaPastas(fA, fB, {});
+                checar(planoPastas.size() == 1 && planoPastas[0].alvoId == bLogo && planoPastas[0].arquivos == 1,
+                       "folder MERGE: conflict list shows the same-name subfolder (Logo -> Logo, 1 file)");
+                checar(pa.mesclarPastas(fA, fB, {}) == 2, "folder MERGE: 2 files merged (A and A/Logo); A/Solta moves whole, with its file");
+                checar(pastaNoMapa(m1).id == fB && pastaNoMapa(m2).id == bLogo && pastaNoMapa(m3).id == bLogo,
+                       "folder MERGE: files land in the target and in the target's same-name subfolder");
+                checar(pastaNoMapa(m4).nome == "Solta" && pastaNoMapa(m4).pai == fB, "folder MERGE: a subfolder without conflict moves under the target");
+                int sobrou = 0;
+                {
+                    auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE id IN (?, ?)");
+                    st.bind(1, Value::of(fA));
+                    st.bind(2, Value::of(aLogo));
+                    if (st.step()) sobrou = st.columnInt(0);
+                }
+                checar(sobrou == 0, "folder MERGE: the source folder (and its merged subfolder) is gone");
             }
 
             // 6) mapa ORIGINAL nunca recebe proposta
@@ -5064,6 +5153,7 @@ int rodarLoteSelfTest() {
 
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
+    rodarSnapshotsFicha();
     rodarTestesMerge(checar);
     rodarTestesLoteAjustes(checar);
     rodarTestesConexaoLeitura(checar);

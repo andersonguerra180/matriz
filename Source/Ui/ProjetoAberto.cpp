@@ -3549,6 +3549,111 @@ int ProjetoAberto::mesclarProposta(const std::string& raizId, const std::string&
     }
 }
 
+bool ProjetoAberto::podeMesclarPastas(const std::string& origemId, const std::string& alvoId) const {
+    if (somenteLeitura_ || !projeto_ || origemId.empty() || alvoId.empty() || origemId == alvoId) return false;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        if (mapaId.empty() || mapaId == kMapaOriginal || mapaId != mapaDaPasta(db, alvoId)) return false;
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        std::vector<const PastaLinha*> sub;
+        descendentes(v, origemId, sub);
+        for (const auto* p : sub) if (p->id == alvoId) return false;  // alvo dentro da origem
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<ProjetoAberto::LinhaMescla> ProjetoAberto::planoDeMesclaPastas(const std::string& origemId, const std::string& alvoId,
+                                                                          const std::map<std::string, bool>& decisoes) const {
+    std::vector<LinhaMescla> out;
+    if (!projeto_ || !podeMesclarPastas(origemId, alvoId)) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        auto itensDireto = [&](const std::string& pastaId) {
+            auto st = db.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?");
+            st.bind(1, matriz::db::Value::of(pastaId));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            return st.step() ? st.columnInt(0) : 0;
+        };
+        std::function<void(const std::string&, const std::string&)> rec = [&](const std::string& orig, const std::string& alvo) {
+            for (const auto& c : v) {
+                if (c.pai != orig) continue;
+                const PastaLinha* par = nullptr;
+                for (const auto& x : v)
+                    if (x.pai == alvo && x.id != c.id &&
+                        juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (!par) continue;
+                LinhaMescla l;
+                l.propostaId = c.id;
+                l.caminhoProposta = caminhoDaPastaNaLista(v, c.id);
+                l.alvoId = par->id;
+                l.caminhoAlvo = caminhoDaPastaNaLista(v, par->id);
+                l.arquivos = itensDireto(c.id);
+                auto it = decisoes.find(c.id);
+                l.mesclar = it == decisoes.end() ? true : it->second;
+                out.push_back(l);
+                if (l.mesclar) rec(c.id, par->id);
+            }
+        };
+        rec(origemId, alvoId);
+    } catch (...) {}
+    return out;
+}
+
+int ProjetoAberto::mesclarPastas(const std::string& origemId, const std::string& alvoId, const std::map<std::string, bool>& decisoes) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return -1; }
+    if (!projeto_ || !podeMesclarPastas(origemId, alvoId)) return -1;
+    if (pastaTemArquivosNoMain(origemId) || pastaTemArquivosNoMain(alvoId)) {
+        avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
+        return -1;
+    }
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        registrarUndoSnapshotMapa("Merge Folders", mapaId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        int movidos = 0;
+        db.exec("BEGIN IMMEDIATE");
+        std::function<void(const std::string&, const std::string&)> mesclar = [&](const std::string& orig, const std::string& alvo) {
+            {
+                auto st = db.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?");
+                st.bind(1, Value::of(orig));
+                st.bind(2, Value::of(mapaId));
+                if (st.step()) movidos += st.columnInt(0);
+            }
+            // O item que já está no alvo fica como está (UPDATE OR IGNORE); o resto da origem é descartado.
+            db.run("UPDATE OR IGNORE acervo_item_pasta SET pasta_id = ? WHERE pasta_id = ? AND mapa_id = ?",
+                   {Value::of(alvo), Value::of(orig), Value::of(mapaId)});
+            db.run("DELETE FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?", {Value::of(orig), Value::of(mapaId)});
+            for (const auto& c : v) {
+                if (c.pai != orig) continue;
+                const PastaLinha* par = nullptr;
+                auto it = decisoes.find(c.id);
+                const bool querMesclar = it == decisoes.end() ? true : it->second;
+                if (querMesclar)
+                    for (const auto& x : v)
+                        if (x.pai == alvo && x.id != c.id &&
+                            juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (par) mesclar(c.id, par->id);
+                else db.run("UPDATE acervo_pasta SET pasta_pai_id = ? WHERE id = ?", {Value::of(alvo), Value::of(c.id)});
+            }
+            db.run("DELETE FROM acervo_pasta WHERE id = ?", {Value::of(orig)});
+        };
+        mesclar(origemId, alvoId);
+        db.exec("COMMIT");
+        return movidos;
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return -1;
+    }
+}
+
 int ProjetoAberto::organizarItensSoltosDasPastasComRegra(const std::string& mapaId) {
     if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal || organizandoAuto_) return 0;
     // Checagem barata: uma consulta só, e só pastas com regra E com itens diretos.
