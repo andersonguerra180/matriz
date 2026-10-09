@@ -1681,9 +1681,13 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
     // de background (ver IntakeWorkspaceComponent::aplicarXAosSelecionados),
     // então o disparo do evento amplo sempre volta pra message thread via
     // callAsync, nunca direto.
+    // Evento de LOTE com os ids (a grade atualiza só esses itens, num refiltro só); o amplo ("" = recarregar
+    // o catálogo inteiro) fica só para lotes enormes.
     bool ehData = camposEValores.front().first == "ano";
-    juce::MessageManager::callAsync([ehData] {
-        EventBus::obterInstancia().dispararItemAlterado("", ehData ? "metadado_data" : "metadado");
+    juce::MessageManager::callAsync([ehData, itemIds] {
+        const std::string tipo = ehData ? "metadado_data" : "metadado";
+        if (itemIds.size() <= 2000) EventBus::obterInstancia().dispararItensAlterados(itemIds, tipo);
+        else EventBus::obterInstancia().dispararItemAlterado("", tipo);
     });
 }
 

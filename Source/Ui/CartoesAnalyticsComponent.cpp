@@ -43,7 +43,11 @@ CartoesAnalyticsComponent::~CartoesAnalyticsComponent() {
 }
 
 // Qualquer mudança de item / marcação / mapa ativo pede releitura, agrupada (não a cada evento).
-void CartoesAnalyticsComponent::aoItemAlterado(const EventoItemAlterado&) {
+void CartoesAnalyticsComponent::aoItemAlterado(const EventoItemAlterado& e) {
+    // Estes campos não mudam nenhum número dos cards: não vale reler o registro por eles. "metadado" NÃO entra:
+    // CONTENT (collection_type) e SOURCE MEDIA mudam o NEEDS ATTENTION, e o evento não diz qual campo foi.
+    const auto& t = e.tipoAlteracao;
+    if (t == "tags" || t == "titulo" || t == "marcado_revisado" || t == "publicacao") return;
     if (!isTimerRunning()) startTimer(500);
 }
 void CartoesAnalyticsComponent::timerCallback() {

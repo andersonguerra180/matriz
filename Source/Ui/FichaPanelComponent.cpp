@@ -22,6 +22,7 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 #include "ProgressoGlobal.h"
+#include "EventBus.h"
 #include <AssetsBinaryData.h>
 #include <exiv2/exiv2.hpp>
 
@@ -5354,6 +5355,14 @@ private:
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacao = false;
         try { dbLote.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+        // Eventos por item (salvarMetadado/tags) viram UM evento de lote no fim; o guard garante o
+        // finalizarLote() mesmo se algo lançar, para o EventBus nunca ficar preso em modo lote.
+        struct LoteEventos {
+            bool ativo = true;
+            LoteEventos() { EventBus::obterInstancia().iniciarLote(); }
+            void fim() { if (ativo) { ativo = false; EventBus::obterInstancia().finalizarLote(); } }
+            ~LoteEventos() { fim(); }
+        } loteEventos;
         std::map<std::string, std::string> tagCanonica;  // grafia do projeto, resolvida uma vez por tag
         for (const auto& id : itemIds_) {
             try {
@@ -5418,6 +5427,7 @@ private:
             sucessos = 0;
             falhas = static_cast<int>(itemIds_.size());
         }
+        loteEventos.fim();
         projeto_.finalizarGrupoUndo();
         juce::Logger::writeToLog("[ficha-lote] campo='" + juce::String(linha->campoId) + "' aplicado em " +
                                   juce::String(sucessos) + " item(ns), " + juce::String(falhas) +
@@ -5521,6 +5531,12 @@ private:
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacaoGeo = false;
         try { dbGeoLote.exec("BEGIN IMMEDIATE"); emTransacaoGeo = true; } catch (...) {}
+        struct LoteEventosGeo {  // idem aplicarCampoAgora: eventos por item saem como um evento de lote
+            bool ativo = true;
+            LoteEventosGeo() { EventBus::obterInstancia().iniciarLote(); }
+            void fim() { if (ativo) { ativo = false; EventBus::obterInstancia().finalizarLote(); } }
+            ~LoteEventosGeo() { fim(); }
+        } loteEventosGeo;
         for (const auto& id : itemIds_) {
             try {
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
@@ -5565,6 +5581,7 @@ private:
             }
         }
         if (emTransacaoGeo) commitOuReverter(dbGeoLote, itemIds_);
+        loteEventosGeo.fim();
         projeto_.finalizarGrupoUndo();
         if (ehLote) {
             ProgressoGlobal::obterInstancia().concluirTarefa(
