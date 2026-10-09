@@ -362,6 +362,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         // Item "CONTENT — imagens também podem ser documentos": uma imagem
         // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
         // classificação semântica de CONTENT, não altera o tipo técnico
@@ -387,6 +388,12 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"PDF", "PDF"},
         {"Doc/Docx", "Doc/Docx"},
         {"Markdown", "Markdown"},
+        {"Website", "Website"},
+        {"DAW", "DAW"},
+        {"NLE", "NLE"},
+        {"CSV", "CSV"},
+        {"MTZ Collection", juce::String::fromUTF8("Coleção MTZ")},
+        {"BKM Catalog", juce::String::fromUTF8("Catálogo BKM")},
         {"Hidden", juce::String::fromUTF8("Invisível")}
     };
     return mapa;
@@ -417,10 +424,11 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
                 "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D", "Document"};
+                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Document"};
     } else if (cat == MediaCategory::Docs) {
         keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
-                "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown"};
+                "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+                "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"};
     } else {
         std::vector<juce::String> res;
         for (auto c : {MediaCategory::Audio, MediaCategory::Video, MediaCategory::Image, MediaCategory::Docs}) {

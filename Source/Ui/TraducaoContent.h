@@ -63,6 +63,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
@@ -82,7 +83,13 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Rar", "Rar"},
         {"PDF", "PDF"},
         {"Doc/Docx", "Doc/Docx"},
-        {"Markdown", "Markdown"}
+        {"Markdown", "Markdown"},
+        {"Website", "Website"},
+        {"DAW", "DAW"},
+        {"NLE", "NLE"},
+        {"CSV", "CSV"},
+        {"MTZ Collection", juce::String::fromUTF8("Coleção MTZ")},
+        {"BKM Catalog", juce::String::fromUTF8("Catálogo BKM")}
     };
     return mapa;
 }

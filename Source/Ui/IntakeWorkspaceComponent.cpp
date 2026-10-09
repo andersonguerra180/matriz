@@ -1607,11 +1607,12 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         }},
         { "IMAGE", {
             "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
-            "Image Edit Project", "Graphics", "Logo", "3D"
+            "Image Edit Project", "Graphics", "Logo", "3D", "YouTube Thumbnail"
         }},
         { "DOCUMENT", {
             "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report",
-            "Reference", "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown"
+            "Reference", "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+            "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
         }}
     };
     return kVocab;

@@ -1637,10 +1637,11 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
         "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-        "Graphics", "Logo", "3D",
+        "Graphics", "Logo", "3D", "YouTube Thumbnail",
         // Docs
         "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
-        "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown"
+        "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+        "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
     };
 
     std::map<std::string, int> contagens;
