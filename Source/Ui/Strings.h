@@ -969,6 +969,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"backup.secao_destino", "BACKUP VERSIONS (MAIN & CLONES)"},
         {"backup.secao_organizacao", "FOLDER STRUCTURE"},
         {"backup.secao_opcoes", "OPTIONS"},
+        {"backup.secao_assets", "ASSETS"},
         {"backup.origem_todos_projeto", "All assets in project"},
         {"backup.origem_todos_catalogo", "All assets in catalog"},
         {"backup.origem_intake", "Intake assets"},

@@ -791,3 +791,12 @@ Um commit por item (A `07da593`, B `983a6c8`, C `9796ab7`, D `c1d356d`, E `e5778
   Fase 1 dos nomes canônicos, anterior a esta branch). ASan/TSan NÃO rodados nesta branch (não mexe em
   `inMemoryRelinkedPaths_`, sets de marcação nem callbacks com `this`; callbacks novos capturam
   SafePointer ou só o ponteiro do banco). Telas conferidas por PNG (`createComponentSnapshot`).
+
+## Aba BACKUP — layout em fluxo (2026-10-08)
+
+Só layout (BackupWorkspaceComponent.cpp: resized/paint/ConfigContainerComponent). ASSETS (prévia) à esquerda com
+título; SELECTION/VERSIONS/STRUCTURE/OPTIONS à direita (mesma largura de antes); rodapé virou card: export à
+esquerda (PUBLISH · SYNC · dropdown [×] · EXPORT), botão principal à direita. Setas (tk.acento) e números 1–6 só
+desenhados nos vãos, só na Coleção (Catálogo sem fluxo). Setas entre cards no ConfigContainer (rolam junto);
+ASSETS→SELECTION e OPTIONS→botão no paint do workspace. Snapshot: test-output/backup_config_locked.png.
+Não verificado no app real: tema escuro, janela pequena, backup/export/sync rodando.

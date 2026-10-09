@@ -1050,6 +1050,39 @@ private:
     PreviaLista::ModoPrioridade modoAtivo_ = PreviaLista::ModoPrioridade::Nenhum;
 };
 
+namespace {
+// Setas e números do fluxo da aba BACKUP (ASSETS 1 → SELECTION 2 → VERSIONS 3 → STRUCTURE 4 → OPTIONS 5 → botão 6).
+// Só desenho: ficam nos vãos entre os cards, nunca por cima de controle.
+constexpr int kLarguraNumeroFluxo = 22;  // espaço reservado à esquerda do título de cada etapa
+
+void desenharSetaFluxo(juce::Graphics& g, juce::Point<float> de, juce::Point<float> ate) {
+    const auto dir = ate - de;
+    const float comprimento = dir.getDistanceFromOrigin();
+    if (comprimento < 4.0f) return;
+    const auto unit = dir / comprimento;
+    const juce::Point<float> normal(-unit.y, unit.x);
+    const float ponta = std::min(6.0f, comprimento * 0.5f);
+    const auto base = ate - unit * ponta;
+    g.setColour(tema().acento);
+    g.drawLine(juce::Line<float>(de, ate), 2.25f);
+    juce::Path v;
+    v.startNewSubPath(base + normal * (ponta * 0.8f));
+    v.lineTo(ate);
+    v.lineTo(base - normal * (ponta * 0.8f));
+    g.strokePath(v, juce::PathStrokeType(2.25f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+}
+
+void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numero) {
+    if (area.isEmpty()) return;
+    const auto c = area.toFloat().withSizeKeepingCentre(18.0f, 18.0f);
+    g.setColour(tema().acento);
+    g.fillEllipse(c);
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.drawText(juce::String(numero), c, juce::Justification::centred, false);
+}
+}  // namespace
+
 class BackupWorkspaceComponent::ConfigContainerComponent : public juce::Component {
 public:
     explicit ConfigContainerComponent(BackupWorkspaceComponent& owner) : owner_(owner) {}
@@ -1062,7 +1095,18 @@ public:
             g.setColour(tk.borda);
             g.drawRoundedRectangle(cartao.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
         }
+        if (!fluxo_) return;
+        // Números 2-5 antes dos títulos e setas verticais curtas nos vãos, perto da borda direita (rolam junto).
+        for (size_t i = 0; i < numeros_.size(); ++i) desenharNumeroFluxo(g, numeros_[i], static_cast<int>(i) + 2);
+        const float x = static_cast<float>(getWidth() - 22);
+        for (size_t i = 0; i + 1 < cartoes_.size(); ++i)
+            desenharSetaFluxo(g, {x, static_cast<float>(cartoes_[i].getBottom()) + 1.0f},
+                              {x, static_cast<float>(cartoes_[i + 1].getY()) - 1.0f});
     }
+
+    // As setas ASSETS -> SELECTION e OPTIONS -> botão são do dono: acompanham a rolagem da coluna.
+    void moved() override { owner_.repaint(); }
+    const std::vector<juce::Rectangle<int>>& cartoes() const { return cartoes_; }
 
     void resized() override {
         const auto& tk = tema();
@@ -1080,7 +1124,9 @@ public:
         const int alturaLinhaToggle = 22;
         const int alturaCabecalhoSecao = 20;
         const int numCartoes = isCatalogMode ? 2 : 4;
-        const int gapCartoes = 8;
+        fluxo_ = !isCatalogMode;  // setas/números do fluxo só na Coleção (os 4 cards)
+        numeros_.clear();
+        const int gapCartoes = fluxo_ ? 18 : 8;  // vão com espaço para a seta entre os cards
         const int espacosTotais = (numCartoes - 1) * gapCartoes;
         const int availableForCards = totalH - espacosTotais;
 
@@ -1133,6 +1179,12 @@ public:
             }
         }
 
+        // Linha do título: com o fluxo, o número da etapa ocupa o começo e o título vem logo depois.
+        auto linhaTitulo = [&](juce::Rectangle<int> linha) {
+            if (fluxo_) numeros_.push_back(linha.removeFromLeft(kLarguraNumeroFluxo));
+            return linha;
+        };
+
         int currY = 0;
         auto abrirCartao = [&](int altura) {
             auto cartao = juce::Rectangle<int>(0, currY, largura, altura);
@@ -1144,7 +1196,7 @@ public:
         // 1. SOURCE (Collection Mode only)
         if (!isCatalogMode && owner_.comboSource_) {
             auto dentro = abrirCartao(card1H);
-            if (owner_.labelSource_) owner_.labelSource_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelSource_) owner_.labelSource_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             owner_.comboSource_->setBounds(dentro.removeFromTop(alturaControle));
             if (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible()) {
@@ -1160,7 +1212,7 @@ public:
         // 2. DESTINATION (Both Collection & Catalog Modes)
         if (owner_.listVaults_) {
             auto dentro = abrirCartao(card2H);
-            if (owner_.labelDest_) owner_.labelDest_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelDest_) owner_.labelDest_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
 
             int alturaDestInfo = 20;
@@ -1187,7 +1239,7 @@ public:
         // 3. ORGANIZATION (Collection Mode only)
         if (!isCatalogMode && owner_.comboOrg_) {
             auto dentro = abrirCartao(card3H);
-            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             if (owner_.togglePreservarEstrutura_) owner_.togglePreservarEstrutura_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleUsarEstruturaMapa_) owner_.toggleUsarEstruturaMapa_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
@@ -1221,7 +1273,7 @@ public:
         if (owner_.toggleVerificarChecksum_) {
             int lastCardH = std::max(40, totalH - currY);
             auto dentro = abrirCartao(lastCardH);
-            if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
@@ -1250,6 +1302,8 @@ public:
 private:
     BackupWorkspaceComponent& owner_;
     std::vector<juce::Rectangle<int>> cartoes_;
+    std::vector<juce::Rectangle<int>> numeros_;  // número de cada etapa, na ordem dos cards
+    bool fluxo_ = false;
     int alturaCalculada_ = 500;
 };
 
@@ -1969,6 +2023,12 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*labelResumo_);
 
+    labelAssets_ = std::make_unique<juce::Label>();  // mesmo estilo dos títulos dos cards da coluna
+    labelAssets_->setText(matriz::i18n::t("backup.secao_assets"), juce::dontSendNotification);
+    labelAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+    labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    addAndMakeVisible(*labelAssets_);
+
     barraLegenda_ = std::make_unique<LegendaStatusComponent>();
     barraLegenda_->aoMudarFiltro = [this](PreviaLista::ModoPrioridade modo) {
         if (listPrevia_) listPrevia_->definirModoPrioridade(modo);
@@ -2231,6 +2291,11 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelSource_->setTooltip(isPt ? juce::String::fromUTF8("Seleção dos itens para o backup") : "Selection of assets to backup");
         labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (labelAssets_) {
+        labelAssets_->setText(matriz::i18n::t("backup.secao_assets"), juce::dontSendNotification);
+        labelAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (comboSource_) {
         comboSource_->setTooltip(isPt ? juce::String::fromUTF8("Escolha quais itens incluir nesta execução do backup") : "Choose which assets to include in this backup run");
@@ -5802,6 +5867,7 @@ void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
     if (configViewport_) configViewport_->setVisible(mostrar);
     if (listPreviaViewport_) listPreviaViewport_->setVisible(mostrar);
     if (labelResumo_) labelResumo_->setVisible(mostrar);
+    if (labelAssets_) labelAssets_->setVisible(mostrar);
     if (barraLegenda_) barraLegenda_->setVisible(mostrar && projeto_.projeto().modo() != matriz::model::Modo::Catalogo);
     if (comboColecoes_) comboColecoes_->setVisible(mostrar && comboSource_->getSelectedId() == 5);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setVisible(mostrar && comboOrg_->getSelectedId() == 5);
@@ -5814,18 +5880,49 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
     g.fillAll(bg);
 
-    // Cabeçalho e rodapé como faixas, separados por fio de 1px
+    // Cabeçalho como faixa, separado por fio de 1px; o rodapé virou um card (EXPORT + botão principal).
     g.setColour(tk.borda);
     if (!faixaCabecalho_.isEmpty())
         g.fillRect(faixaCabecalho_.getX(), faixaCabecalho_.getBottom() - 1, faixaCabecalho_.getWidth(), 1);
-    if (!faixaRodape_.isEmpty())
-        g.fillRect(faixaRodape_.getX(), faixaRodape_.getY(), faixaRodape_.getWidth(), 1);
+    if (!cartaoRodape_.isEmpty() && estado_ != Estado::Running) {
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(cartaoRodape_.toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(cartaoRodape_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+    }
 
     if (!cartaoPrevia_.isEmpty() && estado_ == Estado::Config) {
         g.setColour(tk.painel);
         g.fillRoundedRectangle(cartaoPrevia_.toFloat(), tk.raioMedio);
         g.setColour(tk.borda);
         g.drawRoundedRectangle(cartaoPrevia_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+    }
+
+    // Fluxo: 1 (ASSETS) -> 2 (SELECTION) ... 5 (OPTIONS) -> 6 (botão principal). As setas entre os cards da coluna
+    // ficam no ConfigContainerComponent (rolam junto); aqui, as que ligam a coluna ao ASSETS e ao botão.
+    if (estado_ == Estado::Config && !numeroAssets_.isEmpty()) {
+        desenharNumeroFluxo(g, numeroAssets_, 1);
+        desenharNumeroFluxo(g, numeroBotao_, 6);
+        if (configViewport_ && configContainer_ && configViewport_->isVisible()) {
+            const auto vista = configViewport_->getBounds();
+            const auto deslocamento = configViewport_->getPosition() - configViewport_->getViewPosition();
+            const auto& cartoesColuna = configContainer_->cartoes();
+            if (!cartoesColuna.empty()) {  // ASSETS -> SELECTION, na altura do título do ASSETS
+                const auto selecao = cartoesColuna.front() + deslocamento;
+                const int y = numeroAssets_.getCentreY();
+                if (y >= std::max(selecao.getY(), vista.getY()) + 4 && y <= std::min(selecao.getBottom(), vista.getBottom()) - 4)
+                    desenharSetaFluxo(g, {static_cast<float>(cartaoPrevia_.getRight()) + 1.0f, static_cast<float>(y)},
+                                      {static_cast<float>(selecao.getX()) - 1.0f, static_cast<float>(y)});
+            }
+            if (cartoesColuna.size() >= 4 && btnStartBackup_ && btnStartBackup_->isVisible()) {  // OPTIONS -> botão
+                const auto opcoes = cartoesColuna.back() + deslocamento;
+                const auto botao = btnStartBackup_->getBounds();
+                if (opcoes.getBottom() <= vista.getBottom() && opcoes.getBottom() > vista.getY()) {  // OPTIONS à vista
+                    const float x = static_cast<float>(botao.getCentreX());
+                    desenharSetaFluxo(g, {x, static_cast<float>(opcoes.getBottom()) + 1.0f}, {x, static_cast<float>(botao.getY()) - 1.0f});
+                }
+            }
+        }
     }
 
     if (!cartaoCentral_.isEmpty()) {
@@ -5855,13 +5952,17 @@ void BackupWorkspaceComponent::resized() {
         labelTitulo_->setBounds(rCabecalho);
     }
 
-    // ---- Rodapé ----
+    // ---- Rodapé: card único na largura do conteúdo (mesmas bordas do card ASSETS e da coluna de configuração) ----
     faixaRodape_ = area.removeFromBottom(72);
-    auto botoes = faixaRodape_.reduced(tk.espacoGrande * 2, tk.espacoGrande);
+    cartaoRodape_ = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
+    auto botoes = cartaoRodape_.reduced(tk.espacoPainel + 2, 0);  // mesmo recuo interno do card ASSETS
     const int alturaBotao = 40;
     botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
+    numeroAssets_ = {};
+    numeroBotao_ = {};
 
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    const bool fluxo = !isCatalogMode;  // setas e números do fluxo (Coleção)
     bool temItens = !plano_.itens.empty();
     if (isCatalogMode) {
         auto colecoes = projeto_.listarColecoesLinkadas();
@@ -5911,6 +6012,10 @@ void BackupWorkspaceComponent::resized() {
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         btnStartBackup_->setBounds(botoes.removeFromRight(170));
         btnStartBackup_->setVisible(true);
+        if (fluxo && estado_ == Estado::Config) {  // número 6 no canto superior esquerdo do botão principal (fora dele)
+            auto slot = botoes.removeFromRight(kLarguraNumeroFluxo + 2);
+            numeroBotao_ = juce::Rectangle<int>(slot.getX(), btnStartBackup_->getY() - 4, kLarguraNumeroFluxo, kLarguraNumeroFluxo);
+        }
         botoes.removeFromRight(tk.espacoPainel);
         if (btnRebuildStatus_) {
             const bool emRebuild = projeto_.emRebuild();
@@ -5920,14 +6025,25 @@ void BackupWorkspaceComponent::resized() {
                 botoes.removeFromRight(tk.espacoPainel);
             }
         }
+        // Grupo de export à esquerda do card, nesta ordem: PUBLISH TO HTML · BACKUP SYNC... · dropdown [×] · EXPORT.
         // EXPORT unificado: [dropdown][×][EXPORT] no lugar dos 4 botões de saída. Os antigos
         // seguem existindo (escondidos) e são disparados pelas opções do dropdown.
         for (auto* antigo : {btnExportar_.get(), btnExportZip_.get(), btnSendToPrint_.get(), btnExportWatermark_.get(), btnExportJanela_.get()})
             if (antigo) antigo->setVisible(false);
+        if (btnPublishHtml_) {
+            btnPublishHtml_->setBounds(botoes.removeFromLeft(175));
+            btnPublishHtml_->setVisible(true);
+            if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
+        }
+        botoes.removeFromLeft(tk.espacoPainel);
+        if (btnSyncDestino_) {
+            btnSyncDestino_->setBounds(botoes.removeFromLeft(190));
+            btnSyncDestino_->setVisible(true);
+            botoes.removeFromLeft(tk.espacoPainel);
+        }
         if (btnExportUnificado_ && comboExportOrigem_) {
-            btnExportUnificado_->setBounds(botoes.removeFromRight(100));
-            btnExportUnificado_->setVisible(true);
-            botoes.removeFromRight(tk.espacoPainel);
+            comboExportOrigem_->setBounds(botoes.removeFromLeft(230));
+            comboExportOrigem_->setVisible(true);
             const int opcaoExport = comboExportOrigem_->getSelectedId();
             juce::TextButton* limpar = opcaoExport == kExpZip ? btnLimparZip_.get()
                                      : opcaoExport == kExpPrint ? btnLimparPrint_.get()
@@ -5935,23 +6051,13 @@ void BackupWorkspaceComponent::resized() {
             for (auto* l : {btnLimparZip_.get(), btnLimparPrint_.get(), btnLimparWatermark_.get()})
                 if (l && l != limpar) l->setVisible(false);
             if (limpar) {
-                limpar->setBounds(botoes.removeFromRight(26));
+                botoes.removeFromLeft(tk.espacoPequeno);
+                limpar->setBounds(botoes.removeFromLeft(26));
                 limpar->setVisible(true);
-                botoes.removeFromRight(tk.espacoPequeno);
             }
-            comboExportOrigem_->setBounds(botoes.removeFromRight(230));
-            comboExportOrigem_->setVisible(true);
-            botoes.removeFromRight(tk.espacoPainel);
-        }
-        if (btnSyncDestino_) {
-            btnSyncDestino_->setBounds(botoes.removeFromRight(190));
-            btnSyncDestino_->setVisible(true);
-        }
-        botoes.removeFromRight(tk.espacoPainel);
-        if (btnPublishHtml_) {
-            btnPublishHtml_->setBounds(botoes.removeFromRight(175));
-            btnPublishHtml_->setVisible(true);
-            if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
+            botoes.removeFromLeft(tk.espacoPainel);
+            btnExportUnificado_->setBounds(botoes.removeFromLeft(100));
+            btnExportUnificado_->setVisible(true);
         }
     }
 
@@ -5990,12 +6096,13 @@ void BackupWorkspaceComponent::resized() {
         return;
     }
 
-    // ---- Config: duas colunas justificadas à esquerda, com prévia expandida até a direita ----
+    // ---- Config: ASSETS (prévia) à esquerda ocupando o resto; coluna de configuração à direita, mesma largura ----
     auto corpo = area.reduced(tk.espacoGrande, tk.espacoMedio);
+    corpo.removeFromBottom(tk.espacoGrande);  // vão até o card inferior (seta OPTIONS -> botão principal)
 
     const int larguraConfig = std::min(420, std::max(340, static_cast<int>(corpo.getWidth() * 0.32f)));
-    auto colunaConfig = corpo.removeFromLeft(larguraConfig);
-    corpo.removeFromLeft(tk.espacoMedio);
+    auto colunaConfig = corpo.removeFromRight(larguraConfig);
+    corpo.removeFromRight(28);  // vão entre ASSETS e a coluna (seta ASSETS -> SELECTION)
     auto colunaPrevia = corpo;
 
     if (configViewport_ && configContainer_) {
@@ -6010,6 +6117,14 @@ void BackupWorkspaceComponent::resized() {
     const int padCartao = tk.espacoPainel + 2;
     const int alturaCabecalhoSecao = 26;
     auto dentroPrevia = colunaPrevia.reduced(padCartao, padCartao);
+
+    if (labelAssets_) {  // título ASSETS, mesma altura dos títulos dos cards da coluna
+        auto linhaTitulo = dentroPrevia.removeFromTop(20);
+        if (fluxo) numeroAssets_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+        labelAssets_->setBounds(linhaTitulo);
+        labelAssets_->setVisible(true);
+        dentroPrevia.removeFromTop(2);
+    }
 
     labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);

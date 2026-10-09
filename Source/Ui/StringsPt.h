@@ -984,6 +984,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"backup.secao_destino", "VERSÕES DE BACKUP (MAIN E CLONES)"},
         {"backup.secao_organizacao", "ESTRUTURA DE PASTAS"},
         {"backup.secao_opcoes", "OPÇÕES"},
+        {"backup.secao_assets", "ATIVOS"},
         {"backup.origem_todos_projeto", "Todos os itens do projeto"},
         {"backup.origem_todos_catalogo", "Todos os itens do catálogo"},
         {"backup.origem_intake", "Itens da aba Ingestão"},
