@@ -63,6 +63,7 @@ public:
     std::function<std::set<std::string>()> obterSelecaoAtualDoGrid;
 
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
     bool keyPressed(const juce::KeyPress& tecla) override;

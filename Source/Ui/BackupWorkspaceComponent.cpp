@@ -1055,21 +1055,72 @@ namespace {
 // Só desenho: ficam nos vãos entre os cards, nunca por cima de controle.
 constexpr int kLarguraNumeroFluxo = 22;  // espaço reservado à esquerda do título de cada etapa
 
-void desenharSetaFluxo(juce::Graphics& g, juce::Point<float> de, juce::Point<float> ate) {
-    const auto dir = ate - de;
-    const float comprimento = dir.getDistanceFromOrigin();
-    if (comprimento < 4.0f) return;
-    const auto unit = dir / comprimento;
-    const juce::Point<float> normal(-unit.y, unit.x);
-    const float ponta = std::min(6.0f, comprimento * 0.5f);
-    const auto base = ate - unit * ponta;
-    g.setColour(tema().acento);
-    g.drawLine(juce::Line<float>(de, ate), 2.25f);
+// Estilo "contorno": cards e setas com o mesmo traço; a seta nasce do contorno do card (sem emenda) e é vazada.
+juce::Colour corContornoFluxo() { return tema().textoSecundario.withAlpha(0.6f); }
+constexpr float kTracoFluxo = 1.5f;
+
+void desenharCartaoFluxo(juce::Graphics& g, juce::Rectangle<int> cartao) {
+    const auto& tk = tema();
+    g.setColour(tk.painel);
+    g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
+    g.setColour(corContornoFluxo());
+    g.drawRoundedRectangle(cartao.toFloat().reduced(kTracoFluxo * 0.5f), tk.raioMedio, kTracoFluxo);
+}
+
+// Seta vazada horizontal saindo da borda direita de `cartao` (o contorno do card se abre na haste) até xPonta.
+void desenharSetaVazadaSaindoDaDireita(juce::Graphics& g, juce::Rectangle<int> cartao, float y, float xPonta) {
+    const float x0 = static_cast<float>(cartao.getRight()) - kTracoFluxo;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (xPonta - x0) * 0.5f);
+    if (xPonta - x0 < 12.0f) return;
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x0, y - haste);
+    contorno.lineTo(xPonta - compCabeca, y - haste);
+    contorno.lineTo(xPonta - compCabeca, y - cabeca);
+    contorno.lineTo(xPonta, y);
+    contorno.lineTo(xPonta - compCabeca, y + cabeca);
+    contorno.lineTo(xPonta - compCabeca, y + haste);
+    contorno.lineTo(x0, y + haste);
+    juce::Path preenchimento(contorno);
+    preenchimento.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(preenchimento);  // cobre também o trecho do contorno do card onde a haste se abre
+    g.setColour(corContornoFluxo());
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+}
+
+// "Ponta de balão": V na borda de baixo de `cartao`, centrado em x, apontando para baixo.
+void desenharPontaBalao(juce::Graphics& g, juce::Rectangle<int> cartao, float x) {
+    const float b = static_cast<float>(cartao.getBottom()) - kTracoFluxo, meia = 11.0f, prof = 10.0f;
     juce::Path v;
-    v.startNewSubPath(base + normal * (ponta * 0.8f));
-    v.lineTo(ate);
-    v.lineTo(base - normal * (ponta * 0.8f));
-    g.strokePath(v, juce::PathStrokeType(2.25f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    v.startNewSubPath(x - meia, b);
+    v.lineTo(x, b + prof);
+    v.lineTo(x + meia, b);
+    juce::Path preenchimento(v);
+    preenchimento.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(preenchimento);
+    g.fillRect(juce::Rectangle<float>(x - meia + 1.0f, b - kTracoFluxo, (meia - 1.0f) * 2.0f, kTracoFluxo * 2.0f));
+    g.setColour(corContornoFluxo());
+    g.strokePath(v, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+}
+
+// Seta vazada (fechada) apontando para baixo, de y0 até a ponta em y1.
+void desenharSetaVazadaParaBaixo(juce::Graphics& g, float x, float y0, float y1) {
+    if (y1 - y0 < 8.0f) return;
+    const float haste = 5.0f, cabeca = 11.0f, compCabeca = std::min(10.0f, (y1 - y0) * 0.5f);
+    juce::Path p;
+    p.startNewSubPath(x - haste, y0);
+    p.lineTo(x - haste, y1 - compCabeca);
+    p.lineTo(x - cabeca, y1 - compCabeca);
+    p.lineTo(x, y1);
+    p.lineTo(x + cabeca, y1 - compCabeca);
+    p.lineTo(x + haste, y1 - compCabeca);
+    p.lineTo(x + haste, y0);
+    p.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(p);
+    g.setColour(corContornoFluxo());
+    g.strokePath(p, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
 }
 
 void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numero) {
@@ -1089,19 +1140,25 @@ public:
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        for (const auto& cartao : cartoes_) {
-            g.setColour(tk.painel);
-            g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
-            g.setColour(tk.borda);
-            g.drawRoundedRectangle(cartao.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        if (!fluxo_) {
+            for (const auto& cartao : cartoes_) {
+                g.setColour(tk.painel);
+                g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(cartao.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+            }
+            return;
         }
-        if (!fluxo_) return;
-        // Números 2-5 antes dos títulos e setas verticais curtas nos vãos, perto da borda direita (rolam junto).
+        // Fluxo: cards em contorno; entre um e outro, ponta de balão no de cima + seta vazada até o de baixo,
+        // perto da borda direita (rolam junto). Números 2-5 antes dos títulos.
+        for (const auto& cartao : cartoes_) desenharCartaoFluxo(g, cartao);
+        const float x = static_cast<float>(getWidth() - 34);
+        for (size_t i = 0; i + 1 < cartoes_.size(); ++i) {
+            desenharPontaBalao(g, cartoes_[i], x);
+            desenharSetaVazadaParaBaixo(g, x, static_cast<float>(cartoes_[i].getBottom()) + 13.0f,
+                                        static_cast<float>(cartoes_[i + 1].getY()) - 2.0f);
+        }
         for (size_t i = 0; i < numeros_.size(); ++i) desenharNumeroFluxo(g, numeros_[i], static_cast<int>(i) + 2);
-        const float x = static_cast<float>(getWidth() - 22);
-        for (size_t i = 0; i + 1 < cartoes_.size(); ++i)
-            desenharSetaFluxo(g, {x, static_cast<float>(cartoes_[i].getBottom()) + 1.0f},
-                              {x, static_cast<float>(cartoes_[i + 1].getY()) - 1.0f});
     }
 
     // As setas ASSETS -> SELECTION e OPTIONS -> botão são do dono: acompanham a rolagem da coluna.
@@ -1126,7 +1183,7 @@ public:
         const int numCartoes = isCatalogMode ? 2 : 4;
         fluxo_ = !isCatalogMode;  // setas/números do fluxo só na Coleção (os 4 cards)
         numeros_.clear();
-        const int gapCartoes = fluxo_ ? 18 : 8;  // vão com espaço para a seta entre os cards
+        const int gapCartoes = fluxo_ ? 38 : 8;  // vão com espaço para a ponta de balão + seta entre os cards
         const int espacosTotais = (numCartoes - 1) * gapCartoes;
         const int availableForCards = totalH - espacosTotais;
 
@@ -5884,18 +5941,27 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     g.setColour(tk.borda);
     if (!faixaCabecalho_.isEmpty())
         g.fillRect(faixaCabecalho_.getX(), faixaCabecalho_.getBottom() - 1, faixaCabecalho_.getWidth(), 1);
+    const bool emFluxo = estado_ == Estado::Config && !numeroAssets_.isEmpty();
     if (!cartaoRodape_.isEmpty() && estado_ != Estado::Running) {
-        g.setColour(tk.painel);
-        g.fillRoundedRectangle(cartaoRodape_.toFloat(), tk.raioMedio);
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(cartaoRodape_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        if (emFluxo) {
+            desenharCartaoFluxo(g, cartaoRodape_);
+        } else {
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(cartaoRodape_.toFloat(), tk.raioMedio);
+            g.setColour(tk.borda);
+            g.drawRoundedRectangle(cartaoRodape_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        }
     }
 
     if (!cartaoPrevia_.isEmpty() && estado_ == Estado::Config) {
-        g.setColour(tk.painel);
-        g.fillRoundedRectangle(cartaoPrevia_.toFloat(), tk.raioMedio);
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(cartaoPrevia_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        if (emFluxo) {
+            desenharCartaoFluxo(g, cartaoPrevia_);
+        } else {
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(cartaoPrevia_.toFloat(), tk.raioMedio);
+            g.setColour(tk.borda);
+            g.drawRoundedRectangle(cartaoPrevia_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        }
     }
 
     // Fluxo: 1 (ASSETS) -> 2 (SELECTION) ... 5 (OPTIONS) -> 6 (botão principal). As setas entre os cards da coluna
@@ -5910,17 +5976,9 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
             if (!cartoesColuna.empty()) {  // ASSETS -> SELECTION, na altura do título do ASSETS
                 const auto selecao = cartoesColuna.front() + deslocamento;
                 const int y = numeroAssets_.getCentreY();
-                if (y >= std::max(selecao.getY(), vista.getY()) + 4 && y <= std::min(selecao.getBottom(), vista.getBottom()) - 4)
-                    desenharSetaFluxo(g, {static_cast<float>(cartaoPrevia_.getRight()) + 1.0f, static_cast<float>(y)},
-                                      {static_cast<float>(selecao.getX()) - 1.0f, static_cast<float>(y)});
-            }
-            if (cartoesColuna.size() >= 4 && btnStartBackup_ && btnStartBackup_->isVisible()) {  // OPTIONS -> botão
-                const auto opcoes = cartoesColuna.back() + deslocamento;
-                const auto botao = btnStartBackup_->getBounds();
-                if (opcoes.getBottom() <= vista.getBottom() && opcoes.getBottom() > vista.getY()) {  // OPTIONS à vista
-                    const float x = static_cast<float>(botao.getCentreX());
-                    desenharSetaFluxo(g, {x, static_cast<float>(opcoes.getBottom()) + 1.0f}, {x, static_cast<float>(botao.getY()) - 1.0f});
-                }
+                if (y >= std::max(selecao.getY(), vista.getY()) + 14 && y <= std::min(selecao.getBottom(), vista.getBottom()) - 14)
+                    desenharSetaVazadaSaindoDaDireita(g, cartaoPrevia_, static_cast<float>(y),
+                                                      static_cast<float>(selecao.getX()) - 2.0f);
             }
         }
     }
@@ -5933,6 +5991,22 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     }
 }
 
+// OPTIONS -> botão principal: a ponta de balão fica na borda de baixo do card OPTIONS, que é de um filho (a coluna
+// no viewport) — por isso por cima dos filhos. Só quando o OPTIONS está à vista; a área coberta é o respiro do card.
+void BackupWorkspaceComponent::paintOverChildren(juce::Graphics& g) {
+    if (estado_ != Estado::Config || numeroAssets_.isEmpty() || !configViewport_ || !configContainer_) return;
+    if (!configViewport_->isVisible() || !btnStartBackup_ || !btnStartBackup_->isVisible()) return;
+    const auto& cartoesColuna = configContainer_->cartoes();
+    if (cartoesColuna.size() < 4) return;
+    const auto vista = configViewport_->getBounds();
+    const auto opcoes = cartoesColuna.back() + (configViewport_->getPosition() - configViewport_->getViewPosition());
+    if (opcoes.getBottom() > vista.getBottom() || opcoes.getBottom() <= vista.getY()) return;
+    const float x = static_cast<float>(btnStartBackup_->getBounds().getCentreX());
+    desenharPontaBalao(g, opcoes, x);
+    desenharSetaVazadaParaBaixo(g, x, static_cast<float>(opcoes.getBottom()) + 13.0f,
+                                static_cast<float>(cartaoRodape_.getY()) - 2.0f);
+}
+
 void BackupWorkspaceComponent::resized() {
     const auto& tk = tema();
     cartaoPrevia_ = {};
@@ -5943,9 +6017,12 @@ void BackupWorkspaceComponent::resized() {
 
     auto area = getLocalBounds();
 
-    // ---- Cabeçalho ----
-    faixaCabecalho_ = area.removeFromTop(64);
-    if (labelTitulo_) {
+    // ---- Cabeçalho: só no backup em andamento/concluído ("Backup Complete"...). Na configuração o título
+    // "Backup Configuration" saiu: o espaço vai para os vãos entre os cards.
+    faixaCabecalho_ = {};
+    if (labelTitulo_) labelTitulo_->setVisible(emAndamento);
+    if (emAndamento) faixaCabecalho_ = area.removeFromTop(64);
+    if (labelTitulo_ && emAndamento) {
         auto rCabecalho = faixaCabecalho_.reduced(tk.espacoGrande * 2, 0)
                                          .withTrimmedBottom(tk.espacoMedio)
                                          .removeFromBottom(34);
@@ -6097,12 +6174,12 @@ void BackupWorkspaceComponent::resized() {
     }
 
     // ---- Config: ASSETS (prévia) à esquerda ocupando o resto; coluna de configuração à direita, mesma largura ----
-    auto corpo = area.reduced(tk.espacoGrande, tk.espacoMedio);
-    corpo.removeFromBottom(tk.espacoGrande);  // vão até o card inferior (seta OPTIONS -> botão principal)
+    auto corpo = area.reduced(tk.espacoGrande, tk.espacoGrande);
+    corpo.removeFromBottom(tk.espacoGrande + 8);  // vão até o card inferior (ponta de balão + seta até o botão)
 
     const int larguraConfig = std::min(420, std::max(340, static_cast<int>(corpo.getWidth() * 0.32f)));
     auto colunaConfig = corpo.removeFromRight(larguraConfig);
-    corpo.removeFromRight(28);  // vão entre ASSETS e a coluna (seta ASSETS -> SELECTION)
+    corpo.removeFromRight(fluxo ? 52 : 28);  // vão entre ASSETS e a coluna (seta vazada ASSETS -> SELECTION)
     auto colunaPrevia = corpo;
 
     if (configViewport_ && configContainer_) {
