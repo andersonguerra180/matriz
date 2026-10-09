@@ -1143,6 +1143,95 @@ void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numer
 }
 }  // namespace
 
+// Uma etapa do Make Backup (COPY ou CATALOG), cada uma num card próprio com título, fase, contador "n / total" e a
+// barra no mesmo desenho da barra do rodapé (trilho painelAlt, preenchimento de acento, % no centro).
+class EtapaProgressoComponent : public juce::Component, private juce::Timer {
+public:
+    explicit EtapaProgressoComponent(juce::String titulo) : titulo_(std::move(titulo)) {}
+    ~EtapaProgressoComponent() override { stopTimer(); }
+
+    // Aguardando a etapa anterior: barra vazia, sem animação.
+    void esperar(const juce::String& fase) { definirEstado(Estado::Espera, 0.0, fase, 0, 0); }
+    // fracao < 0 = sem contagem (animação); total > 0 mostra o contador.
+    void definir(double fracao, const juce::String& fase, int feito = 0, int total = 0) {
+        definirEstado(Estado::Andando, fracao, fase, feito, total);
+    }
+    void concluir() { definirEstado(Estado::Concluido, 1.0, juce::String(), 0, 0); }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(r, tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(r.reduced(0.5f), tk.raioPequeno, 1.0f);
+
+        auto area = getLocalBounds().reduced(12, 8);
+        auto linha = area.removeFromTop(18);
+        const bool concluido = estado_ == Estado::Concluido;
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setColour(concluido ? juce::Colour(0xff22c55e) : (estado_ == Estado::Espera ? tk.textoTerciario : tk.acento));
+        const int larguraTitulo = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), titulo_) + 12;
+        g.drawText(titulo_, linha.removeFromLeft(larguraTitulo), juce::Justification::centredLeft);
+        if (total_ > 0) {
+            g.setColour(tk.textoPrimario);
+            g.drawText(juce::String(feito_) + " / " + juce::String(total_), linha.removeFromRight(110), juce::Justification::centredRight);
+        }
+        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setColour(tk.textoSecundario);
+        g.drawText(concluido ? matriz::i18n::t("backup.etapa_concluida") : fase_, linha, juce::Justification::centredLeft, true);
+
+        area.removeFromTop(6);
+        const auto barra = area.removeFromTop(14).toFloat();
+        g.setColour(tk.painelAlt);
+        g.fillRoundedRectangle(barra, 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(barra, 4.0f, 1.0f);
+        const juce::Colour preenchimento = concluido ? juce::Colour(0xff22c55e) : tk.acento;
+        if (estado_ == Estado::Andando && fracao_ < 0.0) {
+            const float largura = 40.0f;
+            const float x = barra.getX() + (barra.getWidth() - largura) * brilho_;
+            g.setColour(tk.acento.withAlpha(0.7f));
+            g.fillRoundedRectangle(juce::Rectangle<float>(x, barra.getY(), largura, barra.getHeight()), 4.0f);
+        } else if (estado_ != Estado::Espera) {
+            const float w = barra.getWidth() * static_cast<float>(juce::jlimit(0.0, 1.0, fracao_));
+            if (w > 0.5f) {
+                g.setColour(preenchimento);
+                g.fillRoundedRectangle(juce::Rectangle<float>(barra.getX(), barra.getY(), w, barra.getHeight()), 4.0f);
+            }
+            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            g.setColour(tk.textoPrimario);
+            g.drawText(juce::String(static_cast<int>(std::round(juce::jlimit(0.0, 1.0, fracao_) * 100.0))) + "%", barra,
+                       juce::Justification::centred, true);
+        }
+    }
+
+private:
+    enum class Estado { Espera, Andando, Concluido };
+
+    void definirEstado(Estado e, double fracao, const juce::String& fase, int feito, int total) {
+        estado_ = e;
+        fracao_ = fracao;
+        fase_ = fase;
+        feito_ = feito;
+        total_ = total;
+        if (e == Estado::Andando && fracao < 0.0) { if (!isTimerRunning()) startTimerHz(25); }
+        else stopTimer();
+        repaint();
+    }
+    void timerCallback() override {
+        brilho_ += 0.04f;
+        if (brilho_ > 1.0f) brilho_ -= 1.0f;
+        repaint();
+    }
+
+    juce::String titulo_, fase_;
+    Estado estado_ = Estado::Espera;
+    double fracao_ = 0.0;
+    int feito_ = 0, total_ = 0;
+    float brilho_ = 0.0f;
+};
+
 class BackupWorkspaceComponent::ConfigContainerComponent : public juce::Component {
 public:
     explicit ConfigContainerComponent(BackupWorkspaceComponent& owner) : owner_(owner) {}
@@ -2130,6 +2219,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     // === PROGRESS ===
     barraProgresso_ = std::make_unique<juce::ProgressBar>(progressoValor_);
     addChildComponent(*barraProgresso_);
+    // Make Backup de coleção: duas etapas, cada uma no seu card (COPY e CATALOG).
+    etapaCopy_ = std::make_unique<EtapaProgressoComponent>(matriz::i18n::t("backup.etapa_copy"));
+    etapaCatalog_ = std::make_unique<EtapaProgressoComponent>(matriz::i18n::t("backup.etapa_catalog"));
+    addChildComponent(*etapaCopy_);
+    addChildComponent(*etapaCatalog_);
 
     labelProgressoStatus_ = std::make_unique<juce::Label>();
     labelProgressoStatus_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
@@ -3896,7 +3990,11 @@ void BackupWorkspaceComponent::iniciarBackup() {
     progressoValor_ = 0.0;
 
     btnStartBackup_->setEnabled(false);
-    barraProgresso_->setVisible(true);
+    barraProgresso_->setVisible(isCatalogMode);  // coleção usa os cards COPY/CATALOG; catálogo mantém a barra única
+    etapaCopy_->setVisible(!isCatalogMode);
+    etapaCatalog_->setVisible(!isCatalogMode);
+    etapaCopy_->definir(-1.0, matriz::i18n::t("backup.progresso_preparando"));
+    etapaCatalog_->esperar(matriz::i18n::t("backup.etapa_aguardando"));
     labelProgressoStatus_->setVisible(true);
     labelProgressoStatus_->setText(matriz::i18n::t("backup.progresso_preparando"), juce::dontSendNotification);
 
@@ -4108,6 +4206,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
                 const juce::String texto = rotulo + " " + juce::String(feito) + " of " + juce::String(total) + "...";
                 safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                safeThis->etapaCopy_->definir(safeThis->progressoValor_, rotulo.trimCharactersAtEnd(":"), feito, total);
                 ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
             });
         };
@@ -4158,6 +4257,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                          resultado = std::move(resultado)]() mutable {
         if (!safeThis) return;
 
+        if (!resultado.cancelado) safeThis->etapaCopy_->concluir();  // a barra COPY fecha em 100%; o CATALOG começa
         safeThis->copiadoCount_ = resultado.consolidados;
         safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
         safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
@@ -4171,6 +4271,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         if (gerarCatalogo && !resultado.cancelado && safeThis) {
             safeThis->labelProgressoStatus_->setText("Generating HTML Catalog...", juce::dontSendNotification);
             ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", "Generating HTML Catalog...");
+            safeThis->etapaCatalog_->definir(-1.0, "Generating HTML Catalog");
             juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
             if (!safeThis) return;
             juce::File catDestDir = projeto.projeto().pasta().getChildFile("catalogo");
@@ -4183,6 +4284,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 [safeThis, cancelamento](int feito, int total) {
                     if (!safeThis) return false;
                     safeThis->labelProgressoStatus_->setText("Cataloging: " + juce::String(feito) + " of " + juce::String(total) + " files...", juce::dontSendNotification);
+                    safeThis->etapaCatalog_->definir(static_cast<double>(feito) / std::max(1, total), "Cataloging", feito, total);
                     ProgressoGlobal::obterInstancia().atualizarProgresso(
                         "backup", feito, "Cataloging " + juce::String(feito) + " of " + juce::String(total) + " files...");
                     juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
@@ -4206,6 +4308,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
             auto fase = [safeThis](const juce::String& texto) {
                 if (!safeThis) return;
                 safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                safeThis->etapaCatalog_->definir(-1.0, texto.trimCharactersAtEnd("."));
                 ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
             };
@@ -4229,6 +4332,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                         const juce::String texto = "Checksums: " + juce::String(feito) + " of " + juce::String(total) + "...";
                         safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
                         safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                        safeThis->etapaCatalog_->definir(safeThis->progressoValor_, "Checksums", feito, total);
                         ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
                         juce::MessageManager::getInstance()->runDispatchLoopUntil(1);
                         return !cancelamento->pedido() && safeThis != nullptr;
@@ -4253,6 +4357,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         // A barra parava no último valor reportado (86%) ao lado de "concluído
         // com sucesso" — dois sinais contraditórios na mesma tela.
         safeThis->progressoValor_ = 1.0;
+        if (!resultado.cancelado) safeThis->etapaCatalog_->concluir();
 
         const bool houveFalha = safeThis->falhasCount_ > 0;
         juce::String rotuloSugerido = safeThis->selectedDestinoIdx_ >= 0 && safeThis->selectedDestinoIdx_ < static_cast<int>(safeThis->destinosBackup_.size())
@@ -6262,7 +6367,7 @@ void BackupWorkspaceComponent::resized() {
     if (emAndamento) {
         const int larguraCartao = std::min(760, area.getWidth() - tk.espacoGrande * 2);
         auto corpo = area.reduced(tk.espacoGrande, tk.espacoGrande);
-        cartaoCentral_ = corpo.withSizeKeepingCentre(larguraCartao, std::min(320, corpo.getHeight()));
+        cartaoCentral_ = corpo.withSizeKeepingCentre(larguraCartao, std::min((etapaCopy_ && etapaCopy_->isVisible()) ? 440 : 320, corpo.getHeight()));
 
         auto dentro = cartaoCentral_.reduced(tk.espacoGrande * 2, tk.espacoGrande);
 
@@ -6273,6 +6378,12 @@ void BackupWorkspaceComponent::resized() {
 
         if (barraProgresso_->isVisible()) {
             barraProgresso_->setBounds(dentro.removeFromTop(24));
+            dentro.removeFromTop(tk.espacoMedio);
+        }
+        if (etapaCopy_ && etapaCopy_->isVisible()) {
+            etapaCopy_->setBounds(dentro.removeFromTop(64));
+            dentro.removeFromTop(tk.espacoMedio);
+            etapaCatalog_->setBounds(dentro.removeFromTop(64));
             dentro.removeFromTop(tk.espacoMedio);
         }
 
@@ -6352,6 +6463,8 @@ void BackupWorkspaceComponent::voltarParaConfiguracao() {
     relatorioErros_.clear();
     if (btnVerErros_) btnVerErros_->setVisible(false);
     barraProgresso_->setVisible(false);
+    etapaCopy_->setVisible(false);
+    etapaCatalog_->setVisible(false);
     labelProgressoStatus_->setVisible(false);
     labelProgressoStatus_->setText({}, juce::dontSendNotification);
     labelProgressoStatus_->setColour(juce::Label::textColourId, tema().textoPrimario);

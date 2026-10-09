@@ -21,6 +21,8 @@
 
 namespace matriz::ui {
 
+class EtapaProgressoComponent;
+
 // O dropdown do EXPORT fica no rodapé: o menu tem que abrir sempre pra cima.
 class ComboAbrePraCimaLookAndFeel : public MatrizLookAndFeel {
 public:
@@ -383,6 +385,7 @@ private:
 
     // === PROGRESS ===
     std::unique_ptr<juce::ProgressBar> barraProgresso_;
+    std::unique_ptr<EtapaProgressoComponent> etapaCopy_, etapaCatalog_;  // Make Backup de coleção: COPY e CATALOG
     std::unique_ptr<juce::Label> labelProgressoStatus_;
 
     // === BUTTONS ===
