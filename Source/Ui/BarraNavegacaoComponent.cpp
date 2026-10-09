@@ -51,24 +51,24 @@ void BarraNavegacaoComponent::reconstruirTabs() {
     tabs_.clear();
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (isCatalog_) {
-        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("1 - Coleções") : "1 - Collections", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("2 - Duplicatas") : "2 - Duplicates", {}, {}, false });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("3 - Armazenamento") : "3 - Storage", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("4 - Disco") : "4 - Disk", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "5 - Backup", {}, {}, false });
+        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("Coleções") : "Collections", {}, {}, false, 1 });
+        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("Duplicatas") : "Duplicates", {}, {}, false, 2 });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Disco") : "Disk", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     } else {
         // Ordem pedida: INTAKE, STRUCTURE, DUPLICATES, METADATA, STORAGE, BACKUP.
-        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("1 - Ingestão") : "1 - Intake", {}, {}, false });
+        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("Ingestão") : "Intake", {}, {}, false, 1 });
         // Item 4 (nova lista): STORAGE (Analytics) e TREEMAP (Tree) viraram
         // uma aba só — "Structure" — com sub-abas FOLDER MAP/SPACE MAP
         // dentro (ver MainComponent::mostrarStructure). Tab::Tree fica sem
         // entrada própria na barra; Tab::Analytics passa a representar a
         // aba combinada.
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("2 - Estrutura") : "2 - Structure", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
-        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("4 - Metadados") : "4 - Metadata", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("5 - Armazenamento") : "5 - Storage", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "6 - Backup", {}, {}, false });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
+        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("Duplicatas") : "Duplicates", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 5 });
+        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 6 });
     }
 }
 
@@ -199,7 +199,24 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         }
         
-        g.drawText(tab.label, tab.bounds, juce::Justification::centred, true);
+        // Número da aba no mesmo selo da aba BACKUP (círculo escuro, número branco), seguido do nome;
+        // o conjunto fica centralizado na aba.
+        {
+            const float d = 18.0f, folga = 6.0f;
+            const auto fonteNome = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, ativo ? juce::Font::bold : juce::Font::plain));
+            const float textW = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(fonteNome, tab.label));
+            const float x0 = tb.getCentreX() - (d + folga + textW) * 0.5f;
+            const juce::Rectangle<float> selo(x0, tb.getCentreY() - d * 0.5f, d, d);
+            g.setColour(tk.acento);
+            g.fillEllipse(selo);
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.drawText(juce::String(tab.numero), selo, juce::Justification::centred, false);
+            g.setColour(ativo ? tk.acento : (tab.hover ? tk.textoPrimario : tk.textoSecundario));
+            g.setFont(fonteNome);
+            g.drawText(tab.label, juce::Rectangle<float>(x0 + d + folga, tb.getY(), textW + 2.0f, tb.getHeight()),
+                       juce::Justification::centredLeft, false);
+        }
         
         // Draw chronological workflow arrow (──›) between sequential tabs with prominent accent contrast
         if (!tab.sepBounds.isEmpty()) {
@@ -269,8 +286,8 @@ void BarraNavegacaoComponent::resized() {
     
     for (const auto& tab : tabs_) {
         int textW = juce::GlyphArrangement::getStringWidthInt(fonteTab, tab.label);
-        // Add 26px padding so text never clips, with minimum width of 88px
-        int w = std::max(88, textW + 26);
+        // 26px de folga + selo numérico (18px) e seu espaçamento (6px); mínimo de 88px
+        int w = std::max(88, textW + 26 + 24);
         tabWidths.push_back(w);
         totalTabsW += w;
     }

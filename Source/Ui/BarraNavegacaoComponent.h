@@ -58,6 +58,7 @@ private:
         juce::Rectangle<int> bounds;
         juce::Rectangle<int> sepBounds;
         bool hover = false;
+        int numero = 0;
     };
 
     std::vector<ItemTab> tabs_;
