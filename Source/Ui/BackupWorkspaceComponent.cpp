@@ -2846,11 +2846,11 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
                                                  : mainSelado_; break;
         case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         case kExpBridge: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
-        case kExpBounce: habilitado = !catalogo && mainSelado_ && !exportando_ && nBounce > 0; break;  // mesma regra dos outros: só com MAIN
+        case kExpBounce: habilitado = !catalogo && !exportando_ && nBounce > 0; break;  // Bounce List sai mesmo sem MAIN
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
-    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge || id == kExpBounce)
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge)
                                         ? matriz::i18n::t("backup.saida_sem_main")
                                         : matriz::i18n::t("export.unificado_dica"));
 
@@ -4790,7 +4790,7 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
 }
 
 void BackupWorkspaceComponent::abrirExport(bool formatoBridge, bool bounce) {
-    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
+    if (!bounce && saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN (a Bounce List é liberada sem ele)
     if (exportando_) return;
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
     const bool wmOk = ProjetoAberto::carregarConfiguracaoWatermarkDePasta(projeto_.projeto().pasta()).valida();
