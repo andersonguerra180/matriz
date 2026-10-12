@@ -463,6 +463,7 @@ ConfiguracaoBounce carregarConfiguracaoBounce(const juce::File& pastaProjeto) {
     cfg.sidecar = static_cast<bool>(v.getProperty("sidecar", true));
     cfg.manifesto = static_cast<bool>(v.getProperty("manifesto", true));
     cfg.embedVideo = static_cast<bool>(v.getProperty("embed_video", true));
+    cfg.mapaId = v.getProperty("mapa_id", "").toString().toStdString();
     return cfg;
 }
 
@@ -473,6 +474,7 @@ bool salvarConfiguracaoBounce(const juce::File& pastaProjeto, const Configuracao
     o->setProperty("sidecar", cfg.sidecar);
     o->setProperty("manifesto", cfg.manifesto);
     o->setProperty("embed_video", cfg.embedVideo);
+    o->setProperty("mapa_id", juce::String(cfg.mapaId));
     return arquivoConfiguracaoBounce(pastaProjeto).replaceWithText(juce::JSON::toString(juce::var(o)));
 }
 

@@ -1,4 +1,5 @@
 #include "BackupWorkspaceComponent.h"
+#include "ArvoreBackupComponent.h"
 #include <unordered_map>
 #include "../App/SemSono.h"
 #include "MainEditPanel.h"
@@ -397,11 +398,35 @@ private:
     juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_, toggleEmbedVideo_;
 };
 
+// Editor da folder structure da Bounce List: janela flutuante (não modal, sempre por cima) com o MESMO editor do Folder
+// Map, aberto no mapa próprio da Bounce List. Não modal de propósito: dá pra arrastar arquivos da grade para as pastas.
+class JanelaEstruturaBounce : public juce::DocumentWindow {
+public:
+    JanelaEstruturaBounce(ProjetoAberto& projeto, const std::string& mapaId, const juce::String& titulo,
+                          std::function<void(const std::set<std::string>&)> aoMostrarNaGrade)
+        : juce::DocumentWindow(titulo, tema().painel, juce::DocumentWindow::closeButton) {
+        auto* arvore = new ArvoreBackupComponent(projeto);
+        arvore->aoMostrarConteudoNaGrade = std::move(aoMostrarNaGrade);
+        arvore->setSize(1100, 700);
+        setContentOwned(arvore, true);
+        arvore->definirModoBounce(mapaId);
+        setUsingNativeTitleBar(true);
+        setResizable(true, true);
+        setAlwaysOnTop(true);
+        centreWithSize(1100, 740);
+        setVisible(true);
+    }
+    void closeButtonPressed() override {
+        juce::Component::SafePointer<juce::Component> self(this);
+        juce::MessageManager::callAsync([self] { delete self.getComponent(); });
+    }
+};
+
 // Janela SETTINGS da Bounce List. Cada mudança é gravada no projeto na hora (bounce_list.json).
 class ConteudoBounceAjustes : public juce::Component {
 public:
-    explicit ConteudoBounceAjustes(const juce::File& pastaProjeto)
-        : pasta_(pastaProjeto), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
+    ConteudoBounceAjustes(const juce::File& pastaProjeto, std::function<void()> aoEstrutura)
+        : pasta_(pastaProjeto), aoEstrutura_(std::move(aoEstrutura)), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
         const auto& tk = tema();
         auto toggle = [&](juce::ToggleButton& t, const char* chave, bool estado) {
             t.setButtonText(matriz::i18n::t(chave));
@@ -421,6 +446,15 @@ public:
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("bounce.settings_titulo"),
                                                        matriz::i18n::t("bounce.cfg_manifesto_aviso"));
         };
+        btnEstrutura_.setButtonText(matriz::i18n::t("bounce.btn_estrutura"));
+        btnEstrutura_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEstrutura_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEstrutura_.onClick = [this] {
+            auto cb = aoEstrutura_;
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);  // o editor é janela não modal
+            if (cb) juce::MessageManager::callAsync(cb);
+        };
+        addAndMakeVisible(btnEstrutura_);
         dica_.setText(matriz::i18n::t("bounce.cfg_dica"), juce::dontSendNotification);
         dica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         dica_.setColour(juce::Label::textColourId, tk.textoTerciario);
@@ -430,11 +464,13 @@ public:
             if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
         };
         addAndMakeVisible(btnFechar_);
-        setSize(480, 250);
+        setSize(480, 290);
     }
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
     void resized() override {
         auto r = getLocalBounds().reduced(16);
+        btnEstrutura_.setBounds(r.removeFromTop(30));
+        r.removeFromTop(8);
         for (auto* t : {&tLimpar_, &tEmbutir_, &tSidecar_, &tManifesto_}) {
             t->setBounds(r.removeFromTop(28));
         }
@@ -445,6 +481,7 @@ public:
 
 private:
     void salvar() {
+        cfg_ = matriz::consolidacao::carregarConfiguracaoBounce(pasta_);  // mantém o que outro ponto gravou (mapaId)
         cfg_.limpar = tLimpar_.getToggleState();
         cfg_.embutir = tEmbutir_.getToggleState();
         cfg_.sidecar = tSidecar_.getToggleState();
@@ -452,7 +489,9 @@ private:
         matriz::consolidacao::salvarConfiguracaoBounce(pasta_, cfg_);
     }
     juce::File pasta_;
+    std::function<void()> aoEstrutura_;
     matriz::consolidacao::ConfiguracaoBounce cfg_;
+    juce::TextButton btnEstrutura_;
     juce::ToggleButton tLimpar_, tEmbutir_, tSidecar_, tManifesto_;
     juce::Label dica_;
     juce::TextButton btnFechar_;
@@ -4861,7 +4900,10 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
 
 void BackupWorkspaceComponent::abrirAjustesBounce() {
     juce::DialogWindow::LaunchOptions opts;
-    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta()));
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta(), [safeThis] {
+        if (safeThis != nullptr) safeThis->abrirEstruturaBounce();
+    }));
     opts.dialogTitle = matriz::i18n::t("bounce.settings_titulo");
     opts.dialogBackgroundColour = tema().painel;
     opts.escapeKeyTriggersCloseButton = true;
@@ -4869,6 +4911,23 @@ void BackupWorkspaceComponent::abrirAjustesBounce() {
     opts.resizable = false;
     opts.componentToCentreAround = this;
     opts.launchAsync();
+}
+
+void BackupWorkspaceComponent::abrirEstruturaBounce() {
+    if (janelaEstruturaBounce_ != nullptr) { janelaEstruturaBounce_->toFront(true); return; }
+    const std::string mapaId = projeto_.mapaBounceId(true);
+    if (mapaId.empty()) return;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto* janela = new JanelaEstruturaBounce(projeto_, mapaId, matriz::i18n::t("bounce.editor_titulo"),
+        [safeThis](const std::set<std::string>& ids) {
+            // Só os arquivos da Bounce List (tag B) interessam aqui: SEM PASTA traria o projeto inteiro.
+            if (safeThis == nullptr || !safeThis->aoAbrirNoGrid) return;
+            std::set<std::string> soB;
+            for (const auto& id : safeThis->projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce))
+                if (ids.count(id)) soB.insert(id);
+            safeThis->aoAbrirNoGrid(soB);
+        });
+    janelaEstruturaBounce_ = janela;
 }
 
 // Bounce List: pergunta só a pasta de destino; estrutura e metadados vêm do que ficou salvo nos ajustes.
@@ -4880,8 +4939,10 @@ void BackupWorkspaceComponent::exportarBounceList() {
                                 [safeThis](const juce::FileChooser& fc) {
         if (safeThis == nullptr || fc.getResult() == juce::File()) return;
         const auto cfg = matriz::consolidacao::carregarConfiguracaoBounce(safeThis->projeto_.projeto().pasta());
+        // Estrutura própria da Bounce List (nasce vazia: tudo em _SEM_PASTA até o usuário montar as pastas).
+        const std::string mapaBounce = safeThis->projeto_.mapaBounceId(true);
         safeThis->iniciarExport(fc.getResult(), {matriz::consolidacao::NivelHierarquia::PastaManual},
-                                matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false, {}, false, true,
+                                matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false, mapaBounce, false, true,
                                 cfg.paraExport());
     });
 }
@@ -4956,7 +5017,8 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
             auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), projeto->pasta(), destino,
                                                                     hierarquia, {}, modo, prefixo,
                                                                     /*autoResolver*/ true, false, false,
-                                                                    /*paraExport*/ true, mapaId);
+                                                                    /*paraExport*/ true, mapaId, false,
+                                                                    /*semPastaNaRaiz*/ bounce);
             for (const auto& id : plano.semPastaExcluidos) if (itens.count(id)) ++semPasta;
             std::vector<matriz::consolidacao::ItemPlanejado> doRecorte;
             for (auto& ip : plano.itens)

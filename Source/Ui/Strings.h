@@ -1542,6 +1542,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"bounce.escolher_destino", "Choose the destination folder for the Bounce List"},
         {"export.bounce_pulados", "{n} file(s) were NOT exported (original changed or missing):"},
         {"export.bounce_conflitos", "{n} name conflict(s) resolved with unique numbering."},
+        {"bounce.btn_estrutura", "FOLDER STRUCTURE..."},
+        {"bounce.editor_titulo", "Bounce List - Folder Structure"},
         {"export.op_bounce", "Bounce List ({n})"},
         {"export.por_editor_visual", "Custom (visual editor)"},
         {"export.abrir_editor_visual", "OPEN VISUAL EDITOR"},

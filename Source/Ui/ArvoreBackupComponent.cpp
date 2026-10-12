@@ -678,13 +678,28 @@ void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, con
     // Com o painel já no tamanho final: o mesmo que o AJUSTAR (auto-organiza o recorte) e centraliza a árvore na tela.
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     juce::MessageManager::callAsync([safeThis] {
-        if (!safeThis || !safeThis->sobreposto_) return;
+        if (!safeThis || !safeThis->sobreposto_ || safeThis->modoBounce_) return;
         safeThis->autoArranjar();
         safeThis->enquadrarPendente_ = true;
         safeThis->tentarEnquadrar();
         safeThis->sincronizarSlider();
         safeThis->repaint();
     });
+}
+
+void ArvoreBackupComponent::definirModoBounce(const std::string& mapaId) {
+    sobreposto_ = true;
+    modoBounce_ = true;
+    raizSobreposicaoId_.clear();
+    mapaAtivoId_ = mapaId;  // só nesta instância: definirMapaAtivo() mudaria o mapa atual do app
+    if (abas_.empty()) abas_.push_back(AbaEstrutura{});
+    abaAtiva_ = 0;
+    for (juce::Component* c : {static_cast<juce::Component*>(comboMapas_.get()), static_cast<juce::Component*>(btnMenuMapa_.get()),
+                               static_cast<juce::Component*>(btnNovoMapa_.get())})
+        if (c) c->setEnabled(false);
+    enquadrarPendente_ = true;
+    resized();
+    recarregar();
 }
 
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
@@ -1345,12 +1360,12 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
 
     // Mapa sem nada salvo (o ORIGINAL sempre, ou um mapa que nunca foi arranjado): já abre arranjado —
     // maior tamanho de cartão que cabe na área, sem sobreposição nem linhas cruzadas.
-    if ((original || !algumaPosicaoSalva || sobreposto_) && canvasPronto && calcularEAplicarAutoArranjo()) {
+    if ((original || !algumaPosicaoSalva || (sobreposto_ && !modoBounce_)) && canvasPronto && calcularEAplicarAutoArranjo()) {
         recalcularPivot();
         aplicarEscalaTamanho(escalaTamanho_);
         return;
     }
-    if (original || !algumaPosicaoSalva || sobreposto_) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
+    if (original || !algumaPosicaoSalva || (sobreposto_ && !modoBounce_)) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
 
     // Mapa com posições salvas: tamanho vem do fator do mapa (ou o tamanho único antigo) x multiplicador.
     layoutarvore::ParametrosAuto pa;
@@ -1676,9 +1691,9 @@ void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::o
     pos = {juce::roundToInt(centroOriginal.x - 95.0f), juce::roundToInt(centroOriginal.y - 42.0f)};
     // Sobreposição: pasta nova sem pai vai para dentro da raiz (senão nasceria fora da vista), e sem posição
     // gravada — o mapa principal a coloca pelo layout.
-    const auto pai = (sobreposto_ && !pastaPaiId) ? std::optional<std::string>(raizSobreposicaoId_) : pastaPaiId;
+    const auto pai = (sobreposto_ && !modoBounce_ && !pastaPaiId) ? std::optional<std::string>(raizSobreposicaoId_) : pastaPaiId;
     std::string novoId = projeto_.criarPastaAcervo(nome, pai, mapaAtivoId_);
-    if (!sobreposto_) projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
+    if (persistePosicoes()) projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
     destaqueNovaPastaId_ = novoId;
     inicioPulsoMs_ = juce::Time::getMillisecondCounter();
@@ -1859,7 +1874,7 @@ void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<i
 
 void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
     if (indices.empty()) return;
-    if (sobreposto_) return;  // sobreposição: posições só em memória (não mexem no layout do mapa principal)
+    if (!persistePosicoes()) return;  // sobreposição: posições só em memória (não mexem no layout do mapa principal)
     if (!mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
     auto& db = projeto_.projeto().registro();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
@@ -1949,7 +1964,7 @@ void ArvoreBackupComponent::autoArranjar() {
     for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
     recalcularPivot();
     persistirPosicoesEmLote(indices);  // uma transação só
-    if (!mapaAtivoEhOriginal() && !sobreposto_) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
+    if (!mapaAtivoEhOriginal() && persistePosicoes()) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
 
     zoom_ = 1.0f;
     panOffset_ = {0.0f, 0.0f};
@@ -3275,7 +3290,7 @@ void ArvoreBackupComponent::aplicarSlider() {
 void ArvoreBackupComponent::persistirEscalas() {
     if (!escalasSujas_) return;
     escalasSujas_ = false;
-    if (sobreposto_) return;  // idem: tamanhos da sobreposição não são gravados
+    if (!persistePosicoes()) return;  // idem: tamanhos da sobreposição não são gravados
     if (mapaAtivoEhOriginal()) return;  // virtual: só em memória
     projeto_.iniciarGrupoUndo("Resize Folders");
     projeto_.registrarUndoVisualMapa("Resize Folders", mapaAtivoId_);

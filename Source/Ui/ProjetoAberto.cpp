@@ -10,6 +10,7 @@
 #include "../Model/NotasEstruturadas.h"
 #include "../Vault/Resolucao.h"
 #include "../Consolidacao/Consolidacao.h"
+#include "../Consolidacao/SaidaBounce.h"
 #include "../Model/ProjectLog.h"
 #include "../Model/NomesCanonicos.h"
 #include "../Consolidacao/PacoteCollection.h"
@@ -2443,16 +2444,35 @@ std::vector<ProjetoAberto::FolderMapInfo> ProjetoAberto::listarFolderMaps() cons
     out.push_back(original);
     if (!projeto_) return out;
 
+    const std::string idBounce = matriz::consolidacao::carregarConfiguracaoBounce(projeto_->pasta()).mapaId;
     auto stmt = leitura().prepare(
         "SELECT id, nome FROM folder_map WHERE projeto_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     while (stmt.step()) {
+        if (!idBounce.empty() && stmt.columnText(0) == idBounce) continue;  // mapa da Bounce List: oculto
         FolderMapInfo info;
         info.id = stmt.columnText(0);
         info.nome = juce::String(stmt.columnText(1));
         out.push_back(info);
     }
     return out;
+}
+
+std::string ProjetoAberto::mapaBounceId(bool criar) {
+    if (!projeto_) return {};
+    auto cfg = matriz::consolidacao::carregarConfiguracaoBounce(projeto_->pasta());
+    if (!cfg.mapaId.empty()) {
+        auto st = leitura().prepare("SELECT 1 FROM folder_map WHERE id = ? AND projeto_id = ?");
+        st.bind(1, matriz::db::Value::of(cfg.mapaId));
+        st.bind(2, matriz::db::Value::of(projeto_->projetoId()));
+        if (st.step()) return cfg.mapaId;
+    }
+    if (!criar) return {};
+    const std::string id = criarFolderMap("BOUNCE LIST", std::nullopt);
+    if (id.empty()) return {};
+    cfg.mapaId = id;
+    matriz::consolidacao::salvarConfiguracaoBounce(projeto_->pasta(), cfg);
+    return id;
 }
 
 std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::optional<std::string>& origemMapaId) {

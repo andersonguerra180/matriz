@@ -359,7 +359,8 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool organizarPorSource,
                                         bool paraExport,
                                         const std::string& mapaId,
-                                        bool estritoAoDestino) {
+                                        bool estritoAoDestino,
+                                        bool semPastaNaRaiz) {
     MATRIZ_TRACE("consolidacao::planejarConsolidacao");
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
@@ -392,6 +393,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     const bool filtrarMapa = !mapaId.empty();
     const bool mapaEmUso = filtrarMapa && usaPastaManual && !usaEstruturaOriginal;
     const bool semPastaFisica = mapaEmUso && !paraExport;
+    const bool semPastaNoCaminho = semPastaFisica || (mapaEmUso && paraExport && semPastaNaRaiz);
     std::set<std::string> itensComMovimento;
 
     // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
@@ -438,7 +440,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         std::string pastaIdCandidata = stmt.columnText(1);
         if (pastaOuAncestralDesativada(registro, pastaIdCandidata)) continue; // pasta desabilitada na TREEMAP — bypass total
-        if (mapaEmUso && paraExport && pastaIdCandidata.empty()) {
+        if (mapaEmUso && paraExport && pastaIdCandidata.empty() && !semPastaNaRaiz) {
             plano.semPastaExcluidos.insert(itemId);  // export por mapa: sem pasta = fora
             continue;
         }
@@ -600,7 +602,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 case NivelHierarquia::PastaManual:
                     // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
-                    if (cadeia.empty() && semPastaFisica) segmentosPasta.add(kPastaSemPasta);
+                    if (cadeia.empty() && semPastaNoCaminho) segmentosPasta.add(kPastaSemPasta);
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
                     juce::String dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("/", false, false);

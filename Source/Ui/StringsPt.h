@@ -1554,6 +1554,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"bounce.escolher_destino", "Escolha a pasta de destino da Lista Bounce"},
         {"export.bounce_pulados", "{n} arquivo(s) NÃO foram exportados (original alterado ou ausente):"},
         {"export.bounce_conflitos", "{n} conflito(s) de nome resolvido(s) com numeração única."},
+        {"bounce.btn_estrutura", "ESTRUTURA DE PASTAS..."},
+        {"bounce.editor_titulo", "Lista Bounce - Estrutura de Pastas"},
         {"export.op_bounce", "Lista Bounce ({n})"},
         {"export.por_editor_visual", "Personalizado (editor visual)"},
         {"export.abrir_editor_visual", "ABRIR EDITOR VISUAL"},

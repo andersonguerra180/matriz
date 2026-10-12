@@ -33,6 +33,7 @@ struct ConfiguracaoBounce {
     bool sidecar = true;
     bool manifesto = true;
     bool embedVideo = true;
+    std::string mapaId;  // folder map PRÓPRIO da Bounce List (oculto da lista de mapas); "" = ainda não criado
     OpcoesMetadadosSaida paraExport() const {
         OpcoesMetadadosSaida o;
         o.modo = limpar ? ModoMetadadosSaida::Clean : embutir ? ModoMetadadosSaida::Embed : ModoMetadadosSaida::Original;

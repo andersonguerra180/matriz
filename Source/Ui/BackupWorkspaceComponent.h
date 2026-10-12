@@ -237,6 +237,8 @@ private:
     int nBounce_ = 0;
     std::unique_ptr<juce::FileChooser> chooserBounce_;
     void abrirAjustesBounce();
+    void abrirEstruturaBounce();
+    juce::Component::SafePointer<juce::Component> janelaEstruturaBounce_;  // dona de si mesma (fecha pelo X); aqui só o ponteiro
     void exportarBounceList();
     // Pacote de collection (EXPORT -> INTAKE de outra collection): seleção +
     // folder map + matriz-pacote.json, sempre do MAIN, em background.
