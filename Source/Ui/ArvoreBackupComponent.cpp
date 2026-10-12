@@ -675,6 +675,16 @@ void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, con
     enquadrarPendente_ = true;
     resized();
     recarregar();
+    // Com o painel já no tamanho final: o mesmo que o AJUSTAR (auto-organiza o recorte) e centraliza a árvore na tela.
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis] {
+        if (!safeThis || !safeThis->sobreposto_) return;
+        safeThis->autoArranjar();
+        safeThis->enquadrarPendente_ = true;
+        safeThis->tentarEnquadrar();
+        safeThis->sincronizarSlider();
+        safeThis->repaint();
+    });
 }
 
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
