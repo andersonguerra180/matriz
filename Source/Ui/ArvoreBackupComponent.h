@@ -79,10 +79,6 @@ public:
     void fecharSobreposicao();
     // Chamado na instância DENTRO da sobreposição, logo depois de construída.
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
-    // Editor da estrutura de pastas da Bounce List (janela própria, não sobreposição): o mapa INTEIRO `mapaId`
-    // (mapa oculto da Bounce List), sem abas nem troca de mapa, com posição e tamanho dos cards gravados no banco.
-    // Não troca o "mapa atual" do app (SEND TO FOLDER continua indo para o mapa do usuário).
-    void definirModoBounce(const std::string& mapaId);
 
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
 
@@ -280,8 +276,6 @@ private:
     std::string destaqueNovaPastaId_;
 
     bool sobreposto_ = false;           // esta instância é a do Folder Map sobreposto
-    bool modoBounce_ = false;           // esta instância edita o mapa da Bounce List (sobreposto_ também fica true: sem abas/combo)
-    bool persistePosicoes() const { return !sobreposto_ || modoBounce_; }
     std::string raizSobreposicaoId_;    // raiz da sobreposição (pasta clicada)
     std::unique_ptr<juce::Component> sobreposicao_;  // a camada aberta por esta instância (no content da janela)
 

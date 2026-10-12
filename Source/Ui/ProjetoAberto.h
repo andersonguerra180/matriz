@@ -536,10 +536,6 @@ public:
     };
     // ORIGINAL sempre primeiro, depois os mapas do usuário em ordem.
     std::vector<FolderMapInfo> listarFolderMaps() const;
-    // Folder map PRÓPRIO da Bounce List (estrutura de pastas do export). Fica oculto de listarFolderMaps(): não aparece no
-    // dropdown nem nos diálogos de export; o id mora em bounce_list.json. Cria na primeira chamada com `criar` true;
-    // "" se não existe (e não foi pedido criar) ou em erro.
-    std::string mapaBounceId(bool criar);
     // origem: nullopt = em branco; kMapaOriginal = cópia do ORIGINAL (é um
     // retrato do momento da cópia — não acompanha mudanças futuras da
     // SOURCE, só o ORIGINAL é ao vivo); outro id = cópia desse mapa do

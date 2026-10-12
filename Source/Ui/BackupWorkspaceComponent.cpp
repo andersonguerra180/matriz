@@ -1,5 +1,4 @@
 #include "BackupWorkspaceComponent.h"
-#include "ArvoreBackupComponent.h"
 #include <unordered_map>
 #include "../App/SemSono.h"
 #include "MainEditPanel.h"
@@ -398,36 +397,34 @@ private:
     juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_, toggleEmbedVideo_;
 };
 
-// Editor da folder structure da Bounce List: janela flutuante (não modal, sempre por cima) com o MESMO editor do Folder
-// Map, aberto no mapa próprio da Bounce List. Não modal de propósito: dá pra arrastar arquivos da grade para as pastas.
-class JanelaEstruturaBounce : public juce::DocumentWindow {
-public:
-    JanelaEstruturaBounce(ProjetoAberto& projeto, const std::string& mapaId, const juce::String& titulo,
-                          std::function<void(const std::set<std::string>&)> aoMostrarNaGrade)
-        : juce::DocumentWindow(titulo, tema().painel, juce::DocumentWindow::closeButton) {
-        auto* arvore = new ArvoreBackupComponent(projeto);
-        arvore->aoMostrarConteudoNaGrade = std::move(aoMostrarNaGrade);
-        arvore->setSize(1100, 700);
-        setContentOwned(arvore, true);
-        arvore->definirModoBounce(mapaId);
-        setUsingNativeTitleBar(true);
-        setResizable(true, true);
-        setAlwaysOnTop(true);
-        centreWithSize(1100, 740);
-        setVisible(true);
-    }
-    void closeButtonPressed() override {
-        juce::Component::SafePointer<juce::Component> self(this);
-        juce::MessageManager::callAsync([self] { delete self.getComponent(); });
-    }
-};
-
 // Janela SETTINGS da Bounce List. Cada mudança é gravada no projeto na hora (bounce_list.json).
 class ConteudoBounceAjustes : public juce::Component {
 public:
-    ConteudoBounceAjustes(const juce::File& pastaProjeto, std::function<void()> aoEstrutura)
-        : pasta_(pastaProjeto), aoEstrutura_(std::move(aoEstrutura)), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
+    ConteudoBounceAjustes(const juce::File& pastaProjeto, std::vector<std::pair<std::string, juce::String>> mapas)
+        : pasta_(pastaProjeto), mapas_(std::move(mapas)), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
         const auto& tk = tema();
+        lblEstrutura_.setText(matriz::i18n::t("bounce.estrutura"), juce::dontSendNotification);
+        lblEstrutura_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        lblEstrutura_.setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(lblEstrutura_);
+        comboEstrutura_.addItem(matriz::i18n::t("bounce.estrutura_mapa"), 1);
+        comboEstrutura_.addItem(matriz::i18n::t("bounce.estrutura_editor"), 2);
+        comboEstrutura_.setSelectedId(cfg_.porVisualEditor ? 2 : 1, juce::dontSendNotification);
+        comboEstrutura_.onChange = [this] { salvar(); atualizarEstrutura(); };
+        addAndMakeVisible(comboEstrutura_);
+        for (size_t i = 0; i < mapas_.size(); ++i) {
+            comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
+            if (mapas_[i].first == cfg_.mapaId) comboMapa_.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+        }
+        if (comboMapa_.getSelectedId() == 0 && !mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
+        comboMapa_.onChange = [this] { salvar(); };
+        addChildComponent(comboMapa_);
+        btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
+        addChildComponent(btnEditorVisual_);
+
         auto toggle = [&](juce::ToggleButton& t, const char* chave, bool estado) {
             t.setButtonText(matriz::i18n::t(chave));
             t.setToggleState(estado, juce::dontSendNotification);
@@ -446,15 +443,6 @@ public:
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("bounce.settings_titulo"),
                                                        matriz::i18n::t("bounce.cfg_manifesto_aviso"));
         };
-        btnEstrutura_.setButtonText(matriz::i18n::t("bounce.btn_estrutura"));
-        btnEstrutura_.setColour(juce::TextButton::buttonColourId, tk.acento);
-        btnEstrutura_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
-        btnEstrutura_.onClick = [this] {
-            auto cb = aoEstrutura_;
-            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);  // o editor é janela não modal
-            if (cb) juce::MessageManager::callAsync(cb);
-        };
-        addAndMakeVisible(btnEstrutura_);
         dica_.setText(matriz::i18n::t("bounce.cfg_dica"), juce::dontSendNotification);
         dica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         dica_.setColour(juce::Label::textColourId, tk.textoTerciario);
@@ -464,24 +452,52 @@ public:
             if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
         };
         addAndMakeVisible(btnFechar_);
-        setSize(480, 290);
+        atualizarEstrutura();
+        setSize(480, 360);
     }
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
     void resized() override {
         auto r = getLocalBounds().reduced(16);
-        btnEstrutura_.setBounds(r.removeFromTop(30));
-        r.removeFromTop(8);
-        for (auto* t : {&tLimpar_, &tEmbutir_, &tSidecar_, &tManifesto_}) {
-            t->setBounds(r.removeFromTop(28));
-        }
+        lblEstrutura_.setBounds(r.removeFromTop(20));
+        comboEstrutura_.setBounds(r.removeFromTop(28));
+        r.removeFromTop(4);
+        if (comboMapa_.isVisible()) comboMapa_.setBounds(r.removeFromTop(28));
+        if (btnEditorVisual_.isVisible()) btnEditorVisual_.setBounds(r.removeFromTop(30));
+        r.removeFromTop(12);
+        for (auto* t : {&tLimpar_, &tEmbutir_, &tSidecar_, &tManifesto_}) t->setBounds(r.removeFromTop(28));
         r.removeFromTop(6);
         dica_.setBounds(r.removeFromTop(36));
         btnFechar_.setBounds(r.removeFromBottom(30).removeFromRight(110));
     }
 
 private:
+    void atualizarEstrutura() {
+        const bool editor = comboEstrutura_.getSelectedId() == 2;
+        comboMapa_.setVisible(!editor && !mapas_.empty());
+        btnEditorVisual_.setVisible(editor);
+        resized();
+    }
+    // Mesmo Visual Editor do BACKUP; modal, na frente deste diálogo.
+    void abrirEditorVisual() {
+        juce::Component::SafePointer<ConteudoBounceAjustes> safeThis(this);
+        const auto csv = matriz::consolidacao::carregarConfiguracaoBounce(pasta_).hierarquiaCsv;
+        HierarquiaEditorOpcoes op;
+        op.titulo = matriz::i18n::t("export.editor_titulo");
+        op.raizPreview = "/Export";
+        HierarquiaEditorWindow::abrirComoDialogo(csv.empty() ? matriz::consolidacao::hierarquiaPadrao()
+                                                             : matriz::consolidacao::hierarquiaDeCsv(csv),
+                                                 [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
+            if (safeThis == nullptr) return;
+            safeThis->hierarquiaCsv_ = matriz::consolidacao::hierarquiaParaCsv(h);
+            safeThis->salvar();
+        }, op, this);
+    }
     void salvar() {
-        cfg_ = matriz::consolidacao::carregarConfiguracaoBounce(pasta_);  // mantém o que outro ponto gravou (mapaId)
+        cfg_ = matriz::consolidacao::carregarConfiguracaoBounce(pasta_);
+        if (hierarquiaCsv_.isNotEmpty()) cfg_.hierarquiaCsv = hierarquiaCsv_.toStdString();
+        cfg_.porVisualEditor = comboEstrutura_.getSelectedId() == 2;
+        const int im = comboMapa_.getSelectedId() - 1;
+        cfg_.mapaId = im >= 0 && im < static_cast<int>(mapas_.size()) ? mapas_[static_cast<size_t>(im)].first : std::string();
         cfg_.limpar = tLimpar_.getToggleState();
         cfg_.embutir = tEmbutir_.getToggleState();
         cfg_.sidecar = tSidecar_.getToggleState();
@@ -489,9 +505,12 @@ private:
         matriz::consolidacao::salvarConfiguracaoBounce(pasta_, cfg_);
     }
     juce::File pasta_;
-    std::function<void()> aoEstrutura_;
+    std::vector<std::pair<std::string, juce::String>> mapas_;
+    juce::String hierarquiaCsv_;
     matriz::consolidacao::ConfiguracaoBounce cfg_;
-    juce::TextButton btnEstrutura_;
+    juce::Label lblEstrutura_;
+    juce::ComboBox comboEstrutura_, comboMapa_;
+    juce::TextButton btnEditorVisual_;
     juce::ToggleButton tLimpar_, tEmbutir_, tSidecar_, tManifesto_;
     juce::Label dica_;
     juce::TextButton btnFechar_;
@@ -4900,10 +4919,10 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
 
 void BackupWorkspaceComponent::abrirAjustesBounce() {
     juce::DialogWindow::LaunchOptions opts;
-    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta(), [safeThis] {
-        if (safeThis != nullptr) safeThis->abrirEstruturaBounce();
-    }));
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps())
+        if (!m.original) mapas.emplace_back(m.id, m.nome);
+    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta(), std::move(mapas)));
     opts.dialogTitle = matriz::i18n::t("bounce.settings_titulo");
     opts.dialogBackgroundColour = tema().painel;
     opts.escapeKeyTriggersCloseButton = true;
@@ -4911,23 +4930,6 @@ void BackupWorkspaceComponent::abrirAjustesBounce() {
     opts.resizable = false;
     opts.componentToCentreAround = this;
     opts.launchAsync();
-}
-
-void BackupWorkspaceComponent::abrirEstruturaBounce() {
-    if (janelaEstruturaBounce_ != nullptr) { janelaEstruturaBounce_->toFront(true); return; }
-    const std::string mapaId = projeto_.mapaBounceId(true);
-    if (mapaId.empty()) return;
-    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    auto* janela = new JanelaEstruturaBounce(projeto_, mapaId, matriz::i18n::t("bounce.editor_titulo"),
-        [safeThis](const std::set<std::string>& ids) {
-            // Só os arquivos da Bounce List (tag B) interessam aqui: SEM PASTA traria o projeto inteiro.
-            if (safeThis == nullptr || !safeThis->aoAbrirNoGrid) return;
-            std::set<std::string> soB;
-            for (const auto& id : safeThis->projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce))
-                if (ids.count(id)) soB.insert(id);
-            safeThis->aoAbrirNoGrid(soB);
-        });
-    janelaEstruturaBounce_ = janela;
 }
 
 // Bounce List: pergunta só a pasta de destino; estrutura e metadados vêm do que ficou salvo nos ajustes.
@@ -4939,11 +4941,13 @@ void BackupWorkspaceComponent::exportarBounceList() {
                                 [safeThis](const juce::FileChooser& fc) {
         if (safeThis == nullptr || fc.getResult() == juce::File()) return;
         const auto cfg = matriz::consolidacao::carregarConfiguracaoBounce(safeThis->projeto_.projeto().pasta());
-        // Estrutura própria da Bounce List (nasce vazia: tudo em _SEM_PASTA até o usuário montar as pastas).
-        const std::string mapaBounce = safeThis->projeto_.mapaBounceId(true);
-        safeThis->iniciarExport(fc.getResult(), {matriz::consolidacao::NivelHierarquia::PastaManual},
-                                matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false, mapaBounce, false, true,
-                                cfg.paraExport());
+        // Estrutura: hierarquia do Visual Editor, ou o Folder Map escolhido (arquivo sem pasta vai para _SEM_PASTA).
+        matriz::consolidacao::HierarquiaBackup hierarquia{matriz::consolidacao::NivelHierarquia::PastaManual};
+        if (cfg.porVisualEditor)
+            hierarquia = cfg.hierarquiaCsv.empty() ? matriz::consolidacao::hierarquiaPadrao()
+                                                   : matriz::consolidacao::hierarquiaDeCsv(cfg.hierarquiaCsv);
+        safeThis->iniciarExport(fc.getResult(), hierarquia, matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false,
+                                cfg.porVisualEditor ? std::string() : cfg.mapaId, false, true, cfg.paraExport());
     });
 }
 

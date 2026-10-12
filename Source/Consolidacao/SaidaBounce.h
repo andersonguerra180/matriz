@@ -33,7 +33,10 @@ struct ConfiguracaoBounce {
     bool sidecar = true;
     bool manifesto = true;
     bool embedVideo = true;
-    std::string mapaId;  // folder map PRÓPRIO da Bounce List (oculto da lista de mapas); "" = ainda não criado
+    // Estrutura de pastas do export: Folder Map existente OU hierarquia montada no Visual Editor.
+    bool porVisualEditor = false;
+    std::string mapaId;        // porVisualEditor false: folder map do usuário ("" = o mapa padrão do projeto)
+    std::string hierarquiaCsv; // porVisualEditor true: níveis do Visual Editor ("" = hierarquia padrão)
     OpcoesMetadadosSaida paraExport() const {
         OpcoesMetadadosSaida o;
         o.modo = limpar ? ModoMetadadosSaida::Clean : embutir ? ModoMetadadosSaida::Embed : ModoMetadadosSaida::Original;
