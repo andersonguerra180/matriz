@@ -397,6 +397,67 @@ private:
     juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_, toggleEmbedVideo_;
 };
 
+// Janela SETTINGS da Bounce List. Cada mudança é gravada no projeto na hora (bounce_list.json).
+class ConteudoBounceAjustes : public juce::Component {
+public:
+    explicit ConteudoBounceAjustes(const juce::File& pastaProjeto)
+        : pasta_(pastaProjeto), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
+        const auto& tk = tema();
+        auto toggle = [&](juce::ToggleButton& t, const char* chave, bool estado) {
+            t.setButtonText(matriz::i18n::t(chave));
+            t.setToggleState(estado, juce::dontSendNotification);
+            addAndMakeVisible(t);
+        };
+        toggle(tLimpar_, "bounce.cfg_limpar", cfg_.limpar);
+        toggle(tEmbutir_, "bounce.cfg_embutir", cfg_.embutir);
+        toggle(tSidecar_, "bounce.cfg_sidecar", cfg_.sidecar);
+        toggle(tManifesto_, "bounce.cfg_manifesto", cfg_.manifesto);
+        tLimpar_.onClick = [this] { if (tLimpar_.getToggleState()) tEmbutir_.setToggleState(false, juce::dontSendNotification); salvar(); };
+        tEmbutir_.onClick = [this] { if (tEmbutir_.getToggleState()) tLimpar_.setToggleState(false, juce::dontSendNotification); salvar(); };
+        tSidecar_.onClick = [this] { salvar(); };
+        tManifesto_.onClick = [this] {
+            salvar();
+            if (!tManifesto_.getToggleState())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("bounce.settings_titulo"),
+                                                       matriz::i18n::t("bounce.cfg_manifesto_aviso"));
+        };
+        dica_.setText(matriz::i18n::t("bounce.cfg_dica"), juce::dontSendNotification);
+        dica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        dica_.setColour(juce::Label::textColourId, tk.textoTerciario);
+        addAndMakeVisible(dica_);
+        btnFechar_.setButtonText(matriz::i18n::t("dialogo.fechar"));
+        btnFechar_.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        addAndMakeVisible(btnFechar_);
+        setSize(480, 250);
+    }
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        for (auto* t : {&tLimpar_, &tEmbutir_, &tSidecar_, &tManifesto_}) {
+            t->setBounds(r.removeFromTop(28));
+        }
+        r.removeFromTop(6);
+        dica_.setBounds(r.removeFromTop(36));
+        btnFechar_.setBounds(r.removeFromBottom(30).removeFromRight(110));
+    }
+
+private:
+    void salvar() {
+        cfg_.limpar = tLimpar_.getToggleState();
+        cfg_.embutir = tEmbutir_.getToggleState();
+        cfg_.sidecar = tSidecar_.getToggleState();
+        cfg_.manifesto = tManifesto_.getToggleState();
+        matriz::consolidacao::salvarConfiguracaoBounce(pasta_, cfg_);
+    }
+    juce::File pasta_;
+    matriz::consolidacao::ConfiguracaoBounce cfg_;
+    juce::ToggleButton tLimpar_, tEmbutir_, tSidecar_, tManifesto_;
+    juce::Label dica_;
+    juce::TextButton btnFechar_;
+};
+
 // Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.
 class ConteudoPacote : public juce::Component {
 public:
@@ -2386,21 +2447,20 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
-        for (int id = kExpSelecionados; id <= kExpBounce; ++id) comboExportOrigem_->addItem("-", id);
+        for (int id = kExpSelecionados; id <= kExpBridge; ++id) comboExportOrigem_->addItem("-", id);
         // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá);
         // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpBridge, !catalogo);
-        comboExportOrigem_->setItemEnabled(kExpBounce, !catalogo);
         // Coleção sempre abre em SELECTED FILES; só o Catálogo (sem essa opção)
         // lembra a última escolha.
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
         if (catalogo && arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
-            if (lembrado >= kExpSelecionados && lembrado <= kExpBounce &&
-                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge && lembrado != kExpBounce)
+            if (lembrado >= kExpSelecionados && lembrado <= kExpBridge &&
+                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge)
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -2418,6 +2478,18 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         btnExportUnificado_->setTooltip(matriz::i18n::t("export.unificado_dica"));
         btnExportUnificado_->onClick = [this] { executarExportUnificado(); };
         addChildComponent(*btnExportUnificado_);
+
+        btnBounceAjustes_ = std::make_unique<juce::TextButton>(matriz::i18n::t("bounce.btn_settings"));
+        aplicarEstiloBotao(*btnBounceAjustes_, false);
+        btnBounceAjustes_->onClick = [this] { abrirAjustesBounce(); };
+        addChildComponent(*btnBounceAjustes_);
+        btnBounceExport_ = std::make_unique<juce::TextButton>(matriz::i18n::t("bounce.btn_export"));
+        aplicarEstiloBotao(*btnBounceExport_, true);
+        btnBounceExport_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6b46c1));
+        btnBounceExport_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        btnBounceExport_->setTooltip(matriz::i18n::t("bounce.btn_export_vazia"));
+        btnBounceExport_->onClick = [this] { exportarBounceList(); };
+        addChildComponent(*btnBounceExport_);
         setWantsKeyboardFocus(true);
     }
 
@@ -2825,8 +2897,8 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
     opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
     opcao(kExpBridge, "export.op_bridge", contagemSelecionados_);
-    opcao(kExpBounce, "export.op_bounce", nBounce);
-    aplicarIconeBounceNoCombo();
+    if (nBounce_ != nBounce) { nBounce_ = nBounce; repaint(cartaoBounce_); }
+    if (btnBounceExport_) btnBounceExport_->setEnabled(!catalogo && !exportando_ && estado_ == Estado::Config && nBounce > 0);
 
     // changeItemText() não atualiza o texto já exibido no combo (ficava "-"):
     // reselecionar o mesmo id força o rótulo a acompanhar o item.
@@ -2846,7 +2918,6 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
                                                  : mainSelado_; break;
         case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         case kExpBridge: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
-        case kExpBounce: habilitado = !catalogo && !exportando_ && nBounce > 0; break;  // Bounce List sai mesmo sem MAIN
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
@@ -2896,7 +2967,6 @@ void BackupWorkspaceComponent::executarExportUnificado() {
         case kExpPlanilha: alvo = btnExportJanela_.get(); break;
         case kExpPacote: abrirPacote(); return;
         case kExpBridge: abrirExport(true); return;  // mesmo recorte do EXPORT de selecionados, com XMP do Bridge
-        case kExpBounce: abrirExport(false, true); return;  // mesmo diálogo/fluxo do EXPORT, fonte = tag B
         default: break;
     }
     // Exatamente a ação e o diálogo do botão antigo correspondente.
@@ -4789,6 +4859,33 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
     return projeto_.projeto().destinationId();
 }
 
+void BackupWorkspaceComponent::abrirAjustesBounce() {
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta()));
+    opts.dialogTitle = matriz::i18n::t("bounce.settings_titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    opts.launchAsync();
+}
+
+// Bounce List: pergunta só a pasta de destino; estrutura e metadados vêm do que ficou salvo nos ajustes.
+void BackupWorkspaceComponent::exportarBounceList() {
+    if (exportando_ || nBounce_ <= 0 || estado_ != Estado::Config) return;
+    chooserBounce_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("bounce.escolher_destino"), juce::File(), "");
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    chooserBounce_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                [safeThis](const juce::FileChooser& fc) {
+        if (safeThis == nullptr || fc.getResult() == juce::File()) return;
+        const auto cfg = matriz::consolidacao::carregarConfiguracaoBounce(safeThis->projeto_.projeto().pasta());
+        safeThis->iniciarExport(fc.getResult(), {matriz::consolidacao::NivelHierarquia::PastaManual},
+                                matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false, {}, false, true,
+                                cfg.paraExport());
+    });
+}
+
 void BackupWorkspaceComponent::abrirExport(bool formatoBridge, bool bounce) {
     if (!bounce && saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN (a Bounce List é liberada sem ele)
     if (exportando_) return;
@@ -4875,7 +4972,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                     });
                     return !cancelado->load();
                 },
-                comW, embutir, formatoBridge, metaSaida);
+                comW, embutir, formatoBridge, metaSaida, /*fonteOrigem*/ bounce);
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
@@ -4905,6 +5002,15 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                            .replace("{e}", juce::String(r.bridgeEmbutidos)).replace("{s}", juce::String(r.bridgeSidecars));
                 for (size_t i = 0; i < r.avisos.size() && i < 5; ++i) msg << "\n- " << juce::String::fromUTF8(r.avisos[i].c_str());
                 if (r.avisos.size() > 5) msg << "\n... +" << (int) (r.avisos.size() - 5);
+            }
+            if (bounce) {
+                if (r.conflitosResolvidos > 0)
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_conflitos").replace("{n}", juce::String(r.conflitosResolvidos));
+                if (!r.pulados.empty()) {
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_pulados").replace("{n}", juce::String((int) r.pulados.size()));
+                    for (size_t i = 0; i < r.pulados.size() && i < 50; ++i) msg << "\n- " << juce::String::fromUTF8(r.pulados[i].c_str());
+                    if (r.pulados.size() > 50) msg << "\n... +" << (int) (r.pulados.size() - 50);
+                }
             }
             safeThis->mostrarResultadoExport(bounce ? "export.titulo_bounce" : "export.titulo", resumo, r.jaExistiam, r.foraDoMain, semPasta,
                                              bounce ? "export.bounce_sem_pasta" : "export.mapa_sem_pasta_aviso", duplicatas, r.falhas,
@@ -6093,10 +6199,33 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
         g.drawRoundedRectangle(r.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
     };
     if (!cartaoRodape_.isEmpty() && estado_ == Estado::Done) cartaoSimples(cartaoRodape_);
-    for (const auto& r : {cartaoAcao_, cartaoSaidas_}) {
+    for (const auto& r : {cartaoAcao_, cartaoSaidas_, cartaoBounce_}) {
         if (r.isEmpty()) continue;
         if (emFluxo) desenharCartaoFluxo(g, r);
         else cartaoSimples(r);
+    }
+    if (!cartaoBounce_.isEmpty()) {
+        const juce::Colour roxo(0xff9333ea);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("bounce.card_titulo"), bounceTituloR_, juce::Justification::centredLeft);
+        const auto selo = bounceTituloR_.removeFromRight(110).withSizeKeepingCentre(110, 18);
+        g.setColour(roxo.withAlpha(0.18f));
+        g.fillRoundedRectangle(selo.toFloat(), 4.0f);
+        g.setColour(roxo);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena - 1.0f, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("bounce.selo"), selo, juce::Justification::centred);
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.drawFittedText(matriz::i18n::t("bounce.desc"), bounceDescR_, juce::Justification::topLeft, 3, 1.0f);
+        g.setColour(tk.fundo);
+        g.fillRoundedRectangle(bounceContagemR_.toFloat(), 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(bounceContagemR_.toFloat().reduced(0.5f), 4.0f, 1.0f);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        g.drawText(matriz::i18n::t("bounce.contagem").replace("{n}", juce::String(nBounce_)),
+                   bounceContagemR_.reduced(8, 0), juce::Justification::centredLeft);
     }
     if (emFluxo && !cartaoAcao_.isEmpty() && !cartaoSaidas_.isEmpty()) {  // (6) -> (7): sai do lado esquerdo do RUN
         desenharSetaVazadaSaindoDaEsquerda(g, cartaoAcao_, static_cast<float>(numeroAcao_.getCentreY()),
@@ -6226,6 +6355,8 @@ void BackupWorkspaceComponent::resized() {
         if (btnExportar_) btnExportar_->setVisible(false);
         if (comboExportOrigem_) comboExportOrigem_->setVisible(false);
         if (btnExportUnificado_) btnExportUnificado_->setVisible(false);
+        cartaoBounce_ = {};
+        for (auto* c : {btnBounceAjustes_.get(), btnBounceExport_.get()}) if (c) c->setVisible(false);
         if (btnExportJanela_) btnExportJanela_->setVisible(false);
         if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
         if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
@@ -6259,6 +6390,11 @@ void BackupWorkspaceComponent::resized() {
         const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
         cartaoAcao_ = linha.removeFromRight(larguraConfigRodape);
         linha.removeFromRight(fluxo ? 52 : 28);
+        cartaoBounce_ = {};
+        if (!isCatalogMode) {  // BOUNCE LIST: card próprio, à esquerda, abaixo do ASSETS
+            cartaoBounce_ = linha.removeFromLeft(juce::jlimit(250, 340, static_cast<int>(linha.getWidth() * 0.34f)));
+            linha.removeFromLeft(tk.espacoGrande);
+        }
         cartaoSaidas_ = linha;
 
         if (btnVerErros_) btnVerErros_->setVisible(false);
@@ -6314,6 +6450,24 @@ void BackupWorkspaceComponent::resized() {
                 linhaAcao.removeFromLeft(tk.espacoPainel);
             }
             btnStartBackup_->setBounds(linhaAcao);
+        }
+
+        {
+            const bool mostrarBounce = !cartaoBounce_.isEmpty();
+            for (auto* c : {btnBounceAjustes_.get(), btnBounceExport_.get()}) if (c) c->setVisible(mostrarBounce);
+            if (mostrarBounce) {
+                auto dentro = cartaoBounce_.reduced(tk.espacoPainel + 2, 8);
+                bounceTituloR_ = dentro.removeFromTop(20);
+                dentro.removeFromTop(4);
+                bounceDescR_ = dentro.removeFromTop(34);
+                dentro.removeFromTop(6);
+                auto linhaContagem = dentro.removeFromTop(28);
+                if (btnBounceAjustes_) btnBounceAjustes_->setBounds(linhaContagem.removeFromRight(100));
+                linhaContagem.removeFromRight(tk.espacoPequeno);
+                bounceContagemR_ = linhaContagem;
+                dentro.removeFromTop(6);
+                if (btnBounceExport_) btnBounceExport_->setBounds(dentro.removeFromTop(alturaBotao));
+            }
         }
 
         // (7) OUTPUTS — mesmo recuo horizontal do card ASSETS

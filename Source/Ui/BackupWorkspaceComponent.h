@@ -231,6 +231,13 @@ private:
     std::unique_ptr<juce::TextButton> btnAtualizarSidecars_;
     void atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar = {});
     void abrirExport(bool formatoBridge = false, bool bounce = false);  // bounce: a fonte são os arquivos com tag B
+    // Card BOUNCE LIST (Coleção): exporta os arquivos com tag B direto dos Assets, sem MAIN.
+    juce::Rectangle<int> cartaoBounce_, bounceTituloR_, bounceDescR_, bounceContagemR_;
+    std::unique_ptr<juce::TextButton> btnBounceAjustes_, btnBounceExport_;
+    int nBounce_ = 0;
+    std::unique_ptr<juce::FileChooser> chooserBounce_;
+    void abrirAjustesBounce();
+    void exportarBounceList();
     // Pacote de collection (EXPORT -> INTAKE de outra collection): seleção +
     // folder map + matriz-pacote.json, sempre do MAIN, em background.
     void abrirPacote();

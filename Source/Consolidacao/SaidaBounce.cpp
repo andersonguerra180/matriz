@@ -447,3 +447,33 @@ bool escreverSidecarFichaMatriz(matriz::db::Database& registro, const std::strin
 }
 
 } // namespace matriz::consolidacao
+
+namespace matriz::consolidacao {
+
+namespace {
+juce::File arquivoConfiguracaoBounce(const juce::File& pastaProjeto) { return pastaProjeto.getChildFile("bounce_list.json"); }
+}  // namespace
+
+ConfiguracaoBounce carregarConfiguracaoBounce(const juce::File& pastaProjeto) {
+    ConfiguracaoBounce cfg;
+    const auto v = juce::JSON::parse(arquivoConfiguracaoBounce(pastaProjeto));
+    if (!v.isObject()) return cfg;
+    cfg.limpar = static_cast<bool>(v.getProperty("limpar", false));
+    cfg.embutir = static_cast<bool>(v.getProperty("embutir", false)) && !cfg.limpar;
+    cfg.sidecar = static_cast<bool>(v.getProperty("sidecar", true));
+    cfg.manifesto = static_cast<bool>(v.getProperty("manifesto", true));
+    cfg.embedVideo = static_cast<bool>(v.getProperty("embed_video", true));
+    return cfg;
+}
+
+bool salvarConfiguracaoBounce(const juce::File& pastaProjeto, const ConfiguracaoBounce& cfg) {
+    auto* o = new juce::DynamicObject();
+    o->setProperty("limpar", cfg.limpar);
+    o->setProperty("embutir", cfg.embutir);
+    o->setProperty("sidecar", cfg.sidecar);
+    o->setProperty("manifesto", cfg.manifesto);
+    o->setProperty("embed_video", cfg.embedVideo);
+    return arquivoConfiguracaoBounce(pastaProjeto).replaceWithText(juce::JSON::toString(juce::var(o)));
+}
+
+}  // namespace matriz::consolidacao

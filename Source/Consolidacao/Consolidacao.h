@@ -278,12 +278,18 @@ struct ResultadoExport {
     int embutidos = 0;          // Embed: ficha gravada dentro da cópia
     int embedNaoSuportado = 0;  // Embed: formato não aceita metadado embutido
     int sidecarsGravados = 0;   // sidecar .xmp ao lado da cópia
+    // EXPORT > Bounce List direto dos Assets (fonteOrigem): originais alterados/ausentes não saem, vão pro relatório.
+    std::vector<std::string> pulados;  // "<código>: <motivo>"
+    int conflitosResolvidos = 0;       // nomes repetidos que ganharam numeração única no plano
 };
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
                                bool embutir, bool formatoBridge = false,
-                               const OpcoesMetadadosSaida& metaSaida = {});
+                               const OpcoesMetadadosSaida& metaSaida = {},
+                               // true = Bounce List direta dos Assets: lê o ORIGINAL (sem MAIN), confere o SHA-256 contra o
+                               // catálogo antes de copiar; alterado/ausente vai pra `pulados`. O original nunca é tocado.
+                               bool fonteOrigem = false);
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
 // para referência — não chamar a partir do fluxo de backup.

@@ -25,6 +25,25 @@ struct OpcoesMetadadosSaida {
     bool embedVideo = true;                                // só Embed: false = vídeo não é reescrito (ffmpeg); sai com sidecar .xmp
 };
 
+// Escolhas da janela SETTINGS da Bounce List, salvas no projeto (`bounce_list.json` na pasta do projeto).
+// Limpar e Embutir são exclusivos (nenhum = cópia idêntica ao original).
+struct ConfiguracaoBounce {
+    bool limpar = false;
+    bool embutir = false;
+    bool sidecar = true;
+    bool manifesto = true;
+    bool embedVideo = true;
+    OpcoesMetadadosSaida paraExport() const {
+        OpcoesMetadadosSaida o;
+        o.modo = limpar ? ModoMetadadosSaida::Clean : embutir ? ModoMetadadosSaida::Embed : ModoMetadadosSaida::Original;
+        o.sidecar = o.modo != ModoMetadadosSaida::Clean && sidecar;
+        o.embedVideo = embedVideo;
+        return o;
+    }
+};
+ConfiguracaoBounce carregarConfiguracaoBounce(const juce::File& pastaProjeto);
+bool salvarConfiguracaoBounce(const juce::File& pastaProjeto, const ConfiguracaoBounce& cfg);
+
 enum class StatusLimpeza {
     Limpo,           // metadados removidos
     RawSemLimpeza,   // RAW: copiado sem limpeza (contado e avisado no fim)

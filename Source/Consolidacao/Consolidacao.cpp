@@ -866,8 +866,9 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir, bool formatoBridge, const OpcoesMetadadosSaida& metaSaida) {
+                               bool embutir, bool formatoBridge, const OpcoesMetadadosSaida& metaSaida, bool fonteOrigem) {
     ResultadoExport resultado;
+    resultado.conflitosResolvidos = plano.conflitosAutoResolvidos;
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensComMarcaDagua;
 #endif
@@ -890,7 +891,25 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             auto noBackup = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
             auto naOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
                                                            matriz::vault::Preferencia::Origem);
-            if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
+            if (fonteOrigem) {
+                // Bounce List direta dos Assets: a fonte é o original catalogado; só vale se ainda é o mesmo arquivo.
+                if (!naOrigem || !naOrigem->existsAsFile()) {
+                    resultado.pulados.push_back(ip.codigoAcervo + ": missing");
+                    continue;
+                }
+                std::string hashCatalogo;
+                auto stH = registro.prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
+                stH.bind(1, matriz::db::Value::of(ip.arquivoId));
+                if (stH.step() && !stH.columnIsNull(0)) hashCatalogo = stH.columnText(0);
+                if (!hashCatalogo.empty()) {
+                    const std::string hashAtual = matriz::ingest::sha256DoArquivo(*naOrigem);  // cancelamento: entre arquivos
+                    if (hashAtual.empty() || hashAtual != hashCatalogo) {
+                        resultado.pulados.push_back(ip.codigoAcervo + ": changed");
+                        continue;
+                    }
+                }
+                noBackup = naOrigem;
+            } else if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
                 ++resultado.foraDoMain;
                 continue;
             }
