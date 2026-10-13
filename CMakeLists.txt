@@ -244,11 +244,13 @@ target_sources(matriz_ingest_selftest PRIVATE
 if(APPLE)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_mac.mm
-        Source/Ingest/MiniaturaPsd.mm)
+        Source/Ingest/MiniaturaPsd.mm
+        Source/Ingest/MiniaturaDocumento_mac.mm)
 elseif(WIN32)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_win.cpp
-        Source/Ingest/MiniaturaPsd_win.cpp)
+        Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ingest/MiniaturaDocumento_win.cpp)
 endif()
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -275,6 +277,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
+    $<$<PLATFORM_ID:Darwin>:-framework\ QuickLook>
     $<$<PLATFORM_ID:Windows>:bcrypt>
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
@@ -630,6 +633,7 @@ if(APPLE)
         Source/App/AreaTransferenciaImagem_mac.mm
         Source/Vault/DiskIdentity_mac.mm
         Source/Ingest/MiniaturaPsd.mm
+        Source/Ingest/MiniaturaDocumento_mac.mm
         Source/Ui/VideoPlayerBridge.mm
         Source/Ui/DocumentPreviewBridge.mm
         Source/Ui/PinturaImediata_mac.mm)
@@ -640,6 +644,7 @@ elseif(WIN32)
         Source/App/AreaTransferenciaImagem_win.cpp
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ingest/MiniaturaDocumento_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
         Source/Ui/DocumentPreviewBridge_win.cpp
         Source/Ui/PinturaImediata_win.cpp)
@@ -684,6 +689,7 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>
     $<$<PLATFORM_ID:Darwin>:-framework\ QuickLookUI>
+    $<$<PLATFORM_ID:Darwin>:-framework\ QuickLook>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
     $<$<PLATFORM_ID:Windows>:bcrypt>
     $<$<PLATFORM_ID:Windows>:dbghelp>

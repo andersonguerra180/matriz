@@ -2152,7 +2152,9 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         auto cat = matriz::ingest::categoriaPorExtensao(arq);
         if (cat != matriz::ingest::CategoriaMidia::Video &&
             cat != matriz::ingest::CategoriaMidia::Audio &&
-            cat != matriz::ingest::CategoriaMidia::Imagem)
+            cat != matriz::ingest::CategoriaMidia::Imagem &&
+            cat != matriz::ingest::CategoriaMidia::Documento &&
+            cat != matriz::ingest::CategoriaMidia::Texto)
             continue;
 
         std::optional<double> duracao;

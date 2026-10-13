@@ -4,6 +4,7 @@
 #include "../Model/CaminhosBanco.h"
 #include "ProcessoExterno.h"
 #include "MiniaturaPsd.h"
+#include "MiniaturaDocumento.h"
 
 #include <exiv2/exiv2.hpp>
 #include <cstring>
@@ -354,6 +355,16 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
                  matriz::db::Value::of(arquivoId), matriz::db::Value::of(onda.duracaoSegundos),
                  matriz::db::Value::of(onda.bucketsPorSegundo), matriz::db::Value::ofBlob(onda.paraBlob()),
                  matriz::db::Value::of(agora)}); });
+        } else if (categoria == CategoriaMidia::Documento || categoria == CategoriaMidia::Texto) {
+            int w = 0, h = 0;
+            if (gerarMiniaturaDocumentoNativa(arquivoNoProjeto.getFullPathName().toRawUTF8(),
+                                              destino.getFullPathName().toRawUTF8(),
+                                              512, &w, &h)) {
+                largura = w;
+                altura = h;
+            } else {
+                return;
+            }
         } else {
             return;
         }
