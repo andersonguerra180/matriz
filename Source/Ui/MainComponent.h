@@ -68,10 +68,10 @@ class MainComponent : public juce::Component,
                        private juce::Timer {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
-    // Item 4 (nova lista): sub-abas da aba combinada "Structure" (ex-STORAGE
-    // + ex-TREEMAP). FolderMap = ArvoreBackupComponent, SpaceMap =
-    // EstatisticasComponent — ver mostrarStructure().
-    enum class SubTabEstrutura { FolderMap, SpaceMap };
+    // Item 4: sub-abas da aba combinada "Structure" (FOLDER MAP, SPACE MAP, DUPLICATES).
+    // FolderMap = ArvoreBackupComponent, SpaceMap = EstatisticasComponent,
+    // Duplicates = DuplicatesWorkspaceComponent — ver mostrarStructure().
+    enum class SubTabEstrutura { FolderMap, SpaceMap, Duplicates };
 
     MainComponent();
     ~MainComponent() override;

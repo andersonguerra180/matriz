@@ -52,23 +52,18 @@ void BarraNavegacaoComponent::reconstruirTabs() {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (isCatalog_) {
         tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("Coleções") : "Collections", {}, {}, false, 1 });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("Duplicatas") : "Duplicates", {}, {}, false, 2 });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 3 });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Disco") : "Disk", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 4 });
         tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     } else {
-        // Ordem pedida: INTAKE, STRUCTURE, DUPLICATES, METADATA, STORAGE, BACKUP.
+        // As 5 abas principais pedidas: (1) Intake, (2) Structure, (3) Metadata, (4) Storage, (5) Backup.
+        // Duplicates agora vive como sub-aba dentro de Structure (Folder Map, Space Map, Duplicates).
         tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("Ingestão") : "Intake", {}, {}, false, 1 });
-        // Item 4 (nova lista): STORAGE (Analytics) e TREEMAP (Tree) viraram
-        // uma aba só — "Structure" — com sub-abas FOLDER MAP/SPACE MAP
-        // dentro (ver MainComponent::mostrarStructure). Tab::Tree fica sem
-        // entrada própria na barra; Tab::Analytics passa a representar a
-        // aba combinada.
         tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("Duplicatas") : "Duplicates", {}, {}, false, 3 });
-        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 4 });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 5 });
-        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 6 });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     }
 }
 
@@ -373,8 +368,8 @@ juce::String BarraNavegacaoComponent::obterTextoAjuda(Tab tab) const {
             return isPt ? juce::String::fromUTF8("Nesta aba, você pode identificar e revisar arquivos duplicados na coleção, comparando assinaturas e resolvendo redundâncias.")
                         : "On this tab, you can identify and resolve duplicate files across the project, comparing signatures and managing redundancy.";
         case Tab::Analytics:
-            return isPt ? juce::String::fromUTF8("Nesta aba, você visualiza a distribuição de espaço, tipos de mídia, integridade e métricas de armazenamento.")
-                        : "On this tab, you can analyze storage usage, media distribution breakdown, and fixity preservation metrics.";
+            return isPt ? juce::String::fromUTF8("Nesta aba, você navega pela estrutura de pastas (Folder Map), distribuição de espaço (Space Map) e identificação de duplicatas (Duplicates).")
+                        : "On this tab, you can explore the folder structure (Folder Map), space distribution (Space Map), and duplicate management (Duplicates).";
         case Tab::Tree:
             return isPt ? juce::String::fromUTF8("Nesta aba, você navega pela estrutura hierárquica de pastas e volumes do projeto através de um mapa visual.")
                         : "On this tab, you can explore the directory structure and assets distribution through an interactive treemap.";
@@ -404,7 +399,7 @@ juce::String BarraNavegacaoComponent::getTooltip() {
                 case Tab::Intake: return isPt ? juce::String::fromUTF8("Gerenciar arquivos recém-ingeridos aguardando verificação para METADADOS") : "Manage recently ingested files awaiting verification to METADATA";
                 case Tab::Grid: return isPt ? juce::String::fromUTF8("Navegar, filtrar e editar metadados de todos os arquivos") : "Browse, filter, and edit metadata of all assets";
                 case Tab::Duplicates: return isPt ? juce::String::fromUTF8("Escanear e resolver arquivos duplicados no projeto ativo") : "Scan and resolve duplicate files in active project";
-                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Ver capacidade de armazenamento, gráficos e métricas de preservação") : "View storage capacity, charts, and preservation metrics";
+                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Navegar pela estrutura do projeto: Folder Map, Space Map e Duplicates") : "Explore project structure: Folder Map, Space Map, and Duplicates";
                 case Tab::Tree: return isPt ? juce::String::fromUTF8("Explorar estrutura de arquivos através do mapa visual de diretórios") : "Explore assets structure via vault directories treemap";
                 case Tab::Backup: return isPt ? juce::String::fromUTF8("Planejar, verificar conflitos e consolidar pacote de publicação do backup") : "Plan, check conflicts, and consolidate backup publication package";
                 case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico") : "Inspect and manage physical disk devices and history";
