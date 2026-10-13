@@ -20,6 +20,8 @@
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
+#include "PainelImportarWhatsapp.h"
+#include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
 #include <algorithm>
@@ -205,6 +207,8 @@ public:
     juce::Colour corFundoCustom = juce::Colours::transparentBlack;
     float tamanhoFonte = 13.0f;
     bool ativo = false;
+    bool desenharPin = false;
+    bool desenharCelular = false;
 
     PillButton(const juce::String& text = {}) : juce::TextButton(text) {}
 
@@ -245,7 +249,26 @@ public:
 
         // Content (Dot + Text)
         auto contentBounds = getLocalBounds().reduced(6, 0);
-        if (!corPonto.isTransparent()) {
+        if (desenharPin) {
+            float pSize = 12.0f;
+            float px = static_cast<float>(contentBounds.getX() + 6);
+            float py = static_cast<float>(contentBounds.getCentreY()) - pSize * 0.6f;
+            juce::Path p;
+            p.addEllipse(px, py, pSize, pSize * 0.85f);
+            p.startNewSubPath(px + 1.0f, py + pSize * 0.45f);
+            p.lineTo(px + pSize * 0.5f, py + pSize + 2.5f);
+            p.lineTo(px + pSize - 1.0f, py + pSize * 0.45f);
+            p.closeSubPath();
+            g.setColour(juce::Colours::white);
+            g.fillPath(p);
+            g.setColour(corFundoCustom.isOpaque() ? corFundoCustom : tk.acento);
+            g.fillEllipse(px + pSize * 0.32f, py + pSize * 0.20f, pSize * 0.36f, pSize * 0.36f);
+            contentBounds.removeFromLeft(static_cast<int>(pSize + 10.0f));
+        } else if (desenharCelular) {
+            auto rCel = contentBounds.removeFromLeft(18).toFloat().withSizeKeepingCentre(12.0f, 16.0f);
+            desenharIcone(g, IconeUi::Celular, rCel, corTextoCustom.isOpaque() ? corTextoCustom : tk.textoPrimario);
+            contentBounds.removeFromLeft(4);
+        } else if (!corPonto.isTransparent()) {
             float dotSize = 7.0f;
             float dotX = static_cast<float>(contentBounds.getX() + 2);
             float dotY = static_cast<float>(contentBounds.getCentreY()) - dotSize * 0.5f;
@@ -1263,25 +1286,27 @@ public:
 
             // Thumbnail Area (~115px height)
             auto thumbArea = bounds.reduced(6, 6).removeFromTop(juce::jmax(60, cardH_ - 95));
-            juce::Image img;
             {
-                const juce::ScopedLock sl(lock_);
-                auto it = cache_.find(item.id);
-                if (it != cache_.end()) img = it->second;
-            }
+                juce::Image img;
+                {
+                    const juce::ScopedLock sl(lock_);
+                    auto it = cache_.find(item.id);
+                    if (it != cache_.end()) img = it->second;
+                }
 
-            if (img.isValid()) {
-                g.setColour(tk.painelAlt);
-                g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
-                g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
-            } else {
-                pedirMiniatura(item.id);
-                g.setColour(corCat.withAlpha(0.12f));
-                g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
-                g.setColour(corCat);
-                g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
-                g.drawText(item.extensao.isNotEmpty() ? item.extensao : item.categoria.substring(0, 3).toUpperCase(),
-                           thumbArea, juce::Justification::centred);
+                if (img.isValid()) {
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
+                } else {
+                    pedirMiniatura(item.id);
+                    g.setColour(corCat.withAlpha(0.12f));
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    g.setColour(corCat);
+                    g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+                    g.drawText(item.extensao.isNotEmpty() ? item.extensao : item.categoria.substring(0, 3).toUpperCase(),
+                               thumbArea, juce::Justification::centred);
+                }
             }
 
             // Thumbnail Border
@@ -1860,6 +1885,17 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnIngerir_ = std::move(btnIngerirPill);
     addAndMakeVisible(*btnIngerir_);
 
+    auto btnCel = std::make_unique<PillButton>(i18n::t("light.cel.importar"));
+    btnCel->tamanhoFonte = 12.0f;
+    btnCel->desenharCelular = true;
+    btnCel->corFundoCustom = tk.painelAlt;
+    btnCel->corTextoCustom = tk.textoPrimario;
+    btnCel->corBordaCustom = tk.borda;
+    btnCel->setTooltip(i18n::t("light.cel.botaoDica"));
+    btnCel->onClick = [this] { abrirReceberDoCelular(); };
+    btnReceberCelular_ = std::move(btnCel);
+    addAndMakeVisible(*btnReceberCelular_);
+
     // Botão Google Drive — com logo googledrive.png
     auto btnGD = std::make_unique<GoogleDriveIconButton>();
     btnGD->onClick = [this] {
@@ -1953,6 +1989,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     setupPill(btnFiltroImage_, "Images (0)", "Image", juce::Colour(0xfff4a261));
     setupPill(btnFiltroDoc_, "Documents (0)", "Document", juce::Colour(0xff2b9348));
     setupPill(btnFiltroOther_, "Other (0)", "Other", juce::Colour(0xff888888));
+    setupPill(btnFiltroPhoneDump_, "Phone Dump (0)", "PhoneDump", juce::Colour(0xff06b6d4));
 
     // 3. LINHA 3 (SelectionActionBar)
     // Cluster A (Left)
@@ -2025,10 +2062,13 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnEventDateLote_ = std::move(btnEventDate);
     addAndMakeVisible(*btnEventDateLote_);
 
-    // GEO LOCATION vive numa seção própria (item 3), separada dos quatro
-    // campos de metadata acima — cor neutra, não é um bloco do Visual Editor.
-    auto btnGeo = std::make_unique<PillButton>(i18n::t("intake.btn_geo_lote"));
-    btnGeo->tamanhoFonte = 12.5f;
+    // GEO LOCATION no card Batch Assignment abaixo de Event Date (item 9A)
+    auto btnGeo = std::make_unique<PillButton>("GEO LOCATION");
+    btnGeo->tamanhoFonte = 12.0f;
+    btnGeo->desenharPin = true;
+    btnGeo->corFundoCustom = juce::Colour(0xff0284c7); // azul celeste
+    btnGeo->corTextoCustom = juce::Colours::white;
+    btnGeo->corBordaCustom = juce::Colour(0xff0369a1);
     btnGeo->onClick = [this] {
         if (btnGeolocationLote_) mostrarEditorGeolocationLote(btnGeolocationLote_->getScreenBounds());
     };
@@ -2322,6 +2362,19 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
 
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemIntake& it) -> bool {
+        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
+
     for (size_t i = 0; i < todosItens_.size(); ++i) {
         const auto& it = todosItens_[i];
         int a = 0, m = 0, d = 0;
@@ -2330,7 +2383,18 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
                           : filtroAnoAtual_ == -1 ? !temData
                           : (temData && a == filtroAnoAtual_ && (filtroMesAtual_ == 0 || m == filtroMesAtual_) &&
                              (filtroDiaAtual_ == 0 || d == filtroDiaAtual_));
-        if ((filtroCategoriaAtual_ == "ALL" || it.categoria == filtroCategoriaAtual_) && dataOk) {
+        if (!dataOk) continue;
+
+        const bool dump = ehDump(it);
+        bool catOk = false;
+        if (filtroCategoriaAtual_ == "ALL") {
+            catOk = true;
+        } else if (filtroCategoriaAtual_ == "PhoneDump") {
+            catOk = dump;
+        } else {
+            catOk = (!dump && it.categoria == filtroCategoriaAtual_);
+        }
+        if (catOk) {
             indicesFiltrados_.push_back(static_cast<int>(i));
         }
     }
@@ -2348,6 +2412,7 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
     updatePill(btnFiltroImage_.get(), filtroCategoriaAtual_ == "Image");
     updatePill(btnFiltroDoc_.get(), filtroCategoriaAtual_ == "Document");
     updatePill(btnFiltroOther_.get(), filtroCategoriaAtual_ == "Other");
+    updatePill(btnFiltroPhoneDump_.get(), filtroCategoriaAtual_ == "PhoneDump");
 
     if (tabela_) tabela_->updateContent();
     if (gridComponent_) {
@@ -2364,13 +2429,31 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     contagemImage_ = 0;
     contagemDoc_ = 0;
     contagemOther_ = 0;
+    contagemPhoneDump_ = 0;
+
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemIntake& it) -> bool {
+        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
 
     for (const auto& item : todosItens_) {
-        if (item.categoria == "Audio") contagemAudio_++;
-        else if (item.categoria == "Video") contagemVideo_++;
-        else if (item.categoria == "Image") contagemImage_++;
-        else if (item.categoria == "Document") contagemDoc_++;
-        else contagemOther_++;
+        if (ehDump(item)) {
+            contagemPhoneDump_++;
+        } else {
+            if (item.categoria == "Audio") contagemAudio_++;
+            else if (item.categoria == "Video") contagemVideo_++;
+            else if (item.categoria == "Image") contagemImage_++;
+            else if (item.categoria == "Document") contagemDoc_++;
+            else contagemOther_++;
+        }
     }
 
     // Item 1 (lista nova de hoje): a contagem/estado dos botões de lote tem
@@ -2389,6 +2472,7 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     if (btnFiltroImage_) btnFiltroImage_->setButtonText(i18n::t("intake.filtro_image").replace("{n}", juce::String(contagemImage_)));
     if (btnFiltroDoc_) btnFiltroDoc_->setButtonText(i18n::t("intake.filtro_doc").replace("{n}", juce::String(contagemDoc_)));
     if (btnFiltroOther_) btnFiltroOther_->setButtonText(i18n::t("intake.filtro_other").replace("{n}", juce::String(contagemOther_)));
+    if (btnFiltroPhoneDump_) btnFiltroPhoneDump_->setButtonText("Phone Dump (" + juce::String(contagemPhoneDump_) + ")");
 
     if (lblContadorTotal_) {
         lblContadorTotal_->setText(i18n::t("intake.ativos_contador").replace("{n}", juce::String(todosItens_.size())), juce::dontSendNotification);
@@ -3749,21 +3833,24 @@ void IntakeWorkspaceComponent::resized() {
                                                           sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
     };
 
-    // 0. IMPORT — os três comandos de entrada de arquivo (INGEST FILES,
-    // GOOGLE DRIVE, LIGHTROOM) vivem aqui, em card próprio no topo da
-    // coluna esquerda, em vez de emprestados para a linha das tabs.
+    // 0. IMPORT — comandos de entrada de arquivo
     if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_ && btnBridge_) {
         for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
+                                   static_cast<juce::Component*>(btnReceberCelular_.get()),
                                    static_cast<juce::Component*>(btnGoogleDrive_.get()),
                                    static_cast<juce::Component*>(btnLightroom_.get()),
                                    static_cast<juce::Component*>(btnBridge_.get())}) {
-            if (c->getParentComponent() != this) addAndMakeVisible(*c);
+            if (c && c->getParentComponent() != this) addAndMakeVisible(*c);
         }
         iniciarCard();
         secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
         sidebar.removeFromTop(4);
         btnIngerir_->setBounds(sidebar.removeFromTop(28));
         sidebar.removeFromTop(4);
+        if (btnReceberCelular_) {
+            btnReceberCelular_->setBounds(sidebar.removeFromTop(28));
+            sidebar.removeFromTop(4);
+        }
         {
             auto importRow = sidebar.removeFromTop(28);
             int terco = (importRow.getWidth() - 12) / 3;
@@ -3817,6 +3904,10 @@ void IntakeWorkspaceComponent::resized() {
     btnFiltroDoc_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
+    sidebar.removeFromTop(4);
+    if (btnFiltroPhoneDump_) {
+        btnFiltroPhoneDump_->setBounds(sidebar.removeFromTop(24));
+    }
     sidebar.removeFromTop(6);
     if (comboAno_) comboAno_->setBounds(sidebar.removeFromTop(26));
     if (comboMes_ && comboDia_) {
@@ -3830,10 +3921,7 @@ void IntakeWorkspaceComponent::resized() {
     finalizarCard();
     sidebar.removeFromTop(8);
 
-    // 3. BATCH ASSIGNMENT — quatro botões coloridos, um por campo de
-    // metadata (item 2 da correção "BACKUP e INTAKE"), sem rótulo/combo
-    // genérico. GEO LOCATION fica de fora, em card próprio logo abaixo
-    // (item 3 — "deixar clara a separação").
+    // 3. BATCH ASSIGNMENT — botões coloridos de metadados, incluindo GEO LOCATION (item 9A)
     iniciarCard();
     secaoHeaderBounds_.push_back({i18n::t("intake.secao_batch"), sidebar.removeFromTop(kHeaderH)});
     sidebar.removeFromTop(4);
@@ -3846,12 +3934,6 @@ void IntakeWorkspaceComponent::resized() {
     btnSubjectLote_->setBounds(sidebar.removeFromTop(26));
     sidebar.removeFromTop(4);
     btnEventDateLote_->setBounds(sidebar.removeFromTop(26));
-    finalizarCard();
-    sidebar.removeFromTop(8);
-
-    // 3b. GEO LOCATION — seção separada dos quatro campos de metadata acima.
-    iniciarCard();
-    secaoHeaderBounds_.push_back({"GEO LOCATION", sidebar.removeFromTop(kHeaderH)});
     sidebar.removeFromTop(4);
     btnGeolocationLote_->setBounds(sidebar.removeFromTop(26));
     finalizarCard();
@@ -3895,6 +3977,70 @@ void IntakeWorkspaceComponent::resized() {
     if (emptyState_) {
         emptyState_->setBounds(area);
     }
+    if (overlayAtual_ && overlayAtual_->isVisible()) {
+        overlayAtual_->setBounds(getLocalBounds());
+        overlayAtual_->toFront(true);
+    }
+}
+
+void IntakeWorkspaceComponent::abrirReceberDoCelular() {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarEscolhaImportacaoCelular(*overlayAtual_, [seguro](std::optional<ModoImportacaoCelular> modo) {
+        juce::MessageManager::callAsync([seguro, modo] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->escolhaImportacaoAtual_.reset();
+            seguro->resized();
+            if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
+        });
+    }, &escolhaImportacaoAtual_);
+    resized();
+}
+
+void IntakeWorkspaceComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
+    if (overlayAtual_ != nullptr) return;
+    if (modo == ModoImportacaoCelular::WhatsApp) {
+        overlayAtual_ = std::make_unique<PainelOverlay>();
+        addAndMakeVisible(*overlayAtual_);
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        mostrarImportarWhatsapp(*overlayAtual_, [seguro] {
+            juce::MessageManager::callAsync([seguro] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->resized();
+                seguro->recarregar();
+            });
+        });
+        resized();
+        return;
+    }
+
+    matriz::celular::OpcoesServidor opcoes;
+    auto* pProj = &projeto_.projeto();
+    opcoes.existentesDoProjeto = [pProj]() -> matriz::celular::ConjuntoExistentes {
+        if (pProj == nullptr) return {};
+        return matriz::celular::existentesDoProjeto(*pProj);
+    };
+
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    painelCelularAtual_ = mostrarReceberDoCelular(*overlayAtual_, opcoes, [seguro](RespostaReceberCelular r) {
+        juce::MessageManager::callAsync([seguro, r] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory()) {
+                if (seguro->aoIngerirArquivosDireto) {
+                    seguro->aoIngerirArquivosDireto({r.pastaSessao});
+                }
+            }
+        });
+    }, modo);
+    resized();
 }
 
 void IntakeWorkspaceComponent::lookAndFeelChanged() {
@@ -3942,8 +4088,11 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     // correspondente no Visual Editor (setada no construtor) — não passam
     // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
-        btnGeolocationLote_->setButtonText(i18n::t("intake.btn_geo_lote"));
-        updatePill(btnGeolocationLote_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
+        btnGeolocationLote_->setButtonText("GEO LOCATION");
+    }
+    if (btnReceberCelular_) {
+        btnReceberCelular_->setButtonText(i18n::t("light.cel.importar"));
+        btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
     }
     if (btnConfirmarSelecao_) {
         btnConfirmarSelecao_->setButtonText(i18n::t("intake.btn_enviar_selecionados"));

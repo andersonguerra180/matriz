@@ -7,6 +7,8 @@
 
 #include <JuceHeader.h>
 #include "ViewModeIconButton.h"
+#include "OverlayComponent.h"
+#include "PainelReceberCelular.h"
 #include <functional>
 #include <memory>
 #include <set>
@@ -228,6 +230,7 @@ private:
     int contagemImage_ = 0;
     int contagemDoc_ = 0;
     int contagemOther_ = 0;
+    int contagemPhoneDump_ = 0;
 
     // Top Header
     std::unique_ptr<juce::Label> lblTitulo_;
@@ -239,6 +242,12 @@ private:
     std::unique_ptr<juce::Button> btnGoogleDrive_;
     std::unique_ptr<juce::Button> btnLightroom_;
     std::unique_ptr<juce::Button> btnBridge_;
+    std::unique_ptr<juce::Button> btnReceberCelular_;
+    std::unique_ptr<PainelOverlay> overlayAtual_;
+    std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
+    std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
+    void abrirReceberDoCelular();
+    void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
@@ -255,6 +264,7 @@ private:
     std::unique_ptr<juce::TextButton> btnFiltroImage_;
     std::unique_ptr<juce::TextButton> btnFiltroDoc_;
     std::unique_ptr<juce::TextButton> btnFiltroOther_;
+    std::unique_ptr<juce::TextButton> btnFiltroPhoneDump_;
     // Filtro pela DATE CREATED (mesma data da coluna): ano (0 = todos, -1 =
     // sem data) e, opcionais, mês e dia (0 = todos).
     std::unique_ptr<juce::ComboBox> comboAno_, comboMes_, comboDia_;

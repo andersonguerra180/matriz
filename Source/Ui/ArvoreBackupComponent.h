@@ -15,6 +15,7 @@ class PainelReceberCelular;
 class EscolhaImportacaoCelular;
 class ConversaWhatsappComponent;
 enum class ModoImportacaoCelular;
+class TrashWindow;
 
 class ArvoreBackupComponent : public juce::Component,
                                private juce::Timer,
@@ -459,6 +460,9 @@ private:
     // Visualização da conversa de WhatsApp dentro do Structure
     std::unique_ptr<ConversaWhatsappComponent> conversaWhatsapp_;
     std::unique_ptr<juce::TextButton> btnVoltarMapa_;
+
+    // Janela flutuante da lixeira (_trash)
+    std::unique_ptr<TrashWindow> janelaTrash_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArvoreBackupComponent)
 };

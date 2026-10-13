@@ -542,7 +542,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnOcultarEditados_->setColour(juce::TextButton::textColourOffId, ocultarEditados_ ? tema().textoSobreAcento : tema().textoSecundario);
         if (mosaico_) mosaico_->definirOcultarEditados(ocultarEditados_);
     };
-    addAndMakeVisible(*btnOcultarEditados_);
+    addChildComponent(*btnOcultarEditados_);
 
     btnOcultarNaoSelecionados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
     btnOcultarNaoSelecionados_->setLookAndFeel(&sidebarButtonLf_);
@@ -555,8 +555,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tema().acento : tema().painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tema().textoSobreAcento : tema().textoSecundario);
         if (mosaico_) mosaico_->definirOcultarNaoSelecionados(ocultarNaoSelecionados_);
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnOcultarNaoSelecionados_);
+    addChildComponent(*btnOcultarNaoSelecionados_);
 
     // Item C.8: mostra só os arquivos do último lote importado pelo
     // ingest — mesmo mecanismo de filtro de anosSelecionados_/tipoMidiaSelecionado_
@@ -576,8 +577,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tema().textoSobreAcento : tema().textoSecundario);
         aplicarFiltrosAdicionais();
         atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a leva
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnMostrarRecentes_);
+    addChildComponent(*btnMostrarRecentes_);
 
     // Override da seleção restrita ao visível: ON inclui no lote também o que um filtro escondeu.
     btnIncluirOcultosSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.incluir_ocultos_off"));
@@ -593,8 +595,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
         if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
         atualizarRotuloSelecionados();
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnIncluirOcultosSelecao_);
+    addChildComponent(*btnIncluirOcultosSelecao_);
 
     // Bounce List: mostra só os arquivos com tag B; soma com media type/ano/etc. Aceso (roxo) com a contagem quando ON.
     btnMostrarBounce_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.bounce_off"));
@@ -605,9 +608,10 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         atualizarBotaoBounce();
         aplicarFiltrosAdicionais();
         atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a lista
+        sincronizarFiltroOpcoesDropdown();
     };
     atualizarBotaoBounce();
-    addAndMakeVisible(*btnMostrarBounce_);
+    addChildComponent(*btnMostrarBounce_);
 
     // SHOW REJECTED (logo abaixo de HIDE EDITED): mostra só os arquivos com tag R; soma com os outros filtros. O R no
     // grid só marca — apagar é o operador quem decide, a partir desta lista.
@@ -619,9 +623,10 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         atualizarBotaoRejeitados();
         aplicarFiltrosAdicionais();
         atualizarContagens();
+        sincronizarFiltroOpcoesDropdown();
     };
     atualizarBotaoRejeitados();
-    addAndMakeVisible(*btnMostrarRejeitados_);
+    addChildComponent(*btnMostrarRejeitados_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
@@ -649,6 +654,93 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnLimparSelecao_->onClick = [this] { if (mosaico_) mosaico_->limparSelecao(); };
     btnLimparSelecao_->setTooltip("Clear current grid selection");
     addAndMakeVisible(*btnLimparSelecao_);
+
+    btnFiltroOpcoes_ = std::make_unique<juce::TextButton>("FILTER OPTIONS  " + juce::String::fromUTF8("\xe2\x96\xbe"));
+    btnFiltroOpcoes_->setLookAndFeel(&sidebarButtonLf_);
+    btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnFiltroOpcoes_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnFiltroOpcoes_->setTooltip("Hide / show filter options");
+    auto aplicarOpcao = [this](int id, bool ligado) {
+        switch (id) {
+            case 1: // HIDE EDITED
+                ocultarEditados_ = ligado;
+                if (btnOcultarEditados_) {
+                    btnOcultarEditados_->setButtonText(ocultarEditados_ ? matriz::i18n::t("catwork.ocultar_editados_on") : matriz::i18n::t("catwork.ocultar_editados_off"));
+                    btnOcultarEditados_->setColour(juce::TextButton::buttonColourId, ocultarEditados_ ? tema().acento : tema().painelAlt);
+                    btnOcultarEditados_->setColour(juce::TextButton::textColourOffId, ocultarEditados_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirOcultarEditados(ocultarEditados_);
+                break;
+            case 2: // SHOW REJECTED
+                mostrarApenasRejeitados_ = ligado;
+                atualizarBotaoRejeitados();
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+            case 3: // HIDE UNSELECTED
+                ocultarNaoSelecionados_ = ligado;
+                if (btnOcultarNaoSelecionados_) {
+                    btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+                    btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tema().acento : tema().painelAlt);
+                    btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirOcultarNaoSelecionados(ocultarNaoSelecionados_);
+                break;
+            case 4: // SHOW RECENTLY INGESTED
+                if (ligado && !mostrarApenasRecentes_) selecionarFiltroTodos();
+                mostrarApenasRecentes_ = ligado;
+                if (btnMostrarRecentes_) {
+                    btnMostrarRecentes_->setButtonText(mostrarApenasRecentes_ ? matriz::i18n::t("catwork.mostrar_recentes_on") : matriz::i18n::t("catwork.mostrar_recentes_off"));
+                    btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tema().acento : tema().painelAlt);
+                    btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+            case 5: // INCLUDE HIDDEN
+                incluirOcultosNaSelecao_ = ligado;
+                if (btnIncluirOcultosSelecao_) {
+                    btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
+                    btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tema().acento : tema().painelAlt);
+                    btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
+                if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
+                atualizarRotuloSelecionados();
+                break;
+            case 6: // SHOW BOUNCE LIST
+                mostrarApenasBounce_ = ligado;
+                atualizarBotaoBounce();
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+        }
+    };
+
+    btnFiltroOpcoes_->onClick = [this, aplicarOpcao] {
+        struct Opcao { int id; const char* rotulo; bool ligado; };
+        const Opcao opcoes[] = {
+            {1, "HIDE EDITED", ocultarEditados_},
+            {2, "SHOW REJECTED", mostrarApenasRejeitados_},
+            {3, "HIDE UNSELECTED", ocultarNaoSelecionados_},
+            {4, "SHOW RECENTLY INGESTED", mostrarApenasRecentes_},
+            {5, "INCLUDE HIDDEN", incluirOcultosNaSelecao_},
+            {6, "SHOW BOUNCE LIST", mostrarApenasBounce_},
+        };
+        juce::PopupMenu menu;
+        for (const auto& o : opcoes) menu.addItem(o.id, o.rotulo, true, o.ligado);
+        juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
+        const bool estados[7] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
+                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_};
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFiltroOpcoes_.get()),
+                           [safeThis, aplicarOpcao, estados](int resultado) {
+                               if (safeThis == nullptr || resultado < 1 || resultado > 6) return;
+                               aplicarOpcao(resultado, !estados[resultado]);
+                               safeThis->sincronizarFiltroOpcoesDropdown();
+                           });
+    };
+    addAndMakeVisible(*btnFiltroOpcoes_);
+    sincronizarFiltroOpcoesDropdown();
 
     lblCaminhoNavegacao_ = std::make_unique<juce::Label>("", "");
     lblCaminhoNavegacao_->setFont(juce::Font(juce::FontOptions(11.0f)));
@@ -703,43 +795,15 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     });
 }
 
-CatalogWorkspaceComponent::HomeButtonLookAndFeel::HomeButtonLookAndFeel() {
-    icone = juce::ImageFileFormat::loadFrom(AssetsBinaryData::home_png, AssetsBinaryData::home_pngSize);
-    if (!icone.isValid()) return;
-
-    // O PNG vem com fundo branco chapado; aqui ele vira transparente para o
-    // ícone assentar sobre o fundo da coluna esquerda.
-    icone = icone.convertedToFormat(juce::Image::ARGB);
-    juce::Image::BitmapData bmp(icone, juce::Image::BitmapData::readWrite);
-    for (int y = 0; y < bmp.height; ++y) {
-        for (int x = 0; x < bmp.width; ++x) {
-            auto cor = bmp.getPixelColour(x, y);
-            if (cor.getRed() >= 240 && cor.getGreen() >= 240 && cor.getBlue() >= 240)
-                bmp.setPixelColour(x, y, juce::Colours::transparentBlack);
-        }
-    }
-}
-
-void CatalogWorkspaceComponent::HomeButtonLookAndFeel::drawButtonText(
-        juce::Graphics& g, juce::TextButton& botao, bool, bool) {
-    auto area = botao.getLocalBounds().reduced(4, 3);
-    auto areaTexto = area.removeFromBottom(14);
-
-    auto cor = botao.findColour(botao.getToggleState() ? juce::TextButton::textColourOnId
-                                                       : juce::TextButton::textColourOffId);
-    if (icone.isValid()) {
-        g.setOpacity(1.0f);
-        g.drawImageWithin(icone, area.getX(), area.getY(), area.getWidth(), area.getHeight(),
-                          juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-    } else {
-        g.setColour(cor);
-        g.setFont(juce::Font(juce::FontOptions(16.0f)));
-        g.drawText(juce::String::fromUTF8("\xf0\x9f\x8f\xa0"), area, juce::Justification::centred, false);
-    }
-
-    g.setColour(cor);
-    g.setFont(getTextButtonFont(botao, botao.getHeight()));
-    g.drawText(botao.getButtonText(), areaTexto, juce::Justification::centred, true);
+void CatalogWorkspaceComponent::sincronizarFiltroOpcoesDropdown() {
+    if (!btnFiltroOpcoes_) return;
+    const int ativos = (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0)
+                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0);
+    juce::String texto = "FILTER OPTIONS";
+    if (ativos > 0) texto += " (" + juce::String(ativos) + ")";
+    texto += "  " + juce::String::fromUTF8("\xe2\x96\xbe");
+    btnFiltroOpcoes_->setButtonText(texto);
+    btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, ativos > 0 ? tema().acento.withAlpha(0.25f) : tema().painelAlt);
 }
 
 CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
@@ -750,6 +814,7 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
 
     if (btnSelecionarTodos_) btnSelecionarTodos_->setLookAndFeel(nullptr);
     if (btnLimparSelecao_) btnLimparSelecao_->setLookAndFeel(nullptr);
+    if (btnFiltroOpcoes_) btnFiltroOpcoes_->setLookAndFeel(nullptr);
     if (btnOcultarEditados_) btnOcultarEditados_->setLookAndFeel(nullptr);
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
@@ -856,15 +921,15 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
     configurarLookAndFeel(sidebarButtonLf_);
 
     for (auto& cat : categorias_) {
-        // "all" é o botão HOME: ícone home.png com o rótulo "All Assets"
-        // logo abaixo (ver HomeButtonLookAndFeel e construirSidebar).
-        if      (cat.chave == "all")         cat.rotulo = matriz::i18n::t("catwork.all");
+        // "all" é o botão de reset: "RESET FILTERS" estilizado em verde
+        if      (cat.chave == "all")         cat.rotulo = "RESET FILTERS";
         else if (cat.chave == "audio")       cat.rotulo = matriz::i18n::t("catwork.audio");
         else if (cat.chave == "video")       cat.rotulo = matriz::i18n::t("catwork.video");
         else if (cat.chave == "images")      cat.rotulo = matriz::i18n::t("catwork.images");
         else if (cat.chave == "documents")   cat.rotulo = matriz::i18n::t("catwork.documents");
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
         else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
+        else if (cat.chave == "phone_dump")  cat.rotulo = "Phone Dump";
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -872,7 +937,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
             texto += " (" + juce::String(categorias_[i].contagem) + ")";
         }
         botoesCategorias_[i]->setButtonText(texto);
-        if (categorias_[i].chave == "all") botoesCategorias_[i]->setTooltip(matriz::i18n::t("catwork.all"));
+        if (categorias_[i].chave == "all") botoesCategorias_[i]->setTooltip("RESET FILTERS");
     }
 
     atualizarBotoesSidebar();
@@ -911,13 +976,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     botoesAnos_.clear();
     collectionDisponiveis_.clear();
 
-    // Item "Coluna esquerda da aba METADATA": o card LIBRARY foi eliminado
-    // por completo, junto dos botões Selected files/Folders/No backup
-    // (removidos, não realocados). "All Assets" sobrevive sozinho, virando
-    // um botão HOME (ícone home.png com o rótulo "All Assets" abaixo)
-    // posicionado acima de "Hide Edited: OFF" em vez de dentro de um card —
-    // ver resized() e HomeButtonLookAndFeel.
-    categorias_.push_back({matriz::i18n::t("catwork.all"), "all", 0});
+    categorias_.push_back({"RESET FILTERS", "all", 0});
 
     indiceInicioMediaType_ = static_cast<int>(categorias_.size());
     secoesSidebar_.push_back({indiceInicioMediaType_, matriz::i18n::t("catwork.secao_media_type")});
@@ -927,6 +986,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.documents"), "documents", 0});
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
     categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
+    categorias_.push_back({"Phone Dump", "phone_dump", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
     // duplicatas (valor perdedor no histórico), pra revisão.
@@ -935,12 +995,12 @@ void CatalogWorkspaceComponent::construirSidebar() {
 
     for (size_t i = 0; i < categorias_.size(); ++i) {
         auto btn = std::make_unique<juce::TextButton>(categorias_[i].rotulo);
-        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&homeButtonLf_)
+        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&resetButtonLf_)
                                    : static_cast<juce::LookAndFeel*>(&sidebarButtonLf_));
         btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
         btn->onClick = [this, i] { selecionarCategoria(static_cast<int>(i)); };
-        if (i == 0) btn->setTooltip(matriz::i18n::t("catwork.all"));
+        if (i == 0) btn->setTooltip("RESET FILTERS");
         addAndMakeVisible(*btn);
         botoesCategorias_.push_back(std::move(btn));
     }
@@ -1173,6 +1233,32 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                                        ? std::optional<juce::String>(matriz::i18n::t("catwork.sem_leva_recente"))
                                        : std::nullopt);
 
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemResumo& it) -> bool {
+        juce::String src(it.sourceMedia);
+        juce::String path(it.caminhoAbsolutoOrigem);
+        juce::String relPath(it.caminhoRelativoArquivo);
+        bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+                      path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
+                      relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
+        if (!match) {
+            for (const auto& tag : it.tags) {
+                if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (match) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
+
     if (filtroHerdadoIds_) anyFilter = true;
     for (const auto& item : itens) {
         if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
@@ -1197,15 +1283,23 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
 
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
-            auto ext = juce::String(item.extensaoArquivo).toLowerCase();
-            auto cat = matriz::ingest::categoriaPorExtensao(ext);
             bool match = false;
-            if (*tipoMidiaSelecionado_ == "audio") match = (cat == matriz::ingest::CategoriaMidia::Audio);
-            else if (*tipoMidiaSelecionado_ == "video") match = (cat == matriz::ingest::CategoriaMidia::Video);
-            else if (*tipoMidiaSelecionado_ == "images") match = (cat == matriz::ingest::CategoriaMidia::Imagem);
-            else if (*tipoMidiaSelecionado_ == "documents") match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-            else if (*tipoMidiaSelecionado_ == "sessions") match = (cat == matriz::ingest::CategoriaMidia::Sessao);
-            else if (*tipoMidiaSelecionado_ == "others") match = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+            if (*tipoMidiaSelecionado_ == "phone_dump") {
+                match = ehDump(item);
+            } else {
+                if (ehDump(item)) {
+                    match = false; // Dump items do not appear in other lists until extracted!
+                } else {
+                    auto ext = juce::String(item.extensaoArquivo).toLowerCase();
+                    auto cat = matriz::ingest::categoriaPorExtensao(ext);
+                    if (*tipoMidiaSelecionado_ == "audio") match = (cat == matriz::ingest::CategoriaMidia::Audio);
+                    else if (*tipoMidiaSelecionado_ == "video") match = (cat == matriz::ingest::CategoriaMidia::Video);
+                    else if (*tipoMidiaSelecionado_ == "images") match = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                    else if (*tipoMidiaSelecionado_ == "documents") match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                    else if (*tipoMidiaSelecionado_ == "sessions") match = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                    else if (*tipoMidiaSelecionado_ == "others") match = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+                }
+            }
             if (!match) continue;
         }
 
@@ -1452,7 +1546,12 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     const std::optional<std::string> listaSel = listaSelecionada_;
     const int geracao = ++geracaoContagens_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado,
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1489,6 +1588,27 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                                        [](const ItemResumo& r) { return r.nestTotal > 1 && !r.nestCapa; }),
                         itens.end());
 
+            auto ehDump = [&](const ItemResumo& it) -> bool {
+                juce::String src(it.sourceMedia);
+                juce::String path(it.caminhoAbsolutoOrigem);
+                juce::String relPath(it.caminhoRelativoArquivo);
+                bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+                              path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
+                              relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
+                if (!match) {
+                    for (const auto& tag : it.tags) {
+                        if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
+                            match = true;
+                            break;
+                        }
+                    }
+                }
+                if (match) {
+                    return (itensExtraidos.count(it.id) == 0);
+                }
+                return false;
+            };
+
             std::map<int, int> contagemPorAno;
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
@@ -1503,6 +1623,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             for (const auto& item : itens) {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
+                const bool isDump = ehDump(item);
 
                 // Passa por cada filtro ativo? (sem filtro = passa)
                 const bool pAno = anosParaTipo.empty() ||
@@ -1511,12 +1632,18 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 bool pTipo = true;
                 if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
-                    else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
-                    else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
-                    else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-                    else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
-                    else if (*filtroTipoMidiaAnos == "others") pTipo = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+                    if (*filtroTipoMidiaAnos == "phone_dump") {
+                        pTipo = isDump;
+                    } else if (isDump) {
+                        pTipo = false;
+                    } else {
+                        if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
+                        else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
+                        else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                        else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                        else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                        else if (*filtroTipoMidiaAnos == "others") pTipo = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+                    }
                 }
 
                 bool pColl = true;
@@ -1541,14 +1668,18 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
                 if (pAno && pColl && pSubj && pLista) {
-                    switch (cat) {
-                        case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
-                        case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
-                        case matriz::ingest::CategoriaMidia::Imagem: ++res.img; break;
-                        case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
-                        case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
-                        case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
-                        default: ++res.outros; break;  // Desconhecida/Arte
+                    if (isDump) {
+                        ++res.phoneDump;
+                    } else {
+                        switch (cat) {
+                            case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
+                            case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
+                            case matriz::ingest::CategoriaMidia::Imagem: ++res.img; break;
+                            case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
+                            case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
+                            case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
+                            default: ++res.outros; break;  // Desconhecida/Arte
+                        }
                     }
                 }
 
@@ -1689,6 +1820,7 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("documents", res.doc);
     definirContagem("sessions", res.sessao);
     definirContagem("others", res.outros);
+    definirContagem("phone_dump", res.phoneDump);
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -1770,26 +1902,30 @@ void CatalogWorkspaceComponent::executarBusca() {
 }
 
 void CatalogWorkspaceComponent::atualizarBotaoRejeitados() {
-    if (!btnMostrarRejeitados_) return;
-    const auto& tk = tema();
-    btnMostrarRejeitados_->setButtonText(mostrarApenasRejeitados_
-        ? matriz::i18n::t("catwork.rejeitados_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Rejeitado))))
-        : matriz::i18n::t("catwork.rejeitados_off"));
-    btnMostrarRejeitados_->setColour(juce::TextButton::buttonColourId, mostrarApenasRejeitados_ ? tk.perigo : tk.painelAlt);
-    btnMostrarRejeitados_->setColour(juce::TextButton::textColourOffId, mostrarApenasRejeitados_ ? juce::Colours::white : tk.textoSecundario);
-    btnMostrarRejeitados_->repaint();
+    if (btnMostrarRejeitados_) {
+        const auto& tk = tema();
+        btnMostrarRejeitados_->setButtonText(mostrarApenasRejeitados_
+            ? matriz::i18n::t("catwork.rejeitados_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Rejeitado))))
+            : matriz::i18n::t("catwork.rejeitados_off"));
+        btnMostrarRejeitados_->setColour(juce::TextButton::buttonColourId, mostrarApenasRejeitados_ ? tk.perigo : tk.painelAlt);
+        btnMostrarRejeitados_->setColour(juce::TextButton::textColourOffId, mostrarApenasRejeitados_ ? juce::Colours::white : tk.textoSecundario);
+        btnMostrarRejeitados_->repaint();
+    }
+    sincronizarFiltroOpcoesDropdown();
 }
 
 void CatalogWorkspaceComponent::atualizarBotaoBounce() {
-    if (!btnMostrarBounce_) return;
-    const auto& tk = tema();
-    const juce::Colour roxo(0xff9333ea);
-    btnMostrarBounce_->setButtonText(mostrarApenasBounce_
-        ? matriz::i18n::t("catwork.bounce_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce))))
-        : matriz::i18n::t("catwork.bounce_off"));
-    btnMostrarBounce_->setColour(juce::TextButton::buttonColourId, mostrarApenasBounce_ ? roxo : tk.painelAlt);
-    btnMostrarBounce_->setColour(juce::TextButton::textColourOffId, mostrarApenasBounce_ ? juce::Colours::white : tk.textoSecundario);
-    btnMostrarBounce_->repaint();
+    if (btnMostrarBounce_) {
+        const auto& tk = tema();
+        const juce::Colour roxo(0xff9333ea);
+        btnMostrarBounce_->setButtonText(mostrarApenasBounce_
+            ? matriz::i18n::t("catwork.bounce_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce))))
+            : matriz::i18n::t("catwork.bounce_off"));
+        btnMostrarBounce_->setColour(juce::TextButton::buttonColourId, mostrarApenasBounce_ ? roxo : tk.painelAlt);
+        btnMostrarBounce_->setColour(juce::TextButton::textColourOffId, mostrarApenasBounce_ ? juce::Colours::white : tk.textoSecundario);
+        btnMostrarBounce_->repaint();
+    }
+    sincronizarFiltroOpcoesDropdown();
 }
 
 void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
@@ -1852,6 +1988,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     if (mosaico_) mosaico_->definirFiltroItens(std::nullopt);
     // Contagens cruzadas (DATE por MEDIA TYPE e vice-versa) sem filtro agora.
     atualizarContagens();
+    sincronizarFiltroOpcoesDropdown();
 }
 
 void CatalogWorkspaceComponent::limparChipsDeBusca() {
@@ -2321,6 +2458,7 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
         else if (ch == "documents") cor = juce::Colour(0xff2b9348);
         else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
         else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
+        else if (ch == "phone_dump") cor = juce::Colour(0xff0284c7);
         else continue;
         auto btnBounds = botoesCategorias_[i]->getBounds();
         float cy = btnBounds.getCentreY() - 4.0f;
@@ -2433,90 +2571,63 @@ void CatalogWorkspaceComponent::resized() {
         viewportChipsBusca_->setBounds(0, 0, 0, 0);
     }
 
-    // 0. VIEW MODES & DISPLAY CONTROLS (directly below Search)
-    // Row 1: List and Miniatures side-by-side (50/50, matching Intake tab)
+    // ==========================================
+    // CARD 1: VIEW
+    // ==========================================
+    int viewCardTop = sidebar.getY();
+    sidebar.removeFromTop(kCardPad);
+    secaoHeaderBounds_.push_back({"VIEW", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+
     if (btnVisaoLista_ && btnVisaoGrade_) {
-        auto viewRow = sidebar.removeFromTop(24).reduced(4, 0);
+        auto viewRow = sidebar.removeFromTop(24).reduced(6, 0);
         int half = (viewRow.getWidth() - 6) / 2;
         btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
         viewRow.removeFromLeft(6);
         btnVisaoGrade_->setBounds(viewRow);
         sidebar.removeFromTop(3);
     }
-    // Row 2: Size slider
     if (sliderTamanho_) {
-        auto sliderRow = sidebar.removeFromTop(18).reduced(4, 0);
+        auto sliderRow = sidebar.removeFromTop(18).reduced(6, 0);
         if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(20));
         sliderTamanho_->setBounds(sliderRow);
         sidebar.removeFromTop(2);
     }
-    // Row 3: Select All & Deselect directly below slider
+    sidebar.removeFromTop(kCardPad);
+    secaoCardBounds_.push_back(juce::Rectangle<int>(4, viewCardTop, kLarguraSidebar - 8, sidebar.getY() - viewCardTop));
+    sidebar.removeFromTop(6);
+
+    // ==========================================
+    // CARD 2: FILTERS
+    // ==========================================
+    int filtersCardTop = sidebar.getY();
+    sidebar.removeFromTop(kCardPad);
+    secaoHeaderBounds_.push_back({"FILTERS", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+
+    // Row: Select All & Deselect
     if (btnSelecionarTodos_ && btnLimparSelecao_) {
-        auto selRow = sidebar.removeFromTop(20).reduced(4, 0);
+        auto selRow = sidebar.removeFromTop(20).reduced(6, 0);
         int halfW = (selRow.getWidth() - 4) / 2;
         btnSelecionarTodos_->setBounds(selRow.removeFromLeft(halfW));
         selRow.removeFromLeft(4);
         btnLimparSelecao_->setBounds(selRow);
-        sidebar.removeFromTop(2);
+        sidebar.removeFromTop(4);
     }
-    // HOME (item "Coluna esquerda da aba METADATA", A): era o botão "All
-    // Assets" dentro do card LIBRARY — agora um botão ícone, acima de
-    // "Hide Edited: OFF". Continua sendo categorias_[0]/botoesCategorias_[0]
-    // (mesma seleção/realce/contagem de sempre), só a posição/aparência
-    // mudou.
+
+    // RESET FILTERS button (green button matching Intake APPROVE SELECTED)
     if (!botoesCategorias_.empty()) {
-        // Altura dobrada (22 -> 44, comprimida a 42 no item 1 de hoje pra
-        // abrir espaço pro chip) para o ícone home.png caber acima do
-        // rótulo "All Assets".
-        botoesCategorias_[0]->setBounds(sidebar.removeFromTop(42).reduced(4, 0));
-        sidebar.removeFromTop(2);
+        botoesCategorias_[0]->setBounds(sidebar.removeFromTop(28).reduced(6, 0));
+        sidebar.removeFromTop(4);
     }
-    if (btnOcultarEditados_) {
-        btnOcultarEditados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnMostrarRejeitados_) {  // logo abaixo de HIDE EDITED
-        btnMostrarRejeitados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnOcultarNaoSelecionados_) {
-        btnOcultarNaoSelecionados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnMostrarRecentes_) {
-        btnMostrarRecentes_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnIncluirOcultosSelecao_) {
-        btnIncluirOcultosSelecao_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnMostrarBounce_) {  // entre INCLUDE HIDDEN e o card MEDIA TYPE
-        btnMostrarBounce_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    sidebar.removeFromTop(sectionSpacing);
 
-    // Cada seção da coluna esquerda vira um card com borda própria (item 7):
-    // um respiro fixo no topo/base marca onde o card começa e termina, e o
-    // retângulo resultante (header + conteúdo + respiro) é guardado pra
-    // paint() desenhar o contorno.
-    int cardTop = 0;
-    auto iniciarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        cardTop = sidebar.getY();
-    };
-    auto finalizarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        secaoCardBounds_.push_back(juce::Rectangle<int>(4, cardTop - kCardPad, kLarguraSidebar - 8,
-                                                          sidebar.getY() - cardTop + kCardPad));
-    };
+    // Checkbox toggle ON/OFF + Dropdown with the 6 options
+    if (btnFiltroOpcoes_) {
+        btnFiltroOpcoes_->setBounds(sidebar.removeFromTop(24).reduced(6, 0));
+        sidebar.removeFromTop(6);
+    }
 
-    // Card LIBRARY eliminado por completo (item "Coluna esquerda da aba
-    // METADATA", B) — MEDIA TYPE é o primeiro card agora.
-
-    // 2. MEDIA TYPE
-    iniciarCard();
+    // Sub-header: MEDIA TYPE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_media_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
     for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
@@ -2525,47 +2636,37 @@ void CatalogWorkspaceComponent::resized() {
         botoesCategorias_[i]->setBounds(btnArea);
         sidebar.removeFromTop(kItemGap);
     }
-    finalizarCard();
-    sidebar.removeFromTop(sectionSpacing);
+    sidebar.removeFromTop(4);
 
-    // 2b. CONTENT TYPE (item 4, nova lista) — card próprio logo abaixo de
-    // MEDIA TYPE, um dropdown só, sem lista de botões.
-    iniciarCard();
+    // Sub-header: CONTENT TYPE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_content_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
     if (comboContentType_) {
-        comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
     if (comboSubject_) {
-        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
     if (comboLista_) {
-        comboLista_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        comboLista_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
-    finalizarCard();
-    sidebar.removeFromTop(sectionSpacing);
+    sidebar.removeFromTop(4);
 
-    // 3. DATE — o card fecha só depois do grid de anos, no fim da função,
-    // porque essa seção usa todo o espaço vertical que sobrar da sidebar.
-    iniciarCard();
+    // Sub-header: DATE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_date"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
 
-    // Item 5/6 (nova lista): FROM/TO/CLEAR deram lugar a este toggle —
-    // marcar vários anos nos botões abaixo faz o papel do range antigo.
     if (toggleMultiplosAnos_) {
         toggleMultiplosAnos_->setBounds(sidebar.removeFromTop(22).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
 
-    // O que sobrar da sidebar (espaço liberado pela remoção do filtro
-    // CONTENT) vai inteiro para a lista de anos, que rola internamente
-    // quando não couber — nenhum ANO fica oculto sem acesso.
     if (anosViewport_) {
         auto anosArea = sidebar;
+        anosArea.removeFromBottom(kCardPad);
         anosViewport_->setBounds(anosArea);
 
         int numAnoRows = (static_cast<int>(botoesAnos_.size()) + 1) / 2;
@@ -2584,12 +2685,8 @@ void CatalogWorkspaceComponent::resized() {
         }
     }
 
-    // Fecha o card DATE no fundo da sidebar — essa seção usa todo o espaço
-    // vertical que sobrar, então o card acompanha (sidebar.getBottom() não
-    // muda com os removeFromTop() acima: cada um empurra o topo, nunca o
-    // fundo).
-    secaoCardBounds_.push_back(juce::Rectangle<int>(4, cardTop - kCardPad, kLarguraSidebar - 8,
-                                                      sidebar.getBottom() - (cardTop - kCardPad)));
+    secaoCardBounds_.push_back(juce::Rectangle<int>(4, filtersCardTop, kLarguraSidebar - 8,
+                                                      sidebar.getBottom() - filtersCardTop - kCardPad));
 
     if (!fichaColapsada_ && fichaPanel_) {
         fichaPanel_->setVisible(true);

@@ -14,6 +14,7 @@
 #include "ConversaWhatsappComponent.h"
 #include "Tablet.h"
 #include "LogosTipoArquivo.h"
+#include "TrashWindow.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 #include "../Whatsapp/ServidorWhatsappApp.h"
@@ -600,12 +601,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
         mostrarMenuArquivoDetalhe(itemId);
     };
 
-    btnReceberCelular_ = std::make_unique<BotaoIconeCelular>();
-    btnReceberCelular_->setComponentID("mb.btnReceberCelular");
-    btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
-    btnReceberCelular_->onClick = [this] { abrirReceberDoCelular(); };
-    addAndMakeVisible(*btnReceberCelular_);
-
+    // btnReceberCelular_ transferido para INTAKE (item 9C)
     setWantsKeyboardFocus(true);
     setOpaque(true);  // o paint faz fillAll do fundo inteiro
 
@@ -623,6 +619,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 ArvoreBackupComponent::~ArvoreBackupComponent() {
     autoRolagem_.stopTimer();
     limparDicaPasta();
+    janelaTrash_.reset();
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
@@ -3046,6 +3043,14 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             limparSelecaoTudo();
             selectedFolderId_ = trashFolderId_;
             atualizarPainelDetalhe(trashFolderId_);
+            if (janelaTrash_) {
+                janelaTrash_->toFront(true);
+            } else {
+                janelaTrash_ = std::make_unique<TrashWindow>(projeto_, mapaAtivoId_, [this] {
+                    recarregar();
+                    repaint();
+                });
+            }
             repaint();
         }
         return;

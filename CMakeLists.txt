@@ -489,6 +489,7 @@ target_sources(matriz PRIVATE
     Source/Analytics/AnalyticsExport.cpp
     Source/Analytics/SavedAnalyses.cpp
     Source/Ui/ArvoreBackupComponent.cpp
+    Source/Ui/TrashWindow.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
