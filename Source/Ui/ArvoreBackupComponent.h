@@ -287,6 +287,16 @@ private:
     mutable std::string contagemSemPastaMapa_;
     bool semPastaHover_ = false;
 
+    // LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas (fora do zoom).
+    juce::Rectangle<int> boundsPastaTrash() const;
+    void desenharPastaTrash(juce::Graphics& g) const;
+    void confirmarEApagarPastas(const std::vector<std::string>& pastaIds);
+    void mostrarMenuArquivoDetalhe(const std::string& itemId);
+    void mostrarMenuPastaTrash();
+    std::string trashFolderId_;
+    int trashContagem_ = 0;
+    bool trashHover_ = false;
+
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);
     // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
     std::unique_ptr<juce::Slider> sliderTamanho_;

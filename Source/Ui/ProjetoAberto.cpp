@@ -3751,9 +3751,192 @@ bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
     }
+    if (ehPastaTrash(pastaId)) return false;
     registrarUndoSubarvoreApagada(pastaId);
     projeto_->registro().run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(pastaId)});
     return true;
+}
+
+static void garantirTabelaLixeira(matriz::db::Database& db) {
+    db.run(
+        "CREATE TABLE IF NOT EXISTS lixeira_item ("
+        "  item_id TEXT NOT NULL,"
+        "  mapa_id TEXT NOT NULL,"
+        "  pasta_origem_id TEXT,"
+        "  nome_pasta_origem TEXT,"
+        "  deletado_em TEXT NOT NULL,"
+        "  PRIMARY KEY (item_id, mapa_id)"
+        ")",
+        {}
+    );
+}
+
+std::string ProjetoAberto::obterOuCriarPastaTrash(const std::string& mapaId) {
+    if (!projeto_) return {};
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+    auto st = db.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ? AND nome = '_trash' LIMIT 1");
+    st.bind(1, matriz::db::Value::of(mapaId));
+    if (st.step()) return st.columnText(0);
+
+    std::string id = juce::Uuid().toString().toStdString();
+    db.run(
+        "INSERT INTO acervo_pasta (id, projeto_id, nome, pasta_pai_id, mapa_id, ativo, criado_em, atualizado_em) "
+        "VALUES (?, ?, '_trash', NULL, ?, 0, datetime('now'), datetime('now'))",
+        {matriz::db::Value::of(id), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(mapaId)}
+    );
+    return id;
+}
+
+bool ProjetoAberto::ehPastaTrash(const std::string& pastaId) const {
+    if (!projeto_ || pastaId.empty()) return false;
+    auto& db = projeto_->registro();
+    auto st = db.prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(pastaId));
+    if (st.step()) return st.columnText(0) == "_trash";
+    return false;
+}
+
+void ProjetoAberto::moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const std::string trashId = obterOuCriarPastaTrash(mapaId);
+    if (trashId.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        std::string agora = matriz::model::agoraIso8601();
+        for (const auto& itemId : itemIds) {
+            std::string pastaOrigId;
+            std::string nomeOrig = nomePastaOrigem;
+            if (nomeOrig.empty()) {
+                auto stP = db.prepare("SELECT ap.id, ap.nome FROM acervo_item_pasta aip "
+                                      "JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+                                      "WHERE aip.item_id = ? AND aip.mapa_id = ? LIMIT 1");
+                stP.bind(1, matriz::db::Value::of(itemId));
+                stP.bind(2, matriz::db::Value::of(mapaId));
+                if (stP.step()) {
+                    pastaOrigId = stP.columnText(0);
+                    nomeOrig = stP.columnText(1);
+                }
+            }
+            if (nomeOrig == "_trash") nomeOrig.clear();
+
+            db.run("INSERT OR REPLACE INTO lixeira_item (item_id, mapa_id, pasta_origem_id, nome_pasta_origem, deletado_em) "
+                   "VALUES (?, ?, ?, ?, ?)",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId),
+                    matriz::db::Value::of(pastaOrigId), matriz::db::Value::of(nomeOrig),
+                    matriz::db::Value::of(agora)});
+
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            inserirItemPastaInterno(itemId, trashId, agora);
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+void ProjetoAberto::extrairItensParaCanvas(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        for (const auto& itemId : itemIds) {
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            db.run("DELETE FROM lixeira_item WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+void ProjetoAberto::restaurarItensDaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        std::string agora = matriz::model::agoraIso8601();
+        for (const auto& itemId : itemIds) {
+            std::string pastaOrigId, nomePastaOrig;
+            auto st = db.prepare("SELECT pasta_origem_id, nome_pasta_origem FROM lixeira_item WHERE item_id = ? AND mapa_id = ?");
+            st.bind(1, matriz::db::Value::of(itemId));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            if (st.step()) {
+                if (!st.columnIsNull(0)) pastaOrigId = st.columnText(0);
+                if (!st.columnIsNull(1)) nomePastaOrig = st.columnText(1);
+            }
+
+            std::string pastaDestinoId;
+            // Se a pasta original ainda existe no mapa e não é a lixeira
+            if (!pastaOrigId.empty()) {
+                auto stChk = db.prepare("SELECT id FROM acervo_pasta WHERE id = ? AND mapa_id = ? AND nome <> '_trash'");
+                stChk.bind(1, matriz::db::Value::of(pastaOrigId));
+                stChk.bind(2, matriz::db::Value::of(mapaId));
+                if (stChk.step()) pastaDestinoId = pastaOrigId;
+            }
+
+            // Se a pasta original foi deletada do canvas, recria pasta com o mesmo nome
+            if (pastaDestinoId.empty() && !nomePastaOrig.empty()) {
+                auto stNome = db.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ? AND lower(nome) = lower(?) AND nome <> '_trash' LIMIT 1");
+                stNome.bind(1, matriz::db::Value::of(mapaId));
+                stNome.bind(2, matriz::db::Value::of(nomePastaOrig));
+                if (stNome.step()) {
+                    pastaDestinoId = stNome.columnText(0);
+                } else {
+                    pastaDestinoId = juce::Uuid().toString().toStdString();
+                    db.run("INSERT INTO acervo_pasta (id, projeto_id, nome, pasta_pai_id, mapa_id, ativo, criado_em, atualizado_em) "
+                           "VALUES (?, ?, ?, NULL, ?, 1, ?, ?)",
+                           {matriz::db::Value::of(pastaDestinoId), matriz::db::Value::of(projeto_->projetoId()),
+                            matriz::db::Value::of(nomePastaOrig), matriz::db::Value::of(mapaId),
+                            matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+                }
+            }
+
+            if (!pastaDestinoId.empty()) {
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                       {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+                inserirItemPastaInterno(itemId, pastaDestinoId, agora);
+            } else {
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                       {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            }
+
+            db.run("DELETE FROM lixeira_item WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+std::vector<std::string> ProjetoAberto::itensNaPastaTrash(const std::string& mapaId) const {
+    std::vector<std::string> out;
+    if (!projeto_) return out;
+    auto& db = projeto_->registro();
+    auto st = db.prepare(
+        "SELECT aip.item_id FROM acervo_item_pasta aip "
+        "JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+        "WHERE aip.mapa_id = ? AND ap.nome = '_trash'");
+    st.bind(1, matriz::db::Value::of(mapaId));
+    while (st.step()) out.push_back(st.columnText(0));
+    return out;
 }
 
 bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {

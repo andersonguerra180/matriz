@@ -815,6 +815,10 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     registro.exec(
         "CREATE TABLE IF NOT EXISTS ingest_pasta_raiz_mapa ("
         "  raiz_id TEXT NOT NULL, mapa_id TEXT NOT NULL, PRIMARY KEY (raiz_id, mapa_id))");
+    registro.exec(
+        "CREATE TABLE IF NOT EXISTS lixeira_item ("
+        "  item_id TEXT NOT NULL, mapa_id TEXT NOT NULL, pasta_origem_id TEXT, nome_pasta_origem TEXT, deletado_em TEXT NOT NULL, "
+        "  PRIMARY KEY (item_id, mapa_id))");
     migrarFolderMapUnico(registro);
     migrarMapaDoMain(registro);
 

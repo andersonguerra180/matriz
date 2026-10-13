@@ -605,6 +605,16 @@ public:
     bool pastaTemArquivosNoMain(const std::string& pastaId) const;
 
     // ------------------------------------------------------------------
+    // LIXEIRA (_trash) DO FOLDER MAP
+    // ------------------------------------------------------------------
+    std::string obterOuCriarPastaTrash(const std::string& mapaId);
+    bool ehPastaTrash(const std::string& pastaId) const;
+    void moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem = "");
+    void extrairItensParaCanvas(const std::vector<std::string>& idsPedidos, const std::string& mapaId);
+    void restaurarItensDaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId);
+    std::vector<std::string> itensNaPastaTrash(const std::string& mapaId) const;
+
+    // ------------------------------------------------------------------
     // AUTO-ORGANIZAÇÃO por pasta (Folder Map). A pasta guarda uma regra (CSV de
     // blocos YEAR, MEDIA TYPE, FILE TYPE, SOURCE MEDIUM, CREATOR, CONTENT,
     // SUBJECT) e distribui os itens soltos nela — e os das subpastas AUTO dela —

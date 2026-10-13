@@ -59,10 +59,11 @@ bool pastaOuAncestralDesativada(matriz::db::Database& registro, const std::strin
     std::set<std::string> visitados;
     while (!atual.empty() && !visitados.count(atual)) {
         visitados.insert(atual);
-        auto stmt = registro.prepare("SELECT ativo, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        auto stmt = registro.prepare("SELECT ativo, pasta_pai_id, nome FROM acervo_pasta WHERE id = ?");
         stmt.bind(1, Value::of(atual));
         if (!stmt.step()) break;
         if (!stmt.columnIsNull(0) && stmt.columnInt(0) == 0) return true;
+        if (!stmt.columnIsNull(2) && stmt.columnText(2) == "_trash") return true;
         atual = stmt.columnIsNull(1) ? std::string() : stmt.columnText(1);
     }
     return false;
