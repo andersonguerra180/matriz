@@ -107,6 +107,16 @@ private:
         // naquela ponta (ex.: só "De" preenchido = "esse ano em diante").
         int anoDe = 0;
         int anoAte = 0;
+
+        // Critérios de coincidência
+        bool coincidirSha256 = true;
+        bool coincidirPHash = true;
+        bool coincidirNome = false;
+        bool coincidirTamanho = true;
+        bool coincidirData = false;
+        bool coincidirDuracao = true;
+        bool coincidirDimensoes = false;
+        bool coincidirEspacoCor = true;
     } activeFilters_;
 
     void resolverTudo(bool ehDuplicataReal);
@@ -151,6 +161,16 @@ private:
     std::unique_ptr<juce::TextEditor> txtAnoDe_;
     std::unique_ptr<juce::Label> lblAnoAte_;
     std::unique_ptr<juce::TextEditor> txtAnoAte_;
+
+    // Toggles de critérios de coincidência
+    std::unique_ptr<juce::ToggleButton> tbSha256_;
+    std::unique_ptr<juce::ToggleButton> tbPHash_;
+    std::unique_ptr<juce::ToggleButton> tbNome_;
+    std::unique_ptr<juce::ToggleButton> tbTamanho_;
+    std::unique_ptr<juce::ToggleButton> tbData_;
+    std::unique_ptr<juce::ToggleButton> tbDuracao_;
+    std::unique_ptr<juce::ToggleButton> tbDimensoes_;
+    std::unique_ptr<juce::ToggleButton> tbEspacoCor_;
     
     // Results list viewport
     class ListaResultadosComponent;

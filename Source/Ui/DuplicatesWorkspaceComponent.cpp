@@ -1068,6 +1068,24 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     txtAnoAte_->setTooltip("Only include items up to this year (blank = no upper limit)");
     addAndMakeVisible(*txtAnoAte_);
 
+    auto criarToggle = [this](std::unique_ptr<juce::ToggleButton>& btn, const juce::String& chaveTexto, const juce::String& chaveDica, bool inicial) {
+        btn = std::make_unique<juce::ToggleButton>(matriz::i18n::t(chaveTexto));
+        btn->setToggleState(inicial, juce::dontSendNotification);
+        btn->setTooltip(matriz::i18n::t(chaveDica));
+        btn->setColour(juce::ToggleButton::textColourId, tema().textoSecundario);
+        btn->setColour(juce::ToggleButton::tickColourId, tema().acento);
+        addAndMakeVisible(*btn);
+    };
+
+    criarToggle(tbSha256_, "duplicatas.match_sha256", "duplicatas.match_sha256_dica", true);
+    criarToggle(tbPHash_, "duplicatas.match_visual", "duplicatas.match_visual_dica", true);
+    criarToggle(tbNome_, "duplicatas.match_nome", "duplicatas.match_nome_dica", false);
+    criarToggle(tbTamanho_, "duplicatas.match_tamanho", "duplicatas.match_tamanho_dica", true);
+    criarToggle(tbData_, "duplicatas.match_data", "duplicatas.match_data_dica", false);
+    criarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica", true);
+    criarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica", false);
+    criarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica", true);
+
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
     lblStatus_->setMinimumHorizontalScale(1.0f);  // o status quebra em linhas na coluna estreita
@@ -1252,6 +1270,23 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         btnReset_->setButtonText(matriz::i18n::t("duplicatas.btn_reset"));
         btnReset_->setTooltip(matriz::i18n::t("duplicatas.btn_reset_dica"));
     }
+    auto atualizarToggle = [&](std::unique_ptr<juce::ToggleButton>& btn, const juce::String& chaveTexto, const juce::String& chaveDica) {
+        if (btn) {
+            btn->setButtonText(matriz::i18n::t(chaveTexto));
+            btn->setTooltip(matriz::i18n::t(chaveDica));
+            btn->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
+            btn->setColour(juce::ToggleButton::tickColourId, tk.acento);
+        }
+    };
+    atualizarToggle(tbSha256_, "duplicatas.match_sha256", "duplicatas.match_sha256_dica");
+    atualizarToggle(tbPHash_, "duplicatas.match_visual", "duplicatas.match_visual_dica");
+    atualizarToggle(tbNome_, "duplicatas.match_nome", "duplicatas.match_nome_dica");
+    atualizarToggle(tbTamanho_, "duplicatas.match_tamanho", "duplicatas.match_tamanho_dica");
+    atualizarToggle(tbData_, "duplicatas.match_data", "duplicatas.match_data_dica");
+    atualizarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica");
+    atualizarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica");
+    atualizarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica");
+
     if (listaComponent_) {
         listaComponent_->updateButtonsI18n();
         listaComponent_->repaint();
@@ -1302,6 +1337,15 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 
     activeFilters_.anoDe = txtAnoDe_->getText().trim().getIntValue();
     activeFilters_.anoAte = txtAnoAte_->getText().trim().getIntValue();
+
+    activeFilters_.coincidirSha256 = tbSha256_ ? tbSha256_->getToggleState() : true;
+    activeFilters_.coincidirPHash = tbPHash_ ? tbPHash_->getToggleState() : true;
+    activeFilters_.coincidirNome = tbNome_ ? tbNome_->getToggleState() : false;
+    activeFilters_.coincidirTamanho = tbTamanho_ ? tbTamanho_->getToggleState() : true;
+    activeFilters_.coincidirData = tbData_ ? tbData_->getToggleState() : false;
+    activeFilters_.coincidirDuracao = tbDuracao_ ? tbDuracao_->getToggleState() : true;
+    activeFilters_.coincidirDimensoes = tbDimensoes_ ? tbDimensoes_->getToggleState() : false;
+    activeFilters_.coincidirEspacoCor = tbEspacoCor_ ? tbEspacoCor_->getToggleState() : true;
 
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
@@ -1519,6 +1563,14 @@ void DuplicatesWorkspaceComponent::run() {
                                   (duracaoIgual && lufsIgual && extIgual) ||
                                   (dimIgual && tamanhoIgual);
 
+                if (activeFilters_.coincidirNome && !nomeIgual) continue;
+                if (activeFilters_.coincidirTamanho && !tamanhoIgual) continue;
+                if (activeFilters_.coincidirDuracao && (a.duracao > 0 || b.duracao > 0) && !duracaoIgual) continue;
+                if (activeFilters_.coincidirDimensoes && (a.largura > 0 || b.largura > 0) && !dimIgual) continue;
+                if (activeFilters_.coincidirEspacoCor && !a.colorSpace.empty() && !b.colorSpace.empty() && !colorSpaceIgual) continue;
+                if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+
                 if (isDupMatch) {
                     DuplicateGroup group;
                     group.original.itemId = a.itemId;
@@ -1654,6 +1706,12 @@ void DuplicatesWorkspaceComponent::run() {
                 group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
                 group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
 
+                if (activeFilters_.coincidirNome && !group.duplicata.nomeCoincide) continue;
+                if (activeFilters_.coincidirTamanho && !group.duplicata.tamanhoCoincide) continue;
+                if (activeFilters_.coincidirDuracao && (group.duplicata.duracao > 0 || group.original.duracao > 0) && !group.duplicata.duracaoCoincide) continue;
+                if (activeFilters_.coincidirDimensoes && (group.duplicata.largura > 0 || group.original.largura > 0) && !group.duplicata.dimCoincide) continue;
+                if (activeFilters_.coincidirEspacoCor && !group.original.colorSpace.empty() && !group.duplicata.colorSpace.empty() && !group.duplicata.colorSpaceCoincide) continue;
+
                 gruposDetectados_.push_back(group);
             }
         }
@@ -1713,82 +1771,124 @@ void DuplicatesWorkspaceComponent::run() {
         for (size_t g = 0; g < gruposDetectados_.size(); ++g)
             grupoExistente[chavePar(gruposDetectados_[g].original.itemId, gruposDetectados_[g].duplicata.itemId)] = g;
 
-        // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
-        faseScan_ = 2;
-        std::vector<std::pair<std::string, std::pair<std::string, std::string>>> paraGravar;  // arquivoId -> (md5, sha256)
-        auto gravarChecksums = [&]() {
-            if (paraGravar.empty()) return;
-            try {
-                db.exec("BEGIN IMMEDIATE");
-                try {
-                    const auto agora = matriz::model::agoraIso8601();
-                    // O gatilho arquivo_master_travado proíbe mexer em checksum de master. Aqui só PREENCHEMOS um checksum
-                    // que nunca foi calculado (nunca trocamos um existente — a cláusula WHERE garante), com o mesmo
-                    // mecanismo da reconciliação de Vault, dentro da transação (a marca some antes do COMMIT).
-                    db.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});
-                    for (const auto& [arqId, par] : paraGravar)
-                        db.run("UPDATE arquivo SET checksum_md5 = ?, checksum_sha256 = ?, checksum_gerado_em = ? "
-                               "WHERE id = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')",
-                               {matriz::db::Value::of(par.first), matriz::db::Value::of(par.second), matriz::db::Value::of(agora),
-                                matriz::db::Value::of(arqId)});
-                    db.run("DELETE FROM reconciliacao_em_curso", {});
-                    db.exec("COMMIT");
-                } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} }
-            } catch (...) {}
-            paraGravar.clear();
-        };
-        size_t semChecksum = 0;
-        for (const auto& it : items) if (it.sha256.empty() && !it.arquivoId.empty()) ++semChecksum;
-        size_t feitos = 0;
-        for (auto& it : items) {
-            if (threadShouldExit()) { gravarChecksums(); return; }
-            if (!it.sha256.empty() || it.arquivoId.empty() || it.fullPath.empty()) continue;
-            progressoScan_ = 0.2 + 0.4 * static_cast<double>(feitos) / static_cast<double>(std::max<size_t>(1, semChecksum));  // 20..60%
-            ++feitos;
-            const juce::File f(juce::String::fromUTF8(it.fullPath.c_str()));
-            if (!f.existsAsFile()) continue;
-            try {
-                auto cs = matriz::ingest::calcularChecksums(f);
-                it.sha256 = cs.sha256;
-                paraGravar.push_back({it.arquivoId, {cs.md5, cs.sha256}});
-                if (paraGravar.size() >= 100) gravarChecksums();
-            } catch (...) {}
-        }
-        gravarChecksums();
-
-        // ---- B2: IDENTICAL — mesmo SHA-256
-        std::unordered_map<std::string, std::vector<size_t>> porSha;
-        for (size_t i = 0; i < items.size(); ++i)
-            if (!items[i].sha256.empty()) porSha[items[i].sha256].push_back(i);
         std::unordered_set<std::string> paresIdenticos;
-        for (auto& [sha, idxs] : porSha) {
-            if (idxs.size() < 2) continue;
-            std::sort(idxs.begin(), idxs.end(), [&](size_t x, size_t y) { return items[x].itemId < items[y].itemId; });
-            for (size_t k = 1; k < idxs.size(); ++k) {
-                const auto& a = items[idxs[0]];
-                const auto& b = items[idxs[k]];
-                const auto chave = chavePar(a.itemId, b.itemId);
-                paresIdenticos.insert(chave);
-                auto ex = grupoExistente.find(chave);
-                if (ex != grupoExistente.end()) {   // já pego por outro critério: ganha o rótulo IDENTICAL
-                    gruposDetectados_[ex->second].criterio = "IDENTICAL";
-                    continue;
+        if (activeFilters_.coincidirSha256) {
+            // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
+            faseScan_ = 2;
+            std::vector<std::pair<std::string, std::pair<std::string, std::string>>> paraGravar;  // arquivoId -> (md5, sha256)
+            auto gravarChecksums = [&]() {
+                if (paraGravar.empty()) return;
+                try {
+                    db.exec("BEGIN IMMEDIATE");
+                    try {
+                        const auto agora = matriz::model::agoraIso8601();
+                        // O gatilho arquivo_master_travado proíbe mexer em checksum de master. Aqui só PREENCHEMOS um checksum
+                        // que nunca foi calculado (nunca trocamos um existente — a cláusula WHERE garante), com o mesmo
+                        // mecanismo da reconciliação de Vault, dentro da transação (a marca some antes do COMMIT).
+                        db.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});
+                        for (const auto& [arqId, par] : paraGravar)
+                            db.run("UPDATE arquivo SET checksum_md5 = ?, checksum_sha256 = ?, checksum_gerado_em = ? "
+                                   "WHERE id = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')",
+                                   {matriz::db::Value::of(par.first), matriz::db::Value::of(par.second), matriz::db::Value::of(agora),
+                                    matriz::db::Value::of(arqId)});
+                        db.run("DELETE FROM reconciliacao_em_curso", {});
+                        db.exec("COMMIT");
+                    } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} }
+                } catch (...) {}
+                paraGravar.clear();
+            };
+            size_t semChecksum = 0;
+            for (const auto& it : items) if (it.sha256.empty() && !it.arquivoId.empty()) ++semChecksum;
+            size_t feitos = 0;
+            for (auto& it : items) {
+                if (threadShouldExit()) { gravarChecksums(); return; }
+                if (!it.sha256.empty() || it.arquivoId.empty() || it.fullPath.empty()) continue;
+                progressoScan_ = 0.2 + 0.4 * static_cast<double>(feitos) / static_cast<double>(std::max<size_t>(1, semChecksum));  // 20..60%
+                ++feitos;
+                const juce::File f(juce::String::fromUTF8(it.fullPath.c_str()));
+                if (!f.existsAsFile()) continue;
+                try {
+                    auto cs = matriz::ingest::calcularChecksums(f);
+                    it.sha256 = cs.sha256;
+                    paraGravar.push_back({it.arquivoId, {cs.md5, cs.sha256}});
+                    if (paraGravar.size() >= 100) gravarChecksums();
+                } catch (...) {}
+            }
+            gravarChecksums();
+
+            // ---- B2: IDENTICAL — mesmo SHA-256
+            std::unordered_map<std::string, std::vector<size_t>> porSha;
+            for (size_t i = 0; i < items.size(); ++i)
+                if (!items[i].sha256.empty()) porSha[items[i].sha256].push_back(i);
+            for (auto& [sha, idxs] : porSha) {
+                if (idxs.size() < 2) continue;
+                std::sort(idxs.begin(), idxs.end(), [&](size_t x, size_t y) { return items[x].itemId < items[y].itemId; });
+                for (size_t k = 1; k < idxs.size(); ++k) {
+                    const auto& a = items[idxs[0]];
+                    const auto& b = items[idxs[k]];
+                    if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                    if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                    if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                    const auto chave = chavePar(a.itemId, b.itemId);
+                    paresIdenticos.insert(chave);
+                    auto ex = grupoExistente.find(chave);
+                    if (ex != grupoExistente.end()) {   // já pego por outro critério: ganha o rótulo IDENTICAL
+                        gruposDetectados_[ex->second].criterio = "IDENTICAL";
+                        continue;
+                    }
+                    auto [o, d] = ordenado(a, b);
+                    auto grupo = gruposParaPar(*o, *d);
+                    grupo.criterio = "IDENTICAL";
+                    grupoExistente[chave] = gruposDetectados_.size();
+                    gruposDetectados_.push_back(std::move(grupo));
                 }
-                auto [o, d] = ordenado(a, b);
-                auto grupo = gruposParaPar(*o, *d);
-                grupo.criterio = "IDENTICAL";
-                grupoExistente[chave] = gruposDetectados_.size();
-                gruposDetectados_.push_back(std::move(grupo));
             }
         }
 
         // ---- B3: PROBABLE — pHash de imagens (só o que falta), com cancelamento e progresso
-        faseScan_ = 3;
-        std::vector<size_t> imagens;
-        for (size_t i = 0; i < items.size(); ++i)
-            if (matriz::ingest::categoriaPorExtensao(items[i].ext) == matriz::ingest::CategoriaMidia::Imagem && !items[i].arquivoId.empty())
-                imagens.push_back(i);
-        std::unordered_map<std::string, uint64_t> phashDe;  // arquivo_id -> hash
+        if (activeFilters_.coincidirPHash) {
+            auto checarImagemMonocromatica = [](const juce::File& arq) -> bool {
+                juce::Image img = juce::ImageFileFormat::loadFrom(arq);
+                if (img.isNull()) return false;
+                if (img.getFormat() == juce::Image::SingleChannel) return true;
+                const int w = img.getWidth();
+                const int h = img.getHeight();
+                if (w <= 0 || h <= 0) return false;
+                const int stepX = std::max(1, w / 16);
+                const int stepY = std::max(1, h / 16);
+                int pontosComCor = 0;
+                int pontosAmostrados = 0;
+                for (int y = 0; y < h; y += stepY) {
+                    for (int x = 0; x < w; x += stepX) {
+                        auto c = img.getPixelAt(x, y);
+                        if (std::abs(c.getRed() - c.getGreen()) > 12 ||
+                            std::abs(c.getGreen() - c.getBlue()) > 12 ||
+                            std::abs(c.getRed() - c.getBlue()) > 12) {
+                            pontosComCor++;
+                        }
+                        pontosAmostrados++;
+                    }
+                }
+                return (pontosComCor * 100 <= pontosAmostrados * 3);
+            };
+            std::unordered_map<std::string, bool> monoDe;
+            auto obterMonocromatico = [&](const ItemInfo& it) -> bool {
+                auto itM = monoDe.find(it.arquivoId);
+                if (itM != monoDe.end()) return itM->second;
+                juce::File f;
+                if (auto mini = projeto_.caminhoMiniaturaPrincipal(it.itemId)) f = juce::File(*mini);
+                if (!f.existsAsFile()) f = juce::File(juce::String::fromUTF8(it.fullPath.c_str()));
+                bool mono = f.existsAsFile() ? checarImagemMonocromatica(f) : false;
+                monoDe[it.arquivoId] = mono;
+                return mono;
+            };
+
+            faseScan_ = 3;
+            std::vector<size_t> imagens;
+            for (size_t i = 0; i < items.size(); ++i)
+                if (matriz::ingest::categoriaPorExtensao(items[i].ext) == matriz::ingest::CategoriaMidia::Imagem && !items[i].arquivoId.empty())
+                    imagens.push_back(i);
+            std::unordered_map<std::string, uint64_t> phashDe;  // arquivo_id -> hash
         auto& indice = projeto_.projeto().indice();
         try {
             auto st = indice.prepare("SELECT arquivo_id, hash FROM phash_imagem");
@@ -1869,6 +1969,16 @@ void DuplicatesWorkspaceComponent::run() {
                         if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
                         // Mesmo SHA-256 = IDENTICAL, nunca PROBABLE (com 3+ cópias o par B-C não está no "em estrela" acima).
                         if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
+
+                        if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                        if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                        if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                        if (activeFilters_.coincidirDimensoes && a.largura > 0 && b.largura > 0 && (a.largura != b.largura || a.altura != b.altura)) continue;
+                        if (activeFilters_.coincidirEspacoCor) {
+                            if (!a.colorSpace.empty() && !b.colorSpace.empty() && a.colorSpace != b.colorSpace) continue;
+                            if (obterMonocromatico(a) != obterMonocromatico(b)) continue;
+                        }
+
                         // EXIF DateTimeOriginal diferente:
                         //  - até 30 s de diferença e parecidas (pHash <= 10): foto em SEQUÊNCIA -> SIMILAR (decisão manual);
                         //  - mais de 30 s: outra foto teria pHash bem diferente; se o pHash é quase igual (<= 4) é a mesma
@@ -1899,6 +2009,7 @@ void DuplicatesWorkspaceComponent::run() {
         std::stable_partition(std::find_if(gruposDetectados_.begin(), gruposDetectados_.end(),
                                            [](const DuplicateGroup& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }),
                               gruposDetectados_.end(), [](const DuplicateGroup& g) { return g.criterio == "PROBABLE"; });
+        }
     }
 
     progressoScan_ = 1.0;
@@ -2544,6 +2655,24 @@ void DuplicatesWorkspaceComponent::resized() {
         lblAnoAte_->setBounds(linha.removeFromLeft(16));
         txtAnoAte_->setBounds(linha);
     }
+    coluna_.finalizarCard();
+
+    // COINCIDÊNCIAS — critérios que o usuário decide incluir ou não
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_coincidencias"));
+    auto linhaToggle = [&](juce::ToggleButton* tb) {
+        if (tb != nullptr) {
+            tb->setBounds(corpo.removeFromTop(18));
+            corpo.removeFromTop(2);
+        }
+    };
+    linhaToggle(tbSha256_.get());
+    linhaToggle(tbPHash_.get());
+    linhaToggle(tbNome_.get());
+    linhaToggle(tbTamanho_.get());
+    linhaToggle(tbData_.get());
+    linhaToggle(tbDuracao_.get());
+    linhaToggle(tbDimensoes_.get());
+    linhaToggle(tbEspacoCor_.get());
     coluna_.finalizarCard();
 
     // AÇÕES — só com resultados.
