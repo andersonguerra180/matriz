@@ -311,8 +311,6 @@ public:
 
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
 
-        // Servidor local das conversas do WhatsApp: ativo enquanto o app estiver aberto.
-        matriz::whatsapp::ServidorWhatsappApp::instancia().iniciar();
 
 #if defined(MATRIZ_UI_APP_NAME_STRING)
         janela_ = std::make_unique<matriz::ui::MainWindow>(MATRIZ_UI_APP_NAME_STRING);
