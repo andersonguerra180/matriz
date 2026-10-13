@@ -10,11 +10,17 @@ namespace matriz::ui {
 class TreeDetailContent;
 class PainelPropostas;
 class ItemPastaExplorador;
+class PainelOverlay;
+class PainelReceberCelular;
+class EscolhaImportacaoCelular;
+class ConversaWhatsappComponent;
+enum class ModoImportacaoCelular;
 
 class ArvoreBackupComponent : public juce::Component,
                                private juce::Timer,
                                public EventBusListener,
-                               public juce::DragAndDropTarget {
+                               public juce::DragAndDropTarget,
+                               public juce::FileDragAndDropTarget {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
@@ -81,6 +87,13 @@ public:
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
 
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
+    std::function<void(const juce::Array<juce::File>& files, const std::string& pastaId)> aoIngerirArquivos;
+
+    void abrirConversaWhatsapp(const std::string& itemId);
+    void fecharConversaWhatsapp();
+    bool conversaAberta() const { return conversaWhatsapp_ != nullptr; }
+    void fecharOverlayImportacao();
+    std::string pastaSelecionadaId() const { return selectedFolderId_; }
 
     // Fase 1 (Folder Maps múltiplos) — SEM PASTA (NO FOLDER) só aceita
     // drop de itens arrastados da grade (MosaicoComponent::startDragging,
@@ -91,6 +104,12 @@ public:
     void itemDragMove(const SourceDetails& details) override;
     void itemDragExit(const SourceDetails& details) override;
     void itemDropped(const SourceDetails& details) override;
+
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void fileDragEnter(const juce::StringArray& files, int x, int y) override;
+    void fileDragMove(const juce::StringArray& files, int x, int y) override;
+    void fileDragExit(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
 
 private:
     struct FolderNode {
@@ -120,9 +139,28 @@ private:
         bool autoSub = false;
     };
 
+    struct LooseFileNode {
+        std::string id;
+        juce::String titulo;
+        juce::String extensao;
+        juce::String tipoMidia;
+        juce::int64 tamanhoBytes = 0;
+        juce::Rectangle<int> bounds;
+        bool selecionado = false;
+        bool ehConversaWhatsapp = false;
+        int nestTotal = 0;  // >1: este arquivo solto é a capa de um NEST
+    };
+
     ProjetoAberto& projeto_;
     std::vector<FolderNode> nodes_;
+    std::vector<LooseFileNode> looseFiles_;
     int nodeDragIndice_ = -1;
+    int looseFileDragIndice_ = -1;
+    int nodeHoverDrop_ = -1;
+    std::vector<std::string> sequenciaPreview_;
+    std::vector<std::pair<size_t, juce::Point<int>>> soltosArrastoIniciais_;
+    int ancoraTipo_ = 0;
+    std::string ancoraId_;
     juce::Point<int> arrastoOffset_;
     // Item 10: quando o arrasto começa dentro de uma seleção múltipla, guarda
     // a posição (em canvas) de cada pasta selecionada no instante do clique,
@@ -271,7 +309,32 @@ private:
     void redefinirTamanhos();
     void persistirEscalas();
     void enquadrarTudo();
+    void reunirArquivosSoltos();
     std::vector<int> indicesSelecionados() const;
+
+    // cards_layout.json: posições persistidas para arquivos soltos no canvas
+    juce::File arquivoLayout() const;
+    std::map<std::string, juce::Point<int>> layoutSalvo_;
+    void carregarLayoutSalvo();
+    void gravarLayoutSalvo();
+    std::string chaveLayout(const std::string& idNo) const { return mapaAtivoId_ + "|" + idNo; }
+    void concluirArrastoDeArquivoSolto(juce::Point<float> canvasRelease);
+    int pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const;
+
+    void limparSelecaoTudo();
+    std::vector<size_t> ordemDeLeituraSoltos() const;
+    std::vector<size_t> ordemDeLeituraPastas() const;
+    void selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId);
+    std::vector<std::string> idsSoltosSelecionados() const;
+    void mostrarMenuDeArquivosSoltos();
+    void adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids);
+    void moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId);
+    void mostrarNaOrigem(const std::string& itemId);
+    void removerSoltosDoBackup(const std::vector<std::string>& ids);
+    bool aplicarMovimentoDeSoltos(const std::vector<std::string>& ids, const std::string& pastaId);
+    std::optional<std::string> soltoAdjacente(const std::string& idAtual, int direcao) const;
+    void selecionarSolto(const std::string& id);
+    void arranjarSoltosSelecionados();
     // S4/15 — pasta recém-criada, com destaque pulsante até o próximo clique
     std::string destaqueNovaPastaId_;
 
@@ -374,6 +437,18 @@ private:
     void selecionarAba(int indice);
     void fecharAba(int indice);
     void desenharBarraDeAbas(juce::Graphics& g);
+
+    // Importação do celular (Wi-Fi: fotos/vídeos ou conversas do WhatsApp)
+    std::unique_ptr<juce::Button> btnReceberCelular_;
+    std::unique_ptr<PainelOverlay> overlayAtual_;
+    std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
+    std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
+    void abrirReceberDoCelular();
+    void iniciarReceberDoCelular(ModoImportacaoCelular modo);
+
+    // Visualização da conversa de WhatsApp dentro do Structure
+    std::unique_ptr<ConversaWhatsappComponent> conversaWhatsapp_;
+    std::unique_ptr<juce::TextButton> btnVoltarMapa_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArvoreBackupComponent)
 };

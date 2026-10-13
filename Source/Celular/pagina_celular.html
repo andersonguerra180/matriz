@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>BKR Matriz Mini</title>
+<style>
+  :root {
+    --fundo: #ede8df; --painel: #f5f2ec; --painel-alt: #d8d2c7; --borda: #b8b2a7;
+    --texto: #1a1815; --texto2: #3d3a35; --texto3: #6b6560;
+    --acento: #4a4540; --sobre-acento: #f5f2ec; --ok: #16a34a; --erro: #dc2626; --alerta: #b45309;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #2d323c; --painel: #3c4351; --painel-alt: #4a5262; --borda: #75859e;
+      --texto: #ffffff; --texto2: #f1f5f9; --texto3: #cbd5e1;
+      --acento: #38bdf8; --sobre-acento: #0b0f17; --ok: #22c55e; --erro: #ef4444; --alerta: #f59e0b;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; background: var(--fundo); color: var(--texto);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  body { padding: max(16px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: .3px; }
+  .sub { color: var(--texto3); font-size: 15px; margin: 0 0 16px; }
+  .cartao { background: var(--painel); border: 1px solid var(--borda); border-radius: 18px; padding: 16px; margin-bottom: 14px; }
+  .aviso { font-size: 15px; line-height: 1.4; color: var(--texto2); }
+  .aviso + .aviso { margin-top: 10px; }
+  .aviso b { color: var(--texto); }
+  .aviso.alerta { color: var(--alerta); }
+  button { font: inherit; border: 0; border-radius: 16px; width: 100%; padding: 18px 16px; font-size: 19px; font-weight: 700;
+    letter-spacing: .4px; cursor: pointer; }
+  button.principal { background: var(--acento); color: var(--sobre-acento); }
+  button.secundario { background: var(--painel-alt); color: var(--texto); }
+  button:disabled { opacity: .45; }
+  .espaco { height: 12px; }
+  .resumo { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .resumo2 { font-size: 15px; color: var(--texto3); margin: 0; }
+  .barra { height: 14px; background: var(--painel-alt); border-radius: 8px; overflow: hidden; margin: 8px 0 4px; }
+  .barra > i { display: block; height: 100%; width: 0%; background: var(--acento); transition: width .15s linear; }
+  .linha { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; color: var(--texto3); }
+  .atual { font-size: 15px; color: var(--texto2); word-break: break-all; margin: 0 0 6px; }
+  .pronto { font-size: 22px; font-weight: 700; color: var(--ok); margin: 0 0 6px; }
+  .erro { color: var(--erro); font-weight: 600; }
+  [hidden] { display: none !important; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+  <h1>BKR Matriz Mini</h1>
+  <p class="sub" id="sub"></p>
+
+  <div class="cartao" id="cartaoEscolher">
+    <button class="principal" id="btnEscolher"></button>
+    <div class="espaco"></div>
+    <p class="resumo" id="resumo" hidden></p>
+    <p class="resumo2" id="resumo2" hidden></p>
+    <div class="espaco" id="espacoEnviar" hidden></div>
+    <button class="principal" id="btnEnviar" hidden></button>
+    <input type="file" id="arquivos" multiple>
+  </div>
+
+  <div class="cartao" id="cartaoProgresso" hidden>
+    <p class="atual" id="atual"></p>
+    <div class="barra"><i id="barraArquivo"></i></div>
+    <div class="linha"><span id="pctArquivo"></span><span id="velocidade"></span></div>
+    <div class="espaco"></div>
+    <p class="resumo2" id="rotuloGeral"></p>
+    <div class="barra"><i id="barraGeral"></i></div>
+    <div class="linha"><span id="contagem"></span><span id="bytesGeral"></span></div>
+    <p class="resumo2" id="ignorados" style="margin-top:8px" hidden></p>
+  </div>
+
+  <div class="cartao" id="cartaoPronto" hidden>
+    <p class="pronto" id="pronto"></p>
+    <p class="resumo2" id="prontoIgnorados" hidden></p>
+    <div class="espaco"></div>
+    <button class="secundario" id="btnMais"></button>
+  </div>
+
+  <div class="cartao" id="cartaoRetomar" hidden>
+    <p class="aviso erro" id="textoPerdida"></p>
+    <button class="principal" id="btnRetomar"></button>
+  </div>
+
+  <div class="cartao">
+    <p class="aviso" id="avisoManter"></p>
+    <p class="aviso alerta" id="avisoIos" hidden></p>
+  </div>
+
+<script>
+(function () {
+  'use strict';
+  var LANG = '{{LANG}}' === 'en' ? 'en' : 'pt';
+  var T = {
+    pt: {
+      sub: 'Envie fotos e vídeos do celular para o computador, direto pelo Wi-Fi.',
+      escolher: 'ESCOLHER FOTOS E VÍDEOS',
+      enviar: 'ENVIAR',
+      arquivos: function (n) { return n === 1 ? '1 arquivo escolhido' : n + ' arquivos escolhidos'; },
+      tamanho: function (s) { return 'Tamanho total: ' + s; },
+      verificando: 'Verificando o que ainda falta enviar…',
+      enviando: 'Enviando…',
+      geral: 'Progresso geral',
+      de: function (a, b) { return a + ' de ' + b + ' enviados'; },
+      ignorados: function (n) { return n === 1 ? '1 já estava no backup, ignorado' : n + ' já estavam no backup, ignorados'; },
+      pronto: function (n) { return 'Pronto! ' + (n === 1 ? '1 arquivo enviado' : n + ' arquivos enviados') + '. Pode voltar ao computador.'; },
+      prontoNada: 'Pronto! Nada novo para enviar. Pode voltar ao computador.',
+      perdida: 'Conexão perdida. Confira o Wi-Fi e o computador.',
+      retomar: 'Conexão perdida — toque para continuar',
+      mais: 'ESCOLHER MAIS ARQUIVOS',
+      manter: 'Mantenha esta tela aberta e o celular desbloqueado até terminar.',
+      ios: 'Para enviar os originais (HEIC e com localização), escolha pelo botão Arquivos / Navegar em vez da Fototeca, se aparecer essa opção.',
+      acesso: 'Acesso negado. Leia o código QR de novo na tela do computador.'
+    },
+    en: {
+      sub: 'Send photos and videos from your phone to the computer over Wi-Fi.',
+      escolher: 'CHOOSE PHOTOS AND VIDEOS',
+      enviar: 'SEND',
+      arquivos: function (n) { return n === 1 ? '1 file chosen' : n + ' files chosen'; },
+      tamanho: function (s) { return 'Total size: ' + s; },
+      verificando: 'Checking what is still missing…',
+      enviando: 'Sending…',
+      geral: 'Overall progress',
+      de: function (a, b) { return a + ' of ' + b + ' sent'; },
+      ignorados: function (n) { return n === 1 ? '1 was already in the backup, skipped' : n + ' were already in the backup, skipped'; },
+      pronto: function (n) { return 'Done! ' + (n === 1 ? '1 file sent' : n + ' files sent') + '. You can go back to the computer.'; },
+      prontoNada: 'Done! Nothing new to send. You can go back to the computer.',
+      perdida: 'Connection lost. Check the Wi-Fi and the computer.',
+      retomar: 'Connection lost — tap to continue',
+      mais: 'CHOOSE MORE FILES',
+      manter: 'Keep this screen open and the phone unlocked until it finishes.',
+      ios: 'To send the originals (HEIC, with location), pick them with the Files / Browse button instead of the Photo Library, if that option appears.',
+      acesso: 'Access denied. Scan the QR code on the computer screen again.'
+    }
+  }[LANG];
+
+  document.documentElement.lang = LANG;
+  function $(id) { return document.getElementById(id); }
+  var token = new URLSearchParams(location.search).get('t') || '';
+
+  $('sub').textContent = T.sub;
+  $('btnEscolher').textContent = T.escolher;
+  $('btnEnviar').textContent = T.enviar;
+  $('btnMais').textContent = T.mais;
+  $('btnRetomar').textContent = T.retomar;
+  $('textoPerdida').textContent = T.perdida;
+  $('avisoManter').textContent = T.manter;
+  $('rotuloGeral').textContent = T.geral;
+  var ehIos = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+              (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ehIos) { $('avisoIos').textContent = T.ios; $('avisoIos').hidden = false; }
+
+  function fmt(b) {
+    if (b < 1024) return b + ' B';
+    var u = ['KB', 'MB', 'GB', 'TB'], i = -1;
+    do { b /= 1024; i++; } while (b >= 1024 && i < u.length - 1);
+    return b.toFixed(b >= 100 ? 0 : 1) + ' ' + u[i];
+  }
+  function q(path, extra) {
+    return path + '?t=' + encodeURIComponent(token) + (extra || '');
+  }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  var escolhidos = [];      // File[]
+  var feitos = [];          // por índice: true quando já chegou (enviado agora ou ignorado)
+  var rodando = false;
+  var wakeLock = null;
+
+  async function pedirTelaAcesa() {
+    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (rodando && document.visibilityState === 'visible') pedirTelaAcesa();
+  });
+
+  $('btnEscolher').onclick = function () { $('arquivos').click(); };
+  $('arquivos').onchange = function () {
+    escolhidos = Array.prototype.slice.call(this.files || []);
+    feitos = escolhidos.map(function () { return false; });
+    var total = escolhidos.reduce(function (a, f) { return a + f.size; }, 0);
+    var tem = escolhidos.length > 0;
+    $('resumo').hidden = !tem; $('resumo2').hidden = !tem;
+    $('btnEnviar').hidden = !tem; $('espacoEnviar').hidden = !tem;
+    $('resumo').textContent = T.arquivos(escolhidos.length);
+    $('resumo2').textContent = T.tamanho(fmt(total));
+    $('cartaoPronto').hidden = true;
+  };
+  $('btnMais').onclick = function () { $('cartaoPronto').hidden = true; $('cartaoEscolher').hidden = false; $('arquivos').click(); };
+
+  // ---- rede ----------------------------------------------------------------------------------
+  async function verificar(indices) {
+    // Pergunta ao computador o que ele ainda não tem (em lotes, para listas grandes).
+    var precisam = [], ignorados = 0;
+    for (var ini = 0; ini < indices.length; ini += 1000) {
+      var parte = indices.slice(ini, ini + 1000);
+      var corpo = JSON.stringify({ files: parte.map(function (i) {
+        var f = escolhidos[i]; return { name: f.name, size: f.size, lm: f.lastModified || 0 };
+      }) });
+      var r = await fetch(q('/api/check'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: corpo });
+      if (r.status === 403) throw new Error('acesso');
+      if (!r.ok) throw new Error('check');
+      var j = await r.json();
+      j.need.forEach(function (k) { precisam.push(parte[k]); });
+      ignorados += j.skipped || 0;
+    }
+    return { precisam: precisam, ignorados: ignorados };
+  }
+
+  function enviarUm(arq, aoProgresso) {
+    return new Promise(function (resolve, reject) {
+      var x = new XMLHttpRequest();
+      x.open('POST', q('/api/upload', '&name=' + encodeURIComponent(arq.name) + '&size=' + arq.size +
+                                       '&lm=' + (arq.lastModified || 0)));
+      x.setRequestHeader('Content-Type', 'application/octet-stream');
+      x.timeout = 0;
+      x.upload.onprogress = function (e) { if (e.lengthComputable) aoProgresso(e.loaded); };
+      x.onload = function () { (x.status >= 200 && x.status < 300) ? resolve() : reject(new Error('http ' + x.status)); };
+      x.onerror = function () { reject(new Error('rede')); };
+      x.onabort = function () { reject(new Error('abortado')); };
+      x.send(arq);   // o navegador lê do disco aos poucos: o arquivo nunca é carregado inteiro na memória
+    });
+  }
+
+  async function enviarComTentativas(arq, aoProgresso) {
+    var esperas = [800, 2500, 6000];
+    for (var t = 0; ; t++) {
+      try { await enviarUm(arq, aoProgresso); return true; }
+      catch (e) {
+        if (t >= esperas.length) return false;
+        aoProgresso(0);
+        await sleep(esperas[t]);
+      }
+    }
+  }
+
+  function esperarToque() {
+    return new Promise(function (resolve) {
+      $('cartaoRetomar').hidden = false;
+      $('btnRetomar').onclick = function () { $('cartaoRetomar').hidden = true; resolve(); };
+    });
+  }
+
+  var enviadosAgora = 0, ignoradosTotal = 0;
+
+  async function rodar() {
+    if (rodando) return;
+    rodando = true;
+    enviadosAgora = 0; ignoradosTotal = 0;
+    $('btnEnviar').disabled = true; $('btnEscolher').disabled = true;
+    $('cartaoProgresso').hidden = false;
+    $('atual').textContent = T.verificando;
+    pedirTelaAcesa();
+    var enviadosBytes = 0;
+    try {
+      for (;;) {
+        var pend = [];
+        for (var i = 0; i < escolhidos.length; i++) if (!feitos[i]) pend.push(i);
+        if (pend.length === 0) break;
+        var ver;
+        try { ver = await verificar(pend); }
+        catch (e) {
+          if (e.message === 'acesso') { $('atual').textContent = T.acesso; throw e; }
+          await esperarToque(); continue;
+        }
+        // O que o computador já tinha conta como feito.
+        var precisaSet = {};
+        ver.precisam.forEach(function (i) { precisaSet[i] = true; });
+        pend.forEach(function (i) { if (!precisaSet[i]) feitos[i] = true; });
+        ignoradosTotal += ver.ignorados;
+        if (ignoradosTotal > 0) { $('ignorados').hidden = false; $('ignorados').textContent = T.ignorados(ignoradosTotal); }
+        if (ver.precisam.length === 0) break;
+
+        var totalBytes = enviadosBytes + ver.precisam.reduce(function (a, i) { return a + escolhidos[i].size; }, 0);
+        var totalArq = enviadosAgora + ver.precisam.length;
+        var perdeu = false;
+        for (var n = 0; n < ver.precisam.length; n++) {
+          var idx = ver.precisam[n], arq = escolhidos[idx];
+          $('atual').textContent = T.enviando + ' ' + arq.name;
+          var ultimoT = Date.now(), ultimoB = 0, vel = 0;
+          var ok = await enviarComTentativas(arq, function (carregado) {
+            var pct = arq.size ? Math.min(100, carregado / arq.size * 100) : 100;
+            $('barraArquivo').style.width = pct + '%';
+            $('pctArquivo').textContent = Math.floor(pct) + '%';
+            var agora = Date.now();
+            if (agora - ultimoT > 700) { vel = (carregado - ultimoB) / ((agora - ultimoT) / 1000); ultimoT = agora; ultimoB = carregado; }
+            if (vel > 0) $('velocidade').textContent = fmt(vel) + '/s';
+            var geralB = enviadosBytes + carregado;
+            $('barraGeral').style.width = (totalBytes ? Math.min(100, geralB / totalBytes * 100) : 100) + '%';
+            $('bytesGeral').textContent = fmt(geralB) + ' / ' + fmt(totalBytes);
+          });
+          if (!ok) { perdeu = true; break; }
+          feitos[idx] = true; enviadosAgora++; enviadosBytes += arq.size;
+          $('contagem').textContent = T.de(enviadosAgora, totalArq);
+          $('barraGeral').style.width = (totalBytes ? enviadosBytes / totalBytes * 100 : 100) + '%';
+          $('bytesGeral').textContent = fmt(enviadosBytes) + ' / ' + fmt(totalBytes);
+        }
+        if (perdeu) await esperarToque();   // volta ao topo: confere o que já chegou e continua
+      }
+      $('cartaoProgresso').hidden = true;
+      $('cartaoEscolher').hidden = true;
+      $('cartaoPronto').hidden = false;
+      $('pronto').textContent = enviadosAgora > 0 ? T.pronto(enviadosAgora) : T.prontoNada;
+      $('prontoIgnorados').hidden = ignoradosTotal === 0;
+      if (ignoradosTotal > 0) $('prontoIgnorados').textContent = T.ignorados(ignoradosTotal);
+      escolhidos = []; feitos = [];
+      $('resumo').hidden = $('resumo2').hidden = $('btnEnviar').hidden = $('espacoEnviar').hidden = true;
+    } catch (e) {
+      /* acesso negado: a mensagem já está na tela */
+    } finally {
+      rodando = false;
+      $('btnEnviar').disabled = false; $('btnEscolher').disabled = false;
+      try { if (wakeLock) wakeLock.release(); } catch (e2) {}
+      wakeLock = null;
+    }
+  }
+  $('btnEnviar').onclick = rodar;
+})();
+</script>
+</body>
+</html>

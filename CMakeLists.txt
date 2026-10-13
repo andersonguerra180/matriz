@@ -87,6 +87,9 @@ juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
     SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/bridgelogo.png Assets/home.png Assets/geo.png
+        Assets/gallery.png
+        Assets/whatsapp.png
+        Assets/whatsapp.jpg
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"
@@ -109,6 +112,12 @@ juce_add_binary_data(MatrizAssets
         "Assets/3d.jpg"
         "Assets/zip.jpeg"
         "Assets/word.jpeg")
+
+# Página web que o celular recebe ao ler o QR code (HTML+CSS+JS num arquivo só, dentro do binário).
+juce_add_binary_data(MatrizCelularAssets
+    NAMESPACE CelularBinaryData
+    HEADER_NAME CelularBinaryData.h
+    SOURCES Source/Celular/pagina_celular.html)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless
@@ -482,6 +491,7 @@ target_sources(matriz PRIVATE
     Source/Ui/UiSelfTest.cpp
     Source/Ui/LoteSelfTest.cpp
     Source/Ui/BounceSelfTest.cpp
+    Source/Ui/VerifySourceSelfTest.cpp
     Source/Ui/RebuildSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
     Source/Ui/LogosTipoArquivo.cpp
@@ -563,6 +573,7 @@ target_sources(matriz PRIVATE
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
     Source/Vault/RescanEngine.cpp
+    Source/Vault/VerifySource.cpp
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
@@ -588,14 +599,35 @@ target_sources(matriz PRIVATE
     Source/Ui/ProjectLoadingModalDialog.cpp
     Source/Ui/RescanBackupSourcesDialog.cpp
     Source/Ui/RescanProgressModalDialog.cpp
+    Source/Ui/VerifySourceDialog.cpp
     Source/Ui/BackupScanProgressDialog.cpp
     Source/Sync/SyncEngine.cpp
-    Source/Ui/SyncDestinationDialog.cpp)
+    Source/Ui/SyncDestinationDialog.cpp
+    Source/Celular/QrCodeImagem.cpp
+    Source/Celular/RecebimentoCelular.cpp
+    Source/Celular/ServidorCelular.cpp
+    Source/Celular/ExistentesProjeto.cpp
+    Source/Whatsapp/ServidorWhatsappApp.cpp
+    Source/Whatsapp/WhatsappConversa.cpp
+    Source/Whatsapp/WhatsappIngestao.cpp
+    Source/Ui/Tablet.cpp
+    Source/Ui/OverlayComponent.cpp
+    Source/Ui/PainelReceberCelular.cpp
+    Source/Ui/PainelImportarWhatsapp.cpp
+    Source/Ui/ConversaWhatsappComponent.cpp
+    Source/ProvaData/ExportadorTrecho.cpp
+    Source/ProvaData/OpenTimestamps.cpp
+    Source/ProvaData/PdfRaster.cpp
+    Source/ProvaData/ProvaData.cpp
+    Source/Model/VolumeLog.cpp
+    Source/Ingest/SobreMaterial.cpp
+    Source/Ingest/IngestaoStaging.cpp)
 
 if(APPLE)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard.mm
         Source/App/SemSono_mac.mm
+        Source/App/AreaTransferenciaImagem_mac.mm
         Source/Vault/DiskIdentity_mac.mm
         Source/Ingest/MiniaturaPsd.mm
         Source/Ui/VideoPlayerBridge.mm
@@ -605,6 +637,7 @@ elseif(WIN32)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard_win.cpp
         Source/App/SemSono_win.cpp
+        Source/App/AreaTransferenciaImagem_win.cpp
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
@@ -629,6 +662,9 @@ target_link_libraries(matriz PRIVATE
     MatrizSchemaAssets
     MatrizI18nAssets
     MatrizAssets
+    MatrizCelularAssets
+    matriz_httplib
+    matriz_qrcodegen
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     Exiv2::exiv2lib

@@ -5,6 +5,8 @@
 #include "../Ingest/ProcessoExterno.h"
 #include "VideoPlayerBridge.h"
 #include "LogosTipoArquivo.h"
+#include "ConversaWhatsappComponent.h"
+#include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -247,6 +249,7 @@ void PreviewComponent::construirParaItem() {
     videoPlayer_.reset();
     documentPreview_.reset();
     textViewer_.reset();
+    conversaWhatsapp_.reset();
     imagemPrincipal_ = {};
     labelSemPreview_->setText("", juce::dontSendNotification);
     categoriaAtual_ = matriz::ingest::CategoriaMidia::Desconhecida;
@@ -257,6 +260,14 @@ void PreviewComponent::construirParaItem() {
     juce::String codigo(codigoStr);
     cabecalhoTitulo_->setText(codigo + " - " + (titulo.isNotEmpty() ? titulo : matriz::i18n::t("ficha.cabecalho_sem_titulo")),
                                juce::dontSendNotification);
+
+    if (matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), itemId_)) {
+        conversaWhatsapp_ = std::make_unique<ConversaWhatsappComponent>(projeto_, itemId_);
+        addAndMakeVisible(*conversaWhatsapp_);
+        labelMetadados_->setText("", juce::dontSendNotification);
+        resized();
+        return;
+    }
 
     auto arquivo = projeto_.arquivoPrincipal(itemId_);
     if (!arquivo) {
@@ -540,6 +551,12 @@ void PreviewComponent::resized() {
     } else {
         labelSemPreview_->setBounds({});
         if (btnRelinkManual_) btnRelinkManual_->setBounds({});
+    }
+
+    if (conversaWhatsapp_) {
+        conversaWhatsapp_->setBounds(area);
+        labelMetadados_->setBounds({});
+        return;
     }
 
     auto areaMetadados = area.removeFromBottom(80).reduced(tema().espacoGrande, tema().espacoMedio);

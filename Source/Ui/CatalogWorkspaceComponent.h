@@ -27,6 +27,8 @@ public:
     ~CatalogWorkspaceComponent() override;
 
     void recarregar();
+    // Ícone de refresh do rodapé: relê do banco a seleção (cards + ficha); `completo` recarrega o grid inteiro.
+    void atualizarMetadados(bool completo);
     void filtrarPorChave(const std::string& chave);
     void filtrarPorIds(std::set<std::string> ids);
     std::set<std::string> itensSelecionados() const;

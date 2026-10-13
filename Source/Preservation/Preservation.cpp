@@ -17,6 +17,20 @@
 
 namespace matriz::preservation {
 
+namespace {
+// juce::String nao reserva espaco extra: cada "+=" aloca de novo e copia o texto
+// inteiro (custo quadratico). Em catalogos grandes isso trava a tela no export.
+// Este acumulador usa std::string (cresce em blocos) e so converte no final.
+struct Acumulador {
+    std::string s;
+    Acumulador() { s.reserve(1u << 20); }
+    Acumulador& operator+=(const juce::String& t) { s.append(t.toRawUTF8()); return *this; }
+    Acumulador& operator+=(const char* t) { s.append(t); return *this; }
+    juce::String toString() const { return juce::String::fromUTF8(s.c_str(), static_cast<int>(s.size())); }
+};
+} // namespace
+
+
 using matriz::db::Value;
 using matriz::db::Database;
 using matriz::model::novoUuid;
@@ -530,7 +544,7 @@ juce::String exportarJson(db::Database& db, const std::string& itemId)
 
 juce::String exportarCsv(db::Database& db, const std::vector<std::string>& itemIds)
 {
-    juce::String csv;
+    Acumulador csv;
     csv += "persistent_id,uuid,name,format,size_bytes,sha256,fixity_status,"
            "backup_status,rights_status,created_at\n";
 
@@ -566,7 +580,7 @@ juce::String exportarCsv(db::Database& db, const std::vector<std::string>& itemI
 
         } catch (...) {}
     }
-    return csv;
+    return csv.toString();
 }
 
 juce::String gerarFullCsvSchemaJson() {
@@ -755,7 +769,7 @@ FullCsvValidationResult validarFullCsvFile(const juce::File& csvFile, int expect
 
 juce::String exportarFullCsv(db::Database& db, const std::vector<std::string>& itemIds)
 {
-    juce::String csv;
+    Acumulador csv;
     // 49 columns in exact official schema order (Section 2)
     csv += "asset_id,persistent_id,catalog_code,"
            "file_title,file_media_type,file_path,file_size_bytes,file_sha256,file_created_at,file_modified_at,"
@@ -961,7 +975,7 @@ juce::String exportarFullCsv(db::Database& db, const std::vector<std::string>& i
                  + esc(dcLanguage) + "," + esc(dcRelation) + "," + esc(dcCoverage) + "," + esc(dcRights) + "\n";
         } catch (...) {}
     }
-    return csv;
+    return csv.toString();
 }
 
 bool exportarFullCsvPacote(db::Database& db, const std::vector<std::string>& itemIds, const juce::File& destLocation, juce::String& errorOut)
@@ -1010,7 +1024,7 @@ bool exportarFullCsvPacote(db::Database& db, const std::vector<std::string>& ite
 juce::String exportarCsvDublinCore(db::Database& db,
                                     const std::vector<std::string>& itemIds)
 {
-    juce::String csv;
+    Acumulador csv;
     csv += "title,creator,subject,description,publisher,contributor,created,issued,type,format,identifier,source,language,relation,coverage,rights\n";
 
     auto esc = [](const juce::String& s) -> juce::String {
@@ -1066,7 +1080,7 @@ juce::String exportarCsvDublinCore(db::Database& db,
                  + esc(language) + "," + esc(relation) + "," + esc(coverage) + "," + esc(rights) + "\n";
         } catch (...) {}
     }
-    return csv;
+    return csv.toString();
 }
 
 juce::String exportarXlsXml(db::Database& db,
@@ -1083,7 +1097,7 @@ juce::String exportarXlsXml(db::Database& db,
                 .replace("'", "&apos;");
     };
 
-    juce::String html;
+    Acumulador html;
     html += "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\"\n"
             "xmlns:x=\"urn:schemas-microsoft-com:office:excel\"\n"
             "xmlns=\"http://www.w3.org/TR/REC-html40\">\n"
@@ -1223,7 +1237,7 @@ juce::String exportarXlsXml(db::Database& db,
     html += "</table>\n";
     html += "</body>\n</html>";
 
-    return html;
+    return html.toString();
 }
 
 // ---------------------------------------------------------------------------
@@ -1235,7 +1249,7 @@ juce::String exportarFixityManifest(db::Database& db,
                                      const std::string& algoritmo)
 {
     bool usarSha = (algoritmo != "md5");
-    juce::String manifest;
+    Acumulador manifest;
 
     for (const auto& id : itemIds) {
         try {
@@ -1254,7 +1268,7 @@ juce::String exportarFixityManifest(db::Database& db,
             }
         } catch (...) {}
     }
-    return manifest;
+    return manifest.toString();
 }
 
 // ---------------------------------------------------------------------------

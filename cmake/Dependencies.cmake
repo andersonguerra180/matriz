@@ -117,4 +117,39 @@ FetchContent_MakeAvailable(exiv2)
 # exiv2lib — quem consome a lib de fora (nós) precisa do mesmo caminho.
 target_include_directories(exiv2lib PUBLIC "${CMAKE_BINARY_DIR}")
 
+# ------------------------------------------------------------------------------
+# cpp-httplib (MIT, header-only) — servidor "Receber do celular". Sem OpenSSL:
+# a conversa é HTTP puro dentro da rede local.
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    cpp_httplib
+    GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+    GIT_TAG v0.60.1
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR nao_tem_cmake_aqui
+)
+FetchContent_MakeAvailable(cpp_httplib)
+add_library(matriz_httplib INTERFACE)
+target_include_directories(matriz_httplib INTERFACE "${cpp_httplib_SOURCE_DIR}")
+if(WIN32)
+    target_link_libraries(matriz_httplib INTERFACE ws2_32 crypt32)
+    target_compile_definitions(matriz_httplib INTERFACE _WIN32_WINNT=0x0A00)
+endif()
+
+# ------------------------------------------------------------------------------
+# qrcodegen (Nayuki, MIT) — QR code em C++ puro, sem rede.
+# ------------------------------------------------------------------------------
+FetchContent_Declare(
+    qrcodegen_src
+    GIT_REPOSITORY https://github.com/nayuki/QR-Code-generator.git
+    GIT_TAG v1.8.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR nao_tem_cmake_aqui
+)
+FetchContent_MakeAvailable(qrcodegen_src)
+add_library(matriz_qrcodegen STATIC "${qrcodegen_src_SOURCE_DIR}/cpp/qrcodegen.cpp")
+target_include_directories(matriz_qrcodegen PUBLIC "${qrcodegen_src_SOURCE_DIR}/cpp")
+set_target_properties(matriz_qrcodegen PROPERTIES CXX_STANDARD 17)
+
 set(CMAKE_SKIP_INSTALL_RULES FALSE)
+

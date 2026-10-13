@@ -11,5 +11,7 @@ namespace matriz::ui {
 // existe em outro Mac. Imagem inválida quando o logo não existe (ex.: os que
 // ainda não foram fornecidos): o chamador cai no ícone genérico. Thread-safe.
 juce::Image carregarLogoDeTipo(const juce::String& nomeArquivo);
+juce::Image logoConversaWhatsapp(int lado = 256);
+juce::Image miniaturaConversaWhatsapp(int largura = 1024);
 
 } // namespace matriz::ui

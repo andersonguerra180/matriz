@@ -8,6 +8,8 @@
 #include "../App/Preferencias.h"
 #include "../App/Logger.h"
 #include "../Model/ProjectLog.h"
+#include "../Whatsapp/WhatsappIngestao.h"
+#include "../Whatsapp/ServidorWhatsappApp.h"
 #include "../Diag/Watchdog.h"
 #include "../Diag/NSExceptionGuard.h"
 #include "../I18n/Strings.h"
@@ -45,7 +47,9 @@
 #include "IngestProgressModalDialog.h"
 #include "RescanBackupSourcesDialog.h"
 #include "RescanProgressModalDialog.h"
+#include "VerifySourceDialog.h"
 #include "../Vault/RescanEngine.h"
+#include "../Vault/VerifySource.h"
 #include "../Vault/AssetRelinkEngine.h"
 #include "../Vault/Resolucao.h"
 #include "../Vault/DeviceUsageLog.h"
@@ -529,6 +533,13 @@ MainComponent::MainComponent() {
     atualizarTooltips();
     addChildComponent(overlay_);
     reconstruirTelaInicial();
+    matriz::whatsapp::ServidorWhatsappApp::instancia().aoConversaRecebida = [this](const juce::File& f, juce::int64 tam) {
+        juce::Component::SafePointer<MainComponent> seguro(this);
+        juce::MessageManager::callAsync([seguro, f, tam] {
+            if (seguro == nullptr) return;
+            seguro->aoConversaRecebida(f, tam);
+        });
+    };
 }
 
 void MainComponent::atualizarTooltips() {
@@ -745,6 +756,7 @@ void MainComponent::esperarJobsDeVaults() {
 }
 
 MainComponent::~MainComponent() {
+    matriz::whatsapp::ServidorWhatsappApp::instancia().aoConversaRecebida = nullptr;
     stopTimer();
     if (cancelamentoLote_) cancelamentoLote_->pedir();
     ingestPool_.removeAllJobs(true, 5000);
@@ -1616,6 +1628,16 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     atualizarFaixaAviso();
 
     barraProgressoGlobal_ = std::make_unique<BarraProgressoGlobalComponent>();
+    {
+        juce::Component::SafePointer<MainComponent> self(this);
+        barraProgressoGlobal_->refreshDisponivel = [self] {
+            return self && self->catalogWorkspace_ && self->catalogWorkspace_->isShowing();
+        };
+        barraProgressoGlobal_->aoPedirRefreshMetadados = [self](bool completo) {
+            if (self && self->catalogWorkspace_ && self->catalogWorkspace_->isShowing())
+                self->catalogWorkspace_->atualizarMetadados(completo);
+        };
+    }
     addAndMakeVisible(*barraProgressoGlobal_);
 
     if (isCatalog) {
@@ -1958,6 +1980,9 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
                 }
             };
             treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
+            treeWorkspace_->aoIngerirArquivos = [this](const juce::Array<juce::File>& files, const std::string& /*pastaId*/) {
+                ingerirArquivos(files);
+            };
             addAndMakeVisible(*treeWorkspace_);
         } else {
             treeWorkspace_->setVisible(true);
@@ -1966,7 +1991,11 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
         // Arquivo(s) selecionado(s) no grid: o Folder Map abre com a pasta deles selecionada e centralizada.
         if (catalogWorkspace_) treeWorkspace_->definirFocoNosItens(catalogWorkspace_->itensSelecionados());
     } else {
-        if (treeWorkspace_) treeWorkspace_->setVisible(false);
+        std::string pastaSel;
+        if (treeWorkspace_) {
+            pastaSel = treeWorkspace_->pastaSelecionadaId();
+            treeWorkspace_->setVisible(false);
+        }
         if (!analyticsWorkspace_) {
             analyticsWorkspace_ = std::make_unique<EstatisticasComponent>(*projetoAberto_);
             analyticsWorkspace_->aoAbrirNoGrid = [this](const std::set<std::string>& ids) {
@@ -1996,6 +2025,9 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
         } else {
             analyticsWorkspace_->setVisible(true);
             analyticsWorkspace_->recarregar();
+        }
+        if (!pastaSel.empty()) {
+            analyticsWorkspace_->definirPastaSelecionada(pastaSel);
         }
     }
 
@@ -2826,6 +2858,45 @@ void MainComponent::selecionarItem(const std::string& itemId) {
 
 void MainComponent::atualizarBarraMetricas() {}
 
+void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 tamanho) {
+    if (!projetoAberto_) {
+        const auto msg = i18n::t("light.wapp.recebida").replace("{nome}", arquivo.getFileName()).replace("{tamanho}", juce::File::descriptionOfSizeInBytes(tamanho));
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, i18n::t("light.wapp.recebidaTitulo"), msg + "\n\nPlease open a project to ingest the chat.");
+        return;
+    }
+    if (treeWorkspace_) {
+        treeWorkspace_->fecharOverlayImportacao();
+    }
+    auto conversas = matriz::whatsapp::detectarConversasEm({arquivo}, nullptr, true);
+    if (!conversas.empty()) {
+        ProgressoGlobal::obterInstancia().iniciarTarefa("whatsapp_ingest", "WhatsApp", 0, nullptr, i18n::t("light.wa.ingerindo"));
+        juce::Component::SafePointer<MainComponent> seguro(this);
+        ingestPool_.addJob([seguro, conversas = std::move(conversas)] {
+            for (const auto& c : conversas) {
+                matriz::whatsapp::OpcoesConversaIngestao opcoes;
+                opcoes.portugues = matriz::i18n::localeAtivo() == "pt_BR";
+                try {
+                    if (seguro != nullptr && seguro->projetoAberto_) {
+                        matriz::whatsapp::ingerirConversa(seguro->projetoAberto_->projeto(), *c, opcoes);
+                    }
+                } catch (const std::exception& e) {
+                    juce::Logger::writeToLog("WhatsApp: ingest error - " + juce::String(e.what()));
+                }
+            }
+            juce::MessageManager::callAsync([seguro] {
+                ProgressoGlobal::obterInstancia().concluirTarefa("whatsapp_ingest");
+                if (seguro == nullptr || !seguro->projetoAberto_) return;
+                EventBus::obterInstancia().dispararItemAlterado("", "metadado");
+                if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+                if (seguro->mosaico_) seguro->mosaico_->recarregar();
+                if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+            });
+        });
+    } else {
+        ingerirArquivos({arquivo});
+    }
+}
+
 void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas) {
     if (!projetoAberto_) return;
     if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
@@ -2834,6 +2905,56 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     if (arquivosOuPastas.size() == 1 && matriz::consolidacao::pacote::pareceUmPacote(arquivosOuPastas[0])) {
         ingerirPacote(arquivosOuPastas[0]);
         return;
+    }
+
+    // WhatsApp: se for uma conversa, ingere como NEST (capa + conversa.txt + mídias)
+    bool talvezConversa = false;
+    for (const auto& f : arquivosOuPastas) {
+        if (f.isDirectory() || f.hasFileExtension("zip") || f.hasFileExtension("txt")) {
+            talvezConversa = true;
+            break;
+        }
+    }
+    if (talvezConversa) {
+        auto conversas = matriz::whatsapp::detectarConversasEm(arquivosOuPastas);
+        if (!conversas.empty()) {
+            std::set<juce::String> excluir;
+            for (const auto& c : conversas) {
+                for (const auto& a : c->abrangidos)
+                    excluir.insert(a.getFullPathName());
+            }
+            juce::Component::SafePointer<MainComponent> seguro(this);
+            ingestPool_.addJob([seguro, conversas = std::move(conversas)] {
+                for (const auto& c : conversas) {
+                    matriz::whatsapp::OpcoesConversaIngestao opcoes;
+                    opcoes.portugues = matriz::i18n::localeAtivo() == "pt_BR";
+                    try {
+                        if (seguro != nullptr && seguro->projetoAberto_) {
+                            matriz::whatsapp::ingerirConversa(seguro->projetoAberto_->projeto(), *c, opcoes);
+                        }
+                    } catch (const std::exception& e) {
+                        juce::Logger::writeToLog("WhatsApp: ingest error - " + juce::String(e.what()));
+                    }
+                }
+                juce::MessageManager::callAsync([seguro] {
+                    if (seguro == nullptr || !seguro->projetoAberto_) return;
+                    EventBus::obterInstancia().dispararItemAlterado("", "metadado");
+                    if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+                    if (seguro->mosaico_) seguro->mosaico_->recarregar();
+                    if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+                });
+            });
+
+            juce::Array<juce::File> restantes;
+            for (const auto& f : arquivosOuPastas) {
+                if (excluir.find(f.getFullPathName()) == excluir.end()) {
+                    restantes.add(f);
+                }
+            }
+            if (restantes.isEmpty()) return;
+            ingerirArquivos(restantes);
+            return;
+        }
     }
 
     bool temDiretorio = false;
@@ -3387,6 +3508,30 @@ void MainComponent::importarCatalogoLightroom() {
                 });
             });
         });
+}
+
+void MainComponent::abrirVerificarDiscosOrigem() {
+    if (!projetoAberto_) return;
+    if (temCatalogoAberto() || projetoAberto_->projeto().modo() == matriz::model::Modo::Catalogo) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
+
+    // Os ganchos conferem projetoAberto_ a cada chamada: o dialog é modal, mas o projeto pode fechar por baixo (clone, erro).
+    juce::Component::SafePointer<MainComponent> self(this);
+    VerifySourceDialog::Ganchos g;
+    g.volumes = matriz::vault::VerifySource::volumesDeOrigem(projetoAberto_->projeto().registro());
+    g.carregarHashes = [self] {
+        if (!self || !self->projetoAberto_) return matriz::vault::HashesConhecidos{};
+        return matriz::vault::VerifySource::carregarHashes(self->projetoAberto_->projeto().registro());
+    };
+    g.ingerir = [self](const juce::Array<juce::File>& arquivos) {
+        if (self && self->projetoAberto_) self->ingerirArquivos(arquivos);
+    };
+    g.ingestOcupado = [self] { return self && self->projetoAberto_ && self->ingestEmAndamento(); };
+    g.pastaRelatorios = [self] {
+        if (!self || !self->projetoAberto_) return juce::File();
+        return self->projetoAberto_->projeto().pasta().getChildFile("relatorios");
+    };
+    VerifySourceDialog::exibirModal(std::move(g));
 }
 
 void MainComponent::iniciarRescanBackupSources() {

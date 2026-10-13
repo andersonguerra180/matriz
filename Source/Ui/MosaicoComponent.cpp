@@ -2,6 +2,7 @@
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
+#include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -2245,6 +2246,12 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
         juce::Image imagem;
         if (caminho) imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(juce::File(*caminho)), maxLargura, maxAltura);
         bool temCaminho = caminho.has_value();
+
+        if (!imagem.isValid() && matriz::whatsapp::itemEhConversa(projeto->projeto().registroLeitura(), itemId)) {
+            // zip de conversa do WhatsApp: a logo no lugar do ícone de zip
+            imagem = reduzirParaCelula(matriz::ui::miniaturaConversaWhatsapp(), maxLargura, maxAltura);
+            temCaminho = imagem.isValid();
+        }
 
         if (!imagem.isValid()) {
             if (auto arq = projeto->arquivoPrincipal(itemId)) {

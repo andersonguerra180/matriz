@@ -69,6 +69,58 @@ struct Tema {
     // Forma
     float raioPequeno;
     float raioMedio;
+
+    // ── Redesenho "tablet" ─────────────────────────────────────────────
+    // Superfícies e linhas
+    juce::Colour cartao;            // cartão / folha
+    juce::Colour cartaoDestaque;    // item ativo da barra lateral
+    juce::Colour linhaSuave;        // divisórias e contornos de cartão (já com alfa)
+    juce::Colour canvasMapa;        // fundo do Folder Map
+    juce::Colour pontilhadoMapa;    // pontos do Folder Map
+    juce::Colour campoFundo;        // fundo de campos de texto / combos
+    juce::Colour campoTexto;        // texto dentro de campos
+    juce::Colour campoSomenteLeitura; // campos automáticos (cinza)
+    juce::Colour sombra;            // sombra de cartões
+    juce::Colour scrim;             // véu atrás de folhas modais
+    juce::Colour perigoSuave;       // fundo do botão SAIR
+    // Cores de seção
+    juce::Colour secaoBackup;
+    juce::Colour secaoExplorer;
+    juce::Colour secaoStats;
+    // Cores de tipo de arquivo
+    juce::Colour tipoAudio;
+    juce::Colour tipoVideo;
+    juce::Colour tipoImagem;
+    juce::Colour tipoDocumento;
+    juce::Colour tipoSessao;
+    juce::Colour tipoOutros;
+    juce::Colour tipoConflito;
+    juce::Colour tipoZip;
+
+    // Medidas
+    float raioCartao;        // 20
+    float raioFolha;         // 32
+    float raioCanvas;        // 28
+    float raioCampo;         // 12
+    int alturaBotao;         // 44
+    int alturaBotaoPrimario; // 48
+    int alturaChip;          // 30
+    int alturaCampo;         // 40
+    int alvoToqueMinimo;     // 40
+    int larguraNav;          // 96
+    int alturaTituloTela;    // 80
+    int alturaStatus;        // 32
+    int larguraFiltros;      // 290
+    int larguraMetadados;    // 320
+
+    // Tipografia de tela
+    float fonteTituloTela;    // 26
+    float fonteSubtituloTela; // 13
+    float fonteRotuloSecao;   // 11
+    float fonteTituloHome;    // 40
+    float fonteKpi;           // 30
+    float fonteNomeNo;        // 18
+    float fonteCorpoGrande;   // 15
 };
 
 // BKR Dark — Pro Tools-inspired dark theme: medium charcoal surfaces,
@@ -118,6 +170,52 @@ inline const Tema& temaBkrDark() {
 
         x.raioPequeno = 5.0f;
         x.raioMedio = 8.0f;
+
+        // Redesenho tablet — BKR Dark
+        x.cartao = x.painel;
+        x.cartaoDestaque = x.painelAlt;
+        x.linhaSuave = x.borda.withAlpha(0.45f);
+        x.canvasMapa = x.fundo.darker(0.25f);
+        x.pontilhadoMapa = x.borda.withAlpha(0.35f);
+        x.campoFundo = juce::Colour(0xff0f1218);
+        x.campoTexto = juce::Colour(0xfff1f5f9);
+        x.campoSomenteLeitura = x.painelAlt.darker(0.2f);
+        x.sombra = juce::Colour(0x66000000);
+        x.scrim = juce::Colour(0xb0000000);
+        x.perigoSuave = juce::Colour(0x33ef4444);
+        x.secaoBackup = juce::Colour(0xff38bdf8);
+        x.secaoExplorer = juce::Colour(0xff22c55e);
+        x.secaoStats = juce::Colour(0xfff59e0b);
+        x.tipoAudio = juce::Colour(0xfff59e0b);
+        x.tipoVideo = juce::Colour(0xffa855f7);
+        x.tipoImagem = juce::Colour(0xff22c55e);
+        x.tipoDocumento = juce::Colour(0xff60a5fa);
+        x.tipoSessao = juce::Colour(0xfffb923c);
+        x.tipoOutros = juce::Colour(0xff94a3b8);
+        x.tipoConflito = juce::Colour(0xffef4444);
+        x.tipoZip = juce::Colour(0xff0ea5e9);
+
+        x.raioCartao = 20.0f;
+        x.raioFolha = 32.0f;
+        x.raioCanvas = 28.0f;
+        x.raioCampo = 12.0f;
+        x.alturaBotao = 44;
+        x.alturaBotaoPrimario = 48;
+        x.alturaChip = 30;
+        x.alturaCampo = 40;
+        x.alvoToqueMinimo = 40;
+        x.larguraNav = 96;
+        x.alturaTituloTela = 80;
+        x.alturaStatus = 32;
+        x.larguraFiltros = 290;
+        x.larguraMetadados = 320;
+        x.fonteTituloTela = 26.0f;
+        x.fonteSubtituloTela = 13.0f;
+        x.fonteRotuloSecao = 11.0f;
+        x.fonteTituloHome = 40.0f;
+        x.fonteKpi = 30.0f;
+        x.fonteNomeNo = 18.0f;
+        x.fonteCorpoGrande = 15.0f;
         return x;
     }();
     return t;
@@ -171,6 +269,52 @@ inline const Tema& temaBkrLight() {
 
         x.raioPequeno = 4.0f;
         x.raioMedio   = 6.0f;
+
+        // Redesenho tablet — BKR Light
+        x.cartao = x.painel;
+        x.cartaoDestaque = x.painel;
+        x.linhaSuave = x.borda.withAlpha(0.60f);
+        x.canvasMapa = juce::Colour(0xffe4dfd5);
+        x.pontilhadoMapa = x.borda.withAlpha(0.55f);
+        x.campoFundo = juce::Colour(0xffffffff);
+        x.campoTexto = x.textoPrimario;
+        x.campoSomenteLeitura = juce::Colour(0xffe9e5dd);
+        x.sombra = juce::Colour(0x14000000);
+        x.scrim = juce::Colour(0x8c1a1815);
+        x.perigoSuave = juce::Colour(0xfffbe4e1);
+        x.secaoBackup = juce::Colour(0xff38bdf8);
+        x.secaoExplorer = juce::Colour(0xff22c55e);
+        x.secaoStats = juce::Colour(0xfff59e0b);
+        x.tipoAudio = juce::Colour(0xffd97706);
+        x.tipoVideo = juce::Colour(0xff9333ea);
+        x.tipoImagem = juce::Colour(0xff16a34a);
+        x.tipoDocumento = juce::Colour(0xff2563eb);
+        x.tipoSessao = juce::Colour(0xffea580c);
+        x.tipoOutros = juce::Colour(0xff6b6560);
+        x.tipoConflito = juce::Colour(0xffdc2626);
+        x.tipoZip = juce::Colour(0xff0284c7);
+
+        x.raioCartao = 20.0f;
+        x.raioFolha = 32.0f;
+        x.raioCanvas = 28.0f;
+        x.raioCampo = 12.0f;
+        x.alturaBotao = 44;
+        x.alturaBotaoPrimario = 48;
+        x.alturaChip = 30;
+        x.alturaCampo = 40;
+        x.alvoToqueMinimo = 40;
+        x.larguraNav = 96;
+        x.alturaTituloTela = 80;
+        x.alturaStatus = 32;
+        x.larguraFiltros = 290;
+        x.larguraMetadados = 320;
+        x.fonteTituloTela = 26.0f;
+        x.fonteSubtituloTela = 13.0f;
+        x.fonteRotuloSecao = 11.0f;
+        x.fonteTituloHome = 40.0f;
+        x.fonteKpi = 30.0f;
+        x.fonteNomeNo = 18.0f;
+        x.fonteCorpoGrande = 15.0f;
         return x;
     }();
     return t;

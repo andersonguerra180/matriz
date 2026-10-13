@@ -150,9 +150,12 @@ public:
     // (Etapa 2, headless) e a UI — chamada tanto pelo botão "Add material"
     // quanto por arrastar arquivos do Finder na janela inteira.
     void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas);
+    void aoConversaRecebida(const juce::File& arquivo, juce::int64 tamanho);
     // Tools > Scan INBOX: cataloga o que está na INBOX do MAIN (só quando o usuário pede; nunca sozinho).
     void escanearInbox();
     void iniciarRescanBackupSources();
+    // Tools > Verify Source Disks: confere discos de origem com o MAIN (só leitura) e manda o que falta para o Intake.
+    void abrirVerificarDiscosOrigem();
     // MAIN EDIT MODE (menu Tools): entrar (barreira do nome do projeto) / sair e abrir o MAIN EDITOR.
     bool podeEditarMain() const;
     bool editandoMain() const;

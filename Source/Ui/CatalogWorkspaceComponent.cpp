@@ -2193,6 +2193,22 @@ void CatalogWorkspaceComponent::recarregar() {
 }
 
 
+void CatalogWorkspaceComponent::atualizarMetadados(bool completo) {
+    if (completo) {
+        recarregar();
+        return;
+    }
+    if (!mosaico_) return;
+    // Cards da seleção relidos do banco (cada um é uma leitura síncrona: acima do teto, só a ficha é refeita).
+    const auto sel = mosaico_->itensSelecionados();
+    if (sel.size() <= 300) {
+        mosaico_->iniciarLoteAtualizacao();
+        for (const auto& id : sel) mosaico_->atualizarItemEmMemoria(id);
+        mosaico_->finalizarLoteAtualizacao();
+    }
+    selecionarItem(sel.empty() ? std::string() : *sel.begin());  // reconstrói a ficha (salva pendências antes)
+}
+
 void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
     for (size_t i = 0; i < categorias_.size(); ++i) {
         if (categorias_[i].chave == chave) {

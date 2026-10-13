@@ -945,6 +945,8 @@ public:
     int gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem);
     // Expira quando este ProjetoAberto é destruído (callbacks assíncronos).
     std::weak_ptr<bool> tokenVida() const { return vivo_; }
+    std::weak_ptr<bool> tokenVivo() const { return vivo_; }
+    void executarProvaEmFundo(std::function<void()> job) { poolProva_.addJob(std::move(job)); }
 
     // Outros itens do projeto cujo conteúdo é idêntico (mesmo SHA-256 de
     // algum arquivo). Inclui o próprio item quando há duplicata, pra a grade
@@ -1282,6 +1284,7 @@ private:
     juce::ThreadPool poolMarcas_{1};
     // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
     juce::ThreadPool poolMerge_{1};
+    juce::ThreadPool poolProva_{2};
     void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;

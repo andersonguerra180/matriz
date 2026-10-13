@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include "Moldura.h"
+
 #include <functional>
 #include <map>
 #include <memory>
@@ -44,7 +46,11 @@ public:
         std::vector<juce::String> opcoes;
     };
 
+    // Tom do aviso: cor do destaque, ícone ao lado do título e cor do botão principal.
+    enum class Tom { Info, Pergunta, Aviso, Perigo, Sucesso };
+
     struct Config {
+        Tom tom = Tom::Pergunta;
         juce::String titulo;
         juce::String mensagem;
         std::vector<Botao> botoes;
@@ -55,6 +61,21 @@ public:
         juce::String textoInicial;
         juce::String dicaCampoTexto;
         std::vector<CampoTexto> campos;
+        // Conteúdo próprio (ex.: questionário "Sobre este material", painel "Receber do celular"),
+        // posicionado entre a mensagem e os botões. O overlay assume a posse (shared_ptr mantém a
+        // Config copiável). Sem botões, o rodapé some e o conteúdo comanda a conclusão
+        // (concluirExterno).
+        // Moldura (sistema de janelas): seção (cor do ícone), trilha ("ATUALIZAR"), linha de progresso e contador do cabeçalho.
+        moldura::Secao secao = moldura::Secao::Auto;
+        juce::String trilha;
+        float progresso = -1.0f;
+        juce::String contador;
+        juce::String dicaRodape;   // texto discreto à esquerda do rodapé
+        std::shared_ptr<juce::Component> conteudo;
+        int larguraCartao = 0;    // 0 = kLarguraCartao
+        int alturaConteudo = 0;   // altura desejada do conteúdo
+        // Teclas que nem o conteúdo nem os botões trataram (Esc, Return…). true = tratada.
+        std::function<bool(const juce::KeyPress&)> aoTecla;
     };
 
     struct Resultado {
@@ -79,6 +100,10 @@ public:
 
     bool estaAberto() const { return aberto_; }
 
+    // Para o conteúdo próprio concluir o overlay (mesmo caminho de um botão: o callback roda uma vez,
+    // já com o overlay escondido). Seguro de chamar de dentro de um clique do próprio conteúdo.
+    void concluirExterno(int botaoId) { concluir(botaoId); }
+
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -91,14 +116,17 @@ public:
     void definirTextoParaTeste(const juce::String& texto);
     juce::String tituloParaTeste() const { return config_.titulo; }
 
-    static constexpr int kLarguraCartao = 520;
-    static constexpr int kMargem = 22;
-    static constexpr int kAlturaLinha = 30;
+    static constexpr int kLarguraCartao = 560;
+    static constexpr int kMargem = 24;
+    static constexpr int kAlturaLinha = 36;
 
 private:
     void concluir(int botaoId);
     juce::Rectangle<int> areaDoCartao() const;
     int alturaDoCartao() const;
+    int larguraDoCartao() const { return config_.larguraCartao > 0 ? config_.larguraCartao : kLarguraCartao; }
+    void soltarConteudo();
+    bool temRodape() const { return !config_.botoes.empty(); }
 
     bool aberto_ = false;
     Config config_;

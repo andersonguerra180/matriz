@@ -20,6 +20,8 @@
 
 namespace matriz::ui {
 
+class ConversaWhatsappComponent;
+
 class PreviewComponent : public juce::Component, private juce::Timer {
 public:
     explicit PreviewComponent(ProjetoAberto& projeto);
@@ -66,6 +68,7 @@ private:
 
     std::unique_ptr<TimelineComponent> timeline_;
     std::unique_ptr<VideoPlayerComponent> videoPlayer_;
+    std::unique_ptr<ConversaWhatsappComponent> conversaWhatsapp_;
     std::unique_ptr<juce::TextButton> btnRelinkManual_;
     juce::String volumeEsperadoNome_;
     juce::String volumeEsperadoSerial_;

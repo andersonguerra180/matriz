@@ -6275,7 +6275,8 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(matriz::i18n::t("bounce.card_titulo"), bounceTituloR_, juce::Justification::centredLeft);
-        const auto selo = bounceTituloR_.removeFromRight(110).withSizeKeepingCentre(110, 18);
+        auto tituloLinha = bounceTituloR_;  // cópia: cortar o membro a cada paint empurrava o selo para a esquerda
+        const auto selo = tituloLinha.removeFromRight(110).withSizeKeepingCentre(110, 18);
         g.setColour(roxo.withAlpha(0.18f));
         g.fillRoundedRectangle(selo.toFloat(), 4.0f);
         g.setColour(roxo);

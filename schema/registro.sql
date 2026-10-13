@@ -1085,3 +1085,41 @@ CREATE TABLE IF NOT EXISTS nest_item (
 
 CREATE INDEX IF NOT EXISTS idx_nest_item_nest ON nest_item(nest_id);
 CREATE INDEX IF NOT EXISTS idx_nest_capa ON nest(capa_item_id);
+
+-- ---------------------------------------------------------------------------
+-- Conversas do WhatsApp
+-- UM item por conversa: item_id é a "capa" do grupo (o .zip da exportação, ou o conversa.txt).
+-- Tudo o que sai dela são itens do MESMO grupo (nest: aparecem como um só no grid).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversa_whatsapp (
+    item_id         TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
+    contato         TEXT NOT NULL,
+    txt_item_id     TEXT,
+    voce            TEXT,
+    autores_json    TEXT,
+    periodo_inicio  TEXT,
+    periodo_fim     TEXT,
+    n_mensagens     INTEGER NOT NULL DEFAULT 0,
+    origem          TEXT,
+    idioma          TEXT,
+    data_exportacao TEXT NOT NULL,
+    pasta_relativa  TEXT NOT NULL,
+    criado_em       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversa_midia (
+    conversa_item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    midia_item_id    TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    ordem            INTEGER NOT NULL,
+    nome_original    TEXT NOT NULL,
+    nome_arquivo     TEXT NOT NULL,
+    papel            TEXT NOT NULL DEFAULT 'midia',
+    subpasta         TEXT,
+    autor            TEXT,
+    data_hora        TEXT,
+    legenda          TEXT,
+    PRIMARY KEY (conversa_item_id, midia_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversa_midia_conversa ON conversa_midia(conversa_item_id, ordem);
+CREATE INDEX IF NOT EXISTS idx_conversa_midia_midia ON conversa_midia(midia_item_id);

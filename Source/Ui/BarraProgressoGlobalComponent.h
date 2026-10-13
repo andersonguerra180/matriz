@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include "ProgressoGlobal.h"
 
 namespace matriz::ui {
@@ -21,6 +22,11 @@ public:
 
     static constexpr int kAlturaFixa = 32;
 
+    // Ícone de refresh à esquerda do estado (COMPLETED/READY): releitura dos metadados. `completo` = Option-clique.
+    // `refreshDisponivel` é consultado pelo timer; o ícone só aparece quando devolve true.
+    std::function<void(bool completo)> aoPedirRefreshMetadados;
+    std::function<bool()> refreshDisponivel;
+
 private:
     void timerCallback() override;
     void atualizarVisual();
@@ -30,6 +36,7 @@ private:
     std::unique_ptr<juce::Label> lblTitulo_;
     std::unique_ptr<juce::Label> lblDetalhe_;
     std::unique_ptr<juce::TextButton> btnCancelar_;
+    std::unique_ptr<juce::Button> btnRefresh_;
 
     float animOffset_ = 0.0f;
     double progressoSuavizado_ = 0.0;

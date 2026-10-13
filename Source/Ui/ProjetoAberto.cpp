@@ -161,6 +161,7 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
 } // namespace
 
 ProjetoAberto::~ProjetoAberto() {
+    poolProva_.removeAllJobs(true, 2000);
     aguardarGravacoesMarcas();
 }
 

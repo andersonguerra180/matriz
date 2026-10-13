@@ -61,6 +61,13 @@ void configurarLookAndFeel(juce::LookAndFeel_V4& lf) {
     lf.setColourScheme(esquema);
 
     // ListBox & Tables
+    lf.setColour(juce::Slider::trackColourId, tk.acento);
+    lf.setColour(juce::Slider::thumbColourId, tk.acento);
+    lf.setColour(juce::Slider::backgroundColourId, tk.painelAlt);
+    lf.setColour(juce::Slider::textBoxTextColourId, tk.textoPrimario);
+    lf.setColour(juce::Slider::textBoxBackgroundColourId, tk.campoFundo);
+    lf.setColour(juce::Slider::textBoxOutlineColourId, tk.linhaSuave);
+
     lf.setColour(juce::ListBox::backgroundColourId, tk.painel);
     lf.setColour(juce::ListBox::outlineColourId, tk.borda);
     lf.setColour(juce::ListBox::textColourId, tk.textoPrimario);
@@ -80,11 +87,11 @@ void configurarLookAndFeel(juce::LookAndFeel_V4& lf) {
     lf.setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
 
     // ComboBox
-    lf.setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
-    lf.setColour(juce::ComboBox::textColourId, juce::Colours::black);
-    lf.setColour(juce::ComboBox::outlineColourId, tk.borda);
-    lf.setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
-    lf.setColour(juce::ComboBox::buttonColourId, juce::Colours::white);
+    lf.setColour(juce::ComboBox::backgroundColourId, tk.campoFundo);
+    lf.setColour(juce::ComboBox::textColourId, tk.campoTexto);
+    lf.setColour(juce::ComboBox::outlineColourId, tk.linhaSuave);
+    lf.setColour(juce::ComboBox::arrowColourId, tk.campoTexto);
+    lf.setColour(juce::ComboBox::buttonColourId, tk.campoFundo);
     lf.setColour(juce::ComboBox::focusedOutlineColourId, tk.acento);
 
     // ToggleButton
@@ -93,12 +100,12 @@ void configurarLookAndFeel(juce::LookAndFeel_V4& lf) {
     lf.setColour(juce::ToggleButton::tickDisabledColourId, tk.textoTerciario);
 
     // TextEditor
-    lf.setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
-    lf.setColour(juce::TextEditor::textColourId, juce::Colours::black);
-    lf.setColour(juce::TextEditor::outlineColourId, tk.borda);
+    lf.setColour(juce::TextEditor::backgroundColourId, tk.campoFundo);
+    lf.setColour(juce::TextEditor::textColourId, tk.campoTexto);
+    lf.setColour(juce::TextEditor::outlineColourId, tk.linhaSuave);
     lf.setColour(juce::TextEditor::focusedOutlineColourId, tk.acento);
     lf.setColour(juce::TextEditor::highlightColourId, tk.acento.withAlpha(0.35f));
-    lf.setColour(juce::TextEditor::highlightedTextColourId, juce::Colours::black);
+    lf.setColour(juce::TextEditor::highlightedTextColourId, tk.campoTexto);
     lf.setColour(juce::TextEditor::shadowColourId, juce::Colours::transparentBlack);
 
     // PopupMenu

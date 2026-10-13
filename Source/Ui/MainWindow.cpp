@@ -49,6 +49,7 @@ enum ComandoMenu {
     kCmdImportGeoFavoritos,
     kCmdProjectLog,
     kCmdRescanBackupSources,
+    kCmdVerifySourceDisks,
     kCmdScanInbox,
     kCmdMainEditModo,
     kCmdMainEditor,
@@ -240,6 +241,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         bool temColecao = conteudo_->temProjetoAberto() && !isCatalog;
         menu.addItem(kCmdRescanBackupSources, isPt ? juce::String::fromUTF8("Rescanear Fontes de Backup...") : "Rescan Backup Sources...", temColecao);
         menu.addItem(kCmdScanInbox, matriz::i18n::t("inbox.menu"), temColecao);
+        menu.addItem(kCmdVerifySourceDisks, matriz::i18n::t("verify.menu"), temColecao);
         menu.addSeparator();
         menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
         menu.addItem(kCmdImportGeoFavoritos,
@@ -298,6 +300,9 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdIngerirArquivos: pedirIngerirArquivos(); break;
         case kCmdRescanBackupSources:
             if (conteudo_) conteudo_->iniciarRescanBackupSources();
+            break;
+        case kCmdVerifySourceDisks:
+            if (conteudo_) conteudo_->abrirVerificarDiscosOrigem();
             break;
         case kCmdScanInbox:
             if (conteudo_) conteudo_->escanearInbox();

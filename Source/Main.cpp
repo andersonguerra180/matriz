@@ -11,6 +11,7 @@
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/LoteSelfTest.h"
 #include "Ui/BounceSelfTest.h"
+#include "Ui/VerifySourceSelfTest.h"
 #include "Ui/RebuildSelfTest.h"
 #include "Ui/ManifestoSelfTest.h"
 #include "Model/CompactacaoRegistro.h"
@@ -19,6 +20,8 @@
 #include "Ui/MatrizLookAndFeel.h"
 #include "Ui/TrialNagDialog.h"
 #include "Ui/UiSelfTest.h"
+#include "Whatsapp/ServidorWhatsappApp.h"
+#include "Celular/ServidorCelular.h"
 
 #include <csignal>
 #if !JUCE_WINDOWS
@@ -290,6 +293,11 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-verifysource")) {
+            setApplicationReturnValue(matriz::ui::rodarVerifySourceSelfTest());
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-manifesto")) {
             setApplicationReturnValue(matriz::ui::rodarManifestoSelfTest());
             quit();
@@ -302,6 +310,9 @@ public:
         }
 
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
+
+        // Servidor local das conversas do WhatsApp: ativo enquanto o app estiver aberto.
+        matriz::whatsapp::ServidorWhatsappApp::instancia().iniciar();
 
 #if defined(MATRIZ_UI_APP_NAME_STRING)
         janela_ = std::make_unique<matriz::ui::MainWindow>(MATRIZ_UI_APP_NAME_STRING);
@@ -331,6 +342,9 @@ public:
         monitorLoop_.reset();
         splash_.reset();
         janela_.reset();
+        matriz::whatsapp::ServidorWhatsappApp::instancia().aoConversaRecebida = nullptr;
+        matriz::whatsapp::ServidorWhatsappApp::instancia().parar();
+        matriz::celular::ServidorCelular::aguardarEncerramentos();
         // A janela (e qualquer Component nela) tem que morrer ANTES do
         // LookAndFeel que aponta pra ela — senão fica um ponteiro pendurado
         // no LookAndFeel::getDefaultLookAndFeel() global.

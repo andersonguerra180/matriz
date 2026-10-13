@@ -8,6 +8,15 @@
 #include "ModalMitigacao.h"
 #include "ProgressoGlobal.h"
 #include "Tokens.h"
+#include "OverlayComponent.h"
+#include "PainelReceberCelular.h"
+#include "PainelImportarWhatsapp.h"
+#include "ConversaWhatsappComponent.h"
+#include "Tablet.h"
+#include "LogosTipoArquivo.h"
+#include "../Celular/ExistentesProjeto.h"
+#include "../Whatsapp/WhatsappIngestao.h"
+#include "../Whatsapp/ServidorWhatsappApp.h"
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
@@ -17,6 +26,27 @@ namespace matriz::ui {
 // ── Detail panel content ─────────────────────────────────────────────
 
 namespace {
+
+class BotaoIconeCelular : public juce::Button {
+public:
+    BotaoIconeCelular() : juce::Button("celular") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paintButton(juce::Graphics& g, bool sobre, bool apertado) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat().reduced(2.0f);
+        desenharCartao(g, r, tk.raioCartao * 0.8f, apertado ? tk.acento.darker(0.15f) : (sobre ? tk.acentoHover : tk.acento), true);
+        auto icone = r.removeFromLeft(r.getHeight());
+        desenharIcone(g, IconeUi::Celular, icone.withSizeKeepingCentre(icone.getHeight() * 0.62f, icone.getHeight() * 0.62f), tk.textoSobreAcento);
+        if (r.getWidth() > 60.0f) {
+            r.removeFromRight(10.0f);
+            g.setColour(tk.textoSobreAcento);
+            g.setFont(fonteUi(tk.fonteCorpoGrande - 1.0f, juce::Font::bold).withExtraKerningFactor(0.05f));
+            g.drawText(i18n::t("light.cel.importar"), r.removeFromTop(r.getHeight() * 0.55f).toNearestInt(), juce::Justification::bottomLeft, true);
+            g.setFont(fonteUi(tk.tamanhoFontePequena));
+            g.setColour(tk.textoSobreAcento.withAlpha(0.85f));
+            g.drawText(i18n::t("light.cel.importarSub"), r.toNearestInt(), juce::Justification::topLeft, true);
+        }
+    }
+};
 
 juce::String formatarTamanhoArquivo(juce::int64 bytes) {
     if (bytes <= 0) return "0 B";
@@ -521,7 +551,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     detailViewport_->setViewedComponent(detailContent_.get(), false);
     detailViewport_->setScrollBarsShown(true, false);
     detailViewport_->setVisible(false);
-    addAndMakeVisible(*detailViewport_);
+    addChildComponent(*detailViewport_);
 
     painelPropostas_ = std::make_unique<PainelPropostas>();
     painelPropostas_->aoAlternar = [this] {
@@ -548,10 +578,23 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     btnFind_->onClick = [this] { if (!pastaExploradorId_.empty()) localizarPasta(pastaExploradorId_); };
     addAndMakeVisible(*btnFind_);
 
+    detailContent_->aoClicarArquivo = [this](const std::string& itemId) {
+        if (matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), itemId)) {
+            abrirConversaWhatsapp(itemId);
+        }
+    };
+
+    btnReceberCelular_ = std::make_unique<BotaoIconeCelular>();
+    btnReceberCelular_->setComponentID("mb.btnReceberCelular");
+    btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
+    btnReceberCelular_->onClick = [this] { abrirReceberDoCelular(); };
+    addAndMakeVisible(*btnReceberCelular_);
+
     setWantsKeyboardFocus(true);
     setOpaque(true);  // o paint faz fillAll do fundo inteiro
 
     migrarPresetsAntigosSeNecessario();
+    carregarLayoutSalvo();
     mapaAtivoId_ = projeto_.mapaInicialDoFolderMap();
     projeto_.definirMapaAtivo(mapaAtivoId_);  // mutadores compat seguem o mapa aberto
     recarregarComboMapas();
@@ -1384,6 +1427,68 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
 
     recalcularPivot();
     aplicarEscalaTamanho(escalaTamanho_); // reaplica a escala global ao layout recém-lido
+
+    looseFiles_.clear();
+    try {
+        const auto soltos = projeto_.itensSemPasta(mapaAtivoId_);
+        auto& db = projeto_.projeto().registro();
+        auto stmt = db.prepare(
+            "SELECT i.id, i.titulo, i.tipo_midia, a.caminho_relativo, a.tamanho_bytes "
+            "FROM item i "
+            "LEFT JOIN arquivo a ON i.id = a.item_id AND a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
+            "ORDER BY i.criado_em"
+        );
+
+        int maxNodeY = 40;
+        int maxNodeX = 40;
+        for (const auto& n : nodes_) {
+            maxNodeY = std::max(maxNodeY, n.bounds.getBottom());
+            maxNodeX = std::max(maxNodeX, n.bounds.getRight());
+        }
+
+        int looseStartX = 40;
+        int looseStartY = nodes_.empty() ? 40 : (maxNodeY + 50);
+        int looseX = looseStartX;
+        int looseY = looseStartY;
+
+        const auto nests = ProjetoAberto::mapaDeNests(db);
+        while (!soltos.empty() && stmt.step()) {
+            if (soltos.count(stmt.columnText(0)) == 0) continue;
+            int nestTotal = 0;
+            if (auto nit = nests.find(stmt.columnText(0)); nit != nests.end()) {
+                if (nit->second.capaId != stmt.columnText(0)) continue;
+                nestTotal = nit->second.total;
+            }
+            LooseFileNode lf;
+            lf.nestTotal = nestTotal;
+            lf.id = stmt.columnText(0);
+            lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            lf.tipoMidia = stmt.columnText(2);
+            lf.extensao = stmt.columnIsNull(3) ? juce::String() : juce::File(juce::String::fromUTF8(stmt.columnText(3).c_str())).getFileExtension().trimCharactersAtStart(".");
+            lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));
+
+            try { lf.ehConversaWhatsapp = matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), lf.id); } catch (...) {}
+            lf.bounds = juce::Rectangle<int>(looseX, looseY, 126, 138);
+            looseY += 148;
+            if (looseY > looseStartY + 420) {
+                looseY = looseStartY;
+                looseX += 138;
+            }
+            auto salvo = layoutSalvo_.find(chaveLayout(lf.id));
+            if (salvo != layoutSalvo_.end()) {
+                lf.bounds.setPosition(salvo->second);
+            } else if (lf.ehConversaWhatsapp) {
+                const auto canvasTopLeft = areaCanvas().getTopLeft();
+                auto posCanvas = screenToCanvas(canvasTopLeft + juce::Point<int>(36, 36));
+                lf.bounds.setPosition(posCanvas.toInt());
+                layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+                gravarLayoutSalvo();
+            }
+            looseFiles_.push_back(lf);
+        }
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("recalcularNodes looseFiles erro: " + juce::String(e.what()));
+    }
 }
 
 // Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
@@ -2032,6 +2137,19 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
     g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
 }
 
+namespace {
+juce::Colour corDoTipoDeArquivo(const Tema& tk, const juce::String& tipoMidia, const juce::String& ext, juce::String& tag) {
+    if (ext == "ZIP" || ext == "RAR" || ext == "7Z" || ext == "TAR" || ext == "GZ") { tag = "ZIP"; return tk.tipoZip; }
+    if (tipoMidia == "audio" || ext == "WAV" || ext == "MP3" || ext == "FLAC" || ext == "AAC" || ext == "AIFF") { tag = "AUDIO"; return tk.tipoAudio; }
+    if (tipoMidia == "video" || ext == "MOV" || ext == "MP4" || ext == "MKV" || ext == "AVI") { tag = "MOVIE"; return tk.tipoVideo; }
+    if (tipoMidia == "foto" || ext == "JPG" || ext == "JPEG" || ext == "PNG" || ext == "TIFF" || ext == "CR2" || ext == "RAW") { tag = "IMG"; return tk.tipoImagem; }
+    if (ext == "PDF" || ext == "DOC" || ext == "DOCX" || ext == "XLS" || ext == "XLSX") { tag = "DOC"; return tk.tipoDocumento; }
+    if (ext == "TXT" || ext == "MD" || ext == "RTF" || ext == "JSON" || ext == "CSV") { tag = "TEXT"; return tk.tipoSessao; }
+    tag = "FILE";
+    return tk.tipoOutros;
+}
+} // namespace
+
 // Fase 1 — arrastar itens (MosaicoComponent::startDragging, descrição =
 // array de item ids, mesmo formato que ArvoreComponent já aceita) pra
 // dentro de SEM PASTA remove-os de todas as pastas do mapa ativo. Não
@@ -2073,6 +2191,40 @@ void ArvoreBackupComponent::itemDropped(const SourceDetails& details) {
 
     projeto_.removerItensDoBackup(itemIds, mapaAtivoId_);
     recarregar();
+}
+
+bool ArvoreBackupComponent::isInterestedInFileDrag(const juce::StringArray& files) {
+    return !files.isEmpty();
+}
+
+void ArvoreBackupComponent::fileDragEnter(const juce::StringArray&, int, int) {
+    repaint();
+}
+
+void ArvoreBackupComponent::fileDragMove(const juce::StringArray&, int x, int y) {
+    int alvo = -1;
+    if (!mapaAtivoEhOriginal()) alvo = pastaAlvoDoDrop(screenToCanvas({ x, y }), {});
+    if (alvo != nodeHoverDrop_) { nodeHoverDrop_ = alvo; repaint(); }
+}
+
+void ArvoreBackupComponent::fileDragExit(const juce::StringArray&) {
+    if (nodeHoverDrop_ != -1) { nodeHoverDrop_ = -1; repaint(); }
+}
+
+void ArvoreBackupComponent::filesDropped(const juce::StringArray& files, int x, int y) {
+    int alvo = -1;
+    if (!mapaAtivoEhOriginal()) alvo = pastaAlvoDoDrop(screenToCanvas({ x, y }), {});
+    fileDragExit({});
+    juce::Array<juce::File> arr;
+    for (const auto& f : files) arr.add(juce::File(f));
+    if (arr.isEmpty()) return;
+    if (alvo >= 0 && alvo < static_cast<int>(nodes_.size())) {
+        if (aoIngerirArquivos) aoIngerirArquivos(arr, nodes_[static_cast<size_t>(alvo)].id);
+        return;
+    }
+    if (aoIngerirArquivos) {
+        aoIngerirArquivos(arr, {});
+    }
 }
 
 void ArvoreBackupComponent::iniciarEdicaoInline(int nodeIndex) {
@@ -2152,7 +2304,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         g.fillRectList(pontos);
     }
 
-    if (nodes_.empty()) {
+    if (nodes_.empty() && looseFiles_.empty()) {
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
         g.drawText(i18n::t("arvore_backup.vazio"), canvas, juce::Justification::centred, true);
@@ -2282,6 +2434,77 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.setColour(tema().acento.withAlpha(alpha));
             g.drawRoundedRectangle(node.bounds.toFloat().expanded(4.0f), 10.0f, 3.0f);
         }
+        if (nodeHoverDrop_ >= 0 && nodeHoverDrop_ < static_cast<int>(nodes_.size()) &&
+            nodes_[static_cast<size_t>(nodeHoverDrop_)].id == node.id) {
+            g.setColour(tema().acento);
+            g.drawRoundedRectangle(node.bounds.toFloat().expanded(3.0f), 10.0f, 2.5f);
+        }
+    }
+
+    // Arquivos soltos (na raiz do mapa): ícone de arquivo com a extensão dentro e o nome embaixo — sem card.
+    for (const auto& lf : looseFiles_) {
+        const auto b = lf.bounds.toFloat();
+        juce::String ext = lf.extensao.toUpperCase().trimCharactersAtStart(".");
+        juce::String tag;
+        const auto cor = corDoTipoDeArquivo(tk, lf.tipoMidia, ext, tag);
+        if (lf.selecionado) {
+            g.setColour(tk.acento.withAlpha(0.22f));
+            g.fillRoundedRectangle(b, 14.0f);
+            g.setColour(tk.acento);
+            g.drawRoundedRectangle(b.reduced(1.0f), 14.0f, 2.0f);
+        }
+        const float lw = 56.0f, lh = 70.0f;
+        if (lf.ehConversaWhatsapp) {
+            const auto bolha = matriz::ui::logoConversaWhatsapp(256);
+            if (bolha.isValid()) {
+                g.setOpacity(1.0f);
+                g.drawImage(bolha, juce::Rectangle<float>(b.getCentreX() - 36.0f, b.getY() + 6.0f, 72.0f, 72.0f), juce::RectanglePlacement::centred);
+                g.setColour(tk.textoPrimario);
+                g.setFont(fonteUi(11.5f, juce::Font::bold));
+                const auto areaTexto = b.withTrimmedTop(82.0f).reduced(4.0f, 2.0f);
+                g.drawFittedText(lf.titulo, areaTexto.toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
+                continue;
+            }
+        }
+        const juce::Rectangle<float> folha(b.getCentreX() - lw * 0.5f, b.getY() + 8.0f, lw, lh);
+        const float dobra = 16.0f;
+        juce::Path p;
+        p.startNewSubPath(folha.getX(), folha.getY() + 6.0f);
+        p.quadraticTo(folha.getX(), folha.getY(), folha.getX() + 6.0f, folha.getY());
+        p.lineTo(folha.getRight() - dobra, folha.getY());
+        p.lineTo(folha.getRight(), folha.getY() + dobra);
+        p.lineTo(folha.getRight(), folha.getBottom() - 6.0f);
+        p.quadraticTo(folha.getRight(), folha.getBottom(), folha.getRight() - 6.0f, folha.getBottom());
+        p.lineTo(folha.getX() + 6.0f, folha.getBottom());
+        p.quadraticTo(folha.getX(), folha.getBottom(), folha.getX(), folha.getBottom() - 6.0f);
+        p.closeSubPath();
+        g.setColour(tk.sombra);
+        g.fillPath(p, juce::AffineTransform::translation(0.0f, 3.0f));
+        g.setColour(tk.cartao);
+        g.fillPath(p);
+        g.setColour(cor.withAlpha(0.20f));
+        g.fillPath(p);
+        g.setColour(cor);
+        g.strokePath(p, juce::PathStrokeType(2.0f));
+        juce::Path dobraP;
+        dobraP.startNewSubPath(folha.getRight() - dobra, folha.getY());
+        dobraP.lineTo(folha.getRight() - dobra, folha.getY() + dobra);
+        dobraP.lineTo(folha.getRight(), folha.getY() + dobra);
+        g.strokePath(dobraP, juce::PathStrokeType(1.6f));
+        g.setColour(cor);
+        g.setFont(fonteUi(ext.length() > 4 ? 11.0f : 14.0f, juce::Font::bold));
+        g.drawText(ext.isNotEmpty() ? ext : tag, folha.withTrimmedTop(dobra).toNearestInt(), juce::Justification::centred, false);
+        if (lf.nestTotal > 1) {
+            const juce::Rectangle<float> selo(folha.getRight() - 12.0f, folha.getBottom() - 16.0f, 24.0f, 18.0f);
+            g.setColour(tk.perigo);
+            g.fillRoundedRectangle(selo, 5.0f);
+            g.setColour(tk.textoSobreAcento);
+            g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+            g.drawText("N" + juce::String(lf.nestTotal), selo.toNearestInt(), juce::Justification::centred, false);
+        }
+        g.setColour(tk.textoPrimario);
+        g.setFont(fonteUi(tk.tamanhoFontePequena + 1.0f, juce::Font::bold));
+        g.drawFittedText(lf.titulo, b.withTrimmedTop(lh + 12.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.9f);
     }
 
     if (marqueeSelecting_) {
@@ -2302,7 +2525,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
     // (também desenha a moldura da lista da pasta selecionada, que fica logo abaixo dos cards)
-    if (!detalheBounds_.isEmpty()) {
+    if (!detalheBounds_.isEmpty() && !selectedFolderId_.empty()) {
         g.setColour(tema().borda.withAlpha(0.7f));
         g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
     }
@@ -2436,7 +2659,7 @@ void ArvoreBackupComponent::resized() {
     // Pasta selecionada: nome, subpastas e a lista de arquivos ocupam o espaço que sobra na coluna
     // esquerda (antes era um painel por cima do canvas, à direita).
     detalheBounds_ = {};
-    if (detailViewport_ && detailViewport_->isVisible()) {
+    if (detailViewport_ && detailViewport_->isVisible() && !selectedFolderId_.empty()) {
         auto area = corpo.withTrimmedBottom(0);
         area.setX(area.getX() - 4);
         area.setWidth(area.getWidth() + 8);
@@ -2447,6 +2670,37 @@ void ArvoreBackupComponent::resized() {
         } else {
             detailViewport_->setBounds({});
         }
+    } else if (detailViewport_) {
+        detailViewport_->setBounds({});
+    }
+
+    const auto canvas = areaCanvas();
+    if (conversaWhatsapp_ && conversaWhatsapp_->isVisible()) {
+        conversaWhatsapp_->setBounds(canvas);
+        if (btnVoltarMapa_) {
+            btnVoltarMapa_->setBounds(canvas.getX() + 16, canvas.getY() + 16, 140, 32);
+            btnVoltarMapa_->toFront(true);
+        }
+    }
+
+    if (btnReceberCelular_) {
+        constexpr int kAltura = 46;
+        constexpr int kMargem = 16;
+        const int larguraBtn = canvas.getWidth() > 600 ? 250 : kAltura;
+        if (canvas.getWidth() > 150 && canvas.getHeight() > 100 && (!conversaWhatsapp_ || !conversaWhatsapp_->isVisible())) {
+            btnReceberCelular_->setVisible(true);
+            btnReceberCelular_->setBounds(canvas.getRight() - larguraBtn - kMargem,
+                                          canvas.getBottom() - kAltura - kMargem,
+                                          larguraBtn, kAltura);
+            btnReceberCelular_->toFront(true);
+        } else {
+            btnReceberCelular_->setVisible(false);
+        }
+    }
+
+    if (overlayAtual_ && overlayAtual_->isVisible()) {
+        overlayAtual_->setBounds(getLocalBounds());
+        overlayAtual_->toFront(true);
     }
 }
 
@@ -2521,6 +2775,57 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
     if (!areaCanvas().contains(e.getPosition())) return;
 
     auto canvasClick = screenToCanvas(e.getPosition());
+
+    // Arquivos soltos: clique, Cmd/Ctrl+clique (soma/tira), Shift+clique (intervalo) e botão direito (menu).
+    looseFileDragIndice_ = -1;
+    for (size_t i = 0; i < looseFiles_.size(); ++i) {
+        if (!looseFiles_[i].bounds.toFloat().contains(canvasClick)) continue;
+        const std::string idClicado = looseFiles_[i].id;
+        const bool incremental = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        if (e.mods.isPopupMenu()) {
+            if (!looseFiles_[i].selecionado) {
+                limparSelecaoTudo();
+                looseFiles_[i].selecionado = true;
+            }
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            mostrarMenuDeArquivosSoltos();
+            return;
+        }
+        if (incremental) {
+            looseFiles_[i].selecionado = !looseFiles_[i].selecionado;
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            return;
+        }
+        if (e.mods.isShiftDown() && ancoraTipo_ == 1 && !ancoraId_.empty() && ancoraId_ != idClicado) {
+            selecionarIntervalo(1, ancoraId_, idClicado);
+            repaint();
+            return;
+        }
+        looseFileDragIndice_ = static_cast<int>(i);
+        arrastoOffset_ = { static_cast<int>(canvasClick.x - looseFiles_[i].bounds.getX()),
+                           static_cast<int>(canvasClick.y - looseFiles_[i].bounds.getY()) };
+        soltosArrastoIniciais_.clear();
+        size_t selecionados = 0;
+        for (const auto& lf : looseFiles_) if (lf.selecionado) ++selecionados;
+        if (looseFiles_[i].selecionado && selecionados > 1) {
+            for (size_t k = 0; k < looseFiles_.size(); ++k)
+                if (looseFiles_[k].selecionado) soltosArrastoIniciais_.push_back({ k, looseFiles_[k].bounds.getPosition() });
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            return;
+        }
+        limparSelecaoTudo();
+        looseFiles_[i].selecionado = true;
+        ancoraTipo_ = 1;
+        ancoraId_ = idClicado;
+        repaint();
+        return;
+    }
 
     // Check Output Socket Handles for dragging connections (in canvas space)
     // — ORIGINAL é somente leitura, nunca aceita reconectar pastas (S4/13).
@@ -2778,6 +3083,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             // seleção atual — antes disso o clique só começava o pan e as
             // pastas continuavam com o destaque de seleção ligado.
             for (auto& n : nodes_) n.selecionado = false;
+            for (auto& lf : looseFiles_) lf.selecionado = false;
             panning_ = true;
             panStart_ = e.getPosition();
             atualizarPainelDetalhe("");
@@ -2798,6 +3104,30 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
         auto canvasPos = screenToCanvas(e.getPosition());
         marqueeRectCanvas_ = juce::Rectangle<float>(marqueeStartCanvas_, canvasPos);
         repaint(areaCanvas());  // só o canvas: a coluna esquerda não muda durante a interação
+        return;
+    }
+
+    if (looseFileDragIndice_ >= 0 && looseFileDragIndice_ < static_cast<int>(looseFiles_.size())) {
+        auto canvasPos = screenToCanvas(e.getPosition());
+        const auto posAntiga = looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.getPosition();
+        looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.setPosition(
+            static_cast<int>(canvasPos.x - arrastoOffset_.x),
+            static_cast<int>(canvasPos.y - arrastoOffset_.y)
+        );
+        if (soltosArrastoIniciais_.size() > 1) {
+            const auto delta = looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.getPosition() - posAntiga;
+            for (const auto& [k, ini] : soltosArrastoIniciais_)
+                if (static_cast<int>(k) != looseFileDragIndice_ && k < looseFiles_.size())
+                    looseFiles_[k].bounds.translate(delta.x, delta.y);
+        }
+
+        const int nodeSobre = mapaAtivoEhOriginal()
+                                  ? -1
+                                  : pastaAlvoDoDrop(canvasPos, looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds);
+        if (nodeSobre != nodeHoverDrop_) {
+            nodeHoverDrop_ = nodeSobre;
+        }
+        repaint();
         return;
     }
 
@@ -2868,6 +3198,11 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     panning_ = false;
     autoRolagem_.stopTimer();
 
+    if (looseFileDragIndice_ >= 0 && looseFileDragIndice_ < static_cast<int>(looseFiles_.size())) {
+        concluirArrastoDeArquivoSolto(screenToCanvas(e.getPosition()));
+        return;
+    }
+
     if (marqueeSelecting_) {
         marqueeSelecting_ = false;
         int countSelecionados = 0;
@@ -2875,6 +3210,9 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         for (auto& n : nodes_) {
             n.selecionado = marqueeRectCanvas_.intersects(n.bounds.toFloat());
             if (n.selecionado) { ++countSelecionados; unicoSelId = n.id; }
+        }
+        for (auto& lf : looseFiles_) {
+            lf.selecionado = marqueeRectCanvas_.intersects(lf.bounds.toFloat());
         }
         atualizarPainelDetalhe(countSelecionados == 1 ? unicoSelId : "");
         marqueeRectCanvas_ = {};
@@ -2953,6 +3291,15 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
     if (!areaCanvas().contains(e.getPosition())) return;
     auto canvasClick = screenToCanvas(e.getPosition());
+    for (const auto& lf : looseFiles_) {
+        if (lf.bounds.toFloat().contains(canvasClick)) {
+            sequenciaPreview_.clear();
+            if (lf.ehConversaWhatsapp) {
+                abrirConversaWhatsapp(lf.id);
+            }
+            return;
+        }
+    }
     for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
         if (nodes_[static_cast<size_t>(i)].bounds.toFloat().contains(canvasClick)) {
             // Mapa principal: abre a pasta num Folder Map sobreposto. Dentro da sobreposição: renomeia, como antes.
@@ -3346,11 +3693,19 @@ void ArvoreBackupComponent::redefinirTamanhos() {
 
 // FIT: enquadra o mapa inteiro na área visível (também amplia, se o mapa for pequeno).
 void ArvoreBackupComponent::enquadrarTudo() {
-    if (nodes_.empty()) return;
+    if (nodes_.empty() && looseFiles_.empty()) return;
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;
-    juce::Rectangle<int> uniao = nodes_.front().bounds;
-    for (const auto& n : nodes_) uniao = uniao.getUnion(n.bounds);
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    for (const auto& n : nodes_) {
+        uniao = primeiro ? n.bounds : uniao.getUnion(n.bounds);
+        primeiro = false;
+    }
+    for (const auto& lf : looseFiles_) {
+        uniao = primeiro ? lf.bounds : uniao.getUnion(lf.bounds);
+        primeiro = false;
+    }
     constexpr float kMargem = 30.0f;
     const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
     const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
@@ -3789,6 +4144,402 @@ void ArvoreBackupComponent::migrarPresetsAntigosSeNecessario() {
         }
         arquivo.moveFileTo(arquivo.getSiblingFile(arquivo.getFileName() + ".importado"));
     }
+}
+
+void ArvoreBackupComponent::abrirReceberDoCelular() {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    mostrarEscolhaImportacaoCelular(*overlayAtual_, [seguro](std::optional<ModoImportacaoCelular> modo) {
+        juce::MessageManager::callAsync([seguro, modo] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->escolhaImportacaoAtual_.reset();
+            seguro->resized();
+            if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
+        });
+    }, &escolhaImportacaoAtual_);
+    resized();
+}
+
+void ArvoreBackupComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
+    if (overlayAtual_ != nullptr) return;
+    if (modo == ModoImportacaoCelular::WhatsApp) {
+        overlayAtual_ = std::make_unique<PainelOverlay>();
+        addAndMakeVisible(*overlayAtual_);
+        juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+        mostrarImportarWhatsapp(*overlayAtual_, [seguro] {
+            juce::MessageManager::callAsync([seguro] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->resized();
+            });
+        });
+        resized();
+        return;
+    }
+
+    matriz::celular::OpcoesServidor opcoes;
+    auto* pProj = &projeto_.projeto();
+    opcoes.existentesDoProjeto = [pProj]() -> matriz::celular::ConjuntoExistentes {
+        if (pProj == nullptr) return {};
+        return matriz::celular::existentesDoProjeto(*pProj);
+    };
+
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    painelCelularAtual_ = mostrarReceberDoCelular(*overlayAtual_, opcoes, [seguro](RespostaReceberCelular r) {
+        juce::MessageManager::callAsync([seguro, r] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory()) {
+                if (seguro->aoIngerirArquivos) {
+                    seguro->aoIngerirArquivos({r.pastaSessao}, seguro->selectedFolderId_);
+                }
+            }
+        });
+    }, modo);
+    resized();
+}
+
+void ArvoreBackupComponent::abrirConversaWhatsapp(const std::string& itemId) {
+    if (itemId.empty()) return;
+    conversaWhatsapp_ = std::make_unique<ConversaWhatsappComponent>(projeto_, itemId);
+    btnVoltarMapa_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("◀ ") + i18n::t("arvore_backup.voltar_mapa"));
+    btnVoltarMapa_->setColour(juce::TextButton::buttonColourId, tema().cartao);
+    btnVoltarMapa_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnVoltarMapa_->onClick = [this] { fecharConversaWhatsapp(); };
+    addAndMakeVisible(*conversaWhatsapp_);
+    addAndMakeVisible(*btnVoltarMapa_);
+    if (btnReceberCelular_) btnReceberCelular_->setVisible(false);
+    resized();
+}
+
+void ArvoreBackupComponent::fecharConversaWhatsapp() {
+    conversaWhatsapp_.reset();
+    btnVoltarMapa_.reset();
+    if (btnReceberCelular_) btnReceberCelular_->setVisible(true);
+    resized();
+    repaint();
+}
+
+void ArvoreBackupComponent::fecharOverlayImportacao() {
+    if (overlayAtual_ != nullptr) {
+        overlayAtual_.reset();
+        painelCelularAtual_.reset();
+        escolhaImportacaoAtual_.reset();
+        resized();
+        repaint();
+    }
+}
+
+// ── cards_layout.json: posição dos nós de arquivo solto ──────────────
+juce::File ArvoreBackupComponent::arquivoLayout() const {
+    return projeto_.projeto().pasta().getChildFile("cards_layout.json");
+}
+
+void ArvoreBackupComponent::carregarLayoutSalvo() {
+    layoutSalvo_.clear();
+    const auto arq = arquivoLayout();
+    if (!arq.existsAsFile()) return;
+    const auto json = juce::JSON::parse(arq);
+    if (auto* obj = json.getProperty("layouts", {}).getDynamicObject()) {
+        for (const auto& prop : obj->getProperties()) {
+            const auto* arr = prop.value.getArray();
+            if (arr != nullptr && arr->size() == 2)
+                layoutSalvo_[prop.name.toString().toStdString()] = { static_cast<int>((*arr)[0]), static_cast<int>((*arr)[1]) };
+        }
+    }
+}
+
+void ArvoreBackupComponent::gravarLayoutSalvo() {
+    juce::DynamicObject::Ptr layouts = new juce::DynamicObject();
+    for (const auto& [chave, ponto] : layoutSalvo_)
+        layouts->setProperty(juce::Identifier(chave.c_str()), juce::Array<juce::var>{ ponto.x, ponto.y });
+    juce::DynamicObject::Ptr raiz = new juce::DynamicObject();
+    raiz->setProperty("layouts", juce::var(layouts.get()));
+    if (!arquivoLayout().replaceWithText(juce::JSON::toString(juce::var(raiz.get()), true)))
+        juce::Logger::writeToLog("Folder Map: não foi possível gravar " + arquivoLayout().getFullPathName());
+}
+
+int ArvoreBackupComponent::pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const {
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].bounds.toFloat().contains(cursorCanvas)) return static_cast<int>(i);
+    int melhor = -1;
+    long long melhorArea = 0;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        const auto inter = nodes_[i].bounds.getIntersection(iconeCanvas);
+        const long long area = static_cast<long long>(inter.getWidth()) * inter.getHeight();
+        if (area > melhorArea) { melhorArea = area; melhor = static_cast<int>(i); }
+    }
+    return melhor;
+}
+
+void ArvoreBackupComponent::concluirArrastoDeArquivoSolto(juce::Point<float> canvasRelease) {
+    if (looseFileDragIndice_ < 0 || looseFileDragIndice_ >= static_cast<int>(looseFiles_.size())) return;
+    const int targetNodeIndex =
+        pastaAlvoDoDrop(canvasRelease, looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds);
+    if (targetNodeIndex >= 0 && mapaAtivoEhOriginal()) {
+        recarregar();
+    } else if (targetNodeIndex >= 0 && targetNodeIndex < static_cast<int>(nodes_.size())) {
+        std::vector<std::string> ids;
+        if (soltosArrastoIniciais_.size() > 1) {
+            for (const auto& [k, ini] : soltosArrastoIniciais_) if (k < looseFiles_.size()) ids.push_back(looseFiles_[k].id);
+        } else {
+            ids.push_back(looseFiles_[static_cast<size_t>(looseFileDragIndice_)].id);
+        }
+        std::string targetPastaId = nodes_[static_cast<size_t>(targetNodeIndex)].id;
+        projeto_.adicionarItensAPasta(ids, targetPastaId);
+        bool mudouLayout = false;
+        for (const auto& id : ids) mudouLayout |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+        if (mudouLayout) gravarLayoutSalvo();
+        recarregar();
+    } else {
+        if (soltosArrastoIniciais_.size() > 1) {
+            for (const auto& [k, ini] : soltosArrastoIniciais_)
+                if (k < looseFiles_.size()) layoutSalvo_[chaveLayout(looseFiles_[k].id)] = looseFiles_[k].bounds.getPosition();
+        } else {
+            const auto& lf = looseFiles_[static_cast<size_t>(looseFileDragIndice_)];
+            layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+        }
+        gravarLayoutSalvo();
+    }
+    soltosArrastoIniciais_.clear();
+    looseFileDragIndice_ = -1;
+    nodeHoverDrop_ = -1;
+    repaint();
+}
+
+void ArvoreBackupComponent::limparSelecaoTudo() {
+    for (auto& n : nodes_) n.selecionado = false;
+    for (auto& lf : looseFiles_) lf.selecionado = false;
+}
+
+namespace {
+template <typename Lista>
+std::vector<size_t> ordemPorPosicao(const Lista& v) {
+    std::vector<size_t> idx(v.size());
+    for (size_t i = 0; i < v.size(); ++i) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return v[a].bounds.getY() < v[b].bounds.getY(); });
+    std::vector<size_t> out;
+    size_t i = 0;
+    while (i < idx.size()) {
+        const int y0 = v[idx[i]].bounds.getY();
+        const int tolerancia = juce::jmax(8, v[idx[i]].bounds.getHeight() / 2);
+        std::vector<size_t> linha;
+        while (i < idx.size() && std::abs(v[idx[i]].bounds.getY() - y0) <= tolerancia) linha.push_back(idx[i++]);
+        std::sort(linha.begin(), linha.end(), [&](size_t a, size_t b) { return v[a].bounds.getX() < v[b].bounds.getX(); });
+        out.insert(out.end(), linha.begin(), linha.end());
+    }
+    return out;
+}
+} // namespace
+
+std::vector<size_t> ArvoreBackupComponent::ordemDeLeituraSoltos() const { return ordemPorPosicao(looseFiles_); }
+std::vector<size_t> ArvoreBackupComponent::ordemDeLeituraPastas() const { return ordemPorPosicao(nodes_); }
+
+void ArvoreBackupComponent::selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId) {
+    const auto ordem = tipo == 1 ? ordemDeLeituraSoltos() : ordemDeLeituraPastas();
+    int a = -1, b = -1;
+    for (size_t k = 0; k < ordem.size(); ++k) {
+        const auto& id = tipo == 1 ? looseFiles_[ordem[k]].id : nodes_[ordem[k]].id;
+        if (id == deId) a = static_cast<int>(k);
+        if (id == ateId) b = static_cast<int>(k);
+    }
+    if (a < 0 || b < 0) return;
+    limparSelecaoTudo();
+    for (int k = std::min(a, b); k <= std::max(a, b); ++k) {
+        if (tipo == 1) looseFiles_[ordem[static_cast<size_t>(k)]].selecionado = true;
+        else nodes_[ordem[static_cast<size_t>(k)]].selecionado = true;
+    }
+}
+
+std::vector<std::string> ArvoreBackupComponent::idsSoltosSelecionados() const {
+    std::vector<std::string> out;
+    for (size_t i : ordemDeLeituraSoltos())
+        if (looseFiles_[i].selecionado) out.push_back(looseFiles_[i].id);
+    return out;
+}
+
+void ArvoreBackupComponent::mostrarNaOrigem(const std::string& itemId) {
+    juce::File origem;
+    try {
+        auto st = projeto_.projeto().registro().prepare("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC LIMIT 1");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (st.step() && !st.columnIsNull(0)) origem = juce::File(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    if (origem != juce::File() && origem.exists()) {
+        origem.revealToUser();
+    }
+}
+
+bool ArvoreBackupComponent::aplicarMovimentoDeSoltos(const std::vector<std::string>& ids, const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return false;
+    projeto_.adicionarItensAPasta(ids, pastaId);
+    bool mudou = false;
+    for (const auto& id : ids) mudou |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+    if (mudou) gravarLayoutSalvo();
+    recarregar();
+    return true;
+}
+
+void ArvoreBackupComponent::moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId) {
+    aplicarMovimentoDeSoltos(ids, pastaId);
+}
+
+void ArvoreBackupComponent::adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids) {
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    for (const auto& n : nodes_) {
+        if (n.pastaPaiId != paiId) continue;
+        const std::string pastaId = n.id;
+        bool temFilhas = false;
+        for (const auto& m : nodes_) if (m.pastaPaiId == pastaId) { temFilhas = true; break; }
+        if (!temFilhas) {
+            menu.addItem(n.nome, true, false, [seguro, ids, pastaId] { if (seguro) seguro->moverSoltosParaPasta(ids, pastaId); });
+        } else {
+            juce::PopupMenu sub;
+            sub.addItem(n.nome, true, false, [seguro, ids, pastaId] { if (seguro) seguro->moverSoltosParaPasta(ids, pastaId); });
+            sub.addSeparator();
+            adicionarSubmenuDePastas(sub, pastaId, ids);
+            menu.addSubMenu(n.nome, sub);
+        }
+    }
+}
+
+void ArvoreBackupComponent::removerSoltosDoBackup(const std::vector<std::string>& ids) {
+    if (ids.empty()) return;
+    projeto_.removerItensDoProjeto(ids);
+    for (const auto& id : ids) layoutSalvo_.erase(chaveLayout(id));
+    gravarLayoutSalvo();
+    recarregar();
+}
+
+void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
+    const auto ids = idsSoltosSelecionados();
+    if (ids.empty()) return;
+    juce::PopupMenu menu;
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    const bool unico = ids.size() == 1;
+    menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), unico, false, [seguro, ids] { if (seguro) seguro->mostrarNaOrigem(ids.front()); });
+    juce::PopupMenu mover;
+    adicionarSubmenuDePastas(mover, "", ids);
+    menu.addSubMenu(i18n::t("light.ui.mb.ctx.moveToFolder"), mover, mover.getNumItems() > 0 && !mapaAtivoEhOriginal());
+    menu.addSeparator();
+    menu.addItem("NEST", ids.size() > 1, false, [seguro, ids] {
+        if (!seguro) return;
+        seguro->projeto_.criarNest(ids);
+        seguro->recarregar();
+    });
+    bool algumEmNest = false;
+    for (const auto& id : ids) if (projeto_.nestDoItem(id)) { algumEmNest = true; break; }
+    if (algumEmNest)
+        menu.addItem("UNEST", true, false, [seguro, ids] {
+            if (!seguro) return;
+            seguro->projeto_.desfazerNest(ids);
+            seguro->recarregar();
+        });
+    menu.addSeparator();
+    menu.addItem(i18n::t("light.ui.mb.ctx.remove"), true, false, [seguro, ids] { if (seguro) seguro->removerSoltosDoBackup(ids); });
+    menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition());
+}
+
+std::optional<std::string> ArvoreBackupComponent::soltoAdjacente(const std::string& idAtual, int direcao) const {
+    std::vector<std::pair<juce::String, std::string>> ordem;
+    const bool soSelecao = std::find(sequenciaPreview_.begin(), sequenciaPreview_.end(), idAtual) != sequenciaPreview_.end();
+    for (const auto& lf : looseFiles_)
+        if (!soSelecao || std::find(sequenciaPreview_.begin(), sequenciaPreview_.end(), lf.id) != sequenciaPreview_.end())
+            ordem.push_back({ lf.titulo.toLowerCase(), lf.id });
+    std::sort(ordem.begin(), ordem.end());
+    const auto it = std::find_if(ordem.begin(), ordem.end(), [&](const auto& p) { return p.second == idAtual; });
+    if (it == ordem.end() || ordem.size() < 2) return std::nullopt;
+    const int n = static_cast<int>(ordem.size());
+    const int i = static_cast<int>(it - ordem.begin());
+    return ordem[static_cast<size_t>(((i + (direcao >= 0 ? 1 : -1)) % n + n) % n)].second;
+}
+
+void ArvoreBackupComponent::selecionarSolto(const std::string& id) {
+    limparSelecaoTudo();
+    for (auto& lf : looseFiles_) lf.selecionado = (lf.id == id);
+    ancoraTipo_ = 1;
+    ancoraId_ = id;
+    repaint();
+}
+
+void ArvoreBackupComponent::arranjarSoltosSelecionados() {
+    std::vector<size_t> sel;
+    for (size_t i : ordemDeLeituraSoltos()) if (looseFiles_[i].selecionado) sel.push_back(i);
+    if (sel.empty()) return;
+    juce::Rectangle<int> uniao = looseFiles_[sel.front()].bounds;
+    for (size_t i : sel) uniao = uniao.getUnion(looseFiles_[i].bounds);
+    constexpr int cw = 128, ch = 136;
+    const int colunas = juce::jmax(1, uniao.getWidth() / cw);
+    const auto posicoes = [&](juce::Point<int> origem) {
+        std::vector<juce::Point<int>> out;
+        for (size_t k = 0; k < sel.size(); ++k)
+            out.push_back({origem.x + static_cast<int>(k % static_cast<size_t>(colunas)) * cw, origem.y + static_cast<int>(k / static_cast<size_t>(colunas)) * ch});
+        return out;
+    };
+    const auto colide = [&](const std::vector<juce::Point<int>>& pos) {
+        for (size_t k = 0; k < sel.size(); ++k) {
+            const auto r = looseFiles_[sel[k]].bounds.withPosition(pos[k]);
+            for (const auto& n : nodes_) if (r.intersects(n.bounds)) return true;
+            for (size_t j = 0; j < looseFiles_.size(); ++j)
+                if (!looseFiles_[j].selecionado && r.intersects(looseFiles_[j].bounds)) return true;
+        }
+        return false;
+    };
+    auto pos = posicoes(uniao.getTopLeft());
+    if (colide(pos)) {
+        int baixo = uniao.getBottom();
+        for (const auto& n : nodes_) baixo = std::max(baixo, n.bounds.getBottom());
+        for (const auto& lf : looseFiles_) baixo = std::max(baixo, lf.bounds.getBottom());
+        pos = posicoes({uniao.getX(), baixo + 40});
+    }
+    for (size_t k = 0; k < sel.size(); ++k) {
+        looseFiles_[sel[k]].bounds.setPosition(pos[k]);
+        layoutSalvo_[chaveLayout(looseFiles_[sel[k]].id)] = pos[k];
+    }
+    gravarLayoutSalvo();
+    repaint();
+}
+
+void ArvoreBackupComponent::reunirArquivosSoltos() {
+    recarregar();
+    if (looseFiles_.empty()) return;
+    int baixo = 0;
+    for (const auto& n : nodes_) baixo = std::max(baixo, n.bounds.getBottom());
+    const int origemX = 40, origemY = nodes_.empty() ? 40 : baixo + 80;
+    constexpr int celulaW = 128, celulaH = 140;
+    const int n = static_cast<int>(looseFiles_.size());
+    const int colunas = juce::jlimit(1, 12, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n) * 1.5))));
+    limparSelecaoTudo();
+    for (int i = 0; i < n; ++i) {
+        auto& lf = looseFiles_[static_cast<size_t>(i)];
+        lf.bounds = juce::Rectangle<int>(origemX + (i % colunas) * celulaW, origemY + (i / colunas) * celulaH, 112, 124);
+        lf.selecionado = true;
+        layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+    }
+    gravarLayoutSalvo();
+    ancoraTipo_ = 1;
+    ancoraId_ = looseFiles_.front().id;
+
+    juce::Rectangle<int> uniao = looseFiles_.front().bounds;
+    for (const auto& lf : looseFiles_) uniao = uniao.getUnion(lf.bounds);
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() >= 50 && canvas.getHeight() >= 50) {
+        constexpr float kMargem = 60.0f;
+        const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+        const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+        zoom_ = juce::jlimit(0.15f, 1.0f, std::min(zx, zy));
+        const auto centro = uniao.getCentre().toFloat();
+        panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                      static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+        enquadrarPendente_ = false;
+    }
+    repaint();
 }
 
 } // namespace matriz::ui
