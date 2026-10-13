@@ -1085,6 +1085,7 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     criarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica", true);
     criarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica", false);
     criarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica", true);
+    criarToggle(tbFormato_, "duplicatas.match_formato", "duplicatas.match_formato_dica", false);
 
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
@@ -1286,6 +1287,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     atualizarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica");
     atualizarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica");
     atualizarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica");
+    atualizarToggle(tbFormato_, "duplicatas.match_formato", "duplicatas.match_formato_dica");
 
     if (listaComponent_) {
         listaComponent_->updateButtonsI18n();
@@ -1346,6 +1348,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     activeFilters_.coincidirDuracao = tbDuracao_ ? tbDuracao_->getToggleState() : true;
     activeFilters_.coincidirDimensoes = tbDimensoes_ ? tbDimensoes_->getToggleState() : false;
     activeFilters_.coincidirEspacoCor = tbEspacoCor_ ? tbEspacoCor_->getToggleState() : true;
+    activeFilters_.coincidirFormato = tbFormato_ ? tbFormato_->getToggleState() : false;
 
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
@@ -1538,6 +1541,54 @@ void DuplicatesWorkspaceComponent::run() {
         return;
     }
 
+    struct PerfilCorImagem {
+        bool ehMonocromatico = false;
+        double chromaMedio = 0.0;
+        double fracaoPixelsComCor = 0.0;
+    };
+    auto analisarPerfilCor = [](const juce::Image& img) -> PerfilCorImagem {
+        if (img.isNull()) return {};
+        if (img.getFormat() == juce::Image::SingleChannel) return { true, 0.0, 0.0 };
+        const int w = img.getWidth(), h = img.getHeight();
+        if (w <= 0 || h <= 0) return {};
+        const int stepX = std::max(1, w / 64);
+        const int stepY = std::max(1, h / 64);
+        int totalAmostrado = 0;
+        int pixelsComCor = 0;
+        double somaChroma = 0.0;
+        for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+                auto c = img.getPixelAt(x, y);
+                int r = c.getRed(), g = c.getGreen(), b = c.getBlue();
+                int chroma = std::max({r, g, b}) - std::min({r, g, b});
+                somaChroma += chroma;
+                if (chroma >= 18) pixelsComCor++;
+                totalAmostrado++;
+            }
+        }
+        if (totalAmostrado == 0) return {};
+        double chromaMedio = somaChroma / totalAmostrado;
+        double fracaoComCor = static_cast<double>(pixelsComCor) / totalAmostrado;
+        bool mono = (fracaoComCor < 0.05 && chromaMedio < 7.5);
+        return { mono, chromaMedio, fracaoComCor };
+    };
+
+    std::unordered_map<std::string, bool> monoDe;
+    auto obterMonocromatico = [&](const std::string& itemId, const std::string& fullPath) -> bool {
+        auto itM = monoDe.find(itemId);
+        if (itM != monoDe.end()) return itM->second;
+        juce::File f;
+        if (auto mini = projeto_.caminhoMiniaturaPrincipal(itemId)) f = juce::File(*mini);
+        if (!f.existsAsFile() && !fullPath.empty()) f = juce::File(juce::String::fromUTF8(fullPath.c_str()));
+        bool mono = false;
+        if (f.existsAsFile()) {
+            juce::Image img = juce::ImageFileFormat::loadFrom(f);
+            mono = analisarPerfilCor(img).ehMonocromatico;
+        }
+        monoDe[itemId] = mono;
+        return mono;
+    };
+
     // 2. Perform cross-matching for duplicates
     if (isCatalogMode) {
         for (size_t i = 0; i < items.size(); ++i) {
@@ -1564,10 +1615,14 @@ void DuplicatesWorkspaceComponent::run() {
                                   (dimIgual && tamanhoIgual);
 
                 if (activeFilters_.coincidirNome && !nomeIgual) continue;
+                if (activeFilters_.coincidirFormato && !extIgual) continue;
                 if (activeFilters_.coincidirTamanho && !tamanhoIgual) continue;
                 if (activeFilters_.coincidirDuracao && (a.duracao > 0 || b.duracao > 0) && !duracaoIgual) continue;
                 if (activeFilters_.coincidirDimensoes && (a.largura > 0 || b.largura > 0) && !dimIgual) continue;
-                if (activeFilters_.coincidirEspacoCor && !a.colorSpace.empty() && !b.colorSpace.empty() && !colorSpaceIgual) continue;
+                if (activeFilters_.coincidirEspacoCor) {
+                    if (!a.colorSpace.empty() && !b.colorSpace.empty() && !colorSpaceIgual) continue;
+                    if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
+                }
                 if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
                 if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
 
@@ -1707,10 +1762,14 @@ void DuplicatesWorkspaceComponent::run() {
                 group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
 
                 if (activeFilters_.coincidirNome && !group.duplicata.nomeCoincide) continue;
+                if (activeFilters_.coincidirFormato && !group.duplicata.extCoincide) continue;
                 if (activeFilters_.coincidirTamanho && !group.duplicata.tamanhoCoincide) continue;
                 if (activeFilters_.coincidirDuracao && (group.duplicata.duracao > 0 || group.original.duracao > 0) && !group.duplicata.duracaoCoincide) continue;
                 if (activeFilters_.coincidirDimensoes && (group.duplicata.largura > 0 || group.original.largura > 0) && !group.duplicata.dimCoincide) continue;
-                if (activeFilters_.coincidirEspacoCor && !group.original.colorSpace.empty() && !group.duplicata.colorSpace.empty() && !group.duplicata.colorSpaceCoincide) continue;
+                if (activeFilters_.coincidirEspacoCor) {
+                    if (!group.original.colorSpace.empty() && !group.duplicata.colorSpace.empty() && !group.duplicata.colorSpaceCoincide) continue;
+                    if (obterMonocromatico(group.original.itemId, group.original.fullPath) != obterMonocromatico(group.duplicata.itemId, group.duplicata.fullPath)) continue;
+                }
 
                 gruposDetectados_.push_back(group);
             }
@@ -1772,6 +1831,7 @@ void DuplicatesWorkspaceComponent::run() {
             grupoExistente[chavePar(gruposDetectados_[g].original.itemId, gruposDetectados_[g].duplicata.itemId)] = g;
 
         std::unordered_set<std::string> paresIdenticos;
+        std::unordered_set<std::string> paresVistos;
         if (activeFilters_.coincidirSha256) {
             // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
             faseScan_ = 2;
@@ -1827,6 +1887,7 @@ void DuplicatesWorkspaceComponent::run() {
                     const auto& a = items[idxs[0]];
                     const auto& b = items[idxs[k]];
                     if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                    if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
                     if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
                     if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
                     const auto chave = chavePar(a.itemId, b.itemId);
@@ -1845,44 +1906,8 @@ void DuplicatesWorkspaceComponent::run() {
             }
         }
 
-        // ---- B3: PROBABLE — pHash de imagens (só o que falta), com cancelamento e progresso
+        // ---- B3: PROBABLE — similaridade visual de imagens (pHash), com cancelamento e progresso
         if (activeFilters_.coincidirPHash) {
-            auto checarImagemMonocromatica = [](const juce::File& arq) -> bool {
-                juce::Image img = juce::ImageFileFormat::loadFrom(arq);
-                if (img.isNull()) return false;
-                if (img.getFormat() == juce::Image::SingleChannel) return true;
-                const int w = img.getWidth();
-                const int h = img.getHeight();
-                if (w <= 0 || h <= 0) return false;
-                const int stepX = std::max(1, w / 16);
-                const int stepY = std::max(1, h / 16);
-                int pontosComCor = 0;
-                int pontosAmostrados = 0;
-                for (int y = 0; y < h; y += stepY) {
-                    for (int x = 0; x < w; x += stepX) {
-                        auto c = img.getPixelAt(x, y);
-                        if (std::abs(c.getRed() - c.getGreen()) > 12 ||
-                            std::abs(c.getGreen() - c.getBlue()) > 12 ||
-                            std::abs(c.getRed() - c.getBlue()) > 12) {
-                            pontosComCor++;
-                        }
-                        pontosAmostrados++;
-                    }
-                }
-                return (pontosComCor * 100 <= pontosAmostrados * 3);
-            };
-            std::unordered_map<std::string, bool> monoDe;
-            auto obterMonocromatico = [&](const ItemInfo& it) -> bool {
-                auto itM = monoDe.find(it.arquivoId);
-                if (itM != monoDe.end()) return itM->second;
-                juce::File f;
-                if (auto mini = projeto_.caminhoMiniaturaPrincipal(it.itemId)) f = juce::File(*mini);
-                if (!f.existsAsFile()) f = juce::File(juce::String::fromUTF8(it.fullPath.c_str()));
-                bool mono = f.existsAsFile() ? checarImagemMonocromatica(f) : false;
-                monoDe[it.arquivoId] = mono;
-                return mono;
-            };
-
             faseScan_ = 3;
             std::vector<size_t> imagens;
             for (size_t i = 0; i < items.size(); ++i)
@@ -1947,7 +1972,6 @@ void DuplicatesWorkspaceComponent::run() {
             if (it != phashDe.end()) cands.push_back({i, it->second});
         }
         static const int kLarg[11] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5};
-        std::unordered_set<std::string> paresVistos;
         for (int faixa = 0, desloc = 0; faixa < 11; desloc += kLarg[faixa], ++faixa) {
             if (threadShouldExit()) return;
             progressoScan_ = 0.9 + 0.1 * static_cast<double>(faixa) / 11.0;
@@ -1971,12 +1995,14 @@ void DuplicatesWorkspaceComponent::run() {
                         if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
 
                         if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                        if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
+                        if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
                         if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
                         if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
                         if (activeFilters_.coincidirDimensoes && a.largura > 0 && b.largura > 0 && (a.largura != b.largura || a.altura != b.altura)) continue;
                         if (activeFilters_.coincidirEspacoCor) {
                             if (!a.colorSpace.empty() && !b.colorSpace.empty() && a.colorSpace != b.colorSpace) continue;
-                            if (obterMonocromatico(a) != obterMonocromatico(b)) continue;
+                            if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
                         }
 
                         // EXIF DateTimeOriginal diferente:
@@ -2009,6 +2035,42 @@ void DuplicatesWorkspaceComponent::run() {
         std::stable_partition(std::find_if(gruposDetectados_.begin(), gruposDetectados_.end(),
                                            [](const DuplicateGroup& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }),
                               gruposDetectados_.end(), [](const DuplicateGroup& g) { return g.criterio == "PROBABLE"; });
+        }
+
+        // ---- B4: Mesmo nome de arquivo (quando coincidirNome está ativo)
+        if (activeFilters_.coincidirNome) {
+            std::unordered_map<std::string, std::vector<size_t>> porNome;
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (!items[i].titulo.empty()) {
+                    porNome[juce::String(items[i].titulo).toLowerCase().toStdString()].push_back(i);
+                }
+            }
+            for (auto& [nome, idxs] : porNome) {
+                if (idxs.size() < 2) continue;
+                for (size_t x = 0; x < idxs.size(); ++x) {
+                    for (size_t y = x + 1; y < idxs.size(); ++y) {
+                        const auto& a = items[idxs[x]];
+                        const auto& b = items[idxs[y]];
+                        const auto chave = chavePar(a.itemId, b.itemId);
+                        if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
+                        if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
+                        if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
+                        if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                        if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                        if (activeFilters_.coincidirDimensoes && a.largura > 0 && b.largura > 0 && (a.largura != b.largura || a.altura != b.altura)) continue;
+                        if (activeFilters_.coincidirDuracao && (a.duracao > 0 || b.duracao > 0) && std::abs(a.duracao - b.duracao) >= 0.1) continue;
+                        if (activeFilters_.coincidirEspacoCor) {
+                            if (!a.colorSpace.empty() && !b.colorSpace.empty() && a.colorSpace != b.colorSpace) continue;
+                            if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
+                        }
+                        auto [o, d] = ordenado(a, b);
+                        auto grupo = gruposParaPar(*o, *d);
+                        grupo.criterio = "NAME_MATCH";
+                        grupoExistente[chave] = gruposDetectados_.size();
+                        gruposDetectados_.push_back(std::move(grupo));
+                    }
+                }
+            }
         }
     }
 
@@ -2673,6 +2735,7 @@ void DuplicatesWorkspaceComponent::resized() {
     linhaToggle(tbDuracao_.get());
     linhaToggle(tbDimensoes_.get());
     linhaToggle(tbEspacoCor_.get());
+    linhaToggle(tbFormato_.get());
     coluna_.finalizarCard();
 
     // AÇÕES — só com resultados.

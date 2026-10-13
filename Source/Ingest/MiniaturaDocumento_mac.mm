@@ -3,6 +3,8 @@
 #if defined(__APPLE__)
 
 #import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
+#import <PDFKit/PDFKit.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
 #import <QuickLook/QuickLook.h>
@@ -35,6 +37,23 @@ static bool salvarCgImageComoJpeg(CGImageRef imagem, const char* destinoPath,
 }
 
 static CGImageRef renderizarCapaPdf(CFURLRef url, int ladoMaximoPx) {
+    // 1. Tenta via PDFKit (suporta todas as versões de PDF, criptografia e rotações de capa)
+    @autoreleasepool {
+        PDFDocument* doc = [[PDFDocument alloc] initWithURL:(__bridge NSURL*)url];
+        if (doc && [doc pageCount] > 0) {
+            PDFPage* page = [doc pageAtIndex:0];
+            if (page) {
+                NSImage* nsImg = [page thumbnailOfSize:NSMakeSize(ladoMaximoPx, ladoMaximoPx) forBox:kPDFDisplayBoxCropBox];
+                if (nsImg) {
+                    NSRect rect = NSMakeRect(0, 0, nsImg.size.width, nsImg.size.height);
+                    CGImageRef cg = [nsImg CGImageForProposedRect:&rect context:nil hints:nil];
+                    if (cg) return CGImageRetain(cg);
+                }
+            }
+        }
+    }
+
+    // 2. Fallback via CoreGraphics
     CGPDFDocumentRef doc = CGPDFDocumentCreateWithURL(url);
     if (!doc) return NULL;
     CGPDFPageRef page = CGPDFDocumentGetPage(doc, 1);
@@ -44,8 +63,11 @@ static CGImageRef renderizarCapaPdf(CFURLRef url, int ladoMaximoPx) {
     }
 
     CGRect box = CGPDFPageGetBoxRect(page, kCGPDFCropBox);
-    if (box.size.width <= 0 || box.size.height <= 0)
+    CGPDFBox boxType = kCGPDFCropBox;
+    if (box.size.width <= 0 || box.size.height <= 0) {
         box = CGPDFPageGetBoxRect(page, kCGPDFMediaBox);
+        boxType = kCGPDFMediaBox;
+    }
     if (box.size.width <= 0 || box.size.height <= 0) {
         CGPDFDocumentRelease(doc);
         return NULL;
@@ -76,7 +98,7 @@ static CGImageRef renderizarCapaPdf(CFURLRef url, int ladoMaximoPx) {
     CGContextSetRGBFillColor(ctx, 1.0, 1.0, 1.0, 1.0);
     CGContextFillRect(ctx, CGRectMake(0, 0, w, h));
 
-    CGAffineTransform transform = CGPDFPageGetDrawingTransform(page, kCGPDFCropBox, CGRectMake(0, 0, w, h), 0, true);
+    CGAffineTransform transform = CGPDFPageGetDrawingTransform(page, boxType, CGRectMake(0, 0, w, h), rotation, true);
     CGContextConcatCTM(ctx, transform);
     CGContextDrawPDFPage(ctx, page);
 
@@ -84,6 +106,30 @@ static CGImageRef renderizarCapaPdf(CFURLRef url, int ladoMaximoPx) {
     CGContextRelease(ctx);
     CGPDFDocumentRelease(doc);
     return image;
+}
+
+static CGImageRef renderizarDocumentoTexto(NSURL* url, int ladoMaximoPx) {
+    @autoreleasepool {
+        NSDictionary* docAttrs = nil;
+        NSError* err = nil;
+        NSAttributedString* attrStr = [[NSAttributedString alloc] initWithURL:url options:@{} documentAttributes:&docAttrs error:&err];
+        if (!attrStr || [attrStr length] == 0) return NULL;
+
+        CGFloat w = 450.0;
+        CGFloat h = 600.0;
+        NSImage* img = [[NSImage alloc] initWithSize:NSMakeSize(w, h)];
+        [img lockFocus];
+        [[NSColor whiteColor] setFill];
+        NSRectFill(NSMakeRect(0, 0, w, h));
+        NSRect textRect = NSMakeRect(24, 24, w - 48, h - 48);
+        [attrStr drawInRect:textRect];
+        [img unlockFocus];
+
+        NSRect rect = NSMakeRect(0, 0, w, h);
+        CGImageRef cg = [img CGImageForProposedRect:&rect context:nil hints:nil];
+        if (cg) return CGImageRetain(cg);
+    }
+    return NULL;
 }
 
 } // namespace
@@ -100,12 +146,19 @@ bool gerarMiniaturaDocumentoNativa(const char* origemPath, const char* destinoPa
 
         CGImageRef imagem = NULL;
 
-        // Se for PDF, renderiza a primeira página diretamente via CoreGraphics
+        // Se for PDF, renderiza a primeira página diretamente via PDFKit / CoreGraphics
         if ([ext isEqualToString:@"pdf"]) {
             imagem = renderizarCapaPdf((__bridge CFURLRef)urlOrigem, ladoMaximoPx);
         }
 
-        // Se não for PDF ou se renderização de PDF falhou, gera via QuickLook
+        // Se for texto / RTF / HTML, renderiza página com layout tipográfico
+        if (!imagem && ([ext isEqualToString:@"rtf"] || [ext isEqualToString:@"rtfd"] ||
+                        [ext isEqualToString:@"txt"] || [ext isEqualToString:@"html"] ||
+                        [ext isEqualToString:@"htm"])) {
+            imagem = renderizarDocumentoTexto(urlOrigem, ladoMaximoPx);
+        }
+
+        // Se não for PDF ou se renderização falhou, gera via QuickLook (.doc, .docx, .pages, .keynote, etc.)
         if (!imagem) {
             NSDictionary* opcoes = @{
                 (__bridge NSString*)kQLThumbnailOptionIconModeKey: @NO

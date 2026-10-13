@@ -306,6 +306,21 @@ juce::Image desenharMiniaturaFormaDeOnda(const FormaDeOnda& onda, int largura, i
 
 } // namespace
 
+bool gerarMiniaturaDocumento(const juce::File& origem, const juce::File& destino, int ladoMaximoPx,
+                             int* larguraOut, int* alturaOut) {
+    if (!origem.existsAsFile()) return false;
+    destino.getParentDirectory().createDirectory();
+    int w = 0, h = 0;
+    bool ok = gerarMiniaturaDocumentoNativa(origem.getFullPathName().toRawUTF8(),
+                                           destino.getFullPathName().toRawUTF8(),
+                                           ladoMaximoPx, &w, &h);
+    if (ok) {
+        if (larguraOut) *larguraOut = w;
+        if (alturaOut) *alturaOut = h;
+    }
+    return ok;
+}
+
 void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
                                      const std::string& itemId, const std::string& arquivoId,
                                      const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
@@ -357,9 +372,7 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
                  matriz::db::Value::of(agora)}); });
         } else if (categoria == CategoriaMidia::Documento || categoria == CategoriaMidia::Texto) {
             int w = 0, h = 0;
-            if (gerarMiniaturaDocumentoNativa(arquivoNoProjeto.getFullPathName().toRawUTF8(),
-                                              destino.getFullPathName().toRawUTF8(),
-                                              512, &w, &h)) {
+            if (gerarMiniaturaDocumento(arquivoNoProjeto, destino, 512, &w, &h)) {
                 largura = w;
                 altura = h;
             } else {

@@ -117,6 +117,7 @@ private:
         bool coincidirDuracao = true;
         bool coincidirDimensoes = false;
         bool coincidirEspacoCor = true;
+        bool coincidirFormato = false;
     } activeFilters_;
 
     void resolverTudo(bool ehDuplicataReal);
@@ -171,6 +172,7 @@ private:
     std::unique_ptr<juce::ToggleButton> tbDuracao_;
     std::unique_ptr<juce::ToggleButton> tbDimensoes_;
     std::unique_ptr<juce::ToggleButton> tbEspacoCor_;
+    std::unique_ptr<juce::ToggleButton> tbFormato_;
     
     // Results list viewport
     class ListaResultadosComponent;

@@ -1,6 +1,8 @@
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/Miniaturas.h"
+#include "../Model/CaminhosBanco.h"
 #include "LogosTipoArquivo.h"
 #include "../Whatsapp/WhatsappIngestao.h"
 
@@ -2256,14 +2258,39 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
         if (!imagem.isValid()) {
             if (auto arq = projeto->arquivoPrincipal(itemId)) {
                 juce::File f(arq->caminhoAbsoluto);
-                juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-                juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
-                if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
+                if (f.existsAsFile()) {
+                    auto cat = matriz::ingest::categoriaPorExtensao(f);
+                    if (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto) {
+                        juce::File pastaMini = projeto->projeto().pasta().getChildFile(".miniaturas");
+                        pastaMini.createDirectory();
+                        juce::File destino = pastaMini.getChildFile(arq->id + ".jpg");
+                        int w = 0, h = 0;
+                        if (matriz::ingest::gerarMiniaturaDocumento(f, destino, 512, &w, &h) && destino.existsAsFile()) {
+                            std::string rel = matriz::caminhos::relativoParaBanco(destino, projeto->projeto().pasta());
+                            try {
+                                auto& ind = projeto->projeto().indice();
+                                ind.run("INSERT OR REPLACE INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
+                                        "VALUES (?, ?, ?, 'miniatura', ?, ?, ?, ?)",
+                                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                                         matriz::db::Value::of(arq->id), matriz::db::Value::of(rel),
+                                         matriz::db::Value::of(w), matriz::db::Value::of(h),
+                                         matriz::db::Value::of(matriz::model::agoraIso8601())});
+                            } catch (...) {}
+                            imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(destino), maxLargura, maxAltura);
+                            if (imagem.isValid()) temCaminho = true;
+                        }
+                    }
+                }
+                if (!imagem.isValid()) {
+                    juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
+                    juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
+                    if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
-                if (logoFile.isNotEmpty()) {
-                    imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
-                    if (imagem.isValid()) {
-                        temCaminho = true;
+                    if (logoFile.isNotEmpty()) {
+                        imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
+                        if (imagem.isValid()) {
+                            temCaminho = true;
+                        }
                     }
                 }
             }

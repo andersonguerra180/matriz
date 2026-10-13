@@ -77,6 +77,10 @@ FormaDeOnda calcularFormaDeOnda(const juce::File& origemAudio, const juce::File&
 // um ícone por categoria nesses casos (Reorientação completa, §3.3: nunca
 // bloco cinza vazio, mas ícone é aceitável quando não há como gerar uma
 // prévia real — ver nota sobre PDFium/MuPDF em LeituraTecnica.cpp).
+// Gera miniatura (capa) de um documento (.pdf, .doc, .docx, .pages, .rtf, .txt, etc.).
+bool gerarMiniaturaDocumento(const juce::File& origem, const juce::File& destino, int ladoMaximoPx = 512,
+                             int* larguraOut = nullptr, int* alturaOut = nullptr);
+
 void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
                                      const std::string& itemId, const std::string& arquivoId,
                                      const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
