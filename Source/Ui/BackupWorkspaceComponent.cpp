@@ -4572,11 +4572,19 @@ void BackupWorkspaceComponent::iniciarBackup() {
 }
 
 void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
-    struct Grupo { juce::String chave, motivo, acao; std::vector<juce::String> linhas; };
+    struct ItemFalha {
+        juce::String codigo;
+        juce::String caminho;
+        juce::String detalheErro;
+    };
+    struct Grupo {
+        juce::String chave, motivo, diag, acao;
+        std::vector<ItemFalha> itens;
+    };
     std::vector<Grupo> grupos;
-    auto obter = [&](const juce::String& chave, const char* kMotivo, const char* kAcao) -> Grupo& {
+    auto obter = [&](const juce::String& chave, const char* kMotivo, const char* kDiag, const char* kAcao) -> Grupo& {
         for (auto& g : grupos) if (g.chave == chave) return g;
-        grupos.push_back({chave, matriz::i18n::t(kMotivo), matriz::i18n::t(kAcao), {}});
+        grupos.push_back({chave, matriz::i18n::t(kMotivo), matriz::i18n::t(kDiag), matriz::i18n::t(kAcao), {}});
         return grupos.back();
     };
 
@@ -4615,19 +4623,21 @@ void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
         const bool ausente = motivo.contains("ausente no MAIN antigo");
         const bool hash = motivo.contains("difere do hash");
         Grupo* g = nullptr;
-        if (ausente) g = &obter("ausente", "backup.erro_ausente", "backup.erro_ausente_acao");
-        else if (hash) g = &obter("hash", "backup.erro_hash", "backup.erro_hash_acao");
-        else if (motivo.contains("name conflict")) g = &obter("nome", "backup.erro_nome", "backup.erro_nome_acao");
-        else if (mover) g = &obter("move", "backup.erro_move", "backup.erro_move_acao");
-        else g = &obter("outro", "backup.erro_outro", "backup.erro_outro_acao");
+        if (ausente) g = &obter("ausente", "backup.erro_ausente", "backup.erro_ausente_diag", "backup.erro_ausente_acao");
+        else if (hash) g = &obter("hash", "backup.erro_hash", "backup.erro_hash_diag", "backup.erro_hash_acao");
+        else if (motivo.contains("name conflict")) g = &obter("nome", "backup.erro_nome", "backup.erro_nome_diag", "backup.erro_nome_acao");
+        else if (mover) g = &obter("move", "backup.erro_move", "backup.erro_move_diag", "backup.erro_move_acao");
+        else g = &obter("outro", "backup.erro_outro", "backup.erro_outro_diag", "backup.erro_outro_acao");
 
         if (!itemId.empty()) {
             idsBloqueados_.push_back(itemId);
             if (ausente || hash) idsRemoviveis_.push_back(itemId);
         }
-        juce::String linha = "    " + codigo.paddedRight(' ', 12) + (comCaminho++ < kMaxLinhasComCaminho ? caminho : juce::String());
-        if (g->chave == "outro" || g->chave == "move") linha += (caminho.isEmpty() ? "" : "   ") + motivo;
-        g->linhas.push_back(linha.trimEnd());
+        ItemFalha item;
+        item.codigo = codigo;
+        if (comCaminho++ < kMaxLinhasComCaminho) item.caminho = caminho;
+        if (g->chave == "outro" || g->chave == "move") item.detalheErro = motivo;
+        g->itens.push_back(std::move(item));
     }
 
     // Situação do plano atual: o que já está no destino novo e o que ainda falta.
@@ -4641,26 +4651,46 @@ void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
 
     const int nBloq = static_cast<int>(idsBloqueados_.size());
     juce::String texto;
+    texto << "================================================================================\n";
+    texto << "  " << matriz::i18n::t("backup.erros_header_titulo") << "\n";
+    texto << "================================================================================\n\n";
+
     if (rebuild && noPlano > 0)
-        texto << matriz::i18n::t("rebuild.status_situacao").replace("{c}", juce::String(prontos)).replace("{t}", juce::String(noPlano))
-                                                           .replace("{p}", juce::String(noPlano - prontos)) << "\n";
-    if (duplicatas > 0) texto << matriz::i18n::t("rebuild.status_duplicatas").replace("{n}", juce::String(duplicatas)) << "\n";
-    if (whatOption_ != WhatOption::Everything) texto << matriz::i18n::t("rebuild.status_selecao") << "\n";
+        texto << "• " << matriz::i18n::t("rebuild.status_situacao").replace("{c}", juce::String(prontos)).replace("{t}", juce::String(noPlano))
+                                                           .replace("{p}", juce::String(noPlano - prontos)) << "\n\n";
+    if (duplicatas > 0)
+        texto << "• " << matriz::i18n::t("rebuild.status_duplicatas").replace("{n}", juce::String(duplicatas)) << "\n\n";
+    if (whatOption_ != WhatOption::Everything)
+        texto << "• " << matriz::i18n::t("rebuild.status_selecao") << "\n\n";
     if (!grupos.empty()) {
-        texto << "\n" << matriz::i18n::t("backup.erros_intro") << "\n";
-        if (rebuild) texto << matriz::i18n::t("backup.erros_rebuild") << "\n";
-        texto << "\n";
+        texto << "• " << matriz::i18n::t("backup.erros_intro") << "\n\n";
+        if (rebuild) texto << "• " << matriz::i18n::t("backup.erros_rebuild") << "\n\n";
     } else if (rebuild) {
-        texto << "\n" << matriz::i18n::t("rebuild.status_pronto") << "\n";
+        texto << "• " << matriz::i18n::t("rebuild.status_pronto") << "\n\n";
     }
+
     // Ordem fixa: o que mais bloqueia o usuário primeiro.
     const char* ordem[] = {"ausente", "hash", "nome", "move", "outro"};
     for (const char* chave : ordem) {
         for (const auto& g : grupos) {
             if (g.chave != chave) continue;
-            texto << matriz::i18n::t("backup.erros_grupo").replace("{n}", juce::String((int) g.linhas.size())).replace("{motivo}", g.motivo) << "\n";
-            texto << "  " << matriz::i18n::t("backup.erros_onde") << g.acao << "\n";
-            for (const auto& l : g.linhas) texto << l << "\n";
+            texto << "--------------------------------------------------------------------------------\n";
+            texto << "[!] " << matriz::i18n::t("backup.erros_grupo_header").replace("{n}", juce::String((int) g.itens.size())).replace("{motivo}", g.motivo) << "\n";
+            texto << "--------------------------------------------------------------------------------\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+            texto << "  " << g.diag << "\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+            texto << g.acao << "\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) g.itens.size())) << "\n";
+            for (const auto& item : g.itens) {
+                texto << "  • [" << item.codigo << "] " << (item.caminho.isNotEmpty() ? item.caminho : juce::String("-"));
+                if (item.detalheErro.isNotEmpty())
+                    texto << "\n    ↳ " << matriz::i18n::t("backup.erros_lbl_detalhe") << ": " << item.detalheErro;
+                texto << "\n";
+            }
             texto << "\n";
         }
     }
@@ -4677,8 +4707,11 @@ void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
         const juce::File arq = dir.getChildFile("backup-erros-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
         if (arq.replaceWithText(tituloStatus_ + "\n\n" + texto)) arquivoRelatorioErros_ = arq;
     } catch (...) {}
-    if (arquivoRelatorioErros_ != juce::File())
-        texto << matriz::i18n::t("backup.erros_relatorio") << "\n" << arquivoRelatorioErros_.getFullPathName() << "\n";
+    if (arquivoRelatorioErros_ != juce::File()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "• " << matriz::i18n::t("backup.erros_relatorio") << "\n";
+        texto << "  " << arquivoRelatorioErros_.getFullPathName() << "\n\n";
+    }
     relatorioErros_ = texto;
 }
 
@@ -5101,9 +5134,14 @@ void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& titulo
     }
 
     auto& registro = projeto_.projeto().registro();
-    struct Grupo { juce::String motivo, acao; std::vector<juce::String> linhas; };
-    Grupo conflito{matriz::i18n::t("export.res_f_conflito"), matriz::i18n::t("export.res_f_conflito_acao"), {}};
-    Grupo outro{matriz::i18n::t("export.res_f_outro"), matriz::i18n::t("export.res_f_outro_acao"), {}};
+    struct ItemFalha {
+        juce::String codigo;
+        juce::String caminho;
+        juce::String detalheErro;
+    };
+    struct Grupo { juce::String motivo, diag, acao; std::vector<ItemFalha> itens; };
+    Grupo conflito{matriz::i18n::t("export.res_f_conflito"), matriz::i18n::t("export.res_f_conflito_diag"), matriz::i18n::t("export.res_f_conflito_solucao"), {}};
+    Grupo outro{matriz::i18n::t("export.res_f_outro"), matriz::i18n::t("export.res_f_outro_diag"), matriz::i18n::t("export.res_f_outro_solucao"), {}};
     std::vector<std::string> idsComFalha;
     int comCaminho = 0;
     for (const auto& f : falhas) {
@@ -5125,27 +5163,57 @@ void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& titulo
             } catch (...) {}
         }
         const bool ehConflito = motivo.contains("name conflict");
-        juce::String linha = "    " + codigo.paddedRight(' ', 12) + caminho;
-        if (!ehConflito) linha += (caminho.isEmpty() ? "" : "   ") + motivo;
-        (ehConflito ? conflito : outro).linhas.push_back(linha.trimEnd());
+        ItemFalha item;
+        item.codigo = codigo;
+        item.caminho = caminho;
+        if (!ehConflito) item.detalheErro = motivo;
+        (ehConflito ? conflito : outro).itens.push_back(std::move(item));
     }
 
-    juce::String texto = linhaResumo + "\n";
-    if (cancelado) texto << "\n" << matriz::i18n::t("export.cancelado") << "\n";
-    if (jaExistiam > 0) texto << "\n" << matriz::i18n::t("export.res_ja").replace("{n}", juce::String(jaExistiam)) << "\n";
-    if (duplicatas > 0) texto << "\n" << matriz::i18n::t("export.res_dup").replace("{n}", juce::String(duplicatas)) << "\n";
-    if (foraDoMain > 0) texto << "\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(foraDoMain)) << "\n";
-    if (semPasta > 0) texto << "\n" << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)) << "\n";
-    if (extras.trim().isNotEmpty()) texto << "\n" << extras.trim() << "\n";
+    juce::String texto;
+    texto << "================================================================================\n";
+    texto << "  " << matriz::i18n::t("backup.erros_header_titulo") << "\n";
+    texto << "================================================================================\n\n";
+    texto << "• " << linhaResumo << "\n\n";
+
+    if (cancelado) texto << "• " << matriz::i18n::t("export.cancelado") << "\n\n";
+    if (jaExistiam > 0) texto << "• " << matriz::i18n::t("export.res_ja").replace("{n}", juce::String(jaExistiam)) << "\n\n";
+    if (duplicatas > 0) texto << "• " << matriz::i18n::t("export.res_dup").replace("{n}", juce::String(duplicatas)) << "\n\n";
+    if (foraDoMain > 0) texto << "• " << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(foraDoMain)) << "\n\n";
+    if (semPasta > 0) texto << "• " << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)) << "\n\n";
+    if (extras.trim().isNotEmpty()) texto << "• " << extras.trim() << "\n\n";
+
     if (!jaDiferentes.empty()) {
-        texto << "\n" << matriz::i18n::t("export.res_diferentes").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
-        for (size_t i = 0; i < jaDiferentes.size() && i < 300; ++i) texto << "    " << juce::String::fromUTF8(jaDiferentes[i].c_str()) << "\n";
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "[!] " << matriz::i18n::t("export.res_diferentes").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
+        texto << "--------------------------------------------------------------------------------\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+        texto << "  " << matriz::i18n::t("export.res_diferentes_diag") << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+        texto << matriz::i18n::t("export.res_diferentes_solucao") << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
+        for (size_t i = 0; i < jaDiferentes.size() && i < 300; ++i)
+            texto << "  • " << juce::String::fromUTF8(jaDiferentes[i].c_str()) << "\n";
+        texto << "\n";
     }
+
     for (const Grupo* g : {&conflito, &outro}) {
-        if (g->linhas.empty()) continue;
-        texto << "\n" << matriz::i18n::t("backup.erros_grupo").replace("{n}", juce::String((int) g->linhas.size())).replace("{motivo}", g->motivo) << "\n";
-        texto << "  " << matriz::i18n::t("backup.erros_onde") << g->acao << "\n";
-        for (const auto& l : g->linhas) texto << l << "\n";
+        if (g->itens.empty()) continue;
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "[!] " << matriz::i18n::t("backup.erros_grupo_header").replace("{n}", juce::String((int) g->itens.size())).replace("{motivo}", g->motivo) << "\n";
+        texto << "--------------------------------------------------------------------------------\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+        texto << "  " << g->diag << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+        texto << g->acao << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) g->itens.size())) << "\n";
+        for (const auto& item : g->itens) {
+            texto << "  • [" << item.codigo << "] " << (item.caminho.isNotEmpty() ? item.caminho : juce::String("-"));
+            if (item.detalheErro.isNotEmpty())
+                texto << "\n    ↳ " << matriz::i18n::t("backup.erros_lbl_detalhe") << ": " << item.detalheErro;
+            texto << "\n";
+        }
+        texto << "\n";
     }
 
     const juce::String titulo = matriz::i18n::t(tituloKey) + " - " +
@@ -5158,7 +5226,11 @@ void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& titulo
         const juce::File arq = dir.getChildFile("export-resultado-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
         if (arq.replaceWithText(titulo + "\n\n" + texto)) relatorio = arq;
     } catch (...) {}
-    if (relatorio != juce::File()) texto << "\n" << matriz::i18n::t("backup.erros_relatorio") << "\n" << relatorio.getFullPathName() << "\n";
+    if (relatorio != juce::File()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "• " << matriz::i18n::t("backup.erros_relatorio") << "\n";
+        texto << "  " << relatorio.getFullPathName() << "\n\n";
+    }
 
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     DadosStatusBackup d;
