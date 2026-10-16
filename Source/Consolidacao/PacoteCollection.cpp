@@ -61,12 +61,6 @@ std::string texto(const juce::var& obj, const char* chave) {
     return obj.getProperty(chave, {}).toString().trim().toStdString();
 }
 
-std::string sha256Registrado(matriz::db::Database& registro, const std::string& arquivoId) {
-    auto st = registro.prepare("SELECT COALESCE(checksum_sha256, '') FROM arquivo WHERE id = ?");
-    st.bind(1, Value::of(arquivoId));
-    return st.step() ? juce::String(st.columnText(0)).toLowerCase().toStdString() : std::string();
-}
-
 }  // namespace
 
 bool DadosFicha::vazio() const {
@@ -264,11 +258,12 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
             if (!noMain->copyFileTo(destino) || destino.getSize() != noMain->getSize())
                 throw std::runtime_error("copy failed: " + destino.getFullPathName().toStdString());
             // Cópia verificada: o SHA-256 do arquivo entregue é o que vai no
-            // JSON, e tem que bater com o registrado (ou com o do MAIN).
+            // JSON, e tem que bater com o do MAIN que acabou de ser copiado.
+            // NÃO comparar com o SHA registrado no ingest: edição de metadados
+            // in-place no MAIN (mesmo tamanho) deixa o registro defasado e
+            // reprovava cópias perfeitas ("checksum mismatch").
             const std::string sha = juce::String(matriz::ingest::calcularChecksums(destino).sha256).toLowerCase().toStdString();
-            std::string esperado = sha256Registrado(registro, ip.arquivoId);
-            if (esperado.empty())
-                esperado = juce::String(matriz::ingest::calcularChecksums(*noMain).sha256).toLowerCase().toStdString();
+            const std::string esperado = juce::String(matriz::ingest::calcularChecksums(*noMain).sha256).toLowerCase().toStdString();
             if (sha.empty() || sha != esperado)
                 throw std::runtime_error("checksum mismatch after copy: " + destino.getFullPathName().toStdString());
 
