@@ -4,6 +4,7 @@
 #include "../Model/CaminhosBanco.h"
 #include "ProcessoExterno.h"
 #include "MiniaturaPsd.h"
+#include "MiniaturaDocumento.h"
 
 #include <exiv2/exiv2.hpp>
 #include <cstring>
@@ -203,10 +204,12 @@ std::vector<KeyframeGerado> gerarKeyframesVideo(const juce::File& origem, double
             juce::Image img(juce::Image::RGB, larguraPx, alturaPx, true);
             juce::Graphics g(img);
             g.fillAll(juce::Colour(0xff2d2d32));
-            g.setColour(juce::Colour(0xffe0e0e4));
-            g.setFont(14.0f);
-            g.drawText("Video Thumbnail (t=" + juce::String(tempo, 1) + "s)",
-                       img.getBounds(), juce::Justification::centred);
+            // Sem texto: este código roda em thread de fundo e o cache de análise
+            // Unicode do JUCE (drawText) não é thread-safe — causava SIGSEGV na UI.
+            g.setColour(juce::Colour(0xff3c3c44));
+            const int lado = juce::jmax(8, juce::jmin(larguraPx, alturaPx) / 4);
+            g.fillRect(img.getBounds().getCentreX() - lado / 2,
+                       img.getBounds().getCentreY() - lado / 2, lado, lado);
             juce::JPEGImageFormat jpeg;
             if (auto stream = std::unique_ptr<juce::FileOutputStream>(destino.createOutputStream()))
                 jpeg.writeImageToStream(img, *stream);
@@ -340,6 +343,21 @@ juce::Image desenharMiniaturaFormaDeOnda(const FormaDeOnda& onda, int largura, i
 
 } // namespace
 
+bool gerarMiniaturaDocumento(const juce::File& origem, const juce::File& destino, int ladoMaximoPx,
+                             int* larguraOut, int* alturaOut) {
+    if (!origem.existsAsFile()) return false;
+    destino.getParentDirectory().createDirectory();
+    int w = 0, h = 0;
+    bool ok = gerarMiniaturaDocumentoNativa(origem.getFullPathName().toRawUTF8(),
+                                           destino.getFullPathName().toRawUTF8(),
+                                           ladoMaximoPx, &w, &h);
+    if (ok) {
+        if (larguraOut) *larguraOut = w;
+        if (alturaOut) *alturaOut = h;
+    }
+    return ok;
+}
+
 void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::File& pastaProjeto,
                                      const std::string& itemId, const std::string& arquivoId,
                                      const juce::File& arquivoNoProjeto, CategoriaMidia categoria,
@@ -389,6 +407,14 @@ void gerarEGravarMiniaturaPrincipal(matriz::db::Database& indice, const juce::Fi
                  matriz::db::Value::of(arquivoId), matriz::db::Value::of(onda.duracaoSegundos),
                  matriz::db::Value::of(onda.bucketsPorSegundo), matriz::db::Value::ofBlob(onda.paraBlob()),
                  matriz::db::Value::of(agora)}); });
+        } else if (categoria == CategoriaMidia::Documento || categoria == CategoriaMidia::Texto) {
+            int w = 0, h = 0;
+            if (gerarMiniaturaDocumento(arquivoNoProjeto, destino, 512, &w, &h)) {
+                largura = w;
+                altura = h;
+            } else {
+                return;
+            }
         } else {
             return;
         }

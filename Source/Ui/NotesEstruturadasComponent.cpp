@@ -44,8 +44,8 @@ NotesEstruturadasComponent::NotesEstruturadasComponent(bool isPt) : isPt_(isPt) 
         // O quarto argumento é o componente de referência: a AlertWindow se
         // centraliza nele (e não no meio da tela), já limitada à área útil do
         // monitor — ver TopLevelWindow::centreAroundComponent.
-        juce::AlertWindow dlg(isPt_ ? "Nova Seção de Nota" : "New Note Section",
-                               isPt_ ? "Título da seção (ex.: TECHNICAL NOTES):" : "Section title (e.g. TECHNICAL NOTES):",
+        juce::AlertWindow dlg(isPt_ ? juce::String::fromUTF8("Nova Seção de Nota") : "New Note Section",
+                               isPt_ ? juce::String::fromUTF8("Título da seção (ex.: TECHNICAL NOTES):") : "Section title (e.g. TECHNICAL NOTES):",
                                juce::MessageBoxIconType::NoIcon,
                                this);
         dlg.addTextEditor("titulo", "", "");
@@ -135,7 +135,7 @@ void NotesEstruturadasComponent::reconstruirLinhas() {
             conteudoInterno_->addAndMakeVisible(*l->corpoSomenteLeitura);
         } else {
             l->botaoRemover = std::make_unique<juce::TextButton>(juce::String::fromUTF8("\xc3\x97"));
-            l->botaoRemover->setTooltip(isPt_ ? "Remover esta seção de nota" : "Remove this note section");
+            l->botaoRemover->setTooltip(isPt_ ? juce::String::fromUTF8("Remover esta seção de nota") : "Remove this note section");
             l->botaoRemover->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
             l->botaoRemover->setColour(juce::TextButton::textColourOffId, tk.textoTerciario);
             l->botaoRemover->onClick = [this, l] {

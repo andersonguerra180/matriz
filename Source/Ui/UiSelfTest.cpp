@@ -1691,6 +1691,29 @@ int rodarUiSelfTest() {
                        logContent.contains("Backup Version Unlinked") &&
                        logContent.contains("Backup Version Renamed"),
                        "ProjectLog records all 7 required backup version and sync events");
+                checar(logContent.indexOf("Backup Version Renamed") < logContent.indexOf("Backup Completed"),
+                       "ProjectLog puts the newest entry at the top");
+
+                // log.md antigo (mais antigo em cima) é invertido uma vez; reler não inverte de novo.
+                {
+                    const juce::File pastaLogAntigo = pastaVersoes.getChildFile("log_antigo_teste");
+                    pastaLogAntigo.createDirectory();
+                    pastaLogAntigo.getChildFile("log.md").replaceWithText(
+                        "# Log\n\n## Operational Log & Notes\n\n"
+                        "### [2026-01-01 10:00:00] Primeira\n- a\n\n"
+                        "### [2026-01-02 10:00:00] Segunda\n- b\n\n"
+                        "### [2026-01-03 10:00:00] Terceira\n- c\n\n");
+                    matriz::model::ProjectLog logAntigo(pastaLogAntigo);
+                    const juce::String lido = logAntigo.readContent();
+                    const juce::String lido2 = logAntigo.readContent();
+                    checar(lido.indexOf("Terceira") < lido.indexOf("Segunda") && lido.indexOf("Segunda") < lido.indexOf("Primeira") &&
+                               lido2 == lido && pastaLogAntigo.getChildFile("log.antes-inversao.md").existsAsFile(),
+                           "ProjectLog reverses an old oldest-first log once and keeps a copy");
+                    logAntigo.appendEntry("Nova", {"d"});
+                    const juce::String lido3 = logAntigo.readContent();
+                    checar(lido3.indexOf("Nova") < lido3.indexOf("Terceira"), "ProjectLog appends the new entry above the previous newest");
+                    pastaLogAntigo.deleteRecursively();
+                }
             }
 
             // Pasta sem catálogo não é confundida com uma que tem.

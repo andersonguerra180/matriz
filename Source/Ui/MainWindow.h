@@ -12,6 +12,9 @@ public:
     MainWindow(const juce::String& nome);
     ~MainWindow() override;
 
+    // .mtz/.bkm aberto pelo Finder. Ignorado com ingest em andamento (mesma trava do menu Abrir).
+    void abrirArquivoDoSistema(const juce::File& arquivo);
+
     void closeButtonPressed() override;
     void lookAndFeelChanged() override;
 

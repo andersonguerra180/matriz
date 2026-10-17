@@ -5,9 +5,11 @@
 #include "../Ingest/Checksum.h"
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
+#include "../Model/Inbox.h"
 #include "../Preservation/Preservation.h"
 #include "../Vault/Resolucao.h"
 #include "Mascara.h"
+#include "BridgeXmp.h"
 #include "MetadadoEmbutido.h"
 // matriz_ingest_selftest (console app) não linka juce_gui_basics — Ui/BatchWatermarkDialog.h
 // declara um juce::Component e não compila nesse alvo. A aplicação de watermark no backup
@@ -18,6 +20,7 @@
 #endif
 
 #include <algorithm>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <unordered_set>
@@ -57,10 +60,11 @@ bool pastaOuAncestralDesativada(matriz::db::Database& registro, const std::strin
     std::set<std::string> visitados;
     while (!atual.empty() && !visitados.count(atual)) {
         visitados.insert(atual);
-        auto stmt = registro.prepare("SELECT ativo, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        auto stmt = registro.prepare("SELECT ativo, pasta_pai_id, nome FROM acervo_pasta WHERE id = ?");
         stmt.bind(1, Value::of(atual));
         if (!stmt.step()) break;
         if (!stmt.columnIsNull(0) && stmt.columnInt(0) == 0) return true;
+        if (!stmt.columnIsNull(2) && stmt.columnText(2) == "_trash") return true;
         atual = stmt.columnIsNull(1) ? std::string() : stmt.columnText(1);
     }
     return false;
@@ -217,7 +221,7 @@ void anotarMovePendentePraClones(matriz::db::Database& registro, const char* tip
     if (de == para) return;
     std::vector<std::string> clones;
     try {
-        auto st = registro.prepare("SELECT id FROM backup_destino WHERE ativo = 1 AND papel <> 'ORIGINAL'");
+        auto st = registro.prepare("SELECT id FROM backup_destino WHERE ativo = 1 AND papel NOT IN ('ORIGINAL', 'FONTE_REBUILD')");
         while (st.step()) clones.push_back(st.columnText(0));
     } catch (...) { return; }
     for (const auto& clone : clones) {
@@ -281,6 +285,7 @@ std::string nivelHierarquiaToString(NivelHierarquia n) {
         case NivelHierarquia::Artista: return "artista";
         case NivelHierarquia::ContentType: return "content_type";
         case NivelHierarquia::Subject: return "subject";
+        case NivelHierarquia::Lista: return "lista";
         case NivelHierarquia::PastaManual: return "pasta_manual";
         case NivelHierarquia::EstruturaOriginal: return "estrutura_original";
     }
@@ -296,6 +301,7 @@ NivelHierarquia nivelHierarquiaFromString(const std::string& s) {
     if (s == "artista") return NivelHierarquia::Artista;
     if (s == "content_type") return NivelHierarquia::ContentType;
     if (s == "subject") return NivelHierarquia::Subject;
+    if (s == "lista") return NivelHierarquia::Lista;
     if (s == "pasta_manual") return NivelHierarquia::PastaManual;
     throw std::runtime_error("nível de hierarquia de backup desconhecido: \"" + s + "\"");
 }
@@ -408,7 +414,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool forcarRebackup,
                                         bool organizarPorSource,
                                         bool paraExport,
-                                        const std::string& mapaId) {
+                                        const std::string& mapaId,
+                                        bool estritoAoDestino,
+                                        bool semPastaNaRaiz) {
     MATRIZ_TRACE("consolidacao::planejarConsolidacao");
     PlanoConsolidacao plano;
     std::map<std::string, std::string> codigoPorVault;
@@ -441,6 +449,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     const bool filtrarMapa = !mapaId.empty();
     const bool mapaEmUso = filtrarMapa && usaPastaManual && !usaEstruturaOriginal;
     const bool semPastaFisica = mapaEmUso && !paraExport;
+    const bool semPastaNoCaminho = semPastaFisica || (mapaEmUso && paraExport && semPastaNaRaiz);
     std::set<std::string> itensComMovimento;
 
     // Contador de sequência por pasta de destino (garante numeração sequencial por pasta final)
@@ -455,7 +464,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
     auto stmt = registro.prepare(
         std::string("SELECT i.id, COALESCE(aip.pasta_id, ''), i.codigo_acervo, i.titulo, i.tipo_midia, "
         "a.id, a.caminho_relativo, a.checksum_sha256, a.tamanho_bytes, "
-        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, '') "
+        "i.dc_creator, i.collection_type, i.dc_subject, i.source_media, COALESCE(a.vault_id, ''), i.lista "
         "FROM item i "
         "LEFT JOIN acervo_item_pasta aip ON aip.item_id = i.id ") +
         (filtrarMapa ? "AND aip.mapa_id = ? " : "") +
@@ -487,7 +496,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
 
         std::string pastaIdCandidata = stmt.columnText(1);
         if (pastaOuAncestralDesativada(registro, pastaIdCandidata)) continue; // pasta desabilitada na TREEMAP — bypass total
-        if (mapaEmUso && paraExport && pastaIdCandidata.empty()) {
+        if (mapaEmUso && paraExport && pastaIdCandidata.empty() && !semPastaNaRaiz) {
             plano.semPastaExcluidos.insert(itemId);  // export por mapa: sem pasta = fora
             continue;
         }
@@ -506,6 +515,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         std::string collectionTypeAtual = stmt.columnIsNull(10) ? std::string() : stmt.columnText(10);
         std::string dcSubjectAtual = stmt.columnIsNull(11) ? std::string() : stmt.columnText(11);
         std::string sourceMediaAtual = stmt.columnIsNull(12) ? std::string() : stmt.columnText(12);
+        std::string listaAtual = stmt.columnIsNull(14) ? std::string() : stmt.columnText(14);
         juce::String codigoSource;
         if (organizarPorSource) {
             auto itCod = codigoPorVault.find(stmt.columnText(13));
@@ -548,6 +558,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         if (!dcCreatorAtual.empty()) ctx.camposFicha["dc_creator"] = dcCreatorAtual;
         if (!collectionTypeAtual.empty()) ctx.camposFicha["collection_type"] = collectionTypeAtual;
         if (!dcSubjectAtual.empty()) ctx.camposFicha["dc_subject"] = dcSubjectAtual;
+        if (!listaAtual.empty()) ctx.camposFicha["lista"] = listaAtual;
         if (!sourceMediaAtual.empty()) ctx.camposFicha["source_media"] = sourceMediaAtual;
         bool temAnoNaFicha = false;
         {
@@ -637,10 +648,17 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                     segmentosPasta.add(segmentoSeguro(assunto, "No subject"));
                     break;
                 }
+                case NivelHierarquia::Lista: {
+                    // LIST (nome de lista/seleção dentro do SUBJECT): pasta com o nome digitado na ficha.
+                    auto it = ctx.camposFicha.find("lista");
+                    juce::String lista = it == ctx.camposFicha.end() ? juce::String() : juce::String(it->second).trim();
+                    segmentosPasta.add(segmentoSeguro(lista, "No list"));
+                    break;
+                }
                 case NivelHierarquia::PastaManual:
                     // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
-                    if (cadeia.empty() && semPastaFisica) segmentosPasta.add(kPastaSemPasta);
+                    if (cadeia.empty() && semPastaNoCaminho) segmentosPasta.add(kPastaSemPasta);
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
                     juce::String dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("/", false, false);
@@ -723,8 +741,9 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
         // ou legados (sem destino gravado). EXPORT não herda nada disso.
         if (!paraExport) {
             auto stmtJa = registro.prepare(
-                "SELECT caminho_relativo_destino FROM consolidacao_registro WHERE arquivo_id = ? "
-                "AND (destino_path = ? OR destino_path = '' OR destino_path IS NULL "
+                std::string("SELECT caminho_relativo_destino, COALESCE(tamanho_bytes, 0) FROM consolidacao_registro WHERE arquivo_id = ? "
+                "AND (destino_path = ? ") +
+                (estritoAoDestino ? "" : "OR destino_path = '' OR destino_path IS NULL ") +
                 "     OR (? != '' AND COALESCE(destino_id, '') = ?)) "
                 "ORDER BY (pasta_id = ?) DESC, (item_id = ?) DESC LIMIT 1");
             stmtJa.bind(1, Value::of(ip.arquivoId));
@@ -749,8 +768,13 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 } else {
                     caminhoRelDestino = registrado;
                     ip.caminhoRelativoDestino = caminhoRelDestino;
-                    // Sumiu do disco: recopia NO MESMO caminho. Forçado: idem.
-                    ip.jaConsolidado = !forcarRebackup && destino.getChildFile(caminhoRelDestino).existsAsFile();
+                    // Sumiu do disco ou o tamanho não bate com o registrado (truncado): recopia NO MESMO
+                    // caminho. Forçado: idem. Registro antigo (sem tamanho gravado) só confere a existência.
+                    const juce::File noMain = destino.getChildFile(caminhoRelDestino);
+                    const juce::int64 tamRegistrado = static_cast<juce::int64>(stmtJa.columnInt(1));
+                    const bool existe = noMain.existsAsFile();
+                    ip.registradoDivergente = existe && tamRegistrado > 0 && noMain.getSize() != tamRegistrado;
+                    ip.jaConsolidado = !forcarRebackup && existe && !ip.registradoDivergente;
                 }
             } else {
                 ip.jaConsolidado = false;
@@ -905,8 +929,9 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir) {
+                               bool embutir, bool formatoBridge, const OpcoesMetadadosSaida& metaSaida, bool fonteOrigem) {
     ResultadoExport resultado;
+    resultado.conflitosResolvidos = plano.conflitosAutoResolvidos;
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
     (void)itensComMarcaDagua;
 #endif
@@ -929,14 +954,41 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
             auto noBackup = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
             auto naOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
                                                            matriz::vault::Preferencia::Origem);
-            if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
+            if (fonteOrigem) {
+                // Bounce List direta dos Assets: a fonte é o original catalogado; só vale se ainda é o mesmo arquivo.
+                if (!naOrigem || !naOrigem->existsAsFile()) {
+                    resultado.pulados.push_back(ip.codigoAcervo + ": missing");
+                    continue;
+                }
+                std::string hashCatalogo;
+                auto stH = registro.prepare("SELECT checksum_sha256 FROM arquivo WHERE id = ?");
+                stH.bind(1, matriz::db::Value::of(ip.arquivoId));
+                if (stH.step() && !stH.columnIsNull(0)) hashCatalogo = stH.columnText(0);
+                if (!hashCatalogo.empty()) {
+                    const std::string hashAtual = matriz::ingest::sha256DoArquivo(*naOrigem);  // cancelamento: entre arquivos
+                    if (hashAtual.empty() || hashAtual != hashCatalogo) {
+                        resultado.pulados.push_back(ip.codigoAcervo + ": changed");
+                        continue;
+                    }
+                }
+                noBackup = naOrigem;
+            } else if (!noBackup || (naOrigem && *naOrigem == *noBackup)) {
                 ++resultado.foraDoMain;
                 continue;
             }
             juce::File destinoArquivo = destinoExport.getChildFile(ip.caminhoRelativoDestino);
-            if (destinoArquivo.existsAsFile())
-                throw std::runtime_error("already exists in the export folder: " +
-                                         destinoArquivo.getFullPathName().toStdString());
+            if (destinoArquivo.existsAsFile()) {
+                // Já exportado (rodada anterior): pula sem sobrescrever e sem contar como falha — senão rodar o
+                // export de novo para completar o que faltou listava TODO arquivo como "falha". Cópia simples
+                // com tamanho diferente do original merece aviso (pode ter sido editada); com embed/limpeza/
+                // marca d'água o tamanho muda por natureza.
+                ++resultado.jaExistiam;
+                const bool copiaSimples = !formatoBridge && !embutir && itensComMarcaDagua.count(ip.itemId) == 0 &&
+                                          metaSaida.modo != ModoMetadadosSaida::Embed && metaSaida.modo != ModoMetadadosSaida::Clean;
+                if (copiaSimples && noBackup->getSize() != destinoArquivo.getSize())
+                    resultado.jaExistiamDiferentes.push_back(ip.codigoAcervo + ": " + destinoArquivo.getFullPathName().toStdString());
+                continue;
+            }
             destinoArquivo.getParentDirectory().createDirectory();
             if (!noBackup->copyFileTo(destinoArquivo) || destinoArquivo.getSize() != noBackup->getSize())
                 throw std::runtime_error("copy failed: " + destinoArquivo.getFullPathName().toStdString());
@@ -948,7 +1000,53 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
                     ++resultado.comMarcaDagua;
             }
 #endif
-            if (embutir) {
+            if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
+                // EXPORT > Bounce List: Original (cópia idêntica) / Embed (ficha dentro da cópia) / Clean (sem EXIF, IPTC, XMP,
+                // GPS). Só a cópia muda. Falha ao embutir/limpar: a cópia é apagada (nunca sai um arquivo "sujo" como limpo).
+                std::string erroMeta;
+                bool videoSemEmbed = false;  // toggle "Embed in video files" desligado: o vídeo não é reescrito, sai só com sidecar
+                if (metaSaida.modo == ModoMetadadosSaida::Embed) {
+                    if (destinoArquivo.hasFileExtension("wav")) {
+                        auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                        if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                    }
+                    videoSemEmbed = !metaSaida.embedVideo && ehArquivoVideo(destinoArquivo);
+                    switch (videoSemEmbed ? StatusEmbedFicha::NaoSuportado
+                                          : embutirFichaMatrizNaCopia(registro, ip.itemId, destinoArquivo, erroMeta)) {
+                        case StatusEmbedFicha::Embutido: ++resultado.embutidos; break;
+                        case StatusEmbedFicha::NaoSuportado: ++resultado.embedNaoSuportado; break;
+                        case StatusEmbedFicha::SemDados: break;
+                        case StatusEmbedFicha::Falhou:
+                            destinoArquivo.deleteFile();
+                            throw std::runtime_error("could not embed metadata: " + erroMeta);
+                    }
+                } else if (metaSaida.modo == ModoMetadadosSaida::Clean) {
+                    switch (limparMetadadosDaCopia(destinoArquivo, erroMeta)) {
+                        case StatusLimpeza::Limpo: ++resultado.limpos; break;
+                        case StatusLimpeza::RawSemLimpeza: ++resultado.rawSemLimpeza; break;
+                        case StatusLimpeza::TipoSemSuporte: ++resultado.tiposSemLimpeza; break;
+                        case StatusLimpeza::Falhou:
+                            destinoArquivo.deleteFile();
+                            throw std::runtime_error("could not clean metadata: " + erroMeta);
+                    }
+                }
+                if ((metaSaida.sidecar || videoSemEmbed) && metaSaida.modo != ModoMetadadosSaida::Clean &&
+                    escreverSidecarFichaMatriz(registro, ip.itemId, destinoArquivo))
+                    ++resultado.sidecarsGravados;
+            } else if (formatoBridge) {
+                // EXPORT > Adobe Bridge: só a cópia recebe metadado, em XMP no formato que o Bridge lê.
+                if (destinoArquivo.hasFileExtension("wav")) {
+                    auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                    if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
+                }
+                std::string aviso;
+                switch (bridge::gravarXmpBridgeNaCopia(registro, ip.itemId, destinoArquivo, aviso)) {
+                    case bridge::ResultadoBridgeArquivo::Embutido: ++resultado.bridgeEmbutidos; break;
+                    case bridge::ResultadoBridgeArquivo::Sidecar: ++resultado.bridgeSidecars; break;
+                    default: break;
+                }
+                if (!aviso.empty()) resultado.avisos.push_back(aviso);
+            } else if (embutir) {
                 if (destinoArquivo.hasFileExtension("wav")) {
                     auto marcadores = marcadoresDoItem(registro, ip.itemId);
                     if (!marcadores.empty()) embutirMarcadoresEmWav(destinoArquivo, marcadores);
@@ -964,26 +1062,140 @@ ResultadoExport executarExport(matriz::db::Database& registro, const juce::File&
         }
     }
     try {
-        matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Created", {
+        juce::StringArray linhasExport{
             "Destination: " + destinoExport.getFullPathName(),
             "Files: " + juce::String(resultado.copiados) + " (not yet in MAIN, skipped: " +
-                juce::String(resultado.foraDoMain) + ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
-            juce::String("Embedded metadata: ") + (embutir ? "yes" : "no") +
-                ", watermarked: " + juce::String(resultado.comMarcaDagua)});
+                juce::String(resultado.foraDoMain) + ", already in the folder, skipped: " + juce::String(resultado.jaExistiam) +
+                ", failures: " + juce::String((int) resultado.falhas.size()) + ")",
+            juce::String("Embedded metadata: ") + (formatoBridge ? "Adobe Bridge XMP" : (embutir ? "yes" : "no")) +
+                ", watermarked: " + juce::String(resultado.comMarcaDagua)};
+        // A causa de cada falha fica no log (antes só a contagem), com teto para não inflar o arquivo.
+        for (size_t i = 0; i < resultado.falhas.size() && i < 50; ++i)
+            linhasExport.add("  failed: " + juce::String::fromUTF8(resultado.falhas[i].c_str()));
+        if (resultado.falhas.size() > 50) linhasExport.add("  ... +" + juce::String((int) resultado.falhas.size() - 50) + " more failures");
+        matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Created", linhasExport);
+        if (metaSaida.modo != ModoMetadadosSaida::Padrao) {
+            const char* modo = metaSaida.modo == ModoMetadadosSaida::Original ? "Original" : metaSaida.modo == ModoMetadadosSaida::Embed ? "Embed" : "Clean";
+            matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Bounce List", {
+                juce::String("Metadata mode: ") + modo + ", sidecar .xmp: " + (metaSaida.sidecar ? "yes" : "no") +
+                    (metaSaida.modo == ModoMetadadosSaida::Embed ? juce::String(", embed in video: ") + (metaSaida.embedVideo ? "yes" : "no (sidecar only)") : juce::String()),
+                "Cleaned: " + juce::String(resultado.limpos) + ", RAW without cleaning: " + juce::String(resultado.rawSemLimpeza) +
+                    ", other types without cleaning: " + juce::String(resultado.tiposSemLimpeza),
+                "Embedded: " + juce::String(resultado.embutidos) + ", format without embed: " + juce::String(resultado.embedNaoSuportado) +
+                    ", sidecars: " + juce::String(resultado.sidecarsGravados)});
+        }
+        if (formatoBridge) {
+            juce::StringArray linhas{"Embedded XMP: " + juce::String(resultado.bridgeEmbutidos) +
+                                     ", sidecars: " + juce::String(resultado.bridgeSidecars) +
+                                     ", warnings: " + juce::String((int) resultado.avisos.size())};
+            for (const auto& a : resultado.avisos) linhas.add(juce::String::fromUTF8(a.c_str()));
+            matriz::model::ProjectLog(pastaProjeto).appendEntry("Export Adobe Bridge", linhas);
+        }
     } catch (...) {}
     return resultado;
+}
+
+namespace {
+
+constexpr const char* kSufixoTemporario = ".mtz-tmp";
+
+struct CopiaVerificada {
+    bool ok = false;
+    bool cancelado = false;
+    std::string erro;
+    std::string sha256;  // dos bytes lidos da origem == dos bytes gravados (conferidos)
+};
+
+// Cópia verificada (MAIN fiel à SOURCE): copia em blocos para "<nome>.mtz-tmp" calculando o
+// SHA-256 do que foi LIDO da origem, relê o temporário gravado e compara; só então renomeia
+// para o nome final. Divergiu ou falhou: apaga o temporário e devolve o motivo — nada
+// registrado, nada com o nome final. `continuar` é checado entre os blocos (cancelamento).
+CopiaVerificada copiarVerificado(const juce::File& origem, const juce::File& destinoFinal,
+                                 const std::function<bool()>& continuar) {
+    CopiaVerificada r;
+    const juce::File tmp = destinoFinal.getSiblingFile(destinoFinal.getFileName() + kSufixoTemporario);
+    auto falhar = [&](const std::string& motivo) {
+        tmp.deleteFile();
+        r.erro = motivo;
+        return r;
+    };
+    destinoFinal.getParentDirectory().createDirectory();
+    tmp.deleteFile();
+
+    juce::FileInputStream in(origem);
+    if (!in.openedOk()) return falhar("não foi possível abrir a origem: " + origem.getFullPathName().toStdString());
+    {
+        juce::FileOutputStream out(tmp);
+        if (!out.openedOk()) return falhar("não foi possível criar " + tmp.getFullPathName().toStdString());
+        out.setPosition(0);
+        out.truncate();
+
+        matriz::ingest::Sha256Parcial hash;
+        std::vector<char> buf(1 << 20);
+        juce::int64 total = 0;
+        for (;;) {
+            if (continuar && !continuar()) {
+                out.flush();
+                tmp.deleteFile();
+                r.cancelado = true;
+                return r;
+            }
+            const int lidos = in.read(buf.data(), static_cast<int>(buf.size()));
+            if (lidos < 0) return falhar("erro de leitura na origem");
+            if (lidos == 0) break;
+            hash.atualizar(buf.data(), static_cast<size_t>(lidos));
+            if (!out.write(buf.data(), static_cast<size_t>(lidos))) return falhar("erro de escrita no destino (disco cheio?)");
+            total += lidos;
+        }
+        out.flush();
+        if (out.getStatus().failed()) return falhar("erro de escrita no destino");
+        r.sha256 = hash.finalizar();
+        if (total != origem.getSize()) return falhar("tamanho lido difere do tamanho da origem");
+    }
+    if (tmp.getSize() != origem.getSize()) return falhar("tamanho da cópia não bate com o original");
+
+    bool cancelado = false;
+    const std::string hashCopia = matriz::ingest::sha256DoArquivo(tmp, continuar, &cancelado);
+    if (cancelado) {
+        tmp.deleteFile();
+        r.cancelado = true;
+        return r;
+    }
+    if (hashCopia.empty() || hashCopia != r.sha256) return falhar("hash da cópia não confere");
+
+    std::error_code ec;
+    std::filesystem::rename(tmp.getFullPathName().toStdString(), destinoFinal.getFullPathName().toStdString(), ec);
+    if (ec) {
+        destinoFinal.deleteFile();
+        if (!tmp.moveFileTo(destinoFinal)) return falhar("não foi possível renomear a cópia: " + ec.message());
+    }
+    r.ok = true;
+    return r;
+}
+
+}  // namespace
+
+int limparTemporariosDeCopia(const juce::File& destinoMedia) {
+    int apagados = 0;
+    if (!destinoMedia.isDirectory()) return 0;
+    for (const auto& f : destinoMedia.findChildFiles(juce::File::findFiles, true, juce::String("*") + kSufixoTemporario))
+        if (f.deleteFile()) ++apagados;
+    return apagados;
 }
 
 ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                             const juce::File& destino, const PlanoConsolidacao& plano,
                                             const AoProgredir& aoProgredir,
                                             const std::set<std::string>& itensMarcadosWatermark,
-                                            bool embutirNaCopia, std::recursive_mutex* escritaRegistro) {
+                                            bool embutirNaCopia,
+                                            const std::function<bool()>& continuar,
+                                            const OpcoesRebuild* rebuild, std::recursive_mutex* escritaRegistro) {
     ResultadoConsolidacao resultado;
     resultado.totalPlanejado = static_cast<int>(plano.itens.size());
     std::string agora = matriz::model::agoraIso8601();
     // `destino` é <raiz do destino>/Media; o destination.json fica na raiz.
     const std::string destinoId = matriz::vault::destinationIdDaRaiz(destino.getParentDirectory());
+    const juce::File raizDoMain = pastaProjeto.getParentDirectory();  // <raiz>/Project -> <raiz>
     // Código do SOURCE fica fixo quando o primeiro arquivo dele entra no MAIN.
     const auto codigosAtuais = codigosDeSource(registro);
 #if !JUCE_MODULE_AVAILABLE_juce_gui_basics
@@ -1007,25 +1219,63 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
         }
 
         try {
-            auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
-            if (!resolvido)
-                throw std::runtime_error("master ausente em disco (Vault offline ou arquivo movido/removido): " +
-                                          ip.codigoAcervo);
-            juce::File origem = *resolvido;
+            // Rebuild: as duas origens possíveis (cópia no MAIN antigo e SOURCE) são resolvidas à parte.
+            juce::File arquivoNoMainAntigo, arquivoNaSource;
+            std::string hashDoCatalogo;
+            juce::File origem;
+            if (rebuild) {
+                try {
+                    auto stOld = registro.prepare(
+                        "SELECT caminho_relativo_destino FROM consolidacao_registro WHERE arquivo_id = ? "
+                        "AND COALESCE(destino_path, '') <> ? AND COALESCE(destino_id, '') IN ('', ?) "
+                        "ORDER BY (item_id = ?) DESC LIMIT 1");
+                    stOld.bind(1, Value::of(ip.arquivoId));
+                    stOld.bind(2, Value::of(chaveDestino(destino)));
+                    stOld.bind(3, Value::of(rebuild->fonteDestinoId));
+                    stOld.bind(4, Value::of(ip.itemId));
+                    if (stOld.step()) {
+                        const juce::File f = rebuild->fonteMedia.getChildFile(juce::String::fromUTF8(stOld.columnText(0).c_str()));
+                        if (f.existsAsFile()) arquivoNoMainAntigo = f;
+                    }
+                    auto stH = registro.prepare("SELECT IFNULL(checksum_sha256, '') FROM arquivo WHERE id = ?");
+                    stH.bind(1, Value::of(ip.arquivoId));
+                    if (stH.step()) hashDoCatalogo = stH.columnText(0);
+                } catch (...) {}
+                if (auto src = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                              matriz::vault::Preferencia::Origem))
+                    if (src->existsAsFile()) arquivoNaSource = *src;
+                if (arquivoNoMainAntigo == juce::File() && arquivoNaSource == juce::File())
+                    throw std::runtime_error("ausente no MAIN antigo e na SOURCE: " + ip.codigoAcervo);
+                origem = arquivoNoMainAntigo != juce::File() ? arquivoNoMainAntigo : arquivoNaSource;
+            } else {
+                auto resolvido = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto);
+                if (!resolvido)
+                    throw std::runtime_error("master ausente em disco (Vault offline ou arquivo movido/removido): " +
+                                              ip.codigoAcervo);
+                origem = *resolvido;
+            }
 
             juce::File destinoArquivo = destino.getChildFile(ip.caminhoRelativoDestino);
-            // A leitura resolve MAIN primeiro: numa reconsolidação forçada no
-            // próprio MAIN a "origem" é o arquivo de destino — copiar por cima
-            // de si mesmo truncaria o arquivo. Já está lá: conta como pulado.
+            // A leitura resolve MAIN primeiro: se a "origem" for o próprio arquivo de destino (cópia
+            // truncada/forçada), copiar por cima de si mesmo o destruiria — procura a origem de verdade.
             if (origem == destinoArquivo) {
-                ++resultado.pulados;
-                continue;
+                auto daOrigem = matriz::vault::resolverArquivo(registro, ip.arquivoId, pastaProjeto,
+                                                               matriz::vault::Preferencia::Origem);
+                if (daOrigem && *daOrigem != destinoArquivo) {
+                    origem = *daOrigem;
+                } else if (destinoArquivo.existsAsFile() && !ip.registradoDivergente) {
+                    ++resultado.pulados;  // reconsolidação forçada: já está lá e confere
+                    continue;
+                } else {
+                    throw std::runtime_error("cópia no MAIN truncada e a SOURCE não está disponível: " + ip.codigoAcervo);
+                }
             }
             destinoArquivo.getParentDirectory().createDirectory();
 
             // Se o caminho mudou mas o arquivo antigo já existia no destino com o mesmo tamanho,
-            // podemos apenas mover/renomear em vez de recopiar:
+            // basta mover/renomear em vez de recopiar (conferindo o hash registrado):
             bool movidoLocalmente = false;
+            std::string hashVerificado;
             try {
                 auto stmtAntigo = registro.prepare(
                     "SELECT caminho_relativo_destino, checksum_sha256 FROM consolidacao_registro WHERE item_id = ? AND pasta_id = ? AND arquivo_id = ? LIMIT 1");
@@ -1034,30 +1284,112 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                 stmtAntigo.bind(3, Value::of(ip.arquivoId));
                 if (stmtAntigo.step()) {
                     std::string antRel = stmtAntigo.columnText(0);
+                    const std::string hashRegistrado = stmtAntigo.columnText(1);
                     if (!antRel.empty() && antRel != ip.caminhoRelativoDestino.toStdString()) {
                         juce::File arqAntigo = destino.getChildFile(antRel);
-                        if (arqAntigo.existsAsFile() && arqAntigo.getSize() == origem.getSize()) {
+                        if (arqAntigo.existsAsFile() && arqAntigo.getSize() == origem.getSize() && !hashRegistrado.empty()) {
                             destinoArquivo.deleteFile();
                             if (arqAntigo.moveFileTo(destinoArquivo)) {
-                                movidoLocalmente = true;
-                                matriz::model::ProjectLog pLog(pastaProjeto);
-                                pLog.appendEntry("Media Relocated", {"From: " + juce::String::fromUTF8(antRel.c_str()), "To: " + ip.caminhoRelativoDestino});
+                                bool cancelado = false;
+                                const auto hashMovido = matriz::ingest::sha256DoArquivo(destinoArquivo, continuar, &cancelado);
+                                if (cancelado) { resultado.cancelado = true; break; }
+                                if (hashMovido == hashRegistrado) {
+                                    movidoLocalmente = true;
+                                    hashVerificado = hashMovido;
+                                    matriz::model::ProjectLog pLog(pastaProjeto);
+                                    pLog.appendEntry("Media Relocated", {"From: " + juce::String::fromUTF8(antRel.c_str()), "To: " + ip.caminhoRelativoDestino});
+                                } else {
+                                    destinoArquivo.deleteFile();  // não confere: recopia da origem abaixo
+                                }
                             }
                         }
                     }
                 }
             } catch (...) {}
 
+            std::string hashLidoDaOrigem;
+            juce::File origemUsada = origem;
             if (!movidoLocalmente) {
-                destinoArquivo.deleteFile(); // reconsolidação: substitui a cópia anterior, nunca acumula lixo
-
-                if (!origem.copyFileTo(destinoArquivo))
-                    throw std::runtime_error("falha ao copiar pra " + destinoArquivo.getFullPathName().toStdString());
+                CopiaVerificada copia;
+                if (rebuild) {
+                    // 1) MAIN antigo (se existir e ler); 2) confere com o hash do catálogo; 3) divergiu => SOURCE.
+                    bool usouSource = false;
+                    if (arquivoNoMainAntigo != juce::File()) {
+                        copia = copiarVerificado(arquivoNoMainAntigo, destinoArquivo, continuar);
+                        origemUsada = arquivoNoMainAntigo;
+                        if (copia.cancelado) { resultado.cancelado = true; break; }
+                        const bool divergeDoCatalogo = copia.ok && !hashDoCatalogo.empty() && copia.sha256 != hashDoCatalogo;
+                        if (!copia.ok || divergeDoCatalogo) {
+                            if (arquivoNaSource != juce::File()) {
+                                destinoArquivo.deleteFile();
+                                copia = copiarVerificado(arquivoNaSource, destinoArquivo, continuar);
+                                origemUsada = arquivoNaSource;
+                                usouSource = true;
+                                if (copia.cancelado) { resultado.cancelado = true; break; }
+                                if (copia.ok && !hashDoCatalogo.empty() && copia.sha256 != hashDoCatalogo) {
+                                    destinoArquivo.deleteFile();
+                                    throw std::runtime_error("a SOURCE difere do hash do catálogo: " + ip.codigoAcervo);
+                                }
+                                if (copia.ok && divergeDoCatalogo) {
+                                    ++resultado.copiadosDaSourcePorDivergencia;
+                                    resultado.divergentesDaSource.push_back(ip.codigoAcervo);
+                                }
+                            } else if (copia.ok && divergeDoCatalogo) {
+                                // SOURCE indisponível: mantém a cópia do MAIN antigo e avisa no relatório.
+                                resultado.mantidosDoMainAntigo.push_back(
+                                    ip.codigoAcervo + ": copiado do MAIN antigo, difere da SOURCE (SOURCE indisponível)");
+                            }
+                        }
+                    } else {
+                        copia = copiarVerificado(arquivoNaSource, destinoArquivo, continuar);
+                        origemUsada = arquivoNaSource;
+                        usouSource = true;
+                        if (copia.cancelado) { resultado.cancelado = true; break; }
+                    }
+                    (void)usouSource;
+                } else {
+                    copia = copiarVerificado(origem, destinoArquivo, continuar);
+                }
+                if (copia.cancelado) { resultado.cancelado = true; break; }
+                if (!copia.ok) throw std::runtime_error(copia.erro);
+                hashVerificado = copia.sha256;
+                hashLidoDaOrigem = copia.sha256;
             }
 
             if (!destinoArquivo.existsAsFile()) throw std::runtime_error("cópia não existe depois de copiar");
-            if (destinoArquivo.getSize() != origem.getSize())
+            if (!movidoLocalmente && destinoArquivo.getSize() != origemUsada.getSize())
                 throw std::runtime_error("tamanho da cópia não bate com o original");
+
+            // Capa junto da cópia (item 9) — também copiada com verificação. Falha da capa é falha do
+            // item: a cópia principal é desfeita e nada é registrado (o próximo backup refaz os dois).
+            {
+                auto stmtCapa = registro.prepare(
+                    "SELECT id, caminho_relativo FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
+                stmtCapa.bind(1, Value::of(ip.itemId));
+                if (stmtCapa.step()) {
+                    auto capaResolvida = matriz::vault::resolverArquivo(registro, stmtCapa.columnText(0), pastaProjeto);
+                    // Rebuild com a SOURCE fora do ar: a capa também vem do MAIN antigo (ao lado do arquivo).
+                    if (rebuild && !(capaResolvida && capaResolvida->existsAsFile()) && arquivoNoMainAntigo != juce::File()) {
+                        const auto extCapa = juce::File(juce::String::fromUTF8(stmtCapa.columnText(1).c_str())).getFileExtension();
+                        const juce::File c = arquivoNoMainAntigo.getParentDirectory().getChildFile(
+                            arquivoNoMainAntigo.getFileNameWithoutExtension() + extCapa);
+                        if (extCapa.isNotEmpty() && c.existsAsFile()) capaResolvida = c;
+                    }
+                    if (capaResolvida && capaResolvida->existsAsFile()) {
+                        juce::File capa = *capaResolvida;
+                        juce::File destinoCapa = destinoArquivo.getParentDirectory().getChildFile(
+                            destinoArquivo.getFileNameWithoutExtension() + capa.getFileExtension());
+                        if (capa != destinoCapa) {
+                            auto cc = copiarVerificado(capa, destinoCapa, continuar);
+                            if (cc.cancelado) { destinoArquivo.deleteFile(); resultado.cancelado = true; break; }
+                            if (!cc.ok) {
+                                destinoArquivo.deleteFile();
+                                throw std::runtime_error("capa: " + cc.erro);
+                            }
+                        }
+                    }
+                }
+            }
 
             // Apply watermark if item is marked for watermark and configured
 #if JUCE_MODULE_AVAILABLE_juce_gui_basics
@@ -1069,10 +1401,11 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
             }
 #endif
 
-            // Metadados e marcadores dentro da cópia: só no primeiro backup
-            // (antes de o MAIN existir). Em "Adicionar ao MAIN" a cópia fica
-            // byte a byte igual ao original — edições vivem no banco/sidecar.
+            // Metadados e marcadores dentro da cópia: o Make Backup NÃO usa mais (o MAIN é fiel à
+            // SOURCE); fica só para chamadores que pedem explicitamente.
+            bool modificada = itensMarcadosWatermark.count(ip.itemId) > 0;
             if (embutirNaCopia) {
+                modificada = true;
                 if (destinoArquivo.hasFileExtension("wav")) {
                     auto marcadores = marcadoresDoItem(registro, ip.itemId);
                     if (!marcadores.empty()) {
@@ -1084,8 +1417,17 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                 embutirMetadadosNoArquivo(destinoArquivo, meta);
             }
 
-            // Compute FINAL SHA256 of delivered backup bytes AFTER all modifications
-            matriz::ingest::Checksums checksumCopia = matriz::ingest::calcularChecksums(destinoArquivo);
+            // Hash FINAL do que ficou no MAIN: o verificado na cópia, ou recalculado se algo mexeu nos bytes depois.
+            std::string hashFinal = hashVerificado;
+            if (modificada) {
+                bool cancelado = false;
+                hashFinal = matriz::ingest::sha256DoArquivo(destinoArquivo, continuar, &cancelado);
+                if (cancelado) { resultado.cancelado = true; break; }
+                if (hashFinal.empty()) throw std::runtime_error("não foi possível calcular o hash final da cópia");
+            }
+            matriz::ingest::Checksums checksumCopia;
+            checksumCopia.sha256 = hashFinal;
+            const juce::int64 tamanhoFinal = destinoArquivo.getSize();
 
             // Gravações no banco deste item sob o writeMutex (se o chamador está numa thread de fundo); a cópia e o
             // checksum acima, que são o trabalho longo, ficam fora do lock.
@@ -1127,6 +1469,13 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                          Value::of(ip.caminhoRelativoDestino.toStdString()), Value::of(checksumCopia.sha256), Value::of(agora)});
                 }
             }
+            // Tamanho do que ficou no MAIN: é ele que decide, no próximo plano, se o arquivo ainda confere.
+            try {
+                registro.run("UPDATE consolidacao_registro SET tamanho_bytes = ? WHERE item_id = ? AND pasta_id = ? "
+                             "AND arquivo_id = ? AND COALESCE(destino_path, '') = ?",
+                             {Value::of(static_cast<long long>(tamanhoFinal)), Value::of(ip.itemId), Value::of(ip.pastaId),
+                              Value::of(ip.arquivoId), Value::of(destPathStr)});
+            } catch (...) {}
             // Identidade do destino pelo destination_id (o caminho muda quando
             // o disco monta com outro nome) — é o que o resolvedor usa.
             if (!destinoId.empty()) {
@@ -1152,22 +1501,21 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
 
             // -------------------------------------------------------------------
             // Preservation events — PREMIS BACKUP_CREATED + BACKUP_VERIFIED.
-            // BACKUP_VERIFIED:SUCCESS é o único critério para backup_status=OK.
-            // Erros silenciados: falha de preservação não aborta o backup.
+            // BACKUP_VERIFIED:SUCCESS = a cópia gravada tem o mesmo SHA-256 dos bytes lidos da
+            // origem (conferido no temporário, antes do rename). Erros silenciados: falha de
+            // preservação não aborta o backup.
             // -------------------------------------------------------------------
             try {
-                // Lê SHA-256 original do banco para comparação
-                std::string sha256Original;
+                std::string sha256Catalogo;
                 {
                     auto stmtSha = registro.prepare(
                         "SELECT IFNULL(checksum_sha256,'') FROM arquivo WHERE id = ? LIMIT 1");
                     stmtSha.bind(1, Value::of(ip.arquivoId));
-                    if (stmtSha.step()) sha256Original = stmtSha.columnText(0);
+                    if (stmtSha.step()) sha256Catalogo = stmtSha.columnText(0);
                 }
 
                 std::string destStr = destinoArquivo.getFullPathName().toStdString();
 
-                // BACKUP_CREATED — sempre, independente da comparação
                 preservation::registrarEvento(
                     registro, ip.itemId, ip.arquivoId,
                     preservation::EventType::BackupCreated,
@@ -1175,46 +1523,44 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                     preservation::Outcome::Success, {},
                     "bkr-agent-sistema");
 
-                // BACKUP_VERIFIED — compara hash da cópia com hash original
-                bool hashBate = !sha256Original.empty() && (checksumCopia.sha256 == sha256Original);
-                if (hashBate) {
+                const bool diferenteDoCatalogo = !sha256Catalogo.empty() && hashVerificado != sha256Catalogo;
+                preservation::registrarEvento(
+                    registro, ip.itemId, ip.arquivoId,
+                    preservation::EventType::BackupVerified,
+                    "Destination: " + destStr + " | SHA-256: " + hashVerificado,
+                    diferenteDoCatalogo ? preservation::Outcome::Warning : preservation::Outcome::Success,
+                    diferenteDoCatalogo ? "Copy verified against the bytes read, but differs from the catalog SHA-256 ("
+                                            + sha256Catalogo + ")"
+                                        : std::string(),
+                    "bkr-agent-sistema");
+                if (rebuild)
                     preservation::registrarEvento(
-                        registro, ip.itemId, ip.arquivoId,
-                        preservation::EventType::BackupVerified,
-                        "Destination: " + destStr +
-                        " | SHA-256: " + checksumCopia.sha256,
-                        preservation::Outcome::Success, {},
-                        "bkr-agent-sistema");
-                } else {
-                    std::string detail = sha256Original.empty()
-                        ? "No baseline SHA-256 to compare against"
-                        : "Expected: " + sha256Original + " | Got: " + checksumCopia.sha256;
-                    preservation::registrarEvento(
-                        registro, ip.itemId, ip.arquivoId,
-                        preservation::EventType::BackupVerified,
-                        "Destination: " + destStr,
-                        preservation::Outcome::Failure,
-                        detail,
-                        "bkr-agent-sistema");
-                }
+                        registro, ip.itemId, ip.arquivoId, preservation::EventType::Migration,
+                        "MAIN rebuilt from " + rebuild->descricaoFonte + " | SHA-256: " + hashVerificado,
+                        preservation::Outcome::Success, {}, "bkr-agent-sistema");
+                (void)hashLidoDaOrigem;
             } catch (...) {}
             if (trava.owns_lock()) trava.unlock();
 
-            // Capa junto da cópia (item 9).
-            {
-                auto stmtCapa = registro.prepare(
-                    "SELECT id FROM arquivo WHERE item_id = ? AND papel = 'capa_frente' LIMIT 1");
-                stmtCapa.bind(1, Value::of(ip.itemId));
-                if (stmtCapa.step()) {
-                    auto capaResolvida = matriz::vault::resolverArquivo(registro, stmtCapa.columnText(0), pastaProjeto);
-                    if (capaResolvida && capaResolvida->existsAsFile()) {
-                        juce::File capa = *capaResolvida;
-                        juce::File destinoCapa = destinoArquivo.getParentDirectory().getChildFile(
-                            destinoArquivo.getFileNameWithoutExtension() + capa.getFileExtension());
-                        destinoCapa.deleteFile();
-                        if (!capa.copyFileTo(destinoCapa))
-                            resultado.falhas.push_back(ip.codigoAcervo + ": capa não pôde ser copiada junto");
+            // INBOX -> MAIN: o arquivo veio da INBOX do próprio MAIN, então é MOVIDO (a cópia acima já foi
+            // verificada por SHA-256 e registrada; só agora a original sai da INBOX). Se o hash da cópia não
+            // bate com o do catálogo, a original fica onde está. Sidecar .xmp acompanha a mídia.
+            if (!rebuild && !movidoLocalmente && destino.getParentDirectory() == raizDoMain &&
+                matriz::model::inbox::arquivoEstaNaInbox(origemUsada, raizDoMain)) {
+                std::string shaCatalogo;
+                try {
+                    auto stSha = registro.prepare("SELECT IFNULL(checksum_sha256, '') FROM arquivo WHERE id = ?");
+                    stSha.bind(1, Value::of(ip.arquivoId));
+                    if (stSha.step()) shaCatalogo = stSha.columnText(0);
+                } catch (...) {}
+                if (shaCatalogo.empty() || shaCatalogo == hashVerificado) {
+                    for (const juce::File& sidecar : {origemUsada.getSiblingFile(origemUsada.getFileName() + ".xmp"),
+                                                      origemUsada.getSiblingFile(origemUsada.getFileNameWithoutExtension() + ".xmp")}) {
+                        if (!sidecar.existsAsFile()) continue;
+                        const juce::File alvoXmp = destinoArquivo.getSiblingFile(destinoArquivo.getFileName() + ".xmp");
+                        if (alvoXmp.existsAsFile() || sidecar.copyFileTo(alvoXmp)) sidecar.deleteFile();
                     }
+                    if (origemUsada.deleteFile()) ++resultado.movidosDaInbox;
                 }
             }
 
@@ -1222,6 +1568,16 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
         } catch (const std::exception& e) {
             resultado.falhas.push_back(ip.codigoAcervo + ": " + e.what());
         }
+    }
+
+    if (resultado.movidosDaInbox > 0) {
+        const int pastasVazias = matriz::model::inbox::removerSubpastasVazias(matriz::model::inbox::pasta(raizDoMain));
+        try {
+            matriz::model::ProjectLog(pastaProjeto).appendEntry(
+                "INBOX moved into the MAIN",
+                {"Files moved (copied, SHA-256 verified, then removed from the INBOX): " + juce::String(resultado.movidosDaInbox),
+                 "Empty INBOX subfolders removed: " + juce::String(pastasVazias)});
+        } catch (...) {}
     }
 
     return resultado;

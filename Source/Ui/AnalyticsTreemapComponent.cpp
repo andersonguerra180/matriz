@@ -91,16 +91,32 @@ juce::String AnalyticsTreemapComponent::formatarTamanho(uint64_t bytes) const {
     return juce::String(bytes) + " B";
 }
 
-void AnalyticsTreemapComponent::recarregarDoBanco(matriz::db::Database& db) {
-    construirArvoreDoBanco(db);
+void AnalyticsTreemapComponent::limpar() {
+    rootNode_ = std::make_unique<AnalyticsTreemapNode>();
+    rootNode_->id = "ROOT";
+    rootNode_->name = "SPACE MAP";
+    rootNode_->isDirectory = true;
+    rootNode_->isLeaf = false;
+    noAtual_ = rootNode_.get();
+    noHover_ = nullptr;
+    noSelecionado_ = nullptr;
+    totalAssetsNoCatalogo_ = 0;
+    totalTamanhoNoCatalogo_ = 0;
+    breadcrumbs_.clear();
     recalcularLayout();
     repaint();
 }
 
-void AnalyticsTreemapComponent::construirArvoreDoBanco(matriz::db::Database& db) {
+void AnalyticsTreemapComponent::recarregarDoBanco(matriz::db::Database& db, const std::set<std::string>& itensFiltro) {
+    construirArvoreDoBanco(db, itensFiltro);
+    recalcularLayout();
+    repaint();
+}
+
+void AnalyticsTreemapComponent::construirArvoreDoBanco(matriz::db::Database& db, const std::set<std::string>& itensFiltro) {
     rootNode_ = std::make_unique<AnalyticsTreemapNode>();
     rootNode_->id = "ROOT";
-    rootNode_->name = "ALL ASSETS";
+    rootNode_->name = "SPACE MAP";
     rootNode_->isDirectory = true;
     rootNode_->isLeaf = false;
 
@@ -120,6 +136,7 @@ void AnalyticsTreemapComponent::construirArvoreDoBanco(matriz::db::Database& db)
 
         while (stmt.step()) {
             std::string itemId = stmt.columnText(0);
+            if (!itensFiltro.empty() && itensFiltro.count(itemId) == 0) continue;
             std::string titulo = stmt.columnText(1);
             std::string tipoMidia = stmt.columnText(2);
             std::string pathStr = stmt.columnText(3);
@@ -750,7 +767,7 @@ void AnalyticsTreemapComponent::mouseDown(const juce::MouseEvent& e) {
                                 juce::MessageBoxOptions()
                                     .withIconType(juce::MessageBoxIconType::InfoIcon)
                                     .withTitle("Origem Ausente")
-                                    .withMessage("O arquivo de origem não foi encontrado no caminho:\n" + targetPath)
+                                    .withMessage(juce::String::fromUTF8("O arquivo de origem não foi encontrado no caminho:\n") + targetPath)
                                     .withButton("OK"),
                                 nullptr);
                         }

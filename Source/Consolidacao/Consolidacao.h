@@ -30,6 +30,8 @@
 //   por não haver nada embutido — a verificação aqui é existência, tamanho
 //   e checksum.
 
+#include "SaidaBounce.h"
+
 namespace matriz::consolidacao {
 
 // Organização de pastas do backup (item 5). A estrutura padrão é
@@ -43,7 +45,7 @@ namespace matriz::consolidacao {
 // vai pra uma pasta "sem <campo>" em vez de desaparecer ou travar o backup
 // (§5.2 — "nunca desaparece nem trava").
 // EstruturaOriginal preserves the relative folder structure from the source path.
-enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, PastaManual, EstruturaOriginal };
+enum class NivelHierarquia { Projeto, Ano, TipoMidia, TipoArquivo, Origem, Artista, ContentType, Subject, Lista, PastaManual, EstruturaOriginal };
 
 std::string nivelHierarquiaToString(NivelHierarquia n);
 NivelHierarquia nivelHierarquiaFromString(const std::string& s); // lança std::runtime_error se desconhecido
@@ -99,8 +101,9 @@ struct ItemPlanejado {
     juce::String nomeOriginal;             // só pro display na prévia (original vs final)
     juce::String caminhoRelativoDestino;   // relativo à raiz de destino escolhida
     juce::int64 tamanhoBytes = 0;
-    bool jaConsolidado = false;            // incremental — já tem registro com o mesmo checksum, não precisa copiar de novo
+    bool jaConsolidado = false;            // incremental — arquivo existe no MAIN E o tamanho bate com o registrado (senão recopia)
     bool emConflito = false;               // caminhoRelativoDestino colide com outro item do plano
+    bool registradoDivergente = false;     // há registro e o arquivo existe, mas o tamanho não bate com o registrado (truncado/alterado)
     // Fase 2 — item que está em _SEM_PASTA no MAIN e agora tem pasta no mapa
     // do MAIN: caminho atual no MAIN (a ser movido pra caminhoRelativoDestino,
     // nunca recopiado). Vazio = sem movimento.
@@ -180,7 +183,12 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                                         bool paraExport = false,
                                         // Fase 2: folder map do usuário que alimenta PastaManual.
                                         // Vazio = sem filtro (comportamento anterior).
-                                        const std::string& mapaId = {});
+                                        const std::string& mapaId = {},
+                                        // Rebuild do MAIN: só vale como "já consolidado" o registro DESTE destino
+                                        // (os do MAIN antigo e os legados sem destino não contam).
+                                        bool estritoAoDestino = false,
+                                        // export por mapa: item sem pasta no mapa sai em _SEM_PASTA (em vez de ser excluído)
+                                        bool semPastaNaRaiz = false);
 
 // Lê/grava a hierarquia escolhida pelo operador em projeto.hierarquia_backup.
 HierarquiaBackup hierarquiaDoProjeto(matriz::db::Database& registro);
@@ -200,6 +208,23 @@ struct ResultadoConsolidacao {
     // Item 8.3 — quantas cópias receberam os marcadores como metadado
     // embutido (cue/adtl/iXML). Só WAV nesta etapa; ver MetadadoEmbutido.h.
     int arquivosComMarcadorEmbutido = 0;
+
+    // INBOX: arquivos que estavam na INBOX do MAIN e foram MOVIDOS para Media/ (copiados, verificados e só então
+    // removidos da INBOX). Vale só quando o destino é o próprio MAIN do projeto.
+    int movidosDaInbox = 0;
+
+    // Rebuild do MAIN (OpcoesRebuild): de onde veio cada cópia.
+    int copiadosDaSourcePorDivergencia = 0;       // o MAIN antigo diferia do catálogo; copiado da SOURCE
+    std::vector<std::string> mantidosDoMainAntigo;  // difere da SOURCE, mas a SOURCE não estava disponível
+    std::vector<std::string> divergentesDaSource;   // lista (código) dos copiados da SOURCE por divergência
+};
+
+// Rebuild do MAIN: a origem padrão de cada arquivo é a cópia no MAIN antigo (FONTE_REBUILD),
+// conferida contra o SHA-256 do catálogo; divergiu => SOURCE (se disponível).
+struct OpcoesRebuild {
+    juce::File fonteMedia;        // <raiz do MAIN antigo>/Media
+    std::string fonteDestinoId;   // destination_id do MAIN antigo
+    std::string descricaoFonte;   // texto pro evento PREMIS
 };
 
 // Chamado ANTES de cada arquivo, com quantos já foram processados e o total.
@@ -226,9 +251,17 @@ ResultadoConsolidacao executarConsolidacao(matriz::db::Database& registro, const
                                             const AoProgredir& aoProgredir = {},
                                             const std::set<std::string>& itensMarcadosWatermark = {},
                                             bool embutirNaCopia = false,
+                                            // Checado ENTRE OS BLOCOS de cada cópia/verificação (cancelar responde em ~1 s
+                                            // mesmo num arquivo de dezenas de GB). Vazio = nunca cancela no meio do arquivo.
+                                            const std::function<bool()>& continuar = {},
+                                            const OpcoesRebuild* rebuild = nullptr,
                                             // Thread de fundo: passe o writeMutex do projeto — as gravações no banco
                                             // de cada item o seguram (a cópia, que é longa, não). nullptr = sem lock.
                                             std::recursive_mutex* escritaRegistro = nullptr);
+
+// Apaga os "<nome>.mtz-tmp" que uma cópia interrompida deixou em Media/ (chamar no início de
+// todo Make Backup — rodar de novo continua de onde parou). Devolve quantos apagou.
+int limparTemporariosDeCopia(const juce::File& destinoMedia);
 
 // Fase 2 — move (nunca recopia) os itens de _SEM_PASTA pra pasta nova do mapa
 // do MAIN, dentro do MAIN. Não sobrescreve: destino já existente vira falha.
@@ -254,14 +287,34 @@ ResultadoMovimentos executarMovimentosSemPasta(matriz::db::Database& registro, c
 struct ResultadoExport {
     int copiados = 0;
     int foraDoMain = 0;       // ainda não entraram no MAIN: não exportados
+    int jaExistiam = 0;       // já estavam na pasta de destino: pulados, nunca sobrescritos (rodar o export de novo é seguro)
+    std::vector<std::string> jaExistiamDiferentes;  // cópia simples com tamanho diferente do original: avisa, não sobrescreve
     int comMarcaDagua = 0;
     std::vector<std::string> falhas;
     bool cancelado = false;
+    // EXPORT > Adobe Bridge
+    int bridgeEmbutidos = 0;
+    int bridgeSidecars = 0;
+    std::vector<std::string> avisos;  // colisões de nome de sidecar etc. (também vão pro log do export)
+    // EXPORT > Bounce List (modos Original/Embed/Clean)
+    int limpos = 0;             // Clean: metadados removidos
+    int rawSemLimpeza = 0;      // Clean: RAW, copiado sem limpeza
+    int tiposSemLimpeza = 0;    // Clean: formato sem limpeza implementada (PDF, HEIC...), copiado sem alteração
+    int embutidos = 0;          // Embed: ficha gravada dentro da cópia
+    int embedNaoSuportado = 0;  // Embed: formato não aceita metadado embutido
+    int sidecarsGravados = 0;   // sidecar .xmp ao lado da cópia
+    // EXPORT > Bounce List direto dos Assets (fonteOrigem): originais alterados/ausentes não saem, vão pro relatório.
+    std::vector<std::string> pulados;  // "<código>: <motivo>"
+    int conflitosResolvidos = 0;       // nomes repetidos que ganharam numeração única no plano
 };
 ResultadoExport executarExport(matriz::db::Database& registro, const juce::File& pastaProjeto,
                                const juce::File& destinoExport, const PlanoConsolidacao& plano,
                                const AoProgredir& aoProgredir, const std::set<std::string>& itensComMarcaDagua,
-                               bool embutir);
+                               bool embutir, bool formatoBridge = false,
+                               const OpcoesMetadadosSaida& metaSaida = {},
+                               // true = Bounce List direta dos Assets: lê o ORIGINAL (sem MAIN), confere o SHA-256 contra o
+                               // catálogo antes de copiar; alterado/ausente vai pra `pulados`. O original nunca é tocado.
+                               bool fonteOrigem = false);
 
 // SEM USO desde a etapa 5 (arquivo no MAIN nunca é renomeado); mantida só
 // para referência — não chamar a partir do fluxo de backup.

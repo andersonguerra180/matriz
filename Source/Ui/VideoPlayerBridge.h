@@ -9,6 +9,8 @@ typedef void* VPHandle;
 VPHandle vpCreate(void);
 void vpDestroy(VPHandle h);
 bool vpLoad(VPHandle h, const char* path);
+// true se o player nativo consegue reproduzir o arquivo (AVI/MKV/WMV com codec não suportado dão false).
+bool vpArquivoReproduzivel(const char* path);
 void vpPlay(VPHandle h);
 void vpPause(VPHandle h);
 void vpStop(VPHandle h);

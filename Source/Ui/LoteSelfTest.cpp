@@ -3,6 +3,7 @@
 #include "../Ficha/CatalogoDeFichas.h"
 #include "LoteSelfTest.h"
 #include "../Diag/Watchdog.h"
+#include "PainelMetadadosArquivo.h"
 
 #include <JuceHeader.h>
 
@@ -33,6 +34,8 @@
 #include "../Model/NomesCanonicos.h"
 #include "../Model/ProjectLog.h"
 #include "../Consolidacao/PacoteCollection.h"
+#include "../Consolidacao/BridgeXmp.h"
+#include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/Checksum.h"
 #include <exiv2/exiv2.hpp>
 #include "../Ficha/AutocompleteHistorico.h"
@@ -334,6 +337,50 @@ std::string retratoDoRegistro(matriz::db::Database& reg) {
     return s;
 }
 
+// Só inspeção visual (MATRIZ_SNAP_DIR): ficha individual x ficha em lote, em PNG.
+void rodarSnapshotsFicha() {
+    const char* dir = std::getenv("MATRIZ_SNAP_DIR");
+    if (dir == nullptr) return;
+    juce::File raiz = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                          .getChildFile("matriz_ficha_snap_" + juce::Uuid().toDashedString());
+    try {
+        std::vector<juce::File> fontes;
+        for (int i = 0; i < 3; ++i) {
+            fontes.push_back(raiz.getChildFile("S").getChildFile("faixa" + juce::String(i + 1) + ".wav"));
+            escreverWavTeste(fontes.back(), 5 * (i + 1));
+        }
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Snap";
+        params.prefixoNomenclatura = "SNP";
+        auto projeto = matriz::model::Project::criar(raiz.getChildFile("P"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        std::vector<std::string> ids;
+        for (int i = 0; i < 3; ++i) ids.push_back(inserirItemComArquivo(reg, projetoId, "SNP-" + std::to_string(i + 1), fontes[static_cast<size_t>(i)]));
+        juce::PNGImageFormat png;
+        auto gravar = [&](FichaPanelComponent& f, const char* nome) {
+            auto arq = juce::File(dir).getChildFile(nome);
+            arq.deleteFile();
+            if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                png.writeImageToStream(f.createComponentSnapshot(f.getLocalBounds()), *out);
+        };
+        FichaPanelComponent unica(pa);
+        unica.setSize(900, 1100);
+        unica.mostrarItem(ids[0]);
+        unica.setSize(900, 1100);
+        gravar(unica, "ficha_individual.png");
+        FichaPanelComponent lote(pa);
+        lote.setSize(900, 1100);
+        lote.mostrarSelecao(ids);
+        lote.setSize(900, 1100);
+        gravar(lote, "ficha_lote.png");
+    } catch (const std::exception& e) {
+        std::cout << "snapshots ficha: " << e.what() << "\n";
+    }
+    raiz.deleteRecursively();
+}
+
 void rodarTestesPacote(const Checar& checar) {
     namespace pk = matriz::consolidacao::pacote;
     using matriz::db::Value;
@@ -467,6 +514,249 @@ void rodarTestesPacote(const Checar& checar) {
                "a normal folder is not a package");
     } catch (const std::exception& e) {
         checar(false, juce::String("package selftest (export): ") + e.what());
+    }
+    std::cout << "\n-- Adobe Bridge: EXPORT (XMP) and INTAKE (read back) --\n";
+    try {
+        namespace br = matriz::consolidacao::bridge;
+        juce::File raizBr = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                                .getChildFile("matriz_bridge_selftest_" + juce::Uuid().toDashedString());
+        const juce::File src = raizBr.getChildFile("SOURCE_BR");
+        auto tiffMinimo = [](const juce::File& f, bool be) {
+            juce::MemoryOutputStream m;
+            if (!be) { m.write("II", 2); m.writeShort(42); m.writeInt(8); m.writeShort(1);
+                       m.writeShort(256); m.writeShort(3); m.writeInt(1); m.writeShort(4); m.writeShort(0); m.writeInt(0); }
+            else { m.write("MM", 2); m.writeShortBigEndian(42); m.writeIntBigEndian(8); m.writeShortBigEndian(1);
+                   m.writeShortBigEndian(256); m.writeShortBigEndian(3); m.writeIntBigEndian(1); m.writeShortBigEndian(4);
+                   m.writeShortBigEndian(0); m.writeIntBigEndian(0); }
+            f.getParentDirectory().createDirectory();
+            f.replaceWithData(m.getData(), m.getDataSize());
+        };
+        const auto jpeg = src.getChildFile("fotos/img1.jpg");
+        {
+            jpeg.getParentDirectory().createDirectory();
+            juce::Image im(juce::Image::RGB, 32, 24, true);
+            juce::FileOutputStream o(jpeg);
+            juce::JPEGImageFormat fmt;
+            fmt.writeImageToStream(im, o);
+        }
+        const auto raw1 = src.getChildFile("fotos/img2.cr2");
+        const auto raw2 = src.getChildFile("fotos/img2.dng");  // mesmo nome de sidecar que o CR2
+        const auto tif = src.getChildFile("fotos/pic.tif");
+        tiffMinimo(raw1, false);
+        tiffMinimo(raw2, false);
+        tiffMinimo(tif, true);
+        const auto psd = src.getChildFile("video/arte.psd");
+        {
+            juce::MemoryOutputStream m;
+            m.write("8BPS", 4); m.writeShortBigEndian(1); for (int i = 0; i < 6; ++i) m.writeByte(0);
+            m.writeShortBigEndian(3); m.writeIntBigEndian(1); m.writeIntBigEndian(1); m.writeShortBigEndian(8); m.writeShortBigEndian(3);
+            m.writeIntBigEndian(0);                       // color mode data
+            m.writeIntBigEndian(12 + 4);                  // image resources: 1 bloco (1005, 4 bytes)
+            m.write("8BIM", 4); m.writeShortBigEndian(1005); m.writeByte(0); m.writeByte(0); m.writeIntBigEndian(4);
+            m.writeIntBigEndian(72);
+            m.writeIntBigEndian(0);                       // layer and mask
+            m.writeShortBigEndian(0); m.writeByte(1); m.writeByte(2); m.writeByte(3);
+            psd.getParentDirectory().createDirectory();
+            psd.replaceWithData(m.getData(), m.getDataSize());
+        }
+        const auto mp4 = src.getChildFile("video/clip.mp4");
+        {
+            juce::MemoryOutputStream m;
+            m.writeIntBigEndian(24); m.write("ftyp", 4); m.write("isom", 4); m.writeIntBigEndian(0); m.write("isom", 4); m.write("mp41", 4);
+            m.writeIntBigEndian(16); m.write("mdat", 4); m.writeInt64BigEndian(0x1122334455667788LL);
+            mp4.replaceWithData(m.getData(), m.getDataSize());
+        }
+        const auto wav = src.getChildFile("video/som.wav");
+        escreverWavTeste(wav, 5);
+        const std::vector<juce::File> fontes{jpeg, raw1, raw2, tif, psd, mp4, wav};
+
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Bridge A";
+        params.prefixoNomenclatura = "BRA";
+        auto projeto = matriz::model::Project::criar(raizBr.getChildFile("A"), params);
+        const std::string projetoId = projeto->projetoId();
+        ProjetoAberto pa(std::move(projeto));
+        auto& reg = pa.projeto().registro();
+        std::vector<std::string> ids;
+        for (size_t i = 0; i < fontes.size(); ++i) ids.push_back(inserirItemComArquivo(reg, projetoId, "BRA-" + std::to_string(i + 1), fontes[i]));
+
+        const std::string mapa = pa.criarFolderMap("Mapa BR", std::nullopt);
+        const std::string fotos = pa.criarPastaAcervo("Fotos", std::nullopt, mapa);
+        const std::string videos = pa.criarPastaAcervo("Video", std::nullopt, mapa);
+        pa.adicionarItensAPasta({ids[0], ids[1], ids[2], ids[3]}, fotos);
+        pa.adicionarItensAPasta({ids[4], ids[5], ids[6]}, videos);
+        pa.adicionarPessoa("Maria");
+        for (const auto& id : ids) {
+            pa.salvarMetadado(id, "dc_title", "Show no Rio");
+            pa.salvarMetadado(id, "dc_description", "Primeira noite");
+            pa.salvarMetadado(id, "ano", "2013");
+            pa.definirTags(id, {"Show", "Maria"});
+            reg.run("INSERT INTO asset_geolocation (asset_id, city, state_province, country, locality, source) "
+                    "VALUES (?, 'Rio de Janeiro', 'RJ', 'Brasil', 'Lapa', 'USER_ADDRESS')", {Value::of(id)});
+        }
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Print, {ids[0]}, true);
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Zip, {ids[0]}, true);
+        pa.definirMarcacao(ProjetoAberto::TipoMarcacao::Watermark, {ids[0]}, true);
+
+        const juce::File media = pa.projeto().pastaMedia();
+        auto planoMain = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), media,
+                                                                    {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                    matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                    false, false, false, mapa);
+        auto resMain = matriz::consolidacao::executarConsolidacao(reg, pa.projeto().pasta(), media, planoMain);
+        checar(resMain.consolidados == 7, "setup: 7 files in the MAIN (" + juce::String(resMain.consolidados) + ")");
+
+        auto shaDe = [](const juce::File& f) { return matriz::ingest::calcularChecksums(f).sha256; };
+        std::map<std::string, std::string> hashMain;
+        for (const auto& f : media.findChildFiles(juce::File::findFiles, true, "*")) hashMain[f.getFullPathName().toStdString()] = shaDe(f);
+        const std::string retratoAntes = retratoDoRegistro(reg);
+
+        // ---- 1/2) EXPORT > Adobe Bridge
+        const juce::File saida = raizBr.getChildFile("saida_bridge");
+        saida.createDirectory();
+        auto planoExp = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), saida,
+                                                                   {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                   matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                   false, false, /*paraExport*/ true, mapa);
+        auto rExp = matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saida, planoExp, {}, {}, true, /*bridge*/ true);
+        checar(rExp.copiados == 7 && rExp.falhas.empty(), "export copied the 7 files (" + juce::String(rExp.copiados) + ")");
+        checar(saida.getChildFile("Fotos/img1.jpg").existsAsFile() && saida.getChildFile("Fotos/img2.cr2").existsAsFile() &&
+                   saida.getChildFile("Video/clip.mp4").existsAsFile() && saida.getChildFile("Video/arte.psd").existsAsFile(),
+               "the folder map structure is respected in the export");
+        const auto cJpeg = saida.getChildFile("Fotos/img1.jpg");
+        const auto cTif = saida.getChildFile("Fotos/pic.tif");
+        const auto cPsd = saida.getChildFile("Video/arte.psd");
+        const auto cMp4 = saida.getChildFile("Video/clip.mp4");
+        const auto cWav = saida.getChildFile("Video/som.wav");
+        auto temTudo = [](const std::optional<br::DadosBridge>& d) {
+            return d && d->titulo == "Show no Rio" && d->descricao == "Primeira noite" && d->dataCriacao == "2013" &&
+                   d->local == "Lapa" && d->cidade == "Rio de Janeiro" && d->estado == "RJ" && d->pais == "Brasil" &&
+                   d->pessoas == std::vector<std::string>{"Maria"} &&
+                   std::find(d->palavrasChave.begin(), d->palavrasChave.end(), "Show") != d->palavrasChave.end() &&
+                   std::find(d->palavrasChave.begin(), d->palavrasChave.end(), "Maria") != d->palavrasChave.end();
+        };
+        checar(temTudo(br::lerXmpBridge(cJpeg)), "JPEG: XMP embedded (title, description, tags, people, place, date)");
+        checar(juce::ImageFileFormat::loadFrom(cJpeg).isValid() && juce::ImageFileFormat::loadFrom(cJpeg).getWidth() == 32,
+               "JPEG still decodes after embedding");
+        checar(!saida.getChildFile("Fotos/img1.xmp").exists(), "JPEG gets NO sidecar");
+        checar(temTudo(br::lerXmpBridge(cTif)) && cTif.getSize() > tif.getSize(), "TIFF: XMP embedded in tag 700");
+        checar(temTudo(br::lerXmpBridge(cPsd)), "PSD: XMP embedded as image resource 1060");
+        checar(temTudo(br::lerXmpBridge(cMp4)), "MP4: XMP embedded as uuid box");
+        checar(temTudo(br::lerXmpBridge(cWav)), "WAV: XMP embedded as _PMX chunk");
+        {
+            juce::MemoryBlock w;
+            cWav.loadFileAsData(w);
+            const auto* b = static_cast<const juce::uint8*>(w.getData());
+            const juce::uint32 riff = juce::uint32(b[4]) | (juce::uint32(b[5]) << 8) | (juce::uint32(b[6]) << 16) | (juce::uint32(b[7]) << 24);
+            checar(riff == w.getSize() - 8, "WAV: RIFF size matches the new file size");
+            juce::MemoryBlock p;
+            cPsd.loadFileAsData(p);
+            juce::MemoryBlock p0;
+            psd.loadFileAsData(p0);
+            const auto* pb2 = static_cast<const juce::uint8*>(p.getData());
+            const auto* pb0 = static_cast<const juce::uint8*>(p0.getData());
+            checar(std::memcmp(pb2, pb0, 26) == 0 && std::memcmp(pb2 + p.getSize() - 6, pb0 + p0.getSize() - 6, 6) == 0,
+                   "PSD: header and image data are byte-identical to the original");
+            juce::MemoryBlock m4;
+            cMp4.loadFileAsData(m4);
+            checar(std::memcmp(static_cast<const char*>(m4.getData()) + 4, "ftyp", 4) == 0, "MP4: ftyp box still first");
+        }
+        const auto sc = saida.getChildFile("Fotos/img2.xmp");
+        checar(sc.existsAsFile() && sc.loadFileAsString().contains("Pessoas|Maria"),
+               "RAW: sidecar img2.xmp (name with the extension swapped), people as Pessoas|Name");
+        checar(rExp.bridgeSidecars == 1 && rExp.avisos.size() == 1 && juce::String(rExp.avisos[0]).contains("already exists"),
+               "two files wanting the same sidecar name: second one is NOT overwritten and is reported (" + juce::String((int) rExp.avisos.size()) + ")");
+        checar(matriz::model::ProjectLog(pa.projeto().pasta()).readContent().contains("Export Adobe Bridge"),
+               "the collision is registered in the export log");
+        {
+            const juce::String pacote = juce::String(br::montarPacoteXmp(br::coletarDadosBridge(reg, ids[0])));
+            checar(pacote.contains("<rdf:li>Pessoas|Maria</rdf:li>") && pacote.contains("lr:hierarchicalSubject"),
+                   "people go to lr:hierarchicalSubject Pessoas|Maria");
+            checar(!pacote.containsIgnoreCase("print") && !pacote.containsIgnoreCase("watermark") && !pacote.containsIgnoreCase("zip"),
+                   "P / W / K are not exported anywhere");
+        }
+        bool mainIntacto = true;
+        for (const auto& f : media.findChildFiles(juce::File::findFiles, true, "*"))
+            mainIntacto = mainIntacto && hashMain[f.getFullPathName().toStdString()] == shaDe(f);
+        checar(mainIntacto && media.findChildFiles(juce::File::findFiles, true, "*").size() == (int) hashMain.size(),
+               "the MAIN files keep the same hash and no file was created there");
+        checar(retratoDoRegistro(reg) == retratoAntes, "the project record is not changed by the export");
+
+        // O EXPORT normal continua como antes (sem XMP do Bridge, sem sidecar).
+        const juce::File saidaNormal = raizBr.getChildFile("saida_normal");
+        saidaNormal.createDirectory();
+        auto planoN = matriz::consolidacao::planejarConsolidacao(reg, pa.projeto().pasta(), saidaNormal,
+                                                                 {matriz::consolidacao::NivelHierarquia::PastaManual}, {},
+                                                                 matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, true,
+                                                                 false, false, true, mapa);
+        auto rN = matriz::consolidacao::executarExport(reg, pa.projeto().pasta(), saidaNormal, planoN, {}, {}, true);
+        checar(rN.copiados == 7 && rN.bridgeEmbutidos == 0 && rN.bridgeSidecars == 0 && rN.avisos.empty(),
+               "the other EXPORT items are unchanged (no Bridge XMP)");
+
+        // ---- 3) INTAKE > Adobe Bridge: lê o que saiu e aplica num projeto novo
+        matriz::model::NovoProjetoParams params2;
+        params2.nome = "Bridge B";
+        params2.prefixoNomenclatura = "BRB";
+        auto projeto2 = matriz::model::Project::criar(raizBr.getChildFile("B"), params2);
+        const std::string projetoId2 = projeto2->projetoId();
+        ProjetoAberto pb(std::move(projeto2));
+        auto& reg2 = pb.projeto().registro();
+        // O projeto novo já tem a tag "show" (minúscula) e uma tag "Old" num dos itens.
+        const auto preexistente = inserirItemComArquivo(reg2, projetoId2, "BRB-0", wav);
+        pb.definirTags(preexistente, {"show"});
+        std::map<std::string, std::string> hashSaida;
+        std::set<std::string> arquivosAntes;
+        for (const auto& f : saida.findChildFiles(juce::File::findFilesAndDirectories, true, "*")) {
+            arquivosAntes.insert(f.getFullPathName().toStdString());
+            if (f.existsAsFile()) hashSaida[f.getFullPathName().toStdString()] = shaDe(f);
+        }
+        std::vector<std::string> novos;
+        int lidos = 0;
+        for (const auto& f : {cJpeg, saida.getChildFile("Fotos/img2.cr2"), cTif, cPsd, cMp4, cWav}) {
+            const auto id = inserirItemComArquivo(reg2, projetoId2, "BRB-" + std::to_string(novos.size() + 1), f);
+            novos.push_back(id);
+            if (auto d = br::lerXmpBridge(f)) { br::aplicarDadosBridgeAoItem(reg2, id, *d); ++lidos; }
+        }
+        pb.definirTags(novos[1], {"Old"});
+        if (auto d = br::lerXmpBridge(saida.getChildFile("Fotos/img2.cr2"))) br::aplicarDadosBridgeAoItem(reg2, novos[1], *d);
+        checar(lidos == 6, "XMP read from embedded files and from the .xmp sidecar (" + juce::String(lidos) + "/6)");
+        {
+            auto tagsDe = [&](const std::string& id) { return pb.lerTags(id); };
+            const auto t0 = tagsDe(novos[0]);
+            checar(std::count(t0.begin(), t0.end(), "show") == 1 && std::count(t0.begin(), t0.end(), "Show") == 0 &&
+                       std::count(t0.begin(), t0.end(), "Maria") == 1,
+                   "same name without regard to case is the same entry (\"Show\" -> existing \"show\")");
+            const auto t1 = tagsDe(novos[1]);
+            checar(std::count(t1.begin(), t1.end(), "Old") == 1 && std::count(t1.begin(), t1.end(), "Maria") == 1,
+                   "tags are added, never replaced");
+            checar(pb.listarPessoas().size() == 1 && pb.listarPessoas()[0] == "Maria", "people from Pessoas|Name land in PEOPLE (one entry)");
+            auto st = reg2.prepare("SELECT titulo, dc_description, ano FROM item WHERE id = ?");
+            st.bind(1, Value::of(novos[0]));
+            checar(st.step() && st.columnText(0) == "Show no Rio" && st.columnText(1) == "Primeira noite" && st.columnText(2) == "2013",
+                   "title, description and EVENT DATE come back filled");
+            auto g = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(reg2, novos[0]);
+            checar(g && g->city && *g->city == "Rio de Janeiro" && g->stateProvince && *g->stateProvince == "RJ" &&
+                       g->country && *g->country == "Brasil" && g->locality && *g->locality == "Lapa",
+                   "location comes back as GEO LOCATION");
+        }
+        bool origemIntacta = true;
+        for (const auto& [caminho, h] : hashSaida) origemIntacta = origemIntacta && shaDe(juce::File(caminho)) == h;
+        std::set<std::string> arquivosDepois;
+        for (const auto& f : saida.findChildFiles(juce::File::findFilesAndDirectories, true, "*")) arquivosDepois.insert(f.getFullPathName().toStdString());
+        checar(origemIntacta && arquivosDepois == arquivosAntes, "the source files keep the same hash and no file is created in the source folder");
+
+        // ---- 4) pasta sem nenhum XMP: funciona como o INTAKE normal
+        const auto semXmp = raizBr.getChildFile("sem_xmp/a.wav");
+        escreverWavTeste(semXmp, 9);
+        juce::Image im2(juce::Image::RGB, 8, 8, true);
+        const auto semXmpJpg = raizBr.getChildFile("sem_xmp/b.jpg");
+        { juce::FileOutputStream o(semXmpJpg); juce::JPEGImageFormat fmt; fmt.writeImageToStream(im2, o); }
+        raizBr.getChildFile("sem_xmp/lixo.bin").replaceWithText("not a media file");
+        checar(!br::lerXmpBridge(semXmp) && !br::lerXmpBridge(semXmpJpg) && !br::lerXmpBridge(raizBr.getChildFile("sem_xmp/lixo.bin")),
+               "files without any XMP read as 'nothing' (no error)");
+        checar(raizBr.getChildFile("sem_xmp").getNumberOfChildFiles(juce::File::findFiles) == 3, "reading creates nothing in the folder");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("adobe bridge selftest: ") + e.what());
     }
     std::cout << "\n-- Collection package, phase 3: INTAKE of a package --\n";
     try {
@@ -1075,7 +1365,48 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.alternarMarcaR({ra, rb});
             checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}), "R on a mixed selection marks all of it (same rule as P/W/K)");
             pa.alternarMarcaR({rd});
-            checar(pa.idsMarcadosR().count(rd) == 0, "an item that is no longer in the INTAKE is never listed as marked");
+            pa.aguardarGravacoesMarcas();
+            pa.carregarMarcasRDoBanco();  // a memória é recarregada do banco (que só lista quem está em quarentena)
+            checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}) && pa.idsMarcadosR().count(rd) == 0,
+                   "an item that is no longer in the INTAKE is never listed as marked");
+
+            // Persistência: as marcas gravadas em background estão no banco depois da fila esvaziar.
+            {
+                auto st = reg.prepare("SELECT COUNT(*) FROM intake_marca_r WHERE item_id IN (?, ?)");
+                st.bind(1, Value::of(ra)); st.bind(2, Value::of(rb));
+                st.step();
+                checar(st.columnInt(0) == 2, "R marks are written to intake_marca_r by the background queue");
+            }
+            // Nenhuma consulta de intake_marca_r na message thread ao apertar R / ler os marcados.
+            {
+                auto consultas = std::make_shared<std::vector<std::string>>();
+                matriz::db::Database::definirObservadorConsultaLenta(
+                    []() { return juce::MessageManager::getInstance()->isThisTheMessageThread(); },
+                    [consultas](const std::string& sql, long long) { consultas->push_back(sql); }, 0);
+                for (int i = 0; i < 5; ++i) { pa.alternarMarcaR({rc}); (void) pa.idsMarcadosR(); }
+                matriz::db::Database::definirObservadorConsultaLenta(nullptr, nullptr, 100);
+                int deMarcaR = 0;
+                for (const auto& q : *consultas) if (q.find("intake_marca_r") != std::string::npos) ++deMarcaR;
+                checar(deMarcaR == 0, "pressing R repeatedly runs no intake_marca_r query on the message thread");
+                pa.aguardarGravacoesMarcas();
+                pa.alternarMarcaR({rc});  // 5 toques (ímpar) deixaram rc marcado; volta ao estado original
+                pa.aguardarGravacoesMarcas();
+                pa.carregarMarcasRDoBanco();
+                checar(pa.idsMarcadosR() == std::set<std::string>({ra, rb}), "rapid R toggles end in the right state");
+            }
+            // EXPLAIN QUERY PLAN: a consulta das marcas não varre item nem intake_marca_r por inteiro.
+            {
+                auto st = reg.prepare(
+                    "EXPLAIN QUERY PLAN SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1");
+                std::string plano;
+                while (st.step()) plano += st.columnText(3) + "\n";
+                std::cout << "   query plan (marcas R):\n" << plano;
+                checar(plano.find("USING INDEX idx_item_quarentena_criado") != std::string::npos ||
+                           plano.find("idx_item_quarentena") != std::string::npos,
+                       "the R-marks query uses the em_quarentena index (no full item scan)");
+                checar(plano.find("SCAN m") == std::string::npos || plano.find("SCAN i") == std::string::npos,
+                       "the R-marks query does not full-scan both tables");
+            }
 
             // Marcado com R não entra no grid de jeito nenhum (nem em lote, nem pelo "+" de um item só).
             auto emQuarentena = [&](const std::string& id) {
@@ -1119,6 +1450,390 @@ void rodarTestesLoteAjustes(const Checar& checar) {
             pa.desfazer();
             checar(contarItens(ra) == 1 && contarItens(rb) == 1, "one Undo brings the rejected items back");
             checar(contarRejeitados() == 0, "and takes their hashes out of the rejected list");
+        }
+
+        // ----- INTAKE: escala das marcas R (50.000 itens em quarentena, 20.000 marcas, metade 'hash')
+        std::cout << "\n-- INTAKE: R marks at scale (50k items / 20k marks) --\n";
+        {
+            const std::string agoraEsc = matriz::model::agoraIso8601();
+            std::vector<std::string> ids;
+            ids.reserve(50000);
+            reg.exec("BEGIN IMMEDIATE");
+            for (int i = 0; i < 50000; ++i) {
+                const std::string id = matriz::model::novoUuid();
+                ids.push_back(id);
+                reg.run("INSERT INTO item (id, projeto_id, codigo_acervo, titulo, tipo_midia, estado, criado_em, atualizado_em, em_quarentena) "
+                        "VALUES (?, ?, NULL, ?, 'digital_audio', 'capturado', ?, ?, 1)",
+                        {Value::of(id), Value::of(projetoId), Value::of("ESC-" + std::to_string(i)),
+                         Value::of(agoraEsc), Value::of(agoraEsc)});
+                if (i < 20000)
+                    reg.run("INSERT INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, ?, ?)",
+                            {Value::of(id), Value::of(i % 2 == 0 ? "hash" : "usuario"), Value::of(agoraEsc)});
+            }
+            reg.exec("COMMIT");
+
+            const auto t0 = juce::Time::getMillisecondCounter();
+            pa.carregarMarcasRDoBanco();  // (em produção roda em background)
+            const auto ms = juce::Time::getMillisecondCounter() - t0;
+            std::cout << "   loaded 20k marks in " << ms << " ms\n";
+            const auto marcadosEsc = pa.idsMarcadosR();
+            checar(marcadosEsc.size() >= 20000 && marcadosEsc.count(ids[0]) == 1 && marcadosEsc.count(ids[30000]) == 0,
+                   "20,000 marks are loaded into memory");
+
+            auto consultas = std::make_shared<std::vector<std::string>>();
+            matriz::db::Database::definirObservadorConsultaLenta(
+                []() { return juce::MessageManager::getInstance()->isThisTheMessageThread(); },
+                [consultas](const std::string& sql, long long) { consultas->push_back(sql); }, 0);
+            for (int i = 0; i < 20; ++i) { pa.alternarMarcaR({ids[30000 + i]}); (void) pa.idsMarcadosR(); }
+            matriz::db::Database::definirObservadorConsultaLenta(nullptr, nullptr, 100);
+            int deMarcaR = 0;
+            for (const auto& q : *consultas) if (q.find("intake_marca_r") != std::string::npos) ++deMarcaR;
+            checar(deMarcaR == 0, "20 rapid R presses with 50k items run no intake_marca_r query on the message thread");
+            pa.aguardarGravacoesMarcas();
+            pa.carregarMarcasRDoBanco();
+            checar(pa.idsMarcadosR().count(ids[30019]) == 1, "the 20 rapid marks reached the database");
+
+            // Enviar ao grid limpa as marcas dos itens que saem (na mesma transação).
+            reg.run("DELETE FROM item WHERE codigo_acervo IS NULL AND titulo LIKE 'ESC-%'", {});
+            pa.carregarMarcasRDoBanco();
+            checar(pa.idsMarcadosR().count(ids[0]) == 0, "marks of deleted items are gone (ON DELETE CASCADE)");
+        }
+
+        // ----- Marcações E/P/W/K/HTML persistem ao fechar/reabrir
+        std::cout << "\n-- MARKS: E/P/W/K/HTML persist across close/reopen --\n";
+        {
+            using TM = ProjetoAberto::TipoMarcacao;
+            const auto m1 = inserirItem(reg, projetoId, "MRK-1", false);
+            const auto m2 = inserirItem(reg, projetoId, "MRK-2", false);
+            const auto m3 = inserirItem(reg, projetoId, "MRK-3", false);
+            const auto m4 = inserirItem(reg, projetoId, "MRK-4", false);
+            pa.alternarMarcacao(TM::Print, {m1, m2});
+            pa.alternarMarcacao(TM::Watermark, {m2});
+            pa.alternarMarcacao(TM::Zip, {m3});
+            pa.alternarMarcacao(TM::Html, {m1, m4});
+            pa.alternarMarcadoRevisado({m3});
+            pa.definirMarcacao(TM::Html, {m4}, false);  // desmarcar também persiste
+            pa.aguardarGravacoesMarcas();
+            {
+                ProjetoAberto pb(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pb.aguardarGravacoesMarcas();  // espera a carga em background
+                checar(pb.contemMarcacao(TM::Print, m1) && pb.contemMarcacao(TM::Print, m2) && pb.contarMarcacoes(TM::Print) == 2,
+                       "P marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Watermark, m2) && pb.contarMarcacoes(TM::Watermark) == 1, "W marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Zip, m3) && pb.contarMarcacoes(TM::Zip) == 1, "K marks survive close/reopen");
+                checar(pb.contemMarcacao(TM::Html, m1) && !pb.contemMarcacao(TM::Html, m4), "HTML marks survive and an unmark persists");
+                checar(pb.itemMarcadoRevisado(m3) && !pb.itemMarcadoRevisado(m1), "E marks survive close/reopen");
+                pb.limparMarcacoes(TM::Print);
+                pb.limparTodasMarcacoes();
+                pb.aguardarGravacoesMarcas();
+            }
+            {
+                ProjetoAberto pc(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pc.aguardarGravacoesMarcas();
+                checar(pc.contarMarcacoes(TM::Print) == 0 && pc.contarMarcacoes(TM::Zip) == 0 && pc.contarMarcacoes(TM::Html) == 0 &&
+                           pc.contarMarcacoes(TM::Watermark) == 0,
+                       "cleared marks stay cleared after reopen");
+            }
+            pa.carregarMarcacoesDoBanco();
+        }
+
+        // ----- Histórico de impressão (sessões do SEND TO PRINT)
+        std::cout << "\n-- PRINT HISTORY: sessions persist, photos can be in several sessions --\n";
+        {
+            const auto p1 = inserirItem(reg, projetoId, "PRT-1", false);
+            const auto p2 = inserirItem(reg, projetoId, "PRT-2", false);
+            const auto p3 = inserirItem(reg, projetoId, "PRT-3", false);
+            checar(!pa.itemImpresso(p1), "a photo that was never printed has no printed seal");
+            pa.registrarSessaoPrint("Teste A", {p1, p2});
+            pa.registrarSessaoPrint("Teste B", {p2});
+            pa.registrarSessaoPrint("   ", {p3});  // nome vazio: nada é registrado
+            checar(pa.itemImpresso(p1) && pa.itemImpresso(p2) && !pa.itemImpresso(p3), "printed seal in memory right after the export");
+            checar(pa.sessoesPrintDoItem(p2).size() == 2 && pa.sessoesPrintDoItem(p1).size() == 1, "a photo can be in several sessions");
+            pa.aguardarGravacoesMarcas();
+            {
+                auto st = reg.prepare("SELECT COUNT(*), (SELECT COUNT(*) FROM print_sessao_item) FROM print_sessao");
+                st.step();
+                checar(st.columnInt(0) == 2 && st.columnInt(1) == 3, "2 sessions and 3 (session, photo) rows are in the project database");
+            }
+            {
+                ProjetoAberto pb(matriz::model::Project::abrir(raizAj.getChildFile("MAIN")));
+                pb.aguardarGravacoesMarcas();  // espera a carga em background
+                const auto s2 = pb.sessoesPrintDoItem(p2);
+                checar(s2.size() == 2 && s2[0].nome == "Teste A" && s2[1].nome == "Teste B", "sessions (name, order) survive close/reopen");
+                checar(pb.itemImpresso(p1) && !pb.itemImpresso(p3), "printed seals survive close/reopen");
+                checar(ProjetoAberto::descreverSessoesPrint(s2).contains("Teste A") && ProjetoAberto::descreverSessoesPrint(s2).contains("Teste B"),
+                       "tooltip text lists every session name");
+                checar(pb.obterItemResumo(p1).has_value() && pb.obterItemResumo(p1)->impresso, "the item summary used by the grid carries the printed flag");
+            }
+        }
+
+        // ----- NEST: extrair / apagar arquivos do nest
+        std::cout << "\n-- NEST: extract and delete files from a nest --\n";
+        {
+            using TM = ProjetoAberto::TipoMarcacao;
+            auto novoMembro = [&](const char* codigo, const char* data) {
+                auto f = raizAj.getChildFile(juce::String(codigo) + ".nst");
+                f.replaceWithText(codigo);
+                const auto id = inserirItemComArquivo(reg, projetoId, codigo, f);
+                definirCampoRaiz(reg, id, "data_criacao", data);
+                return std::make_pair(id, f);
+            };
+            const auto [e1, f1] = novoMembro("NXE-1", "2012-01-01 10:00:01");
+            const auto [e2, f2] = novoMembro("NXE-2", "2012-01-01 10:00:02");
+            const auto [e3, f3] = novoMembro("NXE-3", "2012-01-01 10:00:03");
+            const auto [e4, f4] = novoMembro("NXE-4", "2012-01-01 10:00:04");
+            const auto nid = pa.criarNest({e1, e2, e3, e4});
+            checar(!nid.empty() && pa.membrosDoNest(nid).size() == 4 && pa.nestDoItem(e1)->capaId == e1, "a nest of 4 with NXE-1 as cover");
+
+            // Extrair a capa: o próximo (por data) vira capa; o extraído volta ao grid como item normal.
+            pa.alternarMarcacao(TM::Print, {e1});
+            pa.extrairDoNest({e1});
+            checar(!pa.nestDoItem(e1).has_value(), "the extracted file is a normal item again");
+            checar(pa.nestDoItem(e2) && pa.nestDoItem(e2)->capaId == e2 && pa.membrosDoNest(nid).size() == 3,
+                   "when the cover is extracted the next file becomes the cover");
+            // Selecionar vários e extrair: sobra 1 → o nest se desfaz.
+            pa.extrairDoNest({e3, e4});
+            checar(!pa.nestDoItem(e2).has_value() && !pa.nestDoItem(e3).has_value() && !pa.nestDoItem(e4).has_value(),
+                   "a nest left with a single file dissolves (the file goes back to the grid)");
+            pa.desfazer();
+            checar(pa.nestDoItem(e2) && pa.membrosDoNest(nid).size() == 3, "undo of the extraction brings the nest back");
+            pa.desfazer();
+            checar(pa.nestDoItem(e1) && pa.membrosDoNest(nid).size() == 4, "undo of the first extraction restores the 4-file nest");
+
+            // Apagar do projeto (nunca do disco), a capa herda a marcação de EXPORT; um Undo desfaz tudo.
+            pa.alternarMarcacao(TM::Print, {e1});  // e1 estava com P desde antes; garante o estado conhecido
+            pa.definirMarcacao(TM::Print, {e1}, true);
+            auto contarItem = [&](const std::string& id) {
+                auto st = reg.prepare("SELECT COUNT(*) FROM item WHERE id = ?");
+                st.bind(1, matriz::db::Value::of(id));
+                st.step();
+                return static_cast<int>(st.columnInt(0));
+            };
+            pa.apagarDoNest({e1, e2});
+            checar(contarItem(e1) == 0 && contarItem(e2) == 0, "deleted files leave the project");
+            checar(f1.existsAsFile() && f2.existsAsFile(), "the original files on disk are never touched");
+            checar(pa.nestDoItem(e3) && pa.nestDoItem(e3)->capaId == e3 && pa.membrosDoNest(nid).size() == 2 && pa.contemMarcacao(TM::Print, e3),
+                   "deleting the cover leaves a 2-file nest: the next file is the cover and inherits the EXPORT mark");
+            pa.desfazer();
+            checar(contarItem(e1) == 1 && contarItem(e2) == 1 && pa.nestDoItem(e3) && pa.membrosDoNest(nid).size() == 4,
+                   "one Undo brings the deleted files and the nest back");
+            pa.apagarDoNest({e1, e2, e3});
+            checar(contarItem(e4) == 1 && !pa.nestDoItem(e4).has_value(), "deleting down to 1 file dissolves the nest");
+            pa.desfazer();
+            checar(pa.nestDoItem(e4) && pa.membrosDoNest(nid).size() == 4, "Undo restores the 4-file nest again");
+            // Capa apagada com sobra de 2+: a próxima capa herda a marca P.
+            pa.alternarMarcacao(TM::Print, {e1});
+            pa.definirMarcacao(TM::Print, {e1}, true);
+            pa.apagarDoNest({e1});
+            checar(pa.nestDoItem(e2) && pa.nestDoItem(e2)->capaId == e2 && pa.contemMarcacao(TM::Print, e2),
+                   "when the cover is deleted the next cover inherits the EXPORT mark");
+            pa.aguardarGravacoesMarcas();
+        }
+
+        // ----- Painel de metadados (INTAKE / preview): leitura pura, cards sem campos vazios
+        std::cout << "\n-- METADATA PANEL: read-only cards --\n";
+        {
+            const auto pm = inserirItem(reg, projetoId, "MDP-1", false, ".wav");
+            auto fArq = raizAj.getChildFile("MDP-1.wav");
+            fArq.replaceWithText("x");
+            reg.run("UPDATE arquivo SET caminho_absoluto_origem = ?, caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(fArq.getFullPathName().toStdString()),
+                     Value::of(R"({"duracaoSegundos":125.0,"sampleRate":48000,"canais":2,"bitDepth":24,"codec":"pcm_s24le","bruto":{}})"),
+                     Value::of(pm)});
+            pa.salvarMetadado(pm, "dc_creator", "Alguem");
+            const auto cards = PainelMetadadosArquivo::lerCards(pa, pm);
+            auto achar = [&](const char* titulo) -> const PainelMetadadosArquivo::Card* {
+                for (const auto& c : cards) if (c.titulo == titulo) return &c;
+                return nullptr;
+            };
+            checar(achar("FILE") != nullptr && achar("TECHNICAL") != nullptr, "FILE and TECHNICAL cards are present");
+            checar(achar("LOCATION / GPS") == nullptr && achar("CAMERA / EXIF") == nullptr, "cards with no field do not appear");
+            bool temDuracao = false, temVazio = false;
+            if (auto* t = achar("TECHNICAL"))
+                for (const auto& l : t->linhas) if (l.rotulo == "Duration" && l.valor == "2:05") temDuracao = true;
+            for (const auto& c : cards) for (const auto& l : c.linhas) if (l.valor.trim().isEmpty()) temVazio = true;
+            checar(temDuracao, "duration 125 s is shown as 2:05");
+            checar(!temVazio, "no empty field is ever listed");
+            const auto* d = achar("DESCRIPTIVE");
+            checar(d != nullptr && d->linhas.size() == 1 && d->linhas[0].valor == "Alguem", "descriptive card shows only what the file has (author)");
+        }
+
+        // ----- NEW FOLDERS (pasta ingerida inteira vira árvore proposta)
+        std::cout << "\n-- NEW FOLDERS: proposed tree, use, discard, merge with conflicts --\n";
+        {
+            const std::string mp = pa.criarFolderMap("Prop", std::nullopt);
+            const std::string exGaleria = pa.criarPastaAcervo("Galeria", std::nullopt, mp);
+            const std::string exLogo = pa.criarPastaAcervo("Logo", exGaleria, mp);
+            int seq = 0;
+            auto novo = [&](const juce::File& f) {
+                escreverWavTeste(f, ++seq);
+                return inserirItemComArquivo(reg, projetoId, "PRP-" + std::to_string(seq), f);
+            };
+            auto pastaDe = [&](const std::string& item) {
+                auto st = reg.prepare("SELECT p.id, p.nome, COALESCE(p.pasta_pai_id, ''), COALESCE(p.proposta_id, '') FROM acervo_item_pasta aip "
+                                      "JOIN acervo_pasta p ON p.id = aip.pasta_id WHERE aip.item_id = ? AND aip.mapa_id = ?");
+                st.bind(1, Value::of(item));
+                st.bind(2, Value::of(mp));
+                struct R { std::string id, nome, pai, prop; };
+                R r;
+                if (st.step()) r = {st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3)};
+                return r;
+            };
+            auto soltos = [&](const std::string& item) { return pa.itensSemPasta(mp).count(item) > 0; };
+
+            // 1) pasta inteira ingerida: nasce UMA proposta; os arquivos seguem em SEM PASTA
+            const auto base = raizAj.getChildFile("NovaPasta/Galeria");
+            const auto x1 = novo(base.getChildFile("x1.wav"));
+            const auto x2 = novo(base.getChildFile("Logo/x2.wav"));
+            const auto x3 = novo(base.getChildFile("Logo/x3.wav"));
+            const auto x4 = novo(base.getChildFile("Outra/x4.wav"));
+            pa.registrarPastasIngeridas({base.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "an ingested folder creates one proposed tree");
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 0, "the same folder does not create a second proposal");
+            auto props = pa.listarPropostas(mp);
+            checar(props.size() == 1 && props[0].nome == "Galeria" && props[0].arquivos == 4, "proposal: name and 4 loose files");
+            checar(soltos(x1) && soltos(x2) && soltos(x3) && soltos(x4), "the files stay in NO FOLDER until the user decides");
+            {
+                const auto arv = pa.arvoreAcervo(mp);
+                int propostas = 0;
+                std::function<void(const ProjetoAberto::NoArvore&)> cont = [&](const ProjetoAberto::NoArvore& n) {
+                    if (n.proposta) ++propostas;
+                    for (const auto& f : n.filhos) cont(f);
+                };
+                cont(arv);
+                checar(propostas == 3, "the map tree flags the 3 proposal folders (Galeria, Logo, Outra)");
+            }
+
+            // 2) mesclar na pasta existente: Logo conflita (mesmo nome) -> mescla; Outra vira subpasta nova
+            const auto dest = pa.destinosDeMescla(props[0].raizId);
+            checar(!dest.empty() && dest[0].id == exGaleria && dest[0].mesmoNome, "merge targets list the same-name folder first");
+            auto plano = pa.planoDeMescla(props[0].raizId, exGaleria, {});
+            checar(plano.size() == 1 && plano[0].alvoId == exLogo && plano[0].mesclar && plano[0].arquivos == 2,
+                   "conflict list: Logo -> existing Logo (2 files), merge by default");
+            checar(pa.mesclarProposta(props[0].raizId, exGaleria, {}) == 4, "merge places the 4 files");
+            checar(pastaDe(x1).id == exGaleria && pastaDe(x2).id == exLogo && pastaDe(x3).id == exLogo, "files went into the EXISTING folders");
+            const auto outra = pastaDe(x4);
+            checar(outra.nome == "Outra" && outra.pai == exGaleria && outra.prop.empty(), "the non-conflicting subfolder is added under the target, as a normal folder");
+            checar(pa.listarPropostas(mp).empty(), "the proposal is gone after merging");
+
+            // 3) manter separada: a decisão por conflito
+            const auto base2 = raizAj.getChildFile("Outro/Galeria");
+            const auto w1 = novo(base2.getChildFile("Logo/w1.wav"));
+            pa.registrarPastasIngeridas({base2.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "second proposal");
+            props = pa.listarPropostas(mp);
+            plano = pa.planoDeMescla(props[0].raizId, exGaleria, {});
+            checar(plano.size() == 1, "conflict Logo detected again");
+            std::map<std::string, bool> manter{{plano[0].propostaId, false}};
+            checar(pa.planoDeMescla(props[0].raizId, exGaleria, manter)[0].mesclar == false, "decision 'keep separate' is reflected in the plan");
+            checar(pa.mesclarProposta(props[0].raizId, exGaleria, manter) == 1, "merge with keep-separate places the file");
+            {
+                int logos = 0;
+                auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE pasta_pai_id = ? AND nome = 'Logo'");
+                st.bind(1, Value::of(exGaleria));
+                if (st.step()) logos = st.columnInt(0);
+                checar(logos == 2 && pastaDe(w1).id != exLogo && pastaDe(w1).prop.empty(), "kept separate: a second Logo folder under the target");
+            }
+
+            // 4) usar a árvore como está
+            const auto base3 = raizAj.getChildFile("Outro3/Show");
+            const auto y1 = novo(base3.getChildFile("y1.wav"));
+            const auto y2 = novo(base3.getChildFile("Sub/y2.wav"));
+            pa.registrarPastasIngeridas({base3.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "third proposal");
+            props = pa.listarPropostas(mp);
+            pa.usarArvoreProposta(props[0].raizId);
+            checar(pastaDe(y1).nome == "Show" && pastaDe(y2).nome == "Sub" && pastaDe(y1).prop.empty() && pastaDe(y2).prop.empty(),
+                   "USE TREE: files go to the folders of the new tree and the proposal mark is cleared");
+
+            // 5) descartar: some a árvore, arquivos ficam soltos
+            const auto base4 = raizAj.getChildFile("Outro4/Lixo");
+            const auto z1 = novo(base4.getChildFile("z1.wav"));
+            pa.registrarPastasIngeridas({base4.getFullPathName().toStdString()});
+            checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "fourth proposal");
+            props = pa.listarPropostas(mp);
+            pa.descartarProposta(props[0].raizId);
+            checar(pa.listarPropostas(mp).empty() && soltos(z1), "DISCARD: tree removed, file stays loose in NO FOLDER");
+
+            // 5b) janela flutuante NEW FOLDERS - ACTION NEEDED: no stage principal e dentro do Folder Map sobreposto
+            {
+                const auto base5 = raizAj.getChildFile("Outro5/Flutua");
+                novo(base5.getChildFile("f1.wav"));
+                pa.registrarPastasIngeridas({base5.getFullPathName().toStdString()});
+                checar(pa.gerarPropostasDeNovasPastas(mp) == 1, "fifth proposal (floating window)");
+                const auto raizProposta = pa.listarPropostas(mp)[0].raizId;
+                pa.definirMapaAtivo(mp);
+                juce::Component host;
+                host.setBounds(0, 0, 1400, 900);
+                ArvoreBackupComponent principal(pa);
+                host.addAndMakeVisible(principal);
+                principal.setBounds(0, 0, 1400, 900);
+                checar(principal.painelPropostasVisivel(), "main stage: the ACTION NEEDED window shows when there is a pending proposal");
+                // Folder Map sobreposto pelo caminho real (duplo clique): a janela também aparece lá dentro.
+                principal.abrirSobreposicao(raizProposta, "Flutua");
+                ArvoreBackupComponent* dentro = principal.mapaDaSobreposicao();
+                checar(dentro != nullptr && dentro->painelPropostasVisivel(), "overlay Folder Map: the ACTION NEEDED window shows too");
+                if (const char* dir = std::getenv("MATRIZ_SNAP_DIR")) {  // inspeção visual (opcional)
+                    juce::PNGImageFormat png;
+                    for (auto par : {std::make_pair("acao_principal.png", &principal), std::make_pair("acao_sobreposto.png", dentro)}) {
+                        if (par.second == nullptr) continue;
+                        auto arq = juce::File(dir).getChildFile(par.first);
+                        arq.deleteFile();
+                        if (auto out = std::unique_ptr<juce::FileOutputStream>(arq.createOutputStream()))
+                            png.writeImageToStream(par.second->createComponentSnapshot(par.second->getLocalBounds()), *out);
+                    }
+                }
+                principal.fecharSobreposicao();
+                pa.descartarProposta(raizProposta);
+            }
+
+            // 5c) MERGE entre duas pastas existentes (menu do canvas/explorer)
+            {
+                const std::string mm = pa.criarFolderMap("MergeFolders", std::nullopt);
+                const auto fA = pa.criarPastaAcervo("A", std::nullopt, mm);
+                const auto fB = pa.criarPastaAcervo("B", std::nullopt, mm);
+                const auto aLogo = pa.criarPastaAcervo("Logo", fA, mm);
+                const auto bLogo = pa.criarPastaAcervo("Logo", fB, mm);
+                const auto aSolta = pa.criarPastaAcervo("Solta", fA, mm);
+                const auto m1 = novo(raizAj.getChildFile("merge/m1.wav"));
+                const auto m2 = novo(raizAj.getChildFile("merge/m2.wav"));
+                const auto m3 = novo(raizAj.getChildFile("merge/m3.wav"));
+                const auto m4 = novo(raizAj.getChildFile("merge/m4.wav"));
+                pa.adicionarItensAPasta({m1}, fA);
+                pa.adicionarItensAPasta({m2}, aLogo);
+                pa.adicionarItensAPasta({m3}, bLogo);
+                pa.adicionarItensAPasta({m4}, aSolta);
+                auto pastaNoMapa = [&](const std::string& item) {
+                    auto st = reg.prepare("SELECT p.id, p.nome, COALESCE(p.pasta_pai_id, '') FROM acervo_item_pasta aip "
+                                          "JOIN acervo_pasta p ON p.id = aip.pasta_id WHERE aip.item_id = ? AND aip.mapa_id = ?");
+                    st.bind(1, Value::of(item));
+                    st.bind(2, Value::of(mm));
+                    struct R { std::string id, nome, pai; };
+                    R r;
+                    if (st.step()) r = {st.columnText(0), st.columnText(1), st.columnText(2)};
+                    return r;
+                };
+                checar(pa.podeMesclarPastas(fA, fB) && !pa.podeMesclarPastas(fA, aLogo) && !pa.podeMesclarPastas(fA, fA),
+                       "folder MERGE: allowed between siblings; blocked into its own subfolder or itself");
+                const auto planoPastas = pa.planoDeMesclaPastas(fA, fB, {});
+                checar(planoPastas.size() == 1 && planoPastas[0].alvoId == bLogo && planoPastas[0].arquivos == 1,
+                       "folder MERGE: conflict list shows the same-name subfolder (Logo -> Logo, 1 file)");
+                checar(pa.mesclarPastas(fA, fB, {}) == 2, "folder MERGE: 2 files merged (A and A/Logo); A/Solta moves whole, with its file");
+                checar(pastaNoMapa(m1).id == fB && pastaNoMapa(m2).id == bLogo && pastaNoMapa(m3).id == bLogo,
+                       "folder MERGE: files land in the target and in the target's same-name subfolder");
+                checar(pastaNoMapa(m4).nome == "Solta" && pastaNoMapa(m4).pai == fB, "folder MERGE: a subfolder without conflict moves under the target");
+                int sobrou = 0;
+                {
+                    auto st = reg.prepare("SELECT COUNT(*) FROM acervo_pasta WHERE id IN (?, ?)");
+                    st.bind(1, Value::of(fA));
+                    st.bind(2, Value::of(aLogo));
+                    if (st.step()) sobrou = st.columnInt(0);
+                }
+                checar(sobrou == 0, "folder MERGE: the source folder (and its merged subfolder) is gone");
+            }
+
+            // 6) mapa ORIGINAL nunca recebe proposta
+            checar(pa.gerarPropostasDeNovasPastas(ProjetoAberto::kMapaOriginal) == 0, "the ORIGINAL map never gets proposals");
         }
 
         // ----- NEST (camada de dados)
@@ -2942,8 +3657,8 @@ int rodarLoteSelfTest() {
         bw.atualizarTravasDoMain();
         checar(bw.mainSelado_ && !bw.configTravada_,
                "old MAIN without saved settings: not locked yet (locks on the next backup)");
-        checar(!bw.toggleEmbutirMetadados_->isVisible() && !bw.toggleForcarRebackup_->isVisible(),
-               "with a MAIN, embed and force-full-backup are gone from the add flow");
+        checar(!bw.toggleForcarRebackup_->isVisible(),
+               "with a MAIN, force-full-backup is gone from the add flow");
         bw.comboOrg_->setSelectedId(3, juce::dontSendNotification);
         bw.comboModoPrefixo_->setSelectedId(2, juce::dontSendNotification);
         bw.gravarConfigDoMain();
@@ -3232,6 +3947,144 @@ int rodarLoteSelfTest() {
         esperarAte([&] { return dw.gruposDetectados_.empty(); });
         checar(estado(b2) == "duplicata" && estado(b1) != "duplicata" && dw.gruposDetectados_.empty(),
                "most recent ingest: pair B keeps the newer file");
+
+        // ----- DUPLICATES (HD recuperado): IDENTICAL por SHA-256 e PROBABLE por pHash
+        {
+            auto gravarPng = [&](const juce::File& f) {
+                juce::Image img(juce::Image::RGB, 96, 96, true);
+                for (int y = 0; y < 96; ++y)
+                    for (int x = 0; x < 96; ++x)
+                        img.setPixelAt(x, y, juce::Colour::fromRGB(static_cast<juce::uint8>((x * 5 + y) & 255), static_cast<juce::uint8>((y * 3) & 255),
+                                                                   static_cast<juce::uint8>(((x ^ y) * 4) & 255)));
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(f);
+                if (out.openedOk()) png.writeImageToStream(img, out);
+            };
+            const auto fOrig = raizQ.getChildFile("recuperada_0001.png");
+            gravarPng(fOrig);
+            const auto fExata = raizQ.getChildFile("nome_totalmente_outro.png");
+            fOrig.copyFileTo(fExata);
+            const auto fBytes = raizQ.getChildFile("IMG_9999_recovered.png");
+            fOrig.copyFileTo(fBytes);
+            fBytes.appendData("TRAILING-RECOVERY-BYTES", 23);  // simula arquivo recuperado: bytes a mais no final
+            const auto rOrig = inserirItemComArquivo(reg, projetoId, "REC-1", fOrig);
+            const auto rExata = inserirItemComArquivo(reg, projetoId, "REC-2", fExata);
+            const auto rBytes = inserirItemComArquivo(reg, projetoId, "REC-3", fBytes);
+            reg.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});  // só o teste: cria o cenário "sem checksum"
+            reg.run("UPDATE arquivo SET checksum_sha256 = NULL WHERE item_id = ?", {Value::of(rExata)});
+            reg.run("DELETE FROM reconciliacao_em_curso", {});
+
+            // Foto em sequência: quase igual (pHash baixo), EXIF com 3 s de diferença => SIMILAR (nunca em lote).
+            const auto fSerie = raizQ.getChildFile("serie_seguinte.png");
+            fOrig.copyFileTo(fSerie);
+            fSerie.appendData("OUTROS-BYTES-DA-SERIE", 21);
+            const auto rSerie = inserirItemComArquivo(reg, projetoId, "REC-4", fSerie);
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:18:36"})")), Value::of(rOrig)});
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:18:39"})")), Value::of(rSerie)});
+            // 20 s depois: ainda é sequência (<= 30 s). 90 s depois com a MESMA imagem: pHash decide => PROBABLE.
+            const auto fLonge = raizQ.getChildFile("serie_longe.png");
+            fOrig.copyFileTo(fLonge);
+            fLonge.appendData("MAIS-BYTES-LONGE", 16);
+            const auto rLonge = inserirItemComArquivo(reg, projetoId, "REC-5", fLonge);
+            reg.run("UPDATE arquivo SET caracteristicas_tecnicas_json = ? WHERE item_id = ?",
+                    {Value::of(std::string(R"({"exifDataOriginal":"2015-04-05T11:20:06"})")), Value::of(rLonge)});
+
+            // Versão de menor resolução (foto recuperada de HD com problema): mesma imagem em 48x48 => PROBABLE.
+            const auto fPequena = raizQ.getChildFile("recuperada_miniatura.png");
+            {
+                juce::Image grande = juce::ImageFileFormat::loadFrom(fOrig);
+                juce::Image pequena = grande.rescaled(48, 48, juce::Graphics::highResamplingQuality);
+                juce::PNGImageFormat png;
+                juce::FileOutputStream out(fPequena);
+                if (out.openedOk()) png.writeImageToStream(pequena, out);
+            }
+            const auto rPequena = inserirItemComArquivo(reg, projetoId, "REC-6", fPequena);
+
+            DuplicatesWorkspaceComponent dwRec(pa);
+            dwRec.iniciarScan();
+            esperarAte([&] { return !dwRec.isThreadRunning(); }, 120000);
+            auto acharGrupo = [&](const std::string& x, const std::string& y) -> const DuplicatesWorkspaceComponent::DuplicateGroup* {
+                for (const auto& g : dwRec.gruposDetectados_)
+                    if ((g.original.itemId == x && g.duplicata.itemId == y) || (g.original.itemId == y && g.duplicata.itemId == x)) return &g;
+                return nullptr;
+            };
+            const auto* gExata = acharGrupo(rOrig, rExata);
+            const auto* gBytes = acharGrupo(rOrig, rBytes);
+            checar(gExata != nullptr && gExata->criterio == "IDENTICAL", "exact copy with another name is IDENTICAL (same SHA-256)");
+            {
+                const auto* gSerie = acharGrupo(rOrig, rSerie);
+                checar(gSerie != nullptr && gSerie->criterio == "SIMILAR", "a near-identical shot taken 3 s later is SIMILAR (manual decision)");
+                const auto* gLonge = acharGrupo(rOrig, rLonge);
+                checar(gLonge != nullptr && gLonge->criterio == "PROBABLE",
+                       "the same picture with EXIF 90 s apart: the pHash decides (PROBABLE), not a sequence");
+            }
+            {
+                const auto* gPequena = acharGrupo(rOrig, rPequena);
+                checar(gPequena != nullptr && gPequena->criterio == "PROBABLE",
+                       "a lower-resolution recovered version of the same picture is PROBABLE (the pHash ignores resolution)");
+            }
+            checar(gBytes != nullptr && gBytes->criterio == "PROBABLE" && gBytes->distanciaPHash >= 0,
+                   "renamed copy with extra trailing bytes is PROBABLE (pHash), for the user to decide");
+            {
+                auto st = reg.prepare("SELECT checksum_sha256 FROM arquivo WHERE item_id = ?");
+                st.bind(1, Value::of(rExata));
+                checar(st.step() && !st.columnText(0).empty(), "the scan computed and stored the missing checksum");
+            }
+            {
+                auto st = pa.projeto().indice().prepare("SELECT COUNT(*) FROM phash_imagem");
+                st.step();
+                checar(st.columnInt(0) >= 3, "pHash values are stored for the next scans (only what is missing is computed)");
+            }
+            // ----- Filtros do SCAN: só entra o que passa pelos filtros, em TODAS as fases
+            {
+                auto varrer = [&](const std::function<void(DuplicatesWorkspaceComponent&)>& configurar,
+                                  const std::set<std::string>& selecao) {
+                    auto dwF = std::make_unique<DuplicatesWorkspaceComponent>(pa);
+                    dwF->fornecerSelecaoDoGrid = [selecao] { return selecao; };
+                    configurar(*dwF);
+                    dwF->iniciarScan();
+                    esperarAte([&] { return !dwF->isThreadRunning(); }, 120000);
+                    auto copia = dwF->gruposDetectados_;
+                    return copia;
+                };
+                auto temItem = [](const std::vector<DuplicatesWorkspaceComponent::DuplicateGroup>& gs, const std::string& id) {
+                    for (const auto& g : gs) if (g.original.itemId == id || g.duplicata.itemId == id) return true;
+                    return false;
+                };
+                // SELECTED FILES: só os selecionados (rOrig + rExata) — nada de fora entra, nem como "original".
+                const auto selGrupos = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig, rExata});
+                checar(selGrupos.size() == 1 && temItem(selGrupos, rOrig) && temItem(selGrupos, rExata),
+                       "SELECTED FILES: only the 2 selected files take part (1 pair, nothing from outside the selection)");
+                const auto selUm = varrer([](DuplicatesWorkspaceComponent& d) { d.cbScope_->setSelectedId(2); }, {rOrig});
+                checar(selUm.empty(), "SELECTED FILES with a single file: its copies outside the selection are NOT compared");
+                // Tipo de arquivo
+                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(4); }, {}).empty(),
+                       "file type = Audio: no image pair appears");
+                checar(!varrer([](DuplicatesWorkspaceComponent& d) { d.cbFileType_->setSelectedId(2); }, {}).empty(),
+                       "file type = Image: the image pairs appear");
+                // Tamanho (os PNGs de teste têm poucos KB)
+                checar(varrer([](DuplicatesWorkspaceComponent& d) {
+                           d.cbSizeFilter_->setSelectedId(2);  // maior que
+                           d.txtSizeValue_->setText("1");
+                           d.cbSizeUnit_->setSelectedId(3);    // MB
+                       }, {}).empty(), "size > 1 MB: tiny test images are out");
+                checar(!varrer([](DuplicatesWorkspaceComponent& d) {
+                           d.cbSizeFilter_->setSelectedId(3);  // menor que
+                           d.txtSizeValue_->setText("1");
+                           d.cbSizeUnit_->setSelectedId(3);
+                       }, {}).empty(), "size < 1 MB: the test images are in");
+                // Ano (itens de teste não têm ano: fora de qualquer faixa)
+                checar(varrer([](DuplicatesWorkspaceComponent& d) { d.txtAnoDe_->setText("2099"); }, {}).empty(),
+                       "year range: items without a year never enter a restricted range");
+            }
+
+            // PROVÁVEIS nunca entram em decisão em lote.
+            dwRec.aplicarEscolhaGlobal(1);
+            esperarAte([&] { return acharGrupo(rOrig, rExata) == nullptr; }, 30000);
+            checar(acharGrupo(rOrig, rBytes) != nullptr, "VALIDATE ALL never resolves a PROBABLE group");
+        }
     } catch (const std::exception& e) {
         checar(false, juce::String("criteria selftest: ") + e.what());
     }
@@ -3413,7 +4266,7 @@ int rodarLoteSelfTest() {
                         if (feito + 1 == cancelarNoArquivo) cancela->store(true);
                         return !cancela->load();
                     },
-                    {}, false, mutexEscrita);
+                    {}, false, {}, nullptr, mutexEscrita);
                 exec->feito.store(true);
             });
             pulsos = 0;
@@ -3836,9 +4689,10 @@ int rodarLoteSelfTest() {
         checar(!bw.mainSelado_ && travados(), "no MAIN: PUBLISH / EXPORT / SPREADSHEET / SYNC locked, with the hint");
         // Pacote de collection (Fase 2): opção nova no dropdown, as de antes seguem lá.
         auto& combo = *bw.comboExportOrigem_;
-        checar(combo.getNumItems() == 6 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
+        checar(combo.getNumItems() == 8 && combo.getItemText(5).startsWith(matriz::i18n::t("export.pacote_titulo")) &&
+                   combo.getItemText(6).startsWith("Adobe Bridge") && combo.getItemText(7).startsWith("Bounce List") &&
                    combo.getItemText(0).startsWith("Selected Files"),
-               "EXPORT dropdown: the 5 options as before + Collection Package");
+               "EXPORT dropdown: the 5 options as before + Collection Package + Adobe Bridge + Bounce List");
         combo.setSelectedId(BackupWorkspaceComponent::kExpPacote, juce::sendNotificationSync);
         checar(!bw.btnExportUnificado_->isEnabled(), "no MAIN: Collection Package locked too");
         // FAZER BACKUP criou o MAIN (registro de cópia), ainda sem destino destacado.
@@ -4290,6 +5144,54 @@ int rodarLoteSelfTest() {
             antigo.setBounds(0, 0, 1400, 900);
             bombear(150);
             checar(pa.fatorCardsDoMapa(grande) == 0.0 && antigo.fatorCards_ >= 1.0, "an old arrangement with cards shrunk below 100% is discarded and re-arranged");
+
+            // Folder Map SOBREPOSTO (duplo clique): raiz = a pasta clicada; posições/tamanhos de lá não são gravados.
+            antigo.autoArranjar();  // grava posições, para comparar depois
+            const auto posicoesGravadas = [&] {
+                std::map<std::string, std::pair<int, int>> m;
+                std::function<void(const ProjetoAberto::NoArvore&)> visitar = [&](const ProjetoAberto::NoArvore& no) {
+                    if (!no.id.empty()) m[no.id] = {no.posicaoX, no.posicaoY};
+                    for (const auto& f : no.filhos) visitar(f);
+                };
+                visitar(pa.arvoreAcervo(grande));
+                return m;
+            };
+            const auto antes = posicoesGravadas();
+            int idxPai = -1;
+            for (size_t i = 0; i < antigo.nodes_.size() && idxPai < 0; ++i)
+                for (const auto& n : antigo.nodes_)
+                    if (n.pastaPaiId == antigo.nodes_[i].id) { idxPai = static_cast<int>(i); break; }
+            checar(idxPai >= 0, "overlay: the test map has a folder with subfolders");
+            if (idxPai >= 0) {
+                const auto raiz = antigo.nodes_[static_cast<size_t>(idxPai)];
+                std::set<int> desc;
+                antigo.coletarDescendentesIndices(idxPai, desc);
+                antigo.abrirSobreposicao(raiz.id, raiz.nome);
+                bombear(150);
+                ArvoreBackupComponent* dentro = nullptr;
+                if (antigo.sobreposicao_)
+                    for (auto* filho : antigo.sobreposicao_->getChildren())
+                        if (auto* a = dynamic_cast<ArvoreBackupComponent*>(filho)) dentro = a;
+                checar(dentro != nullptr && dentro->sobreposto_, "double-click on a folder card opens the Folder Map overlay");
+                if (dentro != nullptr) {
+                    checar(dentro->nodes_.size() == desc.size() + 1 && dentro->mapaAtivoId_ == antigo.mapaAtivoId_,
+                           "overlay shows only the clicked folder + its subfolders, on the same map (" +
+                               juce::String((int) dentro->nodes_.size()) + " of " + juce::String((int) desc.size() + 1) + ")");
+                    std::vector<int> todos;
+                    for (size_t i = 0; i < dentro->nodes_.size(); ++i) todos.push_back(static_cast<int>(i));
+                    dentro->autoArranjar();
+                    dentro->persistirPosicoesEmLote(todos);
+                    checar(posicoesGravadas() == antes, "overlay: arranging/moving cards there does not change the main map layout");
+                    dentro->criarNovaPasta("OVERLAY_NOVA", std::nullopt);
+                    bool sobARaiz = false;
+                    for (const auto& n : dentro->nodes_) sobARaiz |= n.nome == "OVERLAY_NOVA" && n.pastaPaiId == raiz.id;
+                    checar(sobARaiz, "overlay: a new folder is created inside the overlay's root folder");
+                }
+                antigo.fecharSobreposicao();
+                bool apareceu = false;
+                for (const auto& n : antigo.nodes_) apareceu |= n.nome == "OVERLAY_NOVA";
+                checar(antigo.sobreposicao_ == nullptr && apareceu, "EXIT closes the overlay and the main map shows what changed there");
+            }
             pa.definirMapaAtivo(mapa);
         }
 
@@ -4403,8 +5305,16 @@ int rodarLoteSelfTest() {
         tecla(juce::KeyPress::spaceKey);
         checar(abriu == mo->itemEmFoco() && !abriu.empty(), "Space opens the preview of the focused item");
         mo->aoAbrirPreview = abrirOriginal;
-        checar(!mo->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r')),
-               "in the grid, R no longer renames (it is the INTAKE's Reject key); rename is N");
+        {   // R no grid (METADATA) = tag Reject: só marca (não renomeia — renomear é N); R de novo desmarca.
+            const std::string alvoR = mo->itemEmFoco();
+            const auto rejeitado = [&] { return cw->projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvoR); };
+            const bool antes = rejeitado();
+            const bool tratou = mo->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            checar(tratou && rejeitado() != antes && !mo->itensSelecionados().empty(),
+                   "in the grid, R toggles the Reject tag on the selection (it does not rename; rename is N)");
+            mo->keyPressed(juce::KeyPress('r', juce::ModifierKeys(), (juce::juce_wchar) 'r'));
+            checar(rejeitado() == antes, "R again removes the Reject tag");
+        }
         bombear(150);
 
         // Desempenho: segurar a seta para baixo numa coleção de 15.000 itens.
@@ -4564,6 +5474,7 @@ int rodarLoteSelfTest() {
 
     rodarTestesNomesCanonicos(checar);
     rodarTestesPacote(checar);
+    rodarSnapshotsFicha();
     rodarTestesMerge(checar);
     rodarTestesLoteAjustes(checar);
     rodarTestesConexaoLeitura(checar);

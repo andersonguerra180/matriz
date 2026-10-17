@@ -398,7 +398,7 @@ void BackupFileSelectorDialog::atualizarResumoSelecao() {
     if (lblResumo_) lblResumo_->setText(textoResumo, juce::dontSendNotification);
 
     juce::String textoContador = isPt
-        ? (juce::String(totalSelecionados) + " de " + juce::String(totalVisiveis) + " visíveis")
+        ? (juce::String(totalSelecionados) + " de " + juce::String(totalVisiveis) + juce::String::fromUTF8(" visíveis"))
         : (juce::String(totalSelecionados) + " of " + juce::String(totalVisiveis) + " visible");
     if (lblContadorSelecao_) lblContadorSelecao_->setText(textoContador, juce::dontSendNotification);
 

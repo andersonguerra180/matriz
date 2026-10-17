@@ -22,6 +22,7 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
 #include "ProgressoGlobal.h"
+#include "EventBus.h"
 #include <AssetsBinaryData.h>
 #include <exiv2/exiv2.hpp>
 
@@ -322,10 +323,19 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Preset", "Preset"},
         {"DAW Session", juce::String::fromUTF8("Sessão de DAW")},
         {"Field Recording", juce::String::fromUTF8("Gravação de Campo")},
+        {"Ambience Recording", juce::String::fromUTF8("Gravação de Ambiente")},
+        {"Voiceover", juce::String::fromUTF8("Locução")},
+        {"Speech", "Depoimento"},
         {"Sound FX", "Efeitos Sonoros (SFX)"},
         {"MIDI", "MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
         {"Artist Backup", "Backup do Artista"},
+        {"Demo Tape", "Fita Demo"},
+        {"Live Concert", "Concerto ao Vivo"},
+        {"VS", "VS"},
+        {"Impulse Response", "Resposta ao Impulso (IR)"},
+        {"Mix", "Mixagem"},
+        {"Master", juce::String::fromUTF8("Masterização")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},
@@ -352,6 +362,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         // Item "CONTENT — imagens também podem ser documentos": uma imagem
         // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
         // classificação semântica de CONTENT, não altera o tipo técnico
@@ -360,13 +371,29 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
+        {"Release", "Release"},
+        {"Article", "Artigo"},
+        {"Press", juce::String::fromUTF8("Matéria")},
+        {"Text", "Texto"},
+        {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
         {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
-        {"Spreadsheet", "Planilha"},
-        {"Planilha", "Planilha"},
+        {"Sheet", "Planilha"},
+        {"Spreadsheet", "Planilha"},  // valor antigo: lido como Sheet
+        {"Zip", "Zip"},
+        {"Rar", "Rar"},
+        {"PDF", "PDF"},
+        {"Doc/Docx", "Doc/Docx"},
+        {"Markdown", "Markdown"},
+        {"Website", "Website"},
+        {"DAW", "DAW"},
+        {"NLE", "NLE"},
+        {"CSV", "CSV"},
+        {"MTZ Collection", juce::String::fromUTF8("Coleção MTZ")},
+        {"BKM Catalog", juce::String::fromUTF8("Catálogo BKM")},
         {"Hidden", juce::String::fromUTF8("Invisível")}
     };
     return mapa;
@@ -374,6 +401,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
 
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
+    if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;
@@ -388,18 +416,19 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     std::vector<juce::String> keys;
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-                "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup"};
+                "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
+                "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
                 "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D", "Document"};
+                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Document"};
     } else if (cat == MediaCategory::Docs) {
-        keys = {"Documentation", "Book", "Contract", "Manual", "Report", "Reference",
-                "Technical Documentation", "Spreadsheet"};
+        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
+                "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+                "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"};
     } else {
         std::vector<juce::String> res;
         for (auto c : {MediaCategory::Audio, MediaCategory::Video, MediaCategory::Image, MediaCategory::Docs}) {
@@ -425,6 +454,41 @@ inline std::vector<std::string> opcoesContentPorCategoriaString(MediaCategory ca
     res.reserve(juceOpts.size());
     for (const auto& s : juceOpts) res.push_back(s.toStdString());
     return res;
+}
+
+// Ícone de pasta (vetor, sem depender de emoji/fonte) ao lado do rótulo LIST: preenche o campo com o nome de uma
+// pasta do Folder Map. Filho do próprio rótulo, então some/aparece junto com a linha.
+class BotaoPastaIcone : public juce::Button {
+public:
+    BotaoPastaIcone() : juce::Button("pasta") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paintButton(juce::Graphics& g, bool sobre, bool apertado) override {
+        const auto r = getLocalBounds().toFloat().reduced(2.0f, 2.5f);
+        const float abaW = r.getWidth() * 0.45f, abaH = r.getHeight() * 0.25f;
+        juce::Path p;
+        p.addRoundedRectangle(r.getX(), r.getY(), abaW, abaH + 2.0f, 1.5f);
+        p.addRoundedRectangle(r.getX(), r.getY() + abaH, r.getWidth(), r.getHeight() - abaH, 2.0f);
+        g.setColour(tema().textoSecundario.withAlpha(apertado ? 1.0f : (sobre ? 0.95f : 0.65f)));
+        g.fillPath(p);
+    }
+};
+
+// Troca por um instante o texto de um rótulo (ex.: o badge [EDITÁVEL]) para dar retorno do que o clique fez,
+// e devolve o texto original; cliques seguidos não deixam o texto "preso".
+void avisoRapidoNoRotulo(juce::Label* rotulo, const juce::String& texto) {
+    if (rotulo == nullptr) return;
+    auto& props = rotulo->getProperties();
+    if (!props.contains("textoOriginal")) props.set("textoOriginal", rotulo->getText());
+    const int geracao = static_cast<int>(props.getWithDefault("geracaoAviso", 0)) + 1;
+    props.set("geracaoAviso", geracao);
+    rotulo->setText(texto, juce::dontSendNotification);
+    juce::Component::SafePointer<juce::Label> seguro(rotulo);
+    juce::Timer::callAfterDelay(1800, [seguro, geracao] {
+        if (seguro == nullptr) return;
+        auto& pr = seguro->getProperties();
+        if (static_cast<int>(pr.getWithDefault("geracaoAviso", 0)) != geracao) return;
+        seguro->setText(pr.getWithDefault("textoOriginal", juce::String()).toString(), juce::dontSendNotification);
+        pr.remove("textoOriginal");
+    });
 }
 
 class FichaConteudo : public juce::Component {
@@ -665,12 +729,12 @@ public:
 
         {
             juce::StringArray faltando;
-            if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add("YEAR");
-            if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add("SOURCE MEDIA");
-            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add("CONTENT");
+            if (projeto_.lerMetadado(itemId, "ano").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_ano"));
+            if (projeto_.lerMetadado(itemId, "source_media").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_source_media"));
+            if (projeto_.lerMetadado(itemId, "collection_type").value_or("").empty()) faltando.add(matriz::i18n::t("ficha.falta_content"));
             if (faltando.size() > 0) {
                 labelReviewFaltando_ = std::make_unique<juce::Label>();
-                labelReviewFaltando_->setText("Needs review: " + faltando.joinIntoString(", "),
+                labelReviewFaltando_->setText(matriz::i18n::t("ficha.precisa_revisao") + ": " + faltando.joinIntoString(", "),
                                               juce::dontSendNotification);
                 // Ajuste de layout METADATA: "Needs review" em texto preto.
                 labelReviewFaltando_->setColour(juce::Label::textColourId, juce::Colours::black);
@@ -821,7 +885,14 @@ public:
                         // não garante isso sozinho. SUBJECT é pulado aqui
                         // (tratado junto quando o loop chega no CREATOR,
                         // que já vem logo depois dele na ordem de inserção).
-                        if (cu->campoId == "subject") continue;
+                        // LIST e CONTENT também são tratados aqui: sempre na
+                        // coluna esquerda, nesta ordem, logo abaixo de SUBJECT.
+                        if (cu->campoId == "subject" || cu->campoId == "lista" || cu->campoId == "collection") {
+                            bool temCreator = false;
+                            for (auto& outro : camposUnificados_)
+                                if (outro && outro->bloco == bloco && outro->campoId == "creator") { temCreator = true; break; }
+                            if (temCreator) continue;
+                        }
                         if (cu->campoId == "creator") {
                             LinhaUnificada* cuSubject = nullptr;
                             for (auto& outro : camposUnificados_) {
@@ -845,6 +916,18 @@ public:
                             cu->editor->setBounds(x1, yLinha + 18, colW, 24);
                             y0 += alturaLinha + 24;
                             y1 += alturaLinha + 24;
+                            // LIST e CONTENT: coluna esquerda, em sequência.
+                            for (const char* id : {"lista", "collection"}) {
+                                for (auto& outro : camposUnificados_) {
+                                    if (!outro || outro->bloco != bloco || outro->campoId != id) continue;
+                                    outro->rotulo->setBounds(x0, y0, rotuloW, 16);
+                                    outro->badge->setBounds(x0 + colW - 80, y0, 80, 16);
+                                    outro->editor->setBounds(x0, y0 + 18, colW, 24);
+                                    y0 += alturaLinha + 24;
+                                    break;
+                                }
+                            }
+                            colContentGroup = 0;  // PATH/AI GENERATED seguem o CONTENT (esquerda)
                             continue;
                         }
                     }
@@ -1836,6 +1919,7 @@ private:
         std::unique_ptr<juce::Label> rotulo;
         std::unique_ptr<juce::Label> badge;
         std::unique_ptr<juce::Component> editor;
+        std::unique_ptr<juce::Component> btnPasta;  // LIST: ícone "preencher pela pasta do Folder Map" (filho do rótulo)
         std::function<void()> onCommit;
         // Valor com que o editor foi semeado (ou o último valor salvo) —
         // permite ao flush (comitarPendencias) saber se há texto digitado
@@ -1843,6 +1927,57 @@ private:
         juce::String valorSeed;
     };
     std::vector<std::unique_ptr<LinhaUnificada>> camposUnificados_;
+
+    // LIST a partir do Folder Map (item único). Clique: nome da pasta do item; novo clique em até 2 s sobe um nível;
+    // Option-clique (ou botão direito) abre a lista dos níveis. Grava pelo mesmo caminho do campo digitado.
+    struct EstadoCliquePasta { int nivel = -1; juce::int64 quando = 0; juce::String ultimoValor; };
+    void instalarBotaoPastaDaLista(LinhaUnificada& linha, const std::string& itemId) {
+        if (!linha.rotulo || !linha.editor) return;
+        auto* ed = dynamic_cast<juce::TextEditor*>(linha.editor.get());
+        if (ed == nullptr) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.lista_pasta_dica"));
+        botao->setBounds(46, 0, 22, 16);
+        auto estado = std::make_shared<EstadoCliquePasta>();
+        juce::Component::SafePointer<juce::TextEditor> edSeguro(ed);
+        juce::Label* badge = linha.badge.get();
+        auto commit = linha.onCommit;  // por valor: a linha pode ser reconstruída antes do menu fechar
+        auto aplicar = [edSeguro, badge, estado, commit](const std::vector<std::string>& cadeia, int nivel) {
+            if (edSeguro == nullptr || nivel < 0 || static_cast<size_t>(nivel) >= cadeia.size()) return;
+            const juce::String valor = juce::String::fromUTF8(cadeia[static_cast<size_t>(nivel)].c_str());
+            edSeguro->setText(valor, false);
+            estado->nivel = nivel;
+            estado->quando = juce::Time::currentTimeMillis();
+            estado->ultimoValor = valor;
+            if (commit) commit();
+            avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_nivel").replace("{n}", juce::String(nivel + 1)));
+        };
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, itemId, edSeguro, badge, estado, aplicar, botaoRaw] {
+            const auto cadeia = projeto_.cadeiaDePastasDoItem(itemId);
+            if (cadeia.empty()) {
+                avisoRapidoNoRotulo(badge, matriz::i18n::t("ficha.lista_pasta_sem_pasta"));
+                return;
+            }
+            if (juce::ModifierKeys::currentModifiers.isAltDown() || juce::ModifierKeys::currentModifiers.isPopupMenu()) {
+                juce::PopupMenu menu;
+                for (size_t i = 0; i < cadeia.size(); ++i)
+                    menu.addItem(static_cast<int>(i) + 1, juce::String(static_cast<int>(i) + 1) + " - " + juce::String::fromUTF8(cadeia[i].c_str()));
+                menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [aplicar, cadeia](int escolha) {
+                    if (escolha > 0) aplicar(cadeia, escolha - 1);
+                });
+                return;
+            }
+            const auto agora = juce::Time::currentTimeMillis();
+            const bool seguido = estado->nivel >= 0 && agora - estado->quando < 2000 && edSeguro != nullptr &&
+                                 edSeguro->getText() == estado->ultimoValor;
+            int nivel = seguido ? estado->nivel + 1 : 0;
+            if (static_cast<size_t>(nivel) >= cadeia.size()) nivel = 0;  // passou do topo da hierarquia: volta à pasta do item
+            aplicar(cadeia, nivel);
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
     std::unique_ptr<juce::Label> secHeaderDublinCore_;
     std::unique_ptr<juce::TextButton> btnAjudaDublinCore_;
     std::unique_ptr<juce::TextButton> btnCollapseDublinCore_;
@@ -2049,6 +2184,7 @@ private:
         juce::String valDcCreator = projeto_.lerMetadado(itemId, "dc_creator").value_or("");
 
         juce::String valDcSubject = projeto_.lerMetadado(itemId, "dc_subject").value_or("");
+        juce::String valLista = projeto_.lerMetadado(itemId, "lista").value_or("");
 
         juce::String valDcDescription = projeto_.lerMetadado(itemId, "dc_description").value_or("");
 
@@ -2349,7 +2485,7 @@ private:
                         // alimentam o autocomplete do projeto — "creator"/
                         // "subject" (bloco UserAsset) usam a mesma coluna
                         // dc_creator/dc_subject, então caem no mesmo histórico.
-                        if (dbColuna == "dc_subject" || dbColuna == "dc_creator" ||
+                        if (dbColuna == "dc_subject" || dbColuna == "lista" || dbColuna == "dc_creator" ||
                             dbColuna == "dc_publisher" || dbColuna == "dc_contributor") {
                             matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), dbColuna, txt);
                         }
@@ -2449,6 +2585,7 @@ private:
             ed->onReturnKey = linha->onCommit;
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
+            if (dbColuna == "lista") instalarBotaoPastaDaLista(*linhaRaw, itemId);
 
             camposUnificados_.push_back(std::move(linha));
         };
@@ -2832,6 +2969,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("codec", "CODEC", codecStr);
@@ -2861,6 +2999,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("length", isPt ? juce::String::fromUTF8("DURAÇÃO") : juce::String("LENGTH"), lengthStr);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
@@ -2889,6 +3028,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("dimensions", isPt ? juce::String::fromUTF8("DIMENSÕES") : juce::String("DIMENSIONS"), dimensionsStr);
             addAutoFixed("screen_orientation", isPt ? juce::String::fromUTF8("TELA / ORIENTAÇÃO") : juce::String("SCREEN / ORIENTATION"), orientationStr);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
@@ -2914,6 +3054,7 @@ private:
             addEditableText("event_date", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), valEventDate, "ano");
             addEditableText("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), valDcCreator, "dc_creator", true);
             addEditableText("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), valDcSubject, "dc_subject", true);
+            addEditableText("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), valLista, "lista", true);
             addAutoFixed("format", isPt ? "FORMATO" : "FORMAT", ext);
             addAutoFixed("file_size", isPt ? "TAMANHO DO ARQUIVO" : "FILE SIZE", fileSizeStr);
             addAutoFixed("pages", isPt ? juce::String::fromUTF8("PÁGINAS") : juce::String("PAGES"), pagesStr);
@@ -3795,7 +3936,9 @@ public:
                     if (linha->ehNotes)  { linhaNotes = linha;  continue; }
                     if (linha->ehPeople) { linhaPeople = linha; continue; }
                     if (linha->ehTags)   { linhaTags = linha;   continue; }
-                    bool useCol1 = (y1 < y0);
+                    // Lados da ficha individual: EVENT DATE, CREATOR e ORIGINAL SOURCE MEDIUM à direita; SUBJECT, LIST,
+                    // CONTENT, ISRC e AI GENERATED à esquerda (PEOPLE/TAGS seguem à direita, abaixo).
+                    const bool useCol1 = linha->campoId == "year" || linha->campoId == "creator" || linha->campoId == "source_media";
                     layoutLinhaEmColuna(linha, useCol1 ? x1 : x0, useCol1 ? y1 : y0, colW, 80);
                 }
 
@@ -4146,10 +4289,106 @@ private:
         bool ehDropdown = false;
         bool ehOriginalSourceMedium = false;
         std::vector<std::string> opcoes;
+        std::unique_ptr<juce::Component> btnPasta;  // LIST: ícone "preencher pelas pastas do Folder Map" (filho do rótulo)
         // Último valor semeado/aplicado — usado pelo flush (comitarPendencias)
         // pra saber se há texto digitado e ainda não aplicado nesta linha.
         juce::String valorSeed;
     };
+
+    // LIST a partir do Folder Map, em lote: cada arquivo recebe o nome da pasta DELE no nível escolhido (1 = pasta
+    // imediata). Só preenche os vazios, ou substitui tudo; mostra a prévia (quantos, valores distintos, o que será
+    // pulado) e só então grava. Um Undo para o lote todo.
+    void instalarBotaoPastaDaListaLote(LinhaLote& linha) {
+        if (!linha.rotulo || !linha.editor) return;
+        auto botao = std::make_unique<BotaoPastaIcone>();
+        botao->setTooltip(matriz::i18n::t("ficha.lista_pasta_dica_lote"));
+        botao->setBounds(46, 0, 22, 16);
+        juce::Component::SafePointer<FichaLoteConteudo> seguro(this);
+        LinhaLote* linhaPtr = &linha;
+        auto* botaoRaw = botao.get();
+        botao->onClick = [this, seguro, linhaPtr, botaoRaw] {
+            if (itemIds_.empty()) return;
+            // Quantos níveis existem (até 5) e um exemplo de cada, para o menu mostrar o que cada escolha vai gravar.
+            std::vector<std::string> exemplos(5);
+            size_t niveis = 0;
+            for (const auto& id : itemIds_) {
+                const auto cadeia = projeto_.cadeiaDePastasDoItem(id);
+                niveis = std::max(niveis, std::min<size_t>(cadeia.size(), 5));
+                for (size_t n = 0; n < std::min<size_t>(cadeia.size(), 5); ++n)
+                    if (exemplos[n].empty()) exemplos[n] = cadeia[n];
+            }
+            if (niveis == 0) {
+                if (resultado_) resultado_->setText(matriz::i18n::t("ficha.lista_pasta_lote_sem_pasta"), juce::dontSendNotification);
+                return;
+            }
+            juce::PopupMenu menu;
+            for (size_t n = 0; n < niveis; ++n) {
+                const juce::String ex = juce::String::fromUTF8(exemplos[n].c_str());
+                const juce::String base = matriz::i18n::t("ficha.lista_pasta_lote_nivel").replace("{n}", juce::String(static_cast<int>(n) + 1)).replace("{ex}", ex);
+                menu.addItem(static_cast<int>(n) * 2 + 1, base + " - " + matriz::i18n::t("ficha.lista_pasta_lote_vazios"));
+                menu.addItem(static_cast<int>(n) * 2 + 2, base + " - " + matriz::i18n::t("ficha.lista_pasta_lote_todos"));
+                if (n + 1 < niveis) menu.addSeparator();
+            }
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(botaoRaw), [this, seguro, linhaPtr](int escolha) {
+                if (escolha <= 0 || seguro == nullptr) return;
+                const int nivel = (escolha - 1) / 2;
+                const bool soVazios = ((escolha - 1) % 2) == 0;
+                auto previa = std::make_shared<ProjetoAberto::ListaPorPastaPrevia>(projeto_.previaListaPelasPastas(itemIds_, nivel, soVazios));
+                juce::String msg;
+                if (previa->itemEValor.empty()) {
+                    msg << matriz::i18n::t("ficha.lista_pasta_lote_nada");
+                } else {
+                    msg << matriz::i18n::t("ficha.lista_pasta_lote_conf")
+                               .replace("{a}", juce::String(static_cast<int>(previa->itemEValor.size())))
+                               .replace("{v}", juce::String(static_cast<int>(previa->valoresDistintos.size())))
+                               .replace("{ex}", juce::String::fromUTF8(previa->valoresDistintos.begin()->c_str()));
+                }
+                auto linhaExtra = [&](int n, const char* chave) {
+                    if (n > 0) msg << "\n- " << matriz::i18n::t(chave).replace("{n}", juce::String(n));
+                };
+                linhaExtra(previa->jaPreenchidos, "ficha.lista_pasta_lote_ja_tinha");
+                linhaExtra(previa->jaIguais, "ficha.lista_pasta_lote_ja_igual");
+                linhaExtra(previa->semPasta, "ficha.lista_pasta_lote_sem_pasta_n");
+                linhaExtra(previa->semNivel, "ficha.lista_pasta_lote_sem_nivel");
+                if (previa->itemEValor.empty()) {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("ficha.lista_pasta_lote_titulo"), msg, {},
+                                                           nullptr, juce::ModalCallbackFunction::create([](int) {}));
+                    return;
+                }
+                msg << "\n\n" << matriz::i18n::t("ficha.lista_pasta_lote_aplicar_pergunta");
+                juce::AlertWindow::showOkCancelBox(
+                    juce::MessageBoxIconType::QuestionIcon, matriz::i18n::t("ficha.lista_pasta_lote_titulo"), msg,
+                    matriz::i18n::t("ficha.lista_pasta_lote_aplicar"), matriz::i18n::t("comum.cancelar"), nullptr,
+                    juce::ModalCallbackFunction::create([this, seguro, linhaPtr, previa](int ok) {
+                        if (ok == 0 || seguro == nullptr) return;
+                        EscopoLoteAtualizacao escopoLote(*this);
+                        projeto_.aplicarListaPelasPastas(previa->itemEValor);
+                        for (const auto& v : previa->valoresDistintos)
+                            matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), "lista", v);
+                        // O campo passa a mostrar o valor comum (ou "valores múltiplos") e não conta como pendência.
+                        if (auto* ed = dynamic_cast<juce::TextEditor*>(linhaPtr->editor.get())) {
+                            std::string comum;
+                            bool iguais = true, primeiro = true;
+                            for (const auto& id : itemIds_) {
+                                const std::string v = projeto_.lerMetadado(id, "lista").value_or("");
+                                if (primeiro) { comum = v; primeiro = false; }
+                                else if (v != comum) { iguais = false; break; }
+                            }
+                            ed->setText(iguais ? juce::String::fromUTF8(comum.c_str()) : juce::String(), false);
+                            ed->setTextToShowWhenEmpty(iguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
+                            linhaPtr->valorSeed = ed->getText();
+                            piscarBordaSalvo(ed);
+                        }
+                        if (resultado_)
+                            resultado_->setText(matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(static_cast<int>(previa->itemEValor.size()))),
+                                                juce::dontSendNotification);
+                        if (aoAplicarEmLote) aoAplicarEmLote();
+                    }));
+            });
+        };
+        linha.rotulo->addAndMakeVisible(*botao);
+        linha.btnPasta = std::move(botao);
+    }
 
     struct SnapshotItem {
         std::string ano;
@@ -4411,6 +4650,7 @@ private:
             };
             addAndMakeVisible(*ed);
             linha->editor = std::move(ed);
+            if (dbColuna == "lista") instalarBotaoPastaDaListaLote(*linha);
         };
 
         auto addDropdownLote = [this, &tk](const std::string& campoId, const juce::String& rotulo, const std::string& dbColuna, const std::vector<std::string>& opcoes) {
@@ -4924,17 +5164,19 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Audio, isPt));
+                addEditableTextLote("isrc", "ISRC", "isrc");  // Áudio: ISRC logo depois do CONTENT, como na ficha individual
                 addDropdownLote("ai_generated", isPt ? "GERADO POR IA" : "AI GENERATED", "ai_generated",
                                 isPt ? std::vector<std::string>{"SIM (Gerado por IA)", "NÃO"} : std::vector<std::string>{"YES (AI Generated)", "NO"});
-                addEditableTextLote("isrc", "ISRC", "isrc");
                 addNotesLote();
                 addPeopleLote();
                 addTagsLote();
@@ -4950,11 +5192,13 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Video, isPt));
@@ -4975,11 +5219,13 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Image, isPt));
@@ -5000,11 +5246,13 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Docs, isPt));
@@ -5026,11 +5274,13 @@ private:
                 // bloco certo via ehCampoDublinCoreLote). CREATOR e EVENT
                 // DATE trocaram de posição entre si (ajuste de layout da
                 // ficha de seleção múltipla).
-                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
+                // Ordem da ficha individual: EVENT DATE antes de CREATOR.
                 // "As 3 datas do sistema" item 8: YEAR virou EVENT DATE
                 // (mesmo campo nativo "ano" por baixo — só o rótulo muda).
                 addEditableTextLote("year", isPt ? juce::String::fromUTF8("DATA DO EVENTO") : juce::String("EVENT DATE"), "ano");
+                addEditableTextLote("creator", isPt ? juce::String::fromUTF8("CRIADOR") : juce::String("CREATOR"), "dc_creator", false, true);
                 addEditableTextLote("subject", isPt ? juce::String::fromUTF8("ASSUNTO") : juce::String("SUBJECT"), "dc_subject", false, true);
+                addEditableTextLote("lista", isPt ? juce::String::fromUTF8("LISTA") : juce::String("LIST"), "lista", false, true);
                 addOriginalSourceMediumLote();
                 addDropdownLote("collection", isPt ? juce::String::fromUTF8("CONTEÚDO") : juce::String("CONTENT"), "collection_type",
                                 opcoesContentPorCategoriaString(MediaCategory::Mixed, isPt));
@@ -5096,6 +5346,18 @@ private:
         projeto_.iniciarGrupoUndo("Batch edit: " + linha->campoId);
         EscopoLoteAtualizacao escopoLote(*this);
         int sucessos = 0, falhas = 0;
+        // Barra do rodapé "3 / 580" enquanto o lote roda (continua síncrono, numa transação só; a barra se
+        // pinta sozinha com o loop parado — ver BarraProgressoGlobalComponent). Não toma o lugar de outra
+        // tarefa em andamento (ex.: ingest).
+        const juce::String kIdTarefa = "batch_metadata";
+        const bool comProgresso = itemIds_.size() > 1 && !ProgressoGlobal::obterInstancia().estaExecutando();
+        if (comProgresso) {
+            const juce::String campo = linha->rotulo ? linha->rotulo->getText() : juce::String(linha->campoId);
+            ProgressoGlobal::obterInstancia().iniciarTarefa(
+                kIdTarefa, matriz::i18n::t("ficha.lote_progresso_titulo").replace("{campo}", campo),
+                static_cast<int>(itemIds_.size()), nullptr, "", false, true);
+        }
+        int concluidos = 0;
         // Fase 2b (freeze de edição em lote): uma transação só pros N itens
         // em vez de uma implícita por INSERT/UPDATE (salvarMetadado/
         // adicionarTag/removerTag chamados por item, dentro do loop
@@ -5108,6 +5370,14 @@ private:
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacao = false;
         try { dbLote.exec("BEGIN IMMEDIATE"); emTransacao = true; } catch (...) {}
+        // Eventos por item (salvarMetadado/tags) viram UM evento de lote no fim; o guard garante o
+        // finalizarLote() mesmo se algo lançar, para o EventBus nunca ficar preso em modo lote.
+        struct LoteEventos {
+            bool ativo = true;
+            LoteEventos() { EventBus::obterInstancia().iniciarLote(); }
+            void fim() { if (ativo) { ativo = false; EventBus::obterInstancia().finalizarLote(); } }
+            ~LoteEventos() { fim(); }
+        } loteEventos;
         std::map<std::string, std::string> tagCanonica;  // grafia do projeto, resolvida uma vez por tag
         for (const auto& id : itemIds_) {
             try {
@@ -5166,11 +5436,13 @@ private:
                                           juce::Time::getCurrentTime().toISO8601(true) +
                                           " erro=" + juce::String(e.what()));
             }
+            if (comProgresso) ProgressoGlobal::obterInstancia().atualizarProgresso(kIdTarefa, ++concluidos);
         }
         if (emTransacao && !commitOuReverter(dbLote, itemIds_)) {
             sucessos = 0;
             falhas = static_cast<int>(itemIds_.size());
         }
+        loteEventos.fim();
         projeto_.finalizarGrupoUndo();
         juce::Logger::writeToLog("[ficha-lote] campo='" + juce::String(linha->campoId) + "' aplicado em " +
                                   juce::String(sucessos) + " item(ns), " + juce::String(falhas) +
@@ -5180,7 +5452,7 @@ private:
         // Fase 4: mesmos 4 campos do modo single alimentam o autocomplete
         // do projeto (uma vez por aplicação, não por item — é o mesmo
         // valor pros itens selecionados).
-        if (sucessos > 0 && (linha->colunaDb == "dc_subject" || linha->colunaDb == "dc_creator" ||
+        if (sucessos > 0 && (linha->colunaDb == "dc_subject" || linha->colunaDb == "lista" || linha->colunaDb == "dc_creator" ||
                               linha->colunaDb == "dc_publisher" || linha->colunaDb == "dc_contributor")) {
             matriz::ficha::AutocompleteRepository::registrar(projeto_.projeto().registro(), linha->colunaDb, val.toStdString());
         }
@@ -5201,6 +5473,7 @@ private:
         juce::String texto = matriz::i18n::t("ficha.lote_resultado").replace("{sucessos}", juce::String(sucessos));
         if (falhas > 0) texto += matriz::i18n::t("ficha.lote_resultado_falhas").replace("{falhas}", juce::String(falhas));
         if (resultado_) resultado_->setText(texto, juce::dontSendNotification);
+        if (comProgresso) ProgressoGlobal::obterInstancia().concluirTarefa(kIdTarefa, texto);
 
         if (sucessos > 0) piscarBordaSalvo(dynamic_cast<juce::TextEditor*>(linha->editor.get()));
         if (aoAplicarEmLote) aoAplicarEmLote();
@@ -5273,6 +5546,12 @@ private:
         std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
         bool emTransacaoGeo = false;
         try { dbGeoLote.exec("BEGIN IMMEDIATE"); emTransacaoGeo = true; } catch (...) {}
+        struct LoteEventosGeo {  // idem aplicarCampoAgora: eventos por item saem como um evento de lote
+            bool ativo = true;
+            LoteEventosGeo() { EventBus::obterInstancia().iniciarLote(); }
+            void fim() { if (ativo) { ativo = false; EventBus::obterInstancia().finalizarLote(); } }
+            ~LoteEventosGeo() { fim(); }
+        } loteEventosGeo;
         for (const auto& id : itemIds_) {
             try {
                 auto existenteOpt = matriz::analytics::AssetGeolocationRepository::obterPorAssetId(dbGeoLote, id);
@@ -5317,6 +5596,7 @@ private:
             }
         }
         if (emTransacaoGeo) commitOuReverter(dbGeoLote, itemIds_);
+        loteEventosGeo.fim();
         projeto_.finalizarGrupoUndo();
         if (ehLote) {
             ProgressoGlobal::obterInstancia().concluirTarefa(

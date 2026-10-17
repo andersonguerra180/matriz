@@ -22,6 +22,19 @@ void gravarLocale(const juce::String& locale);
 juce::String lerGeminiApiKey();
 void gravarGeminiApiKey(const juce::String& key);
 
+// Preferência simples (texto) por chave
+juce::String lerPreferenciaTexto(const juce::String& chave, const juce::String& padrao = {});
+void gravarPreferenciaTexto(const juce::String& chave, const juce::String& valor);
+
+// Quem é "você" nas conversas do WhatsApp (nome do autor)
+juce::String lerVoceWhatsapp();
+void gravarVoceWhatsapp(const juce::String& autor);
+
+// Conversas do WhatsApp pelo Wi-Fi: chave de pareamento e porta do servidor local
+juce::String lerChaveWhatsapp();
+int lerPortaWhatsapp();
+void gravarPortaWhatsapp(int porta);
+
 // Theme preference: "dark", "light". Default "dark".
 juce::String lerTema();
 void gravarTema(const juce::String& tema);

@@ -208,7 +208,7 @@ void RescanProgressModalDialog::timerCallback() {
                                 juce::String::fromUTF8(" arquivos — ") + formatRemainingTime(remaining), juce::dontSendNotification);
             } else {
                 lblEta_.setText("Scanning " + juce::String(processed) + " of " + juce::String(total) +
-                                " files — " + formatRemainingTime(remaining), juce::dontSendNotification);
+                                juce::String::fromUTF8(" files — ") + formatRemainingTime(remaining), juce::dontSendNotification);
             }
         } else {
             lblEta_.setText(isPt ? (juce::String::fromUTF8("Escaneando ") + juce::String(processed) + " de " + juce::String(total) + " arquivos...")

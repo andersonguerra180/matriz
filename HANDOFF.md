@@ -4,6 +4,58 @@ Estado da investigação de crash/freeze em andamento. Atualizar ao fim de
 cada tarefa: branch/commit atuais, o que mudou, o que falta, decisões que
 não devem ser revertidas.
 
+## Lista de 11 itens (2026-10-08, branch `rebuild-main`)
+
+Feitos (um commit cada, build Debug `build/` compilando; NÃO testados no app ainda, nem ASan/TSan):
+7 cancelar ingest de pasta, 9 aviso do Intake só fecha no DONE, 11 ingest parado em 0% com duplicatas puladas,
+10 vídeo sem waveform, 4 SPREAD H/V centrados em 0, 5 CONTENT Doc/Docx, 3 progresso no rodapé na edição em
+lote da ficha, 8 `.mtz`/`.bkm` com ícone e abertura pelo Finder. Decisões:
+
+- **CANCEL do modal de ingest**: o modal de scan vira o do lote e o CANCEL é religado a `cancelarLoteIngest`
+  (`setOnCancelChoice`). `cancelarLoteIngest` sem lote rodando (`!loteEmCurso_`, `pendentes_ <= 0`, sem
+  finalização) fecha o modal. Sem isso ele ficava em "rolling back" para sempre.
+- **`finishWithNotice` não fecha sozinho** (era 1,5 s); só no DONE.
+- **Progresso de lote síncrono**: `pintarAgora()` (PinturaImediata_mac.mm/_win.cpp) pinta um componente sem
+  despachar mensagens (setNeedsDisplayInRect + displayIfNeeded + CATransaction flush). A barra do rodapé só usa
+  isso quando o timer dela está parado > 150 ms. NÃO trocar por runDispatchLoopUntil (reentrância).
+- **Tipos de documento**: via `PLIST_TO_MERGE` (UTIs `com.bkr.matriz.collection`/`.catalog`), não
+  `DOCUMENT_EXTENSIONS` do JUCE (aponta o ícone para "Icon", que não existe; o bundle usa AppIcon.icns).
+
+Depois, no mesmo dia: **2** R no grid (TipoMarcacao::Rejeitado, `item_marcacao.tipo 'reject'`) só marca +
+SHOW REJECTED logo abaixo de HIDE EDITED (apagar é pelo delete normal, a partir dessa lista); **6** duplo clique
+no folder-card abre o Folder Map sobreposto (raiz = pasta clicada; dentro dele o duplo clique renomeia). No modo
+sobreposto (`sobreposto_`) posições/tamanhos NÃO são gravados (persistirPosicoesEmLote/persistirEscalas/fator do
+AJUSTAR/posição de pasta nova) — senão o layout do mapa principal era sobrescrito com coordenadas da sobreposição.
+**1** app pesado: medido com `sample` no app em uso — custo de CPU na thread principal do Folder Map (COUNT(*) no
+banco a cada paint em desenharSemPasta; coletarDescendentesIndices quadrático no clique), ambos corrigidos.
+Memória estável (footprint ~234 MB em 50 min), sem sinal de vazamento. Próximos suspeitos, se continuar pesado:
+o refresh do Intake a cada 1,5 s durante ingest (IntakeWorkspaceComponent::aplicarSnapshot ~150 ms com Intake
+grande, ver perf.log de 2026-10-07 23:13) e atualizarPainelDetalhe (consulta por clique).
+
+## Lote de 19 modificações (2026-10-04/05, branch `windows-port`)
+
+Commits (ver `git log`): Fase 0 `4d604c8` (17), `fabd9fa` (18), `008bf9e` (19) + race do observador de SQL;
+Fase 1 `f11c1d5` (2), `e56fd8e` (11), marcas persistentes (3); Fase 2 `096b735` (1); Fase 3 `c793aaa` (6-10, 15);
+Fase 4 `548c604` (5, 12, 13); Fase 5 `1f81b78` (4, 14); Fase 6 `d1783af` (16). Decisões que não devem ser revertidas:
+
+- **Autocorreções saíram de `Project::abrir()`**: passos 5/6 (tipo_midia, caminho_absoluto_origem) + limpeza de `intake_marca_r`
+  rodam em `Project::executarAutocorrecoes()` numa thread própria (blocos de 500/transação); passo 6 não repete a busca por 7 dias
+  (`arquivo.origem_verificada_em`). `Project::abrir(pasta, CancelamentoAbertura*)` cancela de verdade (flag + `sqlite3_interrupt`);
+  `carregamentoEmVoo()` é liberada em todos os caminhos (guard `Liberar`). Passos 0-4 continuam na abertura, só com tempo medido.
+- **Marcas em memória + fila serial `poolMarcas_`** (ProjetoAberto): R (`intake_marca_r`), P/W/K/HTML (`item_marcacao`), sessões de
+  impressão (`print_sessao`, `print_sessao_item`). Memória na hora, banco em background numa transação por operação; a carga do banco
+  só vale se não houve toque/gravação pendente (`versaoMarcacoes_`, `gravacoesMarcasPendentes_`). `~ProjetoAberto` espera a fila.
+  `item.marcado_publicacao` NÃO é usada (tabela própria, para não mexer na linha de `item`).
+- **Checksum de master**: o gatilho `arquivo_master_travado` proíbe mudar checksum; o SCAN de DUPLICATES só PREENCHE checksum vazio,
+  usando a marca `reconciliacao_em_curso` dentro da transação. Nunca trocar um checksum existente.
+- **Diagnóstico**: `Database::definirObservadorConsultaLenta` (Main.cpp) loga no Watchdog SQL > 100 ms na message thread.
+- **Nest**: clicar na coluna do preview agora só mostra o arquivo; a capa muda pelo menu ("Use as cover").
+- Builds `build-asan`/`build-tsan` (alvo `matriz`): `--selftest-lote` passa em ambas. `--selftest-uitest` = as mesmas 42 falhas do
+  baseline; `--selftest-mosaico-10k` passa mas aborta no encerramento (destrutor de fonte estática do JUCE) — não investigado.
+  Cuidado: arquivo editado DURANTE um build pode ficar com objeto "mais novo" que a fonte — `touch` e recompile.
+- Não testado em uso real (só self-tests): aviso dos 45 s/CANCELAR, tempo de abertura da collection grande, selos/tooltips,
+  painel de metadados, cards de analytics, importação de favoritos.
+
 ## Branch atual e último commit
 
 - **Versão principal desde 2026-10-01**: a `main` aponta para o último commit de
@@ -761,3 +813,12 @@ Um commit por item (A `07da593`, B `983a6c8`, C `9796ab7`, D `c1d356d`, E `e5778
   Fase 1 dos nomes canônicos, anterior a esta branch). ASan/TSan NÃO rodados nesta branch (não mexe em
   `inMemoryRelinkedPaths_`, sets de marcação nem callbacks com `this`; callbacks novos capturam
   SafePointer ou só o ponteiro do banco). Telas conferidas por PNG (`createComponentSnapshot`).
+
+## Aba BACKUP — layout em fluxo (2026-10-08)
+
+Só layout (BackupWorkspaceComponent.cpp: resized/paint/ConfigContainerComponent). ASSETS (prévia) à esquerda com
+título; SELECTION/VERSIONS/STRUCTURE/OPTIONS à direita (mesma largura de antes); rodapé virou card: export à
+esquerda (PUBLISH · SYNC · dropdown [×] · EXPORT), botão principal à direita. Setas (tk.acento) e números 1–6 só
+desenhados nos vãos, só na Coleção (Catálogo sem fluxo). Setas entre cards no ConfigContainer (rolam junto);
+ASSETS→SELECTION e OPTIONS→botão no paint do workspace. Snapshot: test-output/backup_config_locked.png.
+Não verificado no app real: tema escuro, janela pequena, backup/export/sync rodando.

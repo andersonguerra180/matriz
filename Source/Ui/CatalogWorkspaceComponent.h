@@ -27,6 +27,8 @@ public:
     ~CatalogWorkspaceComponent() override;
 
     void recarregar();
+    // Ícone de refresh do rodapé: relê do banco a seleção (cards + ficha); `completo` recarrega o grid inteiro.
+    void atualizarMetadados(bool completo);
     void filtrarPorChave(const std::string& chave);
     void filtrarPorIds(std::set<std::string> ids);
     std::set<std::string> itensSelecionados() const;
@@ -60,6 +62,8 @@ private:
         int img = 0;
         int doc = 0;
         int sessao = 0;
+        int outros = 0;  // OTHERS: o que nenhuma categoria reconhece (inclusive extensão desconhecida)
+        int phoneDump = 0;
         int revisao = 0;
         int vulneraveis = 0;
         int mergeConflitos = 0;
@@ -68,12 +72,14 @@ private:
         std::vector<std::pair<int, int>> anos;
         std::vector<std::pair<std::string, int>> collections;
         std::vector<std::pair<std::string, int>> subjects;
+        std::vector<std::pair<std::string, int>> listas;
     };
 
     void construirSidebar();
     void construirFiltroAnos();
     void construirFiltroCollection();
     void construirFiltroSubject();
+    void construirFiltroLista();
     void aplicarFiltroAno();
     void aplicarFiltrosAdicionais();
     // Só repinta o destaque dos botões de ano/combo de collection a partir de
@@ -213,6 +219,7 @@ private:
     std::unique_ptr<juce::TextButton> btnOcultarEditados_;
     std::unique_ptr<juce::TextButton> btnOcultarNaoSelecionados_;
     std::unique_ptr<juce::TextButton> btnMostrarRecentes_;
+    std::unique_ptr<juce::TextButton> btnMostrarBounce_;          // toggle: só os arquivos com tag B (Bounce List)
     std::unique_ptr<juce::TextButton> btnIncluirOcultosSelecao_;  // override: seleção também vale para o que o filtro esconde
     std::unique_ptr<juce::TextButton> btnSelecionarTodos_;
     std::unique_ptr<juce::TextButton> btnLimparSelecao_;
@@ -220,6 +227,12 @@ private:
     bool ocultarEditados_ = false;
     bool ocultarNaoSelecionados_ = false;
     bool mostrarApenasRecentes_ = false;
+    bool mostrarApenasBounce_ = false;     // soma com os outros filtros (não zera nada)
+    bool refreshBouncePendente_ = false;   // agrupa eventos de marcação B numa única refiltragem
+    void atualizarBotaoBounce();           // rótulo/cor: OFF, ou ON com a contagem "(n)"
+    std::unique_ptr<juce::TextButton> btnMostrarRejeitados_;      // toggle: só os arquivos com tag R (SHOW REJECTED)
+    bool mostrarApenasRejeitados_ = false;
+    void atualizarBotaoRejeitados();
     bool incluirOcultosNaSelecao_ = false;  // OFF (padrão): edição em lote só nos itens visíveis na grade
     std::set<std::string> selecaoEfetivaVista_;  // última seleção efetiva que a ficha recebeu
     void atualizarRotuloSelecionados();
@@ -228,11 +241,13 @@ private:
     std::vector<std::string> caminhoNavegacao_;
     std::unique_ptr<juce::Label> lblCaminhoNavegacao_;
 
+    std::unique_ptr<juce::TextButton> btnFiltroOpcoes_;
+    void sincronizarFiltroOpcoesDropdown();
+
     struct SecaoSidebar { int indicePrimeiro; juce::String titulo; };
     std::vector<SecaoSidebar> secoesSidebar_;
     std::vector<std::pair<juce::String, juce::Rectangle<int>>> secaoHeaderBounds_;
-    // Cards da coluna esquerda (item 7): um retângulo por seção
-    // (LIBRARY / MEDIA TYPE / DATE), pintado com borda própria em paint().
+    // Cards da coluna esquerda: um retângulo por seção (VIEW, FILTERS), pintado com borda própria em paint().
     std::vector<juce::Rectangle<int>> secaoCardBounds_;
 
     struct SidebarButtonLookAndFeel : public juce::LookAndFeel_V4 {
@@ -242,18 +257,27 @@ private:
     };
     SidebarButtonLookAndFeel sidebarButtonLf_;
 
-    // HOME ("All Assets"): desenha o ícone home.png (fundo branco removido no
-    // carregamento) na metade de cima do botão e o rótulo logo abaixo — por
-    // isso o botão tem o dobro da altura dos demais itens da coluna.
-    struct HomeButtonLookAndFeel : public juce::LookAndFeel_V4 {
-        HomeButtonLookAndFeel();
+    struct ResetButtonLookAndFeel : public juce::LookAndFeel_V4 {
         juce::Font getTextButtonFont(juce::TextButton&, int) override {
-            return juce::Font(juce::FontOptions(11.0f));
+            return juce::Font(juce::FontOptions(12.0f, juce::Font::bold));
         }
-        void drawButtonText(juce::Graphics&, juce::TextButton&, bool, bool) override;
-        juce::Image icone;
+        void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool sobre, bool apertado) override {
+            auto bounds = b.getLocalBounds().toFloat().reduced(0.5f);
+            juce::Colour bg(0xff16a34a);
+            if (apertado) bg = bg.darker(0.15f);
+            else if (sobre) bg = bg.brighter(0.12f);
+            g.setColour(bg);
+            g.fillRoundedRectangle(bounds, 4.0f);
+            g.setColour(juce::Colour(0xff15803d));
+            g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
+        }
+        void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.drawText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, true);
+        }
     };
-    HomeButtonLookAndFeel homeButtonLf_;
+    ResetButtonLookAndFeel resetButtonLf_;
 
     std::vector<CategoriaItem> categorias_;
     int categoriaSelecionada_ = 0;
@@ -304,6 +328,10 @@ private:
     std::unique_ptr<juce::ComboBox> comboSubject_;
     std::vector<std::pair<std::string, int>> subjectsDisponiveis_;
     std::optional<std::string> subjectSelecionado_;
+    // LIST (card CONTENT TYPE): filtra por UMA lista/seleção (item.lista, valor único).
+    std::unique_ptr<juce::ComboBox> comboLista_;
+    std::vector<std::pair<std::string, int>> listasDisponiveis_;
+    std::optional<std::string> listaSelecionada_;
 
     juce::ThreadPool poolMiniaturas_{juce::ThreadPoolOptions{}.withThreadName("MatrizMiniGen")
                                      .withNumberOfThreads(1)

@@ -21,13 +21,22 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Multitracks", "Multitracks"},
         {"Sample Pack", "Pacote de Samples"},
         {"Sample", "Sample"},
-        {"Preset", "Preset / Predefinição"},
+        {"Preset", juce::String::fromUTF8("Preset / Predefinição")},
         {"DAW Session", juce::String::fromUTF8("Sessão de DAW")},
         {"Field Recording", juce::String::fromUTF8("Gravação de Campo")},
+        {"Ambience Recording", juce::String::fromUTF8("Gravação de Ambiente")},
+        {"Voiceover", juce::String::fromUTF8("Locução")},
+        {"Speech", "Depoimento"},
         {"Sound FX", "Efeitos Sonoros (SFX)"},
         {"MIDI", "Arquivo MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo de Artista")},
         {"Artist Backup", "Backup do Artista"},
+        {"Demo Tape", "Fita Demo"},
+        {"Live Concert", "Concerto ao Vivo"},
+        {"VS", "VS"},
+        {"Impulse Response", "Resposta ao Impulso (IR)"},
+        {"Mix", "Mixagem"},
+        {"Master", juce::String::fromUTF8("Masterização")},
         // Video
         {"Raw Footage", juce::String::fromUTF8("Gravação Bruta")},
         {"Home Video", juce::String::fromUTF8("Vídeo Caseiro")},
@@ -54,22 +63,40 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Graphics", juce::String::fromUTF8("Gráficos / Design")},
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
+        {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
+        {"Release", "Release"},
+        {"Article", "Artigo"},
+        {"Press", juce::String::fromUTF8("Matéria")},
+        {"Text", "Texto"},
+        {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
         {"Technical Documentation", juce::String::fromUTF8("Documentação Técnica")},
-        {"Spreadsheet", "Planilha"},
-        {"Planilha", "Planilha"}
+        {"Sheet", "Planilha"},
+        {"Spreadsheet", "Planilha"},  // valor antigo: lido como Sheet
+        {"Zip", "Zip"},
+        {"Rar", "Rar"},
+        {"PDF", "PDF"},
+        {"Doc/Docx", "Doc/Docx"},
+        {"Markdown", "Markdown"},
+        {"Website", "Website"},
+        {"DAW", "DAW"},
+        {"NLE", "NLE"},
+        {"CSV", "CSV"},
+        {"MTZ Collection", juce::String::fromUTF8("Coleção MTZ")},
+        {"BKM Catalog", juce::String::fromUTF8("Catálogo BKM")}
     };
     return mapa;
 }
 
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
+    if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;

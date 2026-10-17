@@ -23,6 +23,7 @@ public:
 
 private:
     void atualizarVisual();
+    juce::Rectangle<int> areaBarra() const;  // única fonte da posição da barra (paint e resized)
 
     EstadoProgresso estado_;
     std::unique_ptr<juce::Label> lblTitulo_;

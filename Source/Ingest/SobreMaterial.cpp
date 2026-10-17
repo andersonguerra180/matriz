@@ -1,0 +1,176 @@
+#include "SobreMaterial.h"
+
+#include <JuceHeader.h>
+
+#include <algorithm>
+#include <set>
+
+#include "../Ficha/AutocompleteHistorico.h"
+#include "../Model/NomesCanonicos.h"
+#include "../Model/NotasEstruturadas.h"
+#include "../Model/Project.h"
+
+namespace matriz::ingest {
+
+using matriz::db::Value;
+
+std::shared_ptr<const SobreMaterial> comTagAutomatica(std::shared_ptr<const SobreMaterial> sobre, const std::string& tag) {
+    auto copia = sobre != nullptr ? std::make_shared<SobreMaterial>(*sobre) : std::make_shared<SobreMaterial>();
+    const bool tem = std::any_of(copia->tags.begin(), copia->tags.end(),
+                                 [&](const std::string& x) { return juce::String(x).trim().equalsIgnoreCase(juce::String(tag)); });
+    if (!tem) copia->tags.push_back(tag);
+    return copia;
+}
+
+struct AplicadorSobreMaterial::Impl {
+    matriz::db::Database& db;
+    SobreMaterial sobre;
+    matriz::model::nomes::Vocabulario tagsVocab;
+    std::vector<std::string> etiquetas;      // pessoas + tags, já na grafia do projeto, sem repetir
+    std::vector<std::string> subjectsNovos;  // dividido e canônico
+
+    Impl(matriz::db::Database& d, SobreMaterial s) : db(d), sobre(std::move(s)) {}
+};
+
+AplicadorSobreMaterial::AplicadorSobreMaterial(matriz::db::Database& registro, SobreMaterial sobre)
+    : impl_(std::make_unique<Impl>(registro, std::move(sobre))) {
+    auto& im = *impl_;
+    using namespace matriz::model::nomes;
+    try {
+        im.tagsVocab = Vocabulario::carregar(im.db, Vocabulario::Tipo::Tags);
+        auto subjects = Vocabulario::carregar(im.db, Vocabulario::Tipo::Subjects);
+
+        // Pessoas entram na lista da coleção (o seletor PEOPLE oferece) E viram tag no item.
+        im.db.execScript("CREATE TABLE IF NOT EXISTS collection_person (id TEXT PRIMARY KEY, nome TEXT NOT NULL UNIQUE, criado_em TEXT NOT NULL);");
+        std::set<std::string> vistos;
+        const auto juntar = [&](const std::string& bruto, bool pessoa) {
+            const std::string aparado = juce::String(bruto).trim().trimCharactersAtStart("#").trim().toStdString();
+            if (aparado.empty()) return;
+            const std::string canon = im.tagsVocab.canonico(aparado);
+            if (!vistos.insert(chave(canon)).second) return;
+            im.etiquetas.push_back(canon);
+            if (pessoa) {
+                try {
+                    im.db.run("INSERT OR IGNORE INTO collection_person (id, nome, criado_em) VALUES (?, ?, ?)",
+                              {Value::of(matriz::model::novoUuid()), Value::of(canon), Value::of(matriz::model::agoraIso8601())});
+                } catch (const std::exception& e) {
+                    juce::Logger::writeToLog("SobreMaterial: pessoa não registrada — " + juce::String(e.what()));
+                }
+            }
+        };
+        for (const auto& p : im.sobre.pessoas) juntar(p, true);
+        for (const auto& t : im.sobre.tags) juntar(t, false);
+
+        for (const auto& s : dividirSubjects(im.sobre.subject)) {
+            const std::string canon = subjects.canonico(s);
+            if (!canon.empty()) im.subjectsNovos.push_back(canon);
+        }
+        for (const auto& s : im.subjectsNovos)
+            matriz::ficha::AutocompleteRepository::registrar(im.db, "dc_subject", s);
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("SobreMaterial: preparo falhou — " + juce::String(e.what()));
+    }
+}
+
+AplicadorSobreMaterial::~AplicadorSobreMaterial() = default;
+
+namespace {
+
+void upsertCampoHumano(matriz::db::Database& db, const std::string& itemId, const std::string& campo, const std::string& valor,
+                       bool sobrescrever) {
+    // sobrescrever=false: se o arquivo já tinha o campo (fonte leitura_tecnica) o original fica como está.
+    db.run("INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+           "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) " +
+               std::string(sobrescrever ? "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, "
+                                          "fonte = 'humano', atualizado_em = excluded.atualizado_em"
+                                        : "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO NOTHING"),
+           {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(campo), Value::of(valor),
+            Value::of(matriz::model::agoraIso8601())});
+}
+
+std::string lerColuna(matriz::db::Database& db, const std::string& itemId, const std::string& coluna) {
+    auto st = db.prepare("SELECT " + coluna + " FROM item WHERE id = ?");
+    st.bind(1, Value::of(itemId));
+    if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    return {};
+}
+
+std::string lerCampo(matriz::db::Database& db, const std::string& itemId, const std::string& campo) {
+    auto st = db.prepare("SELECT valor FROM item_campo WHERE item_id = ? AND campo_id = ? LIMIT 1");
+    st.bind(1, Value::of(itemId));
+    st.bind(2, Value::of(campo));
+    if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    return {};
+}
+
+} // namespace
+
+void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::string* descricaoDoItem) {
+    auto& im = *impl_;
+    auto& db = im.db;
+    const auto& sm = im.sobre;
+    const std::string& descricao = descricaoDoItem != nullptr ? *descricaoDoItem : sm.descricao;
+    if ((sm.vazio() && descricao.empty()) || itemId.empty()) return;
+    using namespace matriz::model::nomes;
+    const std::string agora = matriz::model::agoraIso8601();
+
+    try {
+        if (!sm.collectionType.empty()) {
+            db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                   {Value::of(sm.collectionType), Value::of(agora), Value::of(itemId)});
+            upsertCampoHumano(db, itemId, "collection_type", sm.collectionType, true);
+        }
+
+        if (!im.subjectsNovos.empty()) {
+            // O assunto que o arquivo já traz (item.dc_subject ou leitura técnica) fica; o novo soma.
+            std::string atual = lerColuna(db, itemId, "dc_subject");
+            if (atual.empty()) atual = lerCampo(db, itemId, "dc_subject");
+            std::vector<std::string> todos = dividirSubjects(atual);
+            std::set<std::string> chaves;
+            for (const auto& s : todos) chaves.insert(chave(s));
+            for (const auto& s : im.subjectsNovos)
+                if (chaves.insert(chave(s)).second) todos.push_back(s);
+            std::string junto;
+            for (size_t i = 0; i < todos.size(); ++i) junto += (i ? ", " : "") + todos[i];
+            db.run("UPDATE item SET dc_subject = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                   {Value::of(junto), Value::of(agora), Value::of(itemId)});
+            upsertCampoHumano(db, itemId, "dc_subject", junto, false);
+        }
+
+        if (!descricao.empty()) {
+            auto secoes = matriz::model::parseNotasEstruturadas(lerColuna(db, itemId, "notas_livres"));
+            bool juntou = false;
+            for (auto& s : secoes) {
+                if (s.titulo == "NOTES" && !s.automatica) {
+                    s.conteudo = s.conteudo.empty() ? descricao : s.conteudo + "\n\n" + descricao;
+                    juntou = true;
+                    break;
+                }
+            }
+            if (!juntou) secoes.insert(secoes.begin(), matriz::model::SecaoNota{"NOTES", descricao, false});
+            db.run("UPDATE item SET notas_livres = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                   {Value::of(matriz::model::serializarNotasEstruturadas(secoes)), Value::of(agora), Value::of(itemId)});
+        }
+
+        bool mudouTags = false;
+        for (const auto& tag : im.etiquetas) {
+            auto st = db.prepare("SELECT 1 FROM item_tag WHERE item_id = ? AND tag = ?");
+            st.bind(1, Value::of(itemId));
+            st.bind(2, Value::of(tag));
+            if (st.step()) continue;  // o arquivo já tinha: nada a fazer
+            db.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
+                   {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(tag)});
+            try {
+                db.run("INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)", {Value::of(itemId), Value::of(tag)});
+                db.run("INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)", {Value::of(itemId), Value::of("#" + tag)});
+            } catch (...) {}
+            mudouTags = true;
+        }
+        if (mudouTags)
+            db.run("UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?", {Value::of(agora), Value::of(itemId)});
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("SobreMaterial: falha ao aplicar em " + juce::String(itemId) + " — " + juce::String(e.what()));
+    }
+}
+
+} // namespace matriz::ingest

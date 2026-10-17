@@ -3,12 +3,16 @@
 
 #include "App/Preferencias.h"
 #include "Diag/NSExceptionGuard.h"
+#include "Db/Database.h"
 #include "Diag/Watchdog.h"
 #include "I18n/Strings.h"
 #include "Ui/IngerirArquivosTest.h"
 #include "Ui/MainWindow.h"
 #include "Ui/ModalLoopSelfTest.h"
 #include "Ui/LoteSelfTest.h"
+#include "Ui/BounceSelfTest.h"
+#include "Ui/VerifySourceSelfTest.h"
+#include "Ui/RebuildSelfTest.h"
 #include "Ui/ManifestoSelfTest.h"
 #include "Model/CompactacaoRegistro.h"
 #include "Ui/MosaicoStressTest.h"
@@ -16,6 +20,8 @@
 #include "Ui/MatrizLookAndFeel.h"
 #include "Ui/TrialNagDialog.h"
 #include "Ui/UiSelfTest.h"
+#include "Whatsapp/ServidorWhatsappApp.h"
+#include "Celular/ServidorCelular.h"
 
 #include <csignal>
 #if !JUCE_WINDOWS
@@ -128,7 +134,7 @@ public:
             g.fillRect(botRect);
             g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             g.setColour(juce::Colour(0xffffaa33));
-            g.drawText("EVALUATION COPY — NOT FOR SALE", botRect, juce::Justification::centred, false);
+            g.drawText(juce::String::fromUTF8("EVALUATION COPY — NOT FOR SALE"), botRect, juce::Justification::centred, false);
         }
     }
 
@@ -192,6 +198,17 @@ public:
     void initialise(const juce::String& commandLine) override {
         matriz::app::inicializarPreferencias();
         matriz::diag::inicializarWatchdog();
+        // Item 19-D: SQL na message thread acima de 100 ms vai pro log do Watchdog (só diagnóstico).
+        matriz::db::Database::definirObservadorConsultaLenta(
+            []() {
+                auto* mm = juce::MessageManager::getInstanceWithoutCreating();
+                return mm != nullptr && mm->isThisTheMessageThread();
+            },
+            [](const std::string& sql, long long ms) {
+                matriz::diag::logarWatchdog("[SQL lento na message thread] " + juce::String(static_cast<juce::int64>(ms)) +
+                                            " ms: " + juce::String::fromUTF8(sql.substr(0, 400).c_str()));
+            },
+            100);
 
 #if !MATRIZ_SANITIZER_BUILD && !JUCE_WINDOWS
         stack_t ss;
@@ -212,7 +229,8 @@ public:
         if (commandLine.contains("--selftest-"))
             matriz::diag::desativarAppNapParaSelfTest();
 
-        matriz::i18n::carregar(matriz::app::lerLocale());
+        // Self-tests são determinísticos: sempre em inglês, independente do idioma salvo nas preferências do usuário.
+        matriz::i18n::carregar(commandLine.contains("--selftest-") ? juce::String("en") : matriz::app::lerLocale());
 
         lookAndFeel_ = std::make_unique<matriz::ui::MatrizLookAndFeel>();
         matriz::ui::configurarLookAndFeel(*lookAndFeel_);
@@ -265,6 +283,21 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-rebuild")) {
+            setApplicationReturnValue(matriz::ui::rodarRebuildSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-bounce")) {
+            setApplicationReturnValue(matriz::ui::rodarBounceSelfTest());
+            quit();
+            return;
+        }
+        if (commandLine.contains("--selftest-verifysource")) {
+            setApplicationReturnValue(matriz::ui::rodarVerifySourceSelfTest());
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-manifesto")) {
             setApplicationReturnValue(matriz::ui::rodarManifestoSelfTest());
             quit();
@@ -277,6 +310,7 @@ public:
         }
 
         monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
+
 
 #if defined(MATRIZ_UI_APP_NAME_STRING)
         janela_ = std::make_unique<matriz::ui::MainWindow>(MATRIZ_UI_APP_NAME_STRING);
@@ -294,6 +328,7 @@ public:
                 janela_->toFront(true);
 
                 matriz::ui::TrialNagDialog::exibirSeNecessario(janela_.get());
+                if (arquivoPendente_ != juce::File()) janela_->abrirArquivoDoSistema(std::exchange(arquivoPendente_, {}));
             }
             splash_.reset();
         };
@@ -305,6 +340,9 @@ public:
         monitorLoop_.reset();
         splash_.reset();
         janela_.reset();
+        matriz::whatsapp::ServidorWhatsappApp::instancia().aoConversaRecebida = nullptr;
+        matriz::whatsapp::ServidorWhatsappApp::instancia().parar();
+        matriz::celular::ServidorCelular::aguardarEncerramentos();
         // A janela (e qualquer Component nela) tem que morrer ANTES do
         // LookAndFeel que aponta pra ela — senão fica um ponteiro pendurado
         // no LookAndFeel::getDefaultLookAndFeel() global.
@@ -317,7 +355,20 @@ public:
 
     void systemRequestedQuit() override { quit(); }
 
+    // Duplo clique num .mtz/.bkm no Finder (o macOS entrega o caminho aqui, com o app já rodando ou
+    // acabando de abrir). Durante a splash, guarda e abre quando a janela aparecer.
+    void anotherInstanceStarted(const juce::String& commandLine) override {
+        for (auto token : juce::StringArray::fromTokens(commandLine, true)) {
+            const juce::File arquivo(token.unquoted());
+            if (!arquivo.hasFileExtension("mtz;bkm") || !arquivo.existsAsFile()) continue;
+            if (splash_ != nullptr || janela_ == nullptr) arquivoPendente_ = arquivo;
+            else janela_->abrirArquivoDoSistema(arquivo);
+            return;
+        }
+    }
+
 private:
+    juce::File arquivoPendente_;
     std::unique_ptr<matriz::ui::MatrizLookAndFeel> lookAndFeel_;
     std::unique_ptr<matriz::diag::MessageLoopMonitor> monitorLoop_;
     std::unique_ptr<SplashWindow> splash_;

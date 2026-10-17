@@ -6,15 +6,48 @@
 #include "HierarquiaEditorComponent.h"
 #include "LayoutArvoreFolderMap.h"
 #include "ModalMitigacao.h"
+#include "ProgressoGlobal.h"
 #include "Tokens.h"
+#include "OverlayComponent.h"
+#include "PainelReceberCelular.h"
+#include "PainelImportarWhatsapp.h"
+#include "ConversaWhatsappComponent.h"
+#include "Tablet.h"
+#include "LogosTipoArquivo.h"
+#include "TrashWindow.h"
+#include "../Celular/ExistentesProjeto.h"
+#include "../Whatsapp/WhatsappIngestao.h"
+#include "../Whatsapp/ServidorWhatsappApp.h"
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace matriz::ui {
 
 // ── Detail panel content ─────────────────────────────────────────────
 
 namespace {
+
+class BotaoIconeCelular : public juce::Button {
+public:
+    BotaoIconeCelular() : juce::Button("celular") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paintButton(juce::Graphics& g, bool sobre, bool apertado) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat().reduced(2.0f);
+        desenharCartao(g, r, tk.raioCartao * 0.8f, apertado ? tk.acento.darker(0.15f) : (sobre ? tk.acentoHover : tk.acento), true);
+        auto icone = r.removeFromLeft(r.getHeight());
+        desenharIcone(g, IconeUi::Celular, icone.withSizeKeepingCentre(icone.getHeight() * 0.62f, icone.getHeight() * 0.62f), tk.textoSobreAcento);
+        if (r.getWidth() > 60.0f) {
+            r.removeFromRight(10.0f);
+            g.setColour(tk.textoSobreAcento);
+            g.setFont(fonteUi(tk.fonteCorpoGrande - 1.0f, juce::Font::bold).withExtraKerningFactor(0.05f));
+            g.drawText(i18n::t("light.cel.importar"), r.removeFromTop(r.getHeight() * 0.55f).toNearestInt(), juce::Justification::bottomLeft, true);
+            g.setFont(fonteUi(tk.tamanhoFontePequena));
+            g.setColour(tk.textoSobreAcento.withAlpha(0.85f));
+            g.drawText(i18n::t("light.cel.importarSub"), r.toNearestInt(), juce::Justification::topLeft, true);
+        }
+    }
+};
 
 juce::String formatarTamanhoArquivo(juce::int64 bytes) {
     if (bytes <= 0) return "0 B";
@@ -55,7 +88,11 @@ public:
             if (temCor) {
                 btn->setTooltip(historico_[static_cast<size_t>(i)].toDisplayString(false));
                 btn->onClick = [this, i] {
-                    seletor_.setCurrentColour(historico_[static_cast<size_t>(i)], juce::sendNotification);
+                    // Aplica direto (não depende do aviso do ColourSelector, que não dispara quando a
+                    // cor do seletor já é igual) e só atualiza o seletor para exibir, sem notificar de novo.
+                    const auto cor = historico_[static_cast<size_t>(i)];
+                    seletor_.setCurrentColour(cor, juce::dontSendNotification);
+                    if (onChange_) onChange_(cor);
                 };
             } else {
                 btn->setEnabled(false);
@@ -138,9 +175,11 @@ public:
     }
 
     juce::String folderName;
+    bool isTrash = false;
     std::vector<SubfolderEntry> subfolders;
     std::vector<FileEntry> files;
     std::function<void(const std::string&)> aoClicarArquivo;
+    std::function<void(const std::string&, bool)> aoMenuArquivo;
     std::function<void()> aoMostrarNaGrade;
     std::unique_ptr<juce::TextButton> btnShowInGrid;
     int hoverFileIndex_ = -1;
@@ -172,8 +211,17 @@ public:
 
     void mouseDown(const juce::MouseEvent& e) override {
         int idx = fileIndexAtY(e.getPosition().y);
-        if (idx >= 0 && idx < static_cast<int>(files.size()) && aoClicarArquivo)
-            aoClicarArquivo(files[static_cast<size_t>(idx)].id);
+        if (idx >= 0 && idx < static_cast<int>(files.size())) {
+            const auto& fileId = files[static_cast<size_t>(idx)].id;
+            if (e.mods.isPopupMenu() && aoMenuArquivo) {
+                aoMenuArquivo(fileId, true);
+                return;
+            }
+            if (aoClicarArquivo)
+                aoClicarArquivo(fileId);
+        } else if (e.mods.isPopupMenu() && aoMenuArquivo) {
+            aoMenuArquivo("", true);
+        }
     }
 
     void mouseMove(const juce::MouseEvent& e) override {
@@ -190,9 +238,11 @@ public:
 
         auto area = getLocalBounds().reduced(12, 8);
 
-        g.setColour(tema().textoPrimario);
+        g.setColour(isTrash ? tema().perigo : tema().textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
-        g.drawText(folderName, area.removeFromTop(24), juce::Justification::centredLeft, true);
+        juce::String tituloHeader = folderName;
+        if (isTrash) tituloHeader += " " + i18n::t("arvore_backup.trash_sub");
+        g.drawText(tituloHeader, area.removeFromTop(24), juce::Justification::centredLeft, true);
 
         area.removeFromTop(36); // Space for btnShowInGrid
 
@@ -253,6 +303,145 @@ void pedirTextoBackup(const juce::String& titulo, const juce::String& mensagem, 
 
 } // namespace
 
+// ── Janela flutuante NEW FOLDERS - ACTION NEEDED (sobre o stage) ──────────────────────────────────────────────
+// Só é mostrada quando há proposta pendente. O cabeçalho recolhe/expande; as linhas (rótulo + 3 botões) moram
+// no `conteudo()`, dentro de um Viewport (rola se houver muitas propostas).
+class PainelPropostas : public juce::Component {
+public:
+    static constexpr int kAlturaCabecalho = 28;
+
+    static constexpr int kAlturaRodape = 34;
+
+    PainelPropostas() {
+        vp_.setViewedComponent(&conteudo_, false);
+        vp_.setScrollBarsShown(true, false);
+        addAndMakeVisible(vp_);
+        setMouseCursor(juce::MouseCursor::NormalCursor);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) addAndMakeVisible(*b);
+        usarTodas.setButtonText(i18n::t("arvore_backup.btn_usar_todas"));
+        mesclarTodas.setButtonText(i18n::t("arvore_backup.btn_mesclar_todas"));
+        descartarTodas.setButtonText(i18n::t("arvore_backup.btn_descartar_todas"));
+        usarTodas.setTooltip(i18n::t("arvore_backup.usar_todas_dica"));
+        mesclarTodas.setTooltip(i18n::t("arvore_backup.mesclar_todas_dica"));
+        descartarTodas.setTooltip(i18n::t("arvore_backup.descartar_todas_dica"));
+        usarTodas.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e));
+        mesclarTodas.setColour(juce::TextButton::buttonColourId, tema().acento);
+        descartarTodas.setColour(juce::TextButton::buttonColourId, tema().perigo);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) b->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    }
+
+    juce::TextButton usarTodas, mesclarTodas, descartarTodas;
+
+    juce::Component& conteudo() { return conteudo_; }
+    std::function<void()> aoAlternar;
+
+    void definir(const juce::String& titulo, bool recolhido) {
+        titulo_ = titulo;
+        recolhido_ = recolhido;
+        vp_.setVisible(!recolhido);
+        for (auto* b : {&usarTodas, &mesclarTodas, &descartarTodas}) b->setVisible(!recolhido);
+        repaint();
+    }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(r, tk.raioMedio);
+        g.setColour(tk.alerta.withAlpha(0.18f));
+        g.fillRoundedRectangle(r, tk.raioMedio);
+        g.setColour(tk.alerta);
+        g.drawRoundedRectangle(r.reduced(1.0f), tk.raioMedio, 2.5f);
+        auto cab = getLocalBounds().removeFromTop(kAlturaCabecalho).reduced(10, 0);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText(recolhido_ ? juce::String::fromUTF8("\xe2\x96\xb8") : juce::String::fromUTF8("\xe2\x96\xbe"),
+                   cab.removeFromRight(14), juce::Justification::centred);
+        g.drawText(titulo_, cab, juce::Justification::centredLeft, true);
+    }
+
+    void resized() override {
+        auto area = getLocalBounds().withTrimmedTop(kAlturaCabecalho).reduced(8, 4);
+        auto rodape = area.removeFromBottom(kAlturaRodape - 8);
+        area.removeFromBottom(4);
+        vp_.setBounds(area);
+        const int w = (rodape.getWidth() - 8) / 3;
+        usarTodas.setBounds(rodape.removeFromLeft(w));
+        rodape.removeFromLeft(4);
+        mesclarTodas.setBounds(rodape.removeFromLeft(w));
+        rodape.removeFromLeft(4);
+        descartarTodas.setBounds(rodape);
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        if (e.y < kAlturaCabecalho && aoAlternar) aoAlternar();
+    }
+    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override {}  // não vaza pro zoom do canvas
+
+    int larguraConteudo() const { return std::max(0, vp_.getMaximumVisibleWidth()); }
+
+private:
+    juce::Viewport vp_;
+    juce::Component conteudo_;
+    juce::String titulo_;
+    bool recolhido_ = false;
+};
+
+// ── Explorer de pastas (só pastas, nunca arquivos) ────────────────────────────────────────────────────────────
+class ItemPastaExplorador : public juce::TreeViewItem {
+public:
+    ItemPastaExplorador(std::string id, juce::String nome, int itens, bool ativo,
+                        std::function<void(const std::string&)> aoSelecionar,
+                        std::function<void(const std::string&)> aoLocalizar,
+                        std::function<void(ItemPastaExplorador&)> aoAbrir = nullptr,
+                        std::function<void(const juce::MouseEvent&)> aoMenu = nullptr)
+        : id_(std::move(id)), nome_(std::move(nome)), itens_(itens), ativo_(ativo),
+          aoSelecionar_(std::move(aoSelecionar)), aoLocalizar_(std::move(aoLocalizar)), aoAbrir_(std::move(aoAbrir)),
+          aoMenu_(std::move(aoMenu)) {}
+
+    // Nome inteiro + contagem logo depois dele: a largura do item é a do texto (a árvore ganha rolagem horizontal).
+    juce::String texto() const {
+        return juce::String::fromUTF8("\xf0\x9f\x93\x81 ") + nome_ + (itens_ > 0 ? "   " + juce::String(itens_) : juce::String());
+    }
+    static juce::Font fonte(bool negrito) { return juce::Font(juce::FontOptions(11.0f, negrito ? juce::Font::bold : juce::Font::plain)); }
+    int getItemWidth() const override { return juce::GlyphArrangement::getStringWidthInt(fonte(true), texto()) + 12; }
+    void itemOpennessChanged(bool aberto) override { if (aberto && aoAbrir_) aoAbrir_(*this); }
+
+    const std::string& id() const { return id_; }
+    bool mightContainSubItems() override { return getNumSubItems() > 0; }
+    juce::String getUniqueName() const override { return id_.empty() ? juce::String("raiz") : juce::String(id_); }
+    int getItemHeight() const override { return 20; }
+
+    void paintItem(juce::Graphics& g, int width, int height) override {
+        const auto& tk = tema();
+        if (isSelected()) {
+            g.setColour(tk.acento.withAlpha(0.25f));
+            g.fillRect(0, 0, width, height);
+        }
+        g.setColour(ativo_ ? tk.textoPrimario : tk.textoTerciario);
+        g.setFont(fonte(isSelected()));
+        g.drawText(texto(), juce::Rectangle<int>(0, 0, width, height).reduced(2, 0), juce::Justification::centredLeft, false);
+    }
+
+    void itemSelectionChanged(bool selecionado) override {
+        if (selecionado && aoSelecionar_) aoSelecionar_(id_);
+    }
+    void itemDoubleClicked(const juce::MouseEvent&) override {
+        if (aoLocalizar_) aoLocalizar_(id_);
+    }
+    void itemClicked(const juce::MouseEvent& e) override {
+        if (e.mods.isPopupMenu() && aoMenu_) aoMenu_(e);
+    }
+
+private:
+    std::string id_;
+    juce::String nome_;
+    int itens_;
+    bool ativo_;
+    std::function<void(const std::string&)> aoSelecionar_, aoLocalizar_;
+    std::function<void(ItemPastaExplorador&)> aoAbrir_;
+    std::function<void(const juce::MouseEvent&)> aoMenu_;
+};
+
 ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
 
@@ -290,16 +479,6 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     };
     addAndMakeVisible(*btnRenomearPasta_);
 
-    btnApagarPasta_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_apagar"));
-    btnApagarPasta_->onClick = [this] {
-        for (const auto& n : nodes_) {
-            if (n.selecionado) {
-                apagarPastaSelecionada(n.id);
-                break;
-            }
-        }
-    };
-    addAndMakeVisible(*btnApagarPasta_);
 
     btnAutoArranjar_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_auto_arranjar"));
     btnAutoArranjar_->onClick = [this] { autoArranjar(); };
@@ -343,7 +522,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*btnNovoMapa_);
 
     sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
-    sliderTamanho_->setRange(50.0, 200.0, 1.0);
+    sliderTamanho_->setRange(50.0, 500.0, 1.0);
     sliderTamanho_->setValue(100.0, juce::dontSendNotification);
     sliderTamanho_->setDoubleClickReturnValue(true, 100.0);
     sliderTamanho_->setTextValueSuffix("%");
@@ -353,16 +532,81 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     sliderTamanho_->onDragEnd = [this] { persistirEscalas(); };
     addAndMakeVisible(*sliderTamanho_);
 
+    auto criarSpread = [this](std::unique_ptr<juce::Label>& rotulo, std::unique_ptr<juce::Slider>& slider, const char* chaveRotulo,
+                              const char* chaveDica, float& fator) {
+        rotulo = std::make_unique<juce::Label>(juce::String(), i18n::t(chaveRotulo));
+        rotulo->setFont(juce::Font(juce::FontOptions(10.0f)));
+        rotulo->setMinimumHorizontalScale(1.0f);
+        addAndMakeVisible(*rotulo);
+        slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
+        // Começa no MEIO, valendo 0 (= sem espalhar). Direita espalha, esquerda comprime: fator = 10^(v/100),
+        // então +100 = 10x (o antigo máximo de 1000%) e -100 = 0,1x.
+        slider->setRange(-100.0, 100.0, 1.0);
+        slider->setValue(0.0, juce::dontSendNotification);
+        slider->setDoubleClickReturnValue(true, 0.0);
+        slider->textFromValueFunction = [](double v) {
+            const int n = juce::roundToInt(v);
+            return (n > 0 ? "+" : "") + juce::String(n);
+        };
+        slider->setTextBoxStyle(juce::Slider::TextBoxRight, false, 52, 20);
+        slider->setTooltip(i18n::t(chaveDica));
+        auto* s = slider.get();
+        slider->onValueChange = [this, s, &fator] {
+            fator = static_cast<float>(std::pow(10.0, s->getValue() / 100.0));
+            aplicarEscalaTamanho(escalaTamanho_);
+        };
+        addAndMakeVisible(*slider);
+    };
+    criarSpread(rotuloSpread_, sliderSpread_, "arvore_backup.spread_rotulo", "arvore_backup.spread_tooltip", espalharX_);
+    criarSpread(rotuloSpreadV_, sliderSpreadV_, "arvore_backup.spread_v_rotulo", "arvore_backup.spread_v_tooltip", espalharY_);
+
     detailContent_ = std::make_unique<TreeDetailContent>();
     detailViewport_ = std::make_unique<juce::Viewport>();
     detailViewport_->setViewedComponent(detailContent_.get(), false);
     detailViewport_->setScrollBarsShown(true, false);
     detailViewport_->setVisible(false);
-    addAndMakeVisible(*detailViewport_);
+    addChildComponent(*detailViewport_);
 
+    painelPropostas_ = std::make_unique<PainelPropostas>();
+    painelPropostas_->aoAlternar = [this] {
+        painelPropostasRecolhido_ = !painelPropostasRecolhido_;
+        posicionarPainelPropostas();
+    };
+    painelPropostas_->usarTodas.onClick = [this] { usarTodasPropostas(); };
+    painelPropostas_->mesclarTodas.onClick = [this] { mesclarTodasPropostas(); };
+    painelPropostas_->descartarTodas.onClick = [this] { confirmarDescarteTodasPropostas(); };
+    addChildComponent(*painelPropostas_);
+
+    treeExplorador_ = std::make_unique<juce::TreeView>();
+    treeExplorador_->setRootItemVisible(false);
+    treeExplorador_->setMultiSelectEnabled(true);  // shift/cmd+clique: seleciona 2 pastas pro MERGE
+    treeExplorador_->setDefaultOpenness(false);
+    treeExplorador_->setIndentSize(14);
+    treeExplorador_->getViewport()->setScrollBarsShown(true, true);
+    treeExplorador_->setColour(juce::TreeView::backgroundColourId, juce::Colours::transparentBlack);
+    addAndMakeVisible(*treeExplorador_);
+
+    btnFind_ = std::make_unique<juce::TextButton>(i18n::t("arvore_backup.btn_find"));
+    btnFind_->setTooltip(i18n::t("arvore_backup.find_dica"));
+    btnFind_->setEnabled(false);
+    btnFind_->onClick = [this] { if (!pastaExploradorId_.empty()) localizarPasta(pastaExploradorId_); };
+    addAndMakeVisible(*btnFind_);
+
+    detailContent_->aoClicarArquivo = [this](const std::string& itemId) {
+        if (matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), itemId)) {
+            abrirConversaWhatsapp(itemId);
+        }
+    };
+    detailContent_->aoMenuArquivo = [this](const std::string& itemId, bool) {
+        mostrarMenuArquivoDetalhe(itemId);
+    };
+
+    // btnReceberCelular_ transferido para INTAKE (item 9C)
     setWantsKeyboardFocus(true);
+    setOpaque(true);  // o paint faz fillAll do fundo inteiro
 
     migrarPresetsAntigosSeNecessario();
+    carregarLayoutSalvo();
     mapaAtivoId_ = projeto_.mapaInicialDoFolderMap();
     projeto_.definirMapaAtivo(mapaAtivoId_);  // mutadores compat seguem o mapa aberto
     recarregarComboMapas();
@@ -373,9 +617,130 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
 }
 
 ArvoreBackupComponent::~ArvoreBackupComponent() {
+    autoRolagem_.stopTimer();
+    limparDicaPasta();
+    janelaTrash_.reset();
     try { persistirEscalas(); } catch (...) {}
     EventBus::obterInstancia().removerListener(this);
     detailViewport_->setViewedComponent(nullptr, false);
+    if (treeExplorador_) treeExplorador_->setRootItem(nullptr);
+}
+
+// ---- Folder Map SOBREPOSTO (duplo clique num folder-card) --------------------------------------------------------
+namespace {
+// Camada sobre o content da janela: fundo escurecido (bloqueia cliques no resto do app), painel de 90% com o título
+// e o botão SAIR no canto superior direito, e um ArvoreBackupComponent em modo sobreposto.
+class SobreposicaoFolderMap : public juce::Component, private juce::ComponentListener {
+public:
+    SobreposicaoFolderMap(ProjetoAberto& projeto, juce::Component& host, const std::string& mapaId, const std::string& pastaId,
+                          const juce::String& nome, std::function<void()> aoSair)
+        : host_(&host), aoSair_(std::move(aoSair)) {
+        mapa_ = std::make_unique<ArvoreBackupComponent>(projeto);
+        addAndMakeVisible(*mapa_);
+        titulo_.setText(i18n::t("arvore_backup.sobreposto_titulo").replace("{nome}", nome), juce::dontSendNotification);
+        titulo_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        titulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
+        addAndMakeVisible(titulo_);
+        btnSair_.setButtonText(i18n::t("arvore_backup.sobreposto_sair"));
+        btnSair_.setColour(juce::TextButton::buttonColourId, tema().acento);
+        btnSair_.setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
+        btnSair_.onClick = [this] { if (aoSair_) aoSair_(); };
+        addAndMakeVisible(btnSair_);
+        host.addComponentListener(this);
+        setBounds(host.getLocalBounds());
+        mapa_->definirModoSobreposto(mapaId, pastaId, nome);
+    }
+    ~SobreposicaoFolderMap() override {
+        if (host_ != nullptr) host_->removeComponentListener(this);
+    }
+    void paint(juce::Graphics& g) override {
+        g.fillAll(juce::Colours::black.withAlpha(0.55f));
+        const auto& tk = tema();
+        g.setColour(tk.fundo);
+        g.fillRoundedRectangle(painel().toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(painel().toFloat(), tk.raioMedio, 1.0f);
+    }
+    void resized() override {
+        auto p = painel().reduced(8);
+        auto topo = p.removeFromTop(32);
+        btnSair_.setBounds(topo.removeFromRight(110).reduced(0, 2));
+        titulo_.setBounds(topo);
+        p.removeFromTop(6);
+        mapa_->setBounds(p);
+    }
+
+private:
+    juce::Rectangle<int> painel() const {
+        auto r = getLocalBounds();
+        return r.withSizeKeepingCentre(juce::roundToInt(r.getWidth() * 0.9f), juce::roundToInt(r.getHeight() * 0.9f));
+    }
+    void componentMovedOrResized(juce::Component& c, bool, bool) override { setBounds(c.getLocalBounds()); }
+
+    juce::Component::SafePointer<juce::Component> host_;
+    std::function<void()> aoSair_;
+    std::unique_ptr<ArvoreBackupComponent> mapa_;
+    juce::Label titulo_;
+    juce::TextButton btnSair_;
+};
+}  // namespace
+
+void ArvoreBackupComponent::abrirSobreposicao(const std::string& pastaId, const juce::String& nomePasta) {
+    if (sobreposto_ || sobreposicao_ != nullptr) return;
+    finalizarEdicaoInline();
+    juce::Component* host = getTopLevelComponent();
+    if (auto* janela = dynamic_cast<juce::ResizableWindow*>(host))
+        if (auto* conteudo = janela->getContentComponent()) host = conteudo;
+    if (host == nullptr) return;
+    persistirEscalas();  // tamanhos ajustados aqui antes de abrir
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    sobreposicao_ = std::make_unique<SobreposicaoFolderMap>(projeto_, *host, mapaAtivoId_, pastaId, nomePasta, [safeThis] {
+        // Fora do clique do próprio botão SAIR (ele é filho do que vai ser destruído).
+        juce::MessageManager::callAsync([safeThis] { if (safeThis) safeThis->fecharSobreposicao(); });
+    });
+    host->addAndMakeVisible(*sobreposicao_);
+    sobreposicao_->toFront(true);
+}
+
+void ArvoreBackupComponent::fecharSobreposicao() {
+    sobreposicao_.reset();
+    recarregar();  // o que mudou lá dentro (pastas novas, nomes, conexões) aparece aqui
+    grabKeyboardFocus();
+}
+
+void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId,
+                                                  const juce::String& nomePasta) {
+    sobreposto_ = true;
+    raizSobreposicaoId_ = pastaRaizId;
+    if (mapaId != mapaAtivoId_) {  // o mesmo mapa aberto na tela principal
+        mapaAtivoId_ = mapaId;
+        projeto_.definirMapaAtivo(mapaId);
+        recarregarComboMapas();
+        atualizarEstadoBotoesParaMapa();
+    }
+    // Mesma filtragem das abas (pasta + descendentes), sem a barra de abas.
+    AbaEstrutura aba;
+    aba.pastaRaizId = pastaRaizId;
+    aba.titulo = nomePasta;
+    abas_.push_back(aba);
+    abaAtiva_ = static_cast<int>(abas_.size()) - 1;
+    // Trocar de mapa aqui dentro não faz sentido: a raiz é uma pasta do mapa aberto.
+    for (juce::Component* c : {static_cast<juce::Component*>(comboMapas_.get()), static_cast<juce::Component*>(btnMenuMapa_.get()),
+                               static_cast<juce::Component*>(btnNovoMapa_.get())})
+        if (c) c->setEnabled(false);
+    enquadrarPendente_ = true;
+    resized();
+    recarregar();
+    // Com o painel já no tamanho final: o mesmo que o AJUSTAR (auto-organiza o recorte) e centraliza a árvore na tela.
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    juce::MessageManager::callAsync([safeThis] {
+        if (!safeThis || !safeThis->sobreposto_) return;
+        safeThis->autoArranjar();
+        safeThis->enquadrarPendente_ = true;
+        safeThis->tentarEnquadrar();
+        safeThis->sincronizarSlider();
+        safeThis->repaint();
+    });
 }
 
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
@@ -396,10 +761,390 @@ void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
     });
 }
 
+// ---- NEW FOLDERS: árvore proposta por pasta ingerida inteira -------------------------------------------------
+namespace {
+// Gestão de conflitos da mescla, no estilo de Duplicates: uma linha por pasta com o mesmo nome, cada uma com
+// "mesclar com a existente" ou "manter como pasta separada".
+class DialogoMescla : public juce::Component {
+public:
+    // alvoFixo != "" = MERGE entre duas pastas existentes (menu do canvas/explorer): o destino já está escolhido.
+    DialogoMescla(ProjetoAberto& proj, std::string raizId, juce::String nome, std::function<void()> aoConcluir,
+                  std::string alvoFixo = {}, juce::String alvoCaminho = {})
+        : proj_(proj), raizId_(std::move(raizId)), aoConcluir_(std::move(aoConcluir)), entrePastas_(!alvoFixo.empty()) {
+        if (entrePastas_) {
+            ProjetoAberto::PastaDoMapa d;
+            d.id = alvoFixo;
+            d.caminho = std::move(alvoCaminho);
+            d.mesmoNome = false;
+            destinos_.push_back(std::move(d));
+        } else {
+            destinos_ = proj_.destinosDeMescla(raizId_);
+        }
+        lblAlvo_.setText(i18n::t("mescla.alvo").replace("{nome}", nome), juce::dontSendNotification);
+        addAndMakeVisible(lblAlvo_);
+        comboAlvo_.addItem(i18n::t("mescla.escolha"), 1);
+        for (size_t i = 0; i < destinos_.size(); ++i)
+            comboAlvo_.addItem((destinos_[i].mesmoNome ? juce::String(juce::CharPointer_UTF8("\xe2\x98\x85 ")) : juce::String()) +
+                                   destinos_[i].caminho, static_cast<int>(i) + 2);
+        comboAlvo_.setSelectedId(!destinos_.empty() && (entrePastas_ || destinos_[0].mesmoNome) ? 2 : 1, juce::dontSendNotification);
+        comboAlvo_.setEnabled(!entrePastas_);
+        comboAlvo_.onChange = [this] { reconstruir(); };
+        addAndMakeVisible(comboAlvo_);
+        addAndMakeVisible(lblResumo_);
+        lblResumo_.setJustificationType(juce::Justification::topLeft);
+        viewport_.setViewedComponent(&linhas_, false);
+        viewport_.setScrollBarsShown(true, false);
+        addAndMakeVisible(viewport_);
+        for (auto* b : {&btnTodosMesclar_, &btnTodosSeparar_, &btnAplicar_, &btnCancelar_}) addAndMakeVisible(*b);
+        btnTodosMesclar_.setButtonText(i18n::t("mescla.todos_mesclar"));
+        btnTodosSeparar_.setButtonText(i18n::t("mescla.todos_separar"));
+        btnAplicar_.setButtonText(i18n::t("mescla.btn_aplicar"));
+        btnCancelar_.setButtonText(i18n::t("mescla.btn_cancelar"));
+        btnTodosMesclar_.onClick = [this] { definirTodos(true); };
+        btnTodosSeparar_.onClick = [this] { definirTodos(false); };
+        btnCancelar_.onClick = [this] { fechar(); };
+        btnAplicar_.onClick = [this] {
+            const auto alvo = alvoId();
+            if (alvo.empty()) return;
+            if (entrePastas_) proj_.mesclarPastas(raizId_, alvo, decisoes_);
+            else proj_.mesclarProposta(raizId_, alvo, decisoes_);
+            auto cb = aoConcluir_;
+            fechar();
+            if (cb) juce::MessageManager::callAsync(cb);
+        };
+        setSize(720, 500);
+        reconstruir();
+    }
+
+    static void exibir(ProjetoAberto& proj, const std::string& raizId, const juce::String& nome, std::function<void()> aoConcluir,
+                       const std::string& alvoFixo = {}, const juce::String& alvoCaminho = {}) {
+        juce::DialogWindow::LaunchOptions opt;
+        opt.dialogTitle = alvoFixo.empty() ? i18n::t("mescla.titulo") : i18n::t("mescla.titulo_pastas");
+        opt.content.setOwned(new DialogoMescla(proj, raizId, nome, std::move(aoConcluir), alvoFixo, alvoCaminho));
+        opt.dialogBackgroundColour = tema().fundo;
+        opt.escapeKeyTriggersCloseButton = true;
+        opt.useNativeTitleBar = true;
+        opt.resizable = false;
+        opt.launchAsync();
+    }
+
+    void resized() override {
+        auto a = getLocalBounds().reduced(20);
+        lblAlvo_.setBounds(a.removeFromTop(20));
+        comboAlvo_.setBounds(a.removeFromTop(28));
+        a.removeFromTop(10);
+        auto rodape = a.removeFromBottom(36);
+        a.removeFromBottom(8);
+        auto bulk = a.removeFromBottom(28);
+        a.removeFromBottom(6);
+        lblResumo_.setBounds(a.removeFromTop(34));
+        viewport_.setBounds(a);
+        linhas_.setSize(viewport_.getMaximumVisibleWidth(), std::max(viewport_.getHeight(), alturaLinhas_));
+        btnCancelar_.setBounds(rodape.removeFromRight(130));
+        rodape.removeFromRight(8);
+        btnAplicar_.setBounds(rodape.removeFromRight(130));
+        btnTodosMesclar_.setBounds(bulk.removeFromLeft(170));
+        bulk.removeFromLeft(8);
+        btnTodosSeparar_.setBounds(bulk.removeFromLeft(210));
+        organizarLinhas();
+    }
+
+private:
+    struct Linha { std::string propostaId; std::unique_ptr<juce::Label> rotulo; std::unique_ptr<juce::ComboBox> opcao; };
+
+    std::string alvoId() const {
+        const int id = comboAlvo_.getSelectedId();
+        return id >= 2 && static_cast<size_t>(id - 2) < destinos_.size() ? destinos_[static_cast<size_t>(id - 2)].id : std::string();
+    }
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    }
+    void definirTodos(bool mesclar) {
+        for (const auto& l : plano_) decisoes_[l.propostaId] = mesclar;
+        reconstruir();
+    }
+    void reconstruir() {
+        linhasUi_.clear();
+        linhas_.removeAllChildren();
+        const auto alvo = alvoId();
+        plano_ = entrePastas_ ? proj_.planoDeMesclaPastas(raizId_, alvo, decisoes_) : proj_.planoDeMescla(raizId_, alvo, decisoes_);
+        btnAplicar_.setEnabled(!alvo.empty());
+        btnTodosMesclar_.setEnabled(!plano_.empty());
+        btnTodosSeparar_.setEnabled(!plano_.empty());
+        lblResumo_.setText(alvo.empty() ? juce::String() : (plano_.empty() ? i18n::t("mescla.sem_conflitos") : i18n::t("mescla.conflitos")),
+                           juce::dontSendNotification);
+        juce::Component::SafePointer<DialogoMescla> safe(this);
+        for (const auto& l : plano_) {
+            Linha u;
+            u.propostaId = l.propostaId;
+            u.rotulo = std::make_unique<juce::Label>();
+            u.rotulo->setText(i18n::t("mescla.linha").replace("{p}", l.caminhoProposta).replace("{a}", l.caminhoAlvo)
+                                  .replace("{n}", juce::String(l.arquivos)), juce::dontSendNotification);
+            u.rotulo->setMinimumHorizontalScale(0.7f);
+            u.opcao = std::make_unique<juce::ComboBox>();
+            u.opcao->addItem(i18n::t("mescla.opt_mesclar"), 1);
+            u.opcao->addItem(i18n::t("mescla.opt_separar"), 2);
+            u.opcao->setSelectedId(l.mesclar ? 1 : 2, juce::dontSendNotification);
+            const std::string id = l.propostaId;
+            auto* combo = u.opcao.get();
+            u.opcao->onChange = [safe, id, combo] {
+                if (!safe) return;
+                safe->decisoes_[id] = combo->getSelectedId() == 1;
+                juce::MessageManager::callAsync([safe] { if (safe) safe->reconstruir(); });  // sem destruir o combo dentro do próprio callback
+            };
+            linhas_.addAndMakeVisible(*u.rotulo);
+            linhas_.addAndMakeVisible(*u.opcao);
+            linhasUi_.push_back(std::move(u));
+        }
+        alturaLinhas_ = static_cast<int>(linhasUi_.size()) * 56;
+        resized();
+    }
+    void organizarLinhas() {
+        int y = 0;
+        const int w = linhas_.getWidth();
+        for (auto& u : linhasUi_) {
+            u.rotulo->setBounds(0, y, w, 22);
+            u.opcao->setBounds(0, y + 24, std::min(w, 320), 26);
+            y += 56;
+        }
+    }
+
+    ProjetoAberto& proj_;
+    std::string raizId_;
+    std::function<void()> aoConcluir_;
+    bool entrePastas_ = false;
+    std::vector<ProjetoAberto::PastaDoMapa> destinos_;
+    std::vector<ProjetoAberto::LinhaMescla> plano_;
+    std::map<std::string, bool> decisoes_;
+    std::vector<Linha> linhasUi_;
+    int alturaLinhas_ = 0;
+    juce::Label lblAlvo_, lblResumo_;
+    juce::ComboBox comboAlvo_;
+    juce::Viewport viewport_;
+    juce::Component linhas_;
+    juce::TextButton btnTodosMesclar_, btnTodosSeparar_, btnAplicar_, btnCancelar_;
+};
+}  // namespace
+
+void ArvoreBackupComponent::reconstruirPropostas() {
+    propostas_.clear();  // os filhos saem sozinhos do componente
+    if (mapaAtivoEhOriginal()) return;
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    for (const auto& p : projeto_.listarPropostas(mapaAtivoId_)) {
+        LinhaProposta l;
+        l.raizId = p.raizId;
+        l.arquivos = p.arquivos;
+        l.rotulo = std::make_unique<juce::Label>();
+        l.rotulo->setText(i18n::t("arvore_backup.nova_linha").replace("{nome}", p.nome).replace("{n}", juce::String(p.arquivos)),
+                          juce::dontSendNotification);
+        l.rotulo->setMinimumHorizontalScale(0.7f);
+        auto botao = [this](const juce::String& texto, const juce::String& dica) {
+            auto b = std::make_unique<juce::TextButton>(texto);
+            b->setTooltip(dica);
+            painelPropostas_->conteudo().addAndMakeVisible(*b);
+            return b;
+        };
+        l.usar = botao(i18n::t("arvore_backup.btn_usar_arvore"), i18n::t("arvore_backup.usar_dica"));
+        l.mesclar = botao(i18n::t("arvore_backup.btn_mesclar"), i18n::t("arvore_backup.mesclar_dica"));
+        l.descartar = botao(i18n::t("arvore_backup.btn_descartar"), i18n::t("arvore_backup.descartar_dica"));
+        // Botões coloridos pra ler a ação de longe: verde = usar, acento = mesclar, vermelho = descartar.
+        auto cor = [](juce::TextButton& b, juce::Colour c) {
+            b.setColour(juce::TextButton::buttonColourId, c);
+            b.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        };
+        cor(*l.usar, juce::Colour(0xff22c55e));
+        cor(*l.mesclar, tema().acento);
+        cor(*l.descartar, tema().perigo);
+        l.rotulo->setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        const std::string id = p.raizId;
+        const juce::String nome = p.nome;
+        const int arquivos = p.arquivos;
+        l.usar->onClick = [safe, id] {
+            juce::MessageManager::callAsync([safe, id] {
+                if (!safe) return;
+                safe->projeto_.usarArvoreProposta(id);
+                safe->recarregar();
+            });
+        };
+        l.mesclar->onClick = [safe, id, nome] {
+            juce::MessageManager::callAsync([safe, id, nome] { if (safe) safe->mostrarDialogoMescla(id, nome); });
+        };
+        l.descartar->onClick = [safe, id, arquivos] {
+            juce::MessageManager::callAsync([safe, id, arquivos] { if (safe) safe->confirmarDescarteProposta(id, arquivos); });
+        };
+        painelPropostas_->conteudo().addAndMakeVisible(*l.rotulo);
+        propostas_.push_back(std::move(l));
+    }
+    if (propostas_.size() > ultimoTotalPropostas_) painelPropostasRecolhido_ = false;  // chegou proposta nova: abre
+    ultimoTotalPropostas_ = propostas_.size();
+    resized();
+}
+
+// Janela flutuante: canto superior esquerdo do stage, só com proposta pendente (e nunca no ORIGINAL).
+bool ArvoreBackupComponent::painelPropostasVisivel() const {
+    return painelPropostas_ && painelPropostas_->isVisible() && !painelPropostas_->getBounds().isEmpty();
+}
+
+ArvoreBackupComponent* ArvoreBackupComponent::mapaDaSobreposicao() const {
+    if (sobreposicao_ != nullptr)
+        for (auto* filho : sobreposicao_->getChildren())
+            if (auto* a = dynamic_cast<ArvoreBackupComponent*>(filho)) return a;
+    return nullptr;
+}
+
+void ArvoreBackupComponent::posicionarPainelPropostas() {
+    if (!painelPropostas_) return;
+    const bool visivel = !mapaAtivoEhOriginal() && !propostas_.empty();
+    painelPropostas_->setVisible(visivel);
+    if (!visivel) return;
+
+    constexpr int kMargem = 16, kLinha = 50, kLarguraMax = 340;
+    const auto canvas = areaCanvas();
+    const int largura = std::min(kLarguraMax, std::max(220, canvas.getWidth() - 2 * kMargem));
+    const int alturaConteudo = static_cast<int>(propostas_.size()) * kLinha + 4;
+    const int alturaMax = std::max(PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 60, canvas.getHeight() - 2 * kMargem);
+    const int altura = painelPropostasRecolhido_
+                           ? PainelPropostas::kAlturaCabecalho
+                           : std::min(alturaMax, PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 8 + alturaConteudo);
+    painelPropostas_->setBounds(canvas.getX() + kMargem, canvas.getY() + kMargem, largura, altura);
+    painelPropostas_->definir(juce::String::fromUTF8("\xe2\x9a\xa0 ") + i18n::t("arvore_backup.card_novas_acao") + " (" +
+                                  juce::String(propostas_.size()) + ")",
+                              painelPropostasRecolhido_);
+
+    const int larguraLinhas = std::max(100, painelPropostas_->larguraConteudo());
+    painelPropostas_->conteudo().setSize(larguraLinhas, alturaConteudo);
+    int y = 2;
+    for (auto& p : propostas_) {
+        juce::Rectangle<int> area(0, y, larguraLinhas, kLinha);
+        if (p.rotulo) p.rotulo->setBounds(area.removeFromTop(16));
+        area.removeFromTop(2);
+        auto linha = area.removeFromTop(24);
+        const int w = (linha.getWidth() - 8) / 3;
+        if (p.usar) p.usar->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (p.mesclar) p.mesclar->setBounds(linha.removeFromLeft(w));
+        linha.removeFromLeft(4);
+        if (p.descartar) p.descartar->setBounds(linha);
+        y += kLinha;
+    }
+}
+
+void ArvoreBackupComponent::mostrarDialogoMescla(const std::string& raizId, const juce::String& nome) {
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, raizId, nome, [safe] { if (safe) safe->recarregar(); });
+}
+
+// MERGE entre duas pastas existentes: a origem some e o conteúdo dela vai pro alvo (mesmo diálogo de conflitos da mescla
+// de pasta nova do INTAKE).
+void ArvoreBackupComponent::iniciarMesclaPastas(const std::string& origemId, const std::string& alvoId) {
+    if (mapaAtivoEhOriginal() || !projeto_.podeMesclarPastas(origemId, alvoId)) {
+        juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                         .withIconType(juce::MessageBoxIconType::WarningIcon)
+                                         .withTitle(i18n::t("mescla.titulo_pastas"))
+                                         .withMessage(i18n::t("mescla.pastas_invalido"))
+                                         .withButton(i18n::t("dialogo.ok")),
+                                     nullptr);
+        return;
+    }
+    juce::String nomeOrigem, caminhoAlvo;
+    for (const auto& n : nodes_)
+        if (n.id == origemId) nomeOrigem = n.nome;
+    std::function<juce::String(const std::string&)> caminho = [&](const std::string& id) -> juce::String {
+        for (const auto& n : nodes_)
+            if (n.id == id) return n.pastaPaiId.empty() ? n.nome : caminho(n.pastaPaiId) + " / " + n.nome;
+        return {};
+    };
+    caminhoAlvo = caminho(alvoId);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, origemId, nomeOrigem, [safe] { if (safe) safe->recarregar(); }, alvoId, caminhoAlvo);
+}
+
+void ArvoreBackupComponent::usarTodasPropostas() {
+    std::vector<std::string> ids;
+    for (const auto& p : propostas_) ids.push_back(p.raizId);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::MessageManager::callAsync([safe, ids] {
+        if (!safe) return;
+        for (const auto& id : ids) safe->projeto_.usarArvoreProposta(id);
+        safe->recarregar();
+    });
+}
+
+// MERGE ALL: abre a mescla de cada proposta, uma depois da outra (cada uma tem seu destino e seus conflitos).
+// Cancelar numa delas interrompe a fila; as já mescladas ficam.
+void ArvoreBackupComponent::mesclarTodasPropostas() {
+    std::vector<std::pair<std::string, juce::String>> fila;
+    for (const auto& p : projeto_.listarPropostas(mapaAtivoId_)) fila.emplace_back(p.raizId, p.nome);
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::MessageManager::callAsync([safe, fila] { if (safe) safe->mesclarProximaDaFila(fila); });
+}
+
+void ArvoreBackupComponent::mesclarProximaDaFila(std::vector<std::pair<std::string, juce::String>> fila) {
+    if (fila.empty()) return;
+    const auto atual = fila.front();
+    fila.erase(fila.begin());
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    DialogoMescla::exibir(projeto_, atual.first, atual.second, [safe, fila] {
+        if (!safe) return;
+        safe->recarregar();
+        safe->mesclarProximaDaFila(fila);
+    });
+}
+
+void ArvoreBackupComponent::confirmarDescarteTodasPropostas() {
+    int arquivos = 0;
+    std::vector<std::string> ids;
+    for (const auto& p : propostas_) { ids.push_back(p.raizId); arquivos += p.arquivos; }
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                     .withTitle(i18n::t("arvore_backup.descartar_titulo"))
+                                     .withMessage(i18n::t("arvore_backup.descartar_msg").replace("{n}", juce::String(arquivos)))
+                                     .withButton(i18n::t("arvore_backup.btn_descartar_todas"))
+                                     .withButton(i18n::t("mescla.btn_cancelar")),
+                                 juce::ModalCallbackFunction::create([safe, ids](int r) {
+                                     if (r != 1 || !safe) return;
+                                     for (const auto& id : ids) safe->projeto_.descartarProposta(id);
+                                     safe->recarregar();
+                                 }));
+}
+
+void ArvoreBackupComponent::confirmarDescarteProposta(const std::string& raizId, int arquivos) {
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    juce::AlertWindow::showAsync(juce::MessageBoxOptions()
+                                     .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                                     .withTitle(i18n::t("arvore_backup.descartar_titulo"))
+                                     .withMessage(i18n::t("arvore_backup.descartar_msg").replace("{n}", juce::String(arquivos)))
+                                     .withButton(i18n::t("arvore_backup.btn_descartar"))
+                                     .withButton(i18n::t("mescla.btn_cancelar")),
+                                 juce::ModalCallbackFunction::create([safe, raizId](int r) {
+                                     if (r != 1 || !safe) return;
+                                     safe->projeto_.descartarProposta(raizId);
+                                     safe->recarregar();
+                                 }));
+}
+
 void ArvoreBackupComponent::recarregar() {
+    // Um Undo pode ter apagado/recriado/renomeado mapas: o combo e o mapa ativo acompanham.
+    {
+        const auto mapas = projeto_.listarFolderMaps();
+        bool mudou = mapas.size() != mapasCache_.size();
+        for (size_t i = 0; !mudou && i < mapas.size(); ++i)
+            mudou = mapas[i].id != mapasCache_[i].id || mapas[i].nome != mapasCache_[i].nome;
+        if (mudou) {
+            recarregarComboMapas();
+            atualizarEstadoBotoesParaMapa();
+        }
+    }
     // Itens que chegaram soltos numa pasta com regra (arrastados, SEND TO FOLDER...) são
     // organizados aqui. Uma consulta só quando não há nada a fazer.
-    if (!mapaAtivoEhOriginal()) projeto_.organizarItensSoltosDasPastasComRegra(mapaAtivoId_);
+    if (!mapaAtivoEhOriginal()) {
+        // Pasta ingerida inteira: nasce uma árvore proposta (os arquivos seguem em SEM PASTA até o usuário decidir).
+        if (!aoPerguntarIngestEmProcessamento || !aoPerguntarIngestEmProcessamento())
+            projeto_.gerarPropostasDeNovasPastas(mapaAtivoId_);
+        projeto_.organizarItensSoltosDasPastasComRegra(mapaAtivoId_);
+    }
+    reconstruirPropostas();
     recalcularNodes();
     if (mapaEnquadradoId_ != mapaAtivoId_) {  // primeira abertura deste mapa
         mapaEnquadradoId_ = mapaAtivoId_;
@@ -409,8 +1154,155 @@ void ArvoreBackupComponent::recarregar() {
     repaint();
 }
 
+void ArvoreBackupComponent::reconstruirExplorador() {
+    if (!treeExplorador_) return;
+    std::unique_ptr<juce::XmlElement> aberto(treeExplorador_->getOpennessState(true));
+    juce::Component::SafePointer<ArvoreBackupComponent> safe(this);
+    auto aoSelecionar = [safe](const std::string& id) {
+        if (!safe) return;
+        safe->pastaExploradorId_ = id;
+        if (safe->btnFind_) safe->btnFind_->setEnabled(true);
+    };
+    auto aoLocalizar = [safe](const std::string& id) {
+        if (safe) safe->localizarPasta(id);
+    };
+    auto aoMenu = [safe](const juce::MouseEvent& e) {
+        if (safe) safe->mostrarMenuExplorador(e);
+    };
+    auto aoAbrir = [safe](ItemPastaExplorador& item) {
+        if (!safe || safe->reconstruindoExplorador_) return;
+        const std::string id = item.id();
+        juce::MessageManager::callAsync([safe, id] { if (safe) safe->ajustarVistaExplorador(id); });
+    };
+
+    std::set<std::string> ids;
+    for (const auto& n : nodes_) ids.insert(n.id);
+    std::map<std::string, std::vector<const FolderNode*>> filhos;
+    std::vector<const FolderNode*> raizes;
+    for (const auto& n : nodes_) {
+        if (n.pastaPaiId.empty() || !ids.count(n.pastaPaiId)) raizes.push_back(&n);
+        else filhos[n.pastaPaiId].push_back(&n);
+    }
+    auto porNome = [](const FolderNode* a, const FolderNode* b) { return a->nome.compareNatural(b->nome, false) < 0; };
+    std::sort(raizes.begin(), raizes.end(), porNome);
+    for (auto& par : filhos) std::sort(par.second.begin(), par.second.end(), porNome);
+
+    std::function<std::unique_ptr<ItemPastaExplorador>(const FolderNode&)> montar = [&](const FolderNode& n) {
+        auto item = std::make_unique<ItemPastaExplorador>(n.id, n.nome, n.contagemItens, n.ativo, aoSelecionar, aoLocalizar, aoAbrir, aoMenu);
+        auto it = filhos.find(n.id);
+        if (it != filhos.end())
+            for (const auto* f : it->second) item->addSubItem(montar(*f).release());
+        return item;
+    };
+
+    reconstruindoExplorador_ = true;
+    treeExplorador_->setRootItem(nullptr);
+    raizExplorador_ = std::make_unique<ItemPastaExplorador>(std::string(), juce::String(), 0, true, nullptr, nullptr);
+    for (const auto* r : raizes) raizExplorador_->addSubItem(montar(*r).release());
+    treeExplorador_->setRootItem(raizExplorador_.get());
+    if (aberto) treeExplorador_->restoreOpennessState(*aberto, false);
+    reconstruindoExplorador_ = false;
+
+    // Mantém a seleção do explorer se a pasta ainda existe.
+    if (!pastaExploradorId_.empty() && ids.count(pastaExploradorId_)) {
+        if (auto* item = treeExplorador_->findItemFromIdentifierString(juce::String(pastaExploradorId_)))
+            item->setSelected(true, false, juce::dontSendNotification);
+    } else {
+        pastaExploradorId_.clear();
+    }
+    if (btnFind_) btnFind_->setEnabled(!pastaExploradorId_.empty());
+}
+
+// Ao abrir uma pasta no explorer: acha a melhor posição horizontal pra os nomes dos filhos aparecerem inteiros
+// (a árvore rola pro lado só o necessário, sem esconder a seta da pasta aberta) e mantém a pasta visível.
+void ArvoreBackupComponent::ajustarVistaExplorador(const std::string& pastaId) {
+    if (!treeExplorador_) return;
+    auto* item = dynamic_cast<ItemPastaExplorador*>(treeExplorador_->findItemFromIdentifierString(juce::String(pastaId)));
+    if (item == nullptr || !item->isOpen() || item->getNumSubItems() == 0) return;
+    treeExplorador_->scrollToKeepItemVisible(item);
+    auto* vp = treeExplorador_->getViewport();
+    const int larguraVista = vp->getMaximumVisibleWidth();
+    int direita = 0, indentFilho = 0;
+    for (int i = 0; i < item->getNumSubItems(); ++i) {
+        auto* f = item->getSubItem(i);
+        const auto pos = f->getItemPosition(true);  // relativa ao topo-esquerdo da árvore (já com o recuo)
+        indentFilho = pos.getX();
+        direita = std::max(direita, pos.getX() + f->getItemWidth());
+    }
+    const int deslocamento = juce::jlimit(0, std::max(0, indentFilho - 24), std::max(0, direita - larguraVista));
+    vp->setViewPosition(deslocamento, vp->getViewPositionY());
+}
+
+// Botão direito no explorer: com 2 pastas selecionadas (shift/cmd+clique), MERGE em qualquer direção.
+void ArvoreBackupComponent::mostrarMenuExplorador(const juce::MouseEvent&) {
+    if (!treeExplorador_ || mapaAtivoEhOriginal()) return;
+    std::vector<std::pair<std::string, juce::String>> sel;
+    for (int i = 0; i < treeExplorador_->getNumSelectedItems(); ++i)
+        if (auto* it = dynamic_cast<ItemPastaExplorador*>(treeExplorador_->getSelectedItem(i)))
+            for (const auto& n : nodes_)
+                if (n.id == it->id()) sel.emplace_back(n.id, n.nome);
+    juce::PopupMenu menu;
+    if (sel.size() == 2) {
+        juce::PopupMenu sub;
+        const bool editavel = !projeto_.somenteLeitura();
+        sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", sel[0].second).replace("{b}", sel[1].second), editavel, false,
+                    [this, a = sel[0].first, b = sel[1].first] { iniciarMesclaPastas(a, b); });
+        sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", sel[1].second).replace("{b}", sel[0].second), editavel, false,
+                    [this, a = sel[0].first, b = sel[1].first] { iniciarMesclaPastas(b, a); });
+        menu.addSubMenu(i18n::t("arvore_backup.mesclar_menu"), sub);
+    } else {
+        menu.addItem(i18n::t("arvore_backup.mesclar_menu"), false, false, [] {});
+        menu.addItem(i18n::t("arvore_backup.mesclar_dica_sel"), false, false, [] {});
+    }
+    menu.showMenuAsync(juce::PopupMenu::Options());
+}
+
+// FIND: seleciona a pasta e todos os descendentes no stage, mostra o card da pasta e enquadra a vista na árvore dela.
+void ArvoreBackupComponent::localizarPasta(const std::string& pastaId) {
+    int indice = -1;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].id == pastaId) { indice = static_cast<int>(i); break; }
+    if (indice < 0) return;
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;
+
+    std::set<int> alvo;
+    alvo.insert(indice);
+    coletarDescendentesIndices(indice, alvo);
+
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        const bool sel = alvo.count(static_cast<int>(i)) > 0;
+        nodes_[i].selecionado = sel;
+        if (!sel) continue;
+        uniao = primeiro ? nodes_[i].bounds : uniao.getUnion(nodes_[i].bounds);
+        primeiro = false;
+    }
+
+    constexpr float kMargem = 60.0f;
+    const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+    const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+    zoom_ = juce::jlimit(0.15f, 1.0f, std::min(zx, zy));
+    const auto centro = uniao.getCentre().toFloat();
+    panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                  static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+    enquadrarPendente_ = false;
+    atualizarPainelDetalhe(pastaId, true);
+    sincronizarSlider();
+    repaint();
+}
+
 void ArvoreBackupComponent::recalcularNodes() {
+    recalcularNodesInterno();
+    reconstruirExplorador();
+}
+
+void ArvoreBackupComponent::recalcularNodesInterno() {
     nodes_.clear();
+    trashFolderId_.clear();
+    trashContagem_ = 0;
+    contagemSemPasta_ = -1;  // o próximo paint reconta (itens podem ter entrado/saído de pastas)
     const bool original = mapaAtivoEhOriginal();
     // Um AJUSTAR de uma versão anterior encolhia os cartões abaixo do tamanho legível (fator < 1) e gravou
     // posições compactas para isso. Esse arranjo não serve mais: descarta e deixa o mapa abrir arranjado de novo.
@@ -431,6 +1323,11 @@ void ArvoreBackupComponent::recalcularNodes() {
 
     std::function<void(const ProjetoAberto::NoArvore&)> adicionarNo = [&](const ProjetoAberto::NoArvore& no) {
         if (!no.id.empty()) {
+            if (no.nome == "_trash") {
+                trashFolderId_ = no.id;
+                trashContagem_ = static_cast<int>(no.itemIds.size());
+                return; // Lixeira fica fixa no topo esquerdo do canvas (fora do zoom)
+            }
             FolderNode node;
             node.id = no.id;
             node.nome = no.nome;
@@ -442,6 +1339,7 @@ void ArvoreBackupComponent::recalcularNodes() {
                 node.corCustomizada = juce::Colour::fromString(no.corCustomizadaHex);
                 node.hasCorCustomizada = true;
             }
+            node.proposta = no.proposta;
             node.regra = no.regraOrganizacao;
             node.autoSub = ProjetoAberto::regraEhAuto(node.regra);
             if (node.regra.isNotEmpty() && !node.autoSub) node.niveisRegra = matriz::consolidacao::hierarquiaDeCsv(node.regra.toStdString());
@@ -451,7 +1349,7 @@ void ArvoreBackupComponent::recalcularNodes() {
                 auto it = escalasOriginal_.find(no.id);
                 escala = it != escalasOriginal_.end() ? it->second : 1.0f;
             }
-            node.escalaManual = juce::jlimit(0.5f, 2.0f, escala > 0.0f ? escala : 1.0f);
+            node.escalaManual = juce::jlimit(0.5f, 5.0f, escala > 0.0f ? escala : 1.0f);
 
             const bool posicaoSalva = no.posicaoX != 0 || no.posicaoY != 0;
             algumaPosicaoSalva = algumaPosicaoSalva || posicaoSalva;
@@ -486,6 +1384,11 @@ void ArvoreBackupComponent::recalcularNodes() {
         for (const auto& filho : arvore.filhos) adicionarNo(filho);
     }
 
+    if (!original && trashFolderId_.empty()) {
+        trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
+        trashContagem_ = static_cast<int>(projeto_.itensNaPastaTrash(mapaAtivoId_).size());
+    }
+
     // Nível de cada pasta na hierarquia mostrada (raiz = 0; pai ausente, como numa aba isolada, = raiz).
     {
         std::map<std::string, int> indicePorId;
@@ -510,12 +1413,12 @@ void ArvoreBackupComponent::recalcularNodes() {
 
     // Mapa sem nada salvo (o ORIGINAL sempre, ou um mapa que nunca foi arranjado): já abre arranjado —
     // maior tamanho de cartão que cabe na área, sem sobreposição nem linhas cruzadas.
-    if ((original || !algumaPosicaoSalva) && canvasPronto && calcularEAplicarAutoArranjo()) {
+    if ((original || !algumaPosicaoSalva || sobreposto_) && canvasPronto && calcularEAplicarAutoArranjo()) {
         recalcularPivot();
         aplicarEscalaTamanho(escalaTamanho_);
         return;
     }
-    if (original || !algumaPosicaoSalva) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
+    if (original || !algumaPosicaoSalva || sobreposto_) autoLayoutPendente_ = true;  // canvas ainda sem tamanho: resized() refaz
 
     // Mapa com posições salvas: tamanho vem do fator do mapa (ou o tamanho único antigo) x multiplicador.
     layoutarvore::ParametrosAuto pa;
@@ -549,6 +1452,68 @@ void ArvoreBackupComponent::recalcularNodes() {
 
     recalcularPivot();
     aplicarEscalaTamanho(escalaTamanho_); // reaplica a escala global ao layout recém-lido
+
+    looseFiles_.clear();
+    try {
+        const auto soltos = projeto_.itensSemPasta(mapaAtivoId_);
+        auto& db = projeto_.projeto().registro();
+        auto stmt = db.prepare(
+            "SELECT i.id, i.titulo, i.tipo_midia, a.caminho_relativo, a.tamanho_bytes "
+            "FROM item i "
+            "LEFT JOIN arquivo a ON i.id = a.item_id AND a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
+            "ORDER BY i.criado_em"
+        );
+
+        int maxNodeY = 40;
+        int maxNodeX = 40;
+        for (const auto& n : nodes_) {
+            maxNodeY = std::max(maxNodeY, n.bounds.getBottom());
+            maxNodeX = std::max(maxNodeX, n.bounds.getRight());
+        }
+
+        int looseStartX = 40;
+        int looseStartY = nodes_.empty() ? 40 : (maxNodeY + 50);
+        int looseX = looseStartX;
+        int looseY = looseStartY;
+
+        const auto nests = ProjetoAberto::mapaDeNests(db);
+        while (!soltos.empty() && stmt.step()) {
+            if (soltos.count(stmt.columnText(0)) == 0) continue;
+            int nestTotal = 0;
+            if (auto nit = nests.find(stmt.columnText(0)); nit != nests.end()) {
+                if (nit->second.capaId != stmt.columnText(0)) continue;
+                nestTotal = nit->second.total;
+            }
+            LooseFileNode lf;
+            lf.nestTotal = nestTotal;
+            lf.id = stmt.columnText(0);
+            lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
+            lf.tipoMidia = stmt.columnText(2);
+            lf.extensao = stmt.columnIsNull(3) ? juce::String() : juce::File(juce::String::fromUTF8(stmt.columnText(3).c_str())).getFileExtension().trimCharactersAtStart(".");
+            lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));
+
+            try { lf.ehConversaWhatsapp = matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), lf.id); } catch (...) {}
+            lf.bounds = juce::Rectangle<int>(looseX, looseY, 126, 138);
+            looseY += 148;
+            if (looseY > looseStartY + 420) {
+                looseY = looseStartY;
+                looseX += 138;
+            }
+            auto salvo = layoutSalvo_.find(chaveLayout(lf.id));
+            if (salvo != layoutSalvo_.end()) {
+                lf.bounds.setPosition(salvo->second);
+            } else if (lf.ehConversaWhatsapp) {
+                const auto canvasTopLeft = areaCanvas().getTopLeft();
+                auto posCanvas = screenToCanvas(canvasTopLeft + juce::Point<int>(36, 36));
+                lf.bounds.setPosition(posCanvas.toInt());
+                layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+                gravarLayoutSalvo();
+            }
+            looseFiles_.push_back(lf);
+        }
+    } catch (const std::exception& e) {
+        juce::Logger::writeToLog("recalcularNodes looseFiles erro: " + juce::String(e.what()));
+    }
 }
 
 // Auto-arranjo completo dos nodes_ atuais: posições E tamanhos (por nível), respeitando o multiplicador
@@ -649,11 +1614,12 @@ void ArvoreBackupComponent::tentarEnquadrar() {
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaBarraAbas() const {
+    if (sobreposto_) return {};  // a sobreposição não tem abas
     return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).removeFromTop(kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
-    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(kAlturaBarraAbas);
+    return getLocalBounds().withTrimmedLeft(ColunaCardsLayout::kLargura).withTrimmedTop(sobreposto_ ? 0 : kAlturaBarraAbas);
 }
 
 juce::Rectangle<int> ArvoreBackupComponent::boundsDaAba(int indice) const {
@@ -726,6 +1692,7 @@ void ArvoreBackupComponent::fecharAba(int indice) {
 }
 
 void ArvoreBackupComponent::desenharBarraDeAbas(juce::Graphics& g) {
+    if (sobreposto_) return;
     const auto& tk = tema();
     auto area = areaBarraAbas();
     g.setColour(tk.painelAlt);
@@ -829,9 +1796,19 @@ static void avisarNomeReservado() {
 void ArvoreBackupComponent::criarNovaPasta(const std::string& nome, const std::optional<std::string>& pastaPaiId) {
     if (mapaAtivoEhOriginal()) return;
     if (nomeReservadoDePasta(nome)) { avisarNomeReservado(); return; }
-    auto pos = posicaoLivrePertoDoCentro(190, 84);
-    std::string novoId = projeto_.criarPastaAcervo(nome, pastaPaiId, mapaAtivoId_);
-    projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
+    // `pos` sai em coordenadas da VISTA (já com a escala/spread do slider); o banco guarda a posição a 100%.
+    const float g = std::max(0.05f, escalaTamanho_);
+    auto pos = posicaoLivrePertoDoCentro(juce::roundToInt(190 * g), juce::roundToInt(84 * g));
+    const auto centroVista = juce::Point<float>(pos.x + 190 * g * 0.5f, pos.y + 84 * g * 0.5f);
+    const auto centroOriginal = juce::Point<float>(
+        pivotEscala_.x + (centroVista.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
+        pivotEscala_.y + (centroVista.y - pivotEscala_.y) / (g * std::max(0.05f, espalharY_)));
+    pos = {juce::roundToInt(centroOriginal.x - 95.0f), juce::roundToInt(centroOriginal.y - 42.0f)};
+    // Sobreposição: pasta nova sem pai vai para dentro da raiz (senão nasceria fora da vista), e sem posição
+    // gravada — o mapa principal a coloca pelo layout.
+    const auto pai = (sobreposto_ && !pastaPaiId) ? std::optional<std::string>(raizSobreposicaoId_) : pastaPaiId;
+    std::string novoId = projeto_.criarPastaAcervo(nome, pai, mapaAtivoId_);
+    if (!sobreposto_) projeto_.atualizarPosicaoPastaAcervo(novoId, pos.x, pos.y);
 
     destaqueNovaPastaId_ = novoId;
     inicioPulsoMs_ = juce::Time::getMillisecondCounter();
@@ -851,6 +1828,153 @@ void ArvoreBackupComponent::apagarPastaSelecionada(const std::string& pastaId) {
     if (mapaAtivoEhOriginal()) return;
     projeto_.apagarPastaAcervo(pastaId);
     recarregar();
+}
+
+void ArvoreBackupComponent::confirmarEApagarPastas(const std::vector<std::string>& pastaIds) {
+    if (mapaAtivoEhOriginal() || pastaIds.empty()) return;
+
+    std::vector<std::string> validas;
+    for (const auto& id : pastaIds) {
+        if (id != trashFolderId_ && !projeto_.ehPastaTrash(id))
+            validas.push_back(id);
+    }
+    if (validas.empty()) return;
+
+    std::set<std::string> todasPastas(validas.begin(), validas.end());
+    bool expandiu = true;
+    while (expandiu) {
+        expandiu = false;
+        for (const auto& n : nodes_) {
+            if (todasPastas.count(n.pastaPaiId) > 0 && todasPastas.count(n.id) == 0) {
+                todasPastas.insert(n.id);
+                expandiu = true;
+            }
+        }
+    }
+
+    std::set<std::string> todosItens;
+    for (const auto& n : nodes_) {
+        if (todasPastas.count(n.id) > 0) {
+            todosItens.insert(n.itemIdsDiretos.begin(), n.itemIdsDiretos.end());
+        }
+    }
+
+    std::string nomePrimeira;
+    for (const auto& n : nodes_) {
+        if (n.id == validas.front()) {
+            nomePrimeira = n.nome.toStdString();
+            break;
+        }
+    }
+
+    if (todosItens.empty()) {
+        projeto_.iniciarGrupoUndo("Delete Folders");
+        for (const auto& id : validas) projeto_.apagarPastaAcervo(id);
+        projeto_.finalizarGrupoUndo();
+        recarregar();
+        return;
+    }
+
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    juce::String titulo = i18n::t("arvore_backup.dialogo_deletar_pasta_titulo");
+    juce::String msg = i18n::t("arvore_backup.dialogo_deletar_pasta_msg")
+                           .replace("{n}", juce::String(todosItens.size()));
+
+    auto* alert = new juce::AlertWindow(titulo, msg, juce::AlertWindow::QuestionIcon);
+    alert->addButton(i18n::t("arvore_backup.btn_mover_para_trash"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alert->addButton(i18n::t("arvore_backup.btn_manter_soltos"), 2);
+    alert->addButton(i18n::t("comum.cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    alert->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, validas, todosItens, nomePrimeira](int resultado) {
+        if (!safeThis || resultado == 0) return;
+
+        std::vector<std::string> itemIds(todosItens.begin(), todosItens.end());
+
+        if (resultado == 1) {
+            safeThis->projeto_.moverItensParaTrash(itemIds, safeThis->mapaAtivoId_, nomePrimeira);
+        } else if (resultado == 2) {
+            safeThis->projeto_.extrairItensParaCanvas(itemIds, safeThis->mapaAtivoId_);
+        }
+
+        safeThis->projeto_.iniciarGrupoUndo("Delete Folders");
+        for (const auto& id : validas) safeThis->projeto_.apagarPastaAcervo(id);
+        safeThis->projeto_.finalizarGrupoUndo();
+        safeThis->recarregar();
+    }), true);
+}
+
+void ArvoreBackupComponent::mostrarMenuArquivoDetalhe(const std::string& itemId) {
+    if (itemId.empty()) {
+        if (detailContent_ && detailContent_->isTrash) {
+            mostrarMenuPastaTrash();
+        }
+        return;
+    }
+    juce::PopupMenu menu;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+
+    menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), [safeThis, itemId] {
+        if (safeThis) safeThis->mostrarNaOrigem(itemId);
+    });
+
+    if (detailContent_ && detailContent_->isTrash) {
+        menu.addItem(i18n::t("arvore_backup.restaurar_item"), [safeThis, itemId] {
+            if (!safeThis) return;
+            safeThis->projeto_.restaurarItensDaTrash({itemId}, safeThis->mapaAtivoId_);
+            safeThis->recarregar();
+        });
+        menu.addItem(i18n::t("arvore_backup.extrair_canvas"), [safeThis, itemId] {
+            if (!safeThis) return;
+            safeThis->projeto_.extrairItensParaCanvas({itemId}, safeThis->mapaAtivoId_);
+            safeThis->recarregar();
+        });
+    } else {
+        if (!mapaAtivoEhOriginal()) {
+            menu.addItem(i18n::t("arvore_backup.extrair_canvas"), [safeThis, itemId] {
+                if (!safeThis) return;
+                safeThis->projeto_.extrairItensParaCanvas({itemId}, safeThis->mapaAtivoId_);
+                safeThis->recarregar();
+            });
+            menu.addItem(i18n::t("arvore_backup.mover_para_trash"), [safeThis, itemId] {
+                if (!safeThis) return;
+                safeThis->projeto_.moverItensParaTrash({itemId}, safeThis->mapaAtivoId_);
+                safeThis->recarregar();
+            });
+        }
+    }
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition());
+}
+
+void ArvoreBackupComponent::mostrarMenuPastaTrash() {
+    if (mapaAtivoEhOriginal()) return;
+    auto itens = projeto_.itensNaPastaTrash(mapaAtivoId_);
+    juce::PopupMenu menu;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+
+    const bool temItens = !itens.empty();
+
+    menu.addItem(i18n::t("arvore_backup.trash_restaurar_tudo"), temItens, false, [safeThis, itens] {
+        if (!safeThis || itens.empty()) return;
+        safeThis->projeto_.restaurarItensDaTrash(itens, safeThis->mapaAtivoId_);
+        safeThis->recarregar();
+    });
+
+    menu.addItem(i18n::t("arvore_backup.trash_extrair_tudo"), temItens, false, [safeThis, itens] {
+        if (!safeThis || itens.empty()) return;
+        safeThis->projeto_.extrairItensParaCanvas(itens, safeThis->mapaAtivoId_);
+        safeThis->recarregar();
+    });
+
+    menu.addSeparator();
+
+    menu.addItem(i18n::t("arvore_backup.trash_esvaziar"), temItens, false, [safeThis, itens] {
+        if (!safeThis || itens.empty()) return;
+        safeThis->projeto_.removerItensDoProjeto(itens);
+        safeThis->recarregar();
+    });
+
+    menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition());
 }
 
 void ArvoreBackupComponent::conectarPastas(const std::string& pastaFilhoId, const std::optional<std::string>& novaPastaPaiId) {
@@ -905,6 +2029,7 @@ void ArvoreBackupComponent::alternarAtivoPasta(const std::string& pastaId) {
     if (mapaAtivoEhOriginal()) return;
     for (const auto& n : nodes_) {
         if (n.id == pastaId) {
+            projeto_.registrarUndoVisualMapa("Toggle Folder Active", mapaAtivoId_);
             projeto_.alternarAtivoPastaAcervo(pastaId, !n.ativo);
             break;
         }
@@ -957,6 +2082,7 @@ void ArvoreBackupComponent::aplicarCorAPastas(const std::vector<std::string>& pa
     // o projeto ou reconstruir o Treemap não apaga, porque recalcularNodes()
     // relê cor_customizada do banco toda vez.
     juce::String hex = cor.toDisplayString(true);
+    projeto_.registrarUndoVisualMapa("Folder Color", mapaAtivoId_);
     for (const auto& id : pastaIds) projeto_.definirCorPastaAcervo(id, hex);
     for (auto& n : nodes_) {
         if (std::find(pastaIds.begin(), pastaIds.end(), n.id) != pastaIds.end()) {
@@ -989,16 +2115,29 @@ bool ArvoreBackupComponent::ehDescendente(const std::string& noPaiId, const std:
 
 void ArvoreBackupComponent::coletarDescendentesIndices(int nodeIndex, std::set<int>& acc) const {
     if (nodeIndex < 0 || nodeIndex >= static_cast<int>(nodes_.size())) return;
-    const std::string& parentId = nodes_[static_cast<size_t>(nodeIndex)].id;
-    for (size_t i = 0; i < nodes_.size(); ++i) {
-        if (nodes_[i].pastaPaiId != parentId) continue;
-        int idx = static_cast<int>(i);
-        if (acc.insert(idx).second) coletarDescendentesIndices(idx, acc);
+    // Índice pai -> filhos montado uma vez: a versão recursiva varria TODAS as pastas para cada descendente
+    // (quadrático; aparecia no `sample` de cada clique num mapa grande).
+    std::unordered_map<std::string, std::vector<int>> filhos;
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (!nodes_[i].pastaPaiId.empty()) filhos[nodes_[i].pastaPaiId].push_back(static_cast<int>(i));
+    std::set<int> visitados{nodeIndex};
+    std::vector<int> pendentes{nodeIndex};
+    while (!pendentes.empty()) {
+        const int atual = pendentes.back();
+        pendentes.pop_back();
+        auto it = filhos.find(nodes_[static_cast<size_t>(atual)].id);
+        if (it == filhos.end()) continue;
+        for (int idx : it->second) {
+            acc.insert(idx);
+            if (visitados.insert(idx).second) pendentes.push_back(idx);
+        }
     }
 }
 
 void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indices) {
     if (indices.empty()) return;
+    if (sobreposto_) return;  // sobreposição: posições só em memória (não mexem no layout do mapa principal)
+    if (!mapaAtivoEhOriginal()) projeto_.registrarUndoVisualMapa("Move Folders", mapaAtivoId_);
     auto& db = projeto_.projeto().registro();
     std::unique_lock<std::recursive_mutex> writeLock(projeto_.writeMutex());
     bool emTransacao = false;
@@ -1009,8 +2148,8 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
         // `bounds` está na escala global do slider; o que se grava é a posição a 100% (boundsOriginal).
         const float g = std::max(0.05f, escalaTamanho_);
         const auto c = node.bounds.getCentre().toFloat();
-        node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / g,
-                                                          pivotEscala_.y + (c.y - pivotEscala_.y) / g).toInt());
+        node.boundsOriginal.setCentre(juce::Point<float>(pivotEscala_.x + (c.x - pivotEscala_.x) / (g * std::max(0.05f, espalharX_)),
+                                                          pivotEscala_.y + (c.y - pivotEscala_.y) / (g * std::max(0.05f, espalharY_))).toInt());
         projeto_.atualizarPosicaoPastaAcervo(node.id, node.boundsOriginal.getX(), node.boundsOriginal.getY());
     }
     if (emTransacao) {
@@ -1018,8 +2157,65 @@ void ArvoreBackupComponent::persistirPosicoesEmLote(const std::vector<int>& indi
     }
 }
 
+void ArvoreBackupComponent::autoArranjarSelecionadas(const std::vector<int>& selecionadas) {
+    std::set<int> sel(selecionadas.begin(), selecionadas.end());
+    std::vector<layoutarvore::No> nos;
+    juce::Rectangle<int> uniao;
+    int larguraMax = 0, alturaMax = 0;
+    bool primeiro = true;
+    for (int i : sel) {
+        const auto& n = nodes_[static_cast<size_t>(i)];
+        nos.push_back({n.id, n.pastaPaiId, false, 0, 0});  // pai fora da seleção = raiz do bloco
+        uniao = primeiro ? n.boundsOriginal : uniao.getUnion(n.boundsOriginal);
+        primeiro = false;
+        larguraMax = std::max(larguraMax, n.boundsOriginal.getWidth());
+        alturaMax = std::max(alturaMax, n.boundsOriginal.getHeight());
+    }
+    layoutarvore::Parametros p;
+    p.larguraNo = larguraMax;
+    p.alturaNo = alturaMax;
+    p.origemX = 0;
+    p.origemY = 0;
+    const auto pos = layoutarvore::calcular(nos, p);
+
+    // Bloco novo ancorado no canto superior esquerdo da região que a seleção ocupava; se cair em cima de
+    // uma pasta não selecionada, vai para baixo de todas as outras.
+    auto candidatos = [&](juce::Point<int> origem) {
+        std::map<int, juce::Rectangle<int>> out;
+        for (int i : sel) {
+            auto it = pos.find(nodes_[static_cast<size_t>(i)].id);
+            if (it == pos.end()) continue;
+            out[i] = nodes_[static_cast<size_t>(i)].boundsOriginal.withPosition(origem.x + it->second.x, origem.y + it->second.y);
+        }
+        return out;
+    };
+    auto colide = [&](const std::map<int, juce::Rectangle<int>>& c) {
+        for (const auto& [i, r] : c)
+            for (size_t k = 0; k < nodes_.size(); ++k)
+                if (!sel.count(static_cast<int>(k)) && r.intersects(nodes_[k].boundsOriginal)) return true;
+        return false;
+    };
+    auto c = candidatos(uniao.getTopLeft());
+    if (colide(c)) {
+        int baixo = uniao.getBottom();
+        for (size_t k = 0; k < nodes_.size(); ++k)
+            if (!sel.count(static_cast<int>(k))) baixo = std::max(baixo, nodes_[k].boundsOriginal.getBottom());
+        c = candidatos({uniao.getX(), baixo + 40});
+    }
+    for (const auto& [i, r] : c) nodes_[static_cast<size_t>(i)].boundsOriginal = r;
+
+    aplicarEscalaTamanho(escalaTamanho_);
+    std::vector<int> indices(sel.begin(), sel.end());
+    persistirPosicoesEmLote(indices);
+}
+
 void ArvoreBackupComponent::autoArranjar() {
     if (nodes_.empty()) return;
+    // Com várias pastas selecionadas, o AJUSTAR só atua nelas.
+    if (const auto selecionadas = indicesSelecionados(); selecionadas.size() >= 2) {
+        autoArranjarSelecionadas(selecionadas);
+        return;
+    }
 
     // Só reorganiza as POSIÇÕES (e o fator de cartão que faz tudo caber): o multiplicador que o usuário
     // ajustou em cada pasta é mantido; a escala global volta a 100%.
@@ -1030,7 +2226,7 @@ void ArvoreBackupComponent::autoArranjar() {
     for (size_t i = 0; i < nodes_.size(); ++i) indices.push_back(static_cast<int>(i));
     recalcularPivot();
     persistirPosicoesEmLote(indices);  // uma transação só
-    if (!mapaAtivoEhOriginal()) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
+    if (!mapaAtivoEhOriginal() && !sobreposto_) projeto_.definirFatorCardsDoMapa(mapaAtivoId_, fatorCards_);
 
     zoom_ = 1.0f;
     panOffset_ = {0.0f, 0.0f};
@@ -1101,11 +2297,82 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
         g.setColour(tk.acento);
         g.drawRoundedRectangle(card.reduced(0.5f), tk.raioPequeno, 2.0f);
     }
-    int n = projeto_.contarItensSemPasta(mapaAtivoId_);
+    const auto agora = juce::Time::getMillisecondCounter();
+    if (contagemSemPasta_ < 0 || contagemSemPastaMapa_ != mapaAtivoId_ || agora - contagemSemPastaMs_ > 1000) {
+        contagemSemPasta_ = projeto_.contarItensSemPasta(mapaAtivoId_);
+        contagemSemPastaMs_ = agora;
+        contagemSemPastaMapa_ = mapaAtivoId_;
+    }
+    const int n = contagemSemPasta_;
     g.setColour(tk.textoSecundario);
     g.setFont(juce::Font(juce::FontOptions(10.0f)));
     g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
 }
+
+// LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas (espaço de TELA, imune ao zoom e pan).
+juce::Rectangle<int> ArvoreBackupComponent::boundsPastaTrash() const {
+    if (mapaAtivoEhOriginal() || (!raizSobreposicaoId_.empty() && raizSobreposicaoId_ == trashFolderId_))
+        return {};
+    const auto canvas = areaCanvas();
+    int x = canvas.getX() + 16;
+    int y = canvas.getY() + 16;
+    if (painelPropostas_ && painelPropostas_->isVisible() && !painelPropostas_->getBounds().isEmpty()) {
+        y = painelPropostas_->getBottom() + 12;
+    }
+    return juce::Rectangle<int>(x, y, 160, 56);
+}
+
+void ArvoreBackupComponent::desenharPastaTrash(juce::Graphics& g) const {
+    auto bounds = boundsPastaTrash();
+    if (bounds.isEmpty()) return;
+
+    const auto& tk = tema();
+    auto bf = bounds.toFloat();
+
+    g.setColour(tk.painel.withAlpha(0.95f));
+    g.fillRoundedRectangle(bf, tk.raioPequeno);
+
+    const bool selecionada = (selectedFolderId_ == trashFolderId_ && !trashFolderId_.empty());
+    if (trashHover_ || selecionada) {
+        g.setColour(tk.perigo);
+        g.drawRoundedRectangle(bf, tk.raioPequeno, selecionada ? 2.0f : 1.5f);
+    } else {
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(bf, tk.raioPequeno, 1.0f);
+    }
+
+    auto header = bf.removeFromTop(22.0f);
+    g.setColour(tk.painelAlt);
+    g.fillRoundedRectangle(header, tk.raioPequeno);
+    g.fillRect(header.withTrimmedTop(14.0f));
+
+    g.setColour(tk.perigo);
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.drawText(juce::String::fromUTF8("🗑 _trash"), header.reduced(8.0f, 0.0f), juce::Justification::centredLeft, true);
+
+    g.setColour(tk.textoTerciario);
+    g.setFont(juce::Font(juce::FontOptions(8.5f)));
+    g.drawText(i18n::t("arvore_backup.trash_sub"), header.reduced(8.0f, 0.0f), juce::Justification::centredRight, true);
+
+    auto content = bf.reduced(8.0f, 4.0f);
+    g.setColour(tk.textoPrimario);
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    juce::String contStr = juce::String(trashContagem_) + " " + i18n::t("arvore_backup.items");
+    g.drawText(contStr, content.removeFromTop(16.0f), juce::Justification::centredLeft, true);
+}
+
+namespace {
+juce::Colour corDoTipoDeArquivo(const Tema& tk, const juce::String& tipoMidia, const juce::String& ext, juce::String& tag) {
+    if (ext == "ZIP" || ext == "RAR" || ext == "7Z" || ext == "TAR" || ext == "GZ") { tag = "ZIP"; return tk.tipoZip; }
+    if (tipoMidia == "audio" || ext == "WAV" || ext == "MP3" || ext == "FLAC" || ext == "AAC" || ext == "AIFF") { tag = "AUDIO"; return tk.tipoAudio; }
+    if (tipoMidia == "video" || ext == "MOV" || ext == "MP4" || ext == "MKV" || ext == "AVI") { tag = "MOVIE"; return tk.tipoVideo; }
+    if (tipoMidia == "foto" || ext == "JPG" || ext == "JPEG" || ext == "PNG" || ext == "TIFF" || ext == "CR2" || ext == "RAW") { tag = "IMG"; return tk.tipoImagem; }
+    if (ext == "PDF" || ext == "DOC" || ext == "DOCX" || ext == "XLS" || ext == "XLSX") { tag = "DOC"; return tk.tipoDocumento; }
+    if (ext == "TXT" || ext == "MD" || ext == "RTF" || ext == "JSON" || ext == "CSV") { tag = "TEXT"; return tk.tipoSessao; }
+    tag = "FILE";
+    return tk.tipoOutros;
+}
+} // namespace
 
 // Fase 1 — arrastar itens (MosaicoComponent::startDragging, descrição =
 // array de item ids, mesmo formato que ArvoreComponent já aceita) pra
@@ -1125,6 +2392,11 @@ void ArvoreBackupComponent::itemDragMove(const SourceDetails& details) {
         semPastaHover_ = sobre;
         repaint();
     }
+    bool sobreTrash = boundsPastaTrash().contains(details.localPosition);
+    if (sobreTrash != trashHover_) {
+        trashHover_ = sobreTrash;
+        repaint();
+    }
 }
 
 void ArvoreBackupComponent::itemDragExit(const SourceDetails&) {
@@ -1132,13 +2404,19 @@ void ArvoreBackupComponent::itemDragExit(const SourceDetails&) {
         semPastaHover_ = false;
         repaint();
     }
+    if (trashHover_) {
+        trashHover_ = false;
+        repaint();
+    }
 }
 
 void ArvoreBackupComponent::itemDropped(const SourceDetails& details) {
     bool sobre = semPastaHover_;
+    bool sobreTrash = trashHover_;
     semPastaHover_ = false;
+    trashHover_ = false;
     repaint();
-    if (!sobre || mapaAtivoEhOriginal()) return;
+    if (mapaAtivoEhOriginal()) return;
 
     auto* arr = details.description.getArray();
     if (!arr) return;
@@ -1146,8 +2424,59 @@ void ArvoreBackupComponent::itemDropped(const SourceDetails& details) {
     for (auto& v : *arr) itemIds.push_back(v.toString().toStdString());
     if (itemIds.empty()) return;
 
+    if (sobreTrash) {
+        projeto_.moverItensParaTrash(itemIds, mapaAtivoId_);
+        recarregar();
+        return;
+    }
+
+    if (!sobre) return;
+
     projeto_.removerItensDoBackup(itemIds, mapaAtivoId_);
     recarregar();
+}
+
+bool ArvoreBackupComponent::isInterestedInFileDrag(const juce::StringArray& files) {
+    return !files.isEmpty();
+}
+
+void ArvoreBackupComponent::fileDragEnter(const juce::StringArray&, int, int) {
+    repaint();
+}
+
+void ArvoreBackupComponent::fileDragMove(const juce::StringArray&, int x, int y) {
+    int alvo = -1;
+    if (!mapaAtivoEhOriginal()) alvo = pastaAlvoDoDrop(screenToCanvas({ x, y }), {});
+    if (alvo != nodeHoverDrop_) { nodeHoverDrop_ = alvo; repaint(); }
+    bool sobreTrash = !mapaAtivoEhOriginal() && boundsPastaTrash().contains(x, y);
+    if (sobreTrash != trashHover_) { trashHover_ = sobreTrash; repaint(); }
+}
+
+void ArvoreBackupComponent::fileDragExit(const juce::StringArray&) {
+    if (nodeHoverDrop_ != -1) { nodeHoverDrop_ = -1; repaint(); }
+    if (trashHover_) { trashHover_ = false; repaint(); }
+}
+
+void ArvoreBackupComponent::filesDropped(const juce::StringArray& files, int x, int y) {
+    const bool sobreTrash = !mapaAtivoEhOriginal() && boundsPastaTrash().contains(x, y);
+    int alvo = -1;
+    if (!mapaAtivoEhOriginal() && !sobreTrash) alvo = pastaAlvoDoDrop(screenToCanvas({ x, y }), {});
+    fileDragExit({});
+    juce::Array<juce::File> arr;
+    for (const auto& f : files) arr.add(juce::File(f));
+    if (arr.isEmpty()) return;
+    if (sobreTrash) {
+        if (trashFolderId_.empty()) trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
+        if (aoIngerirArquivos) aoIngerirArquivos(arr, trashFolderId_);
+        return;
+    }
+    if (alvo >= 0 && alvo < static_cast<int>(nodes_.size())) {
+        if (aoIngerirArquivos) aoIngerirArquivos(arr, nodes_[static_cast<size_t>(alvo)].id);
+        return;
+    }
+    if (aoIngerirArquivos) {
+        aoIngerirArquivos(arr, {});
+    }
 }
 
 void ArvoreBackupComponent::iniciarEdicaoInline(int nodeIndex) {
@@ -1211,25 +2540,30 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     g.reduceClipRegion(canvas);
 
     // Canvas background grid pattern (n8n style dots) — in screen space
+    // Zoom afastado: os pontos ficam mais espaçados (nunca milhares); todos numa chamada só.
     g.setColour(tema().painelAlt.withAlpha(0.4f));
-    float dotStep = 24.0f * zoom_;
-    if (dotStep > 4.0f) {
+    {
+        float dotStep = 24.0f * zoom_;
+        while (dotStep < 12.0f) dotStep *= 2.0f;
         float startX = std::fmod(panOffset_.x, dotStep);
         float startY = std::fmod(panOffset_.y, dotStep);
         if (startX < 0) startX += dotStep;
         if (startY < 0) startY += dotStep;
+        juce::RectangleList<float> pontos;
         for (float x = static_cast<float>(canvas.getX()) + startX; x < static_cast<float>(canvas.getRight()); x += dotStep)
             for (float y = static_cast<float>(canvas.getY()) + startY; y < static_cast<float>(canvas.getBottom()); y += dotStep)
-                g.fillEllipse(x, y, 2.0f, 2.0f);
+                pontos.addWithoutMerging({x, y, 2.0f, 2.0f});
+        g.fillRectList(pontos);
     }
 
-    if (nodes_.empty()) {
+    if (nodes_.empty() && looseFiles_.empty()) {
         g.setColour(tema().textoTerciario);
         g.setFont(juce::Font(juce::FontOptions(14.0f)));
         g.drawText(i18n::t("arvore_backup.vazio"), canvas, juce::Justification::centred, true);
         g.restoreState();
         coluna_.paint(g);
         desenharSemPasta(g);
+        desenharPastaTrash(g);
         desenharIndicadorZoom(g);
         desenharBarraDeAbas(g);
         return;
@@ -1251,9 +2585,16 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
                                                   static_cast<float>(node.bounds.getCentreY()));
     }
 
+    // Culling: só desenha o que cai na área visível do canvas (em coordenadas do canvas, com folga de 40 px).
+    // As portas acima continuam montadas para todos.
+    const juce::Rectangle<float> visivel =
+        juce::Rectangle<float>(screenToCanvas(canvas.getTopLeft()), screenToCanvas(canvas.getBottomRight())).expanded(40.0f);
+
     for (const auto& node : nodes_) {
         if (!node.pastaPaiId.empty() && outputPorts.count(node.pastaPaiId) && inputPorts.count(node.id)) {
-            desenharLinhaConexaoN8n(g, outputPorts[node.pastaPaiId], inputPorts[node.id], node.ativo, false);
+            const auto p1 = outputPorts[node.pastaPaiId], p2 = inputPorts[node.id];
+            if (!juce::Rectangle<float>(p1, p2).expanded(40.0f).intersects(visivel)) continue;
+            desenharLinhaConexaoN8n(g, p1, p2, node.ativo, false);
         }
     }
 
@@ -1263,7 +2604,9 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     }
 
     // Node cards
+    const bool arrastando = nodeDragIndice_ >= 0 || panning_;
     for (const auto& node : nodes_) {
+        if (!node.bounds.toFloat().intersects(visivel)) continue;
         auto b = node.bounds.toFloat();
 
         g.setColour(node.ativo ? tema().painel : tema().painelAlt);
@@ -1278,7 +2621,11 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.fillRoundedRectangle(b, 8.0f);
         }
 
-        if (node.selecionado) {
+        if (node.selecionado && arrastando) {
+            // Durante o arrasto/pan: traço sólido simples (o tracejado custa caro a cada frame).
+            g.setColour(juce::Colours::white);
+            g.drawRoundedRectangle(b, 8.0f, 2.5f);
+        } else if (node.selecionado) {
             // Zebra (marching-ants) selection border: solid white base stroke
             // with a dashed black stroke on top, instead of tinting the fill.
             g.setColour(juce::Colours::white);
@@ -1296,22 +2643,27 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.drawRoundedRectangle(b, 8.0f, 1.2f);
         }
 
-        auto header = b.removeFromTop(24);
-        g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
-        g.fillRoundedRectangle(header, 8.0f);
-        g.fillRect(header.withTrimmedTop(16));
+        // A fonte acompanha o tamanho do folder (slider, escala por pasta, nível): 190x84 = 100%.
+        const float fs = juce::jlimit(0.4f, 4.0f, std::min(b.getWidth() / 190.0f, b.getHeight() / 84.0f));
+        // Texto que sairia com menos de 5 px na tela: nem desenha (só retângulo, borda e portas).
+        if (12.0f * fs * zoom_ >= 5.0f) {
+            auto header = b.removeFromTop(24.0f * fs);
+            g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
+            g.fillRoundedRectangle(header, 8.0f);
+            g.fillRect(header.withTrimmedTop(16.0f * fs));
 
-        desenharCabecalhoNo(g, node, header);
+            desenharCabecalhoNo(g, node, header);
 
-        auto content = b.reduced(10, 6);
-        g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-        g.drawText(node.nome, content.removeFromTop(18), juce::Justification::centredLeft, true);
+            auto content = b.reduced(10.0f * fs, 6.0f * fs);
+            g.setColour(node.ativo ? tema().textoPrimario : tema().textoTerciario);
+            g.setFont(juce::Font(juce::FontOptions(12.0f * fs, juce::Font::bold)));
+            g.drawText(node.nome, content.removeFromTop(18.0f * fs), juce::Justification::centredLeft, true);
 
-        g.setColour(tema().textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
-        juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
-        g.drawText(desc, content, juce::Justification::centredLeft, true);
+            g.setColour(tema().textoSecundario);
+            g.setFont(juce::Font(juce::FontOptions(10.0f * fs)));
+            juce::String desc = juce::String(node.contagemItens) + " " + i18n::t("arvore_backup.items");
+            g.drawText(desc, content, juce::Justification::centredLeft, true);
+        }
 
         // Input & Output socket handles
         float portRadius = 6.0f;
@@ -1335,6 +2687,77 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.setColour(tema().acento.withAlpha(alpha));
             g.drawRoundedRectangle(node.bounds.toFloat().expanded(4.0f), 10.0f, 3.0f);
         }
+        if (nodeHoverDrop_ >= 0 && nodeHoverDrop_ < static_cast<int>(nodes_.size()) &&
+            nodes_[static_cast<size_t>(nodeHoverDrop_)].id == node.id) {
+            g.setColour(tema().acento);
+            g.drawRoundedRectangle(node.bounds.toFloat().expanded(3.0f), 10.0f, 2.5f);
+        }
+    }
+
+    // Arquivos soltos (na raiz do mapa): ícone de arquivo com a extensão dentro e o nome embaixo — sem card.
+    for (const auto& lf : looseFiles_) {
+        const auto b = lf.bounds.toFloat();
+        juce::String ext = lf.extensao.toUpperCase().trimCharactersAtStart(".");
+        juce::String tag;
+        const auto cor = corDoTipoDeArquivo(tk, lf.tipoMidia, ext, tag);
+        if (lf.selecionado) {
+            g.setColour(tk.acento.withAlpha(0.22f));
+            g.fillRoundedRectangle(b, 14.0f);
+            g.setColour(tk.acento);
+            g.drawRoundedRectangle(b.reduced(1.0f), 14.0f, 2.0f);
+        }
+        const float lw = 56.0f, lh = 70.0f;
+        if (lf.ehConversaWhatsapp) {
+            const auto bolha = matriz::ui::logoConversaWhatsapp(256);
+            if (bolha.isValid()) {
+                g.setOpacity(1.0f);
+                g.drawImage(bolha, juce::Rectangle<float>(b.getCentreX() - 36.0f, b.getY() + 6.0f, 72.0f, 72.0f), juce::RectanglePlacement::centred);
+                g.setColour(tk.textoPrimario);
+                g.setFont(fonteUi(11.5f, juce::Font::bold));
+                const auto areaTexto = b.withTrimmedTop(82.0f).reduced(4.0f, 2.0f);
+                g.drawFittedText(lf.titulo, areaTexto.toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
+                continue;
+            }
+        }
+        const juce::Rectangle<float> folha(b.getCentreX() - lw * 0.5f, b.getY() + 8.0f, lw, lh);
+        const float dobra = 16.0f;
+        juce::Path p;
+        p.startNewSubPath(folha.getX(), folha.getY() + 6.0f);
+        p.quadraticTo(folha.getX(), folha.getY(), folha.getX() + 6.0f, folha.getY());
+        p.lineTo(folha.getRight() - dobra, folha.getY());
+        p.lineTo(folha.getRight(), folha.getY() + dobra);
+        p.lineTo(folha.getRight(), folha.getBottom() - 6.0f);
+        p.quadraticTo(folha.getRight(), folha.getBottom(), folha.getRight() - 6.0f, folha.getBottom());
+        p.lineTo(folha.getX() + 6.0f, folha.getBottom());
+        p.quadraticTo(folha.getX(), folha.getBottom(), folha.getX(), folha.getBottom() - 6.0f);
+        p.closeSubPath();
+        g.setColour(tk.sombra);
+        g.fillPath(p, juce::AffineTransform::translation(0.0f, 3.0f));
+        g.setColour(tk.cartao);
+        g.fillPath(p);
+        g.setColour(cor.withAlpha(0.20f));
+        g.fillPath(p);
+        g.setColour(cor);
+        g.strokePath(p, juce::PathStrokeType(2.0f));
+        juce::Path dobraP;
+        dobraP.startNewSubPath(folha.getRight() - dobra, folha.getY());
+        dobraP.lineTo(folha.getRight() - dobra, folha.getY() + dobra);
+        dobraP.lineTo(folha.getRight(), folha.getY() + dobra);
+        g.strokePath(dobraP, juce::PathStrokeType(1.6f));
+        g.setColour(cor);
+        g.setFont(fonteUi(ext.length() > 4 ? 11.0f : 14.0f, juce::Font::bold));
+        g.drawText(ext.isNotEmpty() ? ext : tag, folha.withTrimmedTop(dobra).toNearestInt(), juce::Justification::centred, false);
+        if (lf.nestTotal > 1) {
+            const juce::Rectangle<float> selo(folha.getRight() - 12.0f, folha.getBottom() - 16.0f, 24.0f, 18.0f);
+            g.setColour(tk.perigo);
+            g.fillRoundedRectangle(selo, 5.0f);
+            g.setColour(tk.textoSobreAcento);
+            g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+            g.drawText("N" + juce::String(lf.nestTotal), selo.toNearestInt(), juce::Justification::centred, false);
+        }
+        g.setColour(tk.textoPrimario);
+        g.setFont(fonteUi(tk.tamanhoFontePequena + 1.0f, juce::Font::bold));
+        g.drawFittedText(lf.titulo, b.withTrimmedTop(lh + 12.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.9f);
     }
 
     if (marqueeSelecting_) {
@@ -1349,13 +2772,14 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     coluna_.paint(g);
     desenharSemPasta(g);
+    desenharPastaTrash(g);
     desenharIndicadorZoom(g);
     desenharBarraDeAbas(g);
 }
 
 void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
     // (também desenha a moldura da lista da pasta selecionada, que fica logo abaixo dos cards)
-    if (!detalheBounds_.isEmpty()) {
+    if (!detalheBounds_.isEmpty() && !selectedFolderId_.empty()) {
         g.setColour(tema().borda.withAlpha(0.7f));
         g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
     }
@@ -1368,15 +2792,21 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
 // na ordem da regra; subpasta gerada pela regra: marca discreta "auto" à direita.
 void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderNode& node, juce::Rectangle<float> header) const {
     const auto& tk = tema();
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    const float fs = header.getHeight() / 24.0f;  // o cabeçalho tem 24 px a 100% (ver paint)
+    g.setFont(juce::Font(juce::FontOptions(11.0f * fs, juce::Font::bold)));
+    if (node.proposta) {
+        g.setColour(node.hasCorCustomizada ? node.corCustomizada : tk.acento);
+        g.drawText(i18n::t("arvore_backup.nova_marca"), header.reduced(10.0f * fs, 0), juce::Justification::centredLeft);
+        return;
+    }
     if (node.ativo && !node.niveisRegra.empty()) {
         g.setColour(tk.acento);
         const juce::String rotulo = i18n::t("arvore_backup.auto_marca");
         const float largura = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), rotulo));
-        auto area = header.reduced(10, 0);
+        auto area = header.reduced(10.0f * fs, 0);
         g.drawText(rotulo, area.removeFromLeft(largura + 2.0f), juce::Justification::centredLeft);
         area.removeFromLeft(8.0f);
-        constexpr float d = 8.0f, passo = 12.0f;
+        const float d = 8.0f * fs, passo = 12.0f * fs;
         float x = area.getX();
         for (auto nivel : node.niveisRegra) {
             g.setColour(corDoNivelHierarquia(nivel));
@@ -1387,11 +2817,11 @@ void ArvoreBackupComponent::desenharCabecalhoNo(juce::Graphics& g, const FolderN
     }
     g.setColour(node.ativo ? tk.acento : tk.textoTerciario);
     g.drawText(node.ativo ? i18n::t("arvore_backup.no_ativo") : i18n::t("arvore_backup.no_desativado"),
-               header.reduced(10, 0), juce::Justification::centredLeft);
+               header.reduced(10.0f * fs, 0), juce::Justification::centredLeft);
     if (node.autoSub) {
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(9.0f)));
-        g.drawText(i18n::t("arvore_backup.auto_sub_marca"), header.reduced(10, 0), juce::Justification::centredRight);
+        g.setFont(juce::Font(juce::FontOptions(9.0f * fs)));
+        g.drawText(i18n::t("arvore_backup.auto_sub_marca"), header.reduced(10.0f * fs, 0), juce::Justification::centredRight);
     }
 }
 
@@ -1414,7 +2844,7 @@ void ArvoreBackupComponent::resized() {
 
     // PASTAS — Nova pasta, Renomear, Delete e Ajustar.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_pastas"));
-    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnApagarPasta_.get(), btnAutoArranjar_.get()}) {
+    for (auto* b : {btnCriarPasta_.get(), btnRenomearPasta_.get(), btnAutoArranjar_.get()}) {
         if (b) b->setBounds(corpo.removeFromTop(26));
         corpo.removeFromTop(4);
     }
@@ -1438,9 +2868,29 @@ void ArvoreBackupComponent::resized() {
     // FOLDER SIZE — slider de tamanho (seleção ou todos) e RESET SIZES.
     coluna_.iniciarCard(i18n::t("arvore_backup.card_tamanho"));
     if (sliderTamanho_) sliderTamanho_->setBounds(corpo.removeFromTop(22));
+    corpo.removeFromTop(2);
+    if (rotuloSpread_) rotuloSpread_->setBounds(corpo.removeFromTop(14));
+    if (sliderSpread_) sliderSpread_->setBounds(corpo.removeFromTop(22));
+    if (rotuloSpreadV_) rotuloSpreadV_->setBounds(corpo.removeFromTop(14));
+    if (sliderSpreadV_) sliderSpreadV_->setBounds(corpo.removeFromTop(22));
     corpo.removeFromTop(4);
     if (btnResetTamanhos_) btnResetTamanhos_->setBounds(corpo.removeFromTop(26));
     coluna_.finalizarCard();
+
+    // FOLDER EXPLORER — só pastas do mapa ativo; FIND seleciona a pasta (e descendentes) no stage. Ocupa o lugar
+    // que era do NEW FOLDERS (agora uma janela flutuante sobre o stage, ver posicionarPainelPropostas).
+    {
+        constexpr int kAlturaFind = 26;
+        const int reservadoSemPasta = original ? 0 : 46;
+        const int sobra = corpo.getHeight() - reservadoSemPasta - (ColunaCardsLayout::kCardPad * 2 + ColunaCardsLayout::kHeaderH + 4) - kAlturaFind - 4;
+        const int alturaTree = juce::jlimit(70, 230, static_cast<int>(sobra * 0.62f));
+        coluna_.iniciarCard(i18n::t("arvore_backup.card_explorador"));
+        if (treeExplorador_) treeExplorador_->setBounds(corpo.removeFromTop(alturaTree));
+        corpo.removeFromTop(4);
+        if (btnFind_) btnFind_->setBounds(corpo.removeFromTop(kAlturaFind));
+        coluna_.finalizarCard();
+    }
+    posicionarPainelPropostas();
 
     // SEM PASTA — o card com a contagem, clicável e aceitando drop (nunca no ORIGINAL).
     semPastaBounds_ = {};
@@ -1463,7 +2913,7 @@ void ArvoreBackupComponent::resized() {
     // Pasta selecionada: nome, subpastas e a lista de arquivos ocupam o espaço que sobra na coluna
     // esquerda (antes era um painel por cima do canvas, à direita).
     detalheBounds_ = {};
-    if (detailViewport_ && detailViewport_->isVisible()) {
+    if (detailViewport_ && detailViewport_->isVisible() && !selectedFolderId_.empty()) {
         auto area = corpo.withTrimmedBottom(0);
         area.setX(area.getX() - 4);
         area.setWidth(area.getWidth() + 8);
@@ -1474,10 +2924,84 @@ void ArvoreBackupComponent::resized() {
         } else {
             detailViewport_->setBounds({});
         }
+    } else if (detailViewport_) {
+        detailViewport_->setBounds({});
+    }
+
+    const auto canvas = areaCanvas();
+    if (conversaWhatsapp_ && conversaWhatsapp_->isVisible()) {
+        conversaWhatsapp_->setBounds(canvas);
+        if (btnVoltarMapa_) {
+            btnVoltarMapa_->setBounds(canvas.getX() + 16, canvas.getY() + 16, 140, 32);
+            btnVoltarMapa_->toFront(true);
+        }
+    }
+
+    if (btnReceberCelular_) {
+        constexpr int kAltura = 46;
+        constexpr int kMargem = 16;
+        const int larguraBtn = canvas.getWidth() > 600 ? 250 : kAltura;
+        if (canvas.getWidth() > 150 && canvas.getHeight() > 100 && (!conversaWhatsapp_ || !conversaWhatsapp_->isVisible())) {
+            btnReceberCelular_->setVisible(true);
+            btnReceberCelular_->setBounds(canvas.getRight() - larguraBtn - kMargem,
+                                          canvas.getBottom() - kAltura - kMargem,
+                                          larguraBtn, kAltura);
+            btnReceberCelular_->toFront(true);
+        } else {
+            btnReceberCelular_->setVisible(false);
+        }
+    }
+
+    if (overlayAtual_ && overlayAtual_->isVisible()) {
+        overlayAtual_->setBounds(getLocalBounds());
+        overlayAtual_->toFront(true);
     }
 }
 
+void ArvoreBackupComponent::limparDicaPasta() {
+    dicaPasta_.stopTimer();
+    dicaPastaId_.clear();
+    ProgressoGlobal::obterInstancia().definirDica({}, {});
+}
+
+void ArvoreBackupComponent::mouseMove(const juce::MouseEvent& e) {
+    const bool sobreTrash = !mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition());
+    if (sobreTrash != trashHover_) {
+        trashHover_ = sobreTrash;
+        repaint();
+    }
+    std::string idSob;
+    if (areaCanvas().contains(e.getPosition())) {
+        const auto p = screenToCanvas(e.getPosition());
+        for (const auto& n : nodes_)
+            if (n.bounds.toFloat().contains(p)) { idSob = n.id; break; }
+    }
+    if (idSob == dicaPastaId_) return;  // mesmo alvo: o timer de 1 s segue contando (ou a dica já está no rodapé)
+    limparDicaPasta();
+    if (idSob.empty()) return;
+    dicaPastaId_ = idSob;
+    juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
+    dicaPasta_.aoTick = [safeThis] {
+        if (!safeThis) return;
+        for (const auto& n : safeThis->nodes_)
+            if (n.id == safeThis->dicaPastaId_) {
+                ProgressoGlobal::obterInstancia().definirDica(i18n::t("arvore_backup.dica_pasta"), n.nome);
+                return;
+            }
+    };
+    dicaPasta_.startTimer(1000);
+}
+
+void ArvoreBackupComponent::mouseExit(const juce::MouseEvent&) {
+    if (trashHover_) {
+        trashHover_ = false;
+        repaint();
+    }
+    limparDicaPasta();
+}
+
 void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
+    limparDicaPasta();  // clicou: a dica de hover não vale mais
     grabKeyboardFocus(); // garante que ESC (e os atalhos +/-/F2 já existentes) cheguem a este canvas
     if (!destaqueNovaPastaId_.empty()) { // S4/15 — qualquer clique encerra o destaque da pasta nova
         destaqueNovaPastaId_.clear();
@@ -1510,17 +3034,94 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         return;
     }
 
+    // LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas.
+    if (!mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition())) {
+        if (trashFolderId_.empty()) trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
+        if (e.mods.isPopupMenu()) {
+            mostrarMenuPastaTrash();
+        } else {
+            limparSelecaoTudo();
+            selectedFolderId_ = trashFolderId_;
+            atualizarPainelDetalhe(trashFolderId_);
+            if (janelaTrash_) {
+                janelaTrash_->toFront(true);
+            } else {
+                janelaTrash_ = std::make_unique<TrashWindow>(projeto_, mapaAtivoId_, [this] {
+                    recarregar();
+                    repaint();
+                });
+            }
+            repaint();
+        }
+        return;
+    }
+
     // Clique no fundo da coluna esquerda (fora dos controles): nada a fazer.
     if (!areaCanvas().contains(e.getPosition())) return;
 
     auto canvasClick = screenToCanvas(e.getPosition());
+
+    // Arquivos soltos: clique, Cmd/Ctrl+clique (soma/tira), Shift+clique (intervalo) e botão direito (menu).
+    looseFileDragIndice_ = -1;
+    for (size_t i = 0; i < looseFiles_.size(); ++i) {
+        if (!looseFiles_[i].bounds.toFloat().contains(canvasClick)) continue;
+        const std::string idClicado = looseFiles_[i].id;
+        const bool incremental = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        if (e.mods.isPopupMenu()) {
+            if (!looseFiles_[i].selecionado) {
+                limparSelecaoTudo();
+                looseFiles_[i].selecionado = true;
+            }
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            mostrarMenuDeArquivosSoltos();
+            return;
+        }
+        if (incremental) {
+            looseFiles_[i].selecionado = !looseFiles_[i].selecionado;
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            return;
+        }
+        if (e.mods.isShiftDown() && ancoraTipo_ == 1 && !ancoraId_.empty() && ancoraId_ != idClicado) {
+            selecionarIntervalo(1, ancoraId_, idClicado);
+            repaint();
+            return;
+        }
+        looseFileDragIndice_ = static_cast<int>(i);
+        arrastoOffset_ = { static_cast<int>(canvasClick.x - looseFiles_[i].bounds.getX()),
+                           static_cast<int>(canvasClick.y - looseFiles_[i].bounds.getY()) };
+        soltosArrastoIniciais_.clear();
+        size_t selecionados = 0;
+        for (const auto& lf : looseFiles_) if (lf.selecionado) ++selecionados;
+        if (looseFiles_[i].selecionado && selecionados > 1) {
+            for (size_t k = 0; k < looseFiles_.size(); ++k)
+                if (looseFiles_[k].selecionado) soltosArrastoIniciais_.push_back({ k, looseFiles_[k].bounds.getPosition() });
+            ancoraTipo_ = 1;
+            ancoraId_ = idClicado;
+            repaint();
+            return;
+        }
+        limparSelecaoTudo();
+        looseFiles_[i].selecionado = true;
+        ancoraTipo_ = 1;
+        ancoraId_ = idClicado;
+        repaint();
+        return;
+    }
 
     // Check Output Socket Handles for dragging connections (in canvas space)
     // — ORIGINAL é somente leitura, nunca aceita reconectar pastas (S4/13).
     if (!mapaAtivoEhOriginal()) {
         for (size_t i = 0; i < nodes_.size(); ++i) {
             juce::Point<float> outPort(static_cast<float>(nodes_[i].bounds.getRight()), static_cast<float>(nodes_[i].bounds.getCentreY()));
-            if (outPort.getDistanceSquaredFrom(canvasClick) <= 225.0f / (zoom_ * zoom_) + 225.0f) {
+            // Raio de captura em pixels de TELA, limitado a uma fração do card: com o zoom afastado o card
+            // fica pequeno e um raio fixo engolia o corpo dele (impedia selecionar/mover).
+            const float raioTela = juce::jmin(12.0f, 0.18f * static_cast<float>(nodes_[i].bounds.getWidth()) * zoom_);
+            const float raio = raioTela / zoom_;
+            if (outPort.getDistanceSquaredFrom(canvasClick) <= raio * raio) {
                 socketDragParentId_ = nodes_[i].id;
                 socketDragPos_ = canvasClick;
                 repaint();
@@ -1553,7 +3154,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         // Cmd (macOS) / Ctrl: seleção múltipla incremental — cada clique
         // acrescenta (ou tira) uma pasta da seleção, sem zerar as demais,
         // alimentando a mesma seleção que o marquee já produzia.
-        bool selecaoIncremental = e.mods.isCommandDown() || e.mods.isCtrlDown();
+        bool selecaoIncremental = e.mods.isCommandDown() || e.mods.isCtrlDown() || e.mods.isShiftDown();
 
         if (selecaoIncremental && !e.mods.isPopupMenu()) {
             hitNodeRef.selecionado = !hitNodeRef.selecionado;
@@ -1583,6 +3184,10 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
         arrastoGrupoPosicoesIniciais_.clear();
         for (int idx : indicesParaMover) {
             arrastoGrupoPosicoesIniciais_.push_back({idx, nodes_[static_cast<size_t>(idx)].bounds.getPosition().toFloat()});
+        }
+        if (nodeDragIndice_ >= 0) {
+            autoRolagem_.aoTick = [this] { tickAutoRolagem(); };
+            autoRolagem_.startTimer(30);
         }
 
         if (e.mods.isPopupMenu()) {
@@ -1622,7 +3227,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                     aoMostrarConteudoNaGrade(allItemIds);
                 }
             });
-            if (!batch) {
+            if (!batch && !sobreposto_) {
                 menu.addItem(i18n::t("arvore_backup.abrir_em_aba"), [this, pId, nomeNo = hitNodeRef.nome] {
                     abrirAbaParaPasta(pId, nomeNo);
                 });
@@ -1696,6 +3301,22 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 });
             }
 
+            if (selectedIds.size() == 2 && !mapaAtivoEhOriginal()) {
+                // MERGE de duas pastas: escolhe quem some (a outra recebe o conteúdo).
+                juce::PopupMenu sub;
+                juce::String nomeA, nomeB;
+                for (const auto& n : nodes_) {
+                    if (n.id == selectedIds[0]) nomeA = n.nome;
+                    if (n.id == selectedIds[1]) nomeB = n.nome;
+                }
+                const bool editavel = !projeto_.somenteLeitura();
+                sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", nomeA).replace("{b}", nomeB), editavel, false,
+                            [this, a = selectedIds[0], b = selectedIds[1]] { iniciarMesclaPastas(a, b); });
+                sub.addItem(i18n::t("arvore_backup.mesclar_em").replace("{a}", nomeB).replace("{b}", nomeA), editavel, false,
+                            [this, a = selectedIds[0], b = selectedIds[1]] { iniciarMesclaPastas(b, a); });
+                menu.addSubMenu(i18n::t("arvore_backup.mesclar_menu"), sub);
+            }
+
             menu.addItem(i18n::t("arvore_backup.alternar_ativo"), [this, selectedIds] {
                 for (const auto& id : selectedIds) alternarAtivoPasta(id);
             });
@@ -1714,11 +3335,9 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addItem(std::move(item));
             }
 
-            if (!batch) {
-                menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, pId] {
-                    apagarPastaSelecionada(pId);
-                });
-            }
+            menu.addItem(i18n::t("arvore_backup.apagar_pasta_menu"), [this, selectedIds] {
+                confirmarEApagarPastas(selectedIds);
+            });
             menu.showMenuAsync(juce::PopupMenu::Options());
         }
     }
@@ -1746,6 +3365,7 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
             // seleção atual — antes disso o clique só começava o pan e as
             // pastas continuavam com o destaque de seleção ligado.
             for (auto& n : nodes_) n.selecionado = false;
+            for (auto& lf : looseFiles_) lf.selecionado = false;
             panning_ = true;
             panStart_ = e.getPosition();
             atualizarPainelDetalhe("");
@@ -1765,6 +3385,34 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
     if (marqueeSelecting_) {
         auto canvasPos = screenToCanvas(e.getPosition());
         marqueeRectCanvas_ = juce::Rectangle<float>(marqueeStartCanvas_, canvasPos);
+        repaint(areaCanvas());  // só o canvas: a coluna esquerda não muda durante a interação
+        return;
+    }
+
+    if (looseFileDragIndice_ >= 0 && looseFileDragIndice_ < static_cast<int>(looseFiles_.size())) {
+        auto canvasPos = screenToCanvas(e.getPosition());
+        const auto posAntiga = looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.getPosition();
+        looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.setPosition(
+            static_cast<int>(canvasPos.x - arrastoOffset_.x),
+            static_cast<int>(canvasPos.y - arrastoOffset_.y)
+        );
+        if (soltosArrastoIniciais_.size() > 1) {
+            const auto delta = looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds.getPosition() - posAntiga;
+            for (const auto& [k, ini] : soltosArrastoIniciais_)
+                if (static_cast<int>(k) != looseFileDragIndice_ && k < looseFiles_.size())
+                    looseFiles_[k].bounds.translate(delta.x, delta.y);
+        }
+
+        const int nodeSobre = mapaAtivoEhOriginal()
+                                  ? -1
+                                  : pastaAlvoDoDrop(canvasPos, looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds);
+        if (nodeSobre != nodeHoverDrop_) {
+            nodeHoverDrop_ = nodeSobre;
+        }
+        const bool sobreTrash = !mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition());
+        if (sobreTrash != trashHover_) {
+            trashHover_ = sobreTrash;
+        }
         repaint();
         return;
     }
@@ -1774,18 +3422,23 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
         panOffset_.x += delta.x;
         panOffset_.y += delta.y;
         panStart_ = e.getPosition();
-        repaint();
+        repaint(areaCanvas());
         return;
     }
 
     if (!socketDragParentId_.empty()) {
         socketDragPos_ = screenToCanvas(e.getPosition());
-        repaint();
+        repaint(areaCanvas());
         return;
     }
 
+    if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size())) moverArrastoPara(e.getPosition());
+}
+
+// Posiciona o bloco arrastado como se o mouse estivesse em `mouseTela` (coordenadas do componente).
+void ArvoreBackupComponent::moverArrastoPara(juce::Point<int> mouseTela) {
     if (nodeDragIndice_ >= 0 && nodeDragIndice_ < static_cast<int>(nodes_.size())) {
-        auto canvasPos = screenToCanvas(e.getPosition() - arrastoOffset_);
+        auto canvasPos = screenToCanvas(mouseTela - arrastoOffset_);
 
         // Item 10: desloca todo o lote selecionado pelo mesmo delta do nó
         // primário, em vez de mover só a pasta em que o arrasto começou.
@@ -1800,12 +3453,59 @@ void ArvoreBackupComponent::mouseDrag(const juce::MouseEvent& e) {
             juce::Point<float> novaPos = posInicial + delta;
             nodes_[static_cast<size_t>(idx)].bounds.setPosition(static_cast<int>(novaPos.x), static_cast<int>(novaPos.y));
         }
-        repaint();
+        repaint(areaCanvas());
     }
+}
+
+void ArvoreBackupComponent::tickAutoRolagem() {
+    if (nodeDragIndice_ < 0 || nodeDragIndice_ >= static_cast<int>(nodes_.size()) || !isMouseButtonDown()) {
+        autoRolagem_.stopTimer();
+        return;
+    }
+    const auto canvas = areaCanvas();
+    const auto mouse = getMouseXYRelative();
+    constexpr int kMargem = 32;
+    constexpr float kVelMax = 10.0f;  // px de tela por tick (~30 ms): devagar
+    auto empurrao = [&](int pos, int ini, int fim) {
+        if (pos < ini + kMargem) return juce::jmin(1.0f, static_cast<float>(ini + kMargem - pos) / kMargem) * kVelMax;
+        if (pos > fim - kMargem) return -juce::jmin(1.0f, static_cast<float>(pos - (fim - kMargem)) / kMargem) * kVelMax;
+        return 0.0f;
+    };
+    const float dx = empurrao(mouse.x, canvas.getX(), canvas.getRight());
+    const float dy = empurrao(mouse.y, canvas.getY(), canvas.getBottom());
+    if (dx == 0.0f && dy == 0.0f) return;
+    panOffset_.x += dx;
+    panOffset_.y += dy;
+    moverArrastoPara(mouse);  // o bloco segue o mouse, que agora aponta pra outra região do canvas
+    repaint(areaCanvas());
 }
 
 void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     panning_ = false;
+    autoRolagem_.stopTimer();
+
+    if (looseFileDragIndice_ >= 0 && looseFileDragIndice_ < static_cast<int>(looseFiles_.size())) {
+        if (!mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition())) {
+            trashHover_ = false;
+            std::vector<std::string> ids;
+            if (soltosArrastoIniciais_.size() > 1) {
+                for (const auto& [k, ini] : soltosArrastoIniciais_)
+                    if (k < looseFiles_.size()) ids.push_back(looseFiles_[k].id);
+            } else {
+                ids.push_back(looseFiles_[static_cast<size_t>(looseFileDragIndice_)].id);
+            }
+            projeto_.moverItensParaTrash(ids, mapaAtivoId_);
+            for (const auto& id : ids) layoutSalvo_.erase(chaveLayout(id));
+            gravarLayoutSalvo();
+            soltosArrastoIniciais_.clear();
+            looseFileDragIndice_ = -1;
+            nodeHoverDrop_ = -1;
+            recarregar();
+            return;
+        }
+        concluirArrastoDeArquivoSolto(screenToCanvas(e.getPosition()));
+        return;
+    }
 
     if (marqueeSelecting_) {
         marqueeSelecting_ = false;
@@ -1814,6 +3514,9 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
         for (auto& n : nodes_) {
             n.selecionado = marqueeRectCanvas_.intersects(n.bounds.toFloat());
             if (n.selecionado) { ++countSelecionados; unicoSelId = n.id; }
+        }
+        for (auto& lf : looseFiles_) {
+            lf.selecionado = marqueeRectCanvas_.intersects(lf.bounds.toFloat());
         }
         atualizarPainelDetalhe(countSelecionados == 1 ? unicoSelId : "");
         marqueeRectCanvas_ = {};
@@ -1886,14 +3589,34 @@ void ArvoreBackupComponent::mouseUp(const juce::MouseEvent& e) {
     }
     nodeDragIndice_ = -1;
     arrastoGrupoPosicoesIniciais_.clear();
+    repaint(areaCanvas());  // fim do arrasto/pan: a borda da seleção volta ao tracejado
 }
 
 void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
+    if (!mapaAtivoEhOriginal() && boundsPastaTrash().contains(e.getPosition())) {
+        if (trashFolderId_.empty()) trashFolderId_ = projeto_.obterOuCriarPastaTrash(mapaAtivoId_);
+        limparSelecaoTudo();
+        selectedFolderId_ = trashFolderId_;
+        atualizarPainelDetalhe(trashFolderId_, true);
+        repaint();
+        return;
+    }
     if (!areaCanvas().contains(e.getPosition())) return;
     auto canvasClick = screenToCanvas(e.getPosition());
+    for (const auto& lf : looseFiles_) {
+        if (lf.bounds.toFloat().contains(canvasClick)) {
+            sequenciaPreview_.clear();
+            if (lf.ehConversaWhatsapp) {
+                abrirConversaWhatsapp(lf.id);
+            }
+            return;
+        }
+    }
     for (int i = 0; i < static_cast<int>(nodes_.size()); ++i) {
         if (nodes_[static_cast<size_t>(i)].bounds.toFloat().contains(canvasClick)) {
-            iniciarEdicaoInline(i);
+            // Mapa principal: abre a pasta num Folder Map sobreposto. Dentro da sobreposição: renomeia, como antes.
+            if (sobreposto_) iniciarEdicaoInline(i);
+            else abrirSobreposicao(nodes_[static_cast<size_t>(i)].id, nodes_[static_cast<size_t>(i)].nome);
             return;
         }
     }
@@ -1907,6 +3630,25 @@ void ArvoreBackupComponent::mouseWheelMove(const juce::MouseEvent& e, const juce
 }
 
 bool ArvoreBackupComponent::keyPressed(const juce::KeyPress& key) {
+    if (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey) {
+        if (inlineEditor_ && inlineEditor_->hasKeyboardFocus(true)) return false;
+        if (mapaAtivoEhOriginal()) return false;
+        std::vector<std::string> selectedPastaIds;
+        for (const auto& n : nodes_) if (n.selecionado) selectedPastaIds.push_back(n.id);
+        std::vector<std::string> selectedLooseIds;
+        for (const auto& lf : looseFiles_) if (lf.selecionado) selectedLooseIds.push_back(lf.id);
+
+        if (!selectedPastaIds.empty()) {
+            confirmarEApagarPastas(selectedPastaIds);
+            return true;
+        } else if (!selectedLooseIds.empty()) {
+            projeto_.moverItensParaTrash(selectedLooseIds, mapaAtivoId_);
+            for (const auto& id : selectedLooseIds) layoutSalvo_.erase(chaveLayout(id));
+            gravarLayoutSalvo();
+            recarregar();
+            return true;
+        }
+    }
     if (key == juce::KeyPress::escapeKey) {
         bool haviaSelecao = false;
         for (auto& n : nodes_) { haviaSelecao |= n.selecionado; n.selecionado = false; }
@@ -1999,7 +3741,7 @@ void ArvoreBackupComponent::mostrarEditorAutoOrganizar(const std::string& pastaI
 
     HierarquiaEditorOpcoes opcoes;
     opcoes.titulo = i18n::t("arvore_backup.auto_titulo_janela").replace("{nome}", nomePasta);
-    opcoes.paleta = {N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject};
+    opcoes.paleta = {N::Ano, N::TipoMidia, N::TipoArquivo, N::Origem, N::Artista, N::ContentType, N::Subject, N::Lista};
     opcoes.raizPreview = "/" + nomePasta;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     new HierarquiaEditorWindow(atual, [safeThis, pastaId](const matriz::consolidacao::HierarquiaBackup& h) {
@@ -2031,11 +3773,43 @@ void ArvoreBackupComponent::atualizarPainelDetalhe(const std::string& folderId, 
     }
     selectedFolderId_ = folderId;
 
+    if (!trashFolderId_.empty() && folderId == trashFolderId_) {
+        detailContent_->isTrash = true;
+        detailContent_->folderName = "_trash";
+        detailContent_->subfolders.clear();
+        detailContent_->files.clear();
+        auto trashItens = projeto_.itensNaPastaTrash(mapaAtivoId_);
+        if (!trashItens.empty()) {
+            std::set<std::string> setItens(trashItens.begin(), trashItens.end());
+            auto detalhes = projeto_.obterDetalhesItens(setItens);
+            for (const auto& d : detalhes) {
+                TreeDetailContent::FileEntry fe;
+                fe.id = d.id;
+                fe.nome = d.nome;
+                fe.extensao = d.extensao;
+                fe.tamanhoBytes = d.tamanhoBytes;
+                detailContent_->files.push_back(fe);
+            }
+        }
+        detailContent_->aoMostrarNaGrade = [this, trashItens] {
+            if (aoMostrarConteudoNaGrade) {
+                std::set<std::string> s(trashItens.begin(), trashItens.end());
+                aoMostrarConteudoNaGrade(s);
+            }
+        };
+        detailViewport_->setVisible(true);
+        resized();
+        detailContent_->recalcularAltura();
+        detailContent_->repaint();
+        return;
+    }
+
     const FolderNode* selected = nullptr;
     for (const auto& n : nodes_)
         if (n.id == folderId) { selected = &n; break; }
     if (!selected) { detailViewport_->setVisible(false); return; }
 
+    detailContent_->isTrash = false;
     detailContent_->folderName = selected->nome;
 
     detailContent_->subfolders.clear();
@@ -2088,7 +3862,6 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     juce::Component::lookAndFeelChanged();
     if (btnCriarPasta_) btnCriarPasta_->setButtonText(i18n::t("arvore_backup.btn_criar_pasta"));
     if (btnRenomearPasta_) btnRenomearPasta_->setButtonText(i18n::t("arvore_backup.btn_renomear"));
-    if (btnApagarPasta_) btnApagarPasta_->setButtonText(i18n::t("arvore_backup.btn_apagar"));
     if (btnAutoArranjar_) btnAutoArranjar_->setButtonText(i18n::t("arvore_backup.btn_auto_arranjar"));
     if (btnZoomFit_) btnZoomFit_->setButtonText(i18n::t("arvore_backup.btn_fit"));
     if (btnResetTamanhos_) {
@@ -2097,6 +3870,10 @@ void ArvoreBackupComponent::lookAndFeelChanged() {
     }
     if (btnNovoMapa_) btnNovoMapa_->setButtonText(i18n::t("arvore_backup.btn_novo_mapa"));
     if (sliderTamanho_) sliderTamanho_->setTooltip(i18n::t("arvore_backup.slider_tamanho_tooltip"));
+    if (rotuloSpread_) rotuloSpread_->setText(i18n::t("arvore_backup.spread_rotulo"), juce::dontSendNotification);
+    if (sliderSpread_) sliderSpread_->setTooltip(i18n::t("arvore_backup.spread_tooltip"));
+    if (rotuloSpreadV_) rotuloSpreadV_->setText(i18n::t("arvore_backup.spread_v_rotulo"), juce::dontSendNotification);
+    if (sliderSpreadV_) sliderSpreadV_->setTooltip(i18n::t("arvore_backup.spread_v_tooltip"));
     if (detailContent_) detailContent_->lookAndFeelChanged();
     resized();
     repaint();
@@ -2132,8 +3909,8 @@ void ArvoreBackupComponent::visibilityChanged() {
 void ArvoreBackupComponent::aplicarEscalaTamanho(float escala) {
     for (auto& n : nodes_) {
         const auto c = n.boundsOriginal.getCentre().toFloat();
-        const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala,
-                                            pivotEscala_.y + (c.y - pivotEscala_.y) * escala);
+        const juce::Point<float> novoCentro(pivotEscala_.x + (c.x - pivotEscala_.x) * escala * espalharX_,
+                                            pivotEscala_.y + (c.y - pivotEscala_.y) * escala * espalharY_);
         const int w = juce::jmax(6, juce::roundToInt(n.boundsOriginal.getWidth() * escala));
         const int h = juce::jmax(4, juce::roundToInt(n.boundsOriginal.getHeight() * escala));
         n.bounds = juce::Rectangle<int>(w, h).withCentre(novoCentro.toInt());
@@ -2208,7 +3985,10 @@ void ArvoreBackupComponent::aplicarSlider() {
 void ArvoreBackupComponent::persistirEscalas() {
     if (!escalasSujas_) return;
     escalasSujas_ = false;
+    if (sobreposto_) return;  // idem: tamanhos da sobreposição não são gravados
     if (mapaAtivoEhOriginal()) return;  // virtual: só em memória
+    projeto_.iniciarGrupoUndo("Resize Folders");
+    projeto_.registrarUndoVisualMapa("Resize Folders", mapaAtivoId_);
     std::vector<std::pair<std::string, double>> escalas;
     escalas.reserve(nodes_.size());
     for (const auto& n : nodes_) escalas.push_back({n.id, static_cast<double>(n.escalaManual)});
@@ -2218,6 +3998,7 @@ void ArvoreBackupComponent::persistirEscalas() {
     std::vector<int> todos;
     for (size_t i = 0; i < nodes_.size(); ++i) todos.push_back(static_cast<int>(i));
     persistirPosicoesEmLote(todos);
+    projeto_.finalizarGrupoUndo();
 }
 
 // RESET SIZES: volta cada pasta ao tamanho calculado pelo auto-arranjo (multiplicador 1) e a escala
@@ -2275,11 +4056,19 @@ void ArvoreBackupComponent::redefinirTamanhos() {
 
 // FIT: enquadra o mapa inteiro na área visível (também amplia, se o mapa for pequeno).
 void ArvoreBackupComponent::enquadrarTudo() {
-    if (nodes_.empty()) return;
+    if (nodes_.empty() && looseFiles_.empty()) return;
     const auto canvas = areaCanvas();
     if (canvas.getWidth() < 50 || canvas.getHeight() < 50) return;
-    juce::Rectangle<int> uniao = nodes_.front().bounds;
-    for (const auto& n : nodes_) uniao = uniao.getUnion(n.bounds);
+    juce::Rectangle<int> uniao;
+    bool primeiro = true;
+    for (const auto& n : nodes_) {
+        uniao = primeiro ? n.bounds : uniao.getUnion(n.bounds);
+        primeiro = false;
+    }
+    for (const auto& lf : looseFiles_) {
+        uniao = primeiro ? lf.bounds : uniao.getUnion(lf.bounds);
+        primeiro = false;
+    }
     constexpr float kMargem = 30.0f;
     const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
     const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
@@ -2585,7 +4374,6 @@ void ArvoreBackupComponent::atualizarEstadoBotoesParaMapa() {
     juce::String dica = original ? i18n::t("arvore_backup.original_somente_leitura") : juce::String();
     if (btnCriarPasta_) { btnCriarPasta_->setEnabled(!original); btnCriarPasta_->setTooltip(dica); }
     if (btnRenomearPasta_) { btnRenomearPasta_->setEnabled(!original); btnRenomearPasta_->setTooltip(dica); }
-    if (btnApagarPasta_) { btnApagarPasta_->setEnabled(!original); btnApagarPasta_->setTooltip(dica); }
 }
 
 void ArvoreBackupComponent::mostrarMenuMapa() {
@@ -2719,6 +4507,409 @@ void ArvoreBackupComponent::migrarPresetsAntigosSeNecessario() {
         }
         arquivo.moveFileTo(arquivo.getSiblingFile(arquivo.getFileName() + ".importado"));
     }
+}
+
+void ArvoreBackupComponent::abrirReceberDoCelular() {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    mostrarEscolhaImportacaoCelular(*overlayAtual_, [seguro](std::optional<ModoImportacaoCelular> modo) {
+        juce::MessageManager::callAsync([seguro, modo] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->escolhaImportacaoAtual_.reset();
+            seguro->resized();
+            if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
+        });
+    }, &escolhaImportacaoAtual_);
+    resized();
+}
+
+void ArvoreBackupComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
+    if (overlayAtual_ != nullptr) return;
+    if (modo == ModoImportacaoCelular::WhatsApp) {
+        overlayAtual_ = std::make_unique<PainelOverlay>();
+        addAndMakeVisible(*overlayAtual_);
+        juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+        mostrarImportarWhatsapp(*overlayAtual_, [seguro] {
+            juce::MessageManager::callAsync([seguro] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->resized();
+            });
+        });
+        resized();
+        return;
+    }
+
+    matriz::celular::OpcoesServidor opcoes;
+    auto* pProj = &projeto_.projeto();
+    opcoes.existentesDoProjeto = [pProj]() -> matriz::celular::ConjuntoExistentes {
+        if (pProj == nullptr) return {};
+        return matriz::celular::existentesDoProjeto(*pProj);
+    };
+
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    painelCelularAtual_ = mostrarReceberDoCelular(*overlayAtual_, opcoes, [seguro](RespostaReceberCelular r) {
+        juce::MessageManager::callAsync([seguro, r] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory()) {
+                if (seguro->aoIngerirArquivos) {
+                    seguro->aoIngerirArquivos({r.pastaSessao}, seguro->selectedFolderId_);
+                }
+            }
+        });
+    }, modo);
+    resized();
+}
+
+void ArvoreBackupComponent::abrirConversaWhatsapp(const std::string& itemId) {
+    if (itemId.empty()) return;
+    conversaWhatsapp_ = std::make_unique<ConversaWhatsappComponent>(projeto_, itemId);
+    btnVoltarMapa_ = std::make_unique<juce::TextButton>(juce::String::fromUTF8("◀ ") + i18n::t("arvore_backup.voltar_mapa"));
+    btnVoltarMapa_->setColour(juce::TextButton::buttonColourId, tema().cartao);
+    btnVoltarMapa_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnVoltarMapa_->onClick = [this] { fecharConversaWhatsapp(); };
+    addAndMakeVisible(*conversaWhatsapp_);
+    addAndMakeVisible(*btnVoltarMapa_);
+    if (btnReceberCelular_) btnReceberCelular_->setVisible(false);
+    resized();
+}
+
+void ArvoreBackupComponent::fecharConversaWhatsapp() {
+    conversaWhatsapp_.reset();
+    btnVoltarMapa_.reset();
+    if (btnReceberCelular_) btnReceberCelular_->setVisible(true);
+    resized();
+    repaint();
+}
+
+void ArvoreBackupComponent::fecharOverlayImportacao() {
+    if (overlayAtual_ != nullptr) {
+        overlayAtual_.reset();
+        painelCelularAtual_.reset();
+        escolhaImportacaoAtual_.reset();
+        resized();
+        repaint();
+    }
+}
+
+// ── cards_layout.json: posição dos nós de arquivo solto ──────────────
+juce::File ArvoreBackupComponent::arquivoLayout() const {
+    return projeto_.projeto().pasta().getChildFile("cards_layout.json");
+}
+
+void ArvoreBackupComponent::carregarLayoutSalvo() {
+    layoutSalvo_.clear();
+    const auto arq = arquivoLayout();
+    if (!arq.existsAsFile()) return;
+    const auto json = juce::JSON::parse(arq);
+    if (auto* obj = json.getProperty("layouts", {}).getDynamicObject()) {
+        for (const auto& prop : obj->getProperties()) {
+            const auto* arr = prop.value.getArray();
+            if (arr != nullptr && arr->size() == 2)
+                layoutSalvo_[prop.name.toString().toStdString()] = { static_cast<int>((*arr)[0]), static_cast<int>((*arr)[1]) };
+        }
+    }
+}
+
+void ArvoreBackupComponent::gravarLayoutSalvo() {
+    juce::DynamicObject::Ptr layouts = new juce::DynamicObject();
+    for (const auto& [chave, ponto] : layoutSalvo_)
+        layouts->setProperty(juce::Identifier(chave.c_str()), juce::Array<juce::var>{ ponto.x, ponto.y });
+    juce::DynamicObject::Ptr raiz = new juce::DynamicObject();
+    raiz->setProperty("layouts", juce::var(layouts.get()));
+    if (!arquivoLayout().replaceWithText(juce::JSON::toString(juce::var(raiz.get()), true)))
+        juce::Logger::writeToLog("Folder Map: não foi possível gravar " + arquivoLayout().getFullPathName());
+}
+
+int ArvoreBackupComponent::pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const {
+    for (size_t i = 0; i < nodes_.size(); ++i)
+        if (nodes_[i].bounds.toFloat().contains(cursorCanvas)) return static_cast<int>(i);
+    int melhor = -1;
+    long long melhorArea = 0;
+    for (size_t i = 0; i < nodes_.size(); ++i) {
+        const auto inter = nodes_[i].bounds.getIntersection(iconeCanvas);
+        const long long area = static_cast<long long>(inter.getWidth()) * inter.getHeight();
+        if (area > melhorArea) { melhorArea = area; melhor = static_cast<int>(i); }
+    }
+    return melhor;
+}
+
+void ArvoreBackupComponent::concluirArrastoDeArquivoSolto(juce::Point<float> canvasRelease) {
+    if (looseFileDragIndice_ < 0 || looseFileDragIndice_ >= static_cast<int>(looseFiles_.size())) return;
+    const int targetNodeIndex =
+        pastaAlvoDoDrop(canvasRelease, looseFiles_[static_cast<size_t>(looseFileDragIndice_)].bounds);
+    if (targetNodeIndex >= 0 && mapaAtivoEhOriginal()) {
+        recarregar();
+    } else if (targetNodeIndex >= 0 && targetNodeIndex < static_cast<int>(nodes_.size())) {
+        std::vector<std::string> ids;
+        if (soltosArrastoIniciais_.size() > 1) {
+            for (const auto& [k, ini] : soltosArrastoIniciais_) if (k < looseFiles_.size()) ids.push_back(looseFiles_[k].id);
+        } else {
+            ids.push_back(looseFiles_[static_cast<size_t>(looseFileDragIndice_)].id);
+        }
+        std::string targetPastaId = nodes_[static_cast<size_t>(targetNodeIndex)].id;
+        projeto_.adicionarItensAPasta(ids, targetPastaId);
+        bool mudouLayout = false;
+        for (const auto& id : ids) mudouLayout |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+        if (mudouLayout) gravarLayoutSalvo();
+        recarregar();
+    } else {
+        if (soltosArrastoIniciais_.size() > 1) {
+            for (const auto& [k, ini] : soltosArrastoIniciais_)
+                if (k < looseFiles_.size()) layoutSalvo_[chaveLayout(looseFiles_[k].id)] = looseFiles_[k].bounds.getPosition();
+        } else {
+            const auto& lf = looseFiles_[static_cast<size_t>(looseFileDragIndice_)];
+            layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+        }
+        gravarLayoutSalvo();
+    }
+    soltosArrastoIniciais_.clear();
+    looseFileDragIndice_ = -1;
+    nodeHoverDrop_ = -1;
+    repaint();
+}
+
+void ArvoreBackupComponent::limparSelecaoTudo() {
+    for (auto& n : nodes_) n.selecionado = false;
+    for (auto& lf : looseFiles_) lf.selecionado = false;
+}
+
+namespace {
+template <typename Lista>
+std::vector<size_t> ordemPorPosicao(const Lista& v) {
+    std::vector<size_t> idx(v.size());
+    for (size_t i = 0; i < v.size(); ++i) idx[i] = i;
+    std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return v[a].bounds.getY() < v[b].bounds.getY(); });
+    std::vector<size_t> out;
+    size_t i = 0;
+    while (i < idx.size()) {
+        const int y0 = v[idx[i]].bounds.getY();
+        const int tolerancia = juce::jmax(8, v[idx[i]].bounds.getHeight() / 2);
+        std::vector<size_t> linha;
+        while (i < idx.size() && std::abs(v[idx[i]].bounds.getY() - y0) <= tolerancia) linha.push_back(idx[i++]);
+        std::sort(linha.begin(), linha.end(), [&](size_t a, size_t b) { return v[a].bounds.getX() < v[b].bounds.getX(); });
+        out.insert(out.end(), linha.begin(), linha.end());
+    }
+    return out;
+}
+} // namespace
+
+std::vector<size_t> ArvoreBackupComponent::ordemDeLeituraSoltos() const { return ordemPorPosicao(looseFiles_); }
+std::vector<size_t> ArvoreBackupComponent::ordemDeLeituraPastas() const { return ordemPorPosicao(nodes_); }
+
+void ArvoreBackupComponent::selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId) {
+    const auto ordem = tipo == 1 ? ordemDeLeituraSoltos() : ordemDeLeituraPastas();
+    int a = -1, b = -1;
+    for (size_t k = 0; k < ordem.size(); ++k) {
+        const auto& id = tipo == 1 ? looseFiles_[ordem[k]].id : nodes_[ordem[k]].id;
+        if (id == deId) a = static_cast<int>(k);
+        if (id == ateId) b = static_cast<int>(k);
+    }
+    if (a < 0 || b < 0) return;
+    limparSelecaoTudo();
+    for (int k = std::min(a, b); k <= std::max(a, b); ++k) {
+        if (tipo == 1) looseFiles_[ordem[static_cast<size_t>(k)]].selecionado = true;
+        else nodes_[ordem[static_cast<size_t>(k)]].selecionado = true;
+    }
+}
+
+std::vector<std::string> ArvoreBackupComponent::idsSoltosSelecionados() const {
+    std::vector<std::string> out;
+    for (size_t i : ordemDeLeituraSoltos())
+        if (looseFiles_[i].selecionado) out.push_back(looseFiles_[i].id);
+    return out;
+}
+
+void ArvoreBackupComponent::mostrarNaOrigem(const std::string& itemId) {
+    juce::File origem;
+    try {
+        auto st = projeto_.projeto().registro().prepare("SELECT caminho_absoluto_origem FROM arquivo WHERE item_id = ? ORDER BY eh_master DESC LIMIT 1");
+        st.bind(1, matriz::db::Value::of(itemId));
+        if (st.step() && !st.columnIsNull(0)) origem = juce::File(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    if (origem != juce::File() && origem.exists()) {
+        origem.revealToUser();
+    }
+}
+
+bool ArvoreBackupComponent::aplicarMovimentoDeSoltos(const std::vector<std::string>& ids, const std::string& pastaId) {
+    if (mapaAtivoEhOriginal()) return false;
+    projeto_.adicionarItensAPasta(ids, pastaId);
+    bool mudou = false;
+    for (const auto& id : ids) mudou |= layoutSalvo_.erase(chaveLayout(id)) > 0;
+    if (mudou) gravarLayoutSalvo();
+    recarregar();
+    return true;
+}
+
+void ArvoreBackupComponent::moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId) {
+    aplicarMovimentoDeSoltos(ids, pastaId);
+}
+
+void ArvoreBackupComponent::adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids) {
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    for (const auto& n : nodes_) {
+        if (n.pastaPaiId != paiId) continue;
+        const std::string pastaId = n.id;
+        bool temFilhas = false;
+        for (const auto& m : nodes_) if (m.pastaPaiId == pastaId) { temFilhas = true; break; }
+        if (!temFilhas) {
+            menu.addItem(n.nome, true, false, [seguro, ids, pastaId] { if (seguro) seguro->moverSoltosParaPasta(ids, pastaId); });
+        } else {
+            juce::PopupMenu sub;
+            sub.addItem(n.nome, true, false, [seguro, ids, pastaId] { if (seguro) seguro->moverSoltosParaPasta(ids, pastaId); });
+            sub.addSeparator();
+            adicionarSubmenuDePastas(sub, pastaId, ids);
+            menu.addSubMenu(n.nome, sub);
+        }
+    }
+}
+
+void ArvoreBackupComponent::removerSoltosDoBackup(const std::vector<std::string>& ids) {
+    if (ids.empty()) return;
+    projeto_.removerItensDoProjeto(ids);
+    for (const auto& id : ids) layoutSalvo_.erase(chaveLayout(id));
+    gravarLayoutSalvo();
+    recarregar();
+}
+
+void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
+    const auto ids = idsSoltosSelecionados();
+    if (ids.empty()) return;
+    juce::PopupMenu menu;
+    juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+    const bool unico = ids.size() == 1;
+    menu.addItem(i18n::t("light.ui.mb.ctx.showAtSource"), unico, false, [seguro, ids] { if (seguro) seguro->mostrarNaOrigem(ids.front()); });
+    juce::PopupMenu mover;
+    adicionarSubmenuDePastas(mover, "", ids);
+    menu.addSubMenu(i18n::t("light.ui.mb.ctx.moveToFolder"), mover, mover.getNumItems() > 0 && !mapaAtivoEhOriginal());
+    menu.addSeparator();
+    menu.addItem("NEST", ids.size() > 1, false, [seguro, ids] {
+        if (!seguro) return;
+        seguro->projeto_.criarNest(ids);
+        seguro->recarregar();
+    });
+    bool algumEmNest = false;
+    for (const auto& id : ids) if (projeto_.nestDoItem(id)) { algumEmNest = true; break; }
+    if (algumEmNest)
+        menu.addItem("UNEST", true, false, [seguro, ids] {
+            if (!seguro) return;
+            seguro->projeto_.desfazerNest(ids);
+            seguro->recarregar();
+        });
+    menu.addSeparator();
+    menu.addItem(i18n::t("arvore_backup.mover_para_trash"), !mapaAtivoEhOriginal(), false, [seguro, ids] {
+        if (!seguro) return;
+        seguro->projeto_.moverItensParaTrash(ids, seguro->mapaAtivoId_);
+        for (const auto& id : ids) seguro->layoutSalvo_.erase(seguro->chaveLayout(id));
+        seguro->gravarLayoutSalvo();
+        seguro->recarregar();
+    });
+    menu.addItem(i18n::t("light.ui.mb.ctx.remove"), true, false, [seguro, ids] { if (seguro) seguro->removerSoltosDoBackup(ids); });
+    menu.showMenuAsync(juce::PopupMenu::Options().withMousePosition());
+}
+
+std::optional<std::string> ArvoreBackupComponent::soltoAdjacente(const std::string& idAtual, int direcao) const {
+    std::vector<std::pair<juce::String, std::string>> ordem;
+    const bool soSelecao = std::find(sequenciaPreview_.begin(), sequenciaPreview_.end(), idAtual) != sequenciaPreview_.end();
+    for (const auto& lf : looseFiles_)
+        if (!soSelecao || std::find(sequenciaPreview_.begin(), sequenciaPreview_.end(), lf.id) != sequenciaPreview_.end())
+            ordem.push_back({ lf.titulo.toLowerCase(), lf.id });
+    std::sort(ordem.begin(), ordem.end());
+    const auto it = std::find_if(ordem.begin(), ordem.end(), [&](const auto& p) { return p.second == idAtual; });
+    if (it == ordem.end() || ordem.size() < 2) return std::nullopt;
+    const int n = static_cast<int>(ordem.size());
+    const int i = static_cast<int>(it - ordem.begin());
+    return ordem[static_cast<size_t>(((i + (direcao >= 0 ? 1 : -1)) % n + n) % n)].second;
+}
+
+void ArvoreBackupComponent::selecionarSolto(const std::string& id) {
+    limparSelecaoTudo();
+    for (auto& lf : looseFiles_) lf.selecionado = (lf.id == id);
+    ancoraTipo_ = 1;
+    ancoraId_ = id;
+    repaint();
+}
+
+void ArvoreBackupComponent::arranjarSoltosSelecionados() {
+    std::vector<size_t> sel;
+    for (size_t i : ordemDeLeituraSoltos()) if (looseFiles_[i].selecionado) sel.push_back(i);
+    if (sel.empty()) return;
+    juce::Rectangle<int> uniao = looseFiles_[sel.front()].bounds;
+    for (size_t i : sel) uniao = uniao.getUnion(looseFiles_[i].bounds);
+    constexpr int cw = 128, ch = 136;
+    const int colunas = juce::jmax(1, uniao.getWidth() / cw);
+    const auto posicoes = [&](juce::Point<int> origem) {
+        std::vector<juce::Point<int>> out;
+        for (size_t k = 0; k < sel.size(); ++k)
+            out.push_back({origem.x + static_cast<int>(k % static_cast<size_t>(colunas)) * cw, origem.y + static_cast<int>(k / static_cast<size_t>(colunas)) * ch});
+        return out;
+    };
+    const auto colide = [&](const std::vector<juce::Point<int>>& pos) {
+        for (size_t k = 0; k < sel.size(); ++k) {
+            const auto r = looseFiles_[sel[k]].bounds.withPosition(pos[k]);
+            for (const auto& n : nodes_) if (r.intersects(n.bounds)) return true;
+            for (size_t j = 0; j < looseFiles_.size(); ++j)
+                if (!looseFiles_[j].selecionado && r.intersects(looseFiles_[j].bounds)) return true;
+        }
+        return false;
+    };
+    auto pos = posicoes(uniao.getTopLeft());
+    if (colide(pos)) {
+        int baixo = uniao.getBottom();
+        for (const auto& n : nodes_) baixo = std::max(baixo, n.bounds.getBottom());
+        for (const auto& lf : looseFiles_) baixo = std::max(baixo, lf.bounds.getBottom());
+        pos = posicoes({uniao.getX(), baixo + 40});
+    }
+    for (size_t k = 0; k < sel.size(); ++k) {
+        looseFiles_[sel[k]].bounds.setPosition(pos[k]);
+        layoutSalvo_[chaveLayout(looseFiles_[sel[k]].id)] = pos[k];
+    }
+    gravarLayoutSalvo();
+    repaint();
+}
+
+void ArvoreBackupComponent::reunirArquivosSoltos() {
+    recarregar();
+    if (looseFiles_.empty()) return;
+    int baixo = 0;
+    for (const auto& n : nodes_) baixo = std::max(baixo, n.bounds.getBottom());
+    const int origemX = 40, origemY = nodes_.empty() ? 40 : baixo + 80;
+    constexpr int celulaW = 128, celulaH = 140;
+    const int n = static_cast<int>(looseFiles_.size());
+    const int colunas = juce::jlimit(1, 12, static_cast<int>(std::ceil(std::sqrt(static_cast<double>(n) * 1.5))));
+    limparSelecaoTudo();
+    for (int i = 0; i < n; ++i) {
+        auto& lf = looseFiles_[static_cast<size_t>(i)];
+        lf.bounds = juce::Rectangle<int>(origemX + (i % colunas) * celulaW, origemY + (i / colunas) * celulaH, 112, 124);
+        lf.selecionado = true;
+        layoutSalvo_[chaveLayout(lf.id)] = lf.bounds.getPosition();
+    }
+    gravarLayoutSalvo();
+    ancoraTipo_ = 1;
+    ancoraId_ = looseFiles_.front().id;
+
+    juce::Rectangle<int> uniao = looseFiles_.front().bounds;
+    for (const auto& lf : looseFiles_) uniao = uniao.getUnion(lf.bounds);
+    const auto canvas = areaCanvas();
+    if (canvas.getWidth() >= 50 && canvas.getHeight() >= 50) {
+        constexpr float kMargem = 60.0f;
+        const float zx = (static_cast<float>(canvas.getWidth()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getWidth()));
+        const float zy = (static_cast<float>(canvas.getHeight()) - 2.0f * kMargem) / static_cast<float>(std::max(1, uniao.getHeight()));
+        zoom_ = juce::jlimit(0.15f, 1.0f, std::min(zx, zy));
+        const auto centro = uniao.getCentre().toFloat();
+        panOffset_ = {static_cast<float>(canvas.getWidth()) * 0.5f - centro.x * zoom_,
+                      static_cast<float>(canvas.getHeight()) * 0.5f - centro.y * zoom_};
+        enquadrarPendente_ = false;
+    }
+    repaint();
 }
 
 } // namespace matriz::ui

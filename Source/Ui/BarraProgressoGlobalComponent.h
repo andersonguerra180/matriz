@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <functional>
 #include "ProgressoGlobal.h"
 
 namespace matriz::ui {
@@ -17,8 +18,14 @@ public:
     void lookAndFeelChanged() override;
 
     void aoProgressoAtualizado(const EstadoProgresso& estado) override;
+    void aoDicaAlterada() override { atualizarVisual(); }
 
     static constexpr int kAlturaFixa = 32;
+
+    // Ícone de refresh à esquerda do estado (COMPLETED/READY): releitura dos metadados. `completo` = Option-clique.
+    // `refreshDisponivel` é consultado pelo timer; o ícone só aparece quando devolve true.
+    std::function<void(bool completo)> aoPedirRefreshMetadados;
+    std::function<bool()> refreshDisponivel;
 
 private:
     void timerCallback() override;
@@ -29,9 +36,14 @@ private:
     std::unique_ptr<juce::Label> lblTitulo_;
     std::unique_ptr<juce::Label> lblDetalhe_;
     std::unique_ptr<juce::TextButton> btnCancelar_;
+    std::unique_ptr<juce::Button> btnRefresh_;
 
     float animOffset_ = 0.0f;
     double progressoSuavizado_ = 0.0;
+    // Loop de mensagens parado (lote síncrono na message thread): o timer não roda, então a barra se pinta
+    // na hora a cada atualização (ver aoProgressoAtualizado), no máximo a cada 100 ms.
+    juce::uint32 ultimoTimerMs_ = 0;
+    juce::uint32 ultimaPinturaImediataMs_ = 0;
 };
 
 } // namespace matriz::ui

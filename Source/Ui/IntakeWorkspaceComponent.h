@@ -7,6 +7,8 @@
 
 #include <JuceHeader.h>
 #include "ViewModeIconButton.h"
+#include "OverlayComponent.h"
+#include "PainelReceberCelular.h"
 #include <functional>
 #include <memory>
 #include <set>
@@ -18,6 +20,7 @@
 namespace matriz::ui {
 
 class FloatingPreviewWindow;
+class PainelMetadadosArquivo;
 
 class IntakeWorkspaceComponent : public juce::Component,
                                  public juce::TableListBoxModel,
@@ -76,6 +79,8 @@ public:
     std::function<void(const juce::File& gdFolder)> aoIngerirDeGoogleDrive;
     // Called when the Lightroom import button is clicked
     std::function<void()> aoIngerirDeLightroom;
+    // Called when the Adobe Bridge button is clicked
+    std::function<void()> aoIngerirDeBridge;
     std::function<void()> aoConfirmarParaGrid;
     std::function<void()> aoPedirAjuda;
     void setHasParentCatalog(bool hasParent);
@@ -105,6 +110,7 @@ private:
         std::optional<int> ano;  // EVENT DATE (item.ano) — filtro por ano
         bool dataCriacaoDoMetadado = false;  // false = dataCriacao é só a data do ingest (fallback)
         juce::int64 tamanhoBytes = 0;
+        std::optional<double> duracaoSegundos;  // áudio/vídeo: vem junto com a lista (sem consulta ao pintar)
         juce::String caminhoOrigem;
         juce::String categoria; // "Audio", "Video", "Image", "Document", "Project", "Other"
         juce::String collection; // assigned collection or ""
@@ -158,6 +164,12 @@ private:
     void confirmarTodosParaGrid();
     // R (Reject): marca/desmarca a seleção (ou o item do menu); REJEITAR MARCADOS age só nos marcados.
     void alternarMarcaRDosSelecionados();
+    // Seleção estilo Finder (lista e miniaturas): clique = só este; Cmd/Ctrl+clique = liga/desliga; Shift+clique = intervalo.
+    void aplicarCliqueSelecao(int posicaoFiltrada, const juce::ModifierKeys& mods);
+    // Janela de preview (barra de espaço / duplo clique): lateral com os metadados embutidos, só leitura.
+    void abrirPreviewDoItem(const std::string& itemId);
+    // Mostra no painel da direita os metadados do último arquivo clicado (ou esvazia).
+    void atualizarPainelMetadados();
     void alternarMarcaRDeItem(int itemIndex);
     void rejeitarMarcados();
     void atualizarBotaoRejeitar();
@@ -196,6 +208,12 @@ private:
     mutable int posicaoFocoCache_ = -1;  // palpite de posicaoDoFoco(); sempre validado pelo id
     bool focoVisivel_ = false;  // o anel só aparece depois que o teclado é usado
     std::unique_ptr<FloatingPreviewWindow> janelaPreview_;
+    std::unique_ptr<PainelMetadadosArquivo> painelMetadados_;  // coluna direita (somente leitura)
+    std::string ultimoClicadoId_;   // item que o painel mostra quando há vários selecionados
+    std::string idNoPainel_;        // o que o painel já está mostrando (evita reler a cada repaint)
+    std::unique_ptr<juce::Slider> sliderTamanho_;  // mesmo slider da aba METADATA
+    std::unique_ptr<juce::Label> lblTamanho_;
+    double tamanhoMiniaturas_ = 0.46;
     std::vector<int> indicesFiltrados_; // indices into todosItens_
     // item (shift-click seleciona intervalo): âncora do último clique
     // simples (não-shift), em índice de indicesFiltrados_ (posição visível,
@@ -212,6 +230,7 @@ private:
     int contagemImage_ = 0;
     int contagemDoc_ = 0;
     int contagemOther_ = 0;
+    int contagemPhoneDump_ = 0;
 
     // Top Header
     std::unique_ptr<juce::Label> lblTitulo_;
@@ -222,6 +241,13 @@ private:
     std::unique_ptr<juce::TextButton> btnIngerir_;
     std::unique_ptr<juce::Button> btnGoogleDrive_;
     std::unique_ptr<juce::Button> btnLightroom_;
+    std::unique_ptr<juce::Button> btnBridge_;
+    std::unique_ptr<juce::Button> btnReceberCelular_;
+    std::unique_ptr<PainelOverlay> overlayAtual_;
+    std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
+    std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
+    void abrirReceberDoCelular();
+    void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;
     bool hasParentCatalog_ = false;
     std::unique_ptr<juce::TextButton> btnConfirmarSelecao_;
@@ -238,6 +264,7 @@ private:
     std::unique_ptr<juce::TextButton> btnFiltroImage_;
     std::unique_ptr<juce::TextButton> btnFiltroDoc_;
     std::unique_ptr<juce::TextButton> btnFiltroOther_;
+    std::unique_ptr<juce::TextButton> btnFiltroPhoneDump_;
     // Filtro pela DATE CREATED (mesma data da coluna): ano (0 = todos, -1 =
     // sem data) e, opcionais, mês e dia (0 = todos).
     std::unique_ptr<juce::ComboBox> comboAno_, comboMes_, comboDia_;

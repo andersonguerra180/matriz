@@ -39,6 +39,7 @@ const std::set<juce::String>& extensoesSessao() {
         "ai", "ait", "eps", "svg",
         "indd", "indt", "indl", "indb", "idml", "idms", "inx",
         "pts", "wfm", "aan",
+        "veg", "veg-bak",  // Sony Vegas
         "rpp-bak", "rpp-undo",
         "alp", "alc", "adg", "adv", "agr", "amxd", "ams", "abl", "ablbundle", "asd", "ask",
         "fcpbundle", "fcpxml", "fcpxmld", "fcpevent", "fcproject", "fcp", "fcarch", "cboard",
@@ -882,6 +883,15 @@ juce::String obterLogoSessaoPorExtensao(const juce::String& extensaoSemPonto) {
         return "capcut.jpeg";
     if (ext == "bkrgs")
         return "groovesculptor.png";
+    if (ext == "veg" || ext == "veg-bak")  // Sony Vegas (ícone genérico próprio, não a marca)
+        return "vegas.jpeg";
+    // Modelagem 3D / impressão 3D / CAD: miniatura única 3d.jpg (esses formatos não têm preview no app).
+    if (ext == "stl" || ext == "obj" || ext == "fbx" || ext == "blend" || ext == "blend1" || ext == "3ds" || ext == "dae" ||
+        ext == "gltf" || ext == "glb" || ext == "ply" || ext == "step" || ext == "stp" || ext == "iges" || ext == "igs" ||
+        ext == "3mf" || ext == "amf" || ext == "gcode" || ext == "max" || ext == "c4d" || ext == "ma" || ext == "mb" ||
+        ext == "skp" || ext == "x3d" || ext == "wrl" || ext == "usd" || ext == "usda" || ext == "usdc" || ext == "usdz" ||
+        ext == "abc" || ext == "lwo" || ext == "lws" || ext == "mtl" || ext == "f3d" || ext == "ztl" || ext == "zpr")
+        return "3d.jpg";
     if (ext == "logic" || ext == "logicx")
         return "logic.png";
     if (ext == "lrcat" || ext == "lrcat-journal" || ext == "lrcat-wal" || ext == "lrcat-shm" || ext == "lrtemplate" || ext == "lrsmcol")
@@ -904,6 +914,8 @@ juce::String obterLogoParaExtensao(const juce::String& extensaoSemPonto) {
     juce::String ext = extensaoSemPonto.toLowerCase().trim();
     if (ext == "pdf")
         return "pdf.jpeg";
+    if (ext == "zip" || ext == "rar")
+        return "zip.jpeg";
     return obterLogoSessaoPorExtensao(ext);
 }
 

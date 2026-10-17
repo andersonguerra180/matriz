@@ -1,7 +1,10 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <algorithm>
 #include <functional>
+#include <iterator>
+#include <set>
 #include <memory>
 #include <string>
 #include <optional>
@@ -9,9 +12,11 @@
 #include "EventBus.h"
 #include "ProjetoAberto.h"
 #include "FichaPanelComponent.h"
+#include "PainelMetadadosArquivo.h"
 #include "PreviewComponent.h"
 #include "AudioWorkspace.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
 
 namespace matriz::ui {
@@ -60,7 +65,8 @@ public:
                           const std::string& itemId,
                           std::function<void()> aoFecharCallback,
                           CallbackNavegar aoNavegarCallback = nullptr,
-                          CallbackItemMudou aoItemMudouCallback = nullptr)
+                          CallbackItemMudou aoItemMudouCallback = nullptr,
+                          bool somenteLeitura = false)  // INTAKE: lateral = metadados embutidos, só leitura
         : juce::DocumentWindow({}, tema().fundo, juce::DocumentWindow::allButtons),
           projeto_(projeto),
           aoFecharCallback_(std::move(aoFecharCallback)),
@@ -85,7 +91,8 @@ public:
 
         contentComp_ = new ContentComponent(projeto_, itemId,
             [this](int dir) { navegarItem(dir); },
-            [this] { closeButtonPressed(); }
+            [this] { closeButtonPressed(); },
+            somenteLeitura
         );
         setContentOwned(contentComp_, true);
         // NEST: escolher outro arquivo na coluna do grupo troca o que o preview mostra (e a capa).
@@ -163,6 +170,7 @@ public:
         // que recebe a tecla de verdade, e essa aqui não tratava nada além
         // de navegação/Esc. Delega pro mesmo tratamento do conteúdo, que
         // marca o item aberto no preview e repinta o selo.
+        if (contentComp_ && contentComp_->tratarTeclaNest(key)) return true;
         if (contentComp_ && contentComp_->tratarAtalhoDeMarcacao(key)) {
             return true;
         }
@@ -180,10 +188,25 @@ private:
             bool capa = false, atual = false;
         };
         static constexpr int kAlturaLinha = 78;
-        std::function<void(const std::string&)> aoEscolher;
+        std::function<void(const std::string&)> aoEscolher;  // clique simples: mostra o arquivo no preview
+        std::function<void(const std::vector<std::string>&)> aoSelecaoMudou;
+        std::function<void(const std::vector<std::string>&, juce::Point<int>)> aoMenu;
+
+        // Selecionados na ordem da coluna.
+        std::vector<std::string> selecionados() const {
+            std::vector<std::string> out;
+            for (const auto& l : linhas_) if (selecionados_.count(l.id)) out.push_back(l.id);
+            return out;
+        }
+        void limparSelecao() { selecionados_.clear(); ancora_ = -1; repaint(); }
 
         void definir(std::vector<Linha> linhas) {
             linhas_ = std::move(linhas);
+            for (auto it = selecionados_.begin(); it != selecionados_.end();) {  // some quem saiu do nest
+                const auto id = *it;
+                const bool existe = std::any_of(linhas_.begin(), linhas_.end(), [&](const Linha& l) { return l.id == id; });
+                it = existe ? std::next(it) : selecionados_.erase(it);
+            }
             setSize(getWidth(), juce::jmax(kAlturaLinha, static_cast<int>(linhas_.size()) * kAlturaLinha));
             repaint();
         }
@@ -197,6 +220,12 @@ private:
                 const auto& l = linhas_[static_cast<size_t>(i)];
                 juce::Rectangle<int> r(0, i * kAlturaLinha, getWidth(), kAlturaLinha);
                 if (l.atual) { g.setColour(tk.acento.withAlpha(0.22f)); g.fillRect(r); }
+                if (selecionados_.count(l.id)) {  // selecionado (clique / Cmd+clique / Shift+clique)
+                    g.setColour(tk.acento.withAlpha(0.38f));
+                    g.fillRect(r);
+                    g.setColour(tk.acento);
+                    g.drawRect(r.reduced(1), 2);
+                }
                 g.setColour(tk.borda.withAlpha(0.5f));
                 g.fillRect(r.getX(), r.getBottom() - 1, r.getWidth(), 1);
                 auto miniArea = r.reduced(6).removeFromTop(kAlturaLinha - 24).withWidth(getWidth() - 12);
@@ -222,12 +251,38 @@ private:
             }
         }
 
+        // Mesmo modelo do INTAKE: clique = só este; Cmd/Ctrl+clique = liga/desliga; Shift+clique = intervalo.
         void mouseDown(const juce::MouseEvent& e) override {
             const int i = e.y / kAlturaLinha;
-            if (i >= 0 && i < static_cast<int>(linhas_.size()) && aoEscolher) aoEscolher(linhas_[static_cast<size_t>(i)].id);
+            if (i < 0 || i >= static_cast<int>(linhas_.size())) return;
+            const std::string id = linhas_[static_cast<size_t>(i)].id;
+            if (e.mods.isPopupMenu()) {
+                if (!selecionados_.count(id)) { selecionados_ = {id}; ancora_ = i; }
+                repaint();
+                if (aoSelecaoMudou) aoSelecaoMudou(selecionados());
+                if (aoMenu) aoMenu(selecionados(), e.getScreenPosition());
+                return;
+            }
+            bool mostrar = false;
+            if (e.mods.isShiftDown() && ancora_ >= 0 && ancora_ < static_cast<int>(linhas_.size())) {
+                selecionados_.clear();
+                for (int k = std::min(ancora_, i); k <= std::max(ancora_, i); ++k) selecionados_.insert(linhas_[static_cast<size_t>(k)].id);
+            } else if (e.mods.isCommandDown() || e.mods.isCtrlDown()) {
+                if (!selecionados_.erase(id)) selecionados_.insert(id);
+                ancora_ = i;
+            } else {
+                selecionados_ = {id};
+                ancora_ = i;
+                mostrar = true;
+            }
+            repaint();
+            if (mostrar && aoEscolher) aoEscolher(id);
+            if (aoSelecaoMudou) aoSelecaoMudou(selecionados());
         }
 
     private:
+        std::set<std::string> selecionados_;
+        int ancora_ = -1;
         std::vector<Linha> linhas_;
     };
 
@@ -236,11 +291,13 @@ private:
         ContentComponent(ProjetoAberto& projeto,
                          const std::string& itemId,
                          std::function<void(int)> aoNavegar,
-                         std::function<void()> aoFechar)
+                         std::function<void()> aoFechar,
+                         bool somenteLeitura = false)
             : projeto_(projeto),
               itemId_(itemId),
               aoNavegar_(std::move(aoNavegar)),
-              aoFechar_(std::move(aoFechar))
+              aoFechar_(std::move(aoFechar)),
+              somenteLeitura_(somenteLeitura)
         {
             setWantsKeyboardFocus(true);
             // Marcas feitas no grid (E/H/K/P/W) também aparecem aqui.
@@ -276,11 +333,13 @@ private:
                     btnToggleFicha_->setButtonText(juce::CharPointer_UTF8("\xe2\x97\x80 Metadata"));
                     btnToggleFicha_->setTooltip("Show Metadata Inspector");
                     if (fichaPanel_) fichaPanel_->setVisible(false);
+                    if (painelLeitura_) painelLeitura_->setVisible(false);
                     if (resizerBar_) resizerBar_->setVisible(false);
                 } else {
                     btnToggleFicha_->setButtonText(juce::CharPointer_UTF8("\xe2\x96\xb6 Metadata"));
                     btnToggleFicha_->setTooltip("Collapse Metadata Inspector");
                     if (fichaPanel_) fichaPanel_->setVisible(true);
+                    if (painelLeitura_) painelLeitura_->setVisible(true);
                     if (resizerBar_) resizerBar_->setVisible(true);
                 }
                 resized();
@@ -296,11 +355,19 @@ private:
             };
             addAndMakeVisible(*resizerBar_);
 
-            fichaPanel_ = std::make_unique<FichaPanelComponent>(projeto_);
-            addAndMakeVisible(*fichaPanel_);
+            if (somenteLeitura_) {
+                painelLeitura_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
+                addAndMakeVisible(*painelLeitura_);
+                btnToggleFicha_->setTooltip("Collapse / Expand file metadata");
+            } else {
+                fichaPanel_ = std::make_unique<FichaPanelComponent>(projeto_);
+                addAndMakeVisible(*fichaPanel_);
+            }
 
             nestColuna_ = std::make_unique<NestColuna>();
-            nestColuna_->aoEscolher = [this](const std::string& id) { escolherArquivoDoNest(id); };
+            nestColuna_->aoEscolher = [this](const std::string& id) { mostrarArquivoDoNest(id); };
+            nestColuna_->aoSelecaoMudou = [this](const std::vector<std::string>& ids) { atualizarFichaPelaSelecaoDoNest(ids); };
+            nestColuna_->aoMenu = [this](const std::vector<std::string>& ids, juce::Point<int> pos) { menuDoNest(ids, pos); };
             nestViewport_ = std::make_unique<juce::Viewport>();
             nestViewport_->setViewedComponent(nestColuna_.get(), false);
             nestViewport_->setScrollBarsShown(true, false);
@@ -318,12 +385,115 @@ private:
 
         std::function<void(const std::string&)> aoMudouDeArquivo;
 
-        // NEST: o arquivo escolhido na coluna vira a capa e passa a ser mostrado no preview.
-        void escolherArquivoDoNest(const std::string& novoId) {
+        // NEST: clicar num arquivo da coluna o mostra no preview (a capa só muda pelo menu "Use as cover").
+        void mostrarArquivoDoNest(const std::string& novoId) {
             if (novoId == itemId_ || nestId_.empty()) return;
-            projeto_.definirCapaDoNest(nestId_, novoId);
             carregarAsset(novoId);
             if (aoMudouDeArquivo) aoMudouDeArquivo(novoId);
+        }
+
+        void definirComoCapa(const std::string& novoId) {
+            if (nestId_.empty()) return;
+            projeto_.definirCapaDoNest(nestId_, novoId);
+            if (novoId != itemId_) {
+                carregarAsset(novoId);
+                if (aoMudouDeArquivo) aoMudouDeArquivo(novoId);
+            }
+        }
+
+        // Vários arquivos selecionados na coluna: a ficha entra em lote sobre eles (mesmo comportamento do nest
+        // inteiro: campo preenchido sobrescreve, vazio não mexe, TAGS/PEOPLE somam). Um só: ficha normal.
+        void atualizarFichaPelaSelecaoDoNest(const std::vector<std::string>& ids) {
+            if (!fichaPanel_) return;
+            if (ids.size() > 1) fichaPanel_->mostrarSelecao(ids);
+            else if (!itemId_.empty()) fichaPanel_->mostrarItem(itemId_);
+        }
+
+        // Depois de tirar arquivos do nest: quem fica no preview. `retirados` = ids que saíram; `apagados` = saíram do projeto.
+        void reposicionarAposRetirar(const std::vector<std::string>& restantesAntes, const std::set<std::string>& retirados, bool apagados) {
+            nestColuna_->limparSelecao();
+            if (retirados.count(itemId_) == 0) {  // o item aberto continua: só atualiza a coluna e a ficha
+                atualizarColunaNest();
+                resized();
+                if (fichaPanel_) fichaPanel_->mostrarItem(itemId_);
+                return;
+            }
+            std::string alvo;
+            if (restantesAntes.size() >= 1) alvo = restantesAntes.front();
+            if (alvo.empty()) {
+                if (apagados) { if (aoFechar_) aoFechar_(); return; }
+                alvo = itemId_;
+            }
+            carregarAsset(alvo);
+            if (aoMudouDeArquivo) aoMudouDeArquivo(alvo);
+        }
+
+        std::vector<std::string> restantesDoNestSem(const std::set<std::string>& retirados) const {
+            std::vector<std::string> out;
+            if (nestId_.empty()) return out;
+            const auto nest = projeto_.nestDoItem(itemId_);
+            for (const auto& id : projeto_.membrosDoNest(nestId_)) if (retirados.count(id) == 0) out.push_back(id);
+            if (nest && nest->capaId.size() && std::find(out.begin(), out.end(), nest->capaId) != out.end()) {  // capa primeiro, se fica
+                out.erase(std::find(out.begin(), out.end(), nest->capaId));
+                out.insert(out.begin(), nest->capaId);
+            }
+            return out;
+        }
+
+        void extrairSelecionadosDoNest(const std::vector<std::string>& ids) {
+            if (ids.empty()) return;
+            const std::set<std::string> retirados(ids.begin(), ids.end());
+            const auto restantes = restantesDoNestSem(retirados);
+            projeto_.extrairDoNest(ids);
+            reposicionarAposRetirar(restantes.size() >= 2 ? restantes : std::vector<std::string>{}, retirados, false);
+        }
+
+        void apagarSelecionadosDoNest(const std::vector<std::string>& ids) {
+            if (ids.empty()) return;
+            const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+            const juce::String n(static_cast<int>(ids.size()));
+            const juce::String msg = isPt
+                ? juce::String::fromUTF8("Remover ") + n + juce::String::fromUTF8(" arquivo(s) do projeto? Os arquivos originais em disco n\xc3\xa3o s\xc3\xa3o tocados.")
+                : "Remove " + n + " file(s) from the project? The original files on disk are not touched.";
+            auto* w = new juce::AlertWindow(isPt ? "Apagar do nest" : "Delete from nest", msg, juce::MessageBoxIconType::WarningIcon);
+            w->addButton(isPt ? "APAGAR" : "DELETE", 1);
+            w->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+            juce::Component::SafePointer<ContentComponent> seguro(this);
+            w->enterModalState(true, juce::ModalCallbackFunction::create([seguro, ids](int r) {
+                if (r != 1 || !seguro) return;
+                const std::set<std::string> retirados(ids.begin(), ids.end());
+                const auto restantes = seguro->restantesDoNestSem(retirados);
+                seguro->projeto_.apagarDoNest(ids);
+                seguro->reposicionarAposRetirar(restantes, retirados, true);
+            }), true);
+        }
+
+        void menuDoNest(const std::vector<std::string>& ids, juce::Point<int> telaPos) {
+            if (ids.empty()) return;
+            const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+            juce::PopupMenu m;
+            if (ids.size() == 1) m.addItem(1, isPt ? "Usar como capa" : "Use as cover");
+            m.addItem(2, isPt ? "Extrair do nest" : "Extract from nest");
+            m.addSeparator();
+            m.addItem(3, isPt ? juce::String::fromUTF8("Apagar do projeto...") : "Delete from project...");
+            juce::Component::SafePointer<ContentComponent> seguro(this);
+            m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(telaPos.x, telaPos.y, 1, 1)),
+                            [seguro, ids](int r) {
+                                if (!seguro) return;
+                                if (r == 1) seguro->definirComoCapa(ids.front());
+                                else if (r == 2) seguro->extrairSelecionadosDoNest(ids);
+                                else if (r == 3) seguro->apagarSelecionadosDoNest(ids);
+                            });
+        }
+
+        // Delete/Backspace com arquivos selecionados na coluna do nest: apagar do projeto (com confirmação).
+        bool tratarTeclaNest(const juce::KeyPress& key) {
+            if (key != juce::KeyPress::deleteKey && key != juce::KeyPress::backspaceKey) return false;
+            if (!nestColuna_ || !nestViewport_ || !nestViewport_->isVisible()) return false;
+            const auto ids = nestColuna_->selecionados();
+            if (ids.empty()) return false;
+            apagarSelecionadosDoNest(ids);
+            return true;
         }
 
         void atualizarColunaNest() {
@@ -450,6 +620,7 @@ private:
             if (fichaPanel_) {
                 fichaPanel_->mostrarItem(itemId_);
             }
+            if (painelLeitura_) painelLeitura_->mostrarItem(itemId_);
 
             auto refreshFicha = [this] {
                 if (fichaPanel_ && !itemId_.empty()) fichaPanel_->mostrarItem(itemId_);
@@ -506,6 +677,10 @@ private:
                 desenharSelo("H", juce::Colour(0xff39ff14), juce::Colours::black);
             if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, itemId_))
                 desenharSelo("W", juce::Colour(0xffffcc00), juce::Colours::black);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, itemId_))
+                desenharSelo("B", juce::Colour(0xff9333ea), juce::Colours::white);
+            if (projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, itemId_))
+                desenharSelo("R", tema().perigo, juce::Colours::white);
             // E: fundo preto e letra amarela zebra, pra não confundir com o W amarelo.
             if (revisado)
                 desenharSelo("E", juce::Colours::black, juce::Colour(0xffFFEE00));
@@ -555,10 +730,12 @@ private:
             }
 
             // Main Content Split: Media preview (left) | Resizer Bar | Ficha (right)
-            if (!fichaColapsada_ && fichaPanel_) {
-                fichaPanel_->setVisible(true);
-                auto fichaArea = area.removeFromRight(larguraFicha_);
-                fichaPanel_->setBounds(fichaArea);
+            juce::Component* lateral = fichaPanel_ ? static_cast<juce::Component*>(fichaPanel_.get())
+                                                   : static_cast<juce::Component*>(painelLeitura_.get());
+            if (!fichaColapsada_ && lateral) {
+                lateral->setVisible(true);
+                auto fichaArea = area.removeFromRight(somenteLeitura_ ? juce::jmin(larguraFicha_, 340) : larguraFicha_);
+                lateral->setBounds(fichaArea);
 
                 if (resizerBar_) {
                     resizerBar_->setVisible(true);
@@ -566,6 +743,7 @@ private:
                 }
             } else {
                 if (fichaPanel_) fichaPanel_->setVisible(false);
+                if (painelLeitura_) painelLeitura_->setVisible(false);
                 if (resizerBar_) resizerBar_->setVisible(false);
             }
 
@@ -584,6 +762,8 @@ private:
             if (key == juce::KeyPress::escapeKey || key == juce::KeyPress::spaceKey) {
                 if (aoFechar_) { aoFechar_(); return true; }
             }
+
+            if (tratarTeclaNest(key)) return true;
 
             // Item E.10: os atalhos de marcação valem também no preview, e
             // agem sobre o item que está aberto nele — mesmas teclas, mesmo
@@ -618,6 +798,8 @@ private:
         std::unique_ptr<PreviewComponent> preview_;
         std::unique_ptr<AudioWorkspace> escuta_;
         std::unique_ptr<FichaPanelComponent> fichaPanel_;
+        std::unique_ptr<PainelMetadadosArquivo> painelLeitura_;  // só no preview do INTAKE
+        bool somenteLeitura_ = false;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ContentComponent)
     };

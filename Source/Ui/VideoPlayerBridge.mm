@@ -91,6 +91,15 @@ bool vpLoad(VPHandle h, const char* path) {
     return true;
 }
 
+bool vpArquivoReproduzivel(const char* path) {
+    if (!path) return false;
+    @autoreleasepool {
+        NSURL* url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+        AVURLAsset* asset = [AVURLAsset URLAssetWithURL:url options:nil];
+        return asset.playable && [asset tracksWithMediaType:AVMediaTypeVideo].count > 0;
+    }
+}
+
 void vpPlay(VPHandle h) {
     if (!h) return;
     VPState* s = static_cast<VPState*>(h);

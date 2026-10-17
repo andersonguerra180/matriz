@@ -1,5 +1,7 @@
 #include "BackupWorkspaceComponent.h"
 #include <unordered_map>
+#include "../App/SemSono.h"
+#include "MainEditPanel.h"
 #include "GoogleDriveContas.h"
 #include "BackupFileSelectorDialog.h"
 #include "BackupSyncDialog.h"
@@ -30,6 +32,115 @@ namespace matriz::ui {
 
 namespace {
 
+// Janela de status do backup/Rebuild: o que falhou (agrupado por causa), o que ainda falta e, principalmente,
+// os botões para resolver ali mesmo (remover do catálogo, mostrar no Grid, concluir o Rebuild) em vez de mandar
+// o usuário procurar o problema pelo app. O relatório fica gravado em Project/relatorios/.
+struct DadosStatusBackup {
+    juce::String titulo, texto;
+    juce::File relatorio;
+    bool bloqueado = false;       // há itens que impedem o fim
+    int nRemoviveis = 0;          // ausentes / alterados: o conserto é tirá-los do catálogo
+    int nBloqueados = 0;
+    bool rebuild = false;
+    bool podeFinalizar = false;
+    std::function<void()> aoRemover, aoMostrarNoGrid, aoFinalizar;
+};
+
+class ErrosBackupDialog : public juce::Component {
+public:
+    explicit ErrosBackupDialog(DadosStatusBackup d) : d_(std::move(d)) {
+        const auto& tk = tema();
+        lblTitulo_.setText(d_.titulo, juce::dontSendNotification);
+        lblTitulo_.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
+        lblTitulo_.setColour(juce::Label::textColourId, d_.bloqueado ? tk.perigo : tk.estadoQcOk);
+        addAndMakeVisible(lblTitulo_);
+
+        editor_.setMultiLine(true, true);
+        editor_.setReadOnly(true);
+        editor_.setScrollbarsShown(true);
+        editor_.setFont(juce::Font(juce::FontOptions(juce::Font::getDefaultMonospacedFontName(), 12.5f, juce::Font::plain)));
+        editor_.setColour(juce::TextEditor::backgroundColourId, tk.fundo);
+        editor_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
+        editor_.setColour(juce::TextEditor::outlineColourId, tk.borda);
+        editor_.setText(d_.texto, false);
+        addAndMakeVisible(editor_);
+
+        auto botao = [&](juce::TextButton& b, const juce::String& t, std::function<void()> fn, bool visivel = true, bool ativo = true) {
+            b.setButtonText(t);
+            b.setEnabled(ativo);
+            b.onClick = std::move(fn);
+            addChildComponent(b);
+            b.setVisible(visivel);
+        };
+        // Ações que resolvem: fecha a janela e só então age (o callback pode reabrir uma janela atualizada).
+        auto fechando = [this](const std::function<void()>& cb) {
+            return [this, cb] {
+                auto copia = cb;
+                fechar();
+                if (copia) copia();
+            };
+        };
+        botao(btnRemover_, matriz::i18n::t("rebuild.btn_remover").replace("{n}", juce::String(d_.nRemoviveis)),
+              fechando(d_.aoRemover), d_.nRemoviveis > 0);
+        botao(btnMostrar_, matriz::i18n::t("rebuild.btn_mostrar"), fechando(d_.aoMostrarNoGrid), d_.nBloqueados > 0);
+        botao(btnFinalizar_, matriz::i18n::t("rebuild.btn_finalizar"), fechando(d_.aoFinalizar), d_.rebuild, d_.podeFinalizar);
+        botao(btnCopiar_, matriz::i18n::t("backup.erros_copiar"), [this] { juce::SystemClipboard::copyTextToClipboard(d_.texto); });
+        botao(btnAbrir_, matriz::i18n::t("backup.erros_abrir"), [this] {
+            if (!d_.relatorio.startAsProcess()) d_.relatorio.revealToUser();
+        }, true, d_.relatorio.existsAsFile());
+        botao(btnFechar_, matriz::i18n::t("backup.erros_fechar"), [this] { fechar(); });
+        if (d_.podeFinalizar) btnFinalizar_.setColour(juce::TextButton::buttonColourId, tk.estadoQcOk);
+        else if (d_.nRemoviveis > 0) btnRemover_.setColour(juce::TextButton::buttonColourId, tk.perigo);
+        setSize(1000, 600);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(20);
+        lblTitulo_.setBounds(r.removeFromTop(26));
+        r.removeFromTop(8);
+        auto baixo = r.removeFromBottom(34);
+        auto coloca = [&](juce::TextButton& b, int largura) {
+            if (!b.isVisible()) return;
+            b.setBounds(baixo.removeFromRight(largura));
+            baixo.removeFromRight(8);
+        };
+        coloca(btnFechar_, 90);
+        coloca(btnFinalizar_, 160);
+        coloca(btnAbrir_, 130);
+        coloca(btnCopiar_, 110);
+        coloca(btnMostrar_, 130);
+        coloca(btnRemover_, 270);
+        r.removeFromBottom(10);
+        editor_.setBounds(r);
+    }
+
+    static void mostrar(DadosStatusBackup d, juce::Component* centrarEm) {
+        const juce::String titulo = d.titulo;
+        juce::DialogWindow::LaunchOptions opts;
+        opts.content.setOwned(new ErrosBackupDialog(std::move(d)));
+        opts.dialogTitle = titulo;
+        opts.dialogBackgroundColour = tema().painel;
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar = true;
+        opts.resizable = true;
+        opts.componentToCentreAround = centrarEm;
+        opts.launchAsync();
+    }
+
+private:
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+    }
+
+    DadosStatusBackup d_;
+    juce::Label lblTitulo_;
+    juce::TextEditor editor_;
+    juce::TextButton btnRemover_, btnMostrar_, btnFinalizar_, btnCopiar_, btnAbrir_, btnFechar_;
+};
+
+
 // EXPORT (etapa 6): opções livres — não afetam nada no MAIN.
 struct OpcoesExport {
     juce::File destino;
@@ -40,14 +151,15 @@ struct OpcoesExport {
     bool marcaDagua = false;
     std::string mapaId;  // Fase 2: folder map do usuário que estrutura o export ("" = mapa padrão)
     bool porMapa = false;
+    matriz::consolidacao::OpcoesMetadadosSaida metaSaida;  // só Bounce List: Original / Embed / Clean + sidecar
 };
 
 class ConteudoExport : public juce::Component {
 public:
     ConteudoExport(int marcadosW, bool marcaDaguaConfigurada, const juce::String& prefixoPadrao,
                    std::vector<std::pair<std::string, juce::String>> mapas,
-                   std::function<void(OpcoesExport)> aoExportar)
-        : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)) {
+                   std::function<void(OpcoesExport)> aoExportar, bool formatoBridge = false, bool bounce = false)
+        : aoExportar_(std::move(aoExportar)), mapas_(std::move(mapas)), bounce_(bounce) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
             l.setText(t, juce::dontSendNotification);
@@ -55,7 +167,7 @@ public:
             l.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
             addAndMakeVisible(l);
         };
-        rotulo(lblIntro_, matriz::i18n::t("export.intro"));
+        rotulo(lblIntro_, matriz::i18n::t(bounce ? "export.bounce_intro" : "export.intro"));
         lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
         rotulo(lblPasta_, matriz::i18n::t("export.pasta"));
         lblCaminho_.setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -72,11 +184,18 @@ public:
         comboEstrutura_.addItem(matriz::i18n::t("export.por_tipo_ano"), 4);
         comboEstrutura_.addItem(matriz::i18n::t("backup.preservar_estrutura"), 6);
         if (!mapas_.empty()) comboEstrutura_.addItem(matriz::i18n::t("export.por_mapa"), 7);
+        if (bounce) comboEstrutura_.addItem(matriz::i18n::t("export.por_editor_visual"), 8);  // monta a hierarquia no Visual Editor
         comboEstrutura_.setSelectedId(1, juce::dontSendNotification);
         comboEstrutura_.onChange = [this] {
             comboMapa_.setVisible(comboEstrutura_.getSelectedId() == 7);
+            btnEditorVisual_.setVisible(bounce_ && comboEstrutura_.getSelectedId() == 8);
             resized();
         };
+        btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
+        addChildComponent(btnEditorVisual_);
         addAndMakeVisible(comboEstrutura_);
         for (size_t i = 0; i < mapas_.size(); ++i) comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
         if (!mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
@@ -92,13 +211,38 @@ public:
         editPrefixo_.setText(prefixoPadrao, juce::dontSendNotification);
         addChildComponent(editPrefixo_);
 
-        toggleEmbutir_.setButtonText(matriz::i18n::t("export.embutir"));
+        toggleEmbutir_.setButtonText(matriz::i18n::t(formatoBridge ? "export.embutir_bridge" : "export.embutir"));
         toggleEmbutir_.setToggleState(true, juce::dontSendNotification);
-        addAndMakeVisible(toggleEmbutir_);
+        toggleEmbutir_.setEnabled(!formatoBridge);  // no Adobe Bridge o XMP é o próprio objetivo do export
         toggleMarca_.setButtonText(matriz::i18n::t("export.marca_dagua").replace("{n}", juce::String(marcadosW)));
         toggleMarca_.setEnabled(marcadosW > 0 && marcaDaguaConfigurada);
         toggleMarca_.setToggleState(marcadosW > 0 && marcaDaguaConfigurada, juce::dontSendNotification);
-        addAndMakeVisible(toggleMarca_);
+        if (bounce_) {
+            // Bounce List: três modos exclusivos de metadados na saída (a marca d'água sairia do "Original": não existe aqui).
+            rotulo(lblModoMeta_, matriz::i18n::t("export.bounce_metadados"));
+            const char* chaves[3] = {"export.bounce_original", "export.bounce_embed", "export.bounce_clean"};
+            juce::ToggleButton* modos[3] = {&modoOriginal_, &modoEmbed_, &modoClean_};
+            for (int i = 0; i < 3; ++i) {
+                modos[i]->setButtonText(matriz::i18n::t(chaves[i]));
+                modos[i]->setRadioGroupId(7421);
+                modos[i]->onClick = [this] { atualizarSidecarHabilitado(); };
+                addAndMakeVisible(*modos[i]);
+            }
+            modoOriginal_.setToggleState(true, juce::dontSendNotification);  // padrão: cópia idêntica à MAIN
+            toggleSidecar_.setButtonText(matriz::i18n::t("export.bounce_sidecar"));
+            addAndMakeVisible(toggleSidecar_);
+            toggleEmbedVideo_.setButtonText(matriz::i18n::t("export.bounce_embed_video"));
+            toggleEmbedVideo_.setToggleState(true, juce::dontSendNotification);  // padrão = comportamento anterior
+            addAndMakeVisible(toggleEmbedVideo_);
+            atualizarSidecarHabilitado();  // estado inicial (Original): toggle de vídeo desabilitado
+            lblModoDica_.setText(matriz::i18n::t("export.bounce_clean_dica"), juce::dontSendNotification);
+            lblModoDica_.setColour(juce::Label::textColourId, tk.textoTerciario);
+            lblModoDica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+            addAndMakeVisible(lblModoDica_);
+        } else {
+            addAndMakeVisible(toggleEmbutir_);
+            addAndMakeVisible(toggleMarca_);
+        }
 
         btnExportar_.setButtonText(matriz::i18n::t("export.btn"));
         btnExportar_.setEnabled(false);
@@ -107,14 +251,14 @@ public:
         btnCancelar_.setButtonText(matriz::i18n::t("dialogo.cancelar"));
         btnCancelar_.onClick = [this] { fechar(); };
         addAndMakeVisible(btnCancelar_);
-        setSize(560, 440);
+        setSize(560, bounce ? 632 : 440);
     }
 
     void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
 
     void resized() override {
         auto r = getLocalBounds().reduced(16);
-        lblIntro_.setBounds(r.removeFromTop(40));
+        lblIntro_.setBounds(r.removeFromTop(bounce_ ? 56 : 40));
         r.removeFromTop(6);
         lblPasta_.setBounds(r.removeFromTop(20));
         auto linha = r.removeFromTop(28);
@@ -127,14 +271,29 @@ public:
             r.removeFromTop(4);
             comboMapa_.setBounds(r.removeFromTop(28));
         }
+        if (btnEditorVisual_.isVisible()) {
+            r.removeFromTop(4);
+            btnEditorVisual_.setBounds(r.removeFromTop(28));
+        }
         r.removeFromTop(10);
         lblNomes_.setBounds(r.removeFromTop(20));
         linha = r.removeFromTop(28);
         comboNomes_.setBounds(linha.removeFromLeft(linha.getWidth() * 2 / 3));
         editPrefixo_.setBounds(linha.withTrimmedLeft(8));
         r.removeFromTop(10);
-        toggleEmbutir_.setBounds(r.removeFromTop(26));
-        toggleMarca_.setBounds(r.removeFromTop(26));
+        if (bounce_) {
+            lblModoMeta_.setBounds(r.removeFromTop(20));
+            modoOriginal_.setBounds(r.removeFromTop(26));
+            modoEmbed_.setBounds(r.removeFromTop(26));
+            modoClean_.setBounds(r.removeFromTop(26));
+            r.removeFromTop(4);
+            toggleSidecar_.setBounds(r.removeFromTop(26));
+            toggleEmbedVideo_.setBounds(r.removeFromTop(26));
+            lblModoDica_.setBounds(r.removeFromTop(48));
+        } else {
+            toggleEmbutir_.setBounds(r.removeFromTop(26));
+            toggleMarca_.setBounds(r.removeFromTop(26));
+        }
         auto botoes = r.removeFromBottom(32);
         btnExportar_.setBounds(botoes.removeFromRight(130));
         botoes.removeFromRight(8);
@@ -142,6 +301,26 @@ public:
     }
 
 private:
+    // Mesmo Visual Editor do BACKUP ("ABRIR EDITOR VISUAL"); modal pra não ficar bloqueado atrás deste diálogo.
+    void abrirEditorVisual() {
+        juce::Component::SafePointer<ConteudoExport> safeThis(this);
+        HierarquiaEditorOpcoes op;
+        op.titulo = matriz::i18n::t("export.editor_titulo");
+        op.raizPreview = "/Export";
+        // DialogWindow (não DocumentWindow): mesmo nível de janela do diálogo de EXPORT, então abre NA FRENTE dele.
+        HierarquiaEditorWindow::abrirComoDialogo(hierarquiaCustom_, [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
+            if (safeThis != nullptr) safeThis->hierarquiaCustom_ = h;
+        }, op, this);
+    }
+
+    // Sidecar (.xmp) só em Original e Embed; em Clean fica desligado e desabilitado.
+    void atualizarSidecarHabilitado() {
+        const bool clean = modoClean_.getToggleState();
+        if (clean) toggleSidecar_.setToggleState(false, juce::dontSendNotification);
+        toggleSidecar_.setEnabled(!clean);
+        toggleEmbedVideo_.setEnabled(modoEmbed_.getToggleState());  // só faz sentido em Embed
+    }
+
     void escolherPasta() {
         chooser_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("export.pasta"), juce::File(), "");
         juce::Component::SafePointer<ConteudoExport> safeThis(this);
@@ -170,6 +349,10 @@ private:
                 if (idx >= 0 && idx < static_cast<int>(mapas_.size())) o.mapaId = mapas_[static_cast<size_t>(idx)].first;
                 break;
             }
+            case 8:  // Personalizado (editor visual): a hierarquia montada no Visual Editor (vazia = mantém a organização)
+                o.hierarquia = hierarquiaCustom_.empty() ? matriz::consolidacao::HierarquiaBackup{NivelHierarquia::PastaManual}
+                                                         : hierarquiaCustom_;
+                break;
             default: o.hierarquia = {NivelHierarquia::PastaManual}; break;
         }
         const int n = comboNomes_.getSelectedId();
@@ -179,6 +362,16 @@ private:
         o.prefixo = editPrefixo_.getText().trim();
         o.embutir = toggleEmbutir_.getToggleState();
         o.marcaDagua = toggleMarca_.isEnabled() && toggleMarca_.getToggleState();
+        if (bounce_) {
+            using matriz::consolidacao::ModoMetadadosSaida;
+            o.embutir = false;
+            o.marcaDagua = false;
+            o.metaSaida.modo = modoClean_.getToggleState() ? ModoMetadadosSaida::Clean
+                             : modoEmbed_.getToggleState() ? ModoMetadadosSaida::Embed
+                                                           : ModoMetadadosSaida::Original;
+            o.metaSaida.sidecar = o.metaSaida.modo != ModoMetadadosSaida::Clean && toggleSidecar_.getToggleState();
+            o.metaSaida.embedVideo = toggleEmbedVideo_.getToggleState();
+        }
         auto cb = aoExportar_;
         fechar();
         if (cb) cb(o);
@@ -197,6 +390,130 @@ private:
     std::vector<std::pair<std::string, juce::String>> mapas_;
     juce::TextEditor editPrefixo_;
     juce::ToggleButton toggleEmbutir_, toggleMarca_;
+    bool bounce_ = false;
+    matriz::consolidacao::HierarquiaBackup hierarquiaCustom_ = matriz::consolidacao::hierarquiaPadrao();
+    juce::TextButton btnEditorVisual_;
+    juce::Label lblModoMeta_, lblModoDica_;
+    juce::ToggleButton modoOriginal_, modoEmbed_, modoClean_, toggleSidecar_, toggleEmbedVideo_;
+};
+
+// Janela SETTINGS da Bounce List. Cada mudança é gravada no projeto na hora (bounce_list.json).
+class ConteudoBounceAjustes : public juce::Component {
+public:
+    ConteudoBounceAjustes(const juce::File& pastaProjeto, std::vector<std::pair<std::string, juce::String>> mapas)
+        : pasta_(pastaProjeto), mapas_(std::move(mapas)), cfg_(matriz::consolidacao::carregarConfiguracaoBounce(pastaProjeto)) {
+        const auto& tk = tema();
+        lblEstrutura_.setText(matriz::i18n::t("bounce.estrutura"), juce::dontSendNotification);
+        lblEstrutura_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
+        lblEstrutura_.setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(lblEstrutura_);
+        comboEstrutura_.addItem(matriz::i18n::t("bounce.estrutura_mapa"), 1);
+        comboEstrutura_.addItem(matriz::i18n::t("bounce.estrutura_editor"), 2);
+        comboEstrutura_.setSelectedId(cfg_.porVisualEditor ? 2 : 1, juce::dontSendNotification);
+        comboEstrutura_.onChange = [this] { salvar(); atualizarEstrutura(); };
+        addAndMakeVisible(comboEstrutura_);
+        for (size_t i = 0; i < mapas_.size(); ++i) {
+            comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
+            if (mapas_[i].first == cfg_.mapaId) comboMapa_.setSelectedId(static_cast<int>(i) + 1, juce::dontSendNotification);
+        }
+        if (comboMapa_.getSelectedId() == 0 && !mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
+        comboMapa_.onChange = [this] { salvar(); };
+        addChildComponent(comboMapa_);
+        btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
+        addChildComponent(btnEditorVisual_);
+
+        auto toggle = [&](juce::ToggleButton& t, const char* chave, bool estado) {
+            t.setButtonText(matriz::i18n::t(chave));
+            t.setToggleState(estado, juce::dontSendNotification);
+            addAndMakeVisible(t);
+        };
+        toggle(tLimpar_, "bounce.cfg_limpar", cfg_.limpar);
+        toggle(tEmbutir_, "bounce.cfg_embutir", cfg_.embutir);
+        toggle(tSidecar_, "bounce.cfg_sidecar", cfg_.sidecar);
+        toggle(tManifesto_, "bounce.cfg_manifesto", cfg_.manifesto);
+        tLimpar_.onClick = [this] { if (tLimpar_.getToggleState()) tEmbutir_.setToggleState(false, juce::dontSendNotification); salvar(); };
+        tEmbutir_.onClick = [this] { if (tEmbutir_.getToggleState()) tLimpar_.setToggleState(false, juce::dontSendNotification); salvar(); };
+        tSidecar_.onClick = [this] { salvar(); };
+        tManifesto_.onClick = [this] {
+            salvar();
+            if (!tManifesto_.getToggleState())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("bounce.settings_titulo"),
+                                                       matriz::i18n::t("bounce.cfg_manifesto_aviso"));
+        };
+        dica_.setText(matriz::i18n::t("bounce.cfg_dica"), juce::dontSendNotification);
+        dica_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        dica_.setColour(juce::Label::textColourId, tk.textoTerciario);
+        addAndMakeVisible(dica_);
+        btnFechar_.setButtonText(matriz::i18n::t("dialogo.fechar"));
+        btnFechar_.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        addAndMakeVisible(btnFechar_);
+        atualizarEstrutura();
+        setSize(480, 360);
+    }
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        lblEstrutura_.setBounds(r.removeFromTop(20));
+        comboEstrutura_.setBounds(r.removeFromTop(28));
+        r.removeFromTop(4);
+        if (comboMapa_.isVisible()) comboMapa_.setBounds(r.removeFromTop(28));
+        if (btnEditorVisual_.isVisible()) btnEditorVisual_.setBounds(r.removeFromTop(30));
+        r.removeFromTop(12);
+        for (auto* t : {&tLimpar_, &tEmbutir_, &tSidecar_, &tManifesto_}) t->setBounds(r.removeFromTop(28));
+        r.removeFromTop(6);
+        dica_.setBounds(r.removeFromTop(36));
+        btnFechar_.setBounds(r.removeFromBottom(30).removeFromRight(110));
+    }
+
+private:
+    void atualizarEstrutura() {
+        const bool editor = comboEstrutura_.getSelectedId() == 2;
+        comboMapa_.setVisible(!editor && !mapas_.empty());
+        btnEditorVisual_.setVisible(editor);
+        resized();
+    }
+    // Mesmo Visual Editor do BACKUP; modal, na frente deste diálogo.
+    void abrirEditorVisual() {
+        juce::Component::SafePointer<ConteudoBounceAjustes> safeThis(this);
+        const auto csv = matriz::consolidacao::carregarConfiguracaoBounce(pasta_).hierarquiaCsv;
+        HierarquiaEditorOpcoes op;
+        op.titulo = matriz::i18n::t("export.editor_titulo");
+        op.raizPreview = "/Export";
+        HierarquiaEditorWindow::abrirComoDialogo(csv.empty() ? matriz::consolidacao::hierarquiaPadrao()
+                                                             : matriz::consolidacao::hierarquiaDeCsv(csv),
+                                                 [safeThis](const matriz::consolidacao::HierarquiaBackup& h) {
+            if (safeThis == nullptr) return;
+            safeThis->hierarquiaCsv_ = matriz::consolidacao::hierarquiaParaCsv(h);
+            safeThis->salvar();
+        }, op, this);
+    }
+    void salvar() {
+        cfg_ = matriz::consolidacao::carregarConfiguracaoBounce(pasta_);
+        if (hierarquiaCsv_.isNotEmpty()) cfg_.hierarquiaCsv = hierarquiaCsv_.toStdString();
+        cfg_.porVisualEditor = comboEstrutura_.getSelectedId() == 2;
+        const int im = comboMapa_.getSelectedId() - 1;
+        cfg_.mapaId = im >= 0 && im < static_cast<int>(mapas_.size()) ? mapas_[static_cast<size_t>(im)].first : std::string();
+        cfg_.limpar = tLimpar_.getToggleState();
+        cfg_.embutir = tEmbutir_.getToggleState();
+        cfg_.sidecar = tSidecar_.getToggleState();
+        cfg_.manifesto = tManifesto_.getToggleState();
+        matriz::consolidacao::salvarConfiguracaoBounce(pasta_, cfg_);
+    }
+    juce::File pasta_;
+    std::vector<std::pair<std::string, juce::String>> mapas_;
+    juce::String hierarquiaCsv_;
+    matriz::consolidacao::ConfiguracaoBounce cfg_;
+    juce::Label lblEstrutura_;
+    juce::ComboBox comboEstrutura_, comboMapa_;
+    juce::TextButton btnEditorVisual_;
+    juce::ToggleButton tLimpar_, tEmbutir_, tSidecar_, tManifesto_;
+    juce::Label dica_;
+    juce::TextButton btnFechar_;
 };
 
 // Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.
@@ -852,19 +1169,215 @@ private:
     PreviaLista::ModoPrioridade modoAtivo_ = PreviaLista::ModoPrioridade::Nenhum;
 };
 
+namespace {
+// Setas e números do fluxo da aba BACKUP (ASSETS 1 → SELECTION 2 → VERSIONS 3 → STRUCTURE 4 → OPTIONS 5 → botão 6).
+// Só desenho: ficam nos vãos entre os cards, nunca por cima de controle.
+constexpr int kLarguraNumeroFluxo = 22;  // espaço reservado à esquerda do título de cada etapa
+
+// Estilo "contorno": cards e setas com o mesmo traço; a seta nasce do contorno do card (sem emenda) e é vazada.
+juce::Colour corContornoFluxo() { return tema().textoSecundario.withAlpha(0.6f); }
+constexpr float kTracoFluxo = 1.5f;
+
+void desenharCartaoFluxo(juce::Graphics& g, juce::Rectangle<int> cartao) {
+    const auto& tk = tema();
+    g.setColour(tk.painel);
+    g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
+    g.setColour(corContornoFluxo());
+    g.drawRoundedRectangle(cartao.toFloat().reduced(kTracoFluxo * 0.5f), tk.raioMedio, kTracoFluxo);
+}
+
+// Seta vazada horizontal saindo da borda direita de `cartao` (o contorno do card se abre na haste) até xPonta.
+void desenharSetaVazadaSaindoDaDireita(juce::Graphics& g, juce::Rectangle<int> cartao, float y, float xPonta) {
+    const float x0 = static_cast<float>(cartao.getRight()) - kTracoFluxo;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (xPonta - x0) * 0.5f);
+    if (xPonta - x0 < 12.0f) return;
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x0, y - haste);
+    contorno.lineTo(xPonta - compCabeca, y - haste);
+    contorno.lineTo(xPonta - compCabeca, y - cabeca);
+    contorno.lineTo(xPonta, y);
+    contorno.lineTo(xPonta - compCabeca, y + cabeca);
+    contorno.lineTo(xPonta - compCabeca, y + haste);
+    contorno.lineTo(x0, y + haste);
+    juce::Path preenchimento(contorno);
+    preenchimento.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(preenchimento);  // cobre também o trecho do contorno do card onde a haste se abre
+    g.setColour(corContornoFluxo());
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+}
+
+// A mesma seta do ASSETS, saindo da borda ESQUERDA de `cartao` e apontando para a esquerda até xPonta.
+void desenharSetaVazadaSaindoDaEsquerda(juce::Graphics& g, juce::Rectangle<int> cartao, float y, float xPonta) {
+    const float x0 = static_cast<float>(cartao.getX()) + kTracoFluxo;
+    if (x0 - xPonta < 12.0f) return;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (x0 - xPonta) * 0.5f);
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x0, y - haste);
+    contorno.lineTo(xPonta + compCabeca, y - haste);
+    contorno.lineTo(xPonta + compCabeca, y - cabeca);
+    contorno.lineTo(xPonta, y);
+    contorno.lineTo(xPonta + compCabeca, y + cabeca);
+    contorno.lineTo(xPonta + compCabeca, y + haste);
+    contorno.lineTo(x0, y + haste);
+    juce::Path preenchimento(contorno);
+    preenchimento.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(preenchimento);
+    g.setColour(corContornoFluxo());
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+}
+
+// A mesma seta do ASSETS, na vertical: nasce da borda de baixo de `cartao` (o contorno se abre na haste) e aponta
+// para baixo até yPonta.
+void desenharSetaVazadaSaindoDeBaixo(juce::Graphics& g, juce::Rectangle<int> cartao, float x, float yPonta) {
+    const float y0 = static_cast<float>(cartao.getBottom()) - kTracoFluxo;
+    if (yPonta - y0 < 12.0f) return;
+    const float haste = 6.0f, cabeca = 13.0f, compCabeca = std::min(16.0f, (yPonta - y0) * 0.5f);
+    juce::Path contorno;  // aberto do lado do card
+    contorno.startNewSubPath(x - haste, y0);
+    contorno.lineTo(x - haste, yPonta - compCabeca);
+    contorno.lineTo(x - cabeca, yPonta - compCabeca);
+    contorno.lineTo(x, yPonta);
+    contorno.lineTo(x + cabeca, yPonta - compCabeca);
+    contorno.lineTo(x + haste, yPonta - compCabeca);
+    contorno.lineTo(x + haste, y0);
+    juce::Path preenchimento(contorno);
+    preenchimento.closeSubPath();
+    g.setColour(tema().painel);
+    g.fillPath(preenchimento);  // cobre também o trecho do contorno do card onde a haste se abre
+    g.setColour(corContornoFluxo());
+    g.strokePath(contorno, juce::PathStrokeType(kTracoFluxo, juce::PathStrokeType::mitered));
+}
+
+// Etapa do fluxo identificada por letra: 1 -> A, 2 -> B, ...
+void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numero) {
+    if (area.isEmpty()) return;
+    const auto c = area.toFloat().withSizeKeepingCentre(18.0f, 18.0f);
+    g.setColour(tema().acento);
+    g.fillEllipse(c);
+    g.setColour(juce::Colours::white);
+    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.drawText(juce::String::charToString(static_cast<juce::juce_wchar>(L'A' + numero - 1)), c, juce::Justification::centred, false);
+}
+}  // namespace
+
+// Uma etapa do Make Backup (COPY ou CATALOG), cada uma num card próprio com título, fase, contador "n / total" e a
+// barra no mesmo desenho da barra do rodapé (trilho painelAlt, preenchimento de acento, % no centro).
+class EtapaProgressoComponent : public juce::Component, private juce::Timer {
+public:
+    explicit EtapaProgressoComponent(juce::String titulo) : titulo_(std::move(titulo)) {}
+    ~EtapaProgressoComponent() override { stopTimer(); }
+
+    // Aguardando a etapa anterior: barra vazia, sem animação.
+    void esperar(const juce::String& fase) { definirEstado(Estado::Espera, 0.0, fase, 0, 0); }
+    // fracao < 0 = sem contagem (animação); total > 0 mostra o contador.
+    void definir(double fracao, const juce::String& fase, int feito = 0, int total = 0) {
+        definirEstado(Estado::Andando, fracao, fase, feito, total);
+    }
+    void concluir() { definirEstado(Estado::Concluido, 1.0, juce::String(), 0, 0); }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        g.setColour(tk.painelAlt.withAlpha(0.25f));
+        g.fillRoundedRectangle(r, tk.raioPequeno);
+        g.setColour(tk.borda.withAlpha(0.7f));
+        g.drawRoundedRectangle(r.reduced(0.5f), tk.raioPequeno, 1.0f);
+
+        auto area = getLocalBounds().reduced(12, 8);
+        auto linha = area.removeFromTop(18);
+        const bool concluido = estado_ == Estado::Concluido;
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setColour(concluido ? juce::Colour(0xff22c55e) : (estado_ == Estado::Espera ? tk.textoTerciario : tk.acento));
+        const int larguraTitulo = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), titulo_) + 12;
+        g.drawText(titulo_, linha.removeFromLeft(larguraTitulo), juce::Justification::centredLeft);
+        if (total_ > 0) {
+            g.setColour(tk.textoPrimario);
+            g.drawText(juce::String(feito_) + " / " + juce::String(total_), linha.removeFromRight(110), juce::Justification::centredRight);
+        }
+        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setColour(tk.textoSecundario);
+        g.drawText(concluido ? matriz::i18n::t("backup.etapa_concluida") : fase_, linha, juce::Justification::centredLeft, true);
+
+        area.removeFromTop(6);
+        const auto barra = area.removeFromTop(14).toFloat();
+        g.setColour(tk.painelAlt);
+        g.fillRoundedRectangle(barra, 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(barra, 4.0f, 1.0f);
+        const juce::Colour preenchimento = concluido ? juce::Colour(0xff22c55e) : tk.acento;
+        if (estado_ == Estado::Andando && fracao_ < 0.0) {
+            const float largura = 40.0f;
+            const float x = barra.getX() + (barra.getWidth() - largura) * brilho_;
+            g.setColour(tk.acento.withAlpha(0.7f));
+            g.fillRoundedRectangle(juce::Rectangle<float>(x, barra.getY(), largura, barra.getHeight()), 4.0f);
+        } else if (estado_ != Estado::Espera) {
+            const float w = barra.getWidth() * static_cast<float>(juce::jlimit(0.0, 1.0, fracao_));
+            if (w > 0.5f) {
+                g.setColour(preenchimento);
+                g.fillRoundedRectangle(juce::Rectangle<float>(barra.getX(), barra.getY(), w, barra.getHeight()), 4.0f);
+            }
+            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            g.setColour(tk.textoPrimario);
+            g.drawText(juce::String(static_cast<int>(std::round(juce::jlimit(0.0, 1.0, fracao_) * 100.0))) + "%", barra,
+                       juce::Justification::centred, true);
+        }
+    }
+
+private:
+    enum class Estado { Espera, Andando, Concluido };
+
+    void definirEstado(Estado e, double fracao, const juce::String& fase, int feito, int total) {
+        estado_ = e;
+        fracao_ = fracao;
+        fase_ = fase;
+        feito_ = feito;
+        total_ = total;
+        if (e == Estado::Andando && fracao < 0.0) { if (!isTimerRunning()) startTimerHz(25); }
+        else stopTimer();
+        repaint();
+    }
+    void timerCallback() override {
+        brilho_ += 0.04f;
+        if (brilho_ > 1.0f) brilho_ -= 1.0f;
+        repaint();
+    }
+
+    juce::String titulo_, fase_;
+    Estado estado_ = Estado::Espera;
+    double fracao_ = 0.0;
+    int feito_ = 0, total_ = 0;
+    float brilho_ = 0.0f;
+};
+
 class BackupWorkspaceComponent::ConfigContainerComponent : public juce::Component {
 public:
     explicit ConfigContainerComponent(BackupWorkspaceComponent& owner) : owner_(owner) {}
 
     void paint(juce::Graphics& g) override {
         const auto& tk = tema();
-        for (const auto& cartao : cartoes_) {
-            g.setColour(tk.painel);
-            g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
-            g.setColour(tk.borda);
-            g.drawRoundedRectangle(cartao.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        if (!fluxo_) {
+            for (const auto& cartao : cartoes_) {
+                g.setColour(tk.painel);
+                g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(cartao.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+            }
+            return;
         }
+        // Fluxo: cards em contorno; de um para o outro, a mesma seta vazada do ASSETS saindo da borda de baixo,
+        // perto da borda direita (rolam junto). Números 2-5 antes dos títulos.
+        for (const auto& cartao : cartoes_) desenharCartaoFluxo(g, cartao);
+        const float x = static_cast<float>(getWidth() - 34);
+        for (size_t i = 0; i + 1 < cartoes_.size(); ++i)
+            desenharSetaVazadaSaindoDeBaixo(g, cartoes_[i], x, static_cast<float>(cartoes_[i + 1].getY()) - 2.0f);
+        for (size_t i = 0; i < numeros_.size(); ++i) desenharNumeroFluxo(g, numeros_[i], static_cast<int>(i) + 2);
     }
+
+    // As setas ASSETS -> SELECTION e OPTIONS -> botão são do dono: acompanham a rolagem da coluna.
+    void moved() override { owner_.repaint(); }
+    const std::vector<juce::Rectangle<int>>& cartoes() const { return cartoes_; }
 
     void resized() override {
         const auto& tk = tema();
@@ -882,7 +1395,9 @@ public:
         const int alturaLinhaToggle = 22;
         const int alturaCabecalhoSecao = 20;
         const int numCartoes = isCatalogMode ? 2 : 4;
-        const int gapCartoes = 8;
+        fluxo_ = !isCatalogMode;  // setas/números do fluxo só na Coleção (os 4 cards)
+        numeros_.clear();
+        const int gapCartoes = fluxo_ ? 38 : 8;  // vão com espaço para a ponta de balão + seta entre os cards
         const int espacosTotais = (numCartoes - 1) * gapCartoes;
         const int availableForCards = totalH - espacosTotais;
 
@@ -910,30 +1425,31 @@ public:
             bool temEditorHierarquia = (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible());
             bool temEditCustomPrefixo = (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible());
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
+            // Coleção: SELECTION, FOLDER STRUCTURE, OPTIONS e RUN (o BACKUP VERSIONS fica no rodapé, card 6).
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
-            int minH2 = alturaCabecalhoSecao + 2 + 32 + 4 + alturaControle + 2 + 20 + (alturaControle + 4) + padCartaoY * 2;
             int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
             int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
-            int minTotal = minH1 + minH2 + minH3 + minH4;
+            const int hRun = alturaCabecalhoSecao + 4 + 40 + padCartaoY * 2;  // título + botão principal
+            int minTotal = minH1 + minH3 + minH4 + hRun;
 
             if (availableForCards >= minTotal) {
                 int extra = availableForCards - minTotal;
-                int extra1 = static_cast<int>(extra * 0.05f);
-                int extra2 = static_cast<int>(extra * 0.60f); // DESTINATION: 38% → 60%
-                int extra3 = static_cast<int>(extra * 0.08f); // ORGANIZATION: 37% → 8% (mínimo)
-                int extra4 = extra - extra1 - extra2 - extra3;
-                card1H = minH1 + extra1;
-                card2H = minH2 + extra2;
-                card3H = minH3 + extra3;
-                card4H = minH4 + extra4;
+                card1H = minH1 + static_cast<int>(extra * 0.05f);
+                card3H = minH3 + static_cast<int>(extra * 0.10f);
+                card4H = availableForCards - card1H - card3H - hRun;  // OPTIONS fica com a sobra
             } else {
-                float ratio = static_cast<float>(availableForCards) / static_cast<float>(std::max(1, minTotal));
+                float ratio = static_cast<float>(std::max(1, availableForCards - hRun)) / static_cast<float>(std::max(1, minTotal - hRun));
                 card1H = std::max(46, static_cast<int>(minH1 * ratio));
-                card2H = std::max(80, static_cast<int>(minH2 * ratio));
                 card3H = std::max(80, static_cast<int>(minH3 * ratio));
-                card4H = std::max(60, availableForCards - card1H - card2H - card3H);
+                card4H = std::max(60, availableForCards - hRun - card1H - card3H);
             }
         }
+
+        // Linha do título: com o fluxo, o número da etapa ocupa o começo e o título vem logo depois.
+        auto linhaTitulo = [&](juce::Rectangle<int> linha) {
+            if (fluxo_) numeros_.push_back(linha.removeFromLeft(kLarguraNumeroFluxo));
+            return linha;
+        };
 
         int currY = 0;
         auto abrirCartao = [&](int altura) {
@@ -946,7 +1462,7 @@ public:
         // 1. SOURCE (Collection Mode only)
         if (!isCatalogMode && owner_.comboSource_) {
             auto dentro = abrirCartao(card1H);
-            if (owner_.labelSource_) owner_.labelSource_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelSource_) owner_.labelSource_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             owner_.comboSource_->setBounds(dentro.removeFromTop(alturaControle));
             if (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible()) {
@@ -959,37 +1475,10 @@ public:
             }
         }
 
-        // 2. DESTINATION (Both Collection & Catalog Modes)
-        if (owner_.listVaults_) {
-            auto dentro = abrirCartao(card2H);
-            if (owner_.labelDest_) owner_.labelDest_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
-            dentro.removeFromTop(2);
-
-            int alturaDestInfo = 20;
-            int reservedBottom = alturaControle + 4 + alturaDestInfo;
-            int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
-            owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
-            dentro.removeFromTop(4);
-            // (o MAIN EDIT MODE mora no menu Tools — ver MainComponent::alternarModoEdicaoMain)
-
-            // Browse and Google Drive buttons side by side
-            {
-                auto linhaBrowse = dentro.removeFromTop(alturaControle);
-                int btnGdW = 32;
-                if (owner_.btnGoogleDriveDest_) {
-                    owner_.btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(btnGdW));
-                    linhaBrowse.removeFromRight(tk.espacoPequeno);
-                }
-                if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(linhaBrowse);
-            }
-            dentro.removeFromTop(2);
-            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
-        }
-
         // 3. ORGANIZATION (Collection Mode only)
         if (!isCatalogMode && owner_.comboOrg_) {
             auto dentro = abrirCartao(card3H);
-            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            if (owner_.labelOrg_) owner_.labelOrg_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             if (owner_.togglePreservarEstrutura_) owner_.togglePreservarEstrutura_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleUsarEstruturaMapa_) owner_.toggleUsarEstruturaMapa_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
@@ -1019,18 +1508,14 @@ public:
             }
         }
 
-        // 4. OPTIONS (Both Collection & Catalog Modes)
+        // 4. OPTIONS (ambos os modos) — antes de BACKUP VERSIONS na ordem do fluxo
         if (owner_.toggleVerificarChecksum_) {
-            int lastCardH = std::max(40, totalH - currY);
-            auto dentro = abrirCartao(lastCardH);
-            if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(dentro.removeFromTop(alturaCabecalhoSecao));
+            auto dentro = abrirCartao(card4H);
+            if (owner_.labelOpcoes_) owner_.labelOpcoes_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
             dentro.removeFromTop(2);
             owner_.toggleVerificarChecksum_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (owner_.toggleGerarCatalogo_) owner_.toggleGerarCatalogo_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
             if (!isCatalogMode) {
-                if (owner_.toggleEmbutirMetadados_ && owner_.toggleEmbutirMetadados_->isVisible()) {
-                    owner_.toggleEmbutirMetadados_->setBounds(dentro.removeFromTop(alturaLinhaToggle));
-                }
                 if (owner_.btnAtualizarSidecars_ && owner_.btnAtualizarSidecars_->isVisible()) {
                     owner_.btnAtualizarSidecars_->setBounds(
                         dentro.removeFromTop(alturaLinhaToggle).reduced(0, 3).removeFromLeft(220));
@@ -1044,6 +1529,48 @@ public:
             }
         }
 
+        // BACKUP VERSIONS (DESTINATION) no Catálogo — último da coluna, com o resto da altura. Na Coleção ele é o
+        // card (6), no rodapé (ver BackupWorkspaceComponent::resized).
+        if (owner_.listVaults_ && !fluxo_) {
+            auto dentro = abrirCartao(std::max(60, totalH - currY));
+            if (owner_.labelDest_) owner_.labelDest_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
+            dentro.removeFromTop(2);
+
+            int alturaDestInfo = 20;
+            int reservedBottom = alturaControle + 4 + alturaDestInfo;
+            int listH = std::max(24, dentro.getHeight() - reservedBottom - 4);
+            owner_.listVaults_->setBounds(dentro.removeFromTop(listH));
+            dentro.removeFromTop(4);
+            // (o MAIN EDIT MODE mora no menu Tools — ver MainComponent::alternarModoEdicaoMain)
+
+            // Browse and Google Drive buttons side by side
+            {
+                auto linhaBrowse = dentro.removeFromTop(alturaControle);
+                int btnGdW = 32;
+                if (owner_.btnGoogleDriveDest_) {
+                    owner_.btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(btnGdW));
+                    linhaBrowse.removeFromRight(tk.espacoPequeno);
+                }
+                if (owner_.btnBrowseVault_) owner_.btnBrowseVault_->setBounds(linhaBrowse);
+            }
+            dentro.removeFromTop(2);
+            if (owner_.labelDestInfo_) owner_.labelDestInfo_->setBounds(dentro.removeFromTop(std::min(alturaDestInfo, dentro.getHeight())));
+        }
+
+
+        // 5. RUN (Coleção): título + botão principal (e o REBUILD STATUS, quando houver), depois de OPTIONS.
+        if (fluxo_ && owner_.btnStartBackup_) {
+            auto dentro = abrirCartao(std::max(60, totalH - currY));
+            if (owner_.labelAcao_) owner_.labelAcao_->setBounds(linhaTitulo(dentro.removeFromTop(alturaCabecalhoSecao)));
+            dentro.removeFromTop(4);
+            auto linha = dentro.removeFromTop(std::min(40, dentro.getHeight()));
+            if (owner_.btnRebuildStatus_ && owner_.btnRebuildStatus_->isVisible()) {
+                owner_.btnRebuildStatus_->setBounds(linha.removeFromLeft(std::min(190, linha.getWidth() / 2)));
+                linha.removeFromLeft(tk.espacoPainel);
+            }
+            owner_.btnStartBackup_->setBounds(linha);
+        }
+
         alturaCalculada_ = cartoes_.empty() ? totalH : cartoes_.back().getBottom();
         repaint();
     }
@@ -1055,6 +1582,8 @@ public:
 private:
     BackupWorkspaceComponent& owner_;
     std::vector<juce::Rectangle<int>> cartoes_;
+    std::vector<juce::Rectangle<int>> numeros_;  // número de cada etapa, na ordem dos cards
+    bool fluxo_ = false;
     int alturaCalculada_ = 500;
 };
 
@@ -1308,18 +1837,19 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
     static const std::vector<std::string> kPadroesContent = {
         // Audio
         "Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
-        "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Sound FX", "MIDI",
-        "Artist Catalog", "Artist Backup",
+        "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
+        "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master",
         // Video
         "Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
         "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
         "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of",
         // Image
         "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-        "Graphics", "Logo", "3D",
+        "Graphics", "Logo", "3D", "YouTube Thumbnail",
         // Docs
-        "Documentation", "Book", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
-        "Spreadsheet", "Planilha"
+        "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference", "Technical Documentation",
+        "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+        "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
     };
 
     std::map<std::string, int> contagens;
@@ -1746,13 +2276,6 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     toggleGerarCatalogo_->setToggleState(true, juce::dontSendNotification);
     configContainer_->addAndMakeVisible(*toggleGerarCatalogo_);
 
-    toggleEmbutirMetadados_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.embutir_metadados"));
-    toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
-    toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
-    toggleEmbutirMetadados_->setTooltip("Enable embedding Dublin Core and technical tags directly into media headers");
-    toggleEmbutirMetadados_->setToggleState(true, juce::dontSendNotification);
-    configContainer_->addAndMakeVisible(*toggleEmbutirMetadados_);
-
     toggleAutoResolverConflitos_ = std::make_unique<juce::ToggleButton>(matriz::i18n::t("backup.auto_resolver_conflitos"));
     toggleAutoResolverConflitos_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
     toggleAutoResolverConflitos_->setColour(juce::ToggleButton::tickColourId, tk.acento);
@@ -1781,6 +2304,23 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*labelResumo_);
 
+    labelAssets_ = std::make_unique<juce::Label>();  // mesmo estilo dos títulos dos cards da coluna
+    labelAssets_->setText(matriz::i18n::t("backup.secao_assets"), juce::dontSendNotification);
+    labelAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+    labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    addAndMakeVisible(*labelAssets_);
+
+    // Títulos dos cards do rodapé: (6) RUN e (7) OUTPUTS FROM THE MAIN (texto do (7) definido no resized: Catálogo
+    // usa outro rótulo).
+    labelAcao_ = std::make_unique<juce::Label>();
+    labelAcao_->setText(matriz::i18n::t("backup.secao_executar"), juce::dontSendNotification);
+    labelSaidas_ = std::make_unique<juce::Label>();
+    for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) {
+        l->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        l->setColour(juce::Label::textColourId, tk.textoSecundario);
+        addAndMakeVisible(*l);
+    }
+
     barraLegenda_ = std::make_unique<LegendaStatusComponent>();
     barraLegenda_->aoMudarFiltro = [this](PreviaLista::ModoPrioridade modo) {
         if (listPrevia_) listPrevia_->definirModoPrioridade(modo);
@@ -1798,6 +2338,11 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     // === PROGRESS ===
     barraProgresso_ = std::make_unique<juce::ProgressBar>(progressoValor_);
     addChildComponent(*barraProgresso_);
+    // Make Backup de coleção: duas etapas, cada uma no seu card (COPY e CATALOG).
+    etapaCopy_ = std::make_unique<EtapaProgressoComponent>(matriz::i18n::t("backup.etapa_copy"));
+    etapaCatalog_ = std::make_unique<EtapaProgressoComponent>(matriz::i18n::t("backup.etapa_catalog"));
+    addChildComponent(*etapaCopy_);
+    addChildComponent(*etapaCatalog_);
 
     labelProgressoStatus_ = std::make_unique<juce::Label>();
     labelProgressoStatus_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
@@ -1915,6 +2460,19 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
     };
     addChildComponent(*btnDone_);
 
+    btnRebuildStatus_ = std::make_unique<juce::TextButton>(matriz::i18n::t("rebuild.btn_status"));
+    aplicarEstiloBotao(*btnRebuildStatus_, false);
+    btnRebuildStatus_->onClick = [this] {
+        prepararRelatorioErros(projeto_.emRebuild());
+        mostrarErrosBackup();
+    };
+    addChildComponent(*btnRebuildStatus_);
+
+    btnVerErros_ = std::make_unique<juce::TextButton>(matriz::i18n::t("backup.erros_btn"));
+    aplicarEstiloBotao(*btnVerErros_, false);
+    btnVerErros_->onClick = [this] { mostrarErrosBackup(); };
+    addChildComponent(*btnVerErros_);
+
     btnOpenCatalog_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
     aplicarEstiloBotao(*btnOpenCatalog_, true);
     btnOpenCatalog_->setTooltip(isPt ? juce::String::fromUTF8("Abrir pasta do backup no Finder") : "Open backup folder in Finder");
@@ -1947,19 +2505,20 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         comboExportOrigem_->setColour(juce::ComboBox::outlineColourId, tk.borda);
         comboExportOrigem_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
         comboExportOrigem_->setTooltip(matriz::i18n::t("export.unificado_dica"));
-        for (int id = kExpSelecionados; id <= kExpPacote; ++id) comboExportOrigem_->addItem("-", id);
+        for (int id = kExpSelecionados; id <= kExpBridge; ++id) comboExportOrigem_->addItem("-", id);
         // Catálogo nunca teve "Selected Files" (o botão antigo não existia lá);
         // o pacote sai do MAIN, que o Catálogo não tem.
         comboExportOrigem_->setItemEnabled(kExpSelecionados, !catalogo);
         comboExportOrigem_->setItemEnabled(kExpPacote, !catalogo);
+        comboExportOrigem_->setItemEnabled(kExpBridge, !catalogo);
         // Coleção sempre abre em SELECTED FILES; só o Catálogo (sem essa opção)
         // lembra a última escolha.
         int inicial = catalogo ? kExpZip : kExpSelecionados;
         const auto arq = arquivoExportOrigem();
         if (catalogo && arq.existsAsFile()) {
             const int lembrado = arq.loadFileAsString().trim().getIntValue();
-            if (lembrado >= kExpSelecionados && lembrado <= kExpPacote &&
-                lembrado != kExpSelecionados && lembrado != kExpPacote)
+            if (lembrado >= kExpSelecionados && lembrado <= kExpBridge &&
+                lembrado != kExpSelecionados && lembrado != kExpPacote && lembrado != kExpBridge)
                 inicial = lembrado;
         }
         comboExportOrigem_->setSelectedId(inicial, juce::dontSendNotification);
@@ -1977,6 +2536,18 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
         btnExportUnificado_->setTooltip(matriz::i18n::t("export.unificado_dica"));
         btnExportUnificado_->onClick = [this] { executarExportUnificado(); };
         addChildComponent(*btnExportUnificado_);
+
+        btnBounceAjustes_ = std::make_unique<juce::TextButton>(matriz::i18n::t("bounce.btn_settings"));
+        aplicarEstiloBotao(*btnBounceAjustes_, false);
+        btnBounceAjustes_->onClick = [this] { abrirAjustesBounce(); };
+        addChildComponent(*btnBounceAjustes_);
+        btnBounceExport_ = std::make_unique<juce::TextButton>(matriz::i18n::t("bounce.btn_export"));
+        aplicarEstiloBotao(*btnBounceExport_, true);
+        btnBounceExport_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff6b46c1));
+        btnBounceExport_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        btnBounceExport_->setTooltip(matriz::i18n::t("bounce.btn_export_vazia"));
+        btnBounceExport_->onClick = [this] { exportarBounceList(); };
+        addChildComponent(*btnBounceExport_);
         setWantsKeyboardFocus(true);
     }
 
@@ -1998,6 +2569,9 @@ BackupWorkspaceComponent::~BackupWorkspaceComponent() {
     poolCatalogoBackup_.removeAllJobs(true, 2000);
     ++*geracaoPlano_;  // job de plano ainda na fila nem começa
     poolPlano_.removeAllJobs(true, 30000);
+    // A cópia do backup usa o Project: cancela entre os blocos e espera o arquivo em curso.
+    cancelamento_->pedir();
+    poolBackup_.removeAllJobs(true, 60000);
     ++geracaoDestinos_;
     poolDestinos_.removeAllJobs(true, 2000);
     // O job de EXPORT usa o Project: cancela entre arquivos e espera o
@@ -2026,6 +2600,17 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         labelSource_->setTooltip(isPt ? juce::String::fromUTF8("Seleção dos itens para o backup") : "Selection of assets to backup");
         labelSource_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
         labelSource_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (labelAssets_) {
+        labelAssets_->setText(matriz::i18n::t("backup.secao_assets"), juce::dontSendNotification);
+        labelAssets_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        labelAssets_->setColour(juce::Label::textColourId, tk.textoSecundario);
+    }
+    if (labelAcao_) labelAcao_->setText(matriz::i18n::t("backup.secao_executar"), juce::dontSendNotification);
+    for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) {
+        if (!l) continue;
+        l->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        l->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (comboSource_) {
         comboSource_->setTooltip(isPt ? juce::String::fromUTF8("Escolha quais itens incluir nesta execução do backup") : "Choose which assets to include in this backup run");
@@ -2165,11 +2750,6 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
         toggleGerarCatalogo_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
         toggleGerarCatalogo_->setColour(juce::ToggleButton::tickColourId, tk.acento);
     }
-    if (toggleEmbutirMetadados_) {
-        toggleEmbutirMetadados_->setButtonText(matriz::i18n::t("backup.embutir_metadados"));
-        toggleEmbutirMetadados_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
-        toggleEmbutirMetadados_->setColour(juce::ToggleButton::tickColourId, tk.acento);
-    }
     if (toggleAutoResolverConflitos_) {
         toggleAutoResolverConflitos_->setButtonText(matriz::i18n::t("backup.auto_resolver_conflitos"));
         toggleAutoResolverConflitos_->setColour(juce::ToggleButton::textColourId, tk.textoPrimario);
@@ -2205,6 +2785,11 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
     if (btnDone_) {
         btnDone_->setButtonText(isPt ? juce::String::fromUTF8("CONCLUÍDO") : "DONE");
         aplicarEstiloBotao(*btnDone_, false);
+    }
+    if (btnRebuildStatus_) btnRebuildStatus_->setButtonText(matriz::i18n::t("rebuild.btn_status"));
+    if (btnVerErros_) {
+        btnVerErros_->setButtonText(matriz::i18n::t("backup.erros_btn"));
+        aplicarEstiloBotao(*btnVerErros_, false);
     }
     if (btnOpenCatalog_) {
         btnOpenCatalog_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR PASTA DO BACKUP") : "OPEN BACKUP FOLDER");
@@ -2360,6 +2945,7 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     const int nZip = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Zip));
     const int nPrint = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Print));
     const int nWm = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
+    const int nBounce = static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce));
     auto opcao = [&](int id, const char* chave, int n) {
         comboExportOrigem_->changeItemText(id, matriz::i18n::t(chave).replace("{n}", juce::String(n)));
     };
@@ -2369,6 +2955,9 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     opcao(kExpWatermark, "export.op_watermark", nWm);
     comboExportOrigem_->changeItemText(kExpPlanilha, matriz::i18n::t("export.op_planilha"));
     opcao(kExpPacote, "export.op_pacote", contagemSelecionados_);
+    opcao(kExpBridge, "export.op_bridge", contagemSelecionados_);
+    if (nBounce_ != nBounce) { nBounce_ = nBounce; repaint(cartaoBounce_); }
+    if (btnBounceExport_) btnBounceExport_->setEnabled(!catalogo && !exportando_ && estado_ == Estado::Config && nBounce > 0);
 
     // changeItemText() não atualiza o texto já exibido no combo (ficava "-"):
     // reselecionar o mesmo id força o rótulo a acompanhar o item.
@@ -2387,10 +2976,11 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
         case kExpPlanilha: habilitado = catalogo ? !plano_.itens.empty() || projeto_.listarColecoesLinkadas().size() > 0
                                                  : mainSelado_; break;
         case kExpPacote: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
+        case kExpBridge: habilitado = !catalogo && mainSelado_ && !exportando_ && contagemSelecionados_ > 0; break;
         default: break;
     }
     btnExportUnificado_->setEnabled(habilitado);
-    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote)
+    btnExportUnificado_->setTooltip(!habilitado && !catalogo && mainSelado_ == false && (id == kExpSelecionados || id == kExpPlanilha || id == kExpPacote || id == kExpBridge)
                                         ? matriz::i18n::t("backup.saida_sem_main")
                                         : matriz::i18n::t("export.unificado_dica"));
 
@@ -2399,6 +2989,30 @@ void BackupWorkspaceComponent::atualizarExportUnificado() {
     mostrarLimpar(btnLimparZip_.get(), id == kExpZip && estado_ == Estado::Config);
     mostrarLimpar(btnLimparPrint_.get(), id == kExpPrint && estado_ == Estado::Config);
     mostrarLimpar(btnLimparWatermark_.get(), id == kExpWatermark && estado_ == Estado::Config);
+}
+
+// "B" roxo ao lado de "Bounce List" no dropdown do EXPORT (o ComboBox não tem ícone por item: pega o item do menu).
+void BackupWorkspaceComponent::aplicarIconeBounceNoCombo() {
+    if (!comboExportOrigem_) return;
+    juce::Image img(juce::Image::ARGB, 32, 32, true);
+    {
+        juce::Graphics g(img);
+        g.setColour(juce::Colour(0xff9333ea));
+        g.fillRoundedRectangle(2.0f, 2.0f, 28.0f, 28.0f, 6.0f);
+        g.setColour(juce::Colours::white);
+        g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+        g.drawText("B", 0, 0, 32, 32, juce::Justification::centred);
+    }
+    auto* menu = comboExportOrigem_->getRootMenu();
+    juce::PopupMenu::MenuItemIterator it(*menu, true);
+    while (it.next()) {
+        auto& item = it.getItem();
+        if (item.itemID == kExpBounce) {
+            auto d = std::make_unique<juce::DrawableImage>();
+            d->setImage(img);
+            item.setImage(std::move(d));
+        }
+    }
 }
 
 void BackupWorkspaceComponent::executarExportUnificado() {
@@ -2411,6 +3025,7 @@ void BackupWorkspaceComponent::executarExportUnificado() {
         case kExpWatermark: alvo = btnExportWatermark_.get(); break;
         case kExpPlanilha: alvo = btnExportJanela_.get(); break;
         case kExpPacote: abrirPacote(); return;
+        case kExpBridge: abrirExport(true); return;  // mesmo recorte do EXPORT de selecionados, com XMP do Bridge
         default: break;
     }
     // Exatamente a ação e o diálogo do botão antigo correspondente.
@@ -2910,17 +3525,19 @@ void BackupWorkspaceComponent::atualizarResumo() {
     auto* registro = &projeto_.projeto().registro();
     const juce::File pastaProjeto = projeto_.projeto().pasta();
     const juce::File raizProjeto = projeto_.projeto().raiz();
-    const juce::File destinoEscolhido = resolvedDestFolder_;
+    // Rebuild: o plano é sempre do destino novo (nunca de um destino clicado na lista).
+    const juce::File destinoEscolhido = projeto_.emRebuild() ? projeto_.rebuildDestino() : resolvedDestFolder_;
     const auto modoPrefixo = modoPrefixo_;
     const juce::String prefixo = prefixoCustomizado_;
     const bool organizarPorSource = organizarPorSource_;
     const std::string mapaId = mapaParaBackup();
     const bool soPendentes = (whatOption_ == WhatOption::NeedsBackup);
+    const bool rebuild = projeto_.emRebuild();
     auto geracaoAtomica = geracaoPlano_;
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
 
     poolPlano_.addJob([safeThis, geracao, geracaoAtomica, registro, pastaProjeto, raizProjeto, destinoEscolhido, h,
-                       modoPrefixo, prefixo, autoResolver, forcarRebackup, organizarPorSource, mapaId, soPendentes,
+                       modoPrefixo, prefixo, autoResolver, forcarRebackup, organizarPorSource, mapaId, soPendentes, rebuild,
                        itemIds = std::move(itemIds)]() {
         if (geracaoAtomica->load() != geracao) return;  // superado antes de começar
 
@@ -2930,12 +3547,16 @@ void BackupWorkspaceComponent::atualizarResumo() {
         // rodar (ou qualquer outro erro de SQL) não pode derrubar o app inteiro
         // só por abrir a aba BACKUP; melhor mostrar o motivo no resumo.
         try {
-            const juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
-                destinoEscolhido.isDirectory() ? destinoEscolhido : raizProjeto);
+            // Rebuild: o plano é do destino NOVO (ainda não escolhido = pasta fictícia que não existe):
+            // nada conta como "já consolidado" a não ser o que já foi copiado pra lá.
+            const juce::File destinoRaiz = rebuild
+                ? (destinoEscolhido != juce::File() ? destinoEscolhido
+                                                    : juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("bkr_rebuild_novo_main"))
+                : matriz::model::normalizarParaRaizDestino(destinoEscolhido.isDirectory() ? destinoEscolhido : raizProjeto);
             const juce::File destinoMedia = destinoRaiz.getChildFile("Media");
             r.plano = matriz::consolidacao::planejarConsolidacao(
                 *registro, pastaProjeto, destinoMedia, h, {}, modoPrefixo, prefixo,
-                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId);
+                autoResolver, forcarRebackup, organizarPorSource, /*paraExport*/ false, mapaId, /*estritoAoDestino*/ rebuild);
 
             std::vector<matriz::consolidacao::ItemPlanejado> mv;
             for (auto& m : r.plano.movimentosSemPasta)
@@ -3108,7 +3729,7 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         auto st = projeto_.projeto().registro().prepare(
             "SELECT 1 FROM consolidacao_registro WHERE COALESCE(destino_id, '') = '' OR destino_id = ? LIMIT 1");
         st.bind(1, matriz::db::Value::of(destinoIdDoMain()));
-        mainSelado_ = st.step();
+        mainSelado_ = st.step() && !projeto_.emRebuild();  // rebuild: projeto sem MAIN (o antigo só é fonte)
         if (mainSelado_) {
             auto sc = projeto_.projeto().registro().prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
             if (sc.step()) cfg = juce::JSON::parse(juce::String::fromUTF8(sc.columnText(0).c_str()));
@@ -3162,7 +3783,7 @@ void BackupWorkspaceComponent::atualizarTravasDoMain() {
         btnAtualizarSidecars_->setVisible(mainSelado_);
         if (configContainer_) configContainer_->resized();
     }
-    for (auto* t : {toggleEmbutirMetadados_.get(), toggleForcarRebackup_.get()}) {
+    for (auto* t : {toggleForcarRebackup_.get()}) {
         if (!t) continue;
         if (!mostrarOpcoesPrimeiroBackup) t->setToggleState(false, juce::dontSendNotification);
         if (t->isVisible() != mostrarOpcoesPrimeiroBackup) {
@@ -3380,6 +4001,40 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // (sincronização) ou EXPORT. O botão já fica desabilitado fora do MAIN.
     if (!isCatalogMode && !destacadoEhMain()) return;
 
+    // REBUILD DO MAIN: a pasta nova é escolhida (e validada) aqui, uma vez; retomar reaproveita a mesma.
+    const bool rebuild = !isCatalogMode && projeto_.emRebuild();
+    std::optional<matriz::consolidacao::OpcoesRebuild> opcoesRebuild;
+    if (rebuild) {
+        const juce::File novo = projeto_.rebuildDestino();
+        if (novo == juce::File()) { pedirDestinoRebuild(); return; }
+        const auto fonte = projeto_.fonteRebuild();
+        juce::String motivo;
+        if (!fonte || !validarDestinoRebuild(novo, motivo)) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                   fonte ? motivo : juce::String("old MAIN (FONTE_REBUILD) not found"));
+            return;
+        }
+        novo.createDirectory();
+        // O acervo inteiro (o que ainda falta copiar) precisa caber no destino novo.
+        const juce::int64 livre = novo.getBytesFreeOnVolume();
+        if (!novo.isDirectory() || (livre > 0 && livre < plano_.espacoNecessarioBytes)) {
+            juce::AlertWindow::showMessageBoxAsync(
+                juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                matriz::i18n::t("rebuild.sem_espaco")
+                    .replace("{preciso}", juce::File::descriptionOfSizeInBytes(plano_.espacoNecessarioBytes))
+                    .replace("{livre}", juce::File::descriptionOfSizeInBytes(std::max<juce::int64>(0, livre))));
+            return;
+        }
+        resolvedDestFolder_ = novo;
+        customDestFolder_ = novo;
+        matriz::consolidacao::OpcoesRebuild o;
+        o.fonteMedia = fonte->raiz.getChildFile("Media");
+        o.fonteDestinoId = fonte->destinoId;
+        o.descricaoFonte = fonte->raiz.getFullPathName().toStdString();
+        opcoesRebuild = o;
+        relatorioRebuild_.clear();
+    }
+
     // Fase 2: itens de _SEM_PASTA que ganharam pasta no mapa do MAIN — oferece
     // mover (lista + confirmação) antes de qualquer cópia.
     if (!isCatalogMode && !movimentosDecididos_ && !plano_.movimentosSemPasta.empty()) {
@@ -3396,16 +4051,20 @@ void BackupWorkspaceComponent::iniciarBackup() {
     progressoValor_ = 0.0;
 
     btnStartBackup_->setEnabled(false);
-    barraProgresso_->setVisible(true);
+    barraProgresso_->setVisible(isCatalogMode);  // coleção usa os cards COPY/CATALOG; catálogo mantém a barra única
+    etapaCopy_->setVisible(!isCatalogMode);
+    etapaCatalog_->setVisible(!isCatalogMode);
+    etapaCopy_->definir(-1.0, matriz::i18n::t("backup.progresso_preparando"));
+    etapaCatalog_->esperar(matriz::i18n::t("backup.etapa_aguardando"));
     labelProgressoStatus_->setVisible(true);
-    labelProgressoStatus_->setText("Preparing copy operations...", juce::dontSendNotification);
+    labelProgressoStatus_->setText(matriz::i18n::t("backup.progresso_preparando"), juce::dontSendNotification);
 
     auto cancelamento = cancelamento_;
     auto plano = plano_;
     auto& projeto = projeto_;
     bool gerarCatalogo = toggleGerarCatalogo_->getToggleState();
-    // Embed dentro da cópia só no primeiro backup (MAIN ainda não existe).
-    bool embutirMeta = !isCatalogMode && !mainSelado_ && toggleEmbutirMetadados_->getToggleState();
+    // O MAIN é fiel à SOURCE: o backup nunca embute metadados/marcadores (isso é só do EXPORT).
+    const bool embutirMeta = false;
     if (!isCatalogMode) gravarConfigDoMain();  // estas escolhas passam a valer pra todo arquivo novo
 
     juce::File destinoRaiz = matriz::model::normalizarParaRaizDestino(
@@ -3446,7 +4105,22 @@ void BackupWorkspaceComponent::iniciarBackup() {
     // Garante destination.json e Project/ com SQLite no backup
     juce::File destJsonBackup = pastaBackupRaiz.getChildFile("destination.json");
     juce::File destJsonOrig = projeto.projeto().raiz().getChildFile("destination.json");
-    if (destJsonOrig.existsAsFile()) {
+    if (rebuild) {
+        // MAIN novo = destino NOVO (identidade própria; nunca copia o destination.json do MAIN antigo).
+        auto existente = matriz::model::DestinationInfo::lerDeArquivo(destJsonBackup);
+        if (!existente || existente->projetoId != projeto.projeto().projetoId() || existente->papel != "ORIGINAL") {
+            matriz::model::DestinationInfo dInfo;
+            dInfo.formato = 1;
+            dInfo.destinationId = matriz::model::novoUuid();
+            dInfo.projetoId = projeto.projeto().projetoId();
+            dInfo.papel = "ORIGINAL";
+            dInfo.rotulo = pastaBackupRaiz.getFileName().toStdString();
+            dInfo.revisao = projeto.projeto().revisao();
+            dInfo.ultimaEdicaoUtc = matriz::model::agoraIso8601();
+            dInfo.criadoEm = matriz::model::agoraIso8601();
+            dInfo.gravarEmArquivo(destJsonBackup);
+        }
+    } else if (destJsonOrig.existsAsFile()) {
         destJsonOrig.copyFileTo(destJsonBackup);
     } else {
         matriz::model::DestinationInfo dInfo;
@@ -3474,10 +4148,11 @@ void BackupWorkspaceComponent::iniciarBackup() {
         auto colecoes = projeto.listarColecoesLinkadas();
         ProgressoGlobal::obterInstancia().iniciarTarefa(
             "backup",
-            "Consolidating Catalog Collections",
+            matriz::i18n::t("backup.progresso_titulo_catalogo"),
             static_cast<int>(colecoes.size()),
             [cancelamento] { cancelamento->pedir(); },
-            "Preparing catalog backup...");
+            matriz::i18n::t("backup.progresso_preparando_catalogo"),
+            /*temModalProprio*/ true);
 
         resized();
         repaint();
@@ -3566,12 +4241,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
         return;
     }
 
+    // temModalProprio: esta aba já mostra a própria barra (e o CANCEL); o modal global duplicava a barra e
+    // ficava parado em 0% por cima do "Backup completed".
     ProgressoGlobal::obterInstancia().iniciarTarefa(
         "backup",
-        "Consolidating Backup",
+        matriz::i18n::t("backup.progresso_titulo"),
         static_cast<int>(plano.itens.size()),
         [cancelamento] { cancelamento->pedir(); },
-        "Preparing copy operations...");
+        matriz::i18n::t("backup.progresso_preparando"),
+        /*temModalProprio*/ true);
 
     resized();
     repaint();
@@ -3589,8 +4267,12 @@ void BackupWorkspaceComponent::iniciarBackup() {
     cancelarExport_->store(false);
 
     poolExport_.addJob([self, safeThis, cancelamento, plano, destinoRaiz, destinoMedia, pProjeto, vivoProjeto, guarda,
-                        gerarCatalogo, embutirMeta, moverAgora]() {
-        // modo: 0 = só o detalhe da tarefa; 1 = progresso + barra; 2 = progresso sem mexer na barra.
+                        gerarCatalogo, embutirMeta, moverAgora, opcoesRebuild]() {
+        matriz::app::SemSono semSono("BKR Matriz: Make Backup");
+        matriz::consolidacao::limparTemporariosDeCopia(destinoMedia);
+
+        // modo: 0 = só o detalhe da tarefa; 1 = progresso + barra (COPY); 2 = progresso + barra (CATALOG);
+        // 3 = detalhe + barra CATALOG indeterminada.
         // No máximo a cada 100 ms, para não inundar a fila de eventos em backups com milhares de arquivos.
         auto ultimoAviso = std::make_shared<juce::uint32>(0);  // só a thread do job lê/escreve
         auto aviso = [safeThis, ultimoAviso](const juce::String& texto, int feito, int total, int modo) {
@@ -3601,7 +4283,11 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 if (!safeThis) return;
                 if (modo == 1) safeThis->progressoValor_ = static_cast<double>(feito) / std::max(1, total);
                 safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
-                if (modo == 0) ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
+                if (modo == 1) safeThis->etapaCopy_->definir(safeThis->progressoValor_, "Copying", feito, total);
+                else if (modo == 2)
+                    safeThis->etapaCatalog_->definir(static_cast<double>(feito) / std::max(1, total), "Cataloging", feito, total);
+                else if (modo == 3) safeThis->etapaCatalog_->definir(-1.0, texto.trimCharactersAtEnd("."));
+                if (modo == 0 || modo == 3) ProgressoGlobal::obterInstancia().atualizarDetalhe("backup", texto);
                 else ProgressoGlobal::obterInstancia().atualizarProgresso("backup", feito, texto);
             });
         };
@@ -3618,8 +4304,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 &pProjeto->projeto().writeMutex());
         }
 
-        // Marca d'água nunca vai pro MAIN (só EXPORT): nenhum id marcado com W
-        // é passado; embed só no primeiro backup (embutirMeta).
+        // Marca d'água nunca vai pro MAIN (só EXPORT) e o MAIN é fiel à SOURCE: sem embed.
         auto resultado = matriz::consolidacao::executarConsolidacao(
             pProjeto->projeto().registro(),
             pProjeto->projeto().pasta(),
@@ -3629,17 +4314,38 @@ void BackupWorkspaceComponent::iniciarBackup() {
                 aviso("Copying: " + juce::String(feito) + " of " + juce::String(total) + " assets...", feito, total, 1);
                 return !cancelamento->pedido() && !self->cancelarExport_->load();
             },
-            {}, embutirMeta, &pProjeto->projeto().writeMutex()
+            {}, embutirMeta,
+            [cancelamento, self]() { return !cancelamento->pedido() && !self->cancelarExport_->load(); },
+            opcoesRebuild ? &*opcoesRebuild : nullptr,
+            &pProjeto->projeto().writeMutex()
         );
+
+        // Rebuild: o projeto já usava sidecars XMP (o MAIN antigo tinha) => o MAIN novo os recebe, refletindo
+        // os metadados ATUAIS do projeto.
+        if (opcoesRebuild && !resultado.cancelado && resultado.falhas.empty()) {
+            try {
+                bool usavaSidecars = false;
+                {
+                    auto st = pProjeto->projeto().registro().prepare("SELECT 1 FROM sidecar_registro LIMIT 1");
+                    usavaSidecars = st.step();
+                }
+                if (usavaSidecars)
+                    matriz::consolidacao::atualizarSidecarsNoMain(
+                        pProjeto->projeto().registro(), destinoMedia, matriz::vault::destinationIdDaRaiz(destinoRaiz),
+                        /*sobrescreverEditados*/ true, [cancelamento](int, int) { return !cancelamento->pedido(); });
+            } catch (...) {}
+        }
 
         // Contagens e lista de falhas (membros do workspace) voltam pela message thread, antes do `concluir`
         // (a fila do callAsync é FIFO).
         juce::MessageManager::callAsync([safeThis, resultado, movs] {
             if (!safeThis) return;
+            if (!resultado.cancelado) safeThis->etapaCopy_->concluir();  // a barra COPY fecha em 100%; o CATALOG começa
             safeThis->copiadoCount_ = resultado.consolidados;
             safeThis->verificadoCount_ = resultado.consolidados + resultado.pulados;
             safeThis->falhasCount_ = static_cast<int>(resultado.falhas.size());
             safeThis->falhasLista_.clear();
+            safeThis->relatorioErros_.clear();
             for (const auto& f : movs.falhas) safeThis->falhasLista_.push_back("move: " + f);
             safeThis->falhasCount_ += static_cast<int>(movs.falhas.size());
             for (const auto& f : resultado.falhas)
@@ -3647,7 +4353,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
         });
 
         if (gerarCatalogo && !resultado.cancelado) {
-            aviso("Generating HTML Catalog...", 0, 0, 0);
+            aviso("Generating HTML Catalog...", 0, 0, 3);
             juce::File catDestDir = pProjeto->projeto().pasta().getChildFile("catalogo");
             catDestDir.createDirectory();
             auto resCatalogo = matriz::catalogo::gerar(
@@ -3672,7 +4378,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
 
         // Fechamento (message thread): revisão, destino registrado, mensagem final. A cópia já terminou e foi
         // verificada: cancelar só os relatórios não invalida o backup — registrar e confirmar rodam mesmo assim.
-        auto concluir = [safeThis, pProjeto, vivoProjeto, resultado, destinoRaiz](bool relatoriosPulados) {
+        const bool rebuild = opcoesRebuild.has_value();
+        auto concluir = [safeThis, pProjeto, vivoProjeto, resultado, destinoRaiz, rebuild](bool relatoriosPulados) {
             if (!safeThis) {
                 // O workspace foi destruído (troca de idioma/tema): a revisão do projeto confirma mesmo assim.
                 if (!resultado.cancelado && !vivoProjeto.expired()) pProjeto->projeto().confirmarRevisao();
@@ -3690,12 +4397,40 @@ void BackupWorkspaceComponent::iniciarBackup() {
             // A barra parava no último valor reportado (86%) ao lado de "concluído
             // com sucesso" — dois sinais contraditórios na mesma tela.
             safeThis->progressoValor_ = 1.0;
+            if (!resultado.cancelado) safeThis->etapaCatalog_->concluir();
 
             const bool houveFalha = safeThis->falhasCount_ > 0;
             juce::String rotuloSugerido = safeThis->selectedDestinoIdx_ >= 0 && safeThis->selectedDestinoIdx_ < static_cast<int>(safeThis->destinosBackup_.size())
                 ? safeThis->destinosBackup_[static_cast<size_t>(safeThis->selectedDestinoIdx_)].rotulo
                 : (safeThis->googleDriveComoDestino_ ? juce::String("Google Drive") : destinoRaiz.getFileName());
-            safeThis->registrarDestinoBackup(destinoRaiz, rotuloSugerido, safeThis->copiadoCount_, resultado.pulados, safeThis->falhasCount_, resultado.cancelado);
+            if (!rebuild)
+                safeThis->registrarDestinoBackup(destinoRaiz, rotuloSugerido, safeThis->copiadoCount_, resultado.pulados, safeThis->falhasCount_, resultado.cancelado);
+
+            // REBUILD: relatório próprio e, sem falhas e sem cancelar, o fim do modo (o destino novo vira o MAIN).
+            juce::String linhasRebuild;
+            const bool rebuildOk = rebuild && !resultado.cancelado && safeThis->falhasCount_ == 0;
+            if (rebuild) {
+                linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_copiados").replace("{n}", juce::String(safeThis->verificadoCount_));
+                if (resultado.copiadosDaSourcePorDivergencia > 0)
+                    linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_da_source").replace("{n}", juce::String(resultado.copiadosDaSourcePorDivergencia));
+                if (!resultado.mantidosDoMainAntigo.empty()) {
+                    linhasRebuild << "\n" << matriz::i18n::t("rebuild.rel_mantidos").replace("{n}", juce::String((int) resultado.mantidosDoMainAntigo.size()));
+                    for (size_t i = 0; i < resultado.mantidosDoMainAntigo.size() && i < 6; ++i)
+                        linhasRebuild << "\n  - " << juce::String::fromUTF8(resultado.mantidosDoMainAntigo[i].c_str());
+                }
+                try {
+                    juce::StringArray det;
+                    det.add("Copied and verified: " + juce::String(safeThis->verificadoCount_));
+                    det.add("Copied from SOURCE (old MAIN differed): " + juce::String(resultado.copiadosDaSourcePorDivergencia));
+                    det.add("Kept from old MAIN, differs from SOURCE (SOURCE unavailable): " + juce::String((int) resultado.mantidosDoMainAntigo.size()));
+                    det.add("Failures: " + juce::String(safeThis->falhasCount_));
+                    for (const auto& m : resultado.mantidosDoMainAntigo) det.add("  " + juce::String::fromUTF8(m.c_str()));
+                    for (const auto& f : safeThis->falhasLista_) det.add("  failed: " + f);
+                    matriz::model::ProjectLog(safeThis->projeto_.projeto().pasta()).appendEntry("REBUILD DO MAIN: Make Backup finished", det);
+                } catch (...) {}
+                if (rebuildOk)
+                    safeThis->finalizarRebuild(destinoRaiz, matriz::vault::destinationIdDaRaiz(destinoRaiz), safeThis->copiadoCount_);
+            }
 
             juce::String msgFinal = resultado.cancelado ? "Backup cancelled"
                                                        : (houveFalha ? "Backup finished with " + juce::String(safeThis->falhasCount_) + " errors"
@@ -3718,7 +4453,8 @@ void BackupWorkspaceComponent::iniciarBackup() {
             finalMsg << safeThis->copiadoCount_ << " copied   |   "
                      << safeThis->verificadoCount_ << " verified";
             if (houveFalha) finalMsg << "   |   " << safeThis->falhasCount_ << " failed";
-            finalMsg << "\n" << destinoRaiz.getFullPathName();
+            finalMsg << "\n" << destinoRaiz.getFullPathName() << linhasRebuild;
+            if (rebuild && !rebuildOk && !resultado.cancelado) finalMsg << "\n" << matriz::i18n::t("rebuild.rerodar");
             // SOURCE: liberado quando todo arquivo já tem cópia verificada no MAIN.
             if (!resultado.cancelado) {
                 const int dependem = safeThis->projeto_.arquivosQueDependemDoSource();
@@ -3726,17 +4462,15 @@ void BackupWorkspaceComponent::iniciarBackup() {
                                                     : matriz::i18n::t("backup.aviso_source_dependem")
                                                           .replace("{n}", juce::String(dependem)));
             }
-            if (houveFalha) {
-                finalMsg << "\n";
-                int mostradas = 0;
-                for (const auto& f : safeThis->falhasLista_) {
-                    if (mostradas++ >= 4) break;
-                    finalMsg << "\n" << f;
-                }
-                if (safeThis->falhasLista_.size() > 4)
-                    finalMsg << "\n... and " << static_cast<int>(safeThis->falhasLista_.size()) - 4 << " more.";
-            }
+            if (houveFalha)
+                finalMsg << "\n\n" << matriz::i18n::t("backup.erros_pointer").replace("{n}", juce::String(safeThis->falhasCount_));
             safeThis->labelResumo_->setText(finalMsg, juce::dontSendNotification);
+            // Backup com erros: abre já o resultado detalhado (o que falhou, por quê e onde resolver) em vez de
+            // deixar o usuário procurar no log.md.
+            if (houveFalha && !resultado.cancelado && !safeThis->falhasLista_.empty()) {
+                safeThis->prepararRelatorioErros(rebuild);
+                safeThis->mostrarErrosBackup();
+            }
 
             safeThis->labelTitulo_->setText(resultado.cancelado ? "Backup Cancelled" : "Backup Complete",
                                              juce::dontSendNotification);
@@ -3744,7 +4478,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
             if (safeThis->btnCancelarExecucao_) safeThis->btnCancelarExecucao_->setVisible(false);
             safeThis->btnDone_->setVisible(true);
             safeThis->resized();
-            if (!resultado.cancelado) safeThis->perguntarSincronizarClones();
+            if (!resultado.cancelado && !rebuild) safeThis->perguntarSincronizarClones();
         };
 
         if (resultado.cancelado) {  // cópia cancelada: sem relatórios, sem revisão
@@ -3764,6 +4498,7 @@ void BackupWorkspaceComponent::iniciarBackup() {
                     if (!safeThis) return;
                     safeThis->progressoValor_ = fracao;
                     safeThis->labelProgressoStatus_->setText(texto, juce::dontSendNotification);
+                    safeThis->etapaCatalog_->definir(fracao, texto.upToFirstOccurrenceOf(":", false, false).trimCharactersAtEnd("."));
                     ProgressoGlobal::obterInstancia().atualizarFracao("backup", fracao, texto);
                 });
             };
@@ -3803,6 +4538,349 @@ void BackupWorkspaceComponent::iniciarBackup() {
     });
 }
 
+void BackupWorkspaceComponent::prepararRelatorioErros(bool rebuild) {
+    struct ItemFalha {
+        juce::String codigo;
+        juce::String caminho;
+        juce::String detalheErro;
+    };
+    struct Grupo {
+        juce::String chave, motivo, diag, acao;
+        std::vector<ItemFalha> itens;
+    };
+    std::vector<Grupo> grupos;
+    auto obter = [&](const juce::String& chave, const char* kMotivo, const char* kDiag, const char* kAcao) -> Grupo& {
+        for (auto& g : grupos) if (g.chave == chave) return g;
+        grupos.push_back({chave, matriz::i18n::t(kMotivo), matriz::i18n::t(kDiag), matriz::i18n::t(kAcao), {}});
+        return grupos.back();
+    };
+
+    idsRemoviveis_.clear();
+    idsBloqueados_.clear();
+    constexpr int kMaxLinhasComCaminho = 300;  // depois disso só o código; o botão REMOVE continua pegando todos
+    int comCaminho = 0;
+    auto& registro = projeto_.projeto().registro();
+    for (const auto& f : falhasLista_) {
+        juce::String resto = f;
+        const bool mover = resto.startsWith("move: ");
+        if (mover) resto = resto.substring(6);
+        juce::String codigo, motivo = resto;
+        const int sep = resto.indexOf(": ");
+        if (sep > 0 && sep <= 40) {
+            codigo = resto.substring(0, sep);
+            motivo = resto.substring(sep + 2);
+            if (motivo.endsWith(": " + codigo)) motivo = motivo.dropLastCharacters(codigo.length() + 2);
+        }
+
+        // Item que já saiu do catálogo (o usuário removeu depois do backup) não é mais problema.
+        std::string itemId;
+        juce::String caminho;
+        if (codigo.isNotEmpty()) {
+            try {
+                auto st = registro.prepare(
+                    "SELECT i.id, COALESCE(NULLIF(a.caminho_absoluto_origem, ''), a.caminho_relativo) FROM item i "
+                    "LEFT JOIN arquivo a ON a.item_id = i.id WHERE i.codigo_acervo = ? ORDER BY a.eh_master DESC LIMIT 1");
+                st.bind(1, matriz::db::Value::of(codigo.toStdString()));
+                if (!st.step()) continue;
+                itemId = st.columnText(0);
+                if (!st.columnIsNull(1)) caminho = juce::String::fromUTF8(st.columnText(1).c_str());
+            } catch (...) {}
+        }
+
+        const bool ausente = motivo.contains("ausente no MAIN antigo");
+        const bool hash = motivo.contains("difere do hash");
+        Grupo* g = nullptr;
+        if (ausente) g = &obter("ausente", "backup.erro_ausente", "backup.erro_ausente_diag", "backup.erro_ausente_acao");
+        else if (hash) g = &obter("hash", "backup.erro_hash", "backup.erro_hash_diag", "backup.erro_hash_acao");
+        else if (motivo.contains("name conflict")) g = &obter("nome", "backup.erro_nome", "backup.erro_nome_diag", "backup.erro_nome_acao");
+        else if (mover) g = &obter("move", "backup.erro_move", "backup.erro_move_diag", "backup.erro_move_acao");
+        else g = &obter("outro", "backup.erro_outro", "backup.erro_outro_diag", "backup.erro_outro_acao");
+
+        if (!itemId.empty()) {
+            idsBloqueados_.push_back(itemId);
+            if (ausente || hash) idsRemoviveis_.push_back(itemId);
+        }
+        ItemFalha item;
+        item.codigo = codigo;
+        if (comCaminho++ < kMaxLinhasComCaminho) item.caminho = caminho;
+        if (g->chave == "outro" || g->chave == "move") item.detalheErro = motivo;
+        g->itens.push_back(std::move(item));
+    }
+
+    // Situação do plano atual: o que já está no destino novo e o que ainda falta.
+    int noPlano = static_cast<int>(plano_.itens.size()), prontos = 0;
+    for (const auto& it : plano_.itens) if (it.jaConsolidado) ++prontos;
+    int duplicatas = 0;
+    try {
+        auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE estado = 'duplicata'");
+        if (st.step()) duplicatas = static_cast<int>(st.columnInt(0));
+    } catch (...) {}
+
+    const int nBloq = static_cast<int>(idsBloqueados_.size());
+    juce::String texto;
+    texto << "================================================================================\n";
+    texto << "  " << matriz::i18n::t("backup.erros_header_titulo") << "\n";
+    texto << "================================================================================\n\n";
+
+    if (rebuild && noPlano > 0)
+        texto << "• " << matriz::i18n::t("rebuild.status_situacao").replace("{c}", juce::String(prontos)).replace("{t}", juce::String(noPlano))
+                                                           .replace("{p}", juce::String(noPlano - prontos)) << "\n\n";
+    if (duplicatas > 0)
+        texto << "• " << matriz::i18n::t("rebuild.status_duplicatas").replace("{n}", juce::String(duplicatas)) << "\n\n";
+    if (whatOption_ != WhatOption::Everything)
+        texto << "• " << matriz::i18n::t("rebuild.status_selecao") << "\n\n";
+    if (!grupos.empty()) {
+        texto << "• " << matriz::i18n::t("backup.erros_intro") << "\n\n";
+        if (rebuild) texto << "• " << matriz::i18n::t("backup.erros_rebuild") << "\n\n";
+    } else if (rebuild) {
+        texto << "• " << matriz::i18n::t("rebuild.status_pronto") << "\n\n";
+    }
+
+    // Ordem fixa: o que mais bloqueia o usuário primeiro.
+    const char* ordem[] = {"ausente", "hash", "nome", "move", "outro"};
+    for (const char* chave : ordem) {
+        for (const auto& g : grupos) {
+            if (g.chave != chave) continue;
+            texto << "--------------------------------------------------------------------------------\n";
+            texto << "[!] " << matriz::i18n::t("backup.erros_grupo_header").replace("{n}", juce::String((int) g.itens.size())).replace("{motivo}", g.motivo) << "\n";
+            texto << "--------------------------------------------------------------------------------\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+            texto << "  " << g.diag << "\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+            texto << g.acao << "\n\n";
+
+            texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) g.itens.size())) << "\n";
+            for (const auto& item : g.itens) {
+                texto << "  • [" << item.codigo << "] " << (item.caminho.isNotEmpty() ? item.caminho : juce::String("-"));
+                if (item.detalheErro.isNotEmpty())
+                    texto << "\n    ↳ " << matriz::i18n::t("backup.erros_lbl_detalhe") << ": " << item.detalheErro;
+                texto << "\n";
+            }
+            texto << "\n";
+        }
+    }
+
+    statusBloqueado_ = !grupos.empty();
+    statusPodeFinalizar_ = rebuild && grupos.empty() && planoPronto_ && noPlano > 0;
+    tituloStatus_ = statusBloqueado_ ? matriz::i18n::t("backup.erros_titulo").replace("{n}", juce::String(nBloq > 0 ? nBloq : (int) falhasLista_.size()))
+                                     : matriz::i18n::t("rebuild.status_titulo_ok");
+
+    arquivoRelatorioErros_ = juce::File();
+    try {
+        const juce::File dir = projeto_.projeto().pasta().getChildFile("relatorios");
+        dir.createDirectory();
+        const juce::File arq = dir.getChildFile("backup-erros-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
+        if (arq.replaceWithText(tituloStatus_ + "\n\n" + texto)) arquivoRelatorioErros_ = arq;
+    } catch (...) {}
+    if (arquivoRelatorioErros_ != juce::File()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "• " << matriz::i18n::t("backup.erros_relatorio") << "\n";
+        texto << "  " << arquivoRelatorioErros_.getFullPathName() << "\n\n";
+    }
+    relatorioErros_ = texto;
+}
+
+void BackupWorkspaceComponent::mostrarErrosBackup() {
+    if (relatorioErros_.isEmpty()) return;
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+
+    DadosStatusBackup d;
+    d.titulo = tituloStatus_;
+    d.texto = relatorioErros_;
+    d.relatorio = arquivoRelatorioErros_;
+    d.bloqueado = statusBloqueado_;
+    d.nRemoviveis = static_cast<int>(idsRemoviveis_.size());
+    d.nBloqueados = static_cast<int>(idsBloqueados_.size());
+    d.rebuild = projeto_.emRebuild();
+    d.podeFinalizar = statusPodeFinalizar_;
+
+    d.aoMostrarNoGrid = [safeThis] {
+        if (!safeThis || !safeThis->aoAbrirNoGrid) return;
+        safeThis->aoAbrirNoGrid(std::set<std::string>(safeThis->idsBloqueados_.begin(), safeThis->idsBloqueados_.end()));
+    };
+    d.aoRemover = [safeThis] {
+        if (!safeThis) return;
+        const auto ids = safeThis->idsRemoviveis_;
+        const int n = static_cast<int>(ids.size());
+        juce::AlertWindow::showOkCancelBox(
+            juce::MessageBoxIconType::WarningIcon, matriz::i18n::t("rebuild.remover_titulo"),
+            matriz::i18n::t("rebuild.remover_msg").replace("{n}", juce::String(n)), matriz::i18n::t("rebuild.remover_ok"),
+            matriz::i18n::t("backup.erros_fechar"), nullptr,
+            juce::ModalCallbackFunction::create([safeThis, ids](int ok) {
+                if (!safeThis) return;
+                if (ok == 0) { safeThis->mostrarErrosBackup(); return; }  // cancelou: volta pra janela
+                safeThis->projeto_.removerItensDoProjeto(ids);
+                // Recalcula o plano e reabre a janela já atualizada (sem os itens removidos).
+                safeThis->recarregar();
+                safeThis->aoPlanoPronto([safeThis] {
+                    if (!safeThis) return;
+                    safeThis->prepararRelatorioErros(safeThis->projeto_.emRebuild());
+                    safeThis->mostrarErrosBackup();
+                });
+            }));
+    };
+    d.aoFinalizar = [safeThis] {
+        if (safeThis) safeThis->executarBackupAcao(false);
+    };
+    ErrosBackupDialog::mostrar(std::move(d), this);
+}
+
+// ---------------------------------------------------------------- REBUILD DO MAIN
+
+bool BackupWorkspaceComponent::validarDestinoRebuild(const juce::File& novo, juce::String& motivo) const {
+    const auto fonte = projeto_.fonteRebuild();
+    const juce::File antiga = fonte ? fonte->raiz : projeto_.projeto().raiz();
+    for (const juce::File& ref : {antiga, projeto_.projeto().raiz()}) {
+        if (ref == juce::File()) continue;
+        // Recusa o MAIN antigo, qualquer pasta dentro dele e qualquer pasta que o contenha.
+        if (novo == ref || novo.isAChildOf(ref) || ref.isAChildOf(novo)) {
+            motivo = matriz::i18n::t("rebuild.destino_conflita");
+            return false;
+        }
+    }
+    if (novo.exists() && !novo.isDirectory()) {
+        motivo = matriz::i18n::t("rebuild.destino_conflita");
+        return false;
+    }
+    if (novo.isDirectory() && novo.getNumberOfChildFiles(juce::File::findFilesAndDirectories) > 0) {
+        // Só vale pasta vazia — ou uma que ESTE rebuild já começou (retomar).
+        auto info = matriz::model::DestinationInfo::lerDeArquivo(novo.getChildFile("destination.json"));
+        if (!info || info->projetoId != projeto_.projeto().projetoId()) {
+            motivo = matriz::i18n::t("rebuild.destino_nao_vazio");
+            return false;
+        }
+    }
+    return true;
+}
+
+void BackupWorkspaceComponent::pedirDestinoRebuild() {
+    chooserRebuild_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("rebuild.escolher_titulo"),
+                                                          projeto_.projeto().raiz().getParentDirectory(), "");
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    chooserRebuild_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                 [safeThis](const juce::FileChooser& fc) {
+        if (!safeThis) return;
+        const juce::File escolhida = fc.getResult();
+        if (escolhida == juce::File()) return;
+        juce::String motivo;
+        if (!safeThis->validarDestinoRebuild(escolhida, motivo)) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"), motivo);
+            return;
+        }
+        escolhida.createDirectory();
+        if (!escolhida.isDirectory()) {
+            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                   matriz::i18n::t("rebuild.destino_conflita"));
+            return;
+        }
+        safeThis->projeto_.definirRebuildDestino(escolhida);
+        safeThis->resolvedDestFolder_ = escolhida;
+        safeThis->customDestFolder_ = escolhida;
+        safeThis->atualizarResumo();  // o plano passa a ser o do destino novo (espaço necessário incluso)
+        safeThis->aoPlanoPronto([safeThis] { if (safeThis) safeThis->iniciarBackup(); });
+    });
+}
+
+void BackupWorkspaceComponent::finalizarRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId, int) {
+    const auto fonte = projeto_.fonteRebuild();
+    const juce::File raizAntiga = fonte ? fonte->raiz : juce::File();
+    const juce::String erro = projeto_.concluirRebuild(novaRaiz, novoDestinationId);
+    if (erro.isNotEmpty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"), erro);
+        return;
+    }
+    // O MAIN novo precisa abrir sozinho: snapshot consistente do banco (VACUUM INTO) e do resto de Project/.
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    auto* proj = &projeto_.projeto();
+    const juce::File pastaProjeto = proj->pasta();
+    poolBackup_.addJob([safeThis, proj, pastaProjeto, novaRaiz, raizAntiga]() {
+        juce::String falha;
+        try {
+            const juce::File destProject = novaRaiz.getChildFile("Project");
+            destProject.createDirectory();
+            auto snapshot = [&](matriz::db::Database& db, const juce::String& nome) {
+                const juce::File alvo = destProject.getChildFile(nome);
+                alvo.deleteFile();
+                db.exec("VACUUM INTO '" + alvo.getFullPathName().replace("'", "''").toStdString() + "'");
+            };
+            // Conexões SÓ DE LEITURA (uma por thread): o VACUUM INTO na conexão de escrita falhava com
+            // "cannot VACUUM - SQL statements in progress" sempre que a UI (plano do backup recalculado ao
+            // concluir) tinha uma consulta aberta nela. Leitor em WAL tira o snapshot sem esbarrar nisso.
+            snapshot(proj->registroLeitura(), "registro.sqlite");
+            snapshot(proj->indiceLeitura(), "indice.sqlite");
+            for (const auto& c : pastaProjeto.findChildFiles(juce::File::findFilesAndDirectories, false)) {
+                const auto nome = c.getFileName();
+                if (nome.startsWith("registro.sqlite") || nome.startsWith("indice.sqlite")) continue;
+                const juce::File d = destProject.getChildFile(nome);
+                if (c.isDirectory()) { d.deleteRecursively(); c.copyDirectoryTo(d); }
+                else c.copyFileTo(d);
+            }
+        } catch (const std::exception& e) {
+            falha = juce::String::fromUTF8(e.what());
+        }
+        juce::MessageManager::callAsync([safeThis, falha, raizAntiga, novaRaiz]() {
+            if (!safeThis) return;
+            if (falha.isNotEmpty())
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("rebuild.titulo"),
+                                                       matriz::i18n::t("rebuild.erro_copiar_projeto") + "\n" + falha);
+            safeThis->perguntarApagarMainAntigo(raizAntiga, novaRaiz);
+        });
+    });
+}
+
+void BackupWorkspaceComponent::perguntarApagarMainAntigo(const juce::File& raizAntiga, const juce::File& novaRaiz) {
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    // Fim: o projeto vivo ainda aponta pra pasta antiga — reabrir pelo MAIN novo.
+    auto avisoFinal = [safeThis, novaRaiz]() {
+        if (!safeThis) return;
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions()
+                .withIconType(juce::MessageBoxIconType::InfoIcon)
+                .withTitle(matriz::i18n::t("rebuild.titulo"))
+                .withMessage(matriz::i18n::t("rebuild.fim").replace("{novo}", novaRaiz.getFullPathName()))
+                .withButton(matriz::i18n::t("rebuild.reabrir"))
+                .withButton(matriz::i18n::t("rebuild.depois")),
+            juce::ModalCallbackFunction::create([safeThis, novaRaiz](int r) {
+                if (safeThis && r == 1 && safeThis->aoPedirReabrirPasta) safeThis->aoPedirReabrirPasta(novaRaiz);
+            }));
+    };
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::QuestionIcon)
+            .withTitle(matriz::i18n::t("rebuild.titulo"))
+            .withMessage(matriz::i18n::t("rebuild.apagar_msg").replace("{antigo}", raizAntiga.getFullPathName()))
+            .withButton(matriz::i18n::t("rebuild.manter"))
+            .withButton(matriz::i18n::t("rebuild.apagar")),
+        juce::ModalCallbackFunction::create([safeThis, raizAntiga, avisoFinal](int r) {
+            if (!safeThis) return;
+            if (r != 2) { avisoFinal(); return; }  // MANTER (padrão): a pasta fica no disco, desvinculada
+            // APAGAR: barreira do nome do projeto. Só Media/ e _QUARENTENA/ — Project/ (o projeto vivo) nunca.
+            MainEditPanel::pedirNomeDoProjeto(
+                safeThis->projeto_, matriz::i18n::t("rebuild.titulo"), matriz::i18n::t("rebuild.apagar_barreira"),
+                matriz::i18n::t("rebuild.apagar"), [safeThis, raizAntiga, avisoFinal](const juce::String& digitado) {
+                    if (!safeThis || !safeThis->projeto_.nomeConfereComProjeto(digitado)) return;
+                    ProgressoGlobal::obterInstancia().iniciarTarefa("rebuild_apagar", "Deleting old MAIN", 0);
+                    safeThis->poolBackup_.addJob([safeThis, raizAntiga, avisoFinal]() {
+                        const bool ok = raizAntiga.getChildFile("Media").deleteRecursively() &&
+                                        raizAntiga.getChildFile("_QUARENTENA").deleteRecursively();
+                        juce::MessageManager::callAsync([safeThis, ok, raizAntiga, avisoFinal]() {
+                            ProgressoGlobal::obterInstancia().concluirTarefa("rebuild_apagar");
+                            if (!safeThis) return;
+                            try {
+                                matriz::model::ProjectLog(safeThis->projeto_.projeto().pasta()).appendEntry(
+                                    "REBUILD DO MAIN: old MAIN deleted", {"Path: " + raizAntiga.getFullPathName(),
+                                                                          juce::String("Media/ and _QUARENTENA/ removed; Project/ kept"),
+                                                                          ok ? "Result: ok" : "Result: some files could not be deleted"});
+                            } catch (...) {}
+                            avisoFinal();
+                        });
+                    });
+                });
+        }));
+}
+
 void BackupWorkspaceComponent::perguntarMoverSemPasta() {
     juce::String lista;
     int n = 0;
@@ -3839,8 +4917,42 @@ std::string BackupWorkspaceComponent::destinoIdDoMain() {
     return projeto_.projeto().destinationId();
 }
 
-void BackupWorkspaceComponent::abrirExport() {
-    if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
+void BackupWorkspaceComponent::abrirAjustesBounce() {
+    juce::DialogWindow::LaunchOptions opts;
+    std::vector<std::pair<std::string, juce::String>> mapas;
+    for (auto& m : projeto_.listarFolderMaps())
+        if (!m.original) mapas.emplace_back(m.id, m.nome);
+    opts.content.setOwned(new ConteudoBounceAjustes(projeto_.projeto().pasta(), std::move(mapas)));
+    opts.dialogTitle = matriz::i18n::t("bounce.settings_titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    opts.launchAsync();
+}
+
+// Bounce List: pergunta só a pasta de destino; estrutura e metadados vêm do que ficou salvo nos ajustes.
+void BackupWorkspaceComponent::exportarBounceList() {
+    if (exportando_ || nBounce_ <= 0 || estado_ != Estado::Config) return;
+    chooserBounce_ = std::make_unique<juce::FileChooser>(matriz::i18n::t("bounce.escolher_destino"), juce::File(), "");
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    chooserBounce_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                [safeThis](const juce::FileChooser& fc) {
+        if (safeThis == nullptr || fc.getResult() == juce::File()) return;
+        const auto cfg = matriz::consolidacao::carregarConfiguracaoBounce(safeThis->projeto_.projeto().pasta());
+        // Estrutura: hierarquia do Visual Editor, ou o Folder Map escolhido (arquivo sem pasta vai para _SEM_PASTA).
+        matriz::consolidacao::HierarquiaBackup hierarquia{matriz::consolidacao::NivelHierarquia::PastaManual};
+        if (cfg.porVisualEditor)
+            hierarquia = cfg.hierarquiaCsv.empty() ? matriz::consolidacao::hierarquiaPadrao()
+                                                   : matriz::consolidacao::hierarquiaDeCsv(cfg.hierarquiaCsv);
+        safeThis->iniciarExport(fc.getResult(), hierarquia, matriz::consolidacao::ModoPrefixoArquivo::Nenhum, {}, false, false,
+                                cfg.porVisualEditor ? std::string() : cfg.mapaId, false, true, cfg.paraExport());
+    });
+}
+
+void BackupWorkspaceComponent::abrirExport(bool formatoBridge, bool bounce) {
+    if (!bounce && saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN (a Bounce List é liberada sem ele)
     if (exportando_) return;
     const int marcadosW = static_cast<int>(projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark).size());
     const bool wmOk = ProjetoAberto::carregarConfiguracaoWatermarkDePasta(projeto_.projeto().pasta()).valida();
@@ -3848,13 +4960,14 @@ void BackupWorkspaceComponent::abrirExport() {
     std::vector<std::pair<std::string, juce::String>> mapas;
     for (auto& m : projeto_.listarFolderMaps())
         if (!m.original) mapas.emplace_back(m.id, m.nome);
-    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis](OpcoesExport o) {
+    auto* conteudo = new ConteudoExport(marcadosW, wmOk, prefixoAuto_, std::move(mapas), [safeThis, formatoBridge, bounce](OpcoesExport o) {
         if (safeThis != nullptr) safeThis->iniciarExport(o.destino, o.hierarquia, o.modoPrefixo, o.prefixo, o.embutir,
-                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string());
-    });
+                                                          o.marcaDagua, o.porMapa ? o.mapaId : std::string(), formatoBridge,
+                                                          bounce, o.metaSaida);
+    }, formatoBridge, bounce);
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
-    opts.dialogTitle = matriz::i18n::t("export.titulo");
+    opts.dialogTitle = matriz::i18n::t(bounce ? "export.titulo_bounce" : formatoBridge ? "export.titulo_bridge" : "export.titulo");
     opts.dialogBackgroundColour = tema().painel;
     opts.escapeKeyTriggersCloseButton = true;
     opts.useNativeTitleBar = true;
@@ -3866,7 +4979,9 @@ void BackupWorkspaceComponent::abrirExport() {
 void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                              const matriz::consolidacao::HierarquiaBackup& hierarquia,
                                              matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo,
-                                             bool embutir, bool marcaDagua, const std::string& mapaIdPedido) {
+                                             bool embutir, bool marcaDagua, const std::string& mapaIdPedido,
+                                             bool formatoBridge, bool bounce,
+                                             matriz::consolidacao::OpcoesMetadadosSaida metaSaida) {
     if (exportando_ || !destino.isDirectory()) return;
     // "Manter organização" (PastaManual sem mapa escolhido) usa o mapa do MAIN
     // ou o mapa aberto — sem isso um item em pastas de dois mapas sairia duas vezes.
@@ -3879,23 +4994,35 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
     resized();
     cancelarExport_->store(false);
     auto cancelado = cancelarExport_;
-    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t("export.titulo"), 0,
+    ProgressoGlobal::obterInstancia().iniciarTarefa("export", matriz::i18n::t(bounce ? "export.titulo_bounce" : "export.titulo"), 0,
                                                     [cancelado] { cancelado->store(true); });
     // Tudo que toca banco/disco roda fora da message thread.
-    const std::set<std::string> itens = obterItensSelecionadosPeloCriterio();
+    // Bounce List: a fonte são os arquivos com tag B (a seleção do grid não entra); a tag continua depois do export.
+    std::set<std::string> itens;
+    if (bounce) {
+        for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce)) itens.insert(id);
+    } else {
+        itens = obterItensSelecionadosPeloCriterio();
+    }
     std::set<std::string> comW;
-    if (marcaDagua)
+    if (marcaDagua && !bounce)
         for (const auto& id : projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) comW.insert(id);
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId] {
+    poolExport_.addJob([safeThis, projeto, destino, hierarquia, modo, prefixo, embutir, comW, itens, cancelado, mapaId, formatoBridge, bounce, metaSaida] {
         int semPasta = 0;
+        int duplicatas = 0;  // marcados que são duplicata: o plano os exclui de propósito, mas o usuário precisa saber
+        try {
+            auto st = projeto->registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
+            while (st.step()) if (itens.count(st.columnText(0))) ++duplicatas;
+        } catch (...) {}
         matriz::consolidacao::ResultadoExport r;
         try {
             auto plano = matriz::consolidacao::planejarConsolidacao(projeto->registro(), projeto->pasta(), destino,
                                                                     hierarquia, {}, modo, prefixo,
                                                                     /*autoResolver*/ true, false, false,
-                                                                    /*paraExport*/ true, mapaId);
+                                                                    /*paraExport*/ true, mapaId, false,
+                                                                    /*semPastaNaRaiz*/ bounce);
             for (const auto& id : plano.semPastaExcluidos) if (itens.count(id)) ++semPasta;
             std::vector<matriz::consolidacao::ItemPlanejado> doRecorte;
             for (auto& ip : plano.itens)
@@ -3911,31 +5038,179 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                     });
                     return !cancelado->load();
                 },
-                comW, embutir);
+                comW, embutir, formatoBridge, metaSaida, /*fonteOrigem*/ bounce);
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r, destino, semPasta] {
+        juce::MessageManager::callAsync([safeThis, r, destino, semPasta, duplicatas, bounce, metaSaida] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
             safeThis->resized();
-            juce::String msg = matriz::i18n::t("export.fim")
-                                   .replace("{n}", juce::String(r.copiados))
-                                   .replace("{pasta}", destino.getFullPathName());
-            if (semPasta > 0)
-                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(semPasta));
-            if (r.foraDoMain > 0)
-                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
-            if (!r.falhas.empty()) {
-                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
-                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
+            const juce::String resumo = matriz::i18n::t("export.fim")
+                                            .replace("{n}", juce::String(r.copiados))
+                                            .replace("{pasta}", destino.getFullPathName());
+            juce::String msg;
+            if (bounce) {
+                using matriz::consolidacao::ModoMetadadosSaida;
+                if (metaSaida.modo == ModoMetadadosSaida::Clean) {
+                    if (r.rawSemLimpeza > 0)
+                        msg << "\n\n" << matriz::i18n::t("export.bounce_raw").replace("{n}", juce::String(r.rawSemLimpeza));
+                    if (r.tiposSemLimpeza > 0)
+                        msg << "\n\n" << matriz::i18n::t("export.bounce_tipos").replace("{n}", juce::String(r.tiposSemLimpeza));
+                } else if (metaSaida.modo == ModoMetadadosSaida::Embed && r.embedNaoSuportado > 0) {
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_embed_nao").replace("{n}", juce::String(r.embedNaoSuportado));
+                }
             }
-            if (r.cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.titulo"), msg, {},
-                                                   nullptr, juce::ModalCallbackFunction::create([](int) {}));
+            if (r.bridgeEmbutidos > 0 || r.bridgeSidecars > 0 || !r.avisos.empty()) {
+                if (msg.isNotEmpty()) msg << "\n\n";
+                msg << matriz::i18n::t("export.bridge_resumo")
+                           .replace("{e}", juce::String(r.bridgeEmbutidos)).replace("{s}", juce::String(r.bridgeSidecars));
+                for (size_t i = 0; i < r.avisos.size() && i < 5; ++i) msg << "\n- " << juce::String::fromUTF8(r.avisos[i].c_str());
+                if (r.avisos.size() > 5) msg << "\n... +" << (int) (r.avisos.size() - 5);
+            }
+            if (bounce) {
+                if (r.conflitosResolvidos > 0)
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_conflitos").replace("{n}", juce::String(r.conflitosResolvidos));
+                if (!r.pulados.empty()) {
+                    msg << "\n\n" << matriz::i18n::t("export.bounce_pulados").replace("{n}", juce::String((int) r.pulados.size()));
+                    for (size_t i = 0; i < r.pulados.size() && i < 50; ++i) msg << "\n- " << juce::String::fromUTF8(r.pulados[i].c_str());
+                    if (r.pulados.size() > 50) msg << "\n... +" << (int) (r.pulados.size() - 50);
+                }
+            }
+            safeThis->mostrarResultadoExport(bounce ? "export.titulo_bounce" : "export.titulo", resumo, r.jaExistiam, r.foraDoMain, semPasta,
+                                             bounce ? "export.bounce_sem_pasta" : "export.mapa_sem_pasta_aviso", duplicatas, r.falhas,
+                                             r.jaExistiamDiferentes, msg, r.cancelado);
         });
     });
+}
+
+void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam,
+                                                      int foraDoMain, int semPasta, const juce::String& semPastaKey, int duplicatas,
+                                                      const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
+                                                      const juce::String& extras, bool cancelado) {
+    const bool algoParaEntender = !falhas.empty() || !jaDiferentes.empty() || jaExistiam > 0 || duplicatas > 0 || foraDoMain > 0 ||
+                                  semPasta > 0;
+    if (!algoParaEntender) {
+        juce::String msg = linhaResumo;
+        if (extras.trim().isNotEmpty()) msg << "\n\n" << extras.trim();
+        if (cancelado) msg << "\n\n" << matriz::i18n::t("export.cancelado");
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t(tituloKey), msg, {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
+
+    auto& registro = projeto_.projeto().registro();
+    struct ItemFalha {
+        juce::String codigo;
+        juce::String caminho;
+        juce::String detalheErro;
+    };
+    struct Grupo { juce::String motivo, diag, acao; std::vector<ItemFalha> itens; };
+    Grupo conflito{matriz::i18n::t("export.res_f_conflito"), matriz::i18n::t("export.res_f_conflito_diag"), matriz::i18n::t("export.res_f_conflito_solucao"), {}};
+    Grupo outro{matriz::i18n::t("export.res_f_outro"), matriz::i18n::t("export.res_f_outro_diag"), matriz::i18n::t("export.res_f_outro_solucao"), {}};
+    std::vector<std::string> idsComFalha;
+    int comCaminho = 0;
+    for (const auto& f : falhas) {
+        const juce::String s = juce::String::fromUTF8(f.c_str());
+        juce::String codigo, motivo = s;
+        const int sep = s.indexOf(": ");
+        if (sep > 0 && sep <= 40) { codigo = s.substring(0, sep); motivo = s.substring(sep + 2); }
+        juce::String caminho;
+        if (codigo.isNotEmpty()) {
+            try {
+                auto st = registro.prepare(
+                    "SELECT i.id, COALESCE(NULLIF(a.caminho_absoluto_origem, ''), a.caminho_relativo) FROM item i "
+                    "LEFT JOIN arquivo a ON a.item_id = i.id WHERE i.codigo_acervo = ? ORDER BY a.eh_master DESC LIMIT 1");
+                st.bind(1, matriz::db::Value::of(codigo.toStdString()));
+                if (st.step()) {
+                    idsComFalha.push_back(st.columnText(0));
+                    if (comCaminho++ < 300 && !st.columnIsNull(1)) caminho = juce::String::fromUTF8(st.columnText(1).c_str());
+                }
+            } catch (...) {}
+        }
+        const bool ehConflito = motivo.contains("name conflict");
+        ItemFalha item;
+        item.codigo = codigo;
+        item.caminho = caminho;
+        if (!ehConflito) item.detalheErro = motivo;
+        (ehConflito ? conflito : outro).itens.push_back(std::move(item));
+    }
+
+    juce::String texto;
+    texto << "================================================================================\n";
+    texto << "  " << matriz::i18n::t("backup.erros_header_titulo") << "\n";
+    texto << "================================================================================\n\n";
+    texto << "• " << linhaResumo << "\n\n";
+
+    if (cancelado) texto << "• " << matriz::i18n::t("export.cancelado") << "\n\n";
+    if (jaExistiam > 0) texto << "• " << matriz::i18n::t("export.res_ja").replace("{n}", juce::String(jaExistiam)) << "\n\n";
+    if (duplicatas > 0) texto << "• " << matriz::i18n::t("export.res_dup").replace("{n}", juce::String(duplicatas)) << "\n\n";
+    if (foraDoMain > 0) texto << "• " << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(foraDoMain)) << "\n\n";
+    if (semPasta > 0) texto << "• " << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)) << "\n\n";
+    if (extras.trim().isNotEmpty()) texto << "• " << extras.trim() << "\n\n";
+
+    if (!jaDiferentes.empty()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "[!] " << matriz::i18n::t("export.res_diferentes").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
+        texto << "--------------------------------------------------------------------------------\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+        texto << "  " << matriz::i18n::t("export.res_diferentes_diag") << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+        texto << matriz::i18n::t("export.res_diferentes_solucao") << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) jaDiferentes.size())) << "\n";
+        for (size_t i = 0; i < jaDiferentes.size() && i < 300; ++i)
+            texto << "  • " << juce::String::fromUTF8(jaDiferentes[i].c_str()) << "\n";
+        texto << "\n";
+    }
+
+    for (const Grupo* g : {&conflito, &outro}) {
+        if (g->itens.empty()) continue;
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "[!] " << matriz::i18n::t("backup.erros_grupo_header").replace("{n}", juce::String((int) g->itens.size())).replace("{motivo}", g->motivo) << "\n";
+        texto << "--------------------------------------------------------------------------------\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_diag") << "\n";
+        texto << "  " << g->diag << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_solucao") << "\n";
+        texto << g->acao << "\n\n";
+        texto << "• " << matriz::i18n::t("backup.erros_lbl_itens").replace("{n}", juce::String((int) g->itens.size())) << "\n";
+        for (const auto& item : g->itens) {
+            texto << "  • [" << item.codigo << "] " << (item.caminho.isNotEmpty() ? item.caminho : juce::String("-"));
+            if (item.detalheErro.isNotEmpty())
+                texto << "\n    ↳ " << matriz::i18n::t("backup.erros_lbl_detalhe") << ": " << item.detalheErro;
+            texto << "\n";
+        }
+        texto << "\n";
+    }
+
+    const juce::String titulo = matriz::i18n::t(tituloKey) + " - " +
+        (falhas.empty() ? matriz::i18n::t("export.res_titulo_ok")
+                        : matriz::i18n::t("export.res_titulo_falhas").replace("{n}", juce::String((int) falhas.size())));
+    juce::File relatorio;
+    try {
+        const juce::File dir = projeto_.projeto().pasta().getChildFile("relatorios");
+        dir.createDirectory();
+        const juce::File arq = dir.getChildFile("export-resultado-" + juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S") + ".txt");
+        if (arq.replaceWithText(titulo + "\n\n" + texto)) relatorio = arq;
+    } catch (...) {}
+    if (relatorio != juce::File()) {
+        texto << "--------------------------------------------------------------------------------\n";
+        texto << "• " << matriz::i18n::t("backup.erros_relatorio") << "\n";
+        texto << "  " << relatorio.getFullPathName() << "\n\n";
+    }
+
+    juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
+    DadosStatusBackup d;
+    d.titulo = titulo;
+    d.texto = texto;
+    d.relatorio = relatorio;
+    d.bloqueado = !falhas.empty();
+    d.nBloqueados = static_cast<int>(idsComFalha.size());
+    d.rebuild = false;
+    d.aoMostrarNoGrid = [safeThis, idsComFalha] {
+        if (safeThis && safeThis->aoAbrirNoGrid) safeThis->aoAbrirNoGrid(std::set<std::string>(idsComFalha.begin(), idsComFalha.end()));
+    };
+    ErrosBackupDialog::mostrar(std::move(d), this);
 }
 
 void BackupWorkspaceComponent::abrirPacote() {
@@ -3983,6 +5258,11 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     // Tudo que toca banco/disco roda fora da message thread; o projeto só é lido.
     poolExport_.addJob([safeThis, projeto, destino, nome, mapaId, nomeMapa, nomeColecao, itens, cancelado] {
+        int duplicatas = 0;  // marcados que são duplicata: ficam de fora de propósito, o usuário precisa saber
+        try {
+            auto st = projeto->registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
+            while (st.step()) if (itens.count(st.columnText(0))) ++duplicatas;
+        } catch (...) {}
         matriz::consolidacao::pacote::ResultadoPacote r;
         try {
             r = matriz::consolidacao::pacote::gerarPacote(
@@ -3998,26 +5278,18 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r] {
+        juce::MessageManager::callAsync([safeThis, r, duplicatas] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
             safeThis->resized();
-            juce::String msg = r.cancelado ? matriz::i18n::t("export.cancelado")
-                             : r.copiados == 0 ? matriz::i18n::t("export.pacote_vazio")
-                                               : matriz::i18n::t("export.pacote_fim")
-                                                     .replace("{n}", juce::String(r.copiados))
-                                                     .replace("{pasta}", r.pasta.getFullPathName());
-            if (r.semPasta > 0)
-                msg << "\n\n" << matriz::i18n::t("export.mapa_sem_pasta_aviso").replace("{n}", juce::String(r.semPasta));
-            if (r.foraDoMain > 0)
-                msg << "\n\n" << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(r.foraDoMain));
-            if (!r.falhas.empty()) {
-                msg << "\n\n" << matriz::i18n::t("export.falhas").replace("{n}", juce::String((int) r.falhas.size()));
-                for (size_t i = 0; i < r.falhas.size() && i < 5; ++i) msg << "\n- " << juce::String(r.falhas[i]);
-            }
-            juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_titulo"), msg,
-                                                   {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+            const juce::String resumo = r.cancelado ? matriz::i18n::t("export.cancelado")
+                                      : r.copiados == 0 ? matriz::i18n::t("export.pacote_vazio")
+                                                        : matriz::i18n::t("export.pacote_fim")
+                                                              .replace("{n}", juce::String(r.copiados))
+                                                              .replace("{pasta}", r.pasta.getFullPathName());
+            safeThis->mostrarResultadoExport("export.pacote_titulo", resumo, 0, r.foraDoMain, r.semPasta, "export.mapa_sem_pasta_aviso",
+                                             duplicatas, r.falhas, {}, juce::String(), false);
         });
     });
 }
@@ -4164,7 +5436,9 @@ void BackupWorkspaceComponent::carregarDestinosBackup() {
         if (juce::File(d.caminho) == raizProjeto) {
             encontrouRaiz = true;
             d.ativo = true;
-            if (projeto_.projeto().papel() == "ORIGINAL" || d.papel != "CLONE") {
+            if (projeto_.emRebuild()) {
+                d.papel = "FONTE_REBUILD";  // MAIN antigo: só leitura até o rebuild terminar
+            } else if (projeto_.projeto().papel() == "ORIGINAL" || d.papel != "CLONE") {
                 d.papel = "ORIGINAL";
             }
             break;
@@ -4821,6 +6095,7 @@ juce::String BackupWorkspaceComponent::getTooltipForRow(int rowNumber) {
 void BackupWorkspaceComponent::carregarDestinoAtivoInicial() {
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     resolvedDestFolder_ = projeto_.projeto().raiz();
+    if (projeto_.emRebuild()) resolvedDestFolder_ = projeto_.rebuildDestino();  // vazio até a pasta nova ser escolhida
     customDestFolder_ = resolvedDestFolder_;
     selectedDestinoIdx_ = -1;
 
@@ -4998,6 +6273,13 @@ void BackupWorkspaceComponent::mostrarControlesConfig(bool mostrar) {
     if (configViewport_) configViewport_->setVisible(mostrar);
     if (listPreviaViewport_) listPreviaViewport_->setVisible(mostrar);
     if (labelResumo_) labelResumo_->setVisible(mostrar);
+    if (labelAssets_) labelAssets_->setVisible(mostrar);
+    if (projeto_.projeto().modo() != matriz::model::Modo::Catalogo) {  // (6) BACKUP VERSIONS fica fora da coluna
+        for (juce::Component* c : {static_cast<juce::Component*>(labelDest_.get()), static_cast<juce::Component*>(listVaults_.get()),
+                                   static_cast<juce::Component*>(btnBrowseVault_.get()), static_cast<juce::Component*>(btnGoogleDriveDest_.get()),
+                                   static_cast<juce::Component*>(labelDestInfo_.get())})
+            if (c) c->setVisible(mostrar);
+    }
     if (barraLegenda_) barraLegenda_->setVisible(mostrar && projeto_.projeto().modo() != matriz::model::Modo::Catalogo);
     if (comboColecoes_) comboColecoes_->setVisible(mostrar && comboSource_->getSelectedId() == 5);
     if (btnEditarHierarquia_) btnEditarHierarquia_->setVisible(mostrar && comboOrg_->getSelectedId() == 5);
@@ -5010,18 +6292,81 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
     g.fillAll(bg);
 
-    // Cabeçalho e rodapé como faixas, separados por fio de 1px
+    // Cabeçalho como faixa, separado por fio de 1px; o rodapé virou um card (EXPORT + botão principal).
     g.setColour(tk.borda);
     if (!faixaCabecalho_.isEmpty())
         g.fillRect(faixaCabecalho_.getX(), faixaCabecalho_.getBottom() - 1, faixaCabecalho_.getWidth(), 1);
-    if (!faixaRodape_.isEmpty())
-        g.fillRect(faixaRodape_.getX(), faixaRodape_.getY(), faixaRodape_.getWidth(), 1);
+    const bool emFluxo = estado_ == Estado::Config && !numeroAssets_.isEmpty();
+    auto cartaoSimples = [&](juce::Rectangle<int> r) {
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(r.toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+    };
+    if (!cartaoRodape_.isEmpty() && estado_ == Estado::Done) cartaoSimples(cartaoRodape_);
+    for (const auto& r : {cartaoAcao_, cartaoSaidas_, cartaoBounce_}) {
+        if (r.isEmpty()) continue;
+        if (emFluxo) desenharCartaoFluxo(g, r);
+        else cartaoSimples(r);
+    }
+    if (!cartaoBounce_.isEmpty()) {
+        const juce::Colour roxo(0xff9333ea);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("bounce.card_titulo"), bounceTituloR_, juce::Justification::centredLeft);
+        auto tituloLinha = bounceTituloR_;  // cópia: cortar o membro a cada paint empurrava o selo para a esquerda
+        const auto selo = tituloLinha.removeFromRight(110).withSizeKeepingCentre(110, 18);
+        g.setColour(roxo.withAlpha(0.18f));
+        g.fillRoundedRectangle(selo.toFloat(), 4.0f);
+        g.setColour(roxo);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena - 1.0f, juce::Font::bold)));
+        g.drawText(matriz::i18n::t("bounce.selo"), selo, juce::Justification::centred);
+        g.setColour(tk.textoSecundario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.drawFittedText(matriz::i18n::t("bounce.desc"), bounceDescR_, juce::Justification::topLeft, 3, 1.0f);
+        g.setColour(tk.fundo);
+        g.fillRoundedRectangle(bounceContagemR_.toFloat(), 4.0f);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(bounceContagemR_.toFloat().reduced(0.5f), 4.0f, 1.0f);
+        g.setColour(tk.textoPrimario);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+        g.drawText(matriz::i18n::t("bounce.contagem").replace("{n}", juce::String(nBounce_)),
+                   bounceContagemR_.reduced(8, 0), juce::Justification::centredLeft);
+    }
+    if (emFluxo && !cartaoAcao_.isEmpty() && !cartaoSaidas_.isEmpty()) {  // (6) -> (7): sai do lado esquerdo do RUN
+        desenharSetaVazadaSaindoDaEsquerda(g, cartaoAcao_, static_cast<float>(numeroAcao_.getCentreY()),
+                                           static_cast<float>(cartaoSaidas_.getRight()) + 2.0f);
+    }
 
     if (!cartaoPrevia_.isEmpty() && estado_ == Estado::Config) {
-        g.setColour(tk.painel);
-        g.fillRoundedRectangle(cartaoPrevia_.toFloat(), tk.raioMedio);
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(cartaoPrevia_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        if (emFluxo) {
+            desenharCartaoFluxo(g, cartaoPrevia_);
+        } else {
+            g.setColour(tk.painel);
+            g.fillRoundedRectangle(cartaoPrevia_.toFloat(), tk.raioMedio);
+            g.setColour(tk.borda);
+            g.drawRoundedRectangle(cartaoPrevia_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+        }
+    }
+
+    // Fluxo: 1 (ASSETS) -> 2 (SELECTION) ... 5 (OPTIONS) -> 6 (botão principal). As setas entre os cards da coluna
+    // ficam no ConfigContainerComponent (rolam junto); aqui, as que ligam a coluna ao ASSETS e ao botão.
+    if (estado_ == Estado::Config && !numeroAssets_.isEmpty()) {
+        desenharNumeroFluxo(g, numeroAssets_, 1);
+        desenharNumeroFluxo(g, numeroAcao_, 6);
+        desenharNumeroFluxo(g, numeroSaidas_, 7);
+        if (configViewport_ && configContainer_ && configViewport_->isVisible()) {
+            const auto vista = configViewport_->getBounds();
+            const auto deslocamento = configViewport_->getPosition() - configViewport_->getViewPosition();
+            const auto& cartoesColuna = configContainer_->cartoes();
+            if (!cartoesColuna.empty()) {  // ASSETS -> SELECTION, na altura do título do ASSETS
+                const auto selecao = cartoesColuna.front() + deslocamento;
+                const int y = numeroAssets_.getCentreY();
+                if (y >= std::max(selecao.getY(), vista.getY()) + 14 && y <= std::min(selecao.getBottom(), vista.getBottom()) - 14)
+                    desenharSetaVazadaSaindoDaDireita(g, cartaoPrevia_, static_cast<float>(y),
+                                                      static_cast<float>(selecao.getX()) - 2.0f);
+            }
+        }
     }
 
     if (!cartaoCentral_.isEmpty()) {
@@ -5032,8 +6377,37 @@ void BackupWorkspaceComponent::paint(juce::Graphics& g) {
     }
 }
 
+// BACKUP VERSIONS (último da coluna) -> card (6) RUN: a seta nasce da borda de baixo do último card, que é de um filho (a coluna
+// no viewport) — por isso por cima dos filhos. Só quando o OPTIONS está à vista; a área coberta é o respiro do card.
+void BackupWorkspaceComponent::paintOverChildren(juce::Graphics& g) {
+    if (estado_ != Estado::Config || numeroAssets_.isEmpty() || !configViewport_ || !configContainer_) return;
+    if (!configViewport_->isVisible()) return;
+    const auto& cartoesColuna = configContainer_->cartoes();
+    if (cartoesColuna.size() < 4) return;
+    const auto vista = configViewport_->getBounds();
+    const auto opcoes = cartoesColuna.back() + (configViewport_->getPosition() - configViewport_->getViewPosition());
+    if (opcoes.getBottom() > vista.getBottom() || opcoes.getBottom() <= vista.getY()) return;
+    if (cartaoAcao_.isEmpty()) return;
+    const float x = static_cast<float>(opcoes.getRight() - 34);  // mesma posição das setas entre os cards da coluna
+    desenharSetaVazadaSaindoDeBaixo(g, opcoes, x, static_cast<float>(cartaoAcao_.getY()) - 2.0f);
+}
+
 void BackupWorkspaceComponent::resized() {
     const auto& tk = tema();
+    // Coleção: o RUN (5) mora na coluna de configuração e o BACKUP VERSIONS (6) no rodapé; Catálogo: o contrário,
+    // como sempre foi. Só muda o pai dos controles (a visibilidade de cada um é mantida).
+    if (configContainer_) {
+        const bool coluna5Run = projeto_.projeto().modo() != matriz::model::Modo::Catalogo;
+        juce::Component* paraColuna = coluna5Run ? static_cast<juce::Component*>(configContainer_.get()) : this;
+        juce::Component* paraRodape = coluna5Run ? static_cast<juce::Component*>(this) : configContainer_.get();
+        for (juce::Component* c : {static_cast<juce::Component*>(btnStartBackup_.get()), static_cast<juce::Component*>(btnRebuildStatus_.get()),
+                                   static_cast<juce::Component*>(labelAcao_.get())})
+            if (c && c->getParentComponent() != paraColuna) paraColuna->addChildComponent(c);
+        for (juce::Component* c : {static_cast<juce::Component*>(labelDest_.get()), static_cast<juce::Component*>(listVaults_.get()),
+                                   static_cast<juce::Component*>(btnBrowseVault_.get()), static_cast<juce::Component*>(btnGoogleDriveDest_.get()),
+                                   static_cast<juce::Component*>(labelDestInfo_.get())})
+            if (c && c->getParentComponent() != paraRodape) paraRodape->addChildComponent(c);
+    }
     cartaoPrevia_ = {};
     cartaoCentral_ = {};
 
@@ -5042,22 +6416,20 @@ void BackupWorkspaceComponent::resized() {
 
     auto area = getLocalBounds();
 
-    // ---- Cabeçalho ----
-    faixaCabecalho_ = area.removeFromTop(64);
-    if (labelTitulo_) {
+    // ---- Cabeçalho: só no backup em andamento/concluído ("Backup Complete"...). Na configuração o título
+    // "Backup Configuration" saiu: o espaço vai para os vãos entre os cards.
+    faixaCabecalho_ = {};
+    if (labelTitulo_) labelTitulo_->setVisible(emAndamento);
+    if (emAndamento) faixaCabecalho_ = area.removeFromTop(64);
+    if (labelTitulo_ && emAndamento) {
         auto rCabecalho = faixaCabecalho_.reduced(tk.espacoGrande * 2, 0)
                                          .withTrimmedBottom(tk.espacoMedio)
                                          .removeFromBottom(34);
         labelTitulo_->setBounds(rCabecalho);
     }
 
-    // ---- Rodapé ----
-    faixaRodape_ = area.removeFromBottom(72);
-    auto botoes = faixaRodape_.reduced(tk.espacoGrande * 2, tk.espacoGrande);
-    const int alturaBotao = 40;
-    botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
-
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    const bool fluxo = !isCatalogMode;  // setas e números do fluxo (Coleção)
     bool temItens = !plano_.itens.empty();
     if (isCatalogMode) {
         auto colecoes = projeto_.listarColecoesLinkadas();
@@ -5068,14 +6440,29 @@ void BackupWorkspaceComponent::resized() {
             }
         }
     }
+    numeroAssets_ = {};
+    numeroAcao_ = {};
+    numeroSaidas_ = {};
+    cartaoRodape_ = {};
+    cartaoAcao_ = {};
+    cartaoSaidas_ = {};
+    const int alturaBotao = 40;
 
     if (estado_ == Estado::Done) {
+        // ---- Rodapé do resultado: card único na largura do conteúdo ----
+        faixaRodape_ = area.removeFromBottom(72);
+        cartaoRodape_ = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
+        auto botoes = cartaoRodape_.reduced(tk.espacoPainel + 2, 0);
+        botoes = botoes.withSizeKeepingCentre(botoes.getWidth(), alturaBotao);
+        for (auto* l : {labelAcao_.get(), labelSaidas_.get()}) if (l) l->setVisible(false);
         btnDone_->setBounds(botoes.removeFromRight(110));
         btnDone_->setVisible(true);
         btnStartBackup_->setVisible(false);
         if (btnExportar_) btnExportar_->setVisible(false);
         if (comboExportOrigem_) comboExportOrigem_->setVisible(false);
         if (btnExportUnificado_) btnExportUnificado_->setVisible(false);
+        cartaoBounce_ = {};
+        for (auto* c : {btnBounceAjustes_.get(), btnBounceExport_.get()}) if (c) c->setVisible(false);
         if (btnExportJanela_) btnExportJanela_->setVisible(false);
         if (btnSyncDestino_) btnSyncDestino_->setVisible(false);
         if (btnPublishHtml_) btnPublishHtml_->setVisible(false);
@@ -5087,25 +6474,136 @@ void BackupWorkspaceComponent::resized() {
         if (btnLimparWatermark_) btnLimparWatermark_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
         botoes.removeFromRight(tk.espacoPainel);
+        if (btnRebuildStatus_) btnRebuildStatus_->setVisible(false);
+        if (btnVerErros_) {
+            const bool comErros = falhasCount_ > 0 && relatorioErros_.isNotEmpty();
+            btnVerErros_->setVisible(comErros);
+            if (comErros) {
+                btnVerErros_->setBounds(botoes.removeFromRight(150));
+                botoes.removeFromRight(tk.espacoPainel);
+            }
+        }
         if (btnOpenCatalog_) {
             btnOpenCatalog_->setBounds(botoes.removeFromRight(200));
             btnOpenCatalog_->setVisible(true);
         }
     } else {
+        // ---- Rodapé em dois cards, nas mesmas colunas do corpo. À direita, na largura da coluna de configuração:
+        // Coleção = (6) BACKUP VERSIONS (o RUN é o card 5, na coluna); Catálogo = RUN. À esquerda o (7) OUTPUTS,
+        // na largura do ASSETS, com PUBLISH · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) para o (7).
+        faixaRodape_ = area.removeFromBottom(fluxo ? 200 : 96);
+        auto linha = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
+        const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
+        cartaoAcao_ = linha.removeFromRight(larguraConfigRodape);
+        linha.removeFromRight(fluxo ? 52 : 28);
+        cartaoBounce_ = {};
+        if (!isCatalogMode) {  // BOUNCE LIST: card próprio, à esquerda, abaixo do ASSETS
+            cartaoBounce_ = linha.removeFromLeft(juce::jlimit(250, 340, static_cast<int>(linha.getWidth() * 0.34f)));
+            linha.removeFromLeft(tk.espacoGrande);
+        }
+        cartaoSaidas_ = linha;
+
+        if (btnVerErros_) btnVerErros_->setVisible(false);
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
         btnDone_->setVisible(false);
         if (btnCancelarExecucao_) btnCancelarExecucao_->setVisible(false);
-        btnStartBackup_->setBounds(botoes.removeFromRight(170));
+
+        // BACKUP SYNC... mora na ponta direita da linha de título do card de baixo/direita.
+        auto posicionarSyncNoTitulo = [this](juce::Rectangle<int>& linhaTitulo) {
+            if (!btnSyncDestino_) return;
+            auto area = linhaTitulo.removeFromRight(124);
+            linhaTitulo.removeFromRight(4);
+            btnSyncDestino_->setBounds(area.withSizeKeepingCentre(area.getWidth(), 22));
+            btnSyncDestino_->setVisible(true);
+        };
+        auto dentroAcao = cartaoAcao_.reduced(10, 8);  // mesmo recuo dos cards da coluna (10 x 8)
+        if (btnRebuildStatus_) btnRebuildStatus_->setVisible(projeto_.emRebuild());
         btnStartBackup_->setVisible(true);
-        botoes.removeFromRight(tk.espacoPainel);
+        if (fluxo) {
+            // (6) BACKUP VERSIONS — mesmos controles e arrumação de quando ficava na coluna. O RUN (5) é posicionado
+            // pelo ConfigContainerComponent.
+            if (labelAcao_) labelAcao_->setVisible(true);
+            auto linhaTitulo = dentroAcao.removeFromTop(20);
+            posicionarSyncNoTitulo(linhaTitulo);
+            numeroAcao_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+            if (labelDest_) labelDest_->setBounds(linhaTitulo);
+            dentroAcao.removeFromTop(2);
+            const int alturaDestInfo = 20, alturaControleDest = 26;
+            const int reservado = alturaControleDest + 4 + alturaDestInfo;
+            if (listVaults_) listVaults_->setBounds(dentroAcao.removeFromTop(std::max(24, dentroAcao.getHeight() - reservado - 4)));
+            dentroAcao.removeFromTop(4);
+            {
+                auto linhaBrowse = dentroAcao.removeFromTop(alturaControleDest);
+                if (btnGoogleDriveDest_) {
+                    btnGoogleDriveDest_->setBounds(linhaBrowse.removeFromRight(32));
+                    linhaBrowse.removeFromRight(tk.espacoPequeno);
+                }
+                if (btnBrowseVault_) btnBrowseVault_->setBounds(linhaBrowse);
+            }
+            dentroAcao.removeFromTop(2);
+            if (labelDestInfo_) labelDestInfo_->setBounds(dentroAcao.removeFromTop(std::min(alturaDestInfo, dentroAcao.getHeight())));
+        } else {
+            // RUN (Catálogo) — título + botão principal
+            {
+                auto linhaTitulo = dentroAcao.removeFromTop(20);
+                posicionarSyncNoTitulo(linhaTitulo);
+                if (labelAcao_) { labelAcao_->setBounds(linhaTitulo); labelAcao_->setVisible(true); }
+                dentroAcao.removeFromTop(4);
+            }
+            auto linhaAcao = dentroAcao.removeFromTop(alturaBotao);
+            if (btnRebuildStatus_ && btnRebuildStatus_->isVisible()) {
+                btnRebuildStatus_->setBounds(linhaAcao.removeFromLeft(std::min(190, linhaAcao.getWidth() / 2)));
+                linhaAcao.removeFromLeft(tk.espacoPainel);
+            }
+            btnStartBackup_->setBounds(linhaAcao);
+        }
+
+        {
+            const bool mostrarBounce = !cartaoBounce_.isEmpty();
+            for (auto* c : {btnBounceAjustes_.get(), btnBounceExport_.get()}) if (c) c->setVisible(mostrarBounce);
+            if (mostrarBounce) {
+                auto dentro = cartaoBounce_.reduced(tk.espacoPainel + 2, 8);
+                bounceTituloR_ = dentro.removeFromTop(20);
+                dentro.removeFromTop(4);
+                bounceDescR_ = dentro.removeFromTop(34);
+                dentro.removeFromTop(6);
+                auto linhaContagem = dentro.removeFromTop(28);
+                if (btnBounceAjustes_) btnBounceAjustes_->setBounds(linhaContagem.removeFromRight(100));
+                linhaContagem.removeFromRight(tk.espacoPequeno);
+                bounceContagemR_ = linhaContagem;
+                dentro.removeFromTop(6);
+                if (btnBounceExport_) btnBounceExport_->setBounds(dentro.removeFromTop(alturaBotao));
+            }
+        }
+
+        // (7) OUTPUTS — mesmo recuo horizontal do card ASSETS
+        auto dentroSaidas = cartaoSaidas_.reduced(tk.espacoPainel + 2, 8);
+        {
+            auto linhaTitulo = dentroSaidas.removeFromTop(20);
+            if (fluxo) numeroSaidas_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+            if (labelSaidas_) {
+                labelSaidas_->setText(isCatalogMode ? matriz::i18n::t("backup.secao_saidas_catalogo")
+                                                    : matriz::i18n::t("backup.secao_saidas"), juce::dontSendNotification);
+                labelSaidas_->setBounds(linhaTitulo);
+                labelSaidas_->setVisible(true);
+            }
+            dentroSaidas.removeFromTop(4);
+        }
+        auto botoes = dentroSaidas.removeFromTop(alturaBotao);
+        // Grupo de export, nesta ordem: PUBLISH TO HTML · dropdown [×] · EXPORT (o BACKUP SYNC... mora no título do card de baixo/direita).
         // EXPORT unificado: [dropdown][×][EXPORT] no lugar dos 4 botões de saída. Os antigos
         // seguem existindo (escondidos) e são disparados pelas opções do dropdown.
         for (auto* antigo : {btnExportar_.get(), btnExportZip_.get(), btnSendToPrint_.get(), btnExportWatermark_.get(), btnExportJanela_.get()})
             if (antigo) antigo->setVisible(false);
+        if (btnPublishHtml_) {
+            btnPublishHtml_->setBounds(botoes.removeFromLeft(175));
+            btnPublishHtml_->setVisible(true);
+            if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
+        }
+        botoes.removeFromLeft(tk.espacoPainel);
         if (btnExportUnificado_ && comboExportOrigem_) {
-            btnExportUnificado_->setBounds(botoes.removeFromRight(100));
-            btnExportUnificado_->setVisible(true);
-            botoes.removeFromRight(tk.espacoPainel);
+            comboExportOrigem_->setBounds(botoes.removeFromLeft(230));
+            comboExportOrigem_->setVisible(true);
             const int opcaoExport = comboExportOrigem_->getSelectedId();
             juce::TextButton* limpar = opcaoExport == kExpZip ? btnLimparZip_.get()
                                      : opcaoExport == kExpPrint ? btnLimparPrint_.get()
@@ -5113,23 +6611,13 @@ void BackupWorkspaceComponent::resized() {
             for (auto* l : {btnLimparZip_.get(), btnLimparPrint_.get(), btnLimparWatermark_.get()})
                 if (l && l != limpar) l->setVisible(false);
             if (limpar) {
-                limpar->setBounds(botoes.removeFromRight(26));
+                botoes.removeFromLeft(tk.espacoPequeno);
+                limpar->setBounds(botoes.removeFromLeft(26));
                 limpar->setVisible(true);
-                botoes.removeFromRight(tk.espacoPequeno);
             }
-            comboExportOrigem_->setBounds(botoes.removeFromRight(230));
-            comboExportOrigem_->setVisible(true);
-            botoes.removeFromRight(tk.espacoPainel);
-        }
-        if (btnSyncDestino_) {
-            btnSyncDestino_->setBounds(botoes.removeFromRight(190));
-            btnSyncDestino_->setVisible(true);
-        }
-        botoes.removeFromRight(tk.espacoPainel);
-        if (btnPublishHtml_) {
-            btnPublishHtml_->setBounds(botoes.removeFromRight(175));
-            btnPublishHtml_->setVisible(true);
-            if (isCatalogMode) btnPublishHtml_->setEnabled(temItens);  // Catálogo: regra de antes
+            botoes.removeFromLeft(tk.espacoPainel);
+            btnExportUnificado_->setBounds(botoes.removeFromLeft(100));
+            btnExportUnificado_->setVisible(true);
         }
     }
 
@@ -5139,7 +6627,7 @@ void BackupWorkspaceComponent::resized() {
     if (emAndamento) {
         const int larguraCartao = std::min(760, area.getWidth() - tk.espacoGrande * 2);
         auto corpo = area.reduced(tk.espacoGrande, tk.espacoGrande);
-        cartaoCentral_ = corpo.withSizeKeepingCentre(larguraCartao, std::min(320, corpo.getHeight()));
+        cartaoCentral_ = corpo.withSizeKeepingCentre(larguraCartao, std::min((etapaCopy_ && etapaCopy_->isVisible()) ? 440 : 320, corpo.getHeight()));
 
         auto dentro = cartaoCentral_.reduced(tk.espacoGrande * 2, tk.espacoGrande);
 
@@ -5150,6 +6638,12 @@ void BackupWorkspaceComponent::resized() {
 
         if (barraProgresso_->isVisible()) {
             barraProgresso_->setBounds(dentro.removeFromTop(24));
+            dentro.removeFromTop(tk.espacoMedio);
+        }
+        if (etapaCopy_ && etapaCopy_->isVisible()) {
+            etapaCopy_->setBounds(dentro.removeFromTop(64));
+            dentro.removeFromTop(tk.espacoMedio);
+            etapaCatalog_->setBounds(dentro.removeFromTop(64));
             dentro.removeFromTop(tk.espacoMedio);
         }
 
@@ -5168,12 +6662,13 @@ void BackupWorkspaceComponent::resized() {
         return;
     }
 
-    // ---- Config: duas colunas justificadas à esquerda, com prévia expandida até a direita ----
-    auto corpo = area.reduced(tk.espacoGrande, tk.espacoMedio);
+    // ---- Config: ASSETS (prévia) à esquerda ocupando o resto; coluna de configuração à direita, mesma largura ----
+    auto corpo = area.reduced(tk.espacoGrande, tk.espacoGrande);
+    corpo.removeFromBottom(tk.espacoGrande + 8);  // vão até o card inferior (ponta de balão + seta até o botão)
 
     const int larguraConfig = std::min(420, std::max(340, static_cast<int>(corpo.getWidth() * 0.32f)));
-    auto colunaConfig = corpo.removeFromLeft(larguraConfig);
-    corpo.removeFromLeft(tk.espacoMedio);
+    auto colunaConfig = corpo.removeFromRight(larguraConfig);
+    corpo.removeFromRight(fluxo ? 52 : 28);  // vão entre ASSETS e a coluna (seta vazada ASSETS -> SELECTION)
     auto colunaPrevia = corpo;
 
     if (configViewport_ && configContainer_) {
@@ -5188,6 +6683,14 @@ void BackupWorkspaceComponent::resized() {
     const int padCartao = tk.espacoPainel + 2;
     const int alturaCabecalhoSecao = 26;
     auto dentroPrevia = colunaPrevia.reduced(padCartao, padCartao);
+
+    if (labelAssets_) {  // título ASSETS, mesma altura dos títulos dos cards da coluna
+        auto linhaTitulo = dentroPrevia.removeFromTop(20);
+        if (fluxo) numeroAssets_ = linhaTitulo.removeFromLeft(kLarguraNumeroFluxo);
+        labelAssets_->setBounds(linhaTitulo);
+        labelAssets_->setVisible(true);
+        dentroPrevia.removeFromTop(2);
+    }
 
     labelResumo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
     labelResumo_->setColour(juce::Label::textColourId, tk.textoPrimario);
@@ -5217,7 +6720,11 @@ void BackupWorkspaceComponent::voltarParaConfiguracao() {
     verificadoCount_ = 0;
     falhasCount_ = 0;
     falhasLista_.clear();
+    relatorioErros_.clear();
+    if (btnVerErros_) btnVerErros_->setVisible(false);
     barraProgresso_->setVisible(false);
+    etapaCopy_->setVisible(false);
+    etapaCatalog_->setVisible(false);
     labelProgressoStatus_->setVisible(false);
     labelProgressoStatus_->setText({}, juce::dontSendNotification);
     labelProgressoStatus_->setColour(juce::Label::textColourId, tema().textoPrimario);

@@ -1,7 +1,35 @@
 #include "BarraProgressoGlobalComponent.h"
+#include "PinturaImediata.h"
 #include "Tokens.h"
+#include "../I18n/Strings.h"
 
 namespace matriz::ui {
+
+namespace {
+
+// Seta circular de "recarregar", desenhada à mão (o app não usa fontes de ícone).
+class BotaoRefresh : public juce::Button {
+public:
+    BotaoRefresh() : juce::Button("refresh") {}
+
+    void paintButton(juce::Graphics& g, bool sobre, bool apertado) override {
+        const auto& tk = tema();
+        const auto c = getLocalBounds().toFloat().getCentre();
+        const float r = juce::jmin(getWidth(), getHeight()) * 0.30f;
+        const float a0 = juce::MathConstants<float>::pi * 0.25f, a1 = juce::MathConstants<float>::pi * 1.75f;
+        g.setColour(!isEnabled() ? tk.textoTerciario.withAlpha(0.5f) : apertado ? tk.acento : sobre ? tk.textoPrimario : tk.textoSecundario);
+        juce::Path arco;
+        arco.addCentredArc(c.x, c.y, r, r, 0.0f, a0, a1, true);
+        g.strokePath(arco, juce::PathStrokeType(1.6f));
+        const juce::Point<float> fim(c.x + r * std::sin(a1), c.y - r * std::cos(a1));
+        const juce::Point<float> t(std::cos(a1), std::sin(a1)), n(std::sin(a1), -std::cos(a1));
+        juce::Path ponta;
+        ponta.addTriangle(fim + t * 4.5f, fim + n * 3.2f, fim - n * 3.2f);
+        g.fillPath(ponta);
+    }
+};
+
+} // namespace
 
 BarraProgressoGlobalComponent::BarraProgressoGlobalComponent() {
     const auto& tk = tema();
@@ -29,6 +57,14 @@ BarraProgressoGlobalComponent::BarraProgressoGlobalComponent() {
     btnCancelar_->setVisible(false);
     addAndMakeVisible(*btnCancelar_);
 
+    btnRefresh_ = std::make_unique<BotaoRefresh>();
+    btnRefresh_->setTooltip(matriz::i18n::t("refresh.dica"));
+    btnRefresh_->onClick = [this] {
+        if (aoPedirRefreshMetadados) aoPedirRefreshMetadados(juce::ModifierKeys::currentModifiers.isAltDown());
+    };
+    btnRefresh_->setVisible(false);
+    addAndMakeVisible(*btnRefresh_);
+
     ProgressoGlobal::obterInstancia().adicionarListener(this);
     estado_ = ProgressoGlobal::obterInstancia().obterEstado();
     atualizarVisual();
@@ -45,6 +81,14 @@ void BarraProgressoGlobalComponent::aoProgressoAtualizado(const EstadoProgresso&
     estado_ = estado;
     progressoSuavizado_ = (estado_.fracao >= 0.0) ? estado_.fracao : 0.0;
     atualizarVisual();
+
+    // Lote síncrono na message thread (ex.: edição de metadados em lote, "3 / 580"): sem o loop de
+    // mensagens a barra só aparecia no fim. Só age com o timer de 30 Hz parado há mais de 150 ms.
+    const auto agora = juce::Time::getMillisecondCounter();
+    if (estado_.ativo && agora - ultimoTimerMs_ > 150 && agora - ultimaPinturaImediataMs_ >= 100) {
+        ultimaPinturaImediataMs_ = agora;
+        pintarAgora(*this);
+    }
 }
 
 void BarraProgressoGlobalComponent::lookAndFeelChanged() {
@@ -57,7 +101,16 @@ void BarraProgressoGlobalComponent::lookAndFeelChanged() {
 }
 
 void BarraProgressoGlobalComponent::timerCallback() {
+    ultimoTimerMs_ = juce::Time::getMillisecondCounter();
     bool precisaRepaint = false;
+
+    // Ícone de refresh: só com um grid de metadados aberto; apagado enquanto há tarefa rodando (não disputar o disco).
+    const bool mostrarRefresh = refreshDisponivel && refreshDisponivel();
+    if (btnRefresh_->isVisible() != mostrarRefresh) {
+        btnRefresh_->setVisible(mostrarRefresh);
+        resized();
+    }
+    btnRefresh_->setEnabled(!estado_.ativo);
 
     if (estado_.ativo) {
         animOffset_ += 0.05f;
@@ -97,7 +150,14 @@ void BarraProgressoGlobalComponent::atualizarVisual() {
     } else {
         btnCancelar_->setVisible(false);
 
-        if (estado_.mensagemConclusao.isNotEmpty()) {
+        const auto dicaTexto = ProgressoGlobal::obterInstancia().obterDicaTexto();
+        if (dicaTexto.isNotEmpty()) {
+            // Dica de hover (ex.: nome da pasta no Folder Map): some ao tirar o mouse.
+            lblTitulo_->setText(ProgressoGlobal::obterInstancia().obterDicaRotulo().toUpperCase(), juce::dontSendNotification);
+            lblTitulo_->setColour(juce::Label::textColourId, tk.acento);
+            lblDetalhe_->setText(dicaTexto, juce::dontSendNotification);
+            lblDetalhe_->setColour(juce::Label::textColourId, tk.textoPrimario);
+        } else if (estado_.mensagemConclusao.isNotEmpty()) {
             lblTitulo_->setText("COMPLETED", juce::dontSendNotification);
             lblTitulo_->setColour(juce::Label::textColourId, juce::Colour(0xff22c55e));
             lblDetalhe_->setText(estado_.mensagemConclusao, juce::dontSendNotification);
@@ -185,6 +245,10 @@ void BarraProgressoGlobalComponent::paint(juce::Graphics& g) {
 
 void BarraProgressoGlobalComponent::resized() {
     auto area = getLocalBounds().reduced(26, 4);
+    if (btnRefresh_ && btnRefresh_->isVisible()) {
+        btnRefresh_->setBounds(22, (getHeight() - 22) / 2, 22, 22);
+        area.removeFromLeft(22);
+    }
 
     if (btnCancelar_->isVisible()) {
         int btnW = 74;

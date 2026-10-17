@@ -914,8 +914,24 @@ SyncEngine::ResultadoClone SyncEngine::clonarMain(matriz::model::Project& projet
     return r;
 }
 
+namespace {
+// Rebuild do MAIN: o clone é do MAIN antigo — desatualizado, sync bloqueado (criar clone novo).
+bool cloneDesatualizadoPeloRebuild(matriz::model::Project& projeto, const std::string& cloneId) {
+    try {
+        auto st = projeto.registro().prepare("SELECT COALESCE(desatualizado_rebuild, 0) FROM backup_destino WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(cloneId));
+        return st.step() && st.columnInt(0) != 0;
+    } catch (...) {
+        return false;
+    }
+}
+const char* const kMsgCloneDesatualizado =
+    "This clone belongs to the old MAIN (rebuilt) and is outdated; sync is blocked. Create a new clone from the new MAIN.";
+}  // namespace
+
 PlanoSync SyncEngine::compararCloneDoMain(matriz::model::Project& projeto, const std::string& cloneId) {
     PlanoSync vazio;
+    if (cloneDesatualizadoPeloRebuild(projeto, cloneId)) { vazio.errosValidacao.push_back(kMsgCloneDesatualizado); return vazio; }
     std::string caminho;
     {
         auto st = projeto.registro().prepare("SELECT destino_path FROM backup_destino WHERE id = ? AND papel <> 'ORIGINAL'");
@@ -934,6 +950,7 @@ ResultadoSync SyncEngine::sincronizarCloneDoMain(matriz::model::Project& projeto
                                                  bool aplicarRemocoes, const CallbackProgressoSync& progresso,
                                                  matriz::app::CancelamentoPtr cancelamento) {
     ResultadoSync res;
+    if (cloneDesatualizadoPeloRebuild(projeto, cloneId)) { res.falhas.push_back(kMsgCloneDesatualizado); return res; }
     // Etapa 8: o clone recebe os sidecars do MAIN em dia (nunca sobrescreve
     // um sidecar editado por fora — esse espera a decisão em ATUALIZAR SIDECARS).
     try {
@@ -1095,6 +1112,7 @@ ResultadoSync SyncEngine::sincronizarCloneDeSource(matriz::model::Project& proje
                                                    bool aplicarRemocoes, const CallbackProgressoSync& progresso,
                                                    matriz::app::CancelamentoPtr cancelamento) {
     ResultadoSync res;
+    if (cloneDesatualizadoPeloRebuild(projeto, cloneId)) { res.falhas.push_back(kMsgCloneDesatualizado); return res; }
     auto p = compararCloneDeSource(projeto, cloneId);
     if (!p.erro.empty()) {
         res.falhas.push_back(p.erro);

@@ -66,6 +66,9 @@ public:
     void aplicarZoom(double fator, double centroSegundos);
     void zoomArquivoInteiro();
     void mostrarBotaoZoom(bool mostrar);
+    // Vídeo: sem a faixa de forma de onda (nem o "No waveform for this file") — sobra só uma tira fina para
+    // clicar/posicionar, entre os marcadores e o transporte.
+    void mostrarOnda(bool mostrar) { mostrarOnda_ = mostrar; repaint(); }
     double janelaVisivelSegundos() const { return fimVisivel_ - inicioVisivel_; }
 
     // Régua em timecode em vez de mm:ss (item 8.1).
@@ -112,6 +115,7 @@ public:
     static constexpr int kAlturaRegua = 18;
     static constexpr int kAlturaFaixaMarcadores = 20;
     static constexpr int kAlturaTransporte = 30;
+    static constexpr int kAlturaTiraSemOnda = 14;  // ver mostrarOnda(false)
 
 private:
     void timerCallback() override;
@@ -139,6 +143,7 @@ private:
 
     double inicioVisivel_ = 0.0, fimVisivel_ = 0.0;
     bool mostrarTimecode_ = false;
+    bool mostrarOnda_ = true;
 
     ModoRoda modoRoda_ = ModoRoda::Shuttle;
     double velocidadeShuttle_ = 0.0;

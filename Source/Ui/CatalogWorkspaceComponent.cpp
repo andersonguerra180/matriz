@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include "AcoesItem.h"
+#include "PastaPickerWindow.h"
 #include "FichaPanelComponent.h"
 #include "MosaicoComponent.h"
 #include "ProjetoAberto.h"
@@ -169,6 +170,12 @@ public:
         // 5. E - Tag as Edited (marcação manual, ver item 6)
         drawLegendItem('E', "E", juce::Colour(0xffFFEE00), juce::Colours::black, isPt ? juce::String::fromUTF8("Marcar como Editado") : "Tag as Edited");
 
+        // 6. B - Bounce List (marcação persistente para EXPORT > Bounce List)
+        drawLegendItem('B', "B", juce::Colour(0xff9333ea), juce::Colours::white, isPt ? juce::String::fromUTF8("Lista Bounce") : "Bounce List");
+
+        // 7. R - Reject (só marca; apagar pelo SHOW REJECTED)
+        drawLegendItem('R', "R", tk.perigo, juce::Colours::white, isPt ? juce::String::fromUTF8("Rejeitar") : "Reject");
+
         float helpSize = 16.0f;
         if (helpCircle_)
             helpCircle_->setBounds((int)std::round(x), (int)std::round(cy - helpSize * 0.5f), (int)helpSize, (int)helpSize);
@@ -203,6 +210,16 @@ std::vector<std::string> dividirSubjects(const std::string& valor) {
 
 // Entrada fixa, sempre a última do filtro SUBJECT: itens sem nenhum subject cadastrado.
 constexpr const char* kSemSubject = "__sem_subject__";
+constexpr const char* kSemLista = "__sem_lista__";
+
+bool semLista(const ItemResumo& item) { return !item.lista.has_value() || item.lista->empty(); }
+
+// Item passa no filtro LIST? (sem filtro = passa; comparação case-insensitive)
+bool passaLista(const ItemResumo& item, const std::optional<std::string>& sel) {
+    if (!sel.has_value()) return true;
+    if (*sel == kSemLista) return semLista(item);
+    return !semLista(item) && matriz::model::nomes::chave(*item.lista) == matriz::model::nomes::chave(*sel);
+}
 
 bool semSubject(const ItemResumo& item) {
     return !item.subject.has_value() || dividirSubjects(*item.subject).empty();
@@ -418,7 +435,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*campoBusca_);
 
     btnLupaBusca_ = std::make_unique<LupaBuscaButton>();
-    btnLupaBusca_->setTooltip("Run search — clears every active filter first, so the search is always project-wide");
+    btnLupaBusca_->setTooltip(juce::String::fromUTF8("Run search — clears every active filter first, so the search is always project-wide"));
     btnLupaBusca_->onClick = [this] { executarBusca(); };
     addAndMakeVisible(*btnLupaBusca_);
 
@@ -525,7 +542,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnOcultarEditados_->setColour(juce::TextButton::textColourOffId, ocultarEditados_ ? tema().textoSobreAcento : tema().textoSecundario);
         if (mosaico_) mosaico_->definirOcultarEditados(ocultarEditados_);
     };
-    addAndMakeVisible(*btnOcultarEditados_);
+    addChildComponent(*btnOcultarEditados_);
 
     btnOcultarNaoSelecionados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
     btnOcultarNaoSelecionados_->setLookAndFeel(&sidebarButtonLf_);
@@ -538,8 +555,9 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tema().acento : tema().painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tema().textoSobreAcento : tema().textoSecundario);
         if (mosaico_) mosaico_->definirOcultarNaoSelecionados(ocultarNaoSelecionados_);
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnOcultarNaoSelecionados_);
+    addChildComponent(*btnOcultarNaoSelecionados_);
 
     // Item C.8: mostra só os arquivos do último lote importado pelo
     // ingest — mesmo mecanismo de filtro de anosSelecionados_/tipoMidiaSelecionado_
@@ -550,14 +568,18 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     btnMostrarRecentes_->setTooltip("Show only files from the most recent ingest batch (ON/OFF)");
     btnMostrarRecentes_->onClick = [this] {
+        // Ligar = ver a leva recém-ingerida: zera antes os outros filtros (mesmo efeito de ALL ASSETS), senão
+        // a interseção com media type/ano/busca/seleção herdada deixa a grade vazia sem explicação.
+        if (!mostrarApenasRecentes_) selecionarFiltroTodos();
         mostrarApenasRecentes_ = !mostrarApenasRecentes_;
         btnMostrarRecentes_->setButtonText(mostrarApenasRecentes_ ? matriz::i18n::t("catwork.mostrar_recentes_on") : matriz::i18n::t("catwork.mostrar_recentes_off"));
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tema().acento : tema().painelAlt);
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tema().textoSobreAcento : tema().textoSecundario);
         aplicarFiltrosAdicionais();
         atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a leva
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnMostrarRecentes_);
+    addChildComponent(*btnMostrarRecentes_);
 
     // Override da seleção restrita ao visível: ON inclui no lote também o que um filtro escondeu.
     btnIncluirOcultosSelecao_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.incluir_ocultos_off"));
@@ -573,8 +595,38 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
         if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
         if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
         atualizarRotuloSelecionados();
+        sincronizarFiltroOpcoesDropdown();
     };
-    addAndMakeVisible(*btnIncluirOcultosSelecao_);
+    addChildComponent(*btnIncluirOcultosSelecao_);
+
+    // Bounce List: mostra só os arquivos com tag B; soma com media type/ano/etc. Aceso (roxo) com a contagem quando ON.
+    btnMostrarBounce_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.bounce_off"));
+    btnMostrarBounce_->setLookAndFeel(&sidebarButtonLf_);
+    btnMostrarBounce_->setTooltip(matriz::i18n::t("catwork.bounce_tooltip"));
+    btnMostrarBounce_->onClick = [this] {
+        mostrarApenasBounce_ = !mostrarApenasBounce_;
+        atualizarBotaoBounce();
+        aplicarFiltrosAdicionais();
+        atualizarContagens();  // MEDIA TYPE / DATE / CONTENT TYPE refletem só a lista
+        sincronizarFiltroOpcoesDropdown();
+    };
+    atualizarBotaoBounce();
+    addChildComponent(*btnMostrarBounce_);
+
+    // SHOW REJECTED (logo abaixo de HIDE EDITED): mostra só os arquivos com tag R; soma com os outros filtros. O R no
+    // grid só marca — apagar é o operador quem decide, a partir desta lista.
+    btnMostrarRejeitados_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.rejeitados_off"));
+    btnMostrarRejeitados_->setLookAndFeel(&sidebarButtonLf_);
+    btnMostrarRejeitados_->setTooltip(matriz::i18n::t("catwork.rejeitados_tooltip"));
+    btnMostrarRejeitados_->onClick = [this] {
+        mostrarApenasRejeitados_ = !mostrarApenasRejeitados_;
+        atualizarBotaoRejeitados();
+        aplicarFiltrosAdicionais();
+        atualizarContagens();
+        sincronizarFiltroOpcoesDropdown();
+    };
+    atualizarBotaoRejeitados();
+    addChildComponent(*btnMostrarRejeitados_);
 
     btnSelecionarTodos_ = std::make_unique<juce::TextButton>(matriz::i18n::t("catwork.selecionar_todos"));
     btnSelecionarTodos_->setLookAndFeel(&sidebarButtonLf_);
@@ -603,6 +655,93 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     btnLimparSelecao_->setTooltip("Clear current grid selection");
     addAndMakeVisible(*btnLimparSelecao_);
 
+    btnFiltroOpcoes_ = std::make_unique<juce::TextButton>("FILTER OPTIONS  " + juce::String::fromUTF8("\xe2\x96\xbe"));
+    btnFiltroOpcoes_->setLookAndFeel(&sidebarButtonLf_);
+    btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnFiltroOpcoes_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnFiltroOpcoes_->setTooltip("Hide / show filter options");
+    auto aplicarOpcao = [this](int id, bool ligado) {
+        switch (id) {
+            case 1: // HIDE EDITED
+                ocultarEditados_ = ligado;
+                if (btnOcultarEditados_) {
+                    btnOcultarEditados_->setButtonText(ocultarEditados_ ? matriz::i18n::t("catwork.ocultar_editados_on") : matriz::i18n::t("catwork.ocultar_editados_off"));
+                    btnOcultarEditados_->setColour(juce::TextButton::buttonColourId, ocultarEditados_ ? tema().acento : tema().painelAlt);
+                    btnOcultarEditados_->setColour(juce::TextButton::textColourOffId, ocultarEditados_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirOcultarEditados(ocultarEditados_);
+                break;
+            case 2: // SHOW REJECTED
+                mostrarApenasRejeitados_ = ligado;
+                atualizarBotaoRejeitados();
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+            case 3: // HIDE UNSELECTED
+                ocultarNaoSelecionados_ = ligado;
+                if (btnOcultarNaoSelecionados_) {
+                    btnOcultarNaoSelecionados_->setButtonText(ocultarNaoSelecionados_ ? matriz::i18n::t("catwork.ocultar_nao_selecionados_on") : matriz::i18n::t("catwork.ocultar_nao_selecionados_off"));
+                    btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, ocultarNaoSelecionados_ ? tema().acento : tema().painelAlt);
+                    btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, ocultarNaoSelecionados_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirOcultarNaoSelecionados(ocultarNaoSelecionados_);
+                break;
+            case 4: // SHOW RECENTLY INGESTED
+                if (ligado && !mostrarApenasRecentes_) selecionarFiltroTodos();
+                mostrarApenasRecentes_ = ligado;
+                if (btnMostrarRecentes_) {
+                    btnMostrarRecentes_->setButtonText(mostrarApenasRecentes_ ? matriz::i18n::t("catwork.mostrar_recentes_on") : matriz::i18n::t("catwork.mostrar_recentes_off"));
+                    btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tema().acento : tema().painelAlt);
+                    btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+            case 5: // INCLUDE HIDDEN
+                incluirOcultosNaSelecao_ = ligado;
+                if (btnIncluirOcultosSelecao_) {
+                    btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
+                    btnIncluirOcultosSelecao_->setColour(juce::TextButton::buttonColourId, incluirOcultosNaSelecao_ ? tema().acento : tema().painelAlt);
+                    btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tema().textoSobreAcento : tema().textoSecundario);
+                }
+                if (mosaico_) mosaico_->definirIncluirOcultosNaSelecao(incluirOcultosNaSelecao_);
+                if (mosaico_) { selecaoEfetivaVista_ = mosaico_->itensSelecionados(); selecionarItem({}); }
+                atualizarRotuloSelecionados();
+                break;
+            case 6: // SHOW BOUNCE LIST
+                mostrarApenasBounce_ = ligado;
+                atualizarBotaoBounce();
+                aplicarFiltrosAdicionais();
+                atualizarContagens();
+                break;
+        }
+    };
+
+    btnFiltroOpcoes_->onClick = [this, aplicarOpcao] {
+        struct Opcao { int id; const char* rotulo; bool ligado; };
+        const Opcao opcoes[] = {
+            {1, "HIDE EDITED", ocultarEditados_},
+            {2, "SHOW REJECTED", mostrarApenasRejeitados_},
+            {3, "HIDE UNSELECTED", ocultarNaoSelecionados_},
+            {4, "SHOW RECENTLY INGESTED", mostrarApenasRecentes_},
+            {5, "INCLUDE HIDDEN", incluirOcultosNaSelecao_},
+            {6, "SHOW BOUNCE LIST", mostrarApenasBounce_},
+        };
+        juce::PopupMenu menu;
+        for (const auto& o : opcoes) menu.addItem(o.id, o.rotulo, true, o.ligado);
+        juce::Component::SafePointer<CatalogWorkspaceComponent> safeThis(this);
+        const bool estados[7] = {false, ocultarEditados_, mostrarApenasRejeitados_, ocultarNaoSelecionados_,
+                                 mostrarApenasRecentes_, incluirOcultosNaSelecao_, mostrarApenasBounce_};
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(btnFiltroOpcoes_.get()),
+                           [safeThis, aplicarOpcao, estados](int resultado) {
+                               if (safeThis == nullptr || resultado < 1 || resultado > 6) return;
+                               aplicarOpcao(resultado, !estados[resultado]);
+                               safeThis->sincronizarFiltroOpcoesDropdown();
+                           });
+    };
+    addAndMakeVisible(*btnFiltroOpcoes_);
+    sincronizarFiltroOpcoesDropdown();
+
     lblCaminhoNavegacao_ = std::make_unique<juce::Label>("", "");
     lblCaminhoNavegacao_->setFont(juce::Font(juce::FontOptions(11.0f)));
     lblCaminhoNavegacao_->setColour(juce::Label::textColourId, tema().textoSecundario);
@@ -627,6 +766,8 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
             case 'K': tipo = ProjetoAberto::TipoMarcacao::Zip;       break;
             case 'P': tipo = ProjetoAberto::TipoMarcacao::Print;     break;
             case 'W': tipo = ProjetoAberto::TipoMarcacao::Watermark; break;
+            case 'B': tipo = ProjetoAberto::TipoMarcacao::Bounce;    break;
+            case 'R': tipo = ProjetoAberto::TipoMarcacao::Rejeitado; break;
             default: return;
         }
         projeto_.definirMarcacao(tipo, ids, false);
@@ -654,43 +795,15 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     });
 }
 
-CatalogWorkspaceComponent::HomeButtonLookAndFeel::HomeButtonLookAndFeel() {
-    icone = juce::ImageFileFormat::loadFrom(AssetsBinaryData::home_png, AssetsBinaryData::home_pngSize);
-    if (!icone.isValid()) return;
-
-    // O PNG vem com fundo branco chapado; aqui ele vira transparente para o
-    // ícone assentar sobre o fundo da coluna esquerda.
-    icone = icone.convertedToFormat(juce::Image::ARGB);
-    juce::Image::BitmapData bmp(icone, juce::Image::BitmapData::readWrite);
-    for (int y = 0; y < bmp.height; ++y) {
-        for (int x = 0; x < bmp.width; ++x) {
-            auto cor = bmp.getPixelColour(x, y);
-            if (cor.getRed() >= 240 && cor.getGreen() >= 240 && cor.getBlue() >= 240)
-                bmp.setPixelColour(x, y, juce::Colours::transparentBlack);
-        }
-    }
-}
-
-void CatalogWorkspaceComponent::HomeButtonLookAndFeel::drawButtonText(
-        juce::Graphics& g, juce::TextButton& botao, bool, bool) {
-    auto area = botao.getLocalBounds().reduced(4, 3);
-    auto areaTexto = area.removeFromBottom(14);
-
-    auto cor = botao.findColour(botao.getToggleState() ? juce::TextButton::textColourOnId
-                                                       : juce::TextButton::textColourOffId);
-    if (icone.isValid()) {
-        g.setOpacity(1.0f);
-        g.drawImageWithin(icone, area.getX(), area.getY(), area.getWidth(), area.getHeight(),
-                          juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-    } else {
-        g.setColour(cor);
-        g.setFont(juce::Font(juce::FontOptions(16.0f)));
-        g.drawText(juce::String::fromUTF8("\xf0\x9f\x8f\xa0"), area, juce::Justification::centred, false);
-    }
-
-    g.setColour(cor);
-    g.setFont(getTextButtonFont(botao, botao.getHeight()));
-    g.drawText(botao.getButtonText(), areaTexto, juce::Justification::centred, true);
+void CatalogWorkspaceComponent::sincronizarFiltroOpcoesDropdown() {
+    if (!btnFiltroOpcoes_) return;
+    const int ativos = (ocultarEditados_ ? 1 : 0) + (mostrarApenasRejeitados_ ? 1 : 0) + (ocultarNaoSelecionados_ ? 1 : 0)
+                     + (mostrarApenasRecentes_ ? 1 : 0) + (incluirOcultosNaSelecao_ ? 1 : 0) + (mostrarApenasBounce_ ? 1 : 0);
+    juce::String texto = "FILTER OPTIONS";
+    if (ativos > 0) texto += " (" + juce::String(ativos) + ")";
+    texto += "  " + juce::String::fromUTF8("\xe2\x96\xbe");
+    btnFiltroOpcoes_->setButtonText(texto);
+    btnFiltroOpcoes_->setColour(juce::TextButton::buttonColourId, ativos > 0 ? tema().acento.withAlpha(0.25f) : tema().painelAlt);
 }
 
 CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
@@ -701,10 +814,13 @@ CatalogWorkspaceComponent::~CatalogWorkspaceComponent() {
 
     if (btnSelecionarTodos_) btnSelecionarTodos_->setLookAndFeel(nullptr);
     if (btnLimparSelecao_) btnLimparSelecao_->setLookAndFeel(nullptr);
+    if (btnFiltroOpcoes_) btnFiltroOpcoes_->setLookAndFeel(nullptr);
     if (btnOcultarEditados_) btnOcultarEditados_->setLookAndFeel(nullptr);
     if (btnOcultarNaoSelecionados_) btnOcultarNaoSelecionados_->setLookAndFeel(nullptr);
     if (btnMostrarRecentes_) btnMostrarRecentes_->setLookAndFeel(nullptr);
     if (btnIncluirOcultosSelecao_) btnIncluirOcultosSelecao_->setLookAndFeel(nullptr);
+    if (btnMostrarBounce_) btnMostrarBounce_->setLookAndFeel(nullptr);
+    if (btnMostrarRejeitados_) btnMostrarRejeitados_->setLookAndFeel(nullptr);
     for (auto& b : botoesCategorias_) if (b) b->setLookAndFeel(nullptr);
     for (auto& b : botoesAnos_) if (b) b->setLookAndFeel(nullptr);
 }
@@ -717,7 +833,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         campoBusca_->setColour(juce::TextEditor::textColourId, juce::Colours::black);
         campoBusca_->setColour(juce::TextEditor::outlineColourId, tk.borda);
     }
-    for (auto* combo : {comboContentType_.get(), comboSubject_.get()}) {
+    for (auto* combo : {comboContentType_.get(), comboSubject_.get(), comboLista_.get()}) {
         if (!combo) continue;
         combo->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
         combo->setColour(juce::ComboBox::textColourId, juce::Colours::black);
@@ -762,6 +878,8 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
         btnIncluirOcultosSelecao_->setColour(juce::TextButton::textColourOffId, incluirOcultosNaSelecao_ ? tk.textoSobreAcento : tk.textoSecundario);
         btnIncluirOcultosSelecao_->setButtonText(incluirOcultosNaSelecao_ ? matriz::i18n::t("catwork.incluir_ocultos_on") : matriz::i18n::t("catwork.incluir_ocultos_off"));
     }
+    atualizarBotaoBounce();
+    atualizarBotaoRejeitados();
     if (btnMostrarRecentes_) {
         btnMostrarRecentes_->setColour(juce::TextButton::buttonColourId, mostrarApenasRecentes_ ? tk.acento : tk.painelAlt);
         btnMostrarRecentes_->setColour(juce::TextButton::textColourOffId, mostrarApenasRecentes_ ? tk.textoSobreAcento : tk.textoSecundario);
@@ -803,14 +921,15 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
     configurarLookAndFeel(sidebarButtonLf_);
 
     for (auto& cat : categorias_) {
-        // "all" é o botão HOME: ícone home.png com o rótulo "All Assets"
-        // logo abaixo (ver HomeButtonLookAndFeel e construirSidebar).
-        if      (cat.chave == "all")         cat.rotulo = matriz::i18n::t("catwork.all");
+        // "all" é o botão de reset: "RESET FILTERS" estilizado em verde
+        if      (cat.chave == "all")         cat.rotulo = "RESET FILTERS";
         else if (cat.chave == "audio")       cat.rotulo = matriz::i18n::t("catwork.audio");
         else if (cat.chave == "video")       cat.rotulo = matriz::i18n::t("catwork.video");
         else if (cat.chave == "images")      cat.rotulo = matriz::i18n::t("catwork.images");
         else if (cat.chave == "documents")   cat.rotulo = matriz::i18n::t("catwork.documents");
         else if (cat.chave == "sessions")    cat.rotulo = matriz::i18n::t("catwork.sessions");
+        else if (cat.chave == "others")      cat.rotulo = matriz::i18n::t("catwork.others");
+        else if (cat.chave == "phone_dump")  cat.rotulo = "Phone Dump";
     }
     for (size_t i = 0; i < categorias_.size() && i < botoesCategorias_.size(); ++i) {
         juce::String texto = categorias_[i].rotulo;
@@ -818,7 +937,7 @@ void CatalogWorkspaceComponent::lookAndFeelChanged() {
             texto += " (" + juce::String(categorias_[i].contagem) + ")";
         }
         botoesCategorias_[i]->setButtonText(texto);
-        if (categorias_[i].chave == "all") botoesCategorias_[i]->setTooltip(matriz::i18n::t("catwork.all"));
+        if (categorias_[i].chave == "all") botoesCategorias_[i]->setTooltip("RESET FILTERS");
     }
 
     atualizarBotoesSidebar();
@@ -857,13 +976,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     botoesAnos_.clear();
     collectionDisponiveis_.clear();
 
-    // Item "Coluna esquerda da aba METADATA": o card LIBRARY foi eliminado
-    // por completo, junto dos botões Selected files/Folders/No backup
-    // (removidos, não realocados). "All Assets" sobrevive sozinho, virando
-    // um botão HOME (ícone home.png com o rótulo "All Assets" abaixo)
-    // posicionado acima de "Hide Edited: OFF" em vez de dentro de um card —
-    // ver resized() e HomeButtonLookAndFeel.
-    categorias_.push_back({matriz::i18n::t("catwork.all"), "all", 0});
+    categorias_.push_back({"RESET FILTERS", "all", 0});
 
     indiceInicioMediaType_ = static_cast<int>(categorias_.size());
     secoesSidebar_.push_back({indiceInicioMediaType_, matriz::i18n::t("catwork.secao_media_type")});
@@ -872,6 +985,8 @@ void CatalogWorkspaceComponent::construirSidebar() {
     categorias_.push_back({matriz::i18n::t("catwork.images"), "images", 0});
     categorias_.push_back({matriz::i18n::t("catwork.documents"), "documents", 0});
     categorias_.push_back({matriz::i18n::t("catwork.sessions"), "sessions", 0});
+    categorias_.push_back({matriz::i18n::t("catwork.others"), "others", 0});
+    categorias_.push_back({"Phone Dump", "phone_dump", 0});
 
     // Pacote de collection, Fase 4: itens que ficaram com conflito ao juntar
     // duplicatas (valor perdedor no histórico), pra revisão.
@@ -880,12 +995,12 @@ void CatalogWorkspaceComponent::construirSidebar() {
 
     for (size_t i = 0; i < categorias_.size(); ++i) {
         auto btn = std::make_unique<juce::TextButton>(categorias_[i].rotulo);
-        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&homeButtonLf_)
+        btn->setLookAndFeel(i == 0 ? static_cast<juce::LookAndFeel*>(&resetButtonLf_)
                                    : static_cast<juce::LookAndFeel*>(&sidebarButtonLf_));
         btn->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
         btn->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
         btn->onClick = [this, i] { selecionarCategoria(static_cast<int>(i)); };
-        if (i == 0) btn->setTooltip(matriz::i18n::t("catwork.all"));
+        if (i == 0) btn->setTooltip("RESET FILTERS");
         addAndMakeVisible(*btn);
         botoesCategorias_.push_back(std::move(btn));
     }
@@ -893,6 +1008,7 @@ void CatalogWorkspaceComponent::construirSidebar() {
     construirFiltroAnos();
     construirFiltroCollection();
     construirFiltroSubject();
+    construirFiltroLista();
     atualizarContagens();
     selecionarCategoria(0);
 }
@@ -959,6 +1075,20 @@ void CatalogWorkspaceComponent::construirFiltroAnos() {
 }
 
 void CatalogWorkspaceComponent::EscutaEventos::aoItemAlterado(const EventoItemAlterado& e) {
+    if (e.tipoAlteracao == "marcacao" && dono.btnMostrarBounce_) {
+        // Tag B ligada/desligada (ou qualquer marca): a contagem do botão acompanha e, com a Bounce List ativa, o
+        // arquivo desmarcado sai da grade. Um evento em lote vira uma refiltragem só.
+        if (dono.refreshBouncePendente_) return;
+        dono.refreshBouncePendente_ = true;
+        juce::MessageManager::callAsync([safe = juce::Component::SafePointer<CatalogWorkspaceComponent>(&dono)] {
+            if (safe == nullptr) return;
+            safe->refreshBouncePendente_ = false;
+            safe->atualizarBotaoBounce();
+            safe->atualizarBotaoRejeitados();
+            if (safe->mostrarApenasBounce_ || safe->mostrarApenasRejeitados_) safe->aplicarFiltrosAdicionais();
+        });
+        return;
+    }
     if (e.tipoAlteracao != "metadado_data") return;
     // Uma aplicação em lote grava um EVENT DATE por item; sem este guard,
     // cada item da seleção dispararia uma refiltragem completa.
@@ -1017,6 +1147,13 @@ void CatalogWorkspaceComponent::atualizarDestaqueBotoesAnoCollection() {
                 if (subjectsDisponiveis_[i].first == *subjectSelecionado_) { idSel = static_cast<int>(i + 1); break; }
         comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
     }
+    if (comboLista_) {
+        int idSel = static_cast<int>(listasDisponiveis_.size()) + 1;
+        if (listaSelecionada_.has_value())
+            for (size_t i = 0; i < listasDisponiveis_.size(); ++i)
+                if (listasDisponiveis_[i].first == *listaSelecionada_) { idSel = static_cast<int>(i + 1); break; }
+        comboLista_->setSelectedId(idSel, juce::dontSendNotification);
+    }
 }
 
 void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
@@ -1054,6 +1191,19 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         vulneraveisIds.insert(ids.begin(), ids.end());
     }
 
+    std::set<std::string> bounceIds;
+    if (mostrarApenasBounce_) {
+        anyFilter = true;
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
+        bounceIds.insert(ids.begin(), ids.end());
+    }
+    std::set<std::string> rejeitadosIds;
+    if (mostrarApenasRejeitados_) {
+        anyFilter = true;
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Rejeitado);
+        rejeitadosIds.insert(ids.begin(), ids.end());
+    }
+
     std::set<std::string> recentesIds;
     if (mostrarApenasRecentes_) {
         anyFilter = true;
@@ -1083,6 +1233,32 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                                        ? std::optional<juce::String>(matriz::i18n::t("catwork.sem_leva_recente"))
                                        : std::nullopt);
 
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemResumo& it) -> bool {
+        juce::String src(it.sourceMedia);
+        juce::String path(it.caminhoAbsolutoOrigem);
+        juce::String relPath(it.caminhoRelativoArquivo);
+        bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+                      path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
+                      relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
+        if (!match) {
+            for (const auto& tag : it.tags) {
+                if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (match) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
+
     if (filtroHerdadoIds_) anyFilter = true;
     for (const auto& item : itens) {
         if (filtroHerdadoIds_ && !filtroHerdadoIds_->count(item.id)) continue;
@@ -1094,20 +1270,36 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             if (vulneraveisIds.find(item.id) == vulneraveisIds.end()) continue;
         }
 
+        if (mostrarApenasBounce_) {
+            if (bounceIds.find(item.id) == bounceIds.end()) continue;
+        }
+        if (mostrarApenasRejeitados_) {
+            if (rejeitadosIds.find(item.id) == rejeitadosIds.end()) continue;
+        }
+
         if (mostrarApenasRecentes_) {
             if (recentesIds.find(item.id) == recentesIds.end()) continue;
         }
 
         if (tipoMidiaSelecionado_.has_value()) {
             anyFilter = true;
-            auto ext = juce::String(item.extensaoArquivo).toLowerCase();
-            auto cat = matriz::ingest::categoriaPorExtensao(ext);
             bool match = false;
-            if (*tipoMidiaSelecionado_ == "audio") match = (cat == matriz::ingest::CategoriaMidia::Audio);
-            else if (*tipoMidiaSelecionado_ == "video") match = (cat == matriz::ingest::CategoriaMidia::Video);
-            else if (*tipoMidiaSelecionado_ == "images") match = (cat == matriz::ingest::CategoriaMidia::Imagem);
-            else if (*tipoMidiaSelecionado_ == "documents") match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-            else if (*tipoMidiaSelecionado_ == "sessions") match = (cat == matriz::ingest::CategoriaMidia::Sessao);
+            if (*tipoMidiaSelecionado_ == "phone_dump") {
+                match = ehDump(item);
+            } else {
+                if (ehDump(item)) {
+                    match = false; // Dump items do not appear in other lists until extracted!
+                } else {
+                    auto ext = juce::String(item.extensaoArquivo).toLowerCase();
+                    auto cat = matriz::ingest::categoriaPorExtensao(ext);
+                    if (*tipoMidiaSelecionado_ == "audio") match = (cat == matriz::ingest::CategoriaMidia::Audio);
+                    else if (*tipoMidiaSelecionado_ == "video") match = (cat == matriz::ingest::CategoriaMidia::Video);
+                    else if (*tipoMidiaSelecionado_ == "images") match = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                    else if (*tipoMidiaSelecionado_ == "documents") match = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                    else if (*tipoMidiaSelecionado_ == "sessions") match = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                    else if (*tipoMidiaSelecionado_ == "others") match = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+                }
+            }
             if (!match) continue;
         }
 
@@ -1146,8 +1338,18 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
                 continue;
         }
 
+        if (listaSelecionada_.has_value()) {
+            anyFilter = true;
+            if (!passaLista(item, listaSelecionada_)) continue;
+        }
+
         filteredIds.insert(item.id);
     }
+
+    // Resultado vazio por causa de filtro(s) ativo(s) (inclusive um herdado do Structure, que a coluna esquerda não
+    // mostra): diz isso na grade em vez de cair no "arraste aqui". O caso "recentes sem leva" já tem aviso próprio.
+    if (anyFilter && filteredIds.empty() && !(mostrarApenasRecentes_ && recentesIds.empty()))
+        mosaico_->definirMensagemVazia(matriz::i18n::t("catwork.sem_resultados_filtros"));
 
     if (anyFilter) {
         mosaico_->definirFiltroItens(std::move(filteredIds));
@@ -1243,6 +1445,42 @@ void CatalogWorkspaceComponent::construirFiltroSubject() {
     comboSubject_->setSelectedId(idSel, juce::dontSendNotification);
 }
 
+void CatalogWorkspaceComponent::construirFiltroLista() {
+    // LIST: mesmo desenho do combo de SUBJECT, logo abaixo dele no card CONTENT TYPE.
+    if (!comboLista_) {
+        comboLista_ = std::make_unique<juce::ComboBox>();
+        comboLista_->setColour(juce::ComboBox::backgroundColourId, juce::Colours::white);
+        comboLista_->setColour(juce::ComboBox::textColourId, juce::Colours::black);
+        comboLista_->setColour(juce::ComboBox::outlineColourId, tema().borda);
+        comboLista_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
+        comboLista_->setTooltip("Filter by one of the lists used in this project");
+        addAndMakeVisible(*comboLista_);
+        comboLista_->onChange = [this] {
+            int sel = comboLista_->getSelectedId();
+            int idTodos = static_cast<int>(listasDisponiveis_.size()) + 1;
+            if (sel <= 0 || sel >= idTodos) listaSelecionada_ = std::nullopt;
+            else listaSelecionada_ = listasDisponiveis_[static_cast<size_t>(sel - 1)].first;
+            aplicarFiltrosAdicionais();
+            atualizarContagens();
+        };
+    }
+
+    comboLista_->clear(juce::dontSendNotification);
+    int idTodos = static_cast<int>(listasDisponiveis_.size()) + 1;
+    comboLista_->addItem(matriz::i18n::t("catwork.lista_todas"), idTodos);
+    for (size_t i = 0; i < listasDisponiveis_.size(); ++i) {
+        const auto& [valor, contagem] = listasDisponiveis_[i];
+        const juce::String rotulo = (valor == kSemLista) ? matriz::i18n::t("catwork.lista_nenhuma")
+                                                         : juce::String::fromUTF8(valor.c_str());
+        comboLista_->addItem(rotulo + " (" + juce::String(contagem) + ")", static_cast<int>(i + 1));
+    }
+    int idSel = idTodos;
+    if (listaSelecionada_.has_value())
+        for (size_t i = 0; i < listasDisponiveis_.size(); ++i)
+            if (listasDisponiveis_[i].first == *listaSelecionada_) { idSel = static_cast<int>(i + 1); break; }
+    comboLista_->setSelectedId(idSel, juce::dontSendNotification);
+}
+
 void CatalogWorkspaceComponent::atualizarContagens() {
     poolContagens_.removeAllJobs(true, 100);
 
@@ -1254,17 +1492,39 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // Fase 3c: reutilizar itens já em memória no Mosaico — evita segunda query
     // completa para o mesmo evento. Cópia feita aqui na message thread; se o
     // Mosaico ainda estiver vazio (snapshot não chegou) cai no listarItens().
-    // Snapshot em voo: conta com o que há (se houver) e reconta quando
-    // chegar; vazio + em voo não conta nada agora (evita 2ª listarItens()).
+    // Snapshot em voo: não conta agora (ver abaixo) e reconta quando chegar.
     std::vector<ItemResumo> itensCopia;
     if (mosaico_ && !mosaico_->modoQuarentenaAtual()) {
         versaoSnapshotContada_ = mosaico_->versaoSnapshot();
         if (mosaico_->snapshotPendente()) {
+            // Snapshot em voo: não conta agora nem com o que havia em memória — listarColecoesEmbutidas() e o
+            // snapshot disputavam o mesmo banco (HD externo) e o refresh pós-ingest levava dezenas de segundos.
+            // Reconta sozinho quando o snapshot chega (contagensAguardandoSnapshot_, ver aoSnapshot acima).
             contagensAguardandoSnapshot_ = true;
-            if (mosaico_->totalItensCarregados() == 0) return;
+            return;
+        }
+        if (mosaico_->versaoSnapshot() == 0) {
+            // Nenhum snapshot chegou ainda (abertura: construirSidebar() roda antes do primeiro
+            // mosaico_->recarregar()). Cair no listarItens() abaixo duplicava a mesma consulta completa
+            // em paralelo ao snapshot, as duas disputando o HD. Espera o snapshot e reconta quando chegar.
+            contagensAguardandoSnapshot_ = true;
+            return;
         }
         if (mosaico_->totalItensCarregados() > 0)
             itensCopia = mosaico_->todosItensEmMemoria();
+    }
+
+    // "Show Bounce List" ligado: as contagens da sidebar são só da lista B.
+    std::optional<std::set<std::string>> soBounce;
+    if (mostrarApenasBounce_) {
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Bounce);
+        soBounce = std::set<std::string>(ids.begin(), ids.end());
+    }
+    // "Show Rejected" ligado: idem, só os com tag R.
+    std::optional<std::set<std::string>> soRejeitados;
+    if (mostrarApenasRejeitados_) {
+        const auto ids = projeto_.idsMarcados(ProjetoAberto::TipoMarcacao::Rejeitado);
+        soRejeitados = std::set<std::string>(ids.begin(), ids.end());
     }
 
     // "Show Recently Ingested" ligado: as contagens da sidebar são da leva.
@@ -1283,9 +1543,15 @@ void CatalogWorkspaceComponent::atualizarContagens() {
     // pelos filtros ATIVOS dos OUTROS grupos — assim o número do botão bate com o que a grade mostra.
     const std::optional<std::string> collSel = collectionSelecionado_;
     const std::optional<std::string> subjSel = subjectSelecionado_;
+    const std::optional<std::string> listaSel = listaSelecionada_;
     const int geracao = ++geracaoContagens_;
 
-    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, geracao, soRecentes, filtroHerdado,
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    poolContagens_.addJob([safeThis, proj, filtroTipoMidiaAnos, anosParaTipo, collSel, subjSel, listaSel, geracao, soRecentes, soBounce, soRejeitados, filtroHerdado, itensExtraidos,
                            itensCopia = std::move(itensCopia)]() mutable {
         ContagensResultado res;
         try {
@@ -1293,6 +1559,16 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             if (soRecentes) {
                 itens.erase(std::remove_if(itens.begin(), itens.end(),
                                            [&](const ItemResumo& r) { return !soRecentes->count(r.id); }),
+                            itens.end());
+            }
+            if (soBounce) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !soBounce->count(r.id); }),
+                            itens.end());
+            }
+            if (soRejeitados) {
+                itens.erase(std::remove_if(itens.begin(), itens.end(),
+                                           [&](const ItemResumo& r) { return !soRejeitados->count(r.id); }),
                             itens.end());
             }
             if (filtroHerdado) {
@@ -1312,6 +1588,27 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                                        [](const ItemResumo& r) { return r.nestTotal > 1 && !r.nestCapa; }),
                         itens.end());
 
+            auto ehDump = [&](const ItemResumo& it) -> bool {
+                juce::String src(it.sourceMedia);
+                juce::String path(it.caminhoAbsolutoOrigem);
+                juce::String relPath(it.caminhoRelativoArquivo);
+                bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+                              path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
+                              relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
+                if (!match) {
+                    for (const auto& tag : it.tags) {
+                        if (juce::String(tag).equalsIgnoreCase("whatsapp") || juce::String(tag).equalsIgnoreCase("celular") || juce::String(tag).equalsIgnoreCase("smartphone")) {
+                            match = true;
+                            break;
+                        }
+                    }
+                }
+                if (match) {
+                    return (itensExtraidos.count(it.id) == 0);
+                }
+                return false;
+            };
+
             std::map<int, int> contagemPorAno;
             int semAno = 0;
             std::map<std::string, int> contagemPorCollection;
@@ -1319,10 +1616,14 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             int totalSemSubject = 0;
             std::map<std::string, int> contagemPorSubject;
             std::map<std::string, std::string> grafiaPorChaveSubject;
+            int totalSemLista = 0;
+            std::map<std::string, int> contagemPorLista;
+            std::map<std::string, std::string> grafiaPorChaveLista;
 
             for (const auto& item : itens) {
                 auto ext = juce::String(item.extensaoArquivo).toLowerCase();
                 auto cat = matriz::ingest::categoriaPorExtensao(ext);
+                const bool isDump = ehDump(item);
 
                 // Passa por cada filtro ativo? (sem filtro = passa)
                 const bool pAno = anosParaTipo.empty() ||
@@ -1331,11 +1632,18 @@ void CatalogWorkspaceComponent::atualizarContagens() {
 
                 bool pTipo = true;
                 if (filtroTipoMidiaAnos.has_value()) {
-                    if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
-                    else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
-                    else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
-                    else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
-                    else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                    if (*filtroTipoMidiaAnos == "phone_dump") {
+                        pTipo = isDump;
+                    } else if (isDump) {
+                        pTipo = false;
+                    } else {
+                        if (*filtroTipoMidiaAnos == "audio") pTipo = (cat == matriz::ingest::CategoriaMidia::Audio);
+                        else if (*filtroTipoMidiaAnos == "video") pTipo = (cat == matriz::ingest::CategoriaMidia::Video);
+                        else if (*filtroTipoMidiaAnos == "images") pTipo = (cat == matriz::ingest::CategoriaMidia::Imagem);
+                        else if (*filtroTipoMidiaAnos == "documents") pTipo = (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto);
+                        else if (*filtroTipoMidiaAnos == "sessions") pTipo = (cat == matriz::ingest::CategoriaMidia::Sessao);
+                        else if (*filtroTipoMidiaAnos == "others") pTipo = (cat == matriz::ingest::CategoriaMidia::Desconhecida || cat == matriz::ingest::CategoriaMidia::Arte);
+                    }
                 }
 
                 bool pColl = true;
@@ -1356,36 +1664,52 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
 
-                // MEDIA TYPE: ano + collection + subject (não filtra por si mesmo).
-                if (pAno && pColl && pSubj) {
-                    switch (cat) {
-                        case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
-                        case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
-                        case matriz::ingest::CategoriaMidia::Imagem: ++res.img; break;
-                        case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
-                        case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
-                        case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
-                        default: break;
+                const bool pLista = passaLista(item, listaSel);
+
+                // MEDIA TYPE: ano + collection + subject + lista (não filtra por si mesmo).
+                if (pAno && pColl && pSubj && pLista) {
+                    if (isDump) {
+                        ++res.phoneDump;
+                    } else {
+                        switch (cat) {
+                            case matriz::ingest::CategoriaMidia::Audio: ++res.audio; break;
+                            case matriz::ingest::CategoriaMidia::Video: ++res.video; break;
+                            case matriz::ingest::CategoriaMidia::Imagem: ++res.img; break;
+                            case matriz::ingest::CategoriaMidia::Sessao: ++res.sessao; break;
+                            case matriz::ingest::CategoriaMidia::Documento: ++res.doc; break;
+                            case matriz::ingest::CategoriaMidia::Texto: ++res.doc; break;
+                            default: ++res.outros; break;  // Desconhecida/Arte
+                        }
                     }
                 }
 
                 // DATE: tipo + collection + subject. Unknown = sem EVENT DATE e sem ano no
                 // metadado; o palpite pela data do disco conta no ano chutado E em Unknown.
-                if (pTipo && pColl && pSubj) {
+                if (pTipo && pColl && pSubj && pLista) {
                     if (item.ano.has_value()) contagemPorAno[*item.ano]++;
                     if (item.anoDesconhecido()) semAno++;
                 }
 
                 // CONTENT TYPE: tipo + ano + subject.
-                if (pTipo && pAno && pSubj) {
+                if (pTipo && pAno && pSubj && pLista) {
                     if (item.collectionType.has_value() && !item.collectionType->empty())
                         contagemPorCollection[*item.collectionType]++;
                     else
                         semCollection++;
                 }
 
-                // SUBJECT: tipo + ano + collection.
-                if (pTipo && pAno && pColl) {
+                // LIST: tipo + ano + collection + subject.
+                if (pTipo && pAno && pColl && pSubj) {
+                    if (semLista(item)) ++totalSemLista;
+                    else {
+                        auto chave = matriz::model::nomes::chave(*item.lista);
+                        grafiaPorChaveLista.emplace(chave, *item.lista);
+                        contagemPorLista[grafiaPorChaveLista[chave]]++;
+                    }
+                }
+
+                // SUBJECT: tipo + ano + collection + lista.
+                if (pTipo && pAno && pColl && pLista) {
                     if (semSubject(item)) ++totalSemSubject;
                     if (item.subject.has_value()) {
                         // "A, a" conta uma vez só; variações de maiúsculas são o
@@ -1410,6 +1734,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 if (!grafiaPorChaveSubject.count(chaveSel)) contagemPorSubject.emplace(*subjSel, 0);
             }
 
+            if (listaSel && *listaSel != kSemLista &&
+                !grafiaPorChaveLista.count(matriz::model::nomes::chave(*listaSel)))
+                contagemPorLista.emplace(*listaSel, 0);
+
             for (auto it = contagemPorAno.rbegin(); it != contagemPorAno.rend(); ++it)
                 res.anos.push_back({it->first, it->second});
             res.anos.push_back({-1, semAno});  // Unknown sempre no fim, mesmo com 0
@@ -1423,6 +1751,10 @@ void CatalogWorkspaceComponent::atualizarContagens() {
             for (const auto& pair : contagemPorSubject)
                 res.subjects.push_back(pair);
             res.subjects.push_back({kSemSubject, totalSemSubject});  // sempre por último, mesmo com 0
+
+            for (const auto& pair : contagemPorLista)
+                res.listas.push_back(pair);
+            res.listas.push_back({kSemLista, totalSemLista});  // idem
 
             res.mergeConflitos = static_cast<int>(proj->itensDaColecaoEmbutida("merge_conflitos").size());
             auto colecoes = proj->listarColecoesEmbutidas();
@@ -1487,6 +1819,8 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     definirContagem("images", res.img);
     definirContagem("documents", res.doc);
     definirContagem("sessions", res.sessao);
+    definirContagem("others", res.outros);
+    definirContagem("phone_dump", res.phoneDump);
 
     bool reconstruiuAnoOuCollection = false;
 
@@ -1505,6 +1839,12 @@ void CatalogWorkspaceComponent::aplicarContagens(const ContagensResultado& res) 
     if (subjectsDisponiveis_ != res.subjects) {
         subjectsDisponiveis_ = res.subjects;
         construirFiltroSubject();
+        reconstruiuAnoOuCollection = true;
+    }
+
+    if (listasDisponiveis_ != res.listas) {
+        listasDisponiveis_ = res.listas;
+        construirFiltroLista();
         reconstruiuAnoOuCollection = true;
     }
 
@@ -1561,11 +1901,39 @@ void CatalogWorkspaceComponent::executarBusca() {
     resized();
 }
 
+void CatalogWorkspaceComponent::atualizarBotaoRejeitados() {
+    if (btnMostrarRejeitados_) {
+        const auto& tk = tema();
+        btnMostrarRejeitados_->setButtonText(mostrarApenasRejeitados_
+            ? matriz::i18n::t("catwork.rejeitados_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Rejeitado))))
+            : matriz::i18n::t("catwork.rejeitados_off"));
+        btnMostrarRejeitados_->setColour(juce::TextButton::buttonColourId, mostrarApenasRejeitados_ ? tk.perigo : tk.painelAlt);
+        btnMostrarRejeitados_->setColour(juce::TextButton::textColourOffId, mostrarApenasRejeitados_ ? juce::Colours::white : tk.textoSecundario);
+        btnMostrarRejeitados_->repaint();
+    }
+    sincronizarFiltroOpcoesDropdown();
+}
+
+void CatalogWorkspaceComponent::atualizarBotaoBounce() {
+    if (btnMostrarBounce_) {
+        const auto& tk = tema();
+        const juce::Colour roxo(0xff9333ea);
+        btnMostrarBounce_->setButtonText(mostrarApenasBounce_
+            ? matriz::i18n::t("catwork.bounce_on").replace("{n}", juce::String(static_cast<int>(projeto_.contarMarcacoes(ProjetoAberto::TipoMarcacao::Bounce))))
+            : matriz::i18n::t("catwork.bounce_off"));
+        btnMostrarBounce_->setColour(juce::TextButton::buttonColourId, mostrarApenasBounce_ ? roxo : tk.painelAlt);
+        btnMostrarBounce_->setColour(juce::TextButton::textColourOffId, mostrarApenasBounce_ ? juce::Colours::white : tk.textoSecundario);
+        btnMostrarBounce_->repaint();
+    }
+    sincronizarFiltroOpcoesDropdown();
+}
+
 void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     tipoMidiaSelecionado_ = std::nullopt;
     anosSelecionados_.clear();
     collectionSelecionado_ = std::nullopt;
     subjectSelecionado_ = std::nullopt;
+    listaSelecionada_ = std::nullopt;
 
     if (ocultarEditados_) {
         ocultarEditados_ = false;
@@ -1586,6 +1954,11 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
         btnOcultarNaoSelecionados_->setColour(juce::TextButton::textColourOffId, tema().textoSecundario);
     }
+
+    mostrarApenasBounce_ = false;  // ALL ASSETS zera tudo, inclusive a Bounce List
+    atualizarBotaoBounce();
+    mostrarApenasRejeitados_ = false;
+    atualizarBotaoRejeitados();
 
     mostrarApenasRecentes_ = false;
     if (btnMostrarRecentes_) {
@@ -1615,6 +1988,7 @@ void CatalogWorkspaceComponent::limparTodosOsFiltros(bool incluirBusca) {
     if (mosaico_) mosaico_->definirFiltroItens(std::nullopt);
     // Contagens cruzadas (DATE por MEDIA TYPE e vice-versa) sem filtro agora.
     atualizarContagens();
+    sincronizarFiltroOpcoesDropdown();
 }
 
 void CatalogWorkspaceComponent::limparChipsDeBusca() {
@@ -1637,7 +2011,9 @@ void CatalogWorkspaceComponent::selecionarCategoria(int indice) {
     // coluna esquerda funilam dentro dela; só ALL ASSETS (limparTodosOsFiltros,
     // acima) a desliga.
 
-    if (indice < indiceInicioMediaType_) {
+    // "Merge conflicts" fica visualmente no card MEDIA TYPE mas é categoria de coleção (como All/Selected): tratá-lo
+    // como chip de tipo de mídia gravava tipoMidiaSelecionado_="merge_conflitos", que nenhum item casa -> grade vazia.
+    if (indice < indiceInicioMediaType_ || chave == "merge_conflitos") {
         categoriaSelecionada_ = indice;
     } else {
         if (tipoMidiaSelecionado_.has_value() && *tipoMidiaSelecionado_ == chave)
@@ -1670,7 +2046,7 @@ void CatalogWorkspaceComponent::atualizarBotoesSidebar() {
         int idx = static_cast<int>(i);
         const auto& ch = categorias_[i].chave;
         bool ativo = false;
-        if (idx < indiceInicioMediaType_)
+        if (idx < indiceInicioMediaType_ || ch == "merge_conflitos")
             ativo = (idx == categoriaSelecionada_);
         else
             ativo = (tipoMidiaSelecionado_.has_value() && *tipoMidiaSelecionado_ == ch);
@@ -1777,7 +2153,15 @@ void CatalogWorkspaceComponent::selecionarItem(const std::string& itemId) {
         // feita por clique/Select all nunca igualava selecaoEfetivaVista_ e o próximo refresh do grid (ex.: após
         // uma edição em lote) reconstruía a ficha por baixo do usuário (use-after-free nos campos em edição).
         selecaoEfetivaVista_ = sel;
-        fichaPanel_->mostrarSelecao(std::vector<std::string>(sel.begin(), sel.end()));
+        // NEST: aplicar metadados com um nest selecionado vale para TODOS os arquivos dele (a grade mostra só a
+        // capa). A ficha entra em lote sobre os membros: campo preenchido sobrescreve, vazio não mexe, e TAGS /
+        // PEOPLE somam (o lote já se comporta assim). `selecaoEfetivaVista_` continua sendo a seleção da grade.
+        std::vector<std::string> alvo(sel.begin(), sel.end());
+        if (!alvo.empty()) {
+            auto expandido = projeto_.expandirMembrosDeNest(alvo);
+            if (expandido.size() > alvo.size()) alvo = std::move(expandido);
+        }
+        fichaPanel_->mostrarSelecao(alvo);
     }
 }
 
@@ -1892,29 +2276,10 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
     if (itemIds.size() > 1) menu.addItem(600, matriz::i18n::t("menu.nest"));
     if (algumEmNest) menu.addItem(601, matriz::i18n::t("menu.un_nest"));
 
-    juce::PopupMenu subMenuPastas;
-    auto arvore = projeto_.arvoreAcervo();
-    std::vector<std::pair<std::string, juce::String>> pastas;
-
-    std::function<void(const ProjetoAberto::NoArvore&, const juce::String&)> coletarPastas =
-        [&](const ProjetoAberto::NoArvore& n, const juce::String& prefixo) {
-        for (const auto& f : n.filhos) {
-            if (f.id.empty()) continue;
-            juce::String caminho = prefixo.isEmpty() ? f.nome : prefixo + " / " + f.nome;
-            pastas.push_back({f.id, caminho});
-            coletarPastas(f, caminho);
-        }
-    };
-    coletarPastas(arvore, {});
-
-    int pastaIdx = 1000;
-    for (const auto& p : pastas) {
-        subMenuPastas.addItem(pastaIdx++, p.second);
-    }
-    menu.addSubMenu(matriz::i18n::t("menu.mover_para_pasta"), subMenuPastas);
+    menu.addItem(1000, matriz::i18n::t("menu.mover_para_pasta") + "...");
 
     ProjetoAberto* p = &projeto_;
-    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, p, itemIds, ganchos, pastas](int resultado) {
+    menu.showMenuAsync(juce::PopupMenu::Options(), [safeThis, p, itemIds, ganchos](int resultado) {
         if (!safeThis) return;
         if (resultado == 600) {
             p->criarNest(itemIds);
@@ -1931,10 +2296,13 @@ void CatalogWorkspaceComponent::abrirMenuContexto(std::vector<std::string> itemI
             }
             return;
         }
-        if (resultado >= 1000 && resultado < 1000 + static_cast<int>(pastas.size())) {
-            std::string pastaId = pastas[static_cast<size_t>(resultado - 1000)].first;
-            p->adicionarItensAPasta(itemIds, pastaId);
-            safeThis->recarregar();
+        if (resultado == 1000) {
+            PastaPickerWindow::abrir(matriz::i18n::t("menu.mover_para_pasta"), p->arvoreAcervo(),
+                                     [safeThis, p, itemIds](const std::string& pastaId) {
+                                         if (!safeThis) return;
+                                         p->adicionarItensAPasta(itemIds, pastaId);
+                                         safeThis->recarregar();
+                                     });
             return;
         }
         acoes::executar(resultado, *p, itemIds, ganchos);
@@ -1961,6 +2329,22 @@ void CatalogWorkspaceComponent::recarregar() {
     if (mosaico_) mosaico_->recarregar();
 }
 
+
+void CatalogWorkspaceComponent::atualizarMetadados(bool completo) {
+    if (completo) {
+        recarregar();
+        return;
+    }
+    if (!mosaico_) return;
+    // Cards da seleção relidos do banco (cada um é uma leitura síncrona: acima do teto, só a ficha é refeita).
+    const auto sel = mosaico_->itensSelecionados();
+    if (sel.size() <= 300) {
+        mosaico_->iniciarLoteAtualizacao();
+        for (const auto& id : sel) mosaico_->atualizarItemEmMemoria(id);
+        mosaico_->finalizarLoteAtualizacao();
+    }
+    selecionarItem(sel.empty() ? std::string() : *sel.begin());  // reconstrói a ficha (salva pendências antes)
+}
 
 void CatalogWorkspaceComponent::filtrarPorChave(const std::string& chave) {
     for (size_t i = 0; i < categorias_.size(); ++i) {
@@ -2022,6 +2406,7 @@ void CatalogWorkspaceComponent::definirSelecaoItens(const std::set<std::string>&
     anosSelecionados_.clear();
     collectionSelecionado_ = std::nullopt;
     subjectSelecionado_ = std::nullopt;
+    listaSelecionada_ = std::nullopt;
     filtroHerdadoIds_ = itemIds;
     if (mosaico_) {
         mosaico_->definirFiltroItens(itemIds);
@@ -2072,6 +2457,8 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
         else if (ch == "images")    cor = juce::Colour(0xfff4a261);
         else if (ch == "documents") cor = juce::Colour(0xff2b9348);
         else if (ch == "sessions")  cor = juce::Colour(0xff2b9348);
+        else if (ch == "others")    cor = juce::Colour(0xff8a8f98);
+        else if (ch == "phone_dump") cor = juce::Colour(0xff0284c7);
         else continue;
         auto btnBounds = botoesCategorias_[i]->getBounds();
         float cy = btnBounds.getCentreY() - 4.0f;
@@ -2131,7 +2518,7 @@ void CatalogWorkspaceComponent::resized() {
     totalRequiredH += 24 + 3 + 18 + 2; // View modes row 24, slider 18 (compactados no item 1 de hoje)
     if (btnSelecionarTodos_ && btnLimparSelecao_) totalRequiredH += 20 + kItemGap; // Select all / clear row
     totalRequiredH += 42 + kItemGap; // HOME: altura dobrada (comprimida a 42) pra caber ícone + "All Assets"
-    totalRequiredH += (4 * (20 + 1)) + 6; // 4 toggle buttons
+    totalRequiredH += (6 * (20 + 1)) + 6; // 6 toggle buttons (incl. Show Bounce List e Show Rejected)
     // Card LIBRARY eliminado (item "Coluna esquerda da aba METADATA") — só
     // MEDIA TYPE e DATE continuam sendo cards.
     totalRequiredH += kHeaderH + kItemGap + ((static_cast<int>(botoesCategorias_.size()) - indiceInicioMediaType_) * (kBtnH + kItemGap)); // Media Type
@@ -2184,82 +2571,63 @@ void CatalogWorkspaceComponent::resized() {
         viewportChipsBusca_->setBounds(0, 0, 0, 0);
     }
 
-    // 0. VIEW MODES & DISPLAY CONTROLS (directly below Search)
-    // Row 1: List and Miniatures side-by-side (50/50, matching Intake tab)
+    // ==========================================
+    // CARD 1: VIEW
+    // ==========================================
+    int viewCardTop = sidebar.getY();
+    sidebar.removeFromTop(kCardPad);
+    secaoHeaderBounds_.push_back({"VIEW", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+
     if (btnVisaoLista_ && btnVisaoGrade_) {
-        auto viewRow = sidebar.removeFromTop(24).reduced(4, 0);
+        auto viewRow = sidebar.removeFromTop(24).reduced(6, 0);
         int half = (viewRow.getWidth() - 6) / 2;
         btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
         viewRow.removeFromLeft(6);
         btnVisaoGrade_->setBounds(viewRow);
         sidebar.removeFromTop(3);
     }
-    // Row 2: Size slider
     if (sliderTamanho_) {
-        auto sliderRow = sidebar.removeFromTop(18).reduced(4, 0);
+        auto sliderRow = sidebar.removeFromTop(18).reduced(6, 0);
         if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(20));
         sliderTamanho_->setBounds(sliderRow);
         sidebar.removeFromTop(2);
     }
-    // Row 3: Select All & Deselect directly below slider
+    sidebar.removeFromTop(kCardPad);
+    secaoCardBounds_.push_back(juce::Rectangle<int>(4, viewCardTop, kLarguraSidebar - 8, sidebar.getY() - viewCardTop));
+    sidebar.removeFromTop(6);
+
+    // ==========================================
+    // CARD 2: FILTERS
+    // ==========================================
+    int filtersCardTop = sidebar.getY();
+    sidebar.removeFromTop(kCardPad);
+    secaoHeaderBounds_.push_back({"FILTERS", sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
+    sidebar.removeFromTop(kItemGap);
+
+    // Row: Select All & Deselect
     if (btnSelecionarTodos_ && btnLimparSelecao_) {
-        auto selRow = sidebar.removeFromTop(20).reduced(4, 0);
+        auto selRow = sidebar.removeFromTop(20).reduced(6, 0);
         int halfW = (selRow.getWidth() - 4) / 2;
         btnSelecionarTodos_->setBounds(selRow.removeFromLeft(halfW));
         selRow.removeFromLeft(4);
         btnLimparSelecao_->setBounds(selRow);
-        sidebar.removeFromTop(2);
+        sidebar.removeFromTop(4);
     }
-    // HOME (item "Coluna esquerda da aba METADATA", A): era o botão "All
-    // Assets" dentro do card LIBRARY — agora um botão ícone, acima de
-    // "Hide Edited: OFF". Continua sendo categorias_[0]/botoesCategorias_[0]
-    // (mesma seleção/realce/contagem de sempre), só a posição/aparência
-    // mudou.
+
+    // RESET FILTERS button (green button matching Intake APPROVE SELECTED)
     if (!botoesCategorias_.empty()) {
-        // Altura dobrada (22 -> 44, comprimida a 42 no item 1 de hoje pra
-        // abrir espaço pro chip) para o ícone home.png caber acima do
-        // rótulo "All Assets".
-        botoesCategorias_[0]->setBounds(sidebar.removeFromTop(42).reduced(4, 0));
-        sidebar.removeFromTop(2);
+        botoesCategorias_[0]->setBounds(sidebar.removeFromTop(28).reduced(6, 0));
+        sidebar.removeFromTop(4);
     }
-    if (btnOcultarEditados_) {
-        btnOcultarEditados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnOcultarNaoSelecionados_) {
-        btnOcultarNaoSelecionados_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnMostrarRecentes_) {
-        btnMostrarRecentes_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    if (btnIncluirOcultosSelecao_) {
-        btnIncluirOcultosSelecao_->setBounds(sidebar.removeFromTop(20).reduced(4, 0));
-        sidebar.removeFromTop(1);
-    }
-    sidebar.removeFromTop(sectionSpacing);
 
-    // Cada seção da coluna esquerda vira um card com borda própria (item 7):
-    // um respiro fixo no topo/base marca onde o card começa e termina, e o
-    // retângulo resultante (header + conteúdo + respiro) é guardado pra
-    // paint() desenhar o contorno.
-    int cardTop = 0;
-    auto iniciarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        cardTop = sidebar.getY();
-    };
-    auto finalizarCard = [&] {
-        sidebar.removeFromTop(kCardPad);
-        secaoCardBounds_.push_back(juce::Rectangle<int>(4, cardTop - kCardPad, kLarguraSidebar - 8,
-                                                          sidebar.getY() - cardTop + kCardPad));
-    };
+    // Checkbox toggle ON/OFF + Dropdown with the 6 options
+    if (btnFiltroOpcoes_) {
+        btnFiltroOpcoes_->setBounds(sidebar.removeFromTop(24).reduced(6, 0));
+        sidebar.removeFromTop(6);
+    }
 
-    // Card LIBRARY eliminado por completo (item "Coluna esquerda da aba
-    // METADATA", B) — MEDIA TYPE é o primeiro card agora.
-
-    // 2. MEDIA TYPE
-    iniciarCard();
+    // Sub-header: MEDIA TYPE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_media_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
     for (size_t i = static_cast<size_t>(indiceInicioMediaType_); i < botoesCategorias_.size(); ++i) {
@@ -2268,43 +2636,37 @@ void CatalogWorkspaceComponent::resized() {
         botoesCategorias_[i]->setBounds(btnArea);
         sidebar.removeFromTop(kItemGap);
     }
-    finalizarCard();
-    sidebar.removeFromTop(sectionSpacing);
+    sidebar.removeFromTop(4);
 
-    // 2b. CONTENT TYPE (item 4, nova lista) — card próprio logo abaixo de
-    // MEDIA TYPE, um dropdown só, sem lista de botões.
-    iniciarCard();
+    // Sub-header: CONTENT TYPE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_content_type"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
     if (comboContentType_) {
-        comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        comboContentType_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
     if (comboSubject_) {
-        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(4, 0));
+        comboSubject_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
-    finalizarCard();
-    sidebar.removeFromTop(sectionSpacing);
+    if (comboLista_) {
+        comboLista_->setBounds(sidebar.removeFromTop(kBtnH).reduced(6, 0));
+        sidebar.removeFromTop(kItemGap);
+    }
+    sidebar.removeFromTop(4);
 
-    // 3. DATE — o card fecha só depois do grid de anos, no fim da função,
-    // porque essa seção usa todo o espaço vertical que sobrar da sidebar.
-    iniciarCard();
+    // Sub-header: DATE
     secaoHeaderBounds_.push_back({matriz::i18n::t("catwork.secao_date"), sidebar.removeFromTop(kHeaderH).reduced(8, 0)});
     sidebar.removeFromTop(kItemGap);
 
-    // Item 5/6 (nova lista): FROM/TO/CLEAR deram lugar a este toggle —
-    // marcar vários anos nos botões abaixo faz o papel do range antigo.
     if (toggleMultiplosAnos_) {
         toggleMultiplosAnos_->setBounds(sidebar.removeFromTop(22).reduced(6, 0));
         sidebar.removeFromTop(kItemGap);
     }
 
-    // O que sobrar da sidebar (espaço liberado pela remoção do filtro
-    // CONTENT) vai inteiro para a lista de anos, que rola internamente
-    // quando não couber — nenhum ANO fica oculto sem acesso.
     if (anosViewport_) {
         auto anosArea = sidebar;
+        anosArea.removeFromBottom(kCardPad);
         anosViewport_->setBounds(anosArea);
 
         int numAnoRows = (static_cast<int>(botoesAnos_.size()) + 1) / 2;
@@ -2323,12 +2685,8 @@ void CatalogWorkspaceComponent::resized() {
         }
     }
 
-    // Fecha o card DATE no fundo da sidebar — essa seção usa todo o espaço
-    // vertical que sobrar, então o card acompanha (sidebar.getBottom() não
-    // muda com os removeFromTop() acima: cada um empurra o topo, nunca o
-    // fundo).
-    secaoCardBounds_.push_back(juce::Rectangle<int>(4, cardTop - kCardPad, kLarguraSidebar - 8,
-                                                      sidebar.getBottom() - (cardTop - kCardPad)));
+    secaoCardBounds_.push_back(juce::Rectangle<int>(4, filtersCardTop, kLarguraSidebar - 8,
+                                                      sidebar.getBottom() - filtersCardTop - kCardPad));
 
     if (!fichaColapsada_ && fichaPanel_) {
         fichaPanel_->setVisible(true);

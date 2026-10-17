@@ -15,6 +15,8 @@ public:
 
     void recarregar();
     void setSelectedAssets(const std::set<std::string>& assetIds);
+    void definirPastaSelecionada(const std::string& pastaId);
+    std::string pastaSelecionadaId() const { return pastaSelecionadaId_; }
 
     std::function<void(const std::string& itemId)> aoSelecionarItem;
     std::function<void(const std::set<std::string>& assetIds)> aoAbrirNoGrid;
@@ -72,9 +74,23 @@ private:
     int semPastaContagem_ = 0;
     bool semPastaOriginal_ = false;
 
-    void carregarMetricasDoBanco(matriz::db::Database& db);
+    // Space Map sob demanda com Finder-Explorer no card
+    class ItemPastaSpaceMap;
+    std::unique_ptr<ItemPastaSpaceMap> raizExplorador_;
+    juce::TreeView treeExplorador_;
+    juce::TextButton btnCreateSpaceMap_{"Create a Space map for Selected Folder"};
+    std::string pastaSelecionadaId_;
+    std::string pastaEscaneadaId_;
+    bool spaceMapCarregado_ = false;
+    juce::Rectangle<int> cardExplorerBounds_;
+    juce::Rectangle<int> cardTreemapBounds_;
+
     void carregarMetricasCatalogo();
-    void desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area);
+    void reconstruirExplorador();
+    void selecionarPastaNoExplorer(const std::string& pastaId);
+    void executarScanPasta();
+    juce::String obterNomeDaPasta(const std::string& pastaId) const;
+    std::set<std::string> obterItensDaPastaRecursivo(const std::string& pastaRaizId);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EstatisticasComponent)
 };

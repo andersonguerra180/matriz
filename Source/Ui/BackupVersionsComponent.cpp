@@ -358,17 +358,20 @@ void BackupVersionsComponent::renomearVersao(const ProjetoAberto::VersaoResumo& 
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
     auto alert = std::make_shared<juce::AlertWindow>(
-        isPt ? "Renomear Versão de Backup" : "Rename Backup Version",
-        isPt ? "Digite o novo rótulo amigável para esta versão:" : "Enter the new friendly label for this version:",
+        isPt ? juce::String::fromUTF8("Renomear Versão de Backup") : "Rename Backup Version",
+        isPt ? juce::String::fromUTF8("Digite o novo rótulo amigável para esta versão:") : "Enter the new friendly label for this version:",
         juce::AlertWindow::QuestionIcon);
 
-    alert->addTextEditor("rotulo", versao.rotulo, isPt ? "Novo rótulo" : "New label");
+    alert->addTextEditor("rotulo", versao.rotulo, isPt ? juce::String::fromUTF8("Novo rótulo") : "New label");
     // SOURCE: o código (sufixo _S01 / pasta raiz) é editável até o primeiro
     // arquivo dele entrar no MAIN; depois fica fixo.
     const bool editaCodigo = versao.papel == ProjetoAberto::VersaoResumo::Papel::Source && versao.codigoEditavel;
     if (editaCodigo) alert->addTextEditor("codigo", versao.codigo, matriz::i18n::t("backup.codigo_source"));
     alert->addButton(isPt ? "Salvar" : "Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    juce::MessageManager::callAsync([alert] {  // rótulo atual já selecionado
+        if (auto* ed = alert->getTextEditor("rotulo")) { ed->grabKeyboardFocus(); ed->selectAll(); }
+    });
 
     alert->enterModalState(true, juce::ModalCallbackFunction::create([this, versao, alert](int result) {
         if (result != 1) return;

@@ -51,24 +51,19 @@ void BarraNavegacaoComponent::reconstruirTabs() {
     tabs_.clear();
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     if (isCatalog_) {
-        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("1 - Coleções") : "1 - Collections", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("2 - Duplicatas") : "2 - Duplicates", {}, {}, false });
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("3 - Armazenamento") : "3 - Storage", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("4 - Disco") : "4 - Disk", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "5 - Backup", {}, {}, false });
+        tabs_.push_back({ Tab::Catalog, isPt ? juce::String::fromUTF8("Coleções") : "Collections", {}, {}, false, 1 });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     } else {
-        // Ordem pedida: INTAKE, STRUCTURE, DUPLICATES, METADATA, STORAGE, BACKUP.
-        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("1 - Ingestão") : "1 - Intake", {}, {}, false });
-        // Item 4 (nova lista): STORAGE (Analytics) e TREEMAP (Tree) viraram
-        // uma aba só — "Structure" — com sub-abas FOLDER MAP/SPACE MAP
-        // dentro (ver MainComponent::mostrarStructure). Tab::Tree fica sem
-        // entrada própria na barra; Tab::Analytics passa a representar a
-        // aba combinada.
-        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("2 - Estrutura") : "2 - Structure", {}, {}, false });
-        tabs_.push_back({ Tab::Duplicates, isPt ? juce::String::fromUTF8("3 - Duplicatas") : "3 - Duplicates", {}, {}, false });
-        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("4 - Metadados") : "4 - Metadata", {}, {}, false });
-        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("5 - Armazenamento") : "5 - Storage", {}, {}, false });
-        tabs_.push_back({ Tab::Backup, "6 - Backup", {}, {}, false });
+        // As 5 abas principais pedidas: (1) Intake, (2) Structure, (3) Metadata, (4) Storage, (5) Backup.
+        // Duplicates agora vive como sub-aba dentro de Structure (Folder Map, Space Map, Duplicates).
+        tabs_.push_back({ Tab::Intake, isPt ? juce::String::fromUTF8("Ingestão") : "Intake", {}, {}, false, 1 });
+        tabs_.push_back({ Tab::Analytics, isPt ? juce::String::fromUTF8("Estrutura") : "Structure", {}, {}, false, 2 });
+        tabs_.push_back({ Tab::Grid, isPt ? juce::String::fromUTF8("Metadados") : "Metadata", {}, {}, false, 3 });
+        tabs_.push_back({ Tab::Storage, isPt ? juce::String::fromUTF8("Armazenamento") : "Storage", {}, {}, false, 4 });
+        tabs_.push_back({ Tab::Backup, "Backup", {}, {}, false, 5 });
     }
 }
 
@@ -199,7 +194,24 @@ void BarraNavegacaoComponent::paint(juce::Graphics& g) {
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
         }
         
-        g.drawText(tab.label, tab.bounds, juce::Justification::centred, true);
+        // Número da aba no mesmo selo da aba BACKUP (círculo escuro, número branco), seguido do nome;
+        // o conjunto fica centralizado na aba.
+        {
+            const float d = 18.0f, folga = 6.0f;
+            const auto fonteNome = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, ativo ? juce::Font::bold : juce::Font::plain));
+            const float textW = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(fonteNome, tab.label));
+            const float x0 = tb.getCentreX() - (d + folga + textW) * 0.5f;
+            const juce::Rectangle<float> selo(x0, tb.getCentreY() - d * 0.5f, d, d);
+            g.setColour(tk.acento);
+            g.fillEllipse(selo);
+            g.setColour(juce::Colours::white);
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.drawText(juce::String(tab.numero), selo, juce::Justification::centred, false);
+            g.setColour(ativo ? tk.acento : (tab.hover ? tk.textoPrimario : tk.textoSecundario));
+            g.setFont(fonteNome);
+            g.drawText(tab.label, juce::Rectangle<float>(x0 + d + folga, tb.getY(), textW + 2.0f, tb.getHeight()),
+                       juce::Justification::centredLeft, false);
+        }
         
         // Draw chronological workflow arrow (──›) between sequential tabs with prominent accent contrast
         if (!tab.sepBounds.isEmpty()) {
@@ -269,8 +281,8 @@ void BarraNavegacaoComponent::resized() {
     
     for (const auto& tab : tabs_) {
         int textW = juce::GlyphArrangement::getStringWidthInt(fonteTab, tab.label);
-        // Add 26px padding so text never clips, with minimum width of 88px
-        int w = std::max(88, textW + 26);
+        // 26px de folga + selo numérico (18px) e seu espaçamento (6px); mínimo de 88px
+        int w = std::max(88, textW + 26 + 24);
         tabWidths.push_back(w);
         totalTabsW += w;
     }
@@ -356,8 +368,8 @@ juce::String BarraNavegacaoComponent::obterTextoAjuda(Tab tab) const {
             return isPt ? juce::String::fromUTF8("Nesta aba, você pode identificar e revisar arquivos duplicados na coleção, comparando assinaturas e resolvendo redundâncias.")
                         : "On this tab, you can identify and resolve duplicate files across the project, comparing signatures and managing redundancy.";
         case Tab::Analytics:
-            return isPt ? juce::String::fromUTF8("Nesta aba, você visualiza a distribuição de espaço, tipos de mídia, integridade e métricas de armazenamento.")
-                        : "On this tab, you can analyze storage usage, media distribution breakdown, and fixity preservation metrics.";
+            return isPt ? juce::String::fromUTF8("Nesta aba, você navega pela estrutura de pastas (Folder Map), distribuição de espaço (Space Map) e identificação de duplicatas (Duplicates).")
+                        : "On this tab, you can explore the folder structure (Folder Map), space distribution (Space Map), and duplicate management (Duplicates).";
         case Tab::Tree:
             return isPt ? juce::String::fromUTF8("Nesta aba, você navega pela estrutura hierárquica de pastas e volumes do projeto através de um mapa visual.")
                         : "On this tab, you can explore the directory structure and assets distribution through an interactive treemap.";
@@ -387,7 +399,7 @@ juce::String BarraNavegacaoComponent::getTooltip() {
                 case Tab::Intake: return isPt ? juce::String::fromUTF8("Gerenciar arquivos recém-ingeridos aguardando verificação para METADADOS") : "Manage recently ingested files awaiting verification to METADATA";
                 case Tab::Grid: return isPt ? juce::String::fromUTF8("Navegar, filtrar e editar metadados de todos os arquivos") : "Browse, filter, and edit metadata of all assets";
                 case Tab::Duplicates: return isPt ? juce::String::fromUTF8("Escanear e resolver arquivos duplicados no projeto ativo") : "Scan and resolve duplicate files in active project";
-                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Ver capacidade de armazenamento, gráficos e métricas de preservação") : "View storage capacity, charts, and preservation metrics";
+                case Tab::Analytics: return isPt ? juce::String::fromUTF8("Navegar pela estrutura do projeto: Folder Map, Space Map e Duplicates") : "Explore project structure: Folder Map, Space Map, and Duplicates";
                 case Tab::Tree: return isPt ? juce::String::fromUTF8("Explorar estrutura de arquivos através do mapa visual de diretórios") : "Explore assets structure via vault directories treemap";
                 case Tab::Backup: return isPt ? juce::String::fromUTF8("Planejar, verificar conflitos e consolidar pacote de publicação do backup") : "Plan, check conflicts, and consolidate backup publication package";
                 case Tab::Storage: return isPt ? juce::String::fromUTF8("Inspecionar e gerenciar dispositivos físicos de disco e histórico") : "Inspect and manage physical disk devices and history";

@@ -1,6 +1,7 @@
 #include "EstatisticasComponent.h"
 #include "VulnerabilidadesDialog.h"
 #include "Tokens.h"
+#include "ProgressoGlobal.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "../I18n/Strings.h"
 #include <map>
@@ -137,6 +138,57 @@ private:
     EstatisticasComponent& owner_;
 };
 
+class EstatisticasComponent::ItemPastaSpaceMap : public juce::TreeViewItem {
+public:
+    ItemPastaSpaceMap(std::string id, juce::String nome, int itens,
+                      std::function<void(const std::string&)> aoSelecionar)
+        : id_(std::move(id)), nome_(std::move(nome)), itens_(itens),
+          aoSelecionar_(std::move(aoSelecionar)) {}
+
+    juce::String texto() const {
+        return juce::String::fromUTF8("\xf0\x9f\x93\x81 ") + nome_ + (itens_ > 0 ? "  (" + juce::String(itens_) + ")" : juce::String());
+    }
+
+    static juce::Font fonte(bool negrito) {
+        return juce::Font(juce::FontOptions(11.5f, negrito ? juce::Font::bold : juce::Font::plain));
+    }
+
+    int getItemWidth() const override {
+        return juce::GlyphArrangement::getStringWidthInt(fonte(true), texto()) + 20;
+    }
+
+    const std::string& id() const { return id_; }
+    const juce::String& nome() const { return nome_; }
+    bool mightContainSubItems() override { return getNumSubItems() > 0; }
+    juce::String getUniqueName() const override { return id_.empty() ? juce::String("raiz") : juce::String(id_); }
+    int getItemHeight() const override { return 22; }
+
+    void paintItem(juce::Graphics& g, int width, int height) override {
+        const auto& tk = tema();
+        if (isSelected()) {
+            g.setColour(tk.acento.withAlpha(0.25f));
+            g.fillRoundedRectangle(juce::Rectangle<float>(0, 1, width, height - 2), 4.0f);
+            g.setColour(tk.acento);
+            g.drawRoundedRectangle(juce::Rectangle<float>(0, 1, width, height - 2), 4.0f, 1.0f);
+        }
+        g.setColour(isSelected() ? tk.textoPrimario : tk.textoSecundario);
+        g.setFont(fonte(isSelected()));
+        g.drawText(texto(), juce::Rectangle<int>(4, 0, width - 4, height), juce::Justification::centredLeft, false);
+    }
+
+    void itemSelectionChanged(bool selecionado) override {
+        if (selecionado && aoSelecionar_ && !id_.empty()) {
+            aoSelecionar_(id_);
+        }
+    }
+
+private:
+    std::string id_;
+    juce::String nome_;
+    int itens_;
+    std::function<void(const std::string&)> aoSelecionar_;
+};
+
 EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
     : projeto_(projeto) {
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
@@ -148,6 +200,18 @@ EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
         catalogAnalyticsViewport_->setScrollBarsShown(true, false);
         addAndMakeVisible(*catalogAnalyticsViewport_);
     } else {
+        treeExplorador_.setRootItemVisible(false);
+        treeExplorador_.setDefaultOpenness(true);
+        treeExplorador_.setIndentSize(14);
+        treeExplorador_.getViewport()->setScrollBarsShown(true, true);
+        treeExplorador_.setColour(juce::TreeView::backgroundColourId, juce::Colours::transparentBlack);
+        addAndMakeVisible(treeExplorador_);
+
+        addAndMakeVisible(btnCreateSpaceMap_);
+        btnCreateSpaceMap_.setColour(juce::TextButton::buttonColourId, tema().acento);
+        btnCreateSpaceMap_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+        btnCreateSpaceMap_.onClick = [this] { executarScanPasta(); };
+
         addAndMakeVisible(treemapComponent_);
         treemapComponent_.aoSelecionarItem = [this](const std::string& itemId) {
             if (aoSelecionarItem) {
@@ -159,6 +223,7 @@ EstatisticasComponent::EstatisticasComponent(ProjetoAberto& projeto)
                 aoAbrirNoGrid(assetIds);
             }
         };
+        treemapComponent_.limpar();
     }
 
     recarregar();
@@ -172,6 +237,8 @@ void EstatisticasComponent::lookAndFeelChanged() {
     if (catalogAnalyticsContent_) {
         catalogAnalyticsContent_->repaint();
     }
+    btnCreateSpaceMap_.setColour(juce::TextButton::buttonColourId, tema().acento);
+    btnCreateSpaceMap_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     repaint();
 }
 
@@ -189,6 +256,8 @@ void EstatisticasComponent::recarregar() {
             catalogAnalyticsViewport_->setScrollBarsShown(true, false);
             addAndMakeVisible(*catalogAnalyticsViewport_);
         }
+        treeExplorador_.setVisible(false);
+        btnCreateSpaceMap_.setVisible(false);
         treemapComponent_.setVisible(false);
         catalogAnalyticsViewport_->setVisible(true);
         carregarMetricasCatalogo();
@@ -198,17 +267,17 @@ void EstatisticasComponent::recarregar() {
         }
     } else {
         if (catalogAnalyticsViewport_) catalogAnalyticsViewport_->setVisible(false);
+        treeExplorador_.setVisible(true);
+        btnCreateSpaceMap_.setVisible(true);
         treemapComponent_.setVisible(true);
-        matriz::db::Database& db = projeto_.projeto().registro();
-        carregarMetricasDoBanco(db);
-        // Fase 3: mapa do dropdown do Folder Map; contagem = 1 COUNT agregado.
-        semPastaMapaId_ = projeto_.mapaSelecionadoNoFolderMap();
-        semPastaOriginal_ = (semPastaMapaId_ == ProjetoAberto::kMapaOriginal);
-        semPastaMapaNome_ = {};
-        for (auto& m : projeto_.listarFolderMaps())
-            if (m.id == semPastaMapaId_) semPastaMapaNome_ = m.nome;
-        semPastaContagem_ = semPastaOriginal_ ? 0 : projeto_.contarItensSemPasta(semPastaMapaId_);
-        treemapComponent_.recarregarDoBanco(db);
+        reconstruirExplorador();
+        if (spaceMapCarregado_ && !pastaEscaneadaId_.empty()) {
+            auto itens = obterItensDaPastaRecursivo(pastaEscaneadaId_);
+            matriz::db::Database& db = projeto_.projeto().registroLeitura();
+            treemapComponent_.recarregarDoBanco(db, itens);
+        } else {
+            treemapComponent_.limpar();
+        }
     }
     repaint();
 }
@@ -299,64 +368,6 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
     catalogTotalKpi_.backupHealthPercentage = 100.0;
 }
 
-void EstatisticasComponent::carregarMetricasDoBanco(matriz::db::Database& db) {
-    summaryKpi_ = SummaryKpi{};
-    std::map<std::string, uint64_t> formatCounts;
-
-    try {
-        auto stmt = db.prepare(
-            "SELECT i.id, IFNULL(a.caminho_relativo, IFNULL(a.caminho_absoluto_origem, '')), IFNULL(a.tamanho_bytes, 0) "
-            "FROM item i "
-            "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1");
-
-        while (stmt.step()) {
-            std::string pathStr = stmt.columnText(1);
-            juce::int64 sizeBytes = static_cast<juce::int64>(stmt.columnInt(2));
-
-            juce::String ext = "";
-            if (!pathStr.empty()) {
-                int dotIdx = pathStr.rfind('.');
-                if (dotIdx != std::string::npos && dotIdx < pathStr.length() - 1) {
-                    ext = pathStr.substr(dotIdx + 1);
-                    ext = ext.toLowerCase();
-                }
-            }
-
-            std::string format = ext.isEmpty() ? "No Format" : ext.toUpperCase().toStdString();
-            formatCounts[format]++;
-
-            summaryKpi_.totalAssets++;
-            summaryKpi_.totalBytes += sizeBytes;
-        }
-    } catch (...) {}
-
-    std::string topFmt = "Audio";
-    uint64_t topCnt = 0;
-    for (const auto& [fmt, cnt] : formatCounts) {
-        if (cnt > topCnt) {
-            topCnt = cnt;
-            topFmt = fmt;
-        }
-    }
-    summaryKpi_.primaryFormatName = topFmt;
-    summaryKpi_.primaryFormatCount = topCnt;
-    summaryKpi_.vulnerableAssetsCount = summaryKpi_.totalAssets;
-
-    // Calculate Needs Attention (§ B.2)
-    needsAttentionIds_.clear();
-    try {
-        auto stmtRev = db.prepare(
-            "SELECT id FROM item "
-            "WHERE (ano IS NULL OR ano = 0) "
-            "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-            "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
-        while (stmtRev.step()) {
-            needsAttentionIds_.insert(stmtRev.columnText(0));
-        }
-        summaryKpi_.needsAttentionCount = static_cast<uint64_t>(needsAttentionIds_.size());
-    } catch (...) {}
-}
-
 void EstatisticasComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
@@ -370,83 +381,35 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
 
     auto area = getLocalBounds().reduced(16, 12);
 
-    // Section Header Title (§ A.3 - Treemap Explorer)
+    // Section Header Title
     g.setColour(tk.textoPrimario);
     g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-    g.drawText(i18n::t("analytics.titulo"), area.removeFromTop(22), juce::Justification::left);
-    area.removeFromTop(8);
+    g.drawText(i18n::t("analytics.titulo"), area.removeFromTop(24), juce::Justification::centredLeft);
 
-    // Top 5 KPI Cards Area (Top 70px)
-    auto topKpiArea = area.removeFromTop(70);
-    desenharTopKpiCards(g, topKpiArea);
-}
-
-void EstatisticasComponent::desenharTopKpiCards(juce::Graphics& g, const juce::Rectangle<int>& area) {
-    const auto& tk = tema();
-    int cardW = (area.getWidth() - 60) / 6;
-    int cardH = area.getHeight();
-
-    auto drawCard = [&](int x, const juce::String& title, const juce::String& val, const juce::String& subtitle, juce::Colour accentColor) -> juce::Rectangle<int> {
-        juce::Rectangle<int> r(x, area.getY(), cardW, cardH);
+    // Card do Finder-Explorer à esquerda
+    if (!cardExplorerBounds_.isEmpty()) {
         g.setColour(tk.painel);
-        g.fillRoundedRectangle(r.toFloat(), 6.0f);
-
-        // Accent strip on left
-        auto strip = r.removeFromLeft(4);
-        g.setColour(accentColor);
-        g.fillRoundedRectangle(strip.toFloat(), 3.0f);
-
+        g.fillRoundedRectangle(cardExplorerBounds_.toFloat(), tk.raioMedio);
         g.setColour(tk.borda);
-        g.drawRoundedRectangle(r.toFloat(), 6.0f, 1.0f);
+        g.drawRoundedRectangle(cardExplorerBounds_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
 
-        auto inner = r.reduced(10, 6);
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawText(title, inner.removeFromTop(12), juce::Justification::left);
-
+        // Cabeçalho do Card FOLDERS
+        auto headerExp = cardExplorerBounds_.reduced(12, 10).removeFromTop(22);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
-        g.drawText(val, inner.removeFromTop(20), juce::Justification::left);
+        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.drawText("FOLDERS", headerExp, juce::Justification::centredLeft);
+    }
 
-        g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
-        g.drawText(subtitle, inner, juce::Justification::left);
-
-        return juce::Rectangle<int>(x, area.getY(), cardW, cardH);
-    };
-
-    int x = area.getX();
-    drawCard(x, i18n::t("analytics.total_assets"), juce::String(summaryKpi_.totalAssets), i18n::t("analytics.total_assets_sub"), juce::Colour(0xff3b82f6)); x += cardW + 12;
-    drawCard(x, i18n::t("analytics.storage_size"), formatSizeHuman(summaryKpi_.totalBytes), i18n::t("analytics.storage_size_sub"), juce::Colour(0xff10b981)); x += cardW + 12;
-    drawCard(x, i18n::t("analytics.primary_format"), juce::String(summaryKpi_.primaryFormatName), juce::String(summaryKpi_.primaryFormatCount) + " " + i18n::t("analytics.ativos"), juce::Colour(0xfff59e0b)); x += cardW + 12;
-    needsAttentionCardBounds_ = drawCard(x, i18n::t("analytics.needs_attention"), juce::String(summaryKpi_.needsAttentionCount), i18n::t("analytics.needs_attention_sub"), juce::Colour(0xfff97316)); x += cardW + 12;
-    backupHealthCardBounds_ = drawCard(x, i18n::t("analytics.backup_health"), juce::String(summaryKpi_.backupHealthPercentage, 0) + "%", juce::String(summaryKpi_.vulnerableAssetsCount) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444)); x += cardW + 12;
-    // Fase 3: SEM PASTA — número do mapa selecionado no Folder Map. Com o
-    // ORIGINAL o card fica neutro (ORIGINAL não tem itens sem pasta).
-    juce::String valorSemPasta = semPastaOriginal_
-        ? juce::String::fromUTF8("\xe2\x80\x94")
-        : i18n::t("analytics.sem_pasta_valor").replace("{n}", juce::String(semPastaContagem_));
-    juce::String subSemPasta = semPastaOriginal_ ? i18n::t("analytics.sem_pasta_original") : semPastaMapaNome_;
-    semPastaCardBounds_ = drawCard(x, i18n::t("analytics.sem_pasta"), valorSemPasta, subSemPasta,
-                                   semPastaOriginal_ ? juce::Colour(0xff6b7280) : juce::Colour(0xff6366f1));
+    // Card do Mosaico (Treemap) à direita
+    if (!cardTreemapBounds_.isEmpty()) {
+        g.setColour(tk.painel);
+        g.fillRoundedRectangle(cardTreemapBounds_.toFloat(), tk.raioMedio);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(cardTreemapBounds_.toFloat().reduced(0.5f), tk.raioMedio, 1.0f);
+    }
 }
 
-void EstatisticasComponent::mouseDown(const juce::MouseEvent& e) {
-    if (needsAttentionCardBounds_.contains(e.getPosition())) {
-        if (aoClicarNeedsAttention) {
-            aoClicarNeedsAttention(needsAttentionIds_);
-        } else if (aoAbrirNoGrid) {
-            aoAbrirNoGrid(needsAttentionIds_);
-        }
-    } else if (semPastaCardBounds_.contains(e.getPosition())) {
-        if (!semPastaOriginal_ && aoAbrirSemPasta) aoAbrirSemPasta(projeto_.itensSemPasta(semPastaMapaId_));
-    } else if (backupHealthCardBounds_.contains(e.getPosition())) {
-        VulnerabilidadesDialog::exibirModal(projeto_, this, [this](const std::set<std::string>& ids) {
-            if (aoAbrirNoGrid) {
-                aoAbrirNoGrid(ids);
-            }
-        });
-    }
+void EstatisticasComponent::mouseDown(const juce::MouseEvent&) {
 }
 
 void EstatisticasComponent::resized() {
@@ -461,13 +424,170 @@ void EstatisticasComponent::resized() {
         }
     } else {
         auto area = getLocalBounds().reduced(16, 12);
-        area.removeFromTop(22); // Header
+        area.removeFromTop(24); // Header
         area.removeFromTop(8);  // Gap
-        area.removeFromTop(70); // KPI cards
-        area.removeFromTop(12); // Gap
 
-        treemapComponent_.setBounds(area);
+        // Card do Explorer à esquerda (largura 270px)
+        const int explorerW = 270;
+        cardExplorerBounds_ = area.removeFromLeft(explorerW);
+        area.removeFromLeft(12); // Gap
+
+        auto innerExp = cardExplorerBounds_.reduced(12, 12);
+        innerExp.removeFromTop(24); // Rótulo "FOLDERS"
+        innerExp.removeFromTop(6);
+
+        // Botão no rodapé dentro do próprio card
+        btnCreateSpaceMap_.setBounds(innerExp.removeFromBottom(36));
+        innerExp.removeFromBottom(8);
+
+        treeExplorador_.setBounds(innerExp);
+
+        // Card do Treemap à direita
+        cardTreemapBounds_ = area;
+        treemapComponent_.setBounds(cardTreemapBounds_.reduced(2));
     }
+}
+
+void EstatisticasComponent::reconstruirExplorador() {
+    auto arvore = projeto_.arvoreAcervo(projeto_.mapaInicialDoFolderMap());
+
+    std::function<std::unique_ptr<ItemPastaSpaceMap>(const ProjetoAberto::NoArvore&)> montar =
+        [&](const ProjetoAberto::NoArvore& no) -> std::unique_ptr<ItemPastaSpaceMap> {
+            auto item = std::make_unique<ItemPastaSpaceMap>(
+                no.id, no.nome, static_cast<int>(no.itemIds.size()),
+                [this](const std::string& pId) {
+                    pastaSelecionadaId_ = pId;
+                });
+            for (const auto& filho : no.filhos) {
+                item->addSubItem(montar(filho).release());
+            }
+            return item;
+        };
+
+    treeExplorador_.setRootItem(nullptr);
+    raizExplorador_ = std::make_unique<ItemPastaSpaceMap>(std::string(), "Root", 0, nullptr);
+    for (const auto& filho : arvore.filhos) {
+        raizExplorador_->addSubItem(montar(filho).release());
+    }
+    treeExplorador_.setRootItem(raizExplorador_.get());
+
+    if (!pastaSelecionadaId_.empty()) {
+        selecionarPastaNoExplorer(pastaSelecionadaId_);
+    } else if (raizExplorador_->getNumSubItems() > 0) {
+        if (auto* prim = raizExplorador_->getSubItem(0)) {
+            prim->setSelected(true, true);
+        }
+    }
+}
+
+void EstatisticasComponent::selecionarPastaNoExplorer(const std::string& pastaId) {
+    if (pastaId.empty() || !raizExplorador_) return;
+
+    std::function<bool(juce::TreeViewItem*)> procurar = [&](juce::TreeViewItem* item) -> bool {
+        if (auto* p = dynamic_cast<ItemPastaSpaceMap*>(item)) {
+            if (p->id() == pastaId) {
+                juce::TreeViewItem* pai = p->getParentItem();
+                while (pai != nullptr) {
+                    pai->setOpen(true);
+                    pai = pai->getParentItem();
+                }
+                p->setSelected(true, true);
+                treeExplorador_.scrollToKeepItemVisible(p);
+                return true;
+            }
+        }
+        for (int i = 0; i < item->getNumSubItems(); ++i) {
+            if (procurar(item->getSubItem(i))) return true;
+        }
+        return false;
+    };
+
+    procurar(raizExplorador_.get());
+}
+
+void EstatisticasComponent::definirPastaSelecionada(const std::string& pastaId) {
+    if (pastaId.empty()) return;
+    pastaSelecionadaId_ = pastaId;
+    selecionarPastaNoExplorer(pastaId);
+}
+
+juce::String EstatisticasComponent::obterNomeDaPasta(const std::string& pastaId) const {
+    if (pastaId.empty()) return {};
+    try {
+        matriz::db::Database& db = projeto_.projeto().registroLeitura();
+        auto stmt = db.prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
+        stmt.bind(1, matriz::db::Value::of(pastaId));
+        if (stmt.step()) return juce::String::fromUTF8(stmt.columnText(0).c_str());
+    } catch (...) {}
+    return {};
+}
+
+void EstatisticasComponent::executarScanPasta() {
+    if (pastaSelecionadaId_.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::AlertWindow::InfoIcon,
+            "Space Map",
+            "Please select a folder in the explorer to create the Space map.");
+        return;
+    }
+
+    juce::String nomePasta = obterNomeDaPasta(pastaSelecionadaId_);
+    if (nomePasta.isEmpty()) nomePasta = "Selected Folder";
+
+    ProgressoGlobal::obterInstancia().iniciarTarefa(
+        "spacemap_scan",
+        "Space Map",
+        100,
+        nullptr,
+        "Scanning folder " + nomePasta + "...");
+
+    juce::Component::SafePointer<EstatisticasComponent> seguro(this);
+    juce::Timer::callAfterDelay(150, [seguro] {
+        if (seguro == nullptr) return;
+        auto itens = seguro->obterItensDaPastaRecursivo(seguro->pastaSelecionadaId_);
+        matriz::db::Database& db = seguro->projeto_.projeto().registroLeitura();
+        seguro->treemapComponent_.recarregarDoBanco(db, itens);
+        seguro->pastaEscaneadaId_ = seguro->pastaSelecionadaId_;
+        seguro->spaceMapCarregado_ = true;
+        ProgressoGlobal::obterInstancia().concluirTarefa("spacemap_scan");
+        seguro->repaint();
+    });
+}
+
+std::set<std::string> EstatisticasComponent::obterItensDaPastaRecursivo(const std::string& pastaRaizId) {
+    std::set<std::string> itens;
+    if (pastaRaizId.empty()) return itens;
+
+    std::set<std::string> pastasParaVisitar = { pastaRaizId };
+    std::set<std::string> pastasVisitadas;
+    matriz::db::Database& db = projeto_.projeto().registroLeitura();
+
+    while (!pastasParaVisitar.empty()) {
+        auto it = pastasParaVisitar.begin();
+        std::string pId = *it;
+        pastasParaVisitar.erase(it);
+        pastasVisitadas.insert(pId);
+
+        try {
+            auto stmtItens = db.prepare("SELECT item_id FROM acervo_item_pasta WHERE pasta_id = ?");
+            stmtItens.bind(1, matriz::db::Value::of(pId));
+            while (stmtItens.step()) {
+                itens.insert(stmtItens.columnText(0));
+            }
+        } catch (...) {}
+
+        try {
+            auto stmtSub = db.prepare("SELECT id FROM acervo_pasta WHERE pasta_pai_id = ?");
+            stmtSub.bind(1, matriz::db::Value::of(pId));
+            while (stmtSub.step()) {
+                std::string subId = stmtSub.columnText(0);
+                if (pastasVisitadas.count(subId) == 0) {
+                    pastasParaVisitar.insert(subId);
+                }
+            }
+        } catch (...) {}
+    }
+    return itens;
 }
 
 } // namespace matriz::ui

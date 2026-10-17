@@ -3,6 +3,7 @@
 #include <sqlite3.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -157,6 +158,13 @@ public:
     bool rastrearSujo() const { return rastrearSujo_; }
 
     sqlite3* handle() const { return db_; }
+
+    // Diagnóstico (item 19-D): qualquer execução de SQL (step/exec) que demore mais que `limiarMs`
+    // numa thread para a qual `estaNaThreadAlvo()` devolva true (a message thread) é reportada em
+    // `aoLenta(sql, ms)`. Só log; não muda comportamento. Definir uma vez, no início do processo.
+    static void definirObservadorConsultaLenta(std::function<bool()> estaNaThreadAlvo,
+                                               std::function<void(const std::string&, long long)> aoLenta,
+                                               long long limiarMs = 100);
 
     // Esta conexão está em transação aberta POR ESTA thread (a que reteve a
     // trava)? Quem lê pela conexão de leitura usa isto pra voltar à de escrita.

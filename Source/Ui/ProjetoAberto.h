@@ -67,6 +67,7 @@ struct ItemResumo {
     // CONTENT = "Hidden": fora da grade do Catalog, salvo se CONTENT TYPE = Hidden estiver selecionado.
     bool oculto() const { return collectionType.has_value() && *collectionType == "Hidden"; }
     std::optional<std::string> subject;  // item.dc_subject (pode ter vários, separados por , ou ;)
+    std::optional<std::string> lista;    // item.lista — nome de lista/seleção dentro do SUBJECT (um valor só)
 
     // Extensão (sem ponto, minúscula) do arquivo principal — usada pro
     // ícone de placeholder por categoria enquanto não há miniatura real
@@ -91,7 +92,10 @@ struct ItemResumo {
     bool marcadoPublicacao = false;
     bool marcadoZip = false;
     bool marcadoPrint = false;
+    bool impresso = false;        // já saiu em alguma sessão de impressão (SEND TO PRINT)
     bool marcadoWatermark = false;
+    bool marcadoBounce = false;   // tag B (Bounce List): lista persistente de arquivos marcados para exportar
+    bool marcadoRejeitado = false; // tag R no grid (METADATA): só marca; apagar é decisão do operador (SHOW REJECTED)
     bool metadadosEditados = false;
     bool marcadoRevisado = false; // atalho manual "E" (Tag as Edited) — só o operador liga/desliga
     bool pastaAtiva = true;
@@ -122,6 +126,7 @@ public:
 class ProjetoAberto {
 public:
     explicit ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto);
+    ~ProjetoAberto();  // espera a fila de gravação das marcas esvaziar (nada fica sem gravar)
 
     matriz::model::Project& projeto() { jassert(projeto_ != nullptr); return *projeto_; }
 
@@ -132,7 +137,11 @@ public:
                                                         // nullptr = verifica todo item em disco (coleção
                                                         // que não é a aberta); senão só re-verifica os ids
                                                         // do cache (podem ter voltado online via relink).
-                                                        const std::set<std::string>* itensOffline = nullptr);
+                                                        const std::set<std::string>* itensOffline = nullptr,
+                                                        // Progresso (opcional, chamado da thread que lista): feitos < 0 = a consulta
+                                                        // SQL está rodando (um único step, sem contagem possível); feitos >= 0 = linhas
+                                                        // já montadas, de `total`.
+                                                        const std::function<void(int feitos, int total)>& aoProgredir = nullptr);
     std::vector<ItemResumo> listarItensDaColecao(const juce::File& pastaColecao) const;
 
     // Duplicates — "sanitizar": o operador escolheu `manterId`; `descartarId`
@@ -228,7 +237,7 @@ public:
     // MAIN — ainda dependem do SOURCE. 0 = SOURCE pode ser desconectado.
     int arquivosQueDependemDoSource();
 
-    std::vector<ItemResumo> listarItens() const;
+    std::vector<ItemResumo> listarItens(const std::function<void(int feitos, int total)>& aoProgredir = nullptr) const;
     // COUNT(*) no banco — nunca listarItens() (que confere no disco se cada
     // arquivo existe: com a origem no Google Drive travado, a abertura do
     // projeto congelava na message thread).
@@ -313,7 +322,7 @@ public:
     // opcao_livre (marca, formulação, ...), não só marca de fita.
     std::vector<std::string> valoresUsadosNoCampo(const std::string& campoId) const;
 
-    // --- Undo (up to 25 levels) ---
+    // --- Undo (up to 100 levels) ---
     struct UndoEntry {
         std::string descricao;
         std::vector<std::function<void()>> acoesReversas;
@@ -321,6 +330,11 @@ public:
     void registrarUndo(const std::string& descricao, std::function<void()> acaoReversa);
     void iniciarGrupoUndo(const std::string& descricao = {});
     void finalizarGrupoUndo();
+    // Undo do Folder Map (chamar ANTES de mudar o banco). As cópias ficam em tabelas TEMP da conexão do registro.
+    //  - Visual: posição, tamanho (escala_no), ativo, cor das pastas do mapa + fator dos cartões.
+    //  - Snapshot: pastas + vínculos do mapa inteiro (e, com incluirLinhaMapa, a linha do folder_map: mapa apagado).
+    void registrarUndoVisualMapa(const std::string& descricao, const std::string& mapaId);
+    void registrarUndoSnapshotMapa(const std::string& descricao, const std::string& mapaId, bool incluirLinhaMapa = false);
     bool desfazer();
     bool podeDesfazer() const { return !pilhaUndo_.empty(); }
     std::string descricaoUndoAtual() const;
@@ -371,6 +385,11 @@ public:
     // Caminho absoluto da miniatura principal do item, se o índice já
     // processou uma (Etapa 4 escreve isso; pode não existir ainda).
     std::optional<juce::String> caminhoMiniaturaPrincipal(const std::string& itemId) const;
+
+    // Imagens do próprio catálogo (arquivo master com extensão de imagem) cujo código, título ou nome do arquivo contém
+    // `termo` (vazio = as mais recentes). Alimenta o seletor "capa a partir do catálogo".
+    struct ImagemCatalogo { std::string id, codigo, titulo; };
+    std::vector<ImagemCatalogo> buscarImagensDoCatalogo(const std::string& termo, int limite = 200) const;
 
     void gerarMiniaturasFaltantes();
 
@@ -487,6 +506,7 @@ public:
         juce::String corCustomizadaHex; // FOLDER COLOR (item 12) — "" = sem cor
         // Auto-organização: CSV de níveis (pasta com regra), "@auto" (subpasta gerada) ou "".
         juce::String regraOrganizacao;
+        bool proposta = false;  // pasta de uma árvore proposta (ainda não aceita) — ver PropostaPasta
         std::vector<NoArvore> filhos;
         std::set<std::string> itemIds;
         std::set<std::string> itemIdsDiretos;
@@ -585,6 +605,16 @@ public:
     bool pastaTemArquivosNoMain(const std::string& pastaId) const;
 
     // ------------------------------------------------------------------
+    // LIXEIRA (_trash) DO FOLDER MAP
+    // ------------------------------------------------------------------
+    std::string obterOuCriarPastaTrash(const std::string& mapaId);
+    bool ehPastaTrash(const std::string& pastaId) const;
+    void moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem = "");
+    void extrairItensParaCanvas(const std::vector<std::string>& idsPedidos, const std::string& mapaId);
+    void restaurarItensDaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId);
+    std::vector<std::string> itensNaPastaTrash(const std::string& mapaId) const;
+
+    // ------------------------------------------------------------------
     // AUTO-ORGANIZAÇÃO por pasta (Folder Map). A pasta guarda uma regra (CSV de
     // blocos YEAR, MEDIA TYPE, FILE TYPE, SOURCE MEDIUM, CREATOR, CONTENT,
     // SUBJECT) e distribui os itens soltos nela — e os das subpastas AUTO dela —
@@ -620,6 +650,39 @@ public:
     // Passada automática: pastas com regra e itens diretos (checagem barata). Devolve
     // quantas pastas foram organizadas.
     int organizarItensSoltosDasPastasComRegra(const std::string& mapaId);
+
+    // ---- Pasta ingerida inteira: árvore PROPOSTA no Folder Map editado ----
+    // Os arquivos continuam em SEM PASTA até o usuário decidir: USAR a árvore, MESCLAR numa pasta
+    // existente (com gestão de conflitos) ou DESCARTAR (os arquivos ficam soltos).
+    struct PropostaPasta { std::string raizId; juce::String nome; int arquivos = 0; };
+    struct PastaDoMapa { std::string id; juce::String caminho; bool mesmoNome = false; };
+    struct LinhaMescla {
+        std::string propostaId;      // pasta da proposta em conflito
+        juce::String caminhoProposta;
+        std::string alvoId;          // pasta existente com o mesmo nome
+        juce::String caminhoAlvo;
+        int arquivos = 0;
+        bool mesclar = true;         // false = mantém como pasta separada
+    };
+    void registrarPastasIngeridas(const std::vector<std::string>& caminhos);
+    int gerarPropostasDeNovasPastas(const std::string& mapaId);
+    std::vector<PropostaPasta> listarPropostas(const std::string& mapaId) const;
+    void usarArvoreProposta(const std::string& raizId);
+    void descartarProposta(const std::string& raizId);
+    // Pastas existentes (não propostas) do mapa da proposta, as de mesmo nome da raiz primeiro.
+    std::vector<PastaDoMapa> destinosDeMescla(const std::string& raizId) const;
+    std::vector<LinhaMescla> planoDeMescla(const std::string& raizId, const std::string& alvoId,
+                                           const std::map<std::string, bool>& decisoes) const;
+    // alvoId vazio = usar a árvore como está. Devolve nº de arquivos colocados; -1 em erro.
+    int mesclarProposta(const std::string& raizId, const std::string& alvoId, const std::map<std::string, bool>& decisoes);
+    // MERGE de duas pastas JÁ existentes do mesmo mapa (menu do canvas/explorer): a origem some; os itens e as
+    // subpastas dela vão pro alvo. Mesmo plano de conflitos da mescla de proposta (subpasta de mesmo nome:
+    // mescla ou mantém separada, por decisão). false = bloqueado (ORIGINAL, trava do MAIN, alvo dentro da origem).
+    bool podeMesclarPastas(const std::string& origemId, const std::string& alvoId) const;
+    std::vector<LinhaMescla> planoDeMesclaPastas(const std::string& origemId, const std::string& alvoId,
+                                                 const std::map<std::string, bool>& decisoes) const;
+    // Devolve o nº de itens movidos; -1 em erro/bloqueio.
+    int mesclarPastas(const std::string& origemId, const std::string& alvoId, const std::map<std::string, bool>& decisoes);
     // Fase 2 — ID do folder map gravado em projeto.backup_config_main.mapa_id
     // ("" = MAIN ainda não existe, ou foi criado por regra/estrutura original).
     // Só esse mapa fica sujeito às travas do MAIN e não pode ser apagado.
@@ -646,7 +709,22 @@ public:
     bool reavaliarSomenteLeitura();
     // Aviso único (com trava de tempo) usado por todo guarda de escrita.
     static void avisarSomenteLeitura();
+    // MAIN EDIT MODE = REBUILD DO MAIN: o MAIN antigo (papel FONTE_REBUILD) vira só leitura, o
+    // projeto fica sem MAIN e o próximo Make Backup gera um novo do zero. Persiste no banco
+    // (papel do destino) até o rebuild terminar. editandoMain() == "rebuild em andamento".
     bool editandoMain() const { return editandoMain_; }
+    bool emRebuild() const { return editandoMain_; }
+    struct FonteRebuild {
+        std::string destinoId;
+        juce::File raiz;  // raiz do MAIN antigo (contém Media/ e Project/)
+    };
+    std::optional<FonteRebuild> fonteRebuild() const;
+    // Pasta escolhida para o MAIN novo ("" = ainda não escolhida); persiste pra retomar.
+    juce::File rebuildDestino() const;
+    void definirRebuildDestino(const juce::File& raiz);
+    // Fim bem-sucedido: o destino novo vira ORIGINAL, o antigo sai da lista, os clones antigos
+    // ficam desatualizados e o modo termina. Devolve "" ou a mensagem de erro.
+    juce::String concluirRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId);
     // MAIN existe e é este projeto (não CLONE) — condição pra oferecer o modo.
     bool podeEditarMain() const;
     // Só compara o texto com o nome atual; false = barreira não passou.
@@ -733,6 +811,24 @@ public:
     // pastas (N:N) ao mesmo tempo.
     void adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId);
 
+    // --- LIST a partir do Folder Map ---------------------------------------------------------------
+    // Nomes das pastas do item, da mais próxima para cima: [0] = pasta do item, [1] = a pasta pai, ...
+    // Usa o mapa do MAIN (a estrutura que o usuário curou e que vira disco), senão o mapa ativo, senão o
+    // primeiro que tiver o item. Vazio = o item não está em nenhuma pasta.
+    std::vector<std::string> cadeiaDePastasDoItem(const std::string& itemId) const;
+    struct ListaPorPastaPrevia {
+        std::vector<std::pair<std::string, std::string>> itemEValor;  // o que seria gravado
+        int jaPreenchidos = 0;  // pulados: já tinham LIST e só-vazios estava ligado
+        int jaIguais = 0;       // já tinham exatamente esse valor
+        int semPasta = 0;       // item fora de qualquer pasta
+        int semNivel = 0;       // a hierarquia do item não chega nesse nível
+        std::set<std::string> valoresDistintos;
+    };
+    // nivel 0 = pasta imediata do item, 1 = a de cima, ... Não grava nada.
+    ListaPorPastaPrevia previaListaPelasPastas(const std::vector<std::string>& itemIds, int nivel, bool soVazios) const;
+    // Grava (item, valor) como LIST: uma transação por valor distinto e UM Undo para o lote todo.
+    void aplicarListaPelasPastas(const std::vector<std::pair<std::string, std::string>>& itemEValor);
+
     // Reencontra um item pelo código de acervo (usado ao importar um preset
     // de pastas de OUTRO projeto, onde o item_id original não existe aqui).
     // nullopt se não achar nenhum item com esse código.
@@ -806,6 +902,14 @@ public:
     std::string criarNest(const std::vector<std::string>& itemIds);
     // Un-nest: desfaz os nests que os itens integram (todos os arquivos voltam ao grid como itens normais).
     void desfazerNest(const std::vector<std::string>& itemIds);
+    // Linha no log do projeto (log.md), escrita em background na fila serial (nada de disco na message thread).
+    void registrarNoLog(const juce::String& titulo, const juce::StringArray& linhas);
+    // Tira arquivos de seus nests (voltam ao grid como itens normais). Se a capa sai, o próximo (por data) vira capa;
+    // um nest que fica com 1 arquivo se desfaz. Nada toca em arquivo algum. Com Undo.
+    void extrairDoNest(const std::vector<std::string>& itemIds);
+    // Remove do PROJETO (nunca do disco) os arquivos escolhidos do nest, com a mesma regra de capa/dissolução
+    // (a marcação de EXPORT da capa apagada passa para a nova capa). Registra no log; um Undo desfaz tudo.
+    void apagarDoNest(const std::vector<std::string>& itemIds);
     // A capa passa a ser `itemId`; as marcas P/K/H/W da capa antiga acompanham (EXPORT leva só a capa).
     void definirCapaDoNest(const std::string& nestId, const std::string& itemId);
     std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)
@@ -820,10 +924,19 @@ public:
 
     // INTAKE — R (Reject). Marcas R persistidas no projeto (intake_marca_r) e lista de rejeitados por
     // SHA-256 (intake_rejeitados). Só itens em quarentena contam. Nada aqui toca em arquivo algum.
-    // Os itens com R (todos os da quarentena, visíveis ou não sob o filtro atual).
+    // Os itens com R (todos os da quarentena, visíveis ou não sob o filtro atual). Cópia do conjunto
+    // EM MEMÓRIA — nunca consulta o banco (seguro na message thread).
     std::set<std::string> idsMarcadosR() const;
-    // Como P/W/K: se todos já têm R, tira o R de todos; senão marca todos. Uma transação só.
+    // Recarrega o conjunto em memória a partir do banco. SÓ para thread de fundo (faz a consulta);
+    // descarta o resultado se houve alteração/gravação pendente durante a leitura.
+    void carregarMarcasRDoBanco();
+    // Bloqueia até a fila de gravação das marcas esvaziar (destrutor, self-tests).
+    void aguardarGravacoesMarcas();
+    // Como P/W/K: se todos já têm R, tira o R de todos; senão marca todos. A memória muda na hora; a
+    // gravação vai para uma fila serial em background, numa transação. Falhou: reverte a memória e avisa.
     void alternarMarcaR(const std::vector<std::string>& itemIds);
+    // Chamado na message thread quando uma gravação de marca R falhou e a memória foi revertida.
+    std::function<void()> aoMarcasRRevertidas;
     // Rejeita os itens com R: guarda o SHA-256 de cada um na lista de rejeitados e os tira do projeto
     // (removerItensDoProjeto, com Undo). Devolve quantos saíram.
     int rejeitarMarcadosR();
@@ -864,6 +977,8 @@ public:
     int gravarOutraMetadataEmLote(const std::map<std::string, std::string>& textoPorItem);
     // Expira quando este ProjetoAberto é destruído (callbacks assíncronos).
     std::weak_ptr<bool> tokenVida() const { return vivo_; }
+    std::weak_ptr<bool> tokenVivo() const { return vivo_; }
+    void executarProvaEmFundo(std::function<void()> job) { poolProva_.addJob(std::move(job)); }
 
     // Outros itens do projeto cujo conteúdo é idêntico (mesmo SHA-256 de
     // algum arquivo). Inclui o próprio item quando há duplicata, pra a grade
@@ -1040,12 +1155,15 @@ public:
     const std::set<std::string>& obterItensSelecionadosNoGrid() const { return selecionadosNoGrid_; }
     void definirItensSelecionadosNoGrid(const std::set<std::string>& selecionados) { selecionadosNoGrid_ = selecionados; }
 
-    // Tipos de marcação volátil de sessão (em memória, sem persistência em banco)
+    // Tipos de marcação (HTML/ZIP/Print/Watermark). Os conjuntos em memória são cache; a fonte de
+    // verdade é item_marcacao no registro (gravada em background, uma transação por operação).
     enum class TipoMarcacao {
         Html,
         Zip,
         Print,
-        Watermark
+        Watermark,
+        Bounce,  // tag B: Bounce List (EXPORT > Bounce List). Interna: nunca vai pra XMP/sidecar/EXPORT METADATA
+        Rejeitado  // tag R no grid (METADATA): só marca, como o R do INTAKE (que é outro conjunto, marcadosR_)
     };
 
     // Operações sobre conjuntos de marcação de sessão
@@ -1057,6 +1175,26 @@ public:
     void limparTodasMarcacoes();
     std::vector<std::string> idsMarcados(TipoMarcacao tipo) const;
     void transferirMarcacoes(const std::string& oldItemId, const std::string& newItemId);
+    // ---- Histórico de impressão (SEND TO PRINT) ----
+    struct SessaoPrintRef {
+        std::string id;
+        juce::String nome;
+        juce::String criadoEm;  // ISO-8601 UTC
+    };
+    // Registra uma sessão (só chamar com a exportação CONCLUÍDA): memória na hora, banco + ProjectLog em
+    // background (uma transação). `itemIds` = os itens que de fato saíram.
+    void registrarSessaoPrint(const juce::String& nome, const std::vector<std::string>& itemIds);
+    // "Printed: Nome (2012-12-25 14:30); Outro (...)" — data no fuso local. Para tooltips e avisos.
+    static juce::String descreverSessoesPrint(const std::vector<SessaoPrintRef>& sessoes);
+    bool itemImpresso(const std::string& itemId) const;                       // memória, sem banco
+    std::vector<SessaoPrintRef> sessoesPrintDoItem(const std::string& itemId) const;  // memória, sem banco
+    std::set<std::string> idsImpressos() const;                               // cópia, memória
+    // Recarrega do banco (SÓ thread de fundo; a memória manda se houve gravação durante a leitura).
+    void carregarSessoesPrintDoBanco();
+
+    // Recarrega os 4 conjuntos a partir do banco. SÓ para thread de fundo; descarta o resultado se
+    // houve alteração/gravação pendente durante a leitura (a memória manda).
+    void carregarMarcacoesDoBanco();
 
     // Aliases funcionais
     void alternar(TipoMarcacao tipo, const std::vector<std::string>& itemIds) { alternarMarcacao(tipo, itemIds); }
@@ -1120,6 +1258,12 @@ private:
     // Ver definirMapaAtivo()/mapaAtivoPadrao() acima.
     std::string mapaAtivoSelecionado_;
 
+    enum class OpMarcacao { Inserir, Remover, LimparTipo, LimparTodas, Transferir };
+    // Grava a operação em background (fila serial poolMarcas_), numa transação. No-op em somente-leitura.
+    void enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo, std::vector<std::string> ids,
+                                    std::string novoId = {});
+    std::map<std::string, std::vector<SessaoPrintRef>> sessoesPrintPorItem_;  // sob marcacoesMutex_
+    std::uint64_t versaoMarcacoes_ = 0;  // sob marcacoesMutex_; sobe a cada alteração em memória
     std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo);
     const std::set<std::string>& obterConjuntoMarcacao(TipoMarcacao tipo) const;
 
@@ -1137,6 +1281,12 @@ private:
     std::set<std::string> marcadosZip_;
     std::set<std::string> marcadosPrint_;
     std::set<std::string> marcadosWatermark_;
+    std::set<std::string> marcadosBounce_;
+    std::set<std::string> marcadosRejeitado_;
+    // Marcas R do INTAKE (espelho de intake_marca_r só dos itens em quarentena); também sob marcacoesMutex_.
+    std::set<std::string> marcadosR_;
+    std::uint64_t versaoMarcasR_ = 0;          // sobe a cada alteração em memória
+    int gravacoesMarcasPendentes_ = 0;         // jobs de gravação ainda na fila de poolMarcas_
     std::set<std::string> itensOfflineCache_;
     // Só existe pra ser observado por weak_ptr em callbacks assíncronos
     // (ex.: Undo do salvarMetadadoEmLote registrado via callAsync): expira
@@ -1166,8 +1316,12 @@ private:
     // Registra o Undo de uma remoção (item, arquivo e as tabelas filhas guardadas em temp.undo__*). Message thread.
     void registrarUndoDeRemocao(const std::string& token, std::vector<std::string> tabelasGuardadas,
                                 const std::vector<std::string>& ids);
+
+    // Fila SERIAL de gravação das marcas (R, e as demais) — preserva a ordem de toques rápidos.
+    juce::ThreadPool poolMarcas_{1};
     // Resolução de duplicatas/merge (Fase 4). Também depois de projeto_.
     juce::ThreadPool poolMerge_{1};
+    juce::ThreadPool poolProva_{2};
     void restaurarRetratoMerge(const matriz::model::merge::Retrato& retrato);
 
     std::map<std::string, std::string> inMemoryRelinkedPaths_;
@@ -1176,7 +1330,9 @@ private:
     mutable std::vector<std::string> ultimosItensIngeridos_;
     mutable bool ultimosItensIngeridosValido_ = false;
 
-    static constexpr int kMaxUndo = 25;
+    static constexpr int kMaxUndo = 100;
+    int contadorSnapUndo_ = 0;
+    void registrarUndoSubarvoreApagada(const std::string& pastaId);
     std::set<std::string> buscarItensNoEscopo(const juce::String& termo, EscopoBusca escopo) const;
     void registrarUndoEnvioAoGrid(const std::vector<std::string>& itemIds);
     std::vector<UndoEntry> pilhaUndo_;

@@ -1034,6 +1034,30 @@ CREATE TABLE IF NOT EXISTS intake_rejeitados (
     rejeitado_em  TEXT NOT NULL
 );
 
+-- Marcas de sessão que agora persistem: HTML (publicação), ZIP (K), Print (P), Watermark (W).
+-- Uma linha por (item, tipo). O conjunto em memória de ProjetoAberto é cache; esta tabela é a fonte de verdade.
+-- Histórico de impressão (SEND TO PRINT): uma sessão por exportação concluída, com os itens impressos nela.
+-- Uma foto pode estar em várias sessões. Nada aqui toca em arquivo algum.
+CREATE TABLE IF NOT EXISTS print_sessao (
+    id         TEXT PRIMARY KEY,
+    nome       TEXT NOT NULL,
+    criado_em  TEXT NOT NULL,
+    quantidade INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS print_sessao_item (
+    sessao_id TEXT NOT NULL REFERENCES print_sessao(id) ON DELETE CASCADE,
+    item_id   TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    PRIMARY KEY (sessao_id, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_print_sessao_item_item ON print_sessao_item(item_id);
+
+CREATE TABLE IF NOT EXISTS item_marcacao (
+    item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    tipo    TEXT NOT NULL CHECK (tipo IN ('html', 'zip', 'print', 'watermark', 'bounce', 'reject')),
+    PRIMARY KEY (item_id, tipo)
+);
+CREATE INDEX IF NOT EXISTS idx_item_marcacao_tipo ON item_marcacao(tipo);
+
 CREATE TABLE IF NOT EXISTS intake_marca_r (
     item_id    TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
     origem     TEXT NOT NULL DEFAULT 'usuario',  -- 'usuario' | 'hash' (pré-marcado pela lista de rejeitados)
@@ -1066,3 +1090,41 @@ CREATE INDEX IF NOT EXISTS idx_nest_capa ON nest(capa_item_id);
 -- sem eles, cada remoção varria proveniencia e preservation_event inteiras.
 CREATE INDEX IF NOT EXISTS idx_proveniencia_item ON proveniencia(item_id);
 CREATE INDEX IF NOT EXISTS idx_preservation_event_arquivo ON preservation_event(arquivo_id);
+
+-- ---------------------------------------------------------------------------
+-- Conversas do WhatsApp
+-- UM item por conversa: item_id é a "capa" do grupo (o .zip da exportação, ou o conversa.txt).
+-- Tudo o que sai dela são itens do MESMO grupo (nest: aparecem como um só no grid).
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS conversa_whatsapp (
+    item_id         TEXT PRIMARY KEY REFERENCES item(id) ON DELETE CASCADE,
+    contato         TEXT NOT NULL,
+    txt_item_id     TEXT,
+    voce            TEXT,
+    autores_json    TEXT,
+    periodo_inicio  TEXT,
+    periodo_fim     TEXT,
+    n_mensagens     INTEGER NOT NULL DEFAULT 0,
+    origem          TEXT,
+    idioma          TEXT,
+    data_exportacao TEXT NOT NULL,
+    pasta_relativa  TEXT NOT NULL,
+    criado_em       TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversa_midia (
+    conversa_item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    midia_item_id    TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    ordem            INTEGER NOT NULL,
+    nome_original    TEXT NOT NULL,
+    nome_arquivo     TEXT NOT NULL,
+    papel            TEXT NOT NULL DEFAULT 'midia',
+    subpasta         TEXT,
+    autor            TEXT,
+    data_hora        TEXT,
+    legenda          TEXT,
+    PRIMARY KEY (conversa_item_id, midia_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversa_midia_conversa ON conversa_midia(conversa_item_id, ordem);
+CREATE INDEX IF NOT EXISTS idx_conversa_midia_midia ON conversa_midia(midia_item_id);

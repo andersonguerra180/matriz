@@ -33,12 +33,15 @@ struct SubpastaInfo {
     std::set<std::string> itemIds;
 };
 
-class MosaicoComponent : public juce::Component, public EventBusListener, private juce::Timer {
+class MosaicoComponent : public juce::Component, public juce::TooltipClient, public EventBusListener, private juce::Timer {
 public:
     explicit MosaicoComponent(ProjetoAberto& projeto);
     ~MosaicoComponent() override;
 
     void aoItemAlterado(const EventoItemAlterado& e) override;
+    // Tooltip do selo "impressa" (nome(s) e data da(s) sessão(ões) de impressão).
+    juce::String getTooltip() override;
+    static juce::Rectangle<int> boundsSeloImpressa(juce::Rectangle<int> areaImagem);
     // Escondido (outra aba na frente): o evento vira "precisa atualizar" e é aplicado,
     // numa passada só, quando a grade volta a aparecer (aqui e no primeiro paint —
     // visibilityChanged() não dispara quando é um ANCESTRAL que aparece).

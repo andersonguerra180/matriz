@@ -8,11 +8,20 @@
 namespace matriz::ui {
 
 class TreeDetailContent;
+class PainelPropostas;
+class ItemPastaExplorador;
+class PainelOverlay;
+class PainelReceberCelular;
+class EscolhaImportacaoCelular;
+class ConversaWhatsappComponent;
+enum class ModoImportacaoCelular;
+class TrashWindow;
 
 class ArvoreBackupComponent : public juce::Component,
                                private juce::Timer,
                                public EventBusListener,
-                               public juce::DragAndDropTarget {
+                               public juce::DragAndDropTarget,
+                               public juce::FileDragAndDropTarget {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
     explicit ArvoreBackupComponent(ProjetoAberto& projeto);
@@ -21,6 +30,8 @@ public:
     void aoItemAlterado(const EventoItemAlterado& e) override;
 
     void recarregar();
+    // true enquanto uma ingestão ainda está processando arquivos: a árvore proposta só nasce depois.
+    std::function<bool()> aoPerguntarIngestEmProcessamento;
     // Ao entrar na aba STRUCTURE com arquivo(s) selecionados no grid: seleciona a(s) pasta(s) onde ele(s) está(ão)
     // e centraliza o mapa nela(s). Fica pendente até o canvas ter tamanho.
     void definirFocoNosItens(std::set<std::string> itemIds);
@@ -54,6 +65,8 @@ public:
     void lookAndFeelChanged() override;
 
     void mouseDown(const juce::MouseEvent& e) override;
+    void mouseMove(const juce::MouseEvent& e) override;
+    void mouseExit(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
     void mouseDoubleClick(const juce::MouseEvent& e) override;
@@ -61,8 +74,27 @@ public:
     bool keyPressed(const juce::KeyPress& key) override;
 
     std::vector<juce::String> obterListaPastas() const;
+    // Só pro self-test: a janela ACTION NEEDED está visível (e com área)?
+    bool painelPropostasVisivel() const;
+    ArvoreBackupComponent* mapaDaSobreposicao() const;  // idem: o Folder Map dentro da sobreposição aberta (ou nullptr)
+
+    // Folder Map SOBREPOSTO (duplo clique num folder-card): janela por cima do app (90%) com um Folder Map cuja raiz
+    // é a pasta clicada, sempre auto-arranjado. Edições de dados (criar/renomear/conectar/apagar/mover/cor) valem no
+    // mapa de verdade; posição e tamanho dos cards ali são só da sobreposição (não mexem no layout do mapa principal).
+    // SAIR fecha e recarrega este mapa.
+    void abrirSobreposicao(const std::string& pastaId, const juce::String& nomePasta);
+    void fecharSobreposicao();
+    // Chamado na instância DENTRO da sobreposição, logo depois de construída.
+    void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);
 
     std::function<void(const std::set<std::string>& itemIds)> aoMostrarConteudoNaGrade;
+    std::function<void(const juce::Array<juce::File>& files, const std::string& pastaId)> aoIngerirArquivos;
+
+    void abrirConversaWhatsapp(const std::string& itemId);
+    void fecharConversaWhatsapp();
+    bool conversaAberta() const { return conversaWhatsapp_ != nullptr; }
+    void fecharOverlayImportacao();
+    std::string pastaSelecionadaId() const { return selectedFolderId_; }
 
     // Fase 1 (Folder Maps múltiplos) — SEM PASTA (NO FOLDER) só aceita
     // drop de itens arrastados da grade (MosaicoComponent::startDragging,
@@ -73,6 +105,12 @@ public:
     void itemDragMove(const SourceDetails& details) override;
     void itemDragExit(const SourceDetails& details) override;
     void itemDropped(const SourceDetails& details) override;
+
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
+    void fileDragEnter(const juce::StringArray& files, int x, int y) override;
+    void fileDragMove(const juce::StringArray& files, int x, int y) override;
+    void fileDragExit(const juce::StringArray& files) override;
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
 
 private:
     struct FolderNode {
@@ -95,21 +133,55 @@ private:
         // acervo_pasta.cor_customizada; hasCorCustomizada=false = sem marcação.
         juce::Colour corCustomizada;
         bool hasCorCustomizada = false;
+        bool proposta = false;  // árvore nova ainda não aceita (NEW FOLDERS)
         // Auto-organização: regra (CSV) da pasta e blocos já lidos; autoSub = subpasta criada pela regra.
         juce::String regra;
         matriz::consolidacao::HierarquiaBackup niveisRegra;
         bool autoSub = false;
     };
 
+    struct LooseFileNode {
+        std::string id;
+        juce::String titulo;
+        juce::String extensao;
+        juce::String tipoMidia;
+        juce::int64 tamanhoBytes = 0;
+        juce::Rectangle<int> bounds;
+        bool selecionado = false;
+        bool ehConversaWhatsapp = false;
+        int nestTotal = 0;  // >1: este arquivo solto é a capa de um NEST
+    };
+
     ProjetoAberto& projeto_;
     std::vector<FolderNode> nodes_;
+    std::vector<LooseFileNode> looseFiles_;
     int nodeDragIndice_ = -1;
+    int looseFileDragIndice_ = -1;
+    int nodeHoverDrop_ = -1;
+    std::vector<std::string> sequenciaPreview_;
+    std::vector<std::pair<size_t, juce::Point<int>>> soltosArrastoIniciais_;
+    int ancoraTipo_ = 0;
+    std::string ancoraId_;
     juce::Point<int> arrastoOffset_;
     // Item 10: quando o arrasto começa dentro de uma seleção múltipla, guarda
     // a posição (em canvas) de cada pasta selecionada no instante do clique,
     // pra aplicar o mesmo delta do nó primário (nodeDragIndice_) em todas —
     // sem isto só a pasta clicada se movia, o resto da seleção ficava parado.
     std::vector<std::pair<int, juce::Point<float>>> arrastoGrupoPosicoesIniciais_;
+    // Auto-rolagem: arrastando pastas até a borda do canvas, a vista rola devagar e o bloco acompanha.
+    struct TimerAutoRolagem : juce::Timer {
+        std::function<void()> aoTick;
+        void timerCallback() override { if (aoTick) aoTick(); }
+    } autoRolagem_;
+    // Dica no rodapé: o mouse parado mais de 1 s sobre uma pasta (sem clicar) mostra o nome dela no footer do app.
+    struct TimerDicaPasta : juce::Timer {
+        std::function<void()> aoTick;
+        void timerCallback() override { stopTimer(); if (aoTick) aoTick(); }
+    } dicaPasta_;
+    std::string dicaPastaId_;  // pasta sob o mouse (candidata ou já mostrada); vazio = nenhuma
+    void limparDicaPasta();
+    void moverArrastoPara(juce::Point<int> mouseTela);
+    void tickAutoRolagem();
 
     float zoom_ = 1.0f;
     juce::Point<float> panOffset_{0.0f, 0.0f};
@@ -118,12 +190,46 @@ private:
 
     std::unique_ptr<juce::TextButton> btnCriarPasta_;
     std::unique_ptr<juce::TextButton> btnRenomearPasta_;
-    std::unique_ptr<juce::TextButton> btnApagarPasta_;
     std::unique_ptr<juce::TextButton> btnAutoArranjar_;
     std::unique_ptr<juce::TextButton> btnZoomIn_;
     std::unique_ptr<juce::TextButton> btnZoomOut_;
     std::unique_ptr<juce::TextButton> btnZoomFit_;
     std::unique_ptr<juce::TextButton> btnResetTamanhos_;
+
+    // Pasta ingerida inteira: árvore PROPOSTA (card NEW FOLDERS na coluna esquerda).
+    struct LinhaProposta {
+        std::string raizId;
+        int arquivos = 0;
+        std::unique_ptr<juce::Label> rotulo;
+        std::unique_ptr<juce::TextButton> usar, mesclar, descartar;
+    };
+    std::vector<LinhaProposta> propostas_;
+    // As propostas moram numa janela flutuante sobre o stage (canto superior esquerdo do canvas): só existe quando há
+    // ação necessária e o usuário pode recolher/expandir pelo cabeçalho.
+    std::unique_ptr<PainelPropostas> painelPropostas_;
+    bool painelPropostasRecolhido_ = false;
+    size_t ultimoTotalPropostas_ = 0;
+    void posicionarPainelPropostas();
+    void usarTodasPropostas();
+    void mesclarTodasPropostas();
+    void mesclarProximaDaFila(std::vector<std::pair<std::string, juce::String>> fila);
+    void confirmarDescarteTodasPropostas();
+    void reconstruirPropostas();
+
+    // Card FOLDER EXPLORER (coluna esquerda): só pastas do mapa ativo; FIND seleciona a pasta + descendentes no
+    // stage e enquadra a vista nelas.
+    std::unique_ptr<ItemPastaExplorador> raizExplorador_;
+    std::unique_ptr<juce::TreeView> treeExplorador_;
+    std::unique_ptr<juce::TextButton> btnFind_;
+    std::string pastaExploradorId_;  // pasta selecionada no explorer
+    bool reconstruindoExplorador_ = false;
+    void ajustarVistaExplorador(const std::string& pastaId);
+    void reconstruirExplorador();
+    void localizarPasta(const std::string& pastaId);
+    void mostrarMenuExplorador(const juce::MouseEvent& e);
+    void iniciarMesclaPastas(const std::string& origemId, const std::string& alvoId);
+    void mostrarDialogoMescla(const std::string& raizId, const juce::String& nome);
+    void confirmarDescarteProposta(const std::string& raizId, int arquivos);
 
     // Fase 1 — dropdown com todos os folder maps do projeto (ORIGINAL +
     // mapas do usuário), botão "⋯" (rename/duplicate/delete/export/import)
@@ -175,12 +281,32 @@ private:
     // aparece com o ORIGINAL ativo (S4/13: "Não aparece no ORIGINAL").
     juce::Rectangle<int> boundsSemPasta() const;
     void desenharSemPasta(juce::Graphics& g) const;
+    // Contagem do SEM PASTA: era um COUNT(*) no banco A CADA paint (o maior custo do Folder Map, medido com
+    // `sample`). Guardada aqui; refeita no máximo 1x/s e zerada a cada recalcularNodes().
+    mutable int contagemSemPasta_ = -1;
+    mutable juce::uint32 contagemSemPastaMs_ = 0;
+    mutable std::string contagemSemPastaMapa_;
     bool semPastaHover_ = false;
+
+    // LIXEIRA (_trash) — card fixo no canto superior esquerdo do canvas (fora do zoom).
+    juce::Rectangle<int> boundsPastaTrash() const;
+    void desenharPastaTrash(juce::Graphics& g) const;
+    void confirmarEApagarPastas(const std::vector<std::string>& pastaIds);
+    void mostrarMenuArquivoDetalhe(const std::string& itemId);
+    void mostrarMenuPastaTrash();
+    std::string trashFolderId_;
+    int trashContagem_ = 0;
+    bool trashHover_ = false;
 
     // Slider de tamanho. Com folders selecionados age só neles (e PARA quando um encosta num vizinho);
     // sem seleção é a escala GLOBAL: cartões e espaços crescem juntos, então nada se sobrepõe.
     std::unique_ptr<juce::Slider> sliderTamanho_;
     float escalaTamanho_ = 1.0f;  // escala global (visual; não é persistida)
+    // SPREAD: afasta as pastas só na horizontal (posições x em torno do pivot; tamanhos não mudam). Visual,
+    // não persistida; persistirPosicoesEmLote desfaz o fator ao gravar.
+    std::unique_ptr<juce::Slider> sliderSpread_, sliderSpreadV_;
+    std::unique_ptr<juce::Label> rotuloSpread_, rotuloSpreadV_;
+    float espalharX_ = 1.0f, espalharY_ = 1.0f;
     juce::Point<float> pivotEscala_{0.0f, 0.0f};
     double fatorCards_ = 0.0;  // fator do mapa escolhido pelo AJUSTAR; 0 = mapa antigo (tamanho único)
     std::map<std::string, float> escalasOriginal_;  // ORIGINAL é virtual: multiplicadores só em memória
@@ -194,15 +320,47 @@ private:
     void redefinirTamanhos();
     void persistirEscalas();
     void enquadrarTudo();
+    void reunirArquivosSoltos();
     std::vector<int> indicesSelecionados() const;
+
+    // cards_layout.json: posições persistidas para arquivos soltos no canvas
+    juce::File arquivoLayout() const;
+    std::map<std::string, juce::Point<int>> layoutSalvo_;
+    void carregarLayoutSalvo();
+    void gravarLayoutSalvo();
+    std::string chaveLayout(const std::string& idNo) const { return mapaAtivoId_ + "|" + idNo; }
+    void concluirArrastoDeArquivoSolto(juce::Point<float> canvasRelease);
+    int pastaAlvoDoDrop(juce::Point<float> cursorCanvas, juce::Rectangle<int> iconeCanvas) const;
+
+    void limparSelecaoTudo();
+    std::vector<size_t> ordemDeLeituraSoltos() const;
+    std::vector<size_t> ordemDeLeituraPastas() const;
+    void selecionarIntervalo(int tipo, const std::string& deId, const std::string& ateId);
+    std::vector<std::string> idsSoltosSelecionados() const;
+    void mostrarMenuDeArquivosSoltos();
+    void adicionarSubmenuDePastas(juce::PopupMenu& menu, const std::string& paiId, const std::vector<std::string>& ids);
+    void moverSoltosParaPasta(const std::vector<std::string>& ids, const std::string& pastaId);
+    void mostrarNaOrigem(const std::string& itemId);
+    void removerSoltosDoBackup(const std::vector<std::string>& ids);
+    bool aplicarMovimentoDeSoltos(const std::vector<std::string>& ids, const std::string& pastaId);
+    std::optional<std::string> soltoAdjacente(const std::string& idAtual, int direcao) const;
+    void selecionarSolto(const std::string& id);
+    void arranjarSoltosSelecionados();
     // S4/15 — pasta recém-criada, com destaque pulsante até o próximo clique
     std::string destaqueNovaPastaId_;
+
+    bool sobreposto_ = false;           // esta instância é a do Folder Map sobreposto
+    std::string raizSobreposicaoId_;    // raiz da sobreposição (pasta clicada)
+    std::unique_ptr<juce::Component> sobreposicao_;  // a camada aberta por esta instância (no content da janela)
 
     std::unique_ptr<juce::TextEditor> inlineEditor_;
     std::string editingNodeId_;
 
     void recalcularNodes();
+    void recalcularNodesInterno();
     void autoArranjar();
+    // AJUSTAR com 2+ pastas selecionadas: reorganiza só elas (mesmos tamanhos), na região que já ocupavam.
+    void autoArranjarSelecionadas(const std::vector<int>& selecionadas);
 
     // Fase 1 — Export/Import to file do mapa ATIVO, formato JSON herdado do
     // antigo mecanismo de presets (S4/13). pastaPresets()/listarPresetsSalvos()
@@ -290,6 +448,21 @@ private:
     void selecionarAba(int indice);
     void fecharAba(int indice);
     void desenharBarraDeAbas(juce::Graphics& g);
+
+    // Importação do celular (Wi-Fi: fotos/vídeos ou conversas do WhatsApp)
+    std::unique_ptr<juce::Button> btnReceberCelular_;
+    std::unique_ptr<PainelOverlay> overlayAtual_;
+    std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
+    std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
+    void abrirReceberDoCelular();
+    void iniciarReceberDoCelular(ModoImportacaoCelular modo);
+
+    // Visualização da conversa de WhatsApp dentro do Structure
+    std::unique_ptr<ConversaWhatsappComponent> conversaWhatsapp_;
+    std::unique_ptr<juce::TextButton> btnVoltarMapa_;
+
+    // Janela flutuante da lixeira (_trash)
+    std::unique_ptr<TrashWindow> janelaTrash_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ArvoreBackupComponent)
 };

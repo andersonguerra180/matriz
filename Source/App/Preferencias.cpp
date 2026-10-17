@@ -53,6 +53,56 @@ void gravarGeminiApiKey(const juce::String& key) {
     arquivo().saveIfNeeded();
 }
 
+juce::String lerPreferenciaTexto(const juce::String& chave, const juce::String& padrao) { return arquivo().getValue(chave, padrao); }
+
+void gravarPreferenciaTexto(const juce::String& chave, const juce::String& valor) {
+    arquivo().setValue(chave, valor);
+    arquivo().saveIfNeeded();
+}
+
+juce::String lerVoceWhatsapp() { return arquivo().getValue("whatsapp_voce", ""); }
+
+void gravarVoceWhatsapp(const juce::String& autor) {
+    arquivo().setValue("whatsapp_voce", autor);
+    arquivo().saveIfNeeded();
+}
+
+juce::String lerChaveWhatsapp() {
+    auto miniFile = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                        .getChildFile("Application Support/BKR Matriz Mini/BKR Matriz Mini.settings");
+    if (miniFile.existsAsFile()) {
+        juce::PropertiesFile::Options opts;
+        opts.applicationName = "BKR Matriz Mini";
+        opts.filenameSuffix = "settings";
+        opts.folderName = "BKR Matriz Mini";
+        opts.osxLibrarySubFolder = "Application Support";
+        juce::PropertiesFile miniProps(opts);
+        auto mk = miniProps.getValue("whatsapp_chave", "");
+        if (mk.length() == 32) {
+            arquivo().setValue("whatsapp_chave", mk);
+            arquivo().saveIfNeeded();
+            return mk;
+        }
+    }
+    auto k = arquivo().getValue("whatsapp_chave", "");
+    if (k.length() != 32) {
+        static const char* alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+        k.clear();
+        auto& r = juce::Random::getSystemRandom();
+        for (int i = 0; i < 32; ++i) k += juce::String::charToString(static_cast<juce::juce_wchar>(alfabeto[r.nextInt(56)]));
+        arquivo().setValue("whatsapp_chave", k);
+        arquivo().saveIfNeeded();
+    }
+    return k;
+}
+
+int lerPortaWhatsapp() { return arquivo().getIntValue("whatsapp_porta", 8765); }
+
+void gravarPortaWhatsapp(int porta) {
+    arquivo().setValue("whatsapp_porta", porta);
+    arquivo().saveIfNeeded();
+}
+
 juce::String lerTema() { return arquivo().getValue("tema", "dark"); }
 
 void gravarTema(const juce::String& tema) {

@@ -1,7 +1,10 @@
 #include "MosaicoComponent.h"
 #include "../Diag/Watchdog.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/Miniaturas.h"
+#include "../Model/CaminhosBanco.h"
 #include "LogosTipoArquivo.h"
+#include "../Whatsapp/WhatsappIngestao.h"
 
 #include "../Ficha/FichaI18n.h"
 #include "../I18n/Strings.h"
@@ -12,6 +15,9 @@
 #include "SendToPrintDialog.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <memory>
 #include <iterator>
 #include <map>
 
@@ -148,12 +154,17 @@ void MosaicoComponent::aplicarEvento(const EventoItemAlterado& e) {
             // que H/K/P, então precisa do mesmo tratamento aqui — sem isso
             // ficava sem sync ao vivo entre a janela de Preview e a grade.
             bool marcadoW = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Watermark, id);
+            bool marcadoB = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, id);
+            bool marcadoRj = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, id);
             for (ItemResumo* item : {itemEmTodos(id), itemEmFiltrados(id)}) {
                 if (item == nullptr) continue;
                 item->marcadoPublicacao = marcadoH;
                 item->marcadoZip = marcadoK;
                 item->marcadoPrint = marcadoP;
                 item->marcadoWatermark = marcadoW;
+                item->marcadoBounce = marcadoB;
+                item->marcadoRejeitado = marcadoRj;
+                item->impresso = projeto_.itemImpresso(id);
             }
         };
         if (lote) for (const auto& id : e.itemIds) atualizar(id);
@@ -260,6 +271,27 @@ void MosaicoComponent::agendarRefiltroCoalescido() {
     });
 }
 
+namespace {
+// Enquanto a consulta SQL do catálogo roda (fase < 2) não há contagem de itens para mostrar; sem isto a barra
+// fica parada em "Reading catalog index..." por minutos num HD frio. Só captura estado compartilhado (nunca
+// `this`) — encerra sozinho quando a fase passa de 1.
+void agendarRelogioCatalogo(std::shared_ptr<std::atomic<int>> fase, std::shared_ptr<std::atomic<int>> total,
+                            std::chrono::steady_clock::time_point inicio) {
+    juce::Timer::callAfterDelay(1000, [fase, total, inicio] {
+        if (fase->load() >= 2) return;
+        const auto seg = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - inicio).count();
+        const int n = total->load();
+        ProgressoGlobal::obterInstancia().atualizarDetalhe(
+            "catalog_assets",
+            (fase->load() == 0 ? matriz::i18n::t("catalogo.carregando_contando")
+                               : (n > 0 ? matriz::i18n::t("catalogo.carregando_indice_n").replace("{n}", juce::String(n))
+                                        : matriz::i18n::t("catalogo.carregando_indice"))) +
+                " " + juce::String(static_cast<juce::int64>(seg)) + " s");
+        agendarRelogioCatalogo(fase, total, inicio);
+    });
+}
+} // namespace
+
 void MosaicoComponent::recarregar() {
     MATRIZ_TRACE("MosaicoComponent::recarregar");
     if (editorInline_) cancelarEdicaoInline();
@@ -290,14 +322,40 @@ void MosaicoComponent::recarregar() {
     ProjetoAberto* projeto = &projeto_;
     bool isQuarentena = modoQuarentena_;
 
-    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", "Loading Catalog", 100, nullptr, "Reading catalog index...",
+    ProgressoGlobal::obterInstancia().iniciarTarefa("catalog_assets", matriz::i18n::t("catalogo.carregando_titulo"), 100, nullptr, matriz::i18n::t("catalogo.carregando_indice"),
                                                    /*temModalProprio*/ false, /*somenteBarra*/ true);
 
-    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena]() {
+    // Progresso real do "Loading Catalog": fase 0 = contando, 1 = consulta SQL (um único step, sem contagem
+    // possível — só o tempo decorrido), 2 = montando linhas (miniatura/tags por item, com contagem), 3 = fim.
+    auto fase = std::make_shared<std::atomic<int>>(0);
+    auto totalLinhas = std::make_shared<std::atomic<int>>(0);
+    if (isQuarentena) fase->store(1);  // sem contagem prévia no modo quarentena
+    agendarRelogioCatalogo(fase, totalLinhas, std::chrono::steady_clock::now());
+
+    poolSnapshot_.addJob([safeThis, projeto, geracao, isQuarentena, fase, totalLinhas]() {
         std::vector<ItemResumo> itens;
         std::vector<TextosCelula> textos;
+        struct FimDeFase {
+            std::shared_ptr<std::atomic<int>> f;
+            ~FimDeFase() { f->store(3); }
+        } fimDeFase{fase};
         try {
-            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens();
+            const auto aoProgredir = [fase, totalLinhas](int feitos, int total) {
+                auto& pg = ProgressoGlobal::obterInstancia();
+                if (feitos < 0) {
+                    totalLinhas->store(total);
+                    fase->store(1);
+                    pg.atualizarFracao("catalog_assets", 0.05,
+                                       matriz::i18n::t("catalogo.carregando_indice_n").replace("{n}", juce::String(total)));
+                    return;
+                }
+                fase->store(2);
+                pg.atualizarFracao("catalog_assets", 0.1 + 0.8 * (total > 0 ? static_cast<double>(feitos) / total : 0.0),
+                                   matriz::i18n::t("catalogo.carregando_miniaturas").replace("{a}", juce::String(feitos)).replace("{b}", juce::String(total)));
+            };
+            itens = isQuarentena ? projeto->listarItensEmQuarentena() : projeto->listarItens(aoProgredir);
+            fase->store(3);
+            ProgressoGlobal::obterInstancia().atualizarFracao("catalog_assets", 0.92, matriz::i18n::t("catalogo.carregando_montando"));
             // Textos de exibição aqui, no job (não no paint, por célula, a cada quadro).
             textos.reserve(itens.size());
             for (const auto& item : itens) textos.push_back(calcularTextos(item));
@@ -386,6 +444,8 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (auto resumo = projeto_.obterItemResumo(itemId)) {
         it->marcadoRevisado = resumo->marcadoRevisado;
         it->marcadoWatermark = resumo->marcadoWatermark;
+        it->marcadoBounce = resumo->marcadoBounce;
+        it->marcadoRejeitado = resumo->marcadoRejeitado;
     }
 
     // Nome/ano/etc. mudaram: refaz os textos de exibição deste item.
@@ -760,7 +820,7 @@ int MosaicoComponent::compararPorColunaDaLista(const ItemResumo& a, const ItemRe
     auto nome = [](const ItemResumo& i) { return i.titulo.empty() ? i.nomeOriginalArquivo : i.titulo; };
     auto data = [](const ItemResumo& i) { return i.dataCriacao.empty() ? i.criadoEm : i.dataCriacao; };
     auto marcas = [](const ItemResumo& i) {
-        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark);
+        return int(i.marcadoPublicacao) + int(i.marcadoZip) + int(i.marcadoPrint) + int(i.marcadoWatermark) + int(i.marcadoBounce) + int(i.marcadoRejeitado);
     };
     switch (coluna) {
         case 1: return categoriaDaLista(a.extensaoArquivo).compare(categoriaDaLista(b.extensaoArquivo));
@@ -1886,6 +1946,42 @@ bool MosaicoComponent::keyPressed(const juce::KeyPress& tecla) {
         }
     }
 
+    // B = Bounce List: liga/desliga a marca nos selecionados (qualquer tipo de arquivo). Só no grid: no INTAKE
+    // (modo quarentena) o item ainda nem entrou no catálogo, e a marca nunca é gravada aqui.
+    if ((tecla.getKeyCode() == 'B' || c == 'b' || c == 'B') && semModificadores && !modoQuarentena_) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Bounce, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Bounce, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_)
+                if (alvosSet.count(item.id)) item.marcadoBounce = novoEstado;
+            for (auto& item : itensFiltrados_)
+                if (alvosSet.count(item.id)) item.marcadoBounce = novoEstado;
+            repaint();
+            return true;
+        }
+    }
+
+    // R = Reject no grid (METADATA): liga/desliga a marca nos selecionados. Só marca — nada sai do projeto; apagar é
+    // pelo SHOW REJECTED. No INTAKE (modo quarentena) o R é o do próprio Intake (outro conjunto).
+    if ((tecla.getKeyCode() == 'R' || c == 'r' || c == 'R') && semModificadores && !modoQuarentena_) {
+        std::vector<std::string> alvos(selecionados_.begin(), selecionados_.end());
+        if (alvos.empty() && !selecionadoId_.empty()) alvos.push_back(selecionadoId_);
+        if (!alvos.empty()) {
+            projeto_.alternarMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvos);
+            bool novoEstado = projeto_.contemMarcacao(ProjetoAberto::TipoMarcacao::Rejeitado, alvos.front());
+            std::unordered_set<std::string> alvosSet(alvos.begin(), alvos.end());
+            for (auto& item : itensTodos_)
+                if (alvosSet.count(item.id)) item.marcadoRejeitado = novoEstado;
+            for (auto& item : itensFiltrados_)
+                if (alvosSet.count(item.id)) item.marcadoRejeitado = novoEstado;
+            repaint();
+            return true;
+        }
+    }
+
     // P (Send to Print) e W (Watermark) só fazem sentido pra fotos — filtra
     // a seleção antes de marcar, ignorando silenciosamente áudio/vídeo/
     // documentos/sessões que estejam junto. Baseado em extensaoArquivo,
@@ -2153,17 +2249,48 @@ void MosaicoComponent::pedirCarregamentoMiniatura(const std::string& itemId) {
         if (caminho) imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(juce::File(*caminho)), maxLargura, maxAltura);
         bool temCaminho = caminho.has_value();
 
+        if (!imagem.isValid() && matriz::whatsapp::itemEhConversa(projeto->projeto().registroLeitura(), itemId)) {
+            // zip de conversa do WhatsApp: a logo no lugar do ícone de zip
+            imagem = reduzirParaCelula(matriz::ui::miniaturaConversaWhatsapp(), maxLargura, maxAltura);
+            temCaminho = imagem.isValid();
+        }
+
         if (!imagem.isValid()) {
             if (auto arq = projeto->arquivoPrincipal(itemId)) {
                 juce::File f(arq->caminhoAbsoluto);
-                juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
-                juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
-                if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
+                if (f.existsAsFile()) {
+                    auto cat = matriz::ingest::categoriaPorExtensao(f);
+                    if (cat == matriz::ingest::CategoriaMidia::Documento || cat == matriz::ingest::CategoriaMidia::Texto) {
+                        juce::File pastaMini = projeto->projeto().pasta().getChildFile(".miniaturas");
+                        pastaMini.createDirectory();
+                        juce::File destino = pastaMini.getChildFile(arq->id + ".jpg");
+                        int w = 0, h = 0;
+                        if (matriz::ingest::gerarMiniaturaDocumento(f, destino, 512, &w, &h) && destino.existsAsFile()) {
+                            std::string rel = matriz::caminhos::relativoParaBanco(destino, projeto->projeto().pasta());
+                            try {
+                                auto& ind = projeto->projeto().indice();
+                                ind.run("INSERT OR REPLACE INTO miniatura (id, item_id, arquivo_id, tipo, caminho_relativo, largura, altura, gerado_em) "
+                                        "VALUES (?, ?, ?, 'miniatura', ?, ?, ?, ?)",
+                                        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId),
+                                         matriz::db::Value::of(arq->id), matriz::db::Value::of(rel),
+                                         matriz::db::Value::of(w), matriz::db::Value::of(h),
+                                         matriz::db::Value::of(matriz::model::agoraIso8601())});
+                            } catch (...) {}
+                            imagem = reduzirParaCelula(juce::ImageFileFormat::loadFrom(destino), maxLargura, maxAltura);
+                            if (imagem.isValid()) temCaminho = true;
+                        }
+                    }
+                }
+                if (!imagem.isValid()) {
+                    juce::String ext = f.getFileExtension().toLowerCase().replace(".", "");
+                    juce::String logoFile = matriz::ingest::obterLogoParaExtensao(ext);
+                    if (logoFile.isEmpty() && ext == "pd") logoFile = "puredata.png";
 
-                if (logoFile.isNotEmpty()) {
-                    imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
-                    if (imagem.isValid()) {
-                        temCaminho = true;
+                    if (logoFile.isNotEmpty()) {
+                        imagem = reduzirParaCelula(matriz::ui::carregarLogoDeTipo(logoFile), maxLargura, maxAltura);
+                        if (imagem.isValid()) {
+                            temCaminho = true;
+                        }
                     }
                 }
             }
@@ -2603,6 +2730,8 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     selo(item.marcadoZip, "K", juce::Colour(0xff0077ff), juce::Colours::white);
                     selo(item.marcadoPrint, "P", juce::Colour(0xffff6b00), juce::Colours::white);
                     selo(item.marcadoWatermark, "W", juce::Colour(0xffffcc00), juce::Colours::black);
+                    selo(item.marcadoBounce, "B", juce::Colour(0xff9333ea), juce::Colours::white);
+                    selo(item.marcadoRejeitado, "R", tema().perigo, juce::Colours::white);
                 }
 
                 continue;
@@ -2650,16 +2779,21 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.drawLine((float) bounds.getX() + off + 2, (float) bounds.getBottom() + off,
                                (float) bounds.getRight() + off - 2, (float) bounds.getBottom() + off, 1.5f);
                 }
-                const juce::String txt = "NEST " + juce::String(item.nestTotal);
-                const int w = juce::GlyphArrangement::getStringWidthInt(font9Bold, txt) + 12;
-                juce::Rectangle<int> pilula(areaImagem.getRight() - w - 4, areaImagem.getBottom() - 20, w, 16);
+                // (o selo "N" vermelho no canto inferior direito é desenhado junto dos demais selos, mais abaixo)
+            }
+
+            // Selo "impressa" (já saiu em alguma sessão do SEND TO PRINT): ícone de impressora, sem texto.
+            if (item.impresso && !modoQuarentena_) {
+                const auto r = boundsSeloImpressa(areaImagem);
                 g.setColour(juce::Colour(0xe6111827));
-                g.fillRoundedRectangle(pilula.toFloat(), 8.0f);
-                g.setColour(juce::Colour(0xff38bdf8));
-                g.drawRoundedRectangle(pilula.toFloat(), 8.0f, 1.0f);
-                g.setColour(juce::Colours::white);
-                g.setFont(font9Bold);
-                g.drawText(txt, pilula, juce::Justification::centred);
+                g.fillRoundedRectangle(r.toFloat(), 3.0f);
+                g.setColour(juce::Colour(0xff34d399));
+                g.drawRoundedRectangle(r.toFloat(), 3.0f, 1.0f);
+                const auto c = r.toFloat().reduced(3.5f, 3.0f);
+                g.fillRect(c.getX(), c.getY() + 3.5f, c.getWidth(), c.getHeight() - 5.0f);                 // corpo
+                g.fillRect(c.getX() + 2.0f, c.getY(), c.getWidth() - 4.0f, 3.0f);                          // papel entrando
+                g.setColour(juce::Colour(0xe6111827));
+                g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);               // papel saindo (vazado)
             }
 
             // Extension badge (top-left)
@@ -2679,12 +2813,23 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (durText.isNotEmpty()) {
                 int badgeW = juce::jmax(36, static_cast<int>(durText.length()) * 7 + 8);
                 int badgeX = modoQuarentena_ ? (areaImagem.getX() + 4) : (areaImagem.getRight() - badgeW - 4);
+                if (item.nestTotal > 1 && !modoQuarentena_) badgeX -= 20;  // abre espaço para o selo "N" do nest
                 juce::Rectangle<int> durBadge(badgeX, areaImagem.getBottom() - 20, badgeW, 16);
                 g.setColour(juce::Colour(0xcc000000));
                 g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText(durText, durBadge, juce::Justification::centred);
+            }
+
+            // NEST: selo "N" vermelho no canto inferior direito — mesmo padrão dos selos H/K/P/W (16x16, raio 3, fonte 9 bold).
+            if (item.nestTotal > 1) {
+                juce::Rectangle<int> stampN(areaImagem.getRight() - 4 - 16, areaImagem.getBottom() - 4 - 16, 16, 16);
+                g.setColour(juce::Colour(0xffe11d48));
+                g.fillRoundedRectangle(stampN.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("N", stampN, juce::Justification::centred);
             }
 
             // Corner stamps H / K / P (top-right of areaImagem)
@@ -2723,6 +2868,27 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::black);
                 g.setFont(font9Bold);
                 g.drawText("W", stampW, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoBounce) {
+                juce::Rectangle<int> stampB(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(juce::Colour(0xff9333ea));
+                g.fillRoundedRectangle(stampB.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("B", stampB, juce::Justification::centred);
+                stampRight -= 19;
+            }
+            if (item.marcadoRejeitado) {
+                // Igual ao R do INTAKE: véu vermelho na miniatura + selo R.
+                g.setColour(tema().perigo.withAlpha(0.22f));
+                g.fillRect(areaImagem);
+                juce::Rectangle<int> stampR(stampRight - 16, areaImagem.getY() + 4, 16, 16);
+                g.setColour(tema().perigo);
+                g.fillRoundedRectangle(stampR.toFloat(), 3.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText("R", stampR, juce::Justification::centred);
                 stampRight -= 19;
             }
 
@@ -2907,6 +3073,24 @@ juce::Rectangle<int> MosaicoComponent::boundsBotaoAdicionarGrid(int indice) cons
     
     constexpr int kTamMais = 22;
     return juce::Rectangle<int>(areaImagem.getRight() - kTamMais - 6, areaImagem.getY() + 6, kTamMais, kTamMais);
+}
+
+juce::Rectangle<int> MosaicoComponent::boundsSeloImpressa(juce::Rectangle<int> areaImagem) {
+    return juce::Rectangle<int>(areaImagem.getX() + 4, areaImagem.getY() + 22, 18, 16);
+}
+
+juce::String MosaicoComponent::getTooltip() {
+    if (modoVisao_ != ModoVisao::Grade || modoQuarentena_) return {};
+    const auto pos = getMouseXYRelative();
+    const int indice = indiceNaPosicao(pos);
+    if (indice < 0 || indice >= static_cast<int>(itensFiltrados_.size())) return {};
+    const auto& item = itensFiltrados_[static_cast<size_t>(indice)];
+    if (!item.impresso) return {};
+    auto bounds = boundsDaCelula(indice).reduced(4);
+    const int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
+    const auto areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
+    if (!boundsSeloImpressa(areaImagem).contains(pos)) return {};
+    return ProjetoAberto::descreverSessoesPrint(projeto_.sessoesPrintDoItem(item.id));
 }
 
 } // namespace matriz::ui

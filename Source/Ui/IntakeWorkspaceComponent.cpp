@@ -6,6 +6,7 @@
 #include "IntakeWorkspaceComponent.h"
 #include "GeoFavoritosGerenciar.h"
 #include "FloatingPreviewWindow.h"
+#include "PainelMetadadosArquivo.h"
 #include "GoogleDriveContas.h"
 #include "TraducaoContent.h"
 #include "../Ficha/AutocompleteHistorico.h"
@@ -19,6 +20,8 @@
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
+#include "PainelImportarWhatsapp.h"
+#include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
 #include <algorithm>
@@ -120,6 +123,37 @@ private:
     juce::Image img_;
 };
 
+class BridgeIconButton : public juce::Button {
+public:
+    BridgeIconButton() : juce::Button("AdobeBridge") {
+        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
+    }
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+        const auto& tk = tema();
+        auto r = getLocalBounds().toFloat();
+        
+        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
+                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
+        g.fillRoundedRectangle(r, 6.0f);
+        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff4d9fff) : tk.borda);
+        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+
+        if (img_.isValid()) {
+            auto iconArea = r.reduced(4.0f);
+            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
+                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
+                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
+        } else {
+            g.setColour(juce::Colour(0xff4d9fff));
+            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.drawText("Br", getLocalBounds(), juce::Justification::centred);
+        }
+    }
+private:
+    juce::Image img_;
+};
+
 // Cell component for Selection Checkbox
 class CheckboxCellComponent : public juce::Component {
 public:
@@ -173,6 +207,8 @@ public:
     juce::Colour corFundoCustom = juce::Colours::transparentBlack;
     float tamanhoFonte = 13.0f;
     bool ativo = false;
+    bool desenharPin = false;
+    bool desenharCelular = false;
 
     PillButton(const juce::String& text = {}) : juce::TextButton(text) {}
 
@@ -213,7 +249,26 @@ public:
 
         // Content (Dot + Text)
         auto contentBounds = getLocalBounds().reduced(6, 0);
-        if (!corPonto.isTransparent()) {
+        if (desenharPin) {
+            float pSize = 12.0f;
+            float px = static_cast<float>(contentBounds.getX() + 6);
+            float py = static_cast<float>(contentBounds.getCentreY()) - pSize * 0.6f;
+            juce::Path p;
+            p.addEllipse(px, py, pSize, pSize * 0.85f);
+            p.startNewSubPath(px + 1.0f, py + pSize * 0.45f);
+            p.lineTo(px + pSize * 0.5f, py + pSize + 2.5f);
+            p.lineTo(px + pSize - 1.0f, py + pSize * 0.45f);
+            p.closeSubPath();
+            g.setColour(juce::Colours::white);
+            g.fillPath(p);
+            g.setColour(corFundoCustom.isOpaque() ? corFundoCustom : tk.acento);
+            g.fillEllipse(px + pSize * 0.32f, py + pSize * 0.20f, pSize * 0.36f, pSize * 0.36f);
+            contentBounds.removeFromLeft(static_cast<int>(pSize + 10.0f));
+        } else if (desenharCelular) {
+            auto rCel = contentBounds.removeFromLeft(18).toFloat().withSizeKeepingCentre(12.0f, 16.0f);
+            desenharIcone(g, IconeUi::Celular, rCel, corTextoCustom.isOpaque() ? corTextoCustom : tk.textoPrimario);
+            contentBounds.removeFromLeft(4);
+        } else if (!corPonto.isTransparent()) {
             float dotSize = 7.0f;
             float dotX = static_cast<float>(contentBounds.getX() + 2);
             float dotY = static_cast<float>(contentBounds.getCentreY()) - dotSize * 0.5f;
@@ -389,7 +444,95 @@ private:
 // ordem alfabética. Não cria uma base de valores paralela — os valores vêm
 // prontos de fora (query direta na tabela item, ver
 // IntakeWorkspaceComponent::valoresExistentesParaColuna).
-class AutocompleteAssistedField : public juce::Component, private juce::ListBoxModel {
+// Sugestões como CHIPS (mesmo visual dos chips do TagChipsEditor), com área de clique generosa: o chip inteiro e até o
+// espaço entre chips aceitam o clique. Não pede foco de teclado — clicar nunca tira o foco do campo de texto (era o que
+// fazia o ListBox perder o clique na linha pré-selecionada).
+class ChipsSugestoes : public juce::Component {
+public:
+    ChipsSugestoes() {
+        setWantsKeyboardFocus(false);
+        setMouseClickGrabsKeyboardFocus(false);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+    std::function<void(int)> aoEscolher;
+
+    // Devolve a altura necessária para a largura dada.
+    int definir(const std::vector<juce::String>& valores, int largura) {
+        valores_ = valores;
+        if (valores_.size() > 24) valores_.resize(24);
+        destaque_ = -1;
+        hover_ = -1;
+        const auto fonte = juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
+        constexpr int kAlturaChip = 26, kPad = 12, kGap = 6, kMargem = 6;
+        const int util = juce::jmax(60, largura - 2 * kMargem);
+        chips_.clear();
+        int x = kMargem, y = kMargem;
+        for (const auto& v : valores_) {
+            int w = juce::jmin(util, kPad * 2 + juce::GlyphArrangement::getStringWidthInt(fonte, v) + 2);
+            if (x + w > kMargem + util && x > kMargem) { x = kMargem; y += kAlturaChip + kGap; }
+            chips_.push_back({x, y, w, kAlturaChip});
+            x += w + kGap;
+        }
+        const int altura = chips_.empty() ? 0 : y + kAlturaChip + kMargem;
+        setSize(largura, altura);
+        repaint();
+        return altura;
+    }
+    int destaque() const { return destaque_; }
+    juce::Rectangle<int> retanguloDoDestaque() const {
+        return (destaque_ >= 0 && destaque_ < static_cast<int>(chips_.size())) ? chips_[static_cast<size_t>(destaque_)] : juce::Rectangle<int>();
+    }
+    void destacar(int i) {
+        destaque_ = (i >= 0 && i < static_cast<int>(valores_.size())) ? i : -1;
+        repaint();
+    }
+    int quantos() const { return static_cast<int>(valores_.size()); }
+
+    void paint(juce::Graphics& g) override {
+        const auto& tk = tema();
+        g.setColour(juce::Colours::white);
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioPequeno);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
+            const auto r = chips_[static_cast<size_t>(i)].toFloat();
+            const bool ativo = (i == hover_ || i == destaque_);
+            g.setColour(ativo ? tk.acento.brighter(0.3f) : tk.acento.withAlpha(0.25f));
+            g.fillRoundedRectangle(r, r.getHeight() / 2.0f);
+            g.setColour(ativo ? tk.textoSobreAcento : tk.textoPrimario);
+            g.drawText(valores_[static_cast<size_t>(i)], chips_[static_cast<size_t>(i)].reduced(12, 0), juce::Justification::centredLeft, true);
+        }
+    }
+    void mouseMove(const juce::MouseEvent& e) override { const int i = maisProximo(e.getPosition()); if (i != hover_) { hover_ = i; repaint(); } }
+    void mouseExit(const juce::MouseEvent&) override { if (hover_ != -1) { hover_ = -1; repaint(); } }
+    void mouseDown(const juce::MouseEvent& e) override {
+        const int i = maisProximo(e.getPosition());
+        if (i >= 0 && aoEscolher) {
+            auto cb = aoEscolher;  // o callback pode destruir este componente
+            cb(i);
+        }
+    }
+
+private:
+    int maisProximo(juce::Point<int> p) const {
+        int melhor = -1;
+        float menor = 1.0e9f;
+        for (int i = 0; i < static_cast<int>(chips_.size()); ++i) {
+            const auto& r = chips_[static_cast<size_t>(i)];
+            const float dx = static_cast<float>(juce::jmax(r.getX() - p.x, 0, p.x - r.getRight()));
+            const float dy = static_cast<float>(juce::jmax(r.getY() - p.y, 0, p.y - r.getBottom()));
+            const float d = dx * dx + dy * dy;
+            if (d < menor) { menor = d; melhor = i; }
+        }
+        return (melhor >= 0 && menor <= 36.0f) ? melhor : -1;  // chip sob o ponto ou a até 6 px
+    }
+    std::vector<juce::String> valores_;
+    std::vector<juce::Rectangle<int>> chips_;
+    int hover_ = -1, destaque_ = -1;
+};
+
+class AutocompleteAssistedField : public juce::Component {
 public:
     AutocompleteAssistedField(std::vector<juce::String> valoresExistentes, const juce::String& placeholder) {
         valores_ = std::move(valoresExistentes);
@@ -410,17 +553,20 @@ public:
         editor_->aoSetaVertical = [this](int delta) { moverDestaque(delta); };
         editor_->onFocusLost = [this] {
             juce::Component::SafePointer<AutocompleteAssistedField> safe(this);
-            juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->lista_) safe->lista_->setVisible(false); });
+            juce::Timer::callAfterDelay(150, [safe] { if (safe && safe->viewport_) safe->viewport_->setVisible(false); });
         };
         addAndMakeVisible(*editor_);
 
-        lista_ = std::make_unique<juce::ListBox>();
-        lista_->setModel(this);
-        lista_->setRowHeight(22);
-        lista_->setColour(juce::ListBox::backgroundColourId, juce::Colours::white);
-        lista_->setColour(juce::ListBox::outlineColourId, tk.borda);
-        addChildComponent(*lista_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
-        lista_->toFront(false);
+        lista_ = std::make_unique<ChipsSugestoes>();
+        lista_->aoEscolher = [this](int i) { escolher(i); };
+        // Os chips ficam num Viewport com rolagem vertical (muitas sugestões): roda do mouse, barra e setas.
+        viewport_ = std::make_unique<juce::Viewport>();
+        viewport_->setViewedComponent(lista_.get(), false);
+        viewport_->setScrollBarsShown(true, false);
+        viewport_->setMouseClickGrabsKeyboardFocus(false);  // clicar/rolar nunca tira o foco do campo de texto
+        viewport_->setWantsKeyboardFocus(false);
+        addChildComponent(*viewport_);  // abre com foco/digitação (addAndMakeVisible a deixava visível e vazia)
+        viewport_->toFront(false);
     }
 
     juce::String getText() const { return editor_->getText().trim(); }
@@ -433,63 +579,63 @@ public:
     // a lista flutue por cima do que vem embaixo em vez de reservar espaço.
     void abrirSugestoes() { mostrarTodasSugestoes(); }
     int alturaDesejada() const {
-        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
-        return 26 + ((lista_ && lista_->isVisible() && rows > 0) ? 2 + rows * 22 : 0);
+        return 26 + ((viewport_ && viewport_->isVisible() && !sugestoes_.empty()) ? 2 + alturaVisivel_ : 0);
     }
 
     void resized() override {
         auto area = getLocalBounds();
         editor_->setBounds(area.removeFromTop(26));
         area.removeFromTop(2);
-        int rows = juce::jmin(5, static_cast<int>(sugestoes_.size()));
-        lista_->setBounds(area.removeFromTop(rows * 22));
+        if (sugestoes_.empty()) { viewport_->setBounds(area.removeFromTop(0)); return; }
+        constexpr int kAlturaMaxima = 150;  // acima disso rola
+        const int largura = area.getWidth() - viewport_->getScrollBarThickness();
+        alturaLista_ = lista_->definir(sugestoes_, juce::jmax(60, largura));  // quebra em linhas conforme a largura
+        alturaVisivel_ = juce::jmin(alturaLista_, kAlturaMaxima);
+        viewport_->setBounds(area.removeFromTop(alturaVisivel_));
+        lista_->destacar(destaqueAtual_);
     }
 
 private:
-    int getNumRows() override { return static_cast<int>(sugestoes_.size()); }
-
-    void paintListBoxItem(int rowNumber, juce::Graphics& g, int width, int height, bool rowIsSelected) override {
-        if (rowNumber < 0 || rowNumber >= static_cast<int>(sugestoes_.size())) return;
-        g.fillAll(rowIsSelected ? tema().acento.withAlpha(0.25f) : juce::Colours::white);
-        g.setColour(juce::Colours::black);
-        g.setFont(juce::Font(juce::FontOptions(13.0f)));
-        g.drawText(sugestoes_[static_cast<size_t>(rowNumber)], 6, 0, width - 12, height, juce::Justification::centredLeft);
-    }
-
-    void listBoxItemClicked(int row, const juce::MouseEvent&) override { escolher(row); }
 
     void escolher(int row) {
         if (row < 0 || row >= static_cast<int>(sugestoes_.size())) return;
         juce::String escolhido = sugestoes_[static_cast<size_t>(row)];
         editor_->setText(escolhido, false);
-        lista_->setVisible(false);
+        viewport_->setVisible(false);
         if (aoEscolher) aoEscolher(escolhido);
     }
 
     // 1º Enter com sugestão destacada: confirma a sugestão (nunca aplica um
     // valor parcial por engano). Lista fechada: Enter aplica. Vazio: nada.
     void tratarEnter() {
-        const int destacada = lista_->isVisible() ? lista_->getSelectedRow() : -1;
+        const int destacada = viewport_->isVisible() ? lista_->destaque() : -1;
         if (destacada >= 0 && destacada < static_cast<int>(sugestoes_.size())) {
             escolher(destacada);
             return;
         }
         if (getText().isEmpty()) return;
-        lista_->setVisible(false);
+        viewport_->setVisible(false);
         if (aoEnter) aoEnter();
     }
 
     void moverDestaque(int delta) {
-        if (!lista_->isVisible() || sugestoes_.empty()) return;
+        if (!viewport_->isVisible() || sugestoes_.empty()) return;
         const int n = static_cast<int>(sugestoes_.size());
-        int r = lista_->getSelectedRow() + delta;
-        lista_->selectRow(juce::jlimit(0, n - 1, r));
+        destaqueAtual_ = juce::jlimit(0, n - 1, lista_->destaque() + delta);
+        lista_->destacar(destaqueAtual_);
+        const auto r = lista_->retanguloDoDestaque();
+        if (!r.isEmpty()) {  // mantém o chip destacado à vista ao navegar pelas setas
+            auto pos = viewport_->getViewPosition();
+            if (r.getY() < pos.y) pos.y = r.getY() - 6;
+            else if (r.getBottom() > pos.y + viewport_->getViewHeight()) pos.y = r.getBottom() - viewport_->getViewHeight() + 6;
+            viewport_->setViewPosition(pos);
+        }
     }
 
     void mostrarTodasSugestoes() {
         sugestoes_ = valores_;
-        lista_->updateContent();
-        lista_->setVisible(!sugestoes_.empty());
+        destaqueAtual_ = -1;
+        viewport_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
     }
@@ -500,11 +646,10 @@ private:
         sugestoes_.clear();
         for (auto& v : valores_)
             if (v.startsWithIgnoreCase(q)) sugestoes_.push_back(v);
-        lista_->updateContent();
         // Digitando: a 1ª sugestão fica destacada (é ela que o Enter confirma).
-        if (!sugestoes_.empty()) lista_->selectRow(0);
-        else lista_->deselectAllRows();
-        lista_->setVisible(!sugestoes_.empty());
+        destaqueAtual_ = sugestoes_.empty() ? -1 : 0;
+        viewport_->setViewPosition(0, 0);  // lista nova: volta ao topo
+        viewport_->setVisible(!sugestoes_.empty());
         resized();
         if (auto* parent = getParentComponent()) parent->resized();
     }
@@ -526,7 +671,11 @@ private:
     std::vector<juce::String> valores_;
     std::vector<juce::String> sugestoes_;
     std::unique_ptr<FocusAwareTextEditor> editor_;
-    std::unique_ptr<juce::ListBox> lista_;
+    std::unique_ptr<ChipsSugestoes> lista_;
+    std::unique_ptr<juce::Viewport> viewport_;
+    int alturaLista_ = 0;
+    int alturaVisivel_ = 0;
+    int destaqueAtual_ = -1;
 };
 
 class GeoLocationPopupContent : public juce::Component {
@@ -998,10 +1147,12 @@ public:
         }
 
         int padding = 14;
-        int cardMinW = 190;
-        int cardH = 210;
+        // Slider de tamanho (mesma escala da aba METADATA: 80..320 px de largura mínima do card).
+        int cardMinW = static_cast<int>(80.0 + owner_.tamanhoMiniaturas_ * (320.0 - 80.0));
+        int cardH = 0;  // proporcional: miniatura (cardH - kAlturaTextoCard) + área de texto fixa
         int colunas = std::max(1, (w - padding) / (cardMinW + padding));
         int cardW = (w - padding * (colunas + 1)) / colunas;
+        cardH = std::max(150, static_cast<int>(cardW * 1.1));
         int linhas = (total + colunas - 1) / colunas;
         int totalH = padding + linhas * (cardH + padding);
 
@@ -1134,26 +1285,28 @@ public:
             g.fillRoundedRectangle(bounds.toFloat(), tk.raioMedio);
 
             // Thumbnail Area (~115px height)
-            auto thumbArea = bounds.reduced(6, 6).removeFromTop(115);
-            juce::Image img;
+            auto thumbArea = bounds.reduced(6, 6).removeFromTop(juce::jmax(60, cardH_ - 95));
             {
-                const juce::ScopedLock sl(lock_);
-                auto it = cache_.find(item.id);
-                if (it != cache_.end()) img = it->second;
-            }
+                juce::Image img;
+                {
+                    const juce::ScopedLock sl(lock_);
+                    auto it = cache_.find(item.id);
+                    if (it != cache_.end()) img = it->second;
+                }
 
-            if (img.isValid()) {
-                g.setColour(tk.painelAlt);
-                g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
-                g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
-            } else {
-                pedirMiniatura(item.id);
-                g.setColour(corCat.withAlpha(0.12f));
-                g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
-                g.setColour(corCat);
-                g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
-                g.drawText(item.extensao.isNotEmpty() ? item.extensao : item.categoria.substring(0, 3).toUpperCase(),
-                           thumbArea, juce::Justification::centred);
+                if (img.isValid()) {
+                    g.setColour(tk.painelAlt);
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    g.drawImage(img, thumbArea.toFloat(), juce::RectanglePlacement::centred);
+                } else {
+                    pedirMiniatura(item.id);
+                    g.setColour(corCat.withAlpha(0.12f));
+                    g.fillRoundedRectangle(thumbArea.toFloat(), tk.raioPequeno);
+                    g.setColour(corCat);
+                    g.setFont(juce::Font(juce::FontOptions(22.0f, juce::Font::bold)));
+                    g.drawText(item.extensao.isNotEmpty() ? item.extensao : item.categoria.substring(0, 3).toUpperCase(),
+                               thumbArea, juce::Justification::centred);
+                }
             }
 
             // Thumbnail Border
@@ -1213,6 +1366,22 @@ public:
                 g.drawRoundedRectangle(offBadge.toFloat(), 4.0f, 1.0f);
                 g.setFont(font9Bold);
                 g.drawText("OFFLINE", offBadge, juce::Justification::centred);
+            }
+
+            // Duração (áudio/vídeo): selo no canto inferior esquerdo da miniatura, desenhado aqui (nunca embutido na
+            // imagem). Sem duração lida: nada (nunca "0:00").
+            if (item.duracaoSegundos && (item.categoria == "Audio" || item.categoria == "Video")) {
+                const auto total = static_cast<juce::int64>(*item.duracaoSegundos + 0.5);
+                const auto hh = total / 3600, mm = (total / 60) % 60, ss = total % 60;
+                const juce::String txt = hh > 0 ? juce::String(hh) + ":" + juce::String(mm).paddedLeft('0', 2) + ":" + juce::String(ss).paddedLeft('0', 2)
+                                                : juce::String(mm) + ":" + juce::String(ss).paddedLeft('0', 2);
+                const int w = juce::GlyphArrangement::getStringWidthInt(font10Bold, txt) + 12;
+                juce::Rectangle<int> durBadge(thumbArea.getX() + 6, thumbArea.getBottom() - 22, w, 16);
+                g.setColour(juce::Colour(0xcc000000));
+                g.fillRoundedRectangle(durBadge.toFloat(), 4.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font10Bold);
+                g.drawText(txt, durBadge, juce::Justification::centred);
             }
 
             // R (Reject): véu vermelho na miniatura, selo "R" e moldura vermelha no card.
@@ -1307,8 +1476,11 @@ public:
 
         if (e.getNumberOfClicks() >= 2) {
             if (idx >= 0 && idx < static_cast<int>(owner_.indicesFiltrados_.size())) {
-                owner_.abrirArquivoOrigem(idx);
+                const int real = owner_.indicesFiltrados_[static_cast<size_t>(idx)];
+                if (real >= 0 && real < static_cast<int>(owner_.todosItens_.size()))
+                    owner_.abrirPreviewDoItem(owner_.todosItens_[static_cast<size_t>(real)].id);  // "Mostrar na origem" fica no menu de contexto
             }
+            clickedCardIdx_ = -1;
             return;
         }
 
@@ -1387,21 +1559,9 @@ public:
         if (clickedCardIdx_ >= 0 && clickedCardIdx_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
             int realIdx = owner_.indicesFiltrados_[static_cast<size_t>(clickedCardIdx_)];
             if (realIdx >= 0 && realIdx < static_cast<int>(owner_.todosItens_.size())) {
-                // item (shift-clique seleciona intervalo): mesma âncora
-                // compartilhada com a visão em lista (cellClicked).
-                if (e.mods.isShiftDown() && owner_.ultimaPosicaoClicadaParaSelecao_ >= 0 &&
-                    owner_.ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(owner_.indicesFiltrados_.size())) {
-                    int de = std::min(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
-                    int ate = std::max(owner_.ultimaPosicaoClicadaParaSelecao_, clickedCardIdx_);
-                    for (int p = de; p <= ate; ++p) {
-                        int ri = owner_.indicesFiltrados_[static_cast<size_t>(p)];
-                        if (ri >= 0 && ri < static_cast<int>(owner_.todosItens_.size()))
-                            owner_.todosItens_[static_cast<size_t>(ri)].selecionado = true;
-                    }
-                } else {
-                    owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado = !owner_.todosItens_[static_cast<size_t>(realIdx)].selecionado;
-                    owner_.ultimaPosicaoClicadaParaSelecao_ = clickedCardIdx_;
-                }
+                // Seleção estilo Finder: clique simples = só este; Cmd/Ctrl = liga/desliga; Shift = intervalo
+                // (âncora compartilhada com a visão em lista).
+                owner_.aplicarCliqueSelecao(clickedCardIdx_, e.mods);
                 owner_.atualizarContagens();
                 if (owner_.tabela_) owner_.tabela_->repaint();
                 repaint();
@@ -1461,8 +1621,8 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         { "AUDIO", {
             "Album", "EP", "Single", "Compilation", "Soundtrack",
             "Stems", "Multitracks", "Sample Pack", "Sample", "Preset", "DAW Session",
-            "Field Recording", "Sound FX", "MIDI",
-            "Artist Catalog", "Artist Backup"
+            "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
+            "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"
         }},
         { "VIDEO", {
             "Raw Footage", "Home Video", "Music Video", "Film",
@@ -1472,11 +1632,12 @@ const std::vector<IntakeWorkspaceComponent::CategoriaColecao>& IntakeWorkspaceCo
         }},
         { "IMAGE", {
             "Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional",
-            "Image Edit Project", "Graphics", "Logo", "3D"
+            "Image Edit Project", "Graphics", "Logo", "3D", "YouTube Thumbnail"
         }},
         { "DOCUMENT", {
-            "Documentation", "Book", "Contract", "Manual", "Report",
-            "Reference", "Technical Documentation", "Planilha"
+            "Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report",
+            "Reference", "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
+            "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"
         }}
     };
     return kVocab;
@@ -1693,12 +1854,47 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     btnVisaoIcones_->onClick = [this] { definirModoVisao(ModoVisao::Icones); };
     addAndMakeVisible(*btnVisaoIcones_);
 
+    painelMetadados_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
+    addAndMakeVisible(*painelMetadados_);
+
+    // Mesmo slider de tamanho da aba METADATA (mesmo visual e limites); só vale na visão em miniaturas.
+    sliderTamanho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
+    sliderTamanho_->setRange(0.0, 1.0, 0.01);
+    sliderTamanho_->setValue(tamanhoMiniaturas_, juce::dontSendNotification);
+    sliderTamanho_->setDoubleClickReturnValue(true, tamanhoMiniaturas_);
+    sliderTamanho_->setColour(juce::Slider::trackColourId, tema().borda);
+    sliderTamanho_->setColour(juce::Slider::thumbColourId, tema().acento);
+    sliderTamanho_->setColour(juce::Slider::backgroundColourId, tema().painelAlt);
+    sliderTamanho_->onValueChange = [this] {
+        tamanhoMiniaturas_ = sliderTamanho_->getValue();
+        if (gridComponent_) gridComponent_->recalcularLayout();
+    };
+    sliderTamanho_->setTooltip("Adjust thumbnail display size");
+    sliderTamanho_->setEnabled(false);  // habilita ao entrar na visão em miniaturas
+    addAndMakeVisible(*sliderTamanho_);
+    lblTamanho_ = std::make_unique<juce::Label>("", "SIZE");
+    lblTamanho_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
+    lblTamanho_->setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(*lblTamanho_);
+
     auto btnIngerirPill = std::make_unique<PillButton>(i18n::t("intake.btn_ingerir"));
     btnIngerirPill->tamanhoFonte = 13.0f;
     btnIngerirPill->onClick = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
     btnIngerirPill->setTooltip(i18n::t("intake.tooltip_ingerir"));
     btnIngerir_ = std::move(btnIngerirPill);
     addAndMakeVisible(*btnIngerir_);
+
+    auto btnCel = std::make_unique<PillButton>(i18n::t("light.cel.importar"));
+    btnCel->tamanhoFonte = 12.0f;
+    btnCel->desenharCelular = true;
+    btnCel->corFundoCustom = tk.painelAlt;
+    btnCel->corTextoCustom = tk.textoPrimario;
+    btnCel->corBordaCustom = tk.borda;
+    btnCel->setTooltip(i18n::t("light.cel.botaoDica"));
+    btnCel->onClick = [this] { abrirReceberDoCelular(); };
+    btnReceberCelular_ = std::move(btnCel);
+    addAndMakeVisible(*btnReceberCelular_);
 
     // Botão Google Drive — com logo googledrive.png
     auto btnGD = std::make_unique<GoogleDriveIconButton>();
@@ -1723,6 +1919,15 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     };
     btnLightroom_ = std::move(btnLR);
     addAndMakeVisible(*btnLightroom_);
+
+    // Adobe Bridge: pasta catalogada no Bridge entra no INTAKE normal, com o XMP já aplicado nos itens.
+    auto btnBR = std::make_unique<BridgeIconButton>();
+    btnBR->setTooltip(i18n::t("intake.importar_bridge"));
+    btnBR->onClick = [this] {
+        if (aoIngerirDeBridge) aoIngerirDeBridge();
+    };
+    btnBridge_ = std::move(btnBR);
+    addAndMakeVisible(*btnBridge_);
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     // CLOSE PROJECT / RETURN TO CATALOG saíram da barra desta aba (e de todas
@@ -1784,6 +1989,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     setupPill(btnFiltroImage_, "Images (0)", "Image", juce::Colour(0xfff4a261));
     setupPill(btnFiltroDoc_, "Documents (0)", "Document", juce::Colour(0xff2b9348));
     setupPill(btnFiltroOther_, "Other (0)", "Other", juce::Colour(0xff888888));
+    setupPill(btnFiltroPhoneDump_, "Phone Dump (0)", "PhoneDump", juce::Colour(0xff06b6d4));
 
     // 3. LINHA 3 (SelectionActionBar)
     // Cluster A (Left)
@@ -1818,25 +2024,25 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
         return btn;
     };
 
-    auto btnOrigMed = criarBotaoLote("SOURCE MEDIUM", corDoNivelHierarquia(NH::Origem), [this] {
+    auto btnOrigMed = criarBotaoLote(i18n::t("intake.btn_source_medium_lote"), corDoNivelHierarquia(NH::Origem), [this] {
         if (btnSourceMediumLote_) mostrarEditorOriginalSourceMediumLote(btnSourceMediumLote_->getScreenBounds());
     });
     btnSourceMediumLote_ = std::move(btnOrigMed);
     addAndMakeVisible(*btnSourceMediumLote_);
 
-    auto btnCreator = criarBotaoLote("CREATOR", corDoNivelHierarquia(NH::Artista), [this] {
+    auto btnCreator = criarBotaoLote(i18n::t("intake.btn_creator_lote"), corDoNivelHierarquia(NH::Artista), [this] {
         if (btnCreatorLote_) mostrarEditorCreatorLote(btnCreatorLote_->getScreenBounds());
     });
     btnCreatorLote_ = std::move(btnCreator);
     addAndMakeVisible(*btnCreatorLote_);
 
-    auto btnContent = criarBotaoLote("CONTENT", corDoNivelHierarquia(NH::ContentType), [this] {
+    auto btnContent = criarBotaoLote(i18n::t("intake.btn_content_lote"), corDoNivelHierarquia(NH::ContentType), [this] {
         if (btnContentLote_) mostrarEditorContentLote(btnContentLote_->getScreenBounds());
     });
     btnContentLote_ = std::move(btnContent);
     addAndMakeVisible(*btnContentLote_);
 
-    auto btnSubject = criarBotaoLote("SUBJECT", corDoNivelHierarquia(NH::Subject), [this] {
+    auto btnSubject = criarBotaoLote(i18n::t("intake.btn_subject_lote"), corDoNivelHierarquia(NH::Subject), [this] {
         if (btnSubjectLote_) mostrarEditorSubjectLote(btnSubjectLote_->getScreenBounds());
     });
     btnSubjectLote_ = std::move(btnSubject);
@@ -1850,16 +2056,19 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     // (ContentType) e ficava fácil de confundir um com o outro aqui; o
     // Visual Editor do BACKUP continua usando o verde original pro nível
     // Ano, não mexi nisso.
-    auto btnEventDate = criarBotaoLote("EVENT DATE", juce::Colour(0xff9575cd), [this] {
+    auto btnEventDate = criarBotaoLote(i18n::t("intake.btn_event_date_lote"), juce::Colour(0xff9575cd), [this] {
         if (btnEventDateLote_) mostrarEditorEventDateLote(btnEventDateLote_->getScreenBounds());
     });
     btnEventDateLote_ = std::move(btnEventDate);
     addAndMakeVisible(*btnEventDateLote_);
 
-    // GEO LOCATION vive numa seção própria (item 3), separada dos quatro
-    // campos de metadata acima — cor neutra, não é um bloco do Visual Editor.
-    auto btnGeo = std::make_unique<PillButton>(i18n::t("intake.btn_geo_lote"));
-    btnGeo->tamanhoFonte = 12.5f;
+    // GEO LOCATION no card Batch Assignment abaixo de Event Date (item 9A)
+    auto btnGeo = std::make_unique<PillButton>("GEO LOCATION");
+    btnGeo->tamanhoFonte = 12.0f;
+    btnGeo->desenharPin = true;
+    btnGeo->corFundoCustom = juce::Colour(0xff0284c7); // azul celeste
+    btnGeo->corTextoCustom = juce::Colours::white;
+    btnGeo->corBordaCustom = juce::Colour(0xff0369a1);
     btnGeo->onClick = [this] {
         if (btnGeolocationLote_) mostrarEditorGeolocationLote(btnGeolocationLote_->getScreenBounds());
     };
@@ -2024,6 +2233,7 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         it.nomeArquivo = item.nomeOriginalArquivo.empty() ? it.titulo : juce::String::fromUTF8(item.nomeOriginalArquivo.c_str());
         it.extensao = juce::String(item.extensaoArquivo).toUpperCase();
         it.tamanhoBytes = item.tamanhoBytes;
+        if (item.duracaoSegundos && *item.duracaoSegundos > 0.0) it.duracaoSegundos = item.duracaoSegundos;
 
         auto cat = matriz::ingest::categoriaPorExtensao(juce::String(item.extensaoArquivo));
         switch (cat) {
@@ -2085,6 +2295,9 @@ void IntakeWorkspaceComponent::definirModoVisao(ModoVisao modo) {
         if (btnVisaoIcones_) {
             btnVisaoIcones_->setAtivo(modoVisao_ == ModoVisao::Icones);
         }
+        if (sliderTamanho_) sliderTamanho_->setEnabled(modoVisao_ == ModoVisao::Icones);
+        idNoPainel_.clear();             // ao voltar para as miniaturas o painel relê o item atual
+        atualizarPainelMetadados();
         atualizarVisibilidadeEmptyState();
         resized();
         repaint();
@@ -2149,6 +2362,19 @@ void IntakeWorkspaceComponent::atualizarComboAno() {
 
 void IntakeWorkspaceComponent::atualizarFiltragem() {
     indicesFiltrados_.clear();
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemIntake& it) -> bool {
+        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
+
     for (size_t i = 0; i < todosItens_.size(); ++i) {
         const auto& it = todosItens_[i];
         int a = 0, m = 0, d = 0;
@@ -2157,7 +2383,18 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
                           : filtroAnoAtual_ == -1 ? !temData
                           : (temData && a == filtroAnoAtual_ && (filtroMesAtual_ == 0 || m == filtroMesAtual_) &&
                              (filtroDiaAtual_ == 0 || d == filtroDiaAtual_));
-        if ((filtroCategoriaAtual_ == "ALL" || it.categoria == filtroCategoriaAtual_) && dataOk) {
+        if (!dataOk) continue;
+
+        const bool dump = ehDump(it);
+        bool catOk = false;
+        if (filtroCategoriaAtual_ == "ALL") {
+            catOk = true;
+        } else if (filtroCategoriaAtual_ == "PhoneDump") {
+            catOk = dump;
+        } else {
+            catOk = (!dump && it.categoria == filtroCategoriaAtual_);
+        }
+        if (catOk) {
             indicesFiltrados_.push_back(static_cast<int>(i));
         }
     }
@@ -2175,6 +2412,7 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
     updatePill(btnFiltroImage_.get(), filtroCategoriaAtual_ == "Image");
     updatePill(btnFiltroDoc_.get(), filtroCategoriaAtual_ == "Document");
     updatePill(btnFiltroOther_.get(), filtroCategoriaAtual_ == "Other");
+    updatePill(btnFiltroPhoneDump_.get(), filtroCategoriaAtual_ == "PhoneDump");
 
     if (tabela_) tabela_->updateContent();
     if (gridComponent_) {
@@ -2185,18 +2423,37 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
 }
 
 void IntakeWorkspaceComponent::atualizarContagens() {
+    atualizarPainelMetadados();  // toda mudança de seleção passa por aqui
     contagemAudio_ = 0;
     contagemVideo_ = 0;
     contagemImage_ = 0;
     contagemDoc_ = 0;
     contagemOther_ = 0;
+    contagemPhoneDump_ = 0;
+
+    std::set<std::string> itensExtraidos;
+    try {
+        itensExtraidos = projeto_.itensSemPasta(projeto_.mapaInicialDoFolderMap());
+    } catch (...) {}
+
+    auto ehDump = [&](const ItemIntake& it) -> bool {
+        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+            it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
+            return (itensExtraidos.count(it.id) == 0);
+        }
+        return false;
+    };
 
     for (const auto& item : todosItens_) {
-        if (item.categoria == "Audio") contagemAudio_++;
-        else if (item.categoria == "Video") contagemVideo_++;
-        else if (item.categoria == "Image") contagemImage_++;
-        else if (item.categoria == "Document") contagemDoc_++;
-        else contagemOther_++;
+        if (ehDump(item)) {
+            contagemPhoneDump_++;
+        } else {
+            if (item.categoria == "Audio") contagemAudio_++;
+            else if (item.categoria == "Video") contagemVideo_++;
+            else if (item.categoria == "Image") contagemImage_++;
+            else if (item.categoria == "Document") contagemDoc_++;
+            else contagemOther_++;
+        }
     }
 
     // Item 1 (lista nova de hoje): a contagem/estado dos botões de lote tem
@@ -2215,6 +2472,7 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     if (btnFiltroImage_) btnFiltroImage_->setButtonText(i18n::t("intake.filtro_image").replace("{n}", juce::String(contagemImage_)));
     if (btnFiltroDoc_) btnFiltroDoc_->setButtonText(i18n::t("intake.filtro_doc").replace("{n}", juce::String(contagemDoc_)));
     if (btnFiltroOther_) btnFiltroOther_->setButtonText(i18n::t("intake.filtro_other").replace("{n}", juce::String(contagemOther_)));
+    if (btnFiltroPhoneDump_) btnFiltroPhoneDump_->setButtonText("Phone Dump (" + juce::String(contagemPhoneDump_) + ")");
 
     if (lblContadorTotal_) {
         lblContadorTotal_->setText(i18n::t("intake.ativos_contador").replace("{n}", juce::String(todosItens_.size())), juce::dontSendNotification);
@@ -2268,6 +2526,7 @@ void IntakeWorkspaceComponent::recarregar() {
         std::vector<ItemResumo> quarentena;
         try {
             quarentena = proj->listarItensEmQuarentena();
+            proj->carregarMarcasRDoBanco();  // as marcas R chegam junto com a lista (nunca consultadas na message thread)
         } catch (const std::exception&) {
             return;
         }
@@ -2701,6 +2960,12 @@ void IntakeWorkspaceComponent::alternarMarcaRDosSelecionados() {
     else if (!selecionados.empty()) alvo = selecionados;
     else if (!idFoco.empty()) alvo.insert(idFoco);
     if (alvo.empty()) return;
+    projeto_.aoMarcasRRevertidas = [safeThis = juce::Component::SafePointer<IntakeWorkspaceComponent>(this)]() {
+        if (!safeThis) return;
+        safeThis->marcadosR_ = safeThis->projeto_.idsMarcadosR();
+        safeThis->atualizarBotaoRejeitar();
+        safeThis->repaint();
+    };
     projeto_.alternarMarcaR(std::vector<std::string>(alvo.begin(), alvo.end()));
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();
@@ -2716,6 +2981,12 @@ void IntakeWorkspaceComponent::alternarMarcaRDeItem(int itemIndex) {
     std::vector<std::string> ids;
     if (selecionados.count(itemId) > 0 && selecionados.size() > 1) ids.assign(selecionados.begin(), selecionados.end());
     else ids.push_back(itemId);
+    projeto_.aoMarcasRRevertidas = [safeThis = juce::Component::SafePointer<IntakeWorkspaceComponent>(this)]() {
+        if (!safeThis) return;
+        safeThis->marcadosR_ = safeThis->projeto_.idsMarcadosR();
+        safeThis->atualizarBotaoRejeitar();
+        safeThis->repaint();
+    };
     projeto_.alternarMarcaR(ids);
     marcadosR_ = projeto_.idsMarcadosR();
     atualizarBotaoRejeitar();
@@ -2809,6 +3080,7 @@ void IntakeWorkspaceComponent::moverFocoGrade(int dx, int dy, bool estender) {
     }
 
     if (auto* it = doItem(novo)) focoId_ = it->id;
+    if (selecaoMudou) ultimoClicadoId_ = focoId_;  // Shift+seta: o painel acompanha o item do foco
     posicaoFocoCache_ = novo;
     garantirCardVisivel(novo);
     if (selecaoMudou) {
@@ -2827,8 +3099,12 @@ void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
     if (pos < 0) return;
     const int real = indicesFiltrados_[static_cast<size_t>(pos)];
     if (real < 0 || real >= static_cast<int>(todosItens_.size())) return;
-    const std::string itemId = todosItens_[static_cast<size_t>(real)].id;
+    abrirPreviewDoItem(todosItens_[static_cast<size_t>(real)].id);
+}
 
+void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
+    if (itemId.empty()) return;
+    janelaPreview_.reset();  // duplo clique em outro arquivo troca o preview
     juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
     auto aoFechar = [safe] {
         juce::MessageManager::callAsync([safe] {
@@ -2857,7 +3133,7 @@ void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
         if (p >= 0) safe->garantirCardVisivel(p);
         if (safe->gridComponent_) safe->gridComponent_->repaint();
     };
-    janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou);
+    janelaPreview_ = std::make_unique<FloatingPreviewWindow>(projeto_, itemId, aoFechar, aoNavegar, aoItemMudou, /*somenteLeitura=*/true);
 }
 
 bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
@@ -2876,10 +3152,10 @@ bool IntakeWorkspaceComponent::keyPressed(const juce::KeyPress& k) {
             moverFocoGrade(dx, dy, mods.isShiftDown());
             return true;
         }
-        if (codigo == juce::KeyPress::spaceKey && !mods.isShiftDown()) {
-            alternarPreviewDoFoco();
-            return true;
-        }
+    }
+    if (k.getKeyCode() == juce::KeyPress::spaceKey && !mods.isShiftDown()) {  // preview também na visão em lista
+        alternarPreviewDoFoco();
+        return true;
     }
     const auto c = k.getTextCharacter();
     if (c == 'r' || c == 'R') {
@@ -3171,6 +3447,7 @@ void IntakeWorkspaceComponent::sortOrderChanged(int newSortColumnId, bool isForw
 
 void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& e) {
     focoVisivel_ = false;  // clique na lista: o R volta a valer para a seleção
+    grabKeyboardFocus();   // R e barra de espaço (preview) valem também na lista
     if (rowNumber < 0 || rowNumber >= static_cast<int>(indicesFiltrados_.size())) return;
     int realIndex = indicesFiltrados_[static_cast<size_t>(rowNumber)];
     if (realIndex < 0 || realIndex >= static_cast<int>(todosItens_.size())) return;
@@ -3181,7 +3458,7 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 
     if (e.getNumberOfClicks() >= 2) {
-        abrirArquivoOrigem(rowNumber);
+        abrirPreviewDoItem(todosItens_[static_cast<size_t>(realIndex)].id);  // "Mostrar na origem" fica no menu de contexto
         return;
     }
 
@@ -3195,24 +3472,7 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 
     if (columnId != kColSelect && columnId != kColAction) {
-        // item (shift-clique seleciona intervalo): segura shift e clica em
-        // outra linha — tudo entre a âncora (último clique simples) e esta
-        // linha vira selecionado, igual Finder/Explorer. A âncora só muda
-        // num clique simples (sem shift), pra dar pra esticar/encolher o
-        // intervalo repetindo o shift+clique a partir do mesmo ponto.
-        if (e.mods.isShiftDown() && ultimaPosicaoClicadaParaSelecao_ >= 0 &&
-            ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(indicesFiltrados_.size())) {
-            int de = std::min(ultimaPosicaoClicadaParaSelecao_, rowNumber);
-            int ate = std::max(ultimaPosicaoClicadaParaSelecao_, rowNumber);
-            for (int p = de; p <= ate; ++p) {
-                int ri = indicesFiltrados_[static_cast<size_t>(p)];
-                if (ri >= 0 && ri < static_cast<int>(todosItens_.size()))
-                    todosItens_[static_cast<size_t>(ri)].selecionado = true;
-            }
-        } else {
-            todosItens_[static_cast<size_t>(realIndex)].selecionado = !todosItens_[static_cast<size_t>(realIndex)].selecionado;
-            ultimaPosicaoClicadaParaSelecao_ = rowNumber;
-        }
+        aplicarCliqueSelecao(rowNumber, e.mods);
         if (tabela_) {
             tabela_->updateContent();
             tabela_->repaint();
@@ -3221,8 +3481,65 @@ void IntakeWorkspaceComponent::cellClicked(int rowNumber, int columnId, const ju
     }
 }
 
-void IntakeWorkspaceComponent::cellDoubleClicked(int rowNumber, int, const juce::MouseEvent&) {
-    abrirArquivoOrigem(rowNumber);
+void IntakeWorkspaceComponent::cellDoubleClicked(int, int, const juce::MouseEvent&) {
+    // o duplo clique é tratado em cellClicked (getNumberOfClicks() >= 2): abre o preview
+}
+
+void IntakeWorkspaceComponent::aplicarCliqueSelecao(int pos, const juce::ModifierKeys& mods) {
+    if (pos < 0 || pos >= static_cast<int>(indicesFiltrados_.size())) return;
+    auto item = [this](int p) -> ItemIntake* {
+        const int ri = indicesFiltrados_[static_cast<size_t>(p)];
+        return (ri >= 0 && ri < static_cast<int>(todosItens_.size())) ? &todosItens_[static_cast<size_t>(ri)] : nullptr;
+    };
+    auto* clicado = item(pos);
+    if (clicado == nullptr) return;
+
+    if (mods.isShiftDown() && ultimaPosicaoClicadaParaSelecao_ >= 0 &&
+        ultimaPosicaoClicadaParaSelecao_ < static_cast<int>(indicesFiltrados_.size())) {
+        // Shift: intervalo entre a âncora (último clique sem Shift) e o clicado; a âncora não muda.
+        const int de = std::min(ultimaPosicaoClicadaParaSelecao_, pos);
+        const int ate = std::max(ultimaPosicaoClicadaParaSelecao_, pos);
+        for (int p = de; p <= ate; ++p)
+            if (auto* it = item(p)) it->selecionado = true;
+    } else if (mods.isCommandDown() || mods.isCtrlDown()) {
+        clicado->selecionado = !clicado->selecionado;  // liga/desliga só este; vira âncora
+        ultimaPosicaoClicadaParaSelecao_ = pos;
+    } else {
+        for (auto& it : todosItens_) it.selecionado = false;  // clique simples: só este; vira âncora
+        clicado->selecionado = true;
+        ultimaPosicaoClicadaParaSelecao_ = pos;
+    }
+    ultimoClicadoId_ = clicado->id;
+    focoId_ = clicado->id;   // a barra de espaço (preview) e as setas continuam daqui
+    posicaoFocoCache_ = pos;
+    if (tabela_) {
+        tabela_->updateContent();
+        tabela_->repaint();
+    }
+    if (gridComponent_) gridComponent_->repaint();
+    atualizarContagens();
+}
+
+void IntakeWorkspaceComponent::atualizarPainelMetadados() {
+    if (!painelMetadados_ || modoVisao_ != ModoVisao::Icones) return;  // na lista a coluna não existe
+    std::string alvo;
+    if (!ultimoClicadoId_.empty()) {
+        for (int idx : indicesFiltrados_) {
+            if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+            const auto& it = todosItens_[static_cast<size_t>(idx)];
+            if (it.id == ultimoClicadoId_ && it.selecionado) { alvo = it.id; break; }
+        }
+    }
+    if (alvo.empty()) {  // o último clicado saiu da seleção: usa qualquer selecionado visível
+        for (int idx : indicesFiltrados_) {
+            if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
+            const auto& it = todosItens_[static_cast<size_t>(idx)];
+            if (it.selecionado) { alvo = it.id; }
+        }
+    }
+    if (alvo == idNoPainel_) return;
+    idNoPainel_ = alvo;
+    painelMetadados_->mostrarItem(alvo);
 }
 
 void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<int> screenPos) {
@@ -3516,26 +3833,32 @@ void IntakeWorkspaceComponent::resized() {
                                                           sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
     };
 
-    // 0. IMPORT — os três comandos de entrada de arquivo (INGEST FILES,
-    // GOOGLE DRIVE, LIGHTROOM) vivem aqui, em card próprio no topo da
-    // coluna esquerda, em vez de emprestados para a linha das tabs.
-    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_) {
+    // 0. IMPORT — comandos de entrada de arquivo
+    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_ && btnBridge_) {
         for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
+                                   static_cast<juce::Component*>(btnReceberCelular_.get()),
                                    static_cast<juce::Component*>(btnGoogleDrive_.get()),
-                                   static_cast<juce::Component*>(btnLightroom_.get())}) {
-            if (c->getParentComponent() != this) addAndMakeVisible(*c);
+                                   static_cast<juce::Component*>(btnLightroom_.get()),
+                                   static_cast<juce::Component*>(btnBridge_.get())}) {
+            if (c && c->getParentComponent() != this) addAndMakeVisible(*c);
         }
         iniciarCard();
         secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
         sidebar.removeFromTop(4);
         btnIngerir_->setBounds(sidebar.removeFromTop(28));
         sidebar.removeFromTop(4);
+        if (btnReceberCelular_) {
+            btnReceberCelular_->setBounds(sidebar.removeFromTop(28));
+            sidebar.removeFromTop(4);
+        }
         {
             auto importRow = sidebar.removeFromTop(28);
-            int half = (importRow.getWidth() - 6) / 2;
-            btnGoogleDrive_->setBounds(importRow.removeFromLeft(half));
+            int terco = (importRow.getWidth() - 12) / 3;
+            btnGoogleDrive_->setBounds(importRow.removeFromLeft(terco));
             importRow.removeFromLeft(6);
-            btnLightroom_->setBounds(importRow);
+            btnLightroom_->setBounds(importRow.removeFromLeft(terco));
+            importRow.removeFromLeft(6);
+            btnBridge_->setBounds(importRow);
         }
         finalizarCard();
         sidebar.removeFromTop(8);
@@ -3551,7 +3874,13 @@ void IntakeWorkspaceComponent::resized() {
         btnVisaoLista_->setBounds(viewRow.removeFromLeft(half));
         viewRow.removeFromLeft(6);
         btnVisaoIcones_->setBounds(viewRow);
-        sidebar.removeFromTop(6);
+        sidebar.removeFromTop(3);
+    }
+    if (sliderTamanho_) {
+        auto sliderRow = sidebar.removeFromTop(18).reduced(4, 0);
+        if (lblTamanho_) lblTamanho_->setBounds(sliderRow.removeFromLeft(30));
+        sliderTamanho_->setBounds(sliderRow);
+        sidebar.removeFromTop(5);
     }
     // Select All / Clear Selection (antes num card SELECTION próprio) + a contagem de selecionados.
     {
@@ -3575,6 +3904,10 @@ void IntakeWorkspaceComponent::resized() {
     btnFiltroDoc_->setBounds(sidebar.removeFromTop(24));
     sidebar.removeFromTop(4);
     btnFiltroOther_->setBounds(sidebar.removeFromTop(24));
+    sidebar.removeFromTop(4);
+    if (btnFiltroPhoneDump_) {
+        btnFiltroPhoneDump_->setBounds(sidebar.removeFromTop(24));
+    }
     sidebar.removeFromTop(6);
     if (comboAno_) comboAno_->setBounds(sidebar.removeFromTop(26));
     if (comboMes_ && comboDia_) {
@@ -3588,10 +3921,7 @@ void IntakeWorkspaceComponent::resized() {
     finalizarCard();
     sidebar.removeFromTop(8);
 
-    // 3. BATCH ASSIGNMENT — quatro botões coloridos, um por campo de
-    // metadata (item 2 da correção "BACKUP e INTAKE"), sem rótulo/combo
-    // genérico. GEO LOCATION fica de fora, em card próprio logo abaixo
-    // (item 3 — "deixar clara a separação").
+    // 3. BATCH ASSIGNMENT — botões coloridos de metadados, incluindo GEO LOCATION (item 9A)
     iniciarCard();
     secaoHeaderBounds_.push_back({i18n::t("intake.secao_batch"), sidebar.removeFromTop(kHeaderH)});
     sidebar.removeFromTop(4);
@@ -3604,12 +3934,6 @@ void IntakeWorkspaceComponent::resized() {
     btnSubjectLote_->setBounds(sidebar.removeFromTop(26));
     sidebar.removeFromTop(4);
     btnEventDateLote_->setBounds(sidebar.removeFromTop(26));
-    finalizarCard();
-    sidebar.removeFromTop(8);
-
-    // 3b. GEO LOCATION — seção separada dos quatro campos de metadata acima.
-    iniciarCard();
-    secaoHeaderBounds_.push_back({"GEO LOCATION", sidebar.removeFromTop(kHeaderH)});
     sidebar.removeFromTop(4);
     btnGeolocationLote_->setBounds(sidebar.removeFromTop(26));
     finalizarCard();
@@ -3629,6 +3953,14 @@ void IntakeWorkspaceComponent::resized() {
     if (lblNotaReject_) lblNotaReject_->setBounds(sidebar.removeFromTop(28));
     finalizarCard();
 
+    // Coluna da direita: metadados do arquivo selecionado (somente leitura), estreita (~280 px). Some em janelas estreitas.
+    if (painelMetadados_) {
+        // Só no modo MINIATURAS: na LISTA os metadados aparecem apenas na janela de preview.
+        const bool cabe = area.getWidth() >= 760 && modoVisao_ == ModoVisao::Icones;
+        painelMetadados_->setVisible(cabe);
+        if (cabe) painelMetadados_->setBounds(area.removeFromRight(280));
+    }
+
     // Right Area fills the remaining workspace (x = 230 to width, full height)
     if (tabela_) {
         tabela_->setBounds(area);
@@ -3645,6 +3977,70 @@ void IntakeWorkspaceComponent::resized() {
     if (emptyState_) {
         emptyState_->setBounds(area);
     }
+    if (overlayAtual_ && overlayAtual_->isVisible()) {
+        overlayAtual_->setBounds(getLocalBounds());
+        overlayAtual_->toFront(true);
+    }
+}
+
+void IntakeWorkspaceComponent::abrirReceberDoCelular() {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarEscolhaImportacaoCelular(*overlayAtual_, [seguro](std::optional<ModoImportacaoCelular> modo) {
+        juce::MessageManager::callAsync([seguro, modo] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->escolhaImportacaoAtual_.reset();
+            seguro->resized();
+            if (modo.has_value()) seguro->iniciarReceberDoCelular(*modo);
+        });
+    }, &escolhaImportacaoAtual_);
+    resized();
+}
+
+void IntakeWorkspaceComponent::iniciarReceberDoCelular(ModoImportacaoCelular modo) {
+    if (overlayAtual_ != nullptr) return;
+    if (modo == ModoImportacaoCelular::WhatsApp) {
+        overlayAtual_ = std::make_unique<PainelOverlay>();
+        addAndMakeVisible(*overlayAtual_);
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        mostrarImportarWhatsapp(*overlayAtual_, [seguro] {
+            juce::MessageManager::callAsync([seguro] {
+                if (seguro == nullptr) return;
+                seguro->overlayAtual_.reset();
+                seguro->resized();
+                seguro->recarregar();
+            });
+        });
+        resized();
+        return;
+    }
+
+    matriz::celular::OpcoesServidor opcoes;
+    auto* pProj = &projeto_.projeto();
+    opcoes.existentesDoProjeto = [pProj]() -> matriz::celular::ConjuntoExistentes {
+        if (pProj == nullptr) return {};
+        return matriz::celular::existentesDoProjeto(*pProj);
+    };
+
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    painelCelularAtual_ = mostrarReceberDoCelular(*overlayAtual_, opcoes, [seguro](RespostaReceberCelular r) {
+        juce::MessageManager::callAsync([seguro, r] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory()) {
+                if (seguro->aoIngerirArquivosDireto) {
+                    seguro->aoIngerirArquivosDireto({r.pastaSessao});
+                }
+            }
+        });
+    }, modo);
+    resized();
 }
 
 void IntakeWorkspaceComponent::lookAndFeelChanged() {
@@ -3692,8 +4088,11 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     // correspondente no Visual Editor (setada no construtor) — não passam
     // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
-        btnGeolocationLote_->setButtonText(i18n::t("intake.btn_geo_lote"));
-        updatePill(btnGeolocationLote_.get(), juce::Colours::transparentBlack, juce::Colours::transparentBlack);
+        btnGeolocationLote_->setButtonText("GEO LOCATION");
+    }
+    if (btnReceberCelular_) {
+        btnReceberCelular_->setButtonText(i18n::t("light.cel.importar"));
+        btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
     }
     if (btnConfirmarSelecao_) {
         btnConfirmarSelecao_->setButtonText(i18n::t("intake.btn_enviar_selecionados"));

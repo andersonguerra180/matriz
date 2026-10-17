@@ -1,9 +1,12 @@
 #include "DuplicatesWorkspaceComponent.h"
 #include "ProjetoAberto.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/Checksum.h"
+#include "../Ingest/Duplicata.h"
 #include "VideoPlayerComponent.h"
 #include "../Vault/Resolucao.h"
 #include "ModalMitigacao.h"
@@ -11,16 +14,117 @@
 #include "DuplicateResolutionDialog.h"
 #include "../Model/ProjectLog.h"
 #include "EventBus.h"
+#include <unordered_map>
+#include <unordered_set>
 #include "ConflitosMergeDialog.h"
 
 namespace matriz::ui {
 
 namespace {
+    // Diálogo de decisão de duplicata: mensagem + GRADE simétrica de botões (3 colunas, mesma largura/altura) + VOLTAR em
+    // largura total. Substitui o AlertWindow, cujos 6 botões numa linha só estouravam a largura e cortavam o último.
+    class DialogoEscolhaDuplicata : public juce::Component {
+    public:
+        struct Botao { juce::String texto; int codigo; };
+
+        DialogoEscolhaDuplicata(const juce::String& mensagem, std::vector<Botao> botoes, const juce::String& textoVoltar,
+                                std::function<void(int)> aoEscolher)
+            : botoes_(std::move(botoes)), aoEscolher_(std::move(aoEscolher)) {
+            const auto& tk = tema();
+            lblMensagem_.setText(mensagem, juce::dontSendNotification);
+            lblMensagem_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            lblMensagem_.setColour(juce::Label::textColourId, tk.textoPrimario);
+            lblMensagem_.setJustificationType(juce::Justification::topLeft);
+            lblMensagem_.setMinimumHorizontalScale(1.0f);
+            addAndMakeVisible(lblMensagem_);
+            for (const auto& b : botoes_) {
+                auto btn = std::make_unique<juce::TextButton>(b.texto);
+                btn->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+                btn->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+                const int codigo = b.codigo;
+                btn->onClick = [this, codigo] { escolher(codigo); };
+                addAndMakeVisible(*btn);
+                botoesUi_.push_back(std::move(btn));
+            }
+            btnVoltar_.setButtonText(textoVoltar);
+            btnVoltar_.setColour(juce::TextButton::buttonColourId, tk.painel);
+            btnVoltar_.setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
+            btnVoltar_.onClick = [this] { escolher(0); };
+            addAndMakeVisible(btnVoltar_);
+            const int linhas = (static_cast<int>(botoes_.size()) + kColunas - 1) / kColunas;
+            setSize(kLargura, kMargem + kAlturaMensagem + kGap + linhas * kAlturaBotao + (linhas - 1) * kGap + kGap + 34 + kMargem);
+        }
+
+        void paint(juce::Graphics& g) override { g.fillAll(tema().fundo); }
+
+        void resized() override {
+            auto area = getLocalBounds().reduced(kMargem);
+            lblMensagem_.setBounds(area.removeFromTop(kAlturaMensagem));
+            area.removeFromTop(kGap);
+            const int largura = (area.getWidth() - (kColunas - 1) * kGap) / kColunas;
+            const int linhas = (static_cast<int>(botoesUi_.size()) + kColunas - 1) / kColunas;
+            for (int i = 0; i < static_cast<int>(botoesUi_.size()); ++i) {
+                const int col = i % kColunas, lin = i / kColunas;
+                botoesUi_[static_cast<size_t>(i)]->setBounds(area.getX() + col * (largura + kGap),
+                                                             area.getY() + lin * (kAlturaBotao + kGap), largura, kAlturaBotao);
+            }
+            area.removeFromTop(linhas * kAlturaBotao + (linhas - 1) * kGap + kGap);
+            btnVoltar_.setBounds(area.removeFromTop(34));
+        }
+
+        static void exibir(const juce::String& titulo, const juce::String& mensagem, std::vector<Botao> botoes,
+                           const juce::String& textoVoltar, std::function<void(int)> aoEscolher) {
+            auto* conteudo = new DialogoEscolhaDuplicata(mensagem, std::move(botoes), textoVoltar, std::move(aoEscolher));
+            juce::DialogWindow::LaunchOptions opt;
+            opt.dialogTitle = titulo;
+            opt.content.setOwned(conteudo);
+            opt.dialogBackgroundColour = tema().fundo;
+            opt.escapeKeyTriggersCloseButton = true;
+            opt.useNativeTitleBar = true;
+            opt.resizable = false;
+            moldura::lancar(opt);
+        }
+
+    private:
+        void escolher(int codigo) {
+            auto cb = aoEscolher_;
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(codigo);
+            if (codigo != 0 && cb) juce::MessageManager::callAsync([cb, codigo] { cb(codigo); });
+        }
+
+        static constexpr int kLargura = 640, kMargem = 24, kGap = 12, kColunas = 3, kAlturaBotao = 44, kAlturaMensagem = 92;
+        std::vector<Botao> botoes_;
+        std::function<void(int)> aoEscolher_;
+        juce::Label lblMensagem_;
+        std::vector<std::unique_ptr<juce::TextButton>> botoesUi_;
+        juce::TextButton btnVoltar_;
+    };
+
     // Closed: top margin (10) + subcard height (130) + bottom margin (12).
     // Sub-card maior (miniatura ocupando a altura toda — item 2).
-    constexpr int kAlturaSubCard = 168;
+    constexpr int kAlturaSubCard = 196;  // cabe título + 5 linhas (Código, Match, Formato, Dimensões, Tamanho) + caminho sem sobrepor
     constexpr int kAlturaFechado = kAlturaSubCard + 22;
     constexpr int kAlturaAberto = kAlturaSubCard + 360;
+
+    // PROBABLE/SIMILAR (pHash) nunca entram em decisão em lote: só um a um, olhando.
+    template <class G> bool ehPrevisto(const G& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }
+    template <class V> int contarPrevistos(const V& gs) {
+        return static_cast<int>(std::count_if(gs.begin(), gs.end(), [](const auto& g) { return ehPrevisto(g); }));
+    }
+    constexpr int kAlturaBannerRisco = 52;
+    // A resolução em background desfaz tudo (rollback) se algo falha; sem isto o clique parecia "não fazer nada".
+    void avisarFalhaResolucao() {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.falha_titulo"),
+                                               matriz::i18n::t("duplicatas.falha_corpo"), {}, nullptr,
+                                               juce::ModalCallbackFunction::create([](int) {}));
+    }
+    // Texto do que sobrou depois de uma decisão em lote: parecidos (pHash) são decisão olhando; empate/sem backup é outro motivo.
+    template <class V> juce::String textoManuais(const V& gs) {
+        const int previstos = contarPrevistos(gs);
+        if (previstos == static_cast<int>(gs.size()))
+            return matriz::i18n::t("duplicatas.manuais_previstos").replace("{n}", juce::String(previstos));
+        return matriz::i18n::t("duplicatas.manuais").replace("{n}", juce::String((int) gs.size()));
+    }
 
     // Notas nunca são sobrescritas pela resolução de duplicatas: acrescenta.
     const char* const kSqlAcrescentarNota =
@@ -250,6 +354,7 @@ public:
         
         if (isImage_) {
             if (image_.isValid()) {
+                g.setOpacity(1.0f);  // a imagem herda o alfa da cor atual
                 g.drawImageWithin(image_, 10, 10, getWidth() - 20, getHeight() - 20,
                                   juce::RectanglePlacement::centred, false);
             } else {
@@ -449,7 +554,9 @@ private:
             : owner_(owner), index_(index), grupo_(grupo), parent_(parent) {
             
             btnValidate_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_validate"));
-            btnValidate_->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff22c55e)); // success green
+            btnValidate_->setColour(juce::TextButton::buttonColourId,  // verde = idêntico/seguro; âmbar = parecido, decidir olhando
+                                    (grupo.criterio == "PROBABLE" || grupo.criterio == "SIMILAR") ? juce::Colour(0xfff59e0b)
+                                                                                                 : juce::Colour(0xff22c55e));
             btnValidate_->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
             btnValidate_->onClick = [this] {
                 owner_.resolverDuplicata(static_cast<int>(index_), true);
@@ -587,10 +694,23 @@ private:
             const auto& tk = tema();
             
             // Outer container box
+            // Risco visível: par "parecido" (pHash) ganha borda e fundo âmbar; idêntico (SHA-256) borda verde.
+            const bool ehPrevisto = grupo_.criterio == "PROBABLE" || grupo_.criterio == "SIMILAR";
+            const juce::Colour corAmbar(0xfff59e0b), corSeguro(0xff22c55e);
             g.setColour(tk.painel);
             g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
-            g.setColour(tk.borda);
-            g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
+            if (ehPrevisto) {
+                g.setColour(corAmbar.withAlpha(0.07f));
+                g.fillRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio);
+                g.setColour(corAmbar);
+                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
+            } else if (grupo_.criterio == "IDENTICAL") {
+                g.setColour(corSeguro.withAlpha(0.75f));
+                g.drawRoundedRectangle(getLocalBounds().toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
+            } else {
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(getLocalBounds().toFloat(), tk.raioMedio, 1.0f);
+            }
 
             int w = getWidth();
             int btnW = 160;
@@ -626,12 +746,36 @@ private:
 
                 // Badge / Header text
                 g.setColour(isDup ? tk.alerta : tk.acento);
-                g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 juce::String headerTag = isDup ? matriz::i18n::t("duplicatas.possible_duplicate") : matriz::i18n::t("duplicatas.existing_original");
                 if (!m.collectionNome.empty()) {
                     headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
                 }
-                g.drawText(headerTag, x + 8, y + 2, subWidth - 16, 20, juce::Justification::centredLeft, true);
+                if (grupo_.criterio == "IDENTICAL") headerTag << " \u00B7 IDENTICAL";
+                else if (grupo_.criterio == "PROBABLE") headerTag << " \u00B7 PROBABLE \u00B7 REVIEW";
+                else if (grupo_.criterio == "SIMILAR") headerTag << " \u00B7 SIMILAR SHOT \u00B7 REVIEW";
+                // Versão de resolução menor (ex.: foto recuperada de HD com problema): marca qual lado tem menos qualidade.
+                int larguraSelo = 0;
+                if (m.largura > 0 && m.altura > 0 && other.largura > 0 && other.altura > 0) {
+                    const long long areaM = static_cast<long long>(m.largura) * m.altura;
+                    const long long areaO = static_cast<long long>(other.largura) * other.altura;
+                    if (areaM != areaO) {
+                        const bool menor = areaM < areaO;
+                        const juce::String rotulo = menor ? "LOWER RESOLUTION" : "HIGHER RESOLUTION";
+                        const juce::Font fonteSelo(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
+                        larguraSelo = juce::GlyphArrangement::getStringWidthInt(fonteSelo, rotulo) + 14;
+                        juce::Rectangle<int> selo(x + subWidth - larguraSelo - 6, y + 4, larguraSelo, 16);
+                        g.setColour(menor ? juce::Colour(0xffef4444) : juce::Colour(0xff22c55e));
+                        g.fillRoundedRectangle(selo.toFloat(), 8.0f);
+                        g.setColour(juce::Colours::white);
+                        g.setFont(fonteSelo);
+                        g.drawText(rotulo, selo, juce::Justification::centred);
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+                        g.setColour(isDup ? tk.alerta : tk.acento);
+                        larguraSelo += 6;
+                    }
+                }
+                g.drawText(headerTag, x + 8, y + 2, subWidth - 16 - larguraSelo, 20, juce::Justification::centredLeft, true);
 
                 // 4. Miniatura grande: ocupa toda a altura do sub-card abaixo
                 // da faixa do cabeçalho, colada à esquerda; as informações
@@ -651,11 +795,12 @@ private:
                     g.setColour(juce::Colours::black.withAlpha(0.35f));
                     g.fillRect(thumbRect);
                     if (thumb.isValid()) {
+                        g.setOpacity(1.0f);  // a cor acima tem alfa 0.35 e a imagem herdava isso (miniatura opaca)
                         g.drawImageWithin(thumb, thumbRect.getX() + 4, thumbRect.getY() + 4, thumbRect.getWidth() - 8,
                                           thumbRect.getHeight() - 8, juce::RectanglePlacement::centred, false);
                     } else {
                         g.setColour(tk.textoTerciario);
-                        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
                         g.drawText(juce::String(m.ext).toUpperCase(), thumbRect, juce::Justification::centred);
                     }
                 }
@@ -686,6 +831,12 @@ private:
 
                 linhaInfo(matriz::i18n::t("duplicatas.code"), m.codigoAcervo.empty() ? juce::String("N/A") : juce::String(m.codigoAcervo),
                           tk.textoSecundario);
+                if (grupo_.criterio == "IDENTICAL")
+                    linhaInfo("Match", "same SHA-256", juce::Colour(0xffef4444));          // coincidência (vermelho, como os outros)
+                else if (grupo_.criterio == "PROBABLE")
+                    linhaInfo("Match", "looks identical (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
+                else if (grupo_.criterio == "SIMILAR")
+                    linhaInfo("Match", "similar shot, seconds apart (pHash d=" + juce::String(grupo_.distanciaPHash) + ")", juce::Colour(0xfff59e0b));
                 linhaInfo(matriz::i18n::t("duplicatas.format"), juce::String(m.ext).toUpperCase(), tk.textoSecundario);
 
                 if (m.duracao > 0.0) {
@@ -712,7 +863,7 @@ private:
                 g.setColour(tk.borda.withAlpha(0.35f));
                 g.drawHorizontalLine(rodapeY - 3, static_cast<float>(metaX), static_cast<float>(x + subWidth - 8));
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(10.5f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                 juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
                 g.drawFittedText(displayPath, metaX, rodapeY, metaW, 30, juce::Justification::topLeft, 2, 1.0f);
             };
@@ -723,6 +874,44 @@ private:
             // Draw Duplicate sub-card
             drawSubCard(g, 14 + subW + 14, 10, subW, subH, grupo_.duplicata, grupo_.original, true, thumbDuplicata_);
             
+            // Nota de risco sob os botões (painel direito): âmbar = decida olhando, verde = byte a byte igual.
+            {
+                const juce::Rectangle<int> nota(w - btnW - 14, 105, btnW, subH - 95);
+                if (ehPrevisto) {
+                    g.setColour(corAmbar.withAlpha(0.16f));
+                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
+                    g.setColour(corAmbar);
+                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
+                    auto in = nota.reduced(7, 5);
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
+                    g.drawText(juce::String::fromUTF8("\u26A0 NOT BYTE-IDENTICAL"), in.removeFromTop(14), juce::Justification::centredLeft, true);
+                    g.setColour(tk.textoSecundario);
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+                    g.drawFittedText(grupo_.criterio == "SIMILAR"
+                                         ? "Looks alike but may be a different shot. Compare both before choosing."
+                                         : "Looks alike but may be an edit or a different file. Compare both before choosing.",
+                                     in, juce::Justification::topLeft, 4, 1.0f);
+                } else if (grupo_.criterio == "IDENTICAL") {
+                    g.setColour(corSeguro.withAlpha(0.14f));
+                    g.fillRoundedRectangle(nota.toFloat(), 5.0f);
+                    g.setColour(corSeguro);
+                    g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
+                    auto in = nota.reduced(7, 5);
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
+                    g.drawText(juce::String::fromUTF8("\u2713 IDENTICAL FILES"), in.removeFromTop(14), juce::Justification::centredLeft, true);
+                    g.setColour(tk.textoSecundario);
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
+                    juce::String textoNota("Same SHA-256: safe to validate.");
+                    if (grupo_.pastaArquivos > 0)
+                        textoNota << "\n" << matriz::i18n::t(grupo_.pastaMesmoConteudo ? "duplicatas.pasta_mesmo_conteudo"
+                                                                                       : "duplicatas.pasta_inteira")
+                                                 .replace("{n}", juce::String(grupo_.pastaArquivos))
+                                                 .replace("{a}", juce::String::fromUTF8(grupo_.pastaNome.c_str()))
+                                                 .replace("{b}", juce::String::fromUTF8(grupo_.pastaEmNome.c_str()));
+                    g.drawFittedText(textoNota, in, juce::Justification::topLeft, grupo_.pastaArquivos > 0 ? 6 : 3, 1.0f);
+                }
+            }
+
             // Draw horizontal dividing line if expanded
             if (isExpanded_) {
                 g.setColour(tk.borda);
@@ -867,13 +1056,13 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
 
     // item: filtro por ano — De/Até, mesmo padrão de campo numérico do
     // size filter. Vazio de qualquer lado = sem limite naquela ponta.
-    lblAno_ = std::make_unique<juce::Label>("lblAno", "Year");
+    lblAno_ = std::make_unique<juce::Label>("lblAno", matriz::i18n::t("dup.ano"));
     lblAno_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblAno_);
 
     txtAnoDe_ = std::make_unique<juce::TextEditor>("txtAnoDe");
     txtAnoDe_->setInputRestrictions(4, "0123456789");
-    txtAnoDe_->setTextToShowWhenEmpty("From", juce::Colours::grey);
+    txtAnoDe_->setTextToShowWhenEmpty(matriz::i18n::t("dup.de"), juce::Colours::grey);
     txtAnoDe_->setTooltip("Only include items from this year onward (blank = no lower limit)");
     addAndMakeVisible(*txtAnoDe_);
 
@@ -883,9 +1072,28 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
 
     txtAnoAte_ = std::make_unique<juce::TextEditor>("txtAnoAte");
     txtAnoAte_->setInputRestrictions(4, "0123456789");
-    txtAnoAte_->setTextToShowWhenEmpty("To", juce::Colours::grey);
+    txtAnoAte_->setTextToShowWhenEmpty(matriz::i18n::t("dup.ate"), juce::Colours::grey);
     txtAnoAte_->setTooltip("Only include items up to this year (blank = no upper limit)");
     addAndMakeVisible(*txtAnoAte_);
+
+    auto criarToggle = [this](std::unique_ptr<juce::ToggleButton>& btn, const juce::String& chaveTexto, const juce::String& chaveDica, bool inicial) {
+        btn = std::make_unique<juce::ToggleButton>(matriz::i18n::t(chaveTexto));
+        btn->setToggleState(inicial, juce::dontSendNotification);
+        btn->setTooltip(matriz::i18n::t(chaveDica));
+        btn->setColour(juce::ToggleButton::textColourId, tema().textoSecundario);
+        btn->setColour(juce::ToggleButton::tickColourId, tema().acento);
+        addAndMakeVisible(*btn);
+    };
+
+    criarToggle(tbSha256_, "duplicatas.match_sha256", "duplicatas.match_sha256_dica", true);
+    criarToggle(tbPHash_, "duplicatas.match_visual", "duplicatas.match_visual_dica", true);
+    criarToggle(tbNome_, "duplicatas.match_nome", "duplicatas.match_nome_dica", false);
+    criarToggle(tbTamanho_, "duplicatas.match_tamanho", "duplicatas.match_tamanho_dica", true);
+    criarToggle(tbData_, "duplicatas.match_data", "duplicatas.match_data_dica", false);
+    criarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica", true);
+    criarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica", false);
+    criarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica", true);
+    criarToggle(tbFormato_, "duplicatas.match_formato", "duplicatas.match_formato_dica", false);
 
     lblStatus_ = std::make_unique<juce::Label>("lblStatus", "");
     lblStatus_->setJustificationType(juce::Justification::centred);
@@ -920,6 +1128,20 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnDismissSelected_->setEnabled(false);
     addChildComponent(*btnDismissSelected_);
 
+    btnReset_ = std::make_unique<juce::TextButton>(matriz::i18n::t("duplicatas.btn_reset"));
+    btnReset_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnReset_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnReset_->setTooltip(matriz::i18n::t("duplicatas.btn_reset_dica"));
+    btnReset_->onClick = [this] { resetarAba(); };
+    addChildComponent(*btnReset_);
+
+    btnResolvidas_ = std::make_unique<juce::TextButton>();
+    btnResolvidas_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnResolvidas_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnResolvidas_->onClick = [this] { abrirResolvidas(); };
+    addAndMakeVisible(*btnResolvidas_);
+    atualizarContagemResolvidas();
+
     viewport_ = std::make_unique<juce::Viewport>();
     // Item 6 (lista nova de hoje): 10px cortava o knob redondo do
     // MatrizLookAndFeel (pensado pra a espessura default de 16px) — sem
@@ -947,14 +1169,157 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
     viewport_.reset();
 }
 
+namespace {
+
+// Lista das duplicatas já resolvidas (escondidas do app) com RESTAURAR. Vive numa janela própria.
+class DuplicatasResolvidasDialogo : public juce::Component, private juce::ListBoxModel {
+public:
+    using Item = ProjetoAberto::DuplicataResolvida;
+    DuplicatasResolvidasDialogo(std::vector<Item> itens, std::function<int(const std::vector<std::string>&)> aoRestaurar,
+                                std::function<std::vector<Item>()> recarregar)
+        : itens_(std::move(itens)), aoRestaurar_(std::move(aoRestaurar)), recarregar_(std::move(recarregar)) {
+        const auto& tk = tema();
+        lblIntro_.setText(matriz::i18n::t("duplicatas.resolvidas_intro"), juce::dontSendNotification);
+        lblIntro_.setColour(juce::Label::textColourId, tk.textoSecundario);
+        lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        addAndMakeVisible(lblIntro_);
+        lista_.setModel(this);
+        lista_.setMultipleSelectionEnabled(true);
+        lista_.setRowHeight(26);
+        addAndMakeVisible(lista_);
+        lblVazio_.setText(matriz::i18n::t("duplicatas.resolvidas_vazio"), juce::dontSendNotification);
+        lblVazio_.setColour(juce::Label::textColourId, tk.textoTerciario);
+        lblVazio_.setJustificationType(juce::Justification::centred);
+        addChildComponent(lblVazio_);
+        for (auto* b : {&btnSel_, &btnTudo_, &btnFechar_}) {
+            b->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            b->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+            addAndMakeVisible(*b);
+        }
+        btnSel_.setButtonText(matriz::i18n::t("duplicatas.btn_restaurar_sel"));
+        btnTudo_.setButtonText(matriz::i18n::t("duplicatas.btn_restaurar_tudo"));
+        btnFechar_.setButtonText(matriz::i18n::t("duplicatas.btn_fechar"));
+        btnSel_.onClick = [this] {
+            std::vector<std::string> ids;
+            const auto sel = lista_.getSelectedRows();
+            for (int i = 0; i < sel.size(); ++i) {
+                const int r = sel[i];
+                if (r >= 0 && r < static_cast<int>(itens_.size())) ids.push_back(itens_[static_cast<size_t>(r)].id);
+            }
+            restaurar(ids);
+        };
+        btnTudo_.onClick = [this] {
+            juce::Component::SafePointer<DuplicatasResolvidasDialogo> seguro(this);
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                    .withTitle(matriz::i18n::t("duplicatas.resolvidas_titulo"))
+                    .withMessage(matriz::i18n::t("duplicatas.restaurar_tudo_confirma").replace("{n}", juce::String((int) itens_.size())))
+                    .withButton(matriz::i18n::t("duplicatas.btn_restaurar_tudo"))
+                    .withButton(matriz::i18n::t("dialogo.cancelar")),
+                juce::ModalCallbackFunction::create([seguro](int r) {
+                    if (r != 1 || seguro == nullptr) return;
+                    std::vector<std::string> ids;
+                    for (const auto& it : seguro->itens_) ids.push_back(it.id);
+                    seguro->restaurar(ids);
+                }));
+        };
+        btnFechar_.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        atualizarEstado();
+        setSize(780, 480);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        lblIntro_.setBounds(r.removeFromTop(48));
+        r.removeFromTop(6);
+        auto botoes = r.removeFromBottom(32);
+        btnFechar_.setBounds(botoes.removeFromRight(110));
+        botoes.removeFromRight(8);
+        btnTudo_.setBounds(botoes.removeFromRight(170));
+        botoes.removeFromRight(8);
+        btnSel_.setBounds(botoes.removeFromRight(210));
+        r.removeFromBottom(8);
+        lista_.setBounds(r);
+        lblVazio_.setBounds(r);
+    }
+
+private:
+    int getNumRows() override { return static_cast<int>(itens_.size()); }
+    void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selecionada) override {
+        if (row < 0 || row >= static_cast<int>(itens_.size())) return;
+        const auto& tk = tema();
+        if (selecionada) { g.setColour(tk.acento.withAlpha(0.18f)); g.fillRect(0, 0, w, h); }
+        const auto& it = itens_[static_cast<size_t>(row)];
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.setColour(tk.textoPrimario);
+        g.drawText(juce::String::fromUTF8(it.codigo.c_str()), 8, 0, 110, h, juce::Justification::centredLeft, true);
+        g.drawText(juce::String::fromUTF8(it.titulo.c_str()), 124, 0, 220, h, juce::Justification::centredLeft, true);
+        g.setColour(tk.textoSecundario);
+        g.drawText(juce::String::fromUTF8(it.caminho.c_str()), 352, 0, w - 360, h, juce::Justification::centredLeft, true);
+    }
+
+    void restaurar(const std::vector<std::string>& ids) {
+        if (ids.empty() || !aoRestaurar_) return;
+        aoRestaurar_(ids);
+        if (recarregar_) itens_ = recarregar_();
+        lista_.deselectAllRows();
+        lista_.updateContent();
+        atualizarEstado();
+    }
+    void atualizarEstado() {
+        lista_.updateContent();
+        lista_.repaint();
+        lblVazio_.setVisible(itens_.empty());
+        btnSel_.setEnabled(!itens_.empty());
+        btnTudo_.setEnabled(!itens_.empty());
+    }
+
+    std::vector<Item> itens_;
+    std::function<int(const std::vector<std::string>&)> aoRestaurar_;
+    std::function<std::vector<Item>()> recarregar_;
+    juce::Label lblIntro_, lblVazio_;
+    juce::ListBox lista_;
+    juce::TextButton btnSel_, btnTudo_, btnFechar_;
+};
+
+}  // namespace
+
+void DuplicatesWorkspaceComponent::abrirResolvidas() {
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> seguro(this);
+    auto* conteudo = new DuplicatasResolvidasDialogo(
+        projeto_.listarDuplicatasResolvidas(),
+        [seguro](const std::vector<std::string>& ids) {
+            if (seguro == nullptr) return 0;
+            const int n = seguro->projeto_.restaurarDuplicatas(ids);  // message thread (EventBus)
+            seguro->atualizarContagemResolvidas();
+            return n;
+        },
+        [seguro] { return seguro != nullptr ? seguro->projeto_.listarDuplicatasResolvidas()
+                                            : std::vector<ProjetoAberto::DuplicataResolvida>{}; });
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(conteudo);
+    opts.dialogTitle = matriz::i18n::t("duplicatas.resolvidas_titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    moldura::lancar(opts);
+}
+
 void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblStatus_) {
         lblStatus_->setColour(juce::Label::textColourId, tk.textoSecundario);
-        lblStatus_->setFont(juce::Font(juce::FontOptions(11.0f)));
+        lblStatus_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     }
     if (lblScope_) {
-        lblScope_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblScope_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblScope_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblScope_->setText(matriz::i18n::t("duplicatas.lbl_scope"), juce::dontSendNotification);
     }
@@ -970,7 +1335,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileType_) {
-        lblFileType_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileType_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblFileType_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileType_->setText(matriz::i18n::t("duplicatas.lbl_type"), juce::dontSendNotification);
     }
@@ -991,7 +1356,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbFileType_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileSize_) {
-        lblFileSize_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileSize_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblFileSize_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileSize_->setText(matriz::i18n::t("duplicatas.lbl_size"), juce::dontSendNotification);
     }
@@ -1020,7 +1385,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblAno_) {
-        lblAno_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblAno_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblAno_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (lblAnoAte_) {
@@ -1062,6 +1427,30 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         btnDismissSelected_->setColour(juce::TextButton::textColourOffId, tk.textoSecundario);
         btnDismissSelected_->setButtonText(matriz::i18n::t("duplicatas.btn_dismiss_selected"));
     }
+    if (btnReset_) {
+        btnReset_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+        btnReset_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        btnReset_->setButtonText(matriz::i18n::t("duplicatas.btn_reset"));
+        btnReset_->setTooltip(matriz::i18n::t("duplicatas.btn_reset_dica"));
+    }
+    auto atualizarToggle = [&](std::unique_ptr<juce::ToggleButton>& btn, const juce::String& chaveTexto, const juce::String& chaveDica) {
+        if (btn) {
+            btn->setButtonText(matriz::i18n::t(chaveTexto));
+            btn->setTooltip(matriz::i18n::t(chaveDica));
+            btn->setColour(juce::ToggleButton::textColourId, tk.textoSecundario);
+            btn->setColour(juce::ToggleButton::tickColourId, tk.acento);
+        }
+    };
+    atualizarToggle(tbSha256_, "duplicatas.match_sha256", "duplicatas.match_sha256_dica");
+    atualizarToggle(tbPHash_, "duplicatas.match_visual", "duplicatas.match_visual_dica");
+    atualizarToggle(tbNome_, "duplicatas.match_nome", "duplicatas.match_nome_dica");
+    atualizarToggle(tbTamanho_, "duplicatas.match_tamanho", "duplicatas.match_tamanho_dica");
+    atualizarToggle(tbData_, "duplicatas.match_data", "duplicatas.match_data_dica");
+    atualizarToggle(tbDuracao_, "duplicatas.match_duracao", "duplicatas.match_duracao_dica");
+    atualizarToggle(tbDimensoes_, "duplicatas.match_dimensoes", "duplicatas.match_dimensoes_dica");
+    atualizarToggle(tbEspacoCor_, "duplicatas.match_espaco_cor", "duplicatas.match_espaco_cor_dica");
+    atualizarToggle(tbFormato_, "duplicatas.match_formato", "duplicatas.match_formato_dica");
+
     if (listaComponent_) {
         listaComponent_->updateButtonsI18n();
         listaComponent_->repaint();
@@ -1069,7 +1458,14 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     repaint();
 }
 
+void DuplicatesWorkspaceComponent::atualizarContagemResolvidas() {
+    if (!btnResolvidas_) return;
+    btnResolvidas_->setButtonText(matriz::i18n::t("duplicatas.btn_resolvidas")
+                                      .replace("{n}", juce::String(projeto_.contarDuplicatasResolvidas())));
+}
+
 void DuplicatesWorkspaceComponent::recarregar() {
+    atualizarContagemResolvidas();
     if (isThreadRunning() || estado_ == State::Results) {
         return; // Don't interrupt active scan or clear results on view reload
     }
@@ -1090,7 +1486,16 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     
     // Capture filter selections from UI safely on main thread before starting the thread
     activeFilters_.scope = cbScope_->getSelectedId();
-    activeFilters_.selecionadosNoGrid = projeto_.obterItensSelecionadosNoGrid();
+    // A seleção vem do grid de verdade (aba METADATA) — antes vinha de projeto_.obterItensSelecionadosNoGrid(), que só o
+    // MosaicoComponent antigo do MainComponent atualizava: com "Selected files" o scan recebia uma seleção vazia.
+    activeFilters_.selecionadosNoGrid = fornecerSelecaoDoGrid ? fornecerSelecaoDoGrid() : projeto_.obterItensSelecionadosNoGrid();
+    if (activeFilters_.scope == 2 && activeFilters_.selecionadosNoGrid.empty()) {
+        const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::InfoIcon, "DUPLICATES",
+            pt ? juce::String::fromUTF8("Nenhum arquivo selecionado no grid. Selecione arquivos na aba METADATA ou escolha \"Todos\" no escopo.")
+               : juce::String("No files are selected in the grid. Select files in the METADATA tab or choose \"All\" as the scope."));
+        return;
+    }
     activeFilters_.fileType = cbFileType_->getSelectedId();
     activeFilters_.sizeFilter = cbSizeFilter_->getSelectedId();
     
@@ -1104,8 +1509,20 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
     activeFilters_.anoDe = txtAnoDe_->getText().trim().getIntValue();
     activeFilters_.anoAte = txtAnoAte_->getText().trim().getIntValue();
 
+    activeFilters_.coincidirSha256 = tbSha256_ ? tbSha256_->getToggleState() : true;
+    activeFilters_.coincidirPHash = tbPHash_ ? tbPHash_->getToggleState() : true;
+    activeFilters_.coincidirNome = tbNome_ ? tbNome_->getToggleState() : false;
+    activeFilters_.coincidirTamanho = tbTamanho_ ? tbTamanho_->getToggleState() : true;
+    activeFilters_.coincidirData = tbData_ ? tbData_->getToggleState() : false;
+    activeFilters_.coincidirDuracao = tbDuracao_ ? tbDuracao_->getToggleState() : true;
+    activeFilters_.coincidirDimensoes = tbDimensoes_ ? tbDimensoes_->getToggleState() : false;
+    activeFilters_.coincidirEspacoCor = tbEspacoCor_ ? tbEspacoCor_->getToggleState() : true;
+    activeFilters_.coincidirFormato = tbFormato_ ? tbFormato_->getToggleState() : false;
+
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
+    achadosScan_ = 0;
+    bytesScan_ = 0;
     gruposDetectados_.clear();
     btnScan_->setEnabled(false);
     btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
@@ -1127,6 +1544,7 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 void DuplicatesWorkspaceComponent::run() {
     auto& db = projeto_.projeto().registro();
     bool isCatalogMode = (projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+    faseScan_ = 1;
 
     // 1. Get all candidate items for duplicate detection
     struct ItemInfo {
@@ -1146,13 +1564,17 @@ void DuplicatesWorkspaceComponent::run() {
         std::string collectionCaminho;
         juce::int64 tamanhoBytes = 0;
         int ano = 0;
+        std::string arquivoId;
+        std::string sha256;
+        std::string dataOriginal;  // EXIF DateTimeOriginal (só imagens), se houver
     };
     std::vector<ItemInfo> items;
 
     auto carregarItensDeDb = [&](matriz::db::Database& database, const juce::File& pastaProjeto, const std::string& colNome, const std::string& colCaminho) {
         try {
             auto stmt = database.prepare(
-                "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem, i.ano "
+                "SELECT i.id, i.codigo_acervo, i.titulo, a.caminho_relativo, a.caracteristicas_tecnicas_json, a.tamanho_bytes, a.caminho_absoluto_origem, i.ano, "
+                "       a.id, a.checksum_sha256 "
                 "FROM item i "
                 "JOIN arquivo a ON a.item_id = i.id "
                 "WHERE a.eh_master = 1 "
@@ -1175,6 +1597,8 @@ void DuplicatesWorkspaceComponent::run() {
                 info.collectionCaminho = colCaminho;
                 // item.ano é TEXT (garantirColuna em Project.cpp), não INTEGER.
                 info.ano = juce::String(stmt.columnText(7)).trim().getIntValue();
+                info.arquivoId = stmt.columnText(8);
+                info.sha256 = stmt.columnText(9);
 
                 std::string absOrig = stmt.columnText(6);
                 if (!absOrig.empty()) {
@@ -1198,8 +1622,11 @@ void DuplicatesWorkspaceComponent::run() {
                     if (obj->hasProperty("lufsIntegrado")) {
                         info.lufs = obj->getProperty("lufsIntegrado");
                     }
+                    if (obj->hasProperty("exifDataOriginal")) info.dataOriginal = obj->getProperty("exifDataOriginal").toString().toStdString();
                     if (auto* bruto = obj->getProperty("bruto").getDynamicObject()) {
                         if (auto* exif = bruto->getProperty("exif").getDynamicObject()) {
+                            if (info.dataOriginal.empty() && exif->hasProperty("Exif.Photo.DateTimeOriginal"))
+                                info.dataOriginal = exif->getProperty("Exif.Photo.DateTimeOriginal").toString().toStdString();
                             if (exif->hasProperty("Exif.Image.Orientation")) {
                                 info.orientation = exif->getProperty("Exif.Image.Orientation").toString().toStdString();
                             }
@@ -1287,6 +1714,54 @@ void DuplicatesWorkspaceComponent::run() {
         return;
     }
 
+    struct PerfilCorImagem {
+        bool ehMonocromatico = false;
+        double chromaMedio = 0.0;
+        double fracaoPixelsComCor = 0.0;
+    };
+    auto analisarPerfilCor = [](const juce::Image& img) -> PerfilCorImagem {
+        if (img.isNull()) return {};
+        if (img.getFormat() == juce::Image::SingleChannel) return { true, 0.0, 0.0 };
+        const int w = img.getWidth(), h = img.getHeight();
+        if (w <= 0 || h <= 0) return {};
+        const int stepX = std::max(1, w / 64);
+        const int stepY = std::max(1, h / 64);
+        int totalAmostrado = 0;
+        int pixelsComCor = 0;
+        double somaChroma = 0.0;
+        for (int y = 0; y < h; y += stepY) {
+            for (int x = 0; x < w; x += stepX) {
+                auto c = img.getPixelAt(x, y);
+                int r = c.getRed(), g = c.getGreen(), b = c.getBlue();
+                int chroma = std::max({r, g, b}) - std::min({r, g, b});
+                somaChroma += chroma;
+                if (chroma >= 18) pixelsComCor++;
+                totalAmostrado++;
+            }
+        }
+        if (totalAmostrado == 0) return {};
+        double chromaMedio = somaChroma / totalAmostrado;
+        double fracaoComCor = static_cast<double>(pixelsComCor) / totalAmostrado;
+        bool mono = (fracaoComCor < 0.05 && chromaMedio < 7.5);
+        return { mono, chromaMedio, fracaoComCor };
+    };
+
+    std::unordered_map<std::string, bool> monoDe;
+    auto obterMonocromatico = [&](const std::string& itemId, const std::string& fullPath) -> bool {
+        auto itM = monoDe.find(itemId);
+        if (itM != monoDe.end()) return itM->second;
+        juce::File f;
+        if (auto mini = projeto_.caminhoMiniaturaPrincipal(itemId)) f = juce::File(*mini);
+        if (!f.existsAsFile() && !fullPath.empty()) f = juce::File(juce::String::fromUTF8(fullPath.c_str()));
+        bool mono = false;
+        if (f.existsAsFile()) {
+            juce::Image img = juce::ImageFileFormat::loadFrom(f);
+            mono = analisarPerfilCor(img).ehMonocromatico;
+        }
+        monoDe[itemId] = mono;
+        return mono;
+    };
+
     // 2. Perform cross-matching for duplicates
     if (isCatalogMode) {
         for (size_t i = 0; i < items.size(); ++i) {
@@ -1311,6 +1786,18 @@ void DuplicatesWorkspaceComponent::run() {
                                   (tamanhoIgual && extIgual) ||
                                   (duracaoIgual && lufsIgual && extIgual) ||
                                   (dimIgual && tamanhoIgual);
+
+                if (activeFilters_.coincidirNome && !nomeIgual) continue;
+                if (activeFilters_.coincidirFormato && !extIgual) continue;
+                if (activeFilters_.coincidirTamanho && !tamanhoIgual) continue;
+                if (activeFilters_.coincidirDuracao && (a.duracao > 0 || b.duracao > 0) && !duracaoIgual) continue;
+                if (activeFilters_.coincidirDimensoes && (a.largura > 0 || b.largura > 0) && !dimIgual) continue;
+                if (activeFilters_.coincidirEspacoCor) {
+                    if (!a.colorSpace.empty() && !b.colorSpace.empty() && !colorSpaceIgual) continue;
+                    if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
+                }
+                if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
 
                 if (isDupMatch) {
                     DuplicateGroup group;
@@ -1360,15 +1847,23 @@ void DuplicatesWorkspaceComponent::run() {
             }
         }
     } else {
+        // Com qualquer filtro ativo (escopo, tipo, tamanho, ano) o "original" também tem que passar pelos filtros:
+        // só se comparam arquivos que estão dentro do que o usuário escolheu.
+        const bool filtrosAtivos = activeFilters_.scope == 2 || activeFilters_.fileType > 1 || activeFilters_.sizeFilter > 1 ||
+                                   activeFilters_.anoDe > 0 || activeFilters_.anoAte > 0;
+        std::set<std::string> idsFiltrados;
+        if (filtrosAtivos) for (const auto& it : items) idsFiltrados.insert(it.itemId);
+
         for (size_t i = 0; i < items.size(); ++i) {
             if (threadShouldExit()) return;
             progressoScan_ = static_cast<double>(i) / static_cast<double>(items.size());
 
             const auto& item = items[i];
+            progressoScan_ = 0.2 * static_cast<double>(i) / static_cast<double>(items.size());  // fase A = 0..20%
             
             auto matchOpt = matriz::ingest::buscarAssetPorMetadados(
                 db, item.titulo, item.ext, item.duracao, item.largura, item.altura, item.tamanhoBytes, item.caminhoRelativo, item.itemId,
-                projeto_.projeto().pasta());
+                projeto_.projeto().pasta(), "", filtrosAtivos ? &idsFiltrados : nullptr);
 
             if (matchOpt && matchOpt->itemId < item.itemId) {
                 DuplicateGroup group;
@@ -1439,7 +1934,389 @@ void DuplicatesWorkspaceComponent::run() {
                 group.duplicata.colorSpaceCoincide = group.original.colorSpaceCoincide = (group.original.colorSpace == group.duplicata.colorSpace);
                 group.duplicata.lufsCoincide = group.original.lufsCoincide = (group.original.lufs != 0.0 && group.duplicata.lufs != 0.0 && std::abs(group.original.lufs - group.duplicata.lufs) < 0.1);
 
+                if (activeFilters_.coincidirNome && !group.duplicata.nomeCoincide) continue;
+                if (activeFilters_.coincidirFormato && !group.duplicata.extCoincide) continue;
+                if (activeFilters_.coincidirTamanho && !group.duplicata.tamanhoCoincide) continue;
+                if (activeFilters_.coincidirDuracao && (group.duplicata.duracao > 0 || group.original.duracao > 0) && !group.duplicata.duracaoCoincide) continue;
+                if (activeFilters_.coincidirDimensoes && (group.duplicata.largura > 0 || group.original.largura > 0) && !group.duplicata.dimCoincide) continue;
+                if (activeFilters_.coincidirEspacoCor) {
+                    if (!group.original.colorSpace.empty() && !group.duplicata.colorSpace.empty() && !group.duplicata.colorSpaceCoincide) continue;
+                    if (obterMonocromatico(group.original.itemId, group.original.fullPath) != obterMonocromatico(group.duplicata.itemId, group.duplicata.fullPath)) continue;
+                }
+
                 gruposDetectados_.push_back(group);
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Fase B (HD recuperado): arquivos recuperados costumam ter outro nome e alguns bytes a mais/menos, então os
+    // critérios acima (tamanho idêntico etc.) não os pegam. Dois níveis novos, SEM trocar os de cima:
+    //  - IDENTICAL: mesmo SHA-256 (independe de nome, extensão e caminho). Checksum que falta é calculado aqui,
+    //    em background, e gravado em arquivo.checksum_sha256 (só o que falta nos próximos scans).
+    //  - PROBABLE (só imagens): pHash parecido (limiar de Duplicata.h). pHash só é calculado AQUI (SCAN), nunca no
+    //    ingest, e fica em phash_imagem (indice.sqlite): os próximos scans só calculam o que falta.
+    // ---------------------------------------------------------------------------------------------
+    if (!isCatalogMode) {
+        // Contador ao vivo: parte do que a fase A já achou e soma cada par novo (B2, B3, B4).
+        achadosScan_ = static_cast<int>(gruposDetectados_.size());
+        {
+            juce::int64 bytesIniciais = 0;
+            for (const auto& g : gruposDetectados_) bytesIniciais += g.duplicata.tamanhoBytes;
+            bytesScan_ = bytesIniciais;
+        }
+        auto contarAchado = [this](const DuplicateGroup& g) {
+            ++achadosScan_;
+            bytesScan_ += g.duplicata.tamanhoBytes;
+        };
+        auto gruposParaPar = [&](const ItemInfo& a, const ItemInfo& b) {
+            DuplicateGroup group;
+            auto preencher = [](DuplicateMatch& m, const ItemInfo& it) {
+                m.itemId = it.itemId; m.codigoAcervo = it.codigoAcervo; m.titulo = it.titulo; m.ext = it.ext;
+                m.duracao = it.duracao; m.largura = it.largura; m.altura = it.altura; m.lufs = it.lufs;
+                m.tamanhoBytes = it.tamanhoBytes; m.orientation = it.orientation; m.colorSpace = it.colorSpace;
+                m.caminhoRelativo = it.caminhoRelativo; m.fullPath = it.fullPath;
+                m.collectionNome = it.collectionNome; m.collectionCaminho = it.collectionCaminho;
+            };
+            preencher(group.original, a);
+            preencher(group.duplicata, b);
+            const bool nomeIgual = juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo));
+            const bool extIgual = (a.ext == b.ext);
+            const bool duracaoIgual = (a.duracao > 0 && b.duracao > 0 && std::abs(a.duracao - b.duracao) < 0.1);
+            const bool dimIgual = (a.largura > 0 && b.largura > 0 && a.largura == b.largura && a.altura == b.altura);
+            const bool tamanhoIgual = (a.tamanhoBytes > 0 && a.tamanhoBytes == b.tamanhoBytes);
+            const bool lufsIgual = (a.lufs != 0.0 && b.lufs != 0.0 && std::abs(a.lufs - b.lufs) < 0.1);
+            group.original.nomeCoincide = group.duplicata.nomeCoincide = nomeIgual;
+            group.original.extCoincide = group.duplicata.extCoincide = extIgual;
+            group.original.duracaoCoincide = group.duplicata.duracaoCoincide = duracaoIgual;
+            group.original.dimCoincide = group.duplicata.dimCoincide = dimIgual;
+            group.original.tamanhoCoincide = group.duplicata.tamanhoCoincide = tamanhoIgual;
+            group.original.orientationCoincide = group.duplicata.orientationCoincide = (!a.orientation.empty() && a.orientation == b.orientation);
+            group.original.colorSpaceCoincide = group.duplicata.colorSpaceCoincide = (!a.colorSpace.empty() && a.colorSpace == b.colorSpace);
+            group.original.lufsCoincide = group.duplicata.lufsCoincide = lufsIgual;
+            return group;
+        };
+        // Original = o de menor id (mesma convenção do critério de sempre).
+        auto ordenado = [](const ItemInfo& x, const ItemInfo& y) { return x.itemId < y.itemId ? std::make_pair(&x, &y) : std::make_pair(&y, &x); };
+        auto chavePar = [](const std::string& a, const std::string& b) { return a < b ? a + "|" + b : b + "|" + a; };
+        // "2015:04:05 11:18:36" ou "2015-04-05T11:18:36": segundos desde 2000 (só para diferenças); -1 se não der para ler.
+        auto segundosExif = [](const std::string& t) -> long long {
+            std::string d;
+            for (char c : t) if (c >= '0' && c <= '9') d += c;
+            if (d.size() < 14) return -1;
+            const int ano = std::stoi(d.substr(0, 4)), mes = std::stoi(d.substr(4, 2)), dia = std::stoi(d.substr(6, 2));
+            const int hh = std::stoi(d.substr(8, 2)), mm = std::stoi(d.substr(10, 2)), ss = std::stoi(d.substr(12, 2));
+            const long long dias = static_cast<long long>(ano) * 372 + (mes - 1) * 31 + (dia - 1);  // só precisa ser monotônico por dia
+            return dias * 86400 + hh * 3600 + mm * 60 + ss;
+        };
+
+        std::unordered_map<std::string, size_t> grupoExistente;  // par -> índice em gruposDetectados_ (fase A)
+        for (size_t g = 0; g < gruposDetectados_.size(); ++g)
+            grupoExistente[chavePar(gruposDetectados_[g].original.itemId, gruposDetectados_[g].duplicata.itemId)] = g;
+
+        std::unordered_set<std::string> paresIdenticos;
+        std::unordered_set<std::string> paresVistos;
+        if (activeFilters_.coincidirSha256) {
+            // ---- B1: checksums que faltam (em background, em blocos de 100 por transação)
+            faseScan_ = 2;
+            std::vector<std::pair<std::string, std::pair<std::string, std::string>>> paraGravar;  // arquivoId -> (md5, sha256)
+            auto gravarChecksums = [&]() {
+                if (paraGravar.empty()) return;
+                try {
+                    db.exec("BEGIN IMMEDIATE");
+                    try {
+                        const auto agora = matriz::model::agoraIso8601();
+                        // O gatilho arquivo_master_travado proíbe mexer em checksum de master. Aqui só PREENCHEMOS um checksum
+                        // que nunca foi calculado (nunca trocamos um existente — a cláusula WHERE garante), com o mesmo
+                        // mecanismo da reconciliação de Vault, dentro da transação (a marca some antes do COMMIT).
+                        db.run("INSERT OR IGNORE INTO reconciliacao_em_curso (marca) VALUES (1)", {});
+                        for (const auto& [arqId, par] : paraGravar)
+                            db.run("UPDATE arquivo SET checksum_md5 = ?, checksum_sha256 = ?, checksum_gerado_em = ? "
+                                   "WHERE id = ? AND (checksum_sha256 IS NULL OR checksum_sha256 = '')",
+                                   {matriz::db::Value::of(par.first), matriz::db::Value::of(par.second), matriz::db::Value::of(agora),
+                                    matriz::db::Value::of(arqId)});
+                        db.run("DELETE FROM reconciliacao_em_curso", {});
+                        db.exec("COMMIT");
+                    } catch (...) { try { db.exec("ROLLBACK"); } catch (...) {} }
+                } catch (...) {}
+                paraGravar.clear();
+            };
+            size_t semChecksum = 0;
+            for (const auto& it : items) if (it.sha256.empty() && !it.arquivoId.empty()) ++semChecksum;
+            size_t feitos = 0;
+            for (auto& it : items) {
+                if (threadShouldExit()) { gravarChecksums(); return; }
+                if (!it.sha256.empty() || it.arquivoId.empty() || it.fullPath.empty()) continue;
+                progressoScan_ = 0.2 + 0.4 * static_cast<double>(feitos) / static_cast<double>(std::max<size_t>(1, semChecksum));  // 20..60%
+                ++feitos;
+                const juce::File f(juce::String::fromUTF8(it.fullPath.c_str()));
+                if (!f.existsAsFile()) continue;
+                try {
+                    auto cs = matriz::ingest::calcularChecksums(f);
+                    it.sha256 = cs.sha256;
+                    paraGravar.push_back({it.arquivoId, {cs.md5, cs.sha256}});
+                    if (paraGravar.size() >= 100) gravarChecksums();
+                } catch (...) {}
+            }
+            gravarChecksums();
+
+            // ---- B2: IDENTICAL — mesmo SHA-256
+            std::unordered_map<std::string, std::vector<size_t>> porSha;
+            for (size_t i = 0; i < items.size(); ++i)
+                if (!items[i].sha256.empty()) porSha[items[i].sha256].push_back(i);
+            for (auto& [sha, idxs] : porSha) {
+                if (idxs.size() < 2) continue;
+                std::sort(idxs.begin(), idxs.end(), [&](size_t x, size_t y) { return items[x].itemId < items[y].itemId; });
+                for (size_t k = 1; k < idxs.size(); ++k) {
+                    const auto& a = items[idxs[0]];
+                    const auto& b = items[idxs[k]];
+                    if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                    if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
+                    if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                    if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                    const auto chave = chavePar(a.itemId, b.itemId);
+                    paresIdenticos.insert(chave);
+                    auto ex = grupoExistente.find(chave);
+                    if (ex != grupoExistente.end()) {   // já pego por outro critério: ganha o rótulo IDENTICAL
+                        gruposDetectados_[ex->second].criterio = "IDENTICAL";
+                        continue;
+                    }
+                    auto [o, d] = ordenado(a, b);
+                    auto grupo = gruposParaPar(*o, *d);
+                    grupo.criterio = "IDENTICAL";
+                    grupoExistente[chave] = gruposDetectados_.size();
+                    contarAchado(grupo);
+                    gruposDetectados_.push_back(std::move(grupo));
+                }
+            }
+
+            // ---- B2b: selo "pasta inteira duplicada". Pasta X está inteira em Y quando TODO arquivo master de X
+            // (conferido contra o banco, não só contra os itens deste scan) tem cópia idêntica em Y. Conservador: filtro
+            // ativo, item já resolvido ou arquivo sem checksum fazem a conta não fechar, e aí não há selo.
+            {
+                auto pastaDe = [](const std::string& fullPath) {
+                    return fullPath.empty() ? std::string()
+                                            : juce::File(juce::String::fromUTF8(fullPath.c_str())).getParentDirectory().getFullPathName().toStdString();
+                };
+                std::unordered_map<std::string, int> totalPorPasta;  // masters do projeto por pasta, sem filtro nenhum
+                try {
+                    const auto pastaProj = projeto_.projeto().pasta();
+                    auto st = db.prepare("SELECT caminho_relativo, caminho_absoluto_origem FROM arquivo WHERE eh_master = 1");
+                    while (st.step()) {
+                        if (threadShouldExit()) return;
+                        const std::string abs = st.columnText(1);
+                        const std::string caminho = !abs.empty() ? abs
+                            : pastaProj.getChildFile(juce::String::fromUTF8(st.columnText(0).c_str())).getFullPathName().toStdString();
+                        const auto pasta = pastaDe(caminho);
+                        if (!pasta.empty()) ++totalPorPasta[pasta];
+                    }
+                } catch (...) { totalPorPasta.clear(); }
+
+                std::unordered_map<std::string, int> comCopiaEm;  // "X\nY" -> arquivos de X com cópia idêntica em Y
+                for (const auto& [sha, idxs] : porSha) {
+                    if (idxs.size() < 2) continue;
+                    std::vector<std::string> pastas;
+                    pastas.reserve(idxs.size());
+                    for (auto i : idxs) pastas.push_back(pastaDe(items[i].fullPath));
+                    std::vector<std::string> distintas;
+                    for (const auto& p : pastas) if (!p.empty()) distintas.push_back(p);
+                    std::sort(distintas.begin(), distintas.end());
+                    distintas.erase(std::unique(distintas.begin(), distintas.end()), distintas.end());
+                    if (distintas.size() < 2 || distintas.size() > 20) continue;  // cópia espalhada demais: sem selo
+                    for (size_t k = 0; k < idxs.size(); ++k)
+                        if (!pastas[k].empty())
+                            for (const auto& y : distintas)
+                                if (y != pastas[k]) ++comCopiaEm[pastas[k] + "\n" + y];
+                }
+
+                auto estaInteiraEm = [&](const std::string& x, const std::string& y) {
+                    const auto t = totalPorPasta.find(x);
+                    const auto c = comCopiaEm.find(x + "\n" + y);
+                    return t != totalPorPasta.end() && c != comCopiaEm.end() && t->second >= 2 && c->second == t->second;
+                };
+                for (auto& g : gruposDetectados_) {
+                    if (g.criterio != "IDENTICAL") continue;
+                    const auto pastaOrig = pastaDe(g.original.fullPath), pastaDup = pastaDe(g.duplicata.fullPath);
+                    if (pastaOrig.empty() || pastaDup.empty() || pastaOrig == pastaDup) continue;
+                    const bool dupEmOrig = estaInteiraEm(pastaDup, pastaOrig);
+                    const bool origEmDup = estaInteiraEm(pastaOrig, pastaDup);
+                    if (!dupEmOrig && !origEmDup) continue;
+                    const auto& coberta = dupEmOrig ? pastaDup : pastaOrig;
+                    const auto& em = dupEmOrig ? pastaOrig : pastaDup;
+                    g.pastaArquivos = totalPorPasta[coberta];
+                    g.pastaNome = juce::File(juce::String::fromUTF8(coberta.c_str())).getFileName().toStdString();
+                    g.pastaEmNome = juce::File(juce::String::fromUTF8(em.c_str())).getFileName().toStdString();
+                    g.pastaMesmoConteudo = dupEmOrig && origEmDup && totalPorPasta[pastaOrig] == totalPorPasta[pastaDup];
+                }
+            }
+        }
+
+        // ---- B3: PROBABLE — similaridade visual de imagens (pHash), com cancelamento e progresso
+        if (activeFilters_.coincidirPHash) {
+            faseScan_ = 3;
+            std::vector<size_t> imagens;
+            for (size_t i = 0; i < items.size(); ++i)
+                if (matriz::ingest::categoriaPorExtensao(items[i].ext) == matriz::ingest::CategoriaMidia::Imagem && !items[i].arquivoId.empty())
+                    imagens.push_back(i);
+            std::unordered_map<std::string, uint64_t> phashDe;  // arquivo_id -> hash
+        auto& indice = projeto_.projeto().indice();
+        try {
+            auto st = indice.prepare("SELECT arquivo_id, hash FROM phash_imagem");
+            while (st.step()) {
+                try { phashDe[st.columnText(0)] = std::stoull(st.columnText(1)); } catch (...) {}
+            }
+        } catch (...) {}
+        std::vector<std::pair<size_t, uint64_t>> novos;  // (índice do item, hash) ainda não gravados
+        auto gravarPHashes = [&]() {
+            if (novos.empty()) return;
+            try {
+                indice.exec("BEGIN IMMEDIATE");
+                try {
+                    const auto agora = matriz::model::agoraIso8601();
+                    for (const auto& [idx, h] : novos)
+                        indice.run("INSERT INTO phash_imagem (id, item_id, arquivo_id, hash, processado_em) VALUES (?, ?, ?, ?, ?)",
+                                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(items[idx].itemId),
+                                    matriz::db::Value::of(items[idx].arquivoId), matriz::db::Value::of(std::to_string(h)),
+                                    matriz::db::Value::of(agora)});
+                    indice.exec("COMMIT");
+                } catch (...) { try { indice.exec("ROLLBACK"); } catch (...) {} }
+            } catch (...) {}
+            novos.clear();
+        };
+        size_t faltam = 0;
+        for (auto i : imagens) if (!phashDe.count(items[i].arquivoId)) ++faltam;
+        size_t calculados = 0;
+        for (auto i : imagens) {
+            if (threadShouldExit()) { gravarPHashes(); return; }
+            if (phashDe.count(items[i].arquivoId)) continue;
+            progressoScan_ = 0.6 + 0.3 * static_cast<double>(calculados) / static_cast<double>(std::max<size_t>(1, faltam));  // 60..90%
+            ++calculados;
+            // Usa a MINIATURA do projeto (pequena, decodifica em ms) em vez de decodificar o original inteiro (foto de
+            // vários MB): o pHash redimensiona para 32x32 de qualquer jeito. Sem miniatura: cai no original.
+            juce::File f;
+            if (auto mini = projeto_.caminhoMiniaturaPrincipal(items[i].itemId)) f = juce::File(*mini);
+            if (!f.existsAsFile()) f = juce::File(juce::String::fromUTF8(items[i].fullPath.c_str()));
+            if (!f.existsAsFile()) continue;
+            try {
+                const uint64_t h = matriz::ingest::calcularPHashImagem(f, juce::File());
+                phashDe[items[i].arquivoId] = h;
+                novos.push_back({i, h});
+                if (novos.size() >= 100) gravarPHashes();
+            } catch (...) {}  // formato que o decodificador não lê: fica de fora do nível PROBABLE
+        }
+        gravarPHashes();
+
+        faseScan_ = 4;
+        // Comparação SEM varrer todos contra todos: 64 bits em 11 faixas (princípio da casa dos pombos: dois hashes a
+        // distância <= 10 coincidem exatamente em ao menos uma das 11 faixas) — só se comparam os que caem na mesma faixa.
+        constexpr int kLimiar = 10;
+        struct Cand { size_t idx; uint64_t h; };
+        std::vector<Cand> cands;
+        for (auto i : imagens) {
+            auto it = phashDe.find(items[i].arquivoId);
+            if (it != phashDe.end()) cands.push_back({i, it->second});
+        }
+        static const int kLarg[11] = {6, 6, 6, 6, 6, 6, 6, 6, 6, 5, 5};
+        for (int faixa = 0, desloc = 0; faixa < 11; desloc += kLarg[faixa], ++faixa) {
+            if (threadShouldExit()) return;
+            progressoScan_ = 0.9 + 0.1 * static_cast<double>(faixa) / 11.0;
+            std::unordered_map<uint32_t, std::vector<size_t>> baldes;
+            const uint64_t mascara = (uint64_t(1) << kLarg[faixa]) - 1;
+            for (size_t c = 0; c < cands.size(); ++c)
+                baldes[static_cast<uint32_t>((cands[c].h >> desloc) & mascara)].push_back(c);
+            for (const auto& [chaveBalde, membros] : baldes) {
+                for (size_t x = 0; x < membros.size(); ++x) {
+                    if ((x & 0x3ff) == 0 && threadShouldExit()) return;
+                    for (size_t y = x + 1; y < membros.size(); ++y) {
+                        const auto& ca = cands[membros[x]];
+                        const auto& cb = cands[membros[y]];
+                        const int dist = matriz::ingest::distanciaHamming(ca.h, cb.h);
+                        if (dist > kLimiar) continue;
+                        const auto& a = items[ca.idx];
+                        const auto& b = items[cb.idx];
+                        const auto chave = chavePar(a.itemId, b.itemId);
+                        if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
+                        // Mesmo SHA-256 = IDENTICAL, nunca PROBABLE (com 3+ cópias o par B-C não está no "em estrela" acima).
+                        if (!a.sha256.empty() && a.sha256 == b.sha256) continue;
+
+                        if (activeFilters_.coincidirNome && !juce::String(a.titulo).equalsIgnoreCase(juce::String(b.titulo))) continue;
+                        if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
+                        if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
+                        if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                        if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                        if (activeFilters_.coincidirDimensoes && a.largura > 0 && b.largura > 0 && (a.largura != b.largura || a.altura != b.altura)) continue;
+                        if (activeFilters_.coincidirEspacoCor) {
+                            if (!a.colorSpace.empty() && !b.colorSpace.empty() && a.colorSpace != b.colorSpace) continue;
+                            if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
+                        }
+
+                        // EXIF DateTimeOriginal diferente:
+                        //  - até 30 s de diferença e parecidas (pHash <= 10): foto em SEQUÊNCIA -> SIMILAR (decisão manual);
+                        //  - mais de 30 s: outra foto teria pHash bem diferente; se o pHash é quase igual (<= 4) é a mesma
+                        //    imagem com horário diferente (ex.: cópia editada) -> PROBABLE; senão, descarta.
+                        bool similar = false;
+                        if (!a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) {
+                            const auto sa = segundosExif(a.dataOriginal), sb = segundosExif(b.dataOriginal);
+                            if (sa < 0 || sb < 0) continue;
+                            if (std::llabs(sa - sb) <= 30) {
+                                if (dist > 10) continue;
+                                similar = true;
+                            } else if (dist > 4) {
+                                continue;
+                            }
+                        }
+                        auto [o, d] = ordenado(a, b);
+                        auto grupo = gruposParaPar(*o, *d);
+                        grupo.criterio = similar ? "SIMILAR" : "PROBABLE";
+                        grupo.distanciaPHash = dist;
+                        contarAchado(grupo);
+                        gruposDetectados_.push_back(std::move(grupo));
+                    }
+                }
+            }
+        }
+        // PROVÁVEIS e depois SIMILARES vão ao fim (categorias separadas na lista).
+        std::stable_partition(gruposDetectados_.begin(), gruposDetectados_.end(),
+                              [](const DuplicateGroup& g) { return g.criterio != "PROBABLE" && g.criterio != "SIMILAR"; });
+        std::stable_partition(std::find_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                           [](const DuplicateGroup& g) { return g.criterio == "PROBABLE" || g.criterio == "SIMILAR"; }),
+                              gruposDetectados_.end(), [](const DuplicateGroup& g) { return g.criterio == "PROBABLE"; });
+        }
+
+        // ---- B4: Mesmo nome de arquivo (quando coincidirNome está ativo)
+        if (activeFilters_.coincidirNome) {
+            std::unordered_map<std::string, std::vector<size_t>> porNome;
+            for (size_t i = 0; i < items.size(); ++i) {
+                if (!items[i].titulo.empty()) {
+                    porNome[juce::String(items[i].titulo).toLowerCase().toStdString()].push_back(i);
+                }
+            }
+            for (auto& [nome, idxs] : porNome) {
+                if (idxs.size() < 2) continue;
+                for (size_t x = 0; x < idxs.size(); ++x) {
+                    for (size_t y = x + 1; y < idxs.size(); ++y) {
+                        const auto& a = items[idxs[x]];
+                        const auto& b = items[idxs[y]];
+                        const auto chave = chavePar(a.itemId, b.itemId);
+                        if (paresIdenticos.count(chave) || grupoExistente.count(chave) || !paresVistos.insert(chave).second) continue;
+                        if (activeFilters_.coincidirTamanho && a.tamanhoBytes > 0 && b.tamanhoBytes > 0 && a.tamanhoBytes != b.tamanhoBytes) continue;
+                        if (activeFilters_.coincidirFormato && a.ext != b.ext) continue;
+                        if (activeFilters_.coincidirData && !a.dataOriginal.empty() && !b.dataOriginal.empty() && a.dataOriginal != b.dataOriginal) continue;
+                        if (activeFilters_.coincidirData && a.ano > 0 && b.ano > 0 && a.ano != b.ano) continue;
+                        if (activeFilters_.coincidirDimensoes && a.largura > 0 && b.largura > 0 && (a.largura != b.largura || a.altura != b.altura)) continue;
+                        if (activeFilters_.coincidirDuracao && (a.duracao > 0 || b.duracao > 0) && std::abs(a.duracao - b.duracao) >= 0.1) continue;
+                        if (activeFilters_.coincidirEspacoCor) {
+                            if (!a.colorSpace.empty() && !b.colorSpace.empty() && a.colorSpace != b.colorSpace) continue;
+                            if (obterMonocromatico(a.itemId, a.fullPath) != obterMonocromatico(b.itemId, b.fullPath)) continue;
+                        }
+                        auto [o, d] = ordenado(a, b);
+                        auto grupo = gruposParaPar(*o, *d);
+                        grupo.criterio = "NAME_MATCH";
+                        grupoExistente[chave] = gruposDetectados_.size();
+                        contarAchado(grupo);
+                        gruposDetectados_.push_back(std::move(grupo));
+                    }
+                }
             }
         }
     }
@@ -1470,11 +2347,19 @@ void DuplicatesWorkspaceComponent::timerCallback() {
             resized();
             repaint();
         } else {
-            lblStatus_->setText("Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
+            static const char* kFases[] = {"Scanning", "Matching files", "Computing checksums", "Computing image fingerprints (pHash)", "Comparing images"};
+            const juce::String fase = kFases[juce::jlimit(0, 4, faseScan_.load())];
+            juce::String achados;
+            if (achadosScan_.load() > 0)
+                achados = " · " + matriz::i18n::t("duplicatas.achadas_ate_agora")
+                                           .replace("{n}", juce::String(achadosScan_.load()))
+                                           .replace("{size}", juce::File::descriptionOfSizeInBytes(bytesScan_.load()));
+            lblStatus_->setText(fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed..." + achados,
+                                juce::dontSendNotification);
             repaint();  // barra de progresso da área direita
             ProgressoGlobal::obterInstancia().atualizarFracao(
                 "duplicates_scan", progressoScan_,
-                "Scanning catalog database: " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
+                fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "%");
         }
     }
 }
@@ -1513,28 +2398,45 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
     // Validation path: Show prompt to ask which file to keep
-    auto janela = std::make_shared<juce::AlertWindow>(
-        isPt ? juce::String::fromUTF8("Resolver Correspondência de Duplicata") : "Resolve Duplicate Match",
-        isPt ? (juce::String::fromUTF8("Como você deseja tratar este par de duplicatas?\n\nArquivo 1 (Original): ") + juce::String(group.original.titulo) + juce::String::fromUTF8("\nArquivo 2 (Duplicata): ") + juce::String(group.duplicata.titulo))
-             : ("How would you like to handle this duplicate pair?\n\nFile 1 (Original): " + juce::String(group.original.titulo) + "\nFile 2 (Duplicate): " + juce::String(group.duplicata.titulo)),
-        juce::MessageBoxIconType::QuestionIcon
-    );
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 1") : "KEEP FILE 1", 1);
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER ARQUIVO 2") : "KEEP FILE 2", 2);
-    janela->addButton(isPt ? juce::String::fromUTF8("MANTER AMBOS") : "KEEP BOTH", 3);
-    janela->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 5);
-    janela->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 6);
-    janela->addButton(isPt ? juce::String::fromUTF8("VOLTAR") : "RETURN", 4, juce::KeyPress(juce::KeyPress::escapeKey));
+    auto descricaoLado = [](const juce::String& rotulo, const DuplicateMatch& m) {
+        juce::String t = rotulo + ": " + juce::String::fromUTF8(m.titulo.c_str());
+        if (m.largura > 0 && m.altura > 0) t += "   (" + juce::String(m.largura) + " x " + juce::String(m.altura) + " px)";
+        return t;
+    };
+    const juce::String mensagem = isPt
+        ? (juce::String::fromUTF8("Como você deseja tratar este par de duplicatas?\n\n") +
+           descricaoLado(juce::String("Arquivo 1 (Original)"), group.original) + "\n" +
+           descricaoLado(juce::String("Arquivo 2 (Duplicata)"), group.duplicata))
+        : ("How would you like to handle this duplicate pair?\n\n" + descricaoLado(juce::String("File 1 (Original)"), group.original) + "\n" +
+           descricaoLado(juce::String("File 2 (Duplicate)"), group.duplicata));
+    // Códigos: 1 = manter 1, 2 = manter 2, 3 = ambos, 5 = mais recente, 6 = primeira no backup, 7 = maior resolução.
+    std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
+        {matriz::i18n::t("duplicatas.action_keep1"), 1},
+        {matriz::i18n::t("duplicatas.action_keep2"), 2},
+        {matriz::i18n::t("duplicatas.action_keep_both"), 3},
+        {matriz::i18n::t("duplicatas.criterio_recente"), 5},
+        {matriz::i18n::t("duplicatas.criterio_backup"), 6},
+        {matriz::i18n::t("duplicatas.criterio_resolucao"), 7},
+    };
 
-    // safeThis: enterModalState() não impede o componente de ser destruído
-    // enquanto a janela de confirmação está aberta (ex.: trocar de aba) —
-    // sem isso, tanto o callback do ModalCallbackFunction quanto o
-    // callAsync aninhado dentro dele desreferenciariam `this` já liberado.
+    // safeThis: o diálogo não impede o componente de ser destruído enquanto está aberto (ex.: trocar de aba).
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
-    janela->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, janela, grupoIdx, group, isPt](int buttonResult) {
-        retirarPeerDaTela(*janela);
-        if (buttonResult == 0 || buttonResult == 4) return; // User cancelled/returned or closed without selecting
+    DialogoEscolhaDuplicata::exibir(
+        isPt ? juce::String::fromUTF8("Resolver Correspondência de Duplicata") : juce::String("Resolve Duplicate Match"),
+        mensagem, std::move(botoes), isPt ? juce::String::fromUTF8("VOLTAR") : juce::String("RETURN"),
+        [safeThis, grupoIdx, group, isPt](int buttonResult) mutable {
         if (!safeThis) return;
+        if (buttonResult == 7) {  // maior resolução: mantém o lado com mais pixels
+            const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+            const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+            if (ao <= 0 || ad <= 0 || ao == ad) {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("duplicatas.criterios"),
+                                                       matriz::i18n::t("duplicatas.criterio_nao_aplica"), {}, nullptr,
+                                                       juce::ModalCallbackFunction::create([](int) {}));
+                return;
+            }
+            buttonResult = ao > ad ? 1 : 2;
+        }
         if (buttonResult == 5 || buttonResult == 6) {  // critério rápido (etapa 9)
             const auto c = criteriosDoPar(safeThis->projeto_.projeto().registro(), group.original.itemId,
                                           group.duplicata.itemId);
@@ -1554,7 +2456,8 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
         // somada à do mantido.
         const std::string idOriginal = group.original.itemId, idDuplicata = group.duplicata.itemId;
         auto aoResolver = [safeThis, idOriginal, idDuplicata, isPt](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-            if (!safeThis || !ok) return;
+            if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
             publicarSanitizacoes(safeThis->projeto_, resultados, {idOriginal, idDuplicata});
             // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
             auto& grupos = safeThis->gruposDetectados_;
@@ -1585,7 +2488,7 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                 [idDuplicata, codigoOriginal](matriz::db::Database& db) {
                     acrescentarNota(db, idDuplicata,
                                     "Validated as a known duplicate pair of " + codigoOriginal +
-                                    " by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                    juce::String::fromUTF8(" by user — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
                     return std::vector<ProjetoAberto::ResultadoSanitizacao>{};
                 },
                 aoResolver);
@@ -1627,7 +2530,21 @@ void DuplicatesWorkspaceComponent::resolverDuplicata(int grupoIdx, bool ehDuplic
                         if (confirmado) juntar(std::move(trocados));
                     });
             });
-    }));
+    });
+}
+
+void DuplicatesWorkspaceComponent::resetarAba() {
+    if (estado_ != State::Results) return;
+    // Nada foi gravado pela detecção em si: só o que o usuário já resolveu fica no banco. Os pares que estavam na
+    // lista voltam a ser "não resolvidos" e reaparecem num próximo SCAN.
+    gruposDetectados_.clear();
+    if (listaComponent_) listaComponent_->updateList(gruposDetectados_);
+    estado_ = State::Idle;
+    lblStatus_->setText("", juce::dontSendNotification);
+    if (viewport_) viewport_->setVisible(false);
+    atualizarBotoesSelecionados();
+    resized();
+    repaint();
 }
 
 void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
@@ -1653,6 +2570,7 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
         try {
             db.run("BEGIN TRANSACTION", {});
             for (const auto& group : gruposDetectados_) {
+                if (group.criterio == "PROBABLE" || group.criterio == "SIMILAR") continue;  // só decisão manual
                 acrescentarNota(db, group.duplicata.itemId,
                                 "Dismissed as duplicate by user in batch. [USER_VERIFIED_NOT_DUPLICATE]");
             }
@@ -1661,7 +2579,16 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
             try { db.run("ROLLBACK", {}); } catch (...) {}
         }
 
-        gruposDetectados_.clear();
+        gruposDetectados_.erase(std::remove_if(gruposDetectados_.begin(), gruposDetectados_.end(),
+                                               [](const DuplicateGroup& g) { return g.criterio != "PROBABLE" && g.criterio != "SIMILAR"; }),
+                                gruposDetectados_.end());
+        if (!gruposDetectados_.empty()) {  // sobraram só PROVÁVEIS: continuam na lista
+            listaComponent_->updateList(gruposDetectados_);
+            lblStatus_->setText(textoManuais(gruposDetectados_), juce::dontSendNotification);
+            resized();
+            repaint();
+            return;
+        }
         estado_ = State::Clean;
         lblStatus_->setText("All duplicates have been resolved! Your archive is clean.", juce::dontSendNotification);
         viewport_->setVisible(false);
@@ -1681,22 +2608,25 @@ void DuplicatesWorkspaceComponent::resolverTudo(bool ehDuplicataReal) {
            juce::String::fromUTF8(" grupos de duplicatas encontrados. Nada é apagado do disco nem do catálogo — "
                                    "o lado descartado só sai da próxima leva de Make Backup."))
         : ("Apply the same choice to all " + juce::String(gruposDetectados_.size()) +
-           " detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
-           "won't be included in the next Make Backup run.");
+           juce::String::fromUTF8(" detected duplicate groups. Nothing is deleted from disk or the catalog — the discarded side just "
+           "won't be included in the next Make Backup run."));
 
-    auto* aw = new juce::AlertWindow(titulo, msg, juce::AlertWindow::QuestionIcon);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep1"), 1);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep2"), 2);
-    aw->addButton(matriz::i18n::t("duplicatas.action_keep_both"), 3);
-    aw->addButton(matriz::i18n::t("duplicatas.criterio_recente"), 4);
-    aw->addButton(matriz::i18n::t("duplicatas.criterio_backup"), 5);
-    aw->addButton(isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"), 0);
-
+    // Grade simétrica de botões (3 colunas). Códigos de aplicarEscolhaGlobal: 1/2/3 manter, 4 mais recente, 5 primeira no
+    // backup, 6 maior resolução.
+    std::vector<DialogoEscolhaDuplicata::Botao> botoes = {
+        {matriz::i18n::t("duplicatas.action_keep1"), 1},
+        {matriz::i18n::t("duplicatas.action_keep2"), 2},
+        {matriz::i18n::t("duplicatas.action_keep_both"), 3},
+        {matriz::i18n::t("duplicatas.criterio_recente"), 4},
+        {matriz::i18n::t("duplicatas.criterio_backup"), 5},
+        {matriz::i18n::t("duplicatas.criterio_resolucao"), 6},
+    };
     juce::Component::SafePointer<DuplicatesWorkspaceComponent> safeThis(this);
-    aw->enterModalState(true, juce::ModalCallbackFunction::create([safeThis](int resultado) {
+    DialogoEscolhaDuplicata::exibir(titulo, msg, std::move(botoes), isPt ? juce::String::fromUTF8("Cancelar") : juce::String("Cancel"),
+                                    [safeThis](int resultado) {
         if (!safeThis || resultado == 0) return;
         safeThis->aplicarEscolhaGlobal(resultado);
-    }), true);
+    });
 }
 
 void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
@@ -1704,7 +2634,15 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
 
     // Fase 4: em background, numa transação, com Undo; as regras de junção
     // valem sem perguntar (conflitos no histórico + filtro "Merge conflicts").
-    const auto grupos = gruposDetectados_;
+    // PROVÁVEIS (pHash) nunca entram em decisão em lote: ficam na lista para decisão manual, um a um.
+    std::vector<DuplicateGroup> grupos, provaveis;
+    for (const auto& g : gruposDetectados_) ((g.criterio == "PROBABLE" || g.criterio == "SIMILAR") ? provaveis : grupos).push_back(g);
+    if (grupos.empty()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, matriz::i18n::t("duplicatas.aviso_lote_titulo"),
+                                               matriz::i18n::t("duplicatas.aviso_lote_corpo").replace("{n}", juce::String((int) provaveis.size())),
+                                               {}, nullptr, juce::ModalCallbackFunction::create([](int) {}));
+        return;
+    }
     std::vector<std::string> ids;
     for (const auto& g : grupos) {
         ids.push_back(g.original.itemId);
@@ -1717,6 +2655,15 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
         for (const auto& grupo : grupos) {
             const auto& group = grupo;
             int escolhaDoGrupo = escolha;
+            if (escolha == 6) {  // maior resolução: o lado com mais pixels; sem dimensões ou empate => decisão manual
+                const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+                const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+                escolhaDoGrupo = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 1 : 2) : 0;
+                if (escolhaDoGrupo == 0) {
+                    paraDecisaoManual->push_back(group);
+                    continue;
+                }
+            }
             if (escolha == 4 || escolha == 5) {
                 const auto c = criteriosDoPar(db, group.original.itemId, group.duplicata.itemId);
                 escolhaDoGrupo = escolha == 4 ? c.maisRecente : c.backupPrimeiro;
@@ -1731,20 +2678,20 @@ void DuplicatesWorkspaceComponent::aplicarEscolhaGlobal(int escolha) {
                 resultados.push_back(ProjetoAberto::sanitizarDuplicata(db, group.duplicata.itemId, group.original.itemId));
             } else { // Keep Both — só documenta o par, os dois continuam entrando no backup normalmente
                 acrescentarNota(db, group.duplicata.itemId,
-                                "Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
-                                "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                juce::String::fromUTF8("Validated as a known duplicate pair by user in batch — both sides kept in Make Backup. "
+                                "[USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
             }
         }
         return resultados;
-    }, [safeThis, ids, paraDecisaoManual](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-        if (!safeThis || !ok) return;
+    }, [safeThis, ids, paraDecisaoManual, provaveis](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
+        if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
         publicarSanitizacoes(safeThis->projeto_, resultados, ids);
         safeThis->gruposDetectados_ = *paraDecisaoManual;
+        safeThis->gruposDetectados_.insert(safeThis->gruposDetectados_.end(), provaveis.begin(), provaveis.end());
         if (!safeThis->gruposDetectados_.empty()) {
             // Sinalizados no resultado: continuam na lista pra decisão manual.
-            safeThis->lblStatus_->setText(matriz::i18n::t("duplicatas.manuais")
-                                              .replace("{n}", juce::String((int) safeThis->gruposDetectados_.size())),
-                                          juce::dontSendNotification);
+            safeThis->lblStatus_->setText(textoManuais(safeThis->gruposDetectados_), juce::dontSendNotification);
             safeThis->listaComponent_->updateList(safeThis->gruposDetectados_);
             safeThis->resized();
             safeThis->repaint();
@@ -1840,6 +2787,9 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
             e.temCriterios = true;
             e.acaoMaisRecente = c.maisRecente == 0 ? -1 : c.maisRecente - 1;
             e.acaoBackupPrimeiro = c.backupPrimeiro == 0 ? -1 : c.backupPrimeiro - 1;
+            const long long ao = static_cast<long long>(group.original.largura) * group.original.altura;
+            const long long ad = static_cast<long long>(group.duplicata.largura) * group.duplicata.altura;
+            e.acaoMaiorResolucao = (ao > 0 && ad > 0 && ao != ad) ? (ao > ad ? 0 : 1) : -1;
         }
         e.imagemA = carregarMiniaturaDoItem(projeto_, group.original.itemId, group.original.collectionCaminho);
         e.imagemB = carregarMiniaturaDoItem(projeto_, group.duplicata.itemId, group.duplicata.collectionCaminho);
@@ -1882,12 +2832,13 @@ void DuplicatesWorkspaceComponent::resolverSelecionados(bool ehDuplicataReal) {
                     } else { // Keep Both — os dois continuam entrando no backup
                         acrescentarNota(db, group.duplicata.itemId,
                                         "Validated as a known duplicate pair of " + juce::String(group.original.codigoAcervo) +
-                                        " by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]");
+                                        juce::String::fromUTF8(" by user in batch — both sides kept in Make Backup. [USER_VERIFIED_DUPLICATE_KEEP_BOTH]"));
                     }
                 }
                 return resultados;
             }, [safeThis, ids, escolhas](bool ok, std::vector<ProjetoAberto::ResultadoSanitizacao> resultados) {
-                if (!safeThis || !ok) return;
+                if (!safeThis) return;
+            if (!ok) { avisarFalhaResolucao(); return; }
                 publicarSanitizacoes(safeThis->projeto_, resultados, ids);
                 // Pelo par (não pelo índice): a lista pode ter mudado enquanto isto rodava.
                 auto& grupos = safeThis->gruposDetectados_;
@@ -1920,7 +2871,7 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
         g.drawRoundedRectangle(card.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
         auto interno = card.reduced(20, 16);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(titulo, interno.removeFromTop(24), juce::Justification::centred, true);
         interno.removeFromTop(6);
         if (progresso >= 0.0f) {
@@ -1931,11 +2882,11 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             g.fillRoundedRectangle(barra.withWidth(barra.getWidth() * juce::jlimit(0.0f, 1.0f, progresso)), 4.0f);
             interno.removeFromTop(6);
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawText(juce::String(static_cast<int>(progresso * 100)) + "%", interno, juce::Justification::centred);
         } else {
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawFittedText(dica, interno, juce::Justification::centredTop, 3);
         }
     };
@@ -1952,9 +2903,25 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             break;
         case State::Results:
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
                        direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
+            if (const int previstos = contarPrevistos(gruposDetectados_); previstos > 0) {
+                const juce::Colour ambar(0xfff59e0b);
+                auto banner = direita.removeFromTop(kAlturaBannerRisco - 6);
+                g.setColour(ambar.withAlpha(0.16f));
+                g.fillRoundedRectangle(banner.toFloat(), 6.0f);
+                g.setColour(ambar);
+                g.drawRoundedRectangle(banner.toFloat().reduced(1.0f), 6.0f, 2.0f);
+                auto in = banner.reduced(12, 6);
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
+                g.drawText(juce::String::fromUTF8("\u26A0  ") +
+                               matriz::i18n::t("duplicatas.aviso_titulo").replace("{n}", juce::String(previstos)),
+                           in.removeFromTop(16), juce::Justification::centredLeft, true);
+                g.setColour(tk.textoPrimario);
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+                g.drawFittedText(matriz::i18n::t("duplicatas.aviso_corpo"), in, juce::Justification::topLeft, 2, 1.0f);
+            }
             break;
     }
 }
@@ -2005,8 +2972,27 @@ void DuplicatesWorkspaceComponent::resized() {
     }
     coluna_.finalizarCard();
 
+    // COINCIDÊNCIAS — critérios que o usuário decide incluir ou não
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_coincidencias"));
+    auto linhaToggle = [&](juce::ToggleButton* tb) {
+        if (tb != nullptr) {
+            tb->setBounds(corpo.removeFromTop(18));
+            corpo.removeFromTop(2);
+        }
+    };
+    linhaToggle(tbSha256_.get());
+    linhaToggle(tbPHash_.get());
+    linhaToggle(tbNome_.get());
+    linhaToggle(tbTamanho_.get());
+    linhaToggle(tbData_.get());
+    linhaToggle(tbDuracao_.get());
+    linhaToggle(tbDimensoes_.get());
+    linhaToggle(tbEspacoCor_.get());
+    linhaToggle(tbFormato_.get());
+    coluna_.finalizarCard();
+
     // AÇÕES — só com resultados.
-    for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get()})
+    for (auto* b : {btnValidateAll_.get(), btnValidateSelected_.get(), btnDismissAll_.get(), btnDismissSelected_.get(), btnReset_.get()})
         b->setVisible(emResultados);
     if (emResultados) {
         coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_acoes"));
@@ -2014,13 +3000,22 @@ void DuplicatesWorkspaceComponent::resized() {
             b->setBounds(corpo.removeFromTop(28));
             corpo.removeFromTop(4);
         }
+        corpo.removeFromTop(6);  // RESET fica separado: não resolve nada, só limpa o recorte atual
+        btnReset_->setBounds(corpo.removeFromTop(28));
+        corpo.removeFromTop(4);
         coluna_.finalizarCard();
     }
+
+    // DUPLICATAS RESOLVIDAS — sempre visível: a lista dos escondidos e o RESTAURAR.
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_resolvidas"));
+    btnResolvidas_->setBounds(corpo.removeFromTop(28));
+    corpo.removeFromTop(4);
+    coluna_.finalizarCard();
 
     // Área da direita.
     auto direita = area.reduced(20);
     if (emResultados) {
-        direita.removeFromTop(kAlturaResumo);
+        direita.removeFromTop(kAlturaResumo + (contarPrevistos(gruposDetectados_) > 0 ? kAlturaBannerRisco : 0));
         viewport_->setBounds(direita);
         viewport_->setVisible(true);
         listaComponent_->setSize(viewport_->getWidth() - viewport_->getScrollBarThickness(), listaComponent_->getHeight());

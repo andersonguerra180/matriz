@@ -83,7 +83,7 @@ void AboutDialog::paint(juce::Graphics& g) {
     if (auto* app = juce::JUCEApplication::getInstance()) {
         auto ver = app->getApplicationVersion();
         if (ver.isNotEmpty()) {
-            versionLabel = (i18n::localeAtivo() == "pt_BR" ? "Versão " : "Version ") + ver;
+            versionLabel = (i18n::localeAtivo() == "pt_BR" ? juce::String::fromUTF8("Versão ") : "Version ") + ver;
         }
     }
     g.drawText(versionLabel, versionRow, juce::Justification::centredLeft, true);

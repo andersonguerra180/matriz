@@ -34,7 +34,7 @@ PeoplePickerComponent::PeoplePickerComponent(ProjetoAberto& projeto, const std::
     addAndMakeVisible(btnAddPerson_);
 
     btnRemovePerson_.setButtonText("-");
-    btnRemovePerson_.setTooltip(isPt ? "Remover pessoa da coleção (-)" : "Remove person from collection (-)");
+    btnRemovePerson_.setTooltip(isPt ? juce::String::fromUTF8("Remover pessoa da coleção (-)") : "Remove person from collection (-)");
     btnRemovePerson_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffcc3333));
     btnRemovePerson_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
     btnRemovePerson_.onClick = [this] { abrirDialogoRemoverPessoa(); };

@@ -477,7 +477,7 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoConsolidacao(ProjetoAberto& pro
 
             auto resultado = matriz::consolidacao::executarConsolidacao(
                 proj->projeto().registro(), proj->projeto().pasta(), destino, plano, progresso("consolidacao.progresso"), {},
-                false, &proj->projeto().writeMutex());
+                false, {}, nullptr, &proj->projeto().writeMutex());
 
             juce::String texto;
             if (resultado.cancelado) {

@@ -873,7 +873,7 @@ StorageWorkspaceComponent::DadosColetados StorageWorkspaceComponent::coletarDado
     try {
         matriz::model::ProjectLog pLog(projeto.projeto().pasta());
         juce::String logText = pLog.readContent();
-        int idx = logText.lastIndexOf("Storage: failed to register");
+        int idx = logText.indexOf("Storage: failed to register");  // log.md: mais recente em cima
         if (idx >= 0) {
             int lineStart = logText.substring(0, idx).lastIndexOfChar('\n');
             if (lineStart < 0) lineStart = 0;

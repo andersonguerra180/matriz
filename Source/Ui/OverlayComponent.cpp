@@ -3,6 +3,7 @@
 #include <map>
 
 #include "../I18n/Strings.h"
+#include "Tablet.h"
 #include "Tokens.h"
 
 namespace matriz::ui {
@@ -49,25 +50,21 @@ static int calcularAlturaTexto(const juce::String& texto, const juce::Font& font
 
 int PainelOverlay::alturaDoCartao() const {
     const auto& tk = tema();
-    int altura = kMargem;
-    altura += static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoGrande;  // título
+    int altura = moldura::kAlturaCabecalho + (temRodape() ? moldura::kAlturaRodape : 0) + 2 * moldura::kMargemCorpo;
     if (config_.mensagem.isNotEmpty()) {
-        int larguraUtil = kLarguraCartao - 2 * kMargem;
-        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
-        int textoH = calcularAlturaTexto(config_.mensagem, fonte, larguraUtil);
-        altura += textoH + tk.espacoGrande;
+        const int larguraUtil = larguraDoCartao() - 2 * moldura::kMargemCorpo;
+        altura += calcularAlturaTexto(config_.mensagem, fonteUi(14.0f), larguraUtil) + tk.espacoGrande;
     }
     if (!config_.opcoes.empty()) altura += kAlturaLinha + tk.espacoMedio;
     if (config_.comCampoTexto) altura += kAlturaLinha + tk.espacoMedio;
-    for (size_t i = 0; i < config_.campos.size(); ++i)
-        altura += 16 + kAlturaLinha + tk.espacoPequeno;
-    altura += kAlturaLinha + 8 + kMargem;
+    for (size_t i = 0; i < config_.campos.size(); ++i) altura += 18 + kAlturaLinha + tk.espacoMedio;
+    if (config_.conteudo) altura += config_.alturaConteudo + tk.espacoMedio;
     return altura;
 }
 
 juce::Rectangle<int> PainelOverlay::areaDoCartao() const {
     int altura = juce::jmin(alturaDoCartao(), juce::jmax(120, getHeight() - 2 * kMargem));
-    int largura = juce::jmin(kLarguraCartao, juce::jmax(240, getWidth() - 2 * kMargem));
+    int largura = juce::jmin(larguraDoCartao(), juce::jmax(240, getWidth() - 2 * kMargem));
     return juce::Rectangle<int>(largura, altura).withCentre(getLocalBounds().getCentre());
 }
 
@@ -141,16 +138,9 @@ void PainelOverlay::mostrar(Config config, std::function<void(Resultado)> aoConc
         camposExtras_.push_back(std::move(cw));
     }
 
-    const auto& tk = tema();
     for (const auto& b : config_.botoes) {
         auto botao = std::make_unique<juce::TextButton>(b.rotulo);
-        if (b.ehPadrao) {
-            botao->setColour(juce::TextButton::buttonColourId, tk.acento);
-            botao->setColour(juce::TextButton::textColourOffId, juce::Colours::white);
-        } else {
-            botao->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-            botao->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
-        }
+        moldura::estilizarBotao(*botao, b.ehPadrao, b.ehPadrao && config_.tom == Tom::Perigo);
         int id = b.id;
         // SafePointer: se o overlay morrer entre o clique e o despacho, o
         // callback não toca em memória liberada.
@@ -161,6 +151,8 @@ void PainelOverlay::mostrar(Config config, std::function<void(Resultado)> aoConc
         addAndMakeVisible(*botao);
         botoes_.push_back(std::move(botao));
     }
+
+    if (config_.conteudo) addAndMakeVisible(*config_.conteudo);
 
     aberto_ = true;
     setVisible(true);
@@ -186,6 +178,7 @@ void PainelOverlay::concluir(int botaoId) {
     aoConcluir_ = nullptr;
     aberto_ = false;
     setVisible(false);
+    soltarConteudo();
     botoes_.clear();
     combo_.reset();
     campo_.reset();
@@ -200,6 +193,7 @@ void PainelOverlay::fechar() {
     aoConcluir_ = nullptr;
     aberto_ = false;
     setVisible(false);
+    soltarConteudo();
     botoes_.clear();
     combo_.reset();
     campo_.reset();
@@ -207,82 +201,86 @@ void PainelOverlay::fechar() {
     rotulosCampos_.clear();
 }
 
+void PainelOverlay::soltarConteudo() {
+    if (!config_.conteudo) return;
+    removeChildComponent(config_.conteudo.get());
+    // Pode estar sendo chamado de dentro de um clique do próprio conteúdo: só destrói depois.
+    auto guardar = std::move(config_.conteudo);
+    config_.conteudo.reset();
+    config_.aoTecla = nullptr;
+    juce::MessageManager::callAsync([guardar] {});
+}
+
 void PainelOverlay::resized() {
     if (!aberto_) return;
     const auto& tk = tema();
-    auto cartao = areaDoCartao().reduced(kMargem);
+    const auto geo = moldura::geometria(areaDoCartao(), temRodape());
+    auto corpo = geo.corpo.reduced(moldura::kMargemCorpo);
 
-    cartao.removeFromTop(static_cast<int>(tk.tamanhoFonteTitulo) + tk.espacoGrande);
     if (config_.mensagem.isNotEmpty()) {
-        int larguraUtil = cartao.getWidth();
-        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
-        int textoH = calcularAlturaTexto(config_.mensagem, fonte, larguraUtil);
-        cartao.removeFromTop(textoH + tk.espacoGrande);
+        const int textoH = calcularAlturaTexto(config_.mensagem, fonteUi(14.0f), corpo.getWidth());
+        corpo.removeFromTop(textoH + tk.espacoGrande);
     }
-
+    if (config_.conteudo) {
+        auto areaConteudo = corpo;
+        areaConteudo.setHeight(juce::jmax(config_.alturaConteudo, corpo.getHeight()));
+        config_.conteudo->setBounds(areaConteudo);
+    }
     if (combo_) {
-        combo_->setBounds(cartao.removeFromTop(kAlturaLinha));
-        cartao.removeFromTop(tk.espacoMedio);
+        combo_->setBounds(corpo.removeFromTop(kAlturaLinha));
+        corpo.removeFromTop(tk.espacoMedio);
     }
     if (campo_) {
-        campo_->setBounds(cartao.removeFromTop(kAlturaLinha));
-        cartao.removeFromTop(tk.espacoMedio);
+        campo_->setBounds(corpo.removeFromTop(kAlturaLinha));
+        corpo.removeFromTop(tk.espacoMedio);
     }
-
     for (size_t i = 0; i < camposExtras_.size(); ++i) {
-        if (i < rotulosCampos_.size())
-            rotulosCampos_[i]->setBounds(cartao.removeFromTop(16));
-        auto area = cartao.removeFromTop(kAlturaLinha);
-        if (camposExtras_[i].editor)
-            camposExtras_[i].editor->setBounds(area);
-        else if (camposExtras_[i].combo)
-            camposExtras_[i].combo->setBounds(area);
-        cartao.removeFromTop(tk.espacoPequeno);
+        if (i < rotulosCampos_.size()) rotulosCampos_[i]->setBounds(corpo.removeFromTop(18));
+        auto area = corpo.removeFromTop(kAlturaLinha);
+        if (camposExtras_[i].editor) camposExtras_[i].editor->setBounds(area);
+        else if (camposExtras_[i].combo) camposExtras_[i].combo->setBounds(area);
+        corpo.removeFromTop(tk.espacoMedio);
     }
 
-    auto rodape = cartao.removeFromBottom(kAlturaLinha + 4);
-    // Da direita pra esquerda: o botão padrão fica na ponta direita
+    // Rodapé: a ação principal na ponta direita, as outras à esquerda dela.
+    auto rodape = geo.rodape.reduced(moldura::kMargemCorpo, 0).withSizeKeepingCentre(geo.rodape.getWidth() - 2 * moldura::kMargemCorpo, 44);
     for (auto it = botoes_.rbegin(); it != botoes_.rend(); ++it) {
-        auto fonteBtn = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo));
-        int strW = juce::GlyphArrangement::getStringWidthInt(fonteBtn, (*it)->getButtonText());
-        int btnW = juce::jmax(130, strW + 36);
-        (*it)->setBounds(rodape.removeFromRight(btnW));
-        rodape.removeFromRight(tk.espacoMedio);
+        const int strW = juce::GlyphArrangement::getStringWidthInt(fonteUi(tk.tamanhoFonteCorpo, juce::Font::bold), (*it)->getButtonText());
+        (*it)->setBounds(rodape.removeFromRight(juce::jmax(120, strW + 48)));
+        rodape.removeFromRight(10);
     }
 }
 
 void PainelOverlay::paint(juce::Graphics& g) {
     if (!aberto_) return;
     const auto& tk = tema();
+    // Scrim: escurece o que está atrás sem esconder, pra o operador não perder o contexto do que estava fazendo.
+    g.fillAll(tk.scrim);
 
-    // Scrim: escurece o que está atrás sem esconder, pra o operador não
-    // perder o contexto do que estava fazendo.
-    g.fillAll(juce::Colours::black.withAlpha(0.55f));
+    const auto geo = moldura::geometria(areaDoCartao(), temRodape());
+    moldura::desenhar(g, geo, config_.secao, config_.trilha, config_.titulo, temRodape(), config_.progresso, config_.contador);
 
-    auto cartao = areaDoCartao();
-    g.setColour(tk.painel);
-    g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
-    g.setColour(tk.borda);
-    g.drawRoundedRectangle(cartao.toFloat(), tk.raioMedio, 1.0f);
-
-    auto miolo = cartao.reduced(kMargem);
-    g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
-    g.drawText(config_.titulo, miolo.removeFromTop(static_cast<int>(tk.tamanhoFonteTitulo)),
-               juce::Justification::centredLeft, true);
-    miolo.removeFromTop(tk.espacoGrande);
-
+    auto corpo = geo.corpo.reduced(moldura::kMargemCorpo);
     if (config_.mensagem.isNotEmpty()) {
-        g.setColour(tk.textoSecundario);
-        juce::Font fonte(juce::FontOptions(tk.tamanhoFonteCorpo));
+        g.setColour(moldura::paleta().tinta);
+        const auto fonte = fonteUi(14.0f);
         g.setFont(fonte);
-        int textoH = calcularAlturaTexto(config_.mensagem, fonte, miolo.getWidth());
-        auto areaTexto = miolo.removeFromTop(textoH);
-        g.drawFittedText(config_.mensagem, areaTexto, juce::Justification::topLeft, 20);
+        const int textoH = calcularAlturaTexto(config_.mensagem, fonte, corpo.getWidth());
+        g.drawFittedText(config_.mensagem, corpo.removeFromTop(textoH), juce::Justification::topLeft, 20);
+    }
+    if (config_.dicaRodape.isNotEmpty() && temRodape()) {
+        g.setColour(moldura::paleta().mudo);
+        g.setFont(fonteUi(tk.tamanhoFontePequena));
+        g.drawText(config_.dicaRodape, geo.rodape.withTrimmedLeft(moldura::kMargemCorpo).withTrimmedRight(moldura::kMargemCorpo + 280),
+                   juce::Justification::centredLeft, true);
     }
 }
 
-void PainelOverlay::mouseDown(const juce::MouseEvent&) {
+void PainelOverlay::mouseDown(const juce::MouseEvent& e) {
+    if (aberto_ && moldura::geometria(areaDoCartao(), temRodape()).botaoFechar.contains(e.getPosition())) {
+        keyPressed(juce::KeyPress(juce::KeyPress::escapeKey));  // o X faz o mesmo que Esc
+        return;
+    }
     // Come o clique: enquanto o overlay está aberto, nada atrás dele responde.
     // Clicar no scrim NÃO fecha — fechar sem escolher precisa ser deliberado
     // (Escape ou o botão de cancelar), senão um clique errado descarta o que
@@ -303,6 +301,7 @@ bool PainelOverlay::keyPressed(const juce::KeyPress& tecla) {
             return true;
         }
     }
+    if (config_.aoTecla && config_.aoTecla(tecla)) return true;
     return true;  // overlay aberto engole o resto do teclado
 }
 

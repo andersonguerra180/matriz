@@ -45,6 +45,7 @@ struct NoBuilder {
     bool ativo = true;
     juce::String corCustomizadaHex;
     juce::String regraOrganizacao;
+    bool proposta = false;
     std::vector<std::unique_ptr<NoBuilder>> filhos;
     std::map<juce::String, NoBuilder*> indiceFilhosPorNome; // dono é `filhos`; só busca
     std::set<std::string> itemIdsDiretos;
@@ -85,6 +86,7 @@ ProjetoAberto::NoArvore materializar(const NoBuilder& b, bool ordenarAlfabetico)
     n.ativo = b.ativo;
     n.corCustomizadaHex = b.corCustomizadaHex;
     n.regraOrganizacao = b.regraOrganizacao;
+    n.proposta = b.proposta;
     n.itemIds = b.itemIdsDiretos;
     n.itemIdsDiretos = b.itemIdsDiretos;
 
@@ -159,11 +161,32 @@ ProjetoAberto::NoArvore construirArvoreOriginalVirtual(matriz::db::Database& db)
 
 } // namespace
 
+ProjetoAberto::~ProjetoAberto() {
+    poolProva_.removeAllJobs(true, 2000);
+    aguardarGravacoesMarcas();
+}
+
+void ProjetoAberto::aguardarGravacoesMarcas() {
+    // Sem isto o destrutor do ThreadPool descartaria gravações ainda na fila.
+    for (int i = 0; i < 6000; ++i) {  // no máximo ~60 s
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            if (gravacoesMarcasPendentes_ == 0 && poolMarcas_.getNumJobs() == 0) break;
+        }
+        juce::Thread::sleep(10);
+    }
+}
+
 ProjetoAberto::ProjetoAberto(std::unique_ptr<matriz::model::Project> projeto) : projeto_(std::move(projeto)) {
     juce::File registroFile = projeto_->pasta().getChildFile("registro.sqlite");
     juce::File pastaProjeto = projeto_->pasta();
     // Fase 5: destino com papel CLONE abre somente leitura.
     somenteLeitura_ = projeto_->papel() == "CLONE" && projeto_->modo() != matriz::model::Modo::Catalogo;
+    // Rebuild do MAIN em andamento (persistido: destino com papel FONTE_REBUILD) — o modo sobrevive ao fechar/reabrir.
+    editandoMain_ = !somenteLeitura_ && projeto_->modo() != matriz::model::Modo::Catalogo && fonteRebuild().has_value();
+    poolMarcas_.addJob([this]() { carregarMarcasRDoBanco(); });  // marcas R: carga em background
+    poolMarcas_.addJob([this]() { carregarMarcacoesDoBanco(); }); // P/W/K/HTML: idem
+    poolMarcas_.addJob([this]() { carregarSessoesPrintDoBanco(); }); // histórico de impressão: idem
 
     const bool somenteLeituraNaAbertura = somenteLeitura_;
     std::thread([registroFile, pastaProjeto, somenteLeituraNaAbertura]() {
@@ -283,8 +306,17 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                                                             matriz::db::Database& indice,
                                                             const juce::File& pastaProjeto,
                                                             const std::map<std::string, std::string>& inMemoryRelinks,
-                                                            const std::set<std::string>* itensOffline) {
+                                                            const std::set<std::string>* itensOffline,
+                                                            const std::function<void(int feitos, int total)>& aoProgredir) {
     std::vector<ItemResumo> out;
+    int totalLinhas = 0;
+    if (aoProgredir) {
+        try {
+            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+            if (st.step()) totalLinhas = static_cast<int>(st.columnInt(0));
+        } catch (...) {}
+        aoProgredir(-1, totalLinhas);
+    }
     std::unique_ptr<matriz::vault::ResolvedorEmLote> resolvedor;  // só se algum item precisar checar disco
 
     // Uma consulta com JOIN em vez de N+1 (arquivo e vault resolvidos num único join
@@ -321,7 +353,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "CASE WHEN json_valid(a.caracteristicas_tecnicas_json) THEN json_extract(a.caracteristicas_tecnicas_json, '$.exifDataOriginal') ELSE NULL END, "
         "i.dc_subject, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
-        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao') "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
+        "i.lista "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -336,6 +369,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "SELECT valor FROM item_campo WHERE item_id = ? AND campo_id IN ('tags', 'genero', 'estilo', 'palavras_chave') AND valor IS NOT NULL AND valor != ''");
 
     while (stmt.step()) {
+        // O ORDER BY força o SQLite a resolver todas as linhas dentro do primeiro step();
+        // daqui em diante o custo é miniatura/tags por item — esse sim dá pra contar.
+        if (aoProgredir && (out.size() % 200 == 0)) aoProgredir(static_cast<int>(out.size()), totalLinhas);
         ItemResumo r;
         r.id = stmt.columnText(0);
         r.codigoAcervo = stmt.columnText(1);
@@ -387,6 +423,10 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         }
         // Data do metadado (mesma regra do Intake, ver listarItensEmQuarentena):
         // sem isto a coluna DATE CREATED do Grid caía em criado_em (data do ingest).
+        if (!stmt.columnIsNull(30)) {
+            std::string lst = stmt.columnText(30);
+            if (!lst.empty()) r.lista = lst;
+        }
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
@@ -457,7 +497,7 @@ int ProjetoAberto::contarItens() const {
     return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
 }
 
-std::vector<ItemResumo> ProjetoAberto::listarItens() const {
+std::vector<ItemResumo> ProjetoAberto::listarItens(const std::function<void(int feitos, int total)>& aoProgredir) const {
     if (!projeto_) return {};
     // Cópia das marcações/relinks em memória sob marcacoesMutex_ (comentário
     // no membro, ProjetoAberto.h) -- este método roda em background
@@ -465,7 +505,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
     // "MatrizSnapshot") enquanto a message thread pode estar escrevendo
     // nesses mesmos sets/map ao mesmo tempo (H/K/P/W, relink).
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, rejeitadoCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -473,14 +513,20 @@ std::vector<ItemResumo> ProjetoAberto::listarItens() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        bounceCopia = marcadosBounce_;
+        rejeitadoCopia = marcadosRejeitado_;
+        for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
-    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia);
+    auto items = listarItensDeProjeto(leitura(), leituraIndice(), projeto_->pasta(), relinkCopia, &offlineCopia, aoProgredir);
     for (auto& item : items) {
         item.marcadoPublicacao = htmlCopia.count(item.id) > 0;
         item.marcadoZip = zipCopia.count(item.id) > 0;
         item.marcadoPrint = printCopia.count(item.id) > 0;
         item.marcadoWatermark = watermarkCopia.count(item.id) > 0;
+        item.marcadoBounce = bounceCopia.count(item.id) > 0;
+        item.marcadoRejeitado = rejeitadoCopia.count(item.id) > 0;
+        item.impresso = impressosCopia.count(item.id) > 0;
     }
     return items;
 }
@@ -500,7 +546,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         "tipo_midia", "ano", "content_type", "source_media", "collection_type", "isrc",
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
-        "dc_language", "dc_relation", "dc_coverage", "dc_rights"};
+        "dc_language", "dc_relation", "dc_coverage", "dc_rights", "lista"};
     std::string cols = "codigo_acervo, titulo, COALESCE(notas_livres, '')";
     for (auto* c : kColunas) cols += std::string(", COALESCE(") + c + ", '')";
     auto lerItem = [&](const std::string& id, std::vector<std::string>& out) {
@@ -552,7 +598,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
         juce::String s = juce::String::fromUTF8(atual.c_str()).trimEnd();
         return (s.isEmpty() ? bloco : s + "\n\n" + bloco).toStdString();
     };
-    juce::String blocoMantido = "[DUPLICATE MERGED] " + juce::String(agora) + " — duplicate " +
+    juce::String blocoMantido = "[DUPLICATE MERGED] " + juce::String(agora) + juce::String::fromUTF8(" — duplicate ") +
                                 juce::String::fromUTF8(r.codigoDescartado.c_str()) + " (\"" +
                                 juce::String::fromUTF8(d[1].c_str()) + "\") discarded; its file stays in SOURCE at " +
                                 juce::String::fromUTF8(localDescartado.c_str()) + " and is not copied to backup.";
@@ -566,8 +612,8 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
                  {Value::of(acrescentar(k[2], blocoMantido)), Value::of(agora), Value::of(manterId)});
 
     juce::String blocoDescartado = "Validated as duplicate of " + juce::String::fromUTF8(r.codigoMantido.c_str()) +
-                                   " — discarded side: file stays in SOURCE, excluded from backup; metadata merged "
-                                   "into the kept item. [USER_VERIFIED_DUPLICATE]";
+                                   juce::String::fromUTF8(" — discarded side: file stays in SOURCE, excluded from backup; metadata merged "
+                                   "into the kept item. [USER_VERIFIED_DUPLICATE]");
     registro.run("UPDATE item SET estado = 'duplicata', notas_livres = ?, atualizado_em = ? WHERE id = ?",
                  {Value::of(acrescentar(d[2], blocoDescartado)), Value::of(agora), Value::of(descartarId)});
 
@@ -592,7 +638,7 @@ ProjetoAberto::ResultadoSanitizacao ProjetoAberto::sanitizarDuplicata(matriz::db
     r.linhasLog.add("Fields merged into kept item: " + juce::String(r.camposSomados) +
                     ", merge conflicts (kept in the item history): " + juce::String(r.conflitos));
     if (r.descartadoJaNoMain)
-        r.linhasLog.add("The discarded item already had a copy in MAIN — left untouched (nothing is deleted).");
+        r.linhasLog.add(juce::String::fromUTF8("The discarded item already had a copy in MAIN — left untouched (nothing is deleted)."));
     return r;
 }
 
@@ -871,6 +917,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDaColecao(const juce::File& pa
                 item.marcadoZip = marcadosZip_.count(item.id) > 0;
                 item.marcadoPrint = marcadosPrint_.count(item.id) > 0;
                 item.marcadoWatermark = marcadosWatermark_.count(item.id) > 0;
+                item.marcadoBounce = marcadosBounce_.count(item.id) > 0;
+                item.marcadoRejeitado = marcadosRejeitado_.count(item.id) > 0;
+                item.impresso = sessoesPrintPorItem_.count(item.id) > 0;
             }
         }
         return items;
@@ -888,7 +937,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     // background (IntakeWorkspaceComponent) enquanto a message thread pode
     // escrever nesses sets/map ao mesmo tempo.
     std::map<std::string, std::string> relinkCopia;
-    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, offlineCopia;
+    std::set<std::string> htmlCopia, zipCopia, printCopia, watermarkCopia, bounceCopia, rejeitadoCopia, offlineCopia, impressosCopia;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         relinkCopia = inMemoryRelinkedPaths_;
@@ -896,6 +945,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
         zipCopia = marcadosZip_;
         printCopia = marcadosPrint_;
         watermarkCopia = marcadosWatermark_;
+        bounceCopia = marcadosBounce_;
+        rejeitadoCopia = marcadosRejeitado_;
+        for (const auto& par : sessoesPrintPorItem_) impressosCopia.insert(par.first);
         offlineCopia = itensOfflineCache_;
     }
 
@@ -957,6 +1009,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 r.marcadoZip = zipCopia.count(r.id) > 0;
                 r.marcadoPrint = printCopia.count(r.id) > 0;
                 r.marcadoWatermark = watermarkCopia.count(r.id) > 0;
+                r.marcadoBounce = bounceCopia.count(r.id) > 0;
+                r.marcadoRejeitado = rejeitadoCopia.count(r.id) > 0;
+                r.impresso = impressosCopia.count(r.id) > 0;
                 if (!stmt.columnIsNull(21)) r.metadadosEditados = stmt.columnInt(21) != 0;
 
                 std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -1069,9 +1124,17 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     if (idsMarcadosR().count(itemId) > 0) return;  // marcado com R: não entra no grid de jeito nenhum
     registrarUndoEnvioAoGrid({itemId});
     std::string agora = matriz::model::agoraIso8601();
-    projeto_->registro().run(
-        "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
-        {matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+    projeto_->registro().exec("BEGIN IMMEDIATE");
+    try {
+        projeto_->registro().run(
+            "UPDATE item SET em_quarentena = 0, atualizado_em = ? WHERE id = ?",
+            {matriz::db::Value::of(agora), matriz::db::Value::of(itemId)});
+        projeto_->registro().run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(itemId)});
+        projeto_->registro().exec("COMMIT");
+    } catch (...) {
+        try { projeto_->registro().exec("ROLLBACK"); } catch (...) {}
+        throw;
+    }
     EventBus::obterInstancia().dispararItemAlterado(itemId, "quarentena");
 }
 
@@ -1091,6 +1154,7 @@ void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& todosOsIds
             projeto_->registro().run(
                 "UPDATE item SET em_quarentena = 0, atualizado_em = ?, lote_grid_id = ? WHERE id = ?",
                 {matriz::db::Value::of(agora), matriz::db::Value::of(loteGridId), matriz::db::Value::of(id)});
+            projeto_->registro().run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
         }
         projeto_->registro().run("COMMIT", {});
     } catch (...) {
@@ -1316,7 +1380,7 @@ std::vector<std::string> ProjetoAberto::valoresUsadosNoCampo(const std::string& 
 std::optional<std::string> ProjetoAberto::lerMetadado(const std::string& itemId, const std::string& coluna) const {
     if (!projeto_) return std::nullopt;
     static const std::set<std::string> kColunasPermitidas = {
-        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo",
+        "ano", "caminho_catalogo", "content_type", "source_media", "collection_type", "isrc", "notas_livres", "titulo", "lista",
         "dc_title", "dc_creator", "dc_subject", "dc_description", "dc_publisher", "dc_contributor",
         "dc_created", "dc_issued", "dc_type", "dc_format", "dc_identifier", "dc_source",
         "dc_language", "dc_relation", "dc_coverage", "dc_rights",
@@ -1382,6 +1446,85 @@ void ProjetoAberto::finalizarGrupoUndo() {
     while (static_cast<int>(pilhaUndo_.size()) > kMaxUndo)
         pilhaUndo_.erase(pilhaUndo_.begin());
     if (aoMudarUndo) aoMudarUndo();
+}
+
+void ProjetoAberto::registrarUndoVisualMapa(const std::string& descricao, const std::string& mapaId) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    const std::string tab = "undo_vi_" + std::to_string(++contadorSnapUndo_);
+    const double fator = fatorCardsDoMapa(mapaId);
+    try {
+        projeto_->registro().run("CREATE TEMP TABLE " + tab + " AS SELECT id, posicao_x, posicao_y, escala_no, ativo, cor_customizada "
+                                 "FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+    } catch (...) { return; }
+    registrarUndo(descricao, [this, tab, mapaId, fator]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            for (const char* col : {"posicao_x", "posicao_y", "escala_no", "ativo", "cor_customizada"})
+                d.run(std::string("UPDATE acervo_pasta SET ") + col + " = (SELECT u." + col + " FROM " + tab +
+                      " u WHERE u.id = acervo_pasta.id) WHERE id IN (SELECT id FROM " + tab + ")", {});
+            d.run("COMMIT", {});
+            if (fator > 0.0) definirFatorCardsDoMapa(mapaId, fator);
+            d.run("DROP TABLE IF EXISTS " + tab, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
+}
+
+void ProjetoAberto::registrarUndoSnapshotMapa(const std::string& descricao, const std::string& mapaId, bool incluirLinhaMapa) {
+    if (desfazendo_ || somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return;
+    const std::string n = std::to_string(++contadorSnapUndo_);
+    const std::string tp = "undo_pa_" + n, tl = "undo_li_" + n, tm = "undo_fm_" + n;
+    auto& db = projeto_->registro();
+    try {
+        db.run("CREATE TEMP TABLE " + tp + " AS SELECT * FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+        db.run("CREATE TEMP TABLE " + tl + " AS SELECT * FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+        if (incluirLinhaMapa)
+            db.run("CREATE TEMP TABLE " + tm + " AS SELECT * FROM folder_map WHERE id = ?", {matriz::db::Value::of(mapaId)});
+    } catch (...) { return; }
+    registrarUndo(descricao, [this, tp, tl, tm, mapaId, incluirLinhaMapa]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            if (incluirLinhaMapa)
+                d.run("INSERT OR REPLACE INTO folder_map SELECT * FROM " + tm, {});
+            d.run("DELETE FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("INSERT INTO acervo_pasta SELECT * FROM " + tp, {});
+            d.run("INSERT OR IGNORE INTO acervo_item_pasta SELECT * FROM " + tl + " WHERE item_id IN (SELECT id FROM item)", {});
+            d.run("COMMIT", {});
+            for (const auto& t : {tp, tl, tm}) d.run("DROP TABLE IF EXISTS " + t, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
+}
+
+void ProjetoAberto::registrarUndoSubarvoreApagada(const std::string& pastaId) {
+    if (desfazendo_ || !projeto_ || pastaId.empty()) return;
+    const std::string n = std::to_string(++contadorSnapUndo_);
+    const std::string tp = "undo_pa_" + n, tl = "undo_li_" + n;
+    auto& db = projeto_->registro();
+    try {
+        db.run("CREATE TEMP TABLE " + tp + " AS WITH RECURSIVE t(id) AS (SELECT id FROM acervo_pasta WHERE id = ? "
+               "UNION ALL SELECT c.id FROM acervo_pasta c JOIN t ON c.pasta_pai_id = t.id) "
+               "SELECT * FROM acervo_pasta WHERE id IN (SELECT id FROM t)", {matriz::db::Value::of(pastaId)});
+        db.run("CREATE TEMP TABLE " + tl + " AS SELECT * FROM acervo_item_pasta WHERE pasta_id IN (SELECT id FROM " + tp + ")", {});
+    } catch (...) { return; }
+    registrarUndo("Delete Folder", [this, tp, tl]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            d.run("INSERT OR IGNORE INTO acervo_pasta SELECT * FROM " + tp, {});
+            d.run("INSERT OR IGNORE INTO acervo_item_pasta SELECT * FROM " + tl + " WHERE item_id IN (SELECT id FROM item)", {});
+            d.run("COMMIT", {});
+            d.run("DROP TABLE IF EXISTS " + tp, {});
+            d.run("DROP TABLE IF EXISTS " + tl, {});
+        } catch (...) {
+            try { d.run("ROLLBACK", {}); } catch (...) {}
+        }
+    });
 }
 
 bool ProjetoAberto::desfazer() {
@@ -1541,9 +1684,13 @@ void ProjetoAberto::salvarMetadadoEmLote(const std::vector<std::string>& itemIds
     // de background (ver IntakeWorkspaceComponent::aplicarXAosSelecionados),
     // então o disparo do evento amplo sempre volta pra message thread via
     // callAsync, nunca direto.
+    // Evento de LOTE com os ids (a grade atualiza só esses itens, num refiltro só); o amplo ("" = recarregar
+    // o catálogo inteiro) fica só para lotes enormes.
     bool ehData = camposEValores.front().first == "ano";
-    juce::MessageManager::callAsync([ehData] {
-        EventBus::obterInstancia().dispararItemAlterado("", ehData ? "metadado_data" : "metadado");
+    juce::MessageManager::callAsync([ehData, itemIds] {
+        const std::string tipo = ehData ? "metadado_data" : "metadado";
+        if (itemIds.size() <= 2000) EventBus::obterInstancia().dispararItensAlterados(itemIds, tipo);
+        else EventBus::obterInstancia().dispararItemAlterado("", tipo);
     });
 }
 
@@ -1924,6 +2071,31 @@ std::optional<juce::String> ProjetoAberto::caminhoMiniaturaPrincipal(const std::
     return projeto_->pasta().getChildFile(relativo).getFullPathName();
 }
 
+std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalogo(const std::string& termo, int limite) const {
+    std::vector<ImagemCatalogo> out;
+    if (!projeto_) return out;
+    try {
+        const std::string padrao = "%" + termo + "%";
+        auto stmt = leitura().prepare(
+            "SELECT i.id, i.codigo_acervo, COALESCE(NULLIF(i.titulo, ''), a.caminho_relativo) "
+            "FROM item i JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(a.papel, '') != 'capa_frente' "
+            "AND (LOWER(a.caminho_relativo) LIKE '%.jpg' OR LOWER(a.caminho_relativo) LIKE '%.jpeg' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.png' OR LOWER(a.caminho_relativo) LIKE '%.gif' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.bmp' OR LOWER(a.caminho_relativo) LIKE '%.webp' OR "
+            "     LOWER(a.caminho_relativo) LIKE '%.tif' OR LOWER(a.caminho_relativo) LIKE '%.tiff') "
+            "AND (? = '' OR i.titulo LIKE ? OR i.codigo_acervo LIKE ? OR a.caminho_relativo LIKE ?) "
+            "ORDER BY i.criado_em DESC LIMIT ?");
+        stmt.bind(1, matriz::db::Value::of(termo));
+        stmt.bind(2, matriz::db::Value::of(padrao));
+        stmt.bind(3, matriz::db::Value::of(padrao));
+        stmt.bind(4, matriz::db::Value::of(padrao));
+        stmt.bind(5, matriz::db::Value::of(static_cast<long long>(limite)));
+        while (stmt.step()) out.push_back({stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
+    } catch (const std::exception&) {}
+    return out;
+}
+
 void ProjetoAberto::gerarMiniaturasFaltantes() {
     if (!projeto_) { DBG("gerarMiniaturasFaltantes: projeto_ é nulo"); return; }
     auto& reg = projeto_->registro();
@@ -1982,7 +2154,9 @@ void ProjetoAberto::gerarMiniaturasFaltantes() {
         auto cat = matriz::ingest::categoriaPorExtensao(arq);
         if (cat != matriz::ingest::CategoriaMidia::Video &&
             cat != matriz::ingest::CategoriaMidia::Audio &&
-            cat != matriz::ingest::CategoriaMidia::Imagem)
+            cat != matriz::ingest::CategoriaMidia::Imagem &&
+            cat != matriz::ingest::CategoriaMidia::Documento &&
+            cat != matriz::ingest::CategoriaMidia::Texto)
             continue;
 
         std::optional<double> duracao;
@@ -2245,6 +2419,8 @@ void ProjetoAberto::definirMapaAtivo(const std::string& mapaId) {
     mapaAtivoSelecionado_ = mapaId;
     if (!projeto_ || mapaId.empty()) return;
     projeto_->pasta().getChildFile("mapa_ativo.txt").replaceWithText(juce::String(mapaId));
+    // Os cards de analytics (NO FOLDER) seguem o mapa selecionado no dropdown do Folder Map.
+    EventBus::obterInstancia().dispararItemAlterado("", "mapa_ativo");
 }
 
 std::string ProjetoAberto::mapaInicialDoFolderMap() const {
@@ -2304,6 +2480,16 @@ std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::o
             matriz::db::Value::of(nome.trim().toStdString()), matriz::db::Value::of(ordem),
             matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
 
+    registrarUndo("Create Folder Map", [this, mapaId]() {
+        auto& d = projeto_->registro();
+        try {
+            d.run("BEGIN TRANSACTION", {});
+            d.run("DELETE FROM acervo_item_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM acervo_pasta WHERE mapa_id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("DELETE FROM folder_map WHERE id = ?", {matriz::db::Value::of(mapaId)});
+            d.run("COMMIT", {});
+        } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} }
+    });
     if (!origemMapaId) return mapaId; // em branco
 
     // Cópia do ORIGINAL ou de outro mapa: um RETRATO do momento, não uma
@@ -2324,6 +2510,14 @@ std::string ProjetoAberto::criarFolderMap(const juce::String& nome, const std::o
 bool ProjetoAberto::renomearFolderMap(const std::string& mapaId, const juce::String& novoNome) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
     if (!projeto_ || mapaId == kMapaOriginal || novoNome.trim().isEmpty()) return false;
+    if (!desfazendo_) {
+        auto st = projeto_->registro().prepare("SELECT nome FROM folder_map WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(mapaId));
+        if (st.step()) {
+            const juce::String nomeAntes(st.columnText(0));
+            registrarUndo("Rename Folder Map", [this, mapaId, nomeAntes]() { renomearFolderMap(mapaId, nomeAntes); });
+        }
+    }
     projeto_->registro().run("UPDATE folder_map SET nome = ?, atualizado_em = ? WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(novoNome.trim().toStdString()),
                                matriz::db::Value::of(matriz::model::agoraIso8601()), matriz::db::Value::of(mapaId),
@@ -2336,6 +2530,7 @@ bool ProjetoAberto::apagarFolderMap(const std::string& mapaId) {
     if (!projeto_ || mapaId == kMapaOriginal) return false;
     // Fase 2: o mapa do MAIN (backup_config_main.mapa_id) não pode ser apagado.
     if (mapaId == mapaDoMainId()) return false;
+    registrarUndoSnapshotMapa("Delete Folder Map", mapaId, true);
     projeto_->registro().run("DELETE FROM folder_map WHERE id = ? AND projeto_id = ?",
                               {matriz::db::Value::of(mapaId), matriz::db::Value::of(projeto_->projetoId())});
     return true;
@@ -2396,7 +2591,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
     std::unordered_map<std::string, NoBuilder*> ptrPorId;
 
     auto stmt = leitura().prepare(
-        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no FROM acervo_pasta "
+        "SELECT id, pasta_pai_id, nome, posicao_x, posicao_y, ativo, cor_customizada, regra_organizacao, escala_no, proposta_id FROM acervo_pasta "
         "WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -2416,6 +2611,7 @@ ProjetoAberto::NoArvore ProjetoAberto::arvoreAcervo(const std::string& mapaId) c
         if (!stmt.columnIsNull(6)) no->corCustomizadaHex = juce::String(stmt.columnText(6));
         if (!stmt.columnIsNull(7)) no->regraOrganizacao = juce::String(stmt.columnText(7));
         if (!stmt.columnIsNull(8)) no->escalaNo = stmt.columnReal(8);
+        no->proposta = !stmt.columnIsNull(9) && !stmt.columnText(9).empty();
         ptrPorId[r.id] = no.get();
         porId[r.id] = std::move(no);
     }
@@ -2499,6 +2695,7 @@ std::string ProjetoAberto::criarPastaAcervo(const std::string& nome, const std::
 
 bool ProjetoAberto::mainExiste() const {
     if (!projeto_) return false;
+    if (editandoMain_) return false;  // rebuild: o MAIN antigo é só fonte; o projeto está sem MAIN
     try {
         auto st = leitura().prepare("SELECT 1 FROM consolidacao_registro LIMIT 1");
         return st.step();
@@ -2534,6 +2731,7 @@ juce::String ProjetoAberto::nomeDoMapaDoMain() const {
 
 bool ProjetoAberto::pastaTemArquivosNoMain(const std::string& pastaId) const {
     if (!projeto_) return false;
+    if (editandoMain_) return false;  // rebuild: estrutura livre, nada travado pelo MAIN antigo
     try {
         // Fase 2: as travas valem só pro mapa do MAIN; os outros mapas do
         // usuário ficam sempre livres. Sem mapa_id gravado, MAIN por regra
@@ -2996,6 +3194,471 @@ void ProjetoAberto::desligarAutoOrganizacao(const std::string& pastaId) {
     });
 }
 
+namespace {
+// Nº de code points UTF-8 (substr() do SQLite conta caracteres, não bytes).
+int comprimentoUtf8(const std::string& s) {
+    int n = 0;
+    for (unsigned char c : s) if ((c & 0xC0) != 0x80) ++n;
+    return n;
+}
+
+// Arquivos (itens) que ainda estão em SEM PASTA no mapa e cuja origem fica em `dir` — só direto, sem subpastas
+// (recursivo = true inclui as subpastas).
+std::vector<std::string> itensSoltosDoDiretorio(matriz::db::Database& db, const std::string& mapaId,
+                                                const std::string& dir, bool recursivo) {
+    std::vector<std::string> out;
+    const std::string prefixo = dir + "/";
+    const int len = comprimentoUtf8(prefixo);
+    auto st = db.prepare(
+        std::string("SELECT a.item_id FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ? ") +
+        (recursivo ? "" : "AND instr(substr(a.caminho_absoluto_origem, ?), '/') = 0 ") +
+        "AND a.id = (SELECT id FROM arquivo a2 WHERE a2.item_id = a.item_id ORDER BY eh_master DESC, id LIMIT 1) "
+        "AND a.item_id NOT IN (SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
+    int k = 1;
+    st.bind(k++, matriz::db::Value::of(static_cast<int>(len)));
+    st.bind(k++, matriz::db::Value::of(prefixo));
+    if (!recursivo) st.bind(k++, matriz::db::Value::of(static_cast<int>(len + 1)));
+    st.bind(k++, matriz::db::Value::of(mapaId));
+    while (st.step()) out.push_back(st.columnText(0));
+    return out;
+}
+
+struct PastaLinha {
+    std::string id, pai, nome, proposta, origem;
+};
+
+std::vector<PastaLinha> carregarPastasDoMapa(matriz::db::Database& db, const std::string& projetoId, const std::string& mapaId) {
+    std::vector<PastaLinha> v;
+    auto st = db.prepare("SELECT id, COALESCE(pasta_pai_id, ''), nome, COALESCE(proposta_id, ''), COALESCE(origem_caminho, '') "
+                         "FROM acervo_pasta WHERE projeto_id = ? AND mapa_id = ? ORDER BY ordem, criado_em");
+    st.bind(1, matriz::db::Value::of(projetoId));
+    st.bind(2, matriz::db::Value::of(mapaId));
+    while (st.step()) v.push_back({st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3), st.columnText(4)});
+    return v;
+}
+
+juce::String caminhoDaPastaNaLista(const std::vector<PastaLinha>& v, const std::string& id) {
+    std::map<std::string, const PastaLinha*> por;
+    for (const auto& p : v) por[p.id] = &p;
+    juce::StringArray partes;
+    std::string cur = id;
+    for (int guard = 0; guard < 200 && !cur.empty(); ++guard) {
+        auto it = por.find(cur);
+        if (it == por.end()) break;
+        partes.insert(0, juce::String::fromUTF8(it->second->nome.c_str()));
+        cur = it->second->pai;
+    }
+    return partes.joinIntoString(" / ");
+}
+}  // namespace
+
+void ProjetoAberto::registrarPastasIngeridas(const std::vector<std::string>& caminhos) {
+    if (somenteLeitura_ || !projeto_ || caminhos.empty()) return;
+    try {
+        const std::string agora = matriz::model::agoraIso8601();
+        for (const auto& c : caminhos) {
+            const std::string norm = juce::File(juce::String::fromUTF8(c.c_str())).getFullPathName().toStdString();
+            if (norm.empty()) continue;
+            projeto_->registro().run("INSERT INTO ingest_pasta_raiz (id, projeto_id, caminho, criado_em) VALUES (?, ?, ?, ?)",
+                                     {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(projeto_->projetoId()),
+                                      matriz::db::Value::of(norm), matriz::db::Value::of(agora)});
+        }
+    } catch (...) {}
+}
+
+int ProjetoAberto::gerarPropostasDeNovasPastas(const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal || mapaId == mapaDoMainId()) return 0;
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    struct Raiz { std::string id, caminho; bool velha; };
+    std::vector<Raiz> raizes;
+    try {
+        auto st = db.prepare(
+            "SELECT r.id, r.caminho, julianday(r.criado_em) < julianday('now', '-2 day') FROM ingest_pasta_raiz r "
+            "WHERE r.projeto_id = ? AND r.criado_em >= (SELECT criado_em FROM folder_map WHERE id = ?) "
+            "AND NOT EXISTS (SELECT 1 FROM ingest_pasta_raiz_mapa m WHERE m.raiz_id = r.id AND m.mapa_id = ?) "
+            "ORDER BY r.criado_em");
+        st.bind(1, Value::of(projeto_->projetoId()));
+        st.bind(2, Value::of(mapaId));
+        st.bind(3, Value::of(mapaId));
+        while (st.step()) raizes.push_back({st.columnText(0), st.columnText(1), st.columnInt(2) != 0});
+    } catch (...) { return 0; }
+    if (raizes.empty()) return 0;
+
+    static const char* kCores[] = {"ffe11d48", "ff0ea5e9", "fff59e0b", "ff10b981", "ff8b5cf6", "ffec4899"};
+    int criadas = 0;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    for (const auto& raiz : raizes) {
+        try {
+            // Mesma pasta ingerida de novo (cada ingest grava uma linha em ingest_pasta_raiz): se este mapa já tem uma
+            // proposta ABERTA para esse caminho, não cria a gêmea — ela ficaria vazia depois de USE TREE/MERGE na outra.
+            {
+                auto aberta = db.prepare("SELECT 1 FROM acervo_pasta WHERE projeto_id = ? AND mapa_id = ? "
+                                         "AND proposta_id = id AND origem_caminho = ? LIMIT 1");
+                aberta.bind(1, Value::of(projeto_->projetoId()));
+                aberta.bind(2, Value::of(mapaId));
+                aberta.bind(3, Value::of(raiz.caminho));
+                if (aberta.step()) {
+                    db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+                    continue;
+                }
+            }
+            const auto itens = itensSoltosDoDiretorio(db, mapaId, raiz.caminho, true);
+            const std::string agora = matriz::model::agoraIso8601();
+            if (itens.empty()) {
+                // Ingestão ainda não terminou (ou só trouxe duplicatas): tenta de novo; raiz antiga é dada como tratada.
+                if (raiz.velha)
+                    db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+                continue;
+            }
+            // Diretórios que contêm arquivos + ancestrais até a raiz.
+            std::set<std::string> dirs{raiz.caminho};
+            {
+                const std::string prefixo = raiz.caminho + "/";
+                const int len = comprimentoUtf8(prefixo);
+                auto st = db.prepare("SELECT DISTINCT a.caminho_absoluto_origem FROM arquivo a WHERE substr(a.caminho_absoluto_origem, 1, ?) = ?");
+                st.bind(1, Value::of(static_cast<int>(len)));
+                st.bind(2, Value::of(prefixo));
+                while (st.step()) {
+                    juce::File d = juce::File(juce::String::fromUTF8(st.columnText(0).c_str())).getParentDirectory();
+                    const juce::File r(juce::String::fromUTF8(raiz.caminho.c_str()));
+                    for (int guard = 0; guard < 100 && d != r && d.getFullPathName().length() > r.getFullPathName().length(); ++guard) {
+                        dirs.insert(d.getFullPathName().toStdString());
+                        d = d.getParentDirectory();
+                    }
+                }
+            }
+            std::vector<std::string> ordenados(dirs.begin(), dirs.end());
+            std::sort(ordenados.begin(), ordenados.end(), [](const std::string& a, const std::string& b) {
+                const auto pa = std::count(a.begin(), a.end(), '/'), pb = std::count(b.begin(), b.end(), '/');
+                return pa != pb ? pa < pb : a < b;
+            });
+
+            db.exec("BEGIN IMMEDIATE");
+            std::map<std::string, std::string> idPorDir;
+            const std::string raizPastaId = matriz::model::novoUuid();
+            const std::string cor = kCores[(criadas + std::count(raiz.caminho.begin(), raiz.caminho.end(), '/')) % 6];
+            int ordemRaiz = 0;
+            {
+                auto st = db.prepare("SELECT COALESCE(MAX(ordem), -1) + 1 FROM acervo_pasta WHERE pasta_pai_id IS NULL AND projeto_id = ? AND mapa_id = ?");
+                st.bind(1, Value::of(projeto_->projetoId()));
+                st.bind(2, Value::of(mapaId));
+                if (st.step()) ordemRaiz = st.columnInt(0);
+            }
+            int ordem = 0;
+            for (const auto& dir : ordenados) {
+                const bool ehRaiz = dir == raiz.caminho;
+                const std::string id = ehRaiz ? raizPastaId : matriz::model::novoUuid();
+                std::string pai;
+                if (!ehRaiz) {
+                    const std::string paiDir = juce::File(juce::String::fromUTF8(dir.c_str())).getParentDirectory().getFullPathName().toStdString();
+                    if (auto it = idPorDir.find(paiDir); it != idPorDir.end()) pai = it->second;
+                    else pai = raizPastaId;
+                }
+                const std::string nome = juce::File(juce::String::fromUTF8(dir.c_str())).getFileName().toStdString();
+                db.run("INSERT INTO acervo_pasta (id, projeto_id, pasta_pai_id, nome, ordem, mapa_id, posicao_x, posicao_y, ativo, "
+                       "cor_customizada, proposta_id, origem_caminho, criado_em, atualizado_em) "
+                       "VALUES (?, ?, ?, ?, ?, ?, 0, 0, 1, ?, ?, ?, ?, ?)",
+                       {Value::of(id), Value::of(projeto_->projetoId()), pai.empty() ? Value::null() : Value::of(pai),
+                        Value::of(nome), Value::of(ehRaiz ? ordemRaiz : ordem++), Value::of(mapaId), Value::of(cor),
+                        Value::of(raizPastaId), Value::of(dir), Value::of(agora), Value::of(agora)});
+                idPorDir[dir] = id;
+            }
+            db.run("INSERT OR IGNORE INTO ingest_pasta_raiz_mapa (raiz_id, mapa_id) VALUES (?, ?)", {Value::of(raiz.id), Value::of(mapaId)});
+            db.exec("COMMIT");
+            ++criadas;
+        } catch (...) {
+            try { db.exec("ROLLBACK"); } catch (...) {}
+        }
+    }
+    return criadas;
+}
+
+std::vector<ProjetoAberto::PropostaPasta> ProjetoAberto::listarPropostas(const std::string& mapaId) const {
+    std::vector<PropostaPasta> out;
+    if (!projeto_ || mapaId.empty() || mapaId == kMapaOriginal) return out;
+    try {
+        auto& db = projeto_->registro();
+        std::vector<std::tuple<std::string, std::string, std::string>> raizes;
+        {
+            auto st = db.prepare("SELECT id, nome, COALESCE(origem_caminho, '') FROM acervo_pasta "
+                                 "WHERE projeto_id = ? AND mapa_id = ? AND proposta_id = id ORDER BY criado_em, nome");
+            st.bind(1, matriz::db::Value::of(projeto_->projetoId()));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            while (st.step()) raizes.emplace_back(st.columnText(0), st.columnText(1), st.columnText(2));
+        }
+        for (const auto& [id, nome, origem] : raizes) {
+            PropostaPasta p;
+            p.raizId = id;
+            p.nome = juce::String::fromUTF8(nome.c_str());
+            p.arquivos = origem.empty() ? 0 : static_cast<int>(itensSoltosDoDiretorio(db, mapaId, origem, true).size());
+            out.push_back(std::move(p));
+        }
+    } catch (...) {}
+    return out;
+}
+
+namespace {
+std::string mapaDaPasta(matriz::db::Database& db, const std::string& pastaId) {
+    auto st = db.prepare("SELECT COALESCE(mapa_id, '') FROM acervo_pasta WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(pastaId));
+    return st.step() ? st.columnText(0) : std::string();
+}
+
+int colocarItensDoDiretorio(matriz::db::Database& db, const std::string& mapaId, const std::string& pastaId,
+                            const std::string& dir, const std::string& agora) {
+    if (dir.empty()) return 0;
+    int n = 0;
+    for (const auto& item : itensSoltosDoDiretorio(db, mapaId, dir, false)) {
+        db.run("INSERT OR IGNORE INTO acervo_item_pasta (id, item_id, pasta_id, mapa_id, criado_em) VALUES (?, ?, ?, ?, ?)",
+               {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(item), matriz::db::Value::of(pastaId),
+                matriz::db::Value::of(mapaId), matriz::db::Value::of(agora)});
+        ++n;
+    }
+    return n;
+}
+
+void descendentes(const std::vector<PastaLinha>& v, const std::string& id, std::vector<const PastaLinha*>& out) {
+    for (const auto& p : v)
+        if (p.pai == id) { out.push_back(&p); descendentes(v, p.id, out); }
+}
+}  // namespace
+
+void ProjetoAberto::usarArvoreProposta(const std::string& raizId) {
+    mesclarProposta(raizId, {}, {});
+}
+
+void ProjetoAberto::descartarProposta(const std::string& raizId) {
+    if (somenteLeitura_ || !projeto_ || raizId.empty()) return;
+    try {
+        registrarUndoSnapshotMapa("Discard Proposed Tree", mapaIdDaPasta(raizId));
+        projeto_->registro().run("DELETE FROM acervo_pasta WHERE proposta_id = ?", {matriz::db::Value::of(raizId)});
+    } catch (...) {}
+}
+
+std::vector<ProjetoAberto::PastaDoMapa> ProjetoAberto::destinosDeMescla(const std::string& raizId) const {
+    std::vector<PastaDoMapa> out;
+    if (!projeto_) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        juce::String nomeRaiz;
+        for (const auto& p : v) if (p.id == raizId) nomeRaiz = juce::String::fromUTF8(p.nome.c_str());
+        for (const auto& p : v) {
+            if (!p.proposta.empty()) continue;
+            PastaDoMapa d;
+            d.id = p.id;
+            d.caminho = caminhoDaPastaNaLista(v, p.id);
+            d.mesmoNome = juce::String::fromUTF8(p.nome.c_str()).equalsIgnoreCase(nomeRaiz);
+            out.push_back(std::move(d));
+        }
+        std::stable_sort(out.begin(), out.end(), [](const PastaDoMapa& a, const PastaDoMapa& b) {
+            if (a.mesmoNome != b.mesmoNome) return a.mesmoNome;
+            return a.caminho.compareIgnoreCase(b.caminho) < 0;
+        });
+    } catch (...) {}
+    return out;
+}
+
+std::vector<ProjetoAberto::LinhaMescla> ProjetoAberto::planoDeMescla(const std::string& raizId, const std::string& alvoId,
+                                                                    const std::map<std::string, bool>& decisoes) const {
+    std::vector<LinhaMescla> out;
+    if (!projeto_ || alvoId.empty()) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        std::function<void(const std::string&, const std::string&)> rec = [&](const std::string& propId, const std::string& alvo) {
+            for (const auto& c : v) {
+                if (c.pai != propId) continue;
+                const PastaLinha* par = nullptr;
+                for (const auto& x : v)
+                    if (x.pai == alvo && x.proposta.empty() &&
+                        juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (!par) continue;
+                LinhaMescla l;
+                l.propostaId = c.id;
+                l.caminhoProposta = caminhoDaPastaNaLista(v, c.id);
+                l.alvoId = par->id;
+                l.caminhoAlvo = caminhoDaPastaNaLista(v, par->id);
+                l.arquivos = c.origem.empty() ? 0 : static_cast<int>(itensSoltosDoDiretorio(db, mapaId, c.origem, true).size());
+                auto it = decisoes.find(c.id);
+                l.mesclar = it == decisoes.end() ? true : it->second;
+                out.push_back(l);
+                if (l.mesclar) rec(c.id, par->id);
+            }
+        };
+        rec(raizId, alvoId);
+    } catch (...) {}
+    return out;
+}
+
+int ProjetoAberto::mesclarProposta(const std::string& raizId, const std::string& alvoId, const std::map<std::string, bool>& decisoes) {
+    if (somenteLeitura_ || !projeto_ || raizId.empty()) return -1;
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        const std::string mapaId = mapaDaPasta(db, raizId);
+        if (mapaId.empty()) return -1;
+        registrarUndoSnapshotMapa(alvoId.empty() ? "Use Proposed Tree" : "Merge Proposed Tree", mapaId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        const std::string agora = matriz::model::agoraIso8601();
+        int colocados = 0;
+        db.exec("BEGIN IMMEDIATE");
+
+        // Aceita uma subárvore como está: arquivos nas pastas dela, marca de proposta e cor saem.
+        auto aceitar = [&](const std::string& id) {
+            std::vector<const PastaLinha*> todas;
+            for (const auto& p : v) if (p.id == id) todas.push_back(&p);
+            descendentes(v, id, todas);
+            for (const auto* p : todas) {
+                colocados += colocarItensDoDiretorio(db, mapaId, p->id, p->origem, agora);
+                db.run("UPDATE acervo_pasta SET proposta_id = NULL, cor_customizada = NULL WHERE id = ?", {Value::of(p->id)});
+            }
+        };
+
+        if (alvoId.empty()) {
+            aceitar(raizId);
+        } else {
+            std::function<void(const std::string&, const std::string&)> mesclar = [&](const std::string& propId, const std::string& alvo) {
+                const PastaLinha* prop = nullptr;
+                for (const auto& p : v) if (p.id == propId) prop = &p;
+                if (prop) colocados += colocarItensDoDiretorio(db, mapaId, alvo, prop->origem, agora);
+                for (const auto& c : v) {
+                    if (c.pai != propId) continue;
+                    const PastaLinha* par = nullptr;
+                    auto it = decisoes.find(c.id);
+                    const bool querMesclar = it == decisoes.end() ? true : it->second;
+                    if (querMesclar)
+                        for (const auto& x : v)
+                            if (x.pai == alvo && x.proposta.empty() &&
+                                juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                    if (par) {
+                        mesclar(c.id, par->id);
+                    } else {
+                        db.run("UPDATE acervo_pasta SET pasta_pai_id = ? WHERE id = ?", {Value::of(alvo), Value::of(c.id)});
+                        aceitar(c.id);
+                    }
+                }
+                db.run("DELETE FROM acervo_pasta WHERE id = ?", {Value::of(propId)});
+            };
+            mesclar(raizId, alvoId);
+        }
+        db.exec("COMMIT");
+        return colocados;
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return -1;
+    }
+}
+
+bool ProjetoAberto::podeMesclarPastas(const std::string& origemId, const std::string& alvoId) const {
+    if (somenteLeitura_ || !projeto_ || origemId.empty() || alvoId.empty() || origemId == alvoId) return false;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        if (mapaId.empty() || mapaId == kMapaOriginal || mapaId != mapaDaPasta(db, alvoId)) return false;
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        std::vector<const PastaLinha*> sub;
+        descendentes(v, origemId, sub);
+        for (const auto* p : sub) if (p->id == alvoId) return false;  // alvo dentro da origem
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::vector<ProjetoAberto::LinhaMescla> ProjetoAberto::planoDeMesclaPastas(const std::string& origemId, const std::string& alvoId,
+                                                                          const std::map<std::string, bool>& decisoes) const {
+    std::vector<LinhaMescla> out;
+    if (!projeto_ || !podeMesclarPastas(origemId, alvoId)) return out;
+    try {
+        auto& db = projeto_->registro();
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        auto itensDireto = [&](const std::string& pastaId) {
+            auto st = db.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?");
+            st.bind(1, matriz::db::Value::of(pastaId));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            return st.step() ? st.columnInt(0) : 0;
+        };
+        std::function<void(const std::string&, const std::string&)> rec = [&](const std::string& orig, const std::string& alvo) {
+            for (const auto& c : v) {
+                if (c.pai != orig) continue;
+                const PastaLinha* par = nullptr;
+                for (const auto& x : v)
+                    if (x.pai == alvo && x.id != c.id &&
+                        juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (!par) continue;
+                LinhaMescla l;
+                l.propostaId = c.id;
+                l.caminhoProposta = caminhoDaPastaNaLista(v, c.id);
+                l.alvoId = par->id;
+                l.caminhoAlvo = caminhoDaPastaNaLista(v, par->id);
+                l.arquivos = itensDireto(c.id);
+                auto it = decisoes.find(c.id);
+                l.mesclar = it == decisoes.end() ? true : it->second;
+                out.push_back(l);
+                if (l.mesclar) rec(c.id, par->id);
+            }
+        };
+        rec(origemId, alvoId);
+    } catch (...) {}
+    return out;
+}
+
+int ProjetoAberto::mesclarPastas(const std::string& origemId, const std::string& alvoId, const std::map<std::string, bool>& decisoes) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return -1; }
+    if (!projeto_ || !podeMesclarPastas(origemId, alvoId)) return -1;
+    if (pastaTemArquivosNoMain(origemId) || pastaTemArquivosNoMain(alvoId)) {
+        avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
+        return -1;
+    }
+    using matriz::db::Value;
+    auto& db = projeto_->registro();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        const std::string mapaId = mapaDaPasta(db, origemId);
+        registrarUndoSnapshotMapa("Merge Folders", mapaId);
+        const auto v = carregarPastasDoMapa(db, projeto_->projetoId(), mapaId);
+        int movidos = 0;
+        db.exec("BEGIN IMMEDIATE");
+        std::function<void(const std::string&, const std::string&)> mesclar = [&](const std::string& orig, const std::string& alvo) {
+            {
+                auto st = db.prepare("SELECT COUNT(*) FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?");
+                st.bind(1, Value::of(orig));
+                st.bind(2, Value::of(mapaId));
+                if (st.step()) movidos += st.columnInt(0);
+            }
+            // O item que já está no alvo fica como está (UPDATE OR IGNORE); o resto da origem é descartado.
+            db.run("UPDATE OR IGNORE acervo_item_pasta SET pasta_id = ? WHERE pasta_id = ? AND mapa_id = ?",
+                   {Value::of(alvo), Value::of(orig), Value::of(mapaId)});
+            db.run("DELETE FROM acervo_item_pasta WHERE pasta_id = ? AND mapa_id = ?", {Value::of(orig), Value::of(mapaId)});
+            for (const auto& c : v) {
+                if (c.pai != orig) continue;
+                const PastaLinha* par = nullptr;
+                auto it = decisoes.find(c.id);
+                const bool querMesclar = it == decisoes.end() ? true : it->second;
+                if (querMesclar)
+                    for (const auto& x : v)
+                        if (x.pai == alvo && x.id != c.id &&
+                            juce::String::fromUTF8(x.nome.c_str()).equalsIgnoreCase(juce::String::fromUTF8(c.nome.c_str()))) { par = &x; break; }
+                if (par) mesclar(c.id, par->id);
+                else db.run("UPDATE acervo_pasta SET pasta_pai_id = ? WHERE id = ?", {Value::of(alvo), Value::of(c.id)});
+            }
+            db.run("DELETE FROM acervo_pasta WHERE id = ?", {Value::of(orig)});
+        };
+        mesclar(origemId, alvoId);
+        db.exec("COMMIT");
+        return movidos;
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return -1;
+    }
+}
+
 int ProjetoAberto::organizarItensSoltosDasPastasComRegra(const std::string& mapaId) {
     if (somenteLeitura_ || !projeto_ || mapaId.empty() || mapaId == kMapaOriginal || organizandoAuto_) return 0;
     // Checagem barata: uma consulta só, e só pastas com regra E com itens diretos.
@@ -3090,8 +3753,192 @@ bool ProjetoAberto::apagarPastaAcervo(const std::string& pastaId) {
         avisarMapaTravado(matriz::i18n::t("mapa_main.pasta_no_main"));
         return false;
     }
+    if (ehPastaTrash(pastaId)) return false;
+    registrarUndoSubarvoreApagada(pastaId);
     projeto_->registro().run("DELETE FROM acervo_pasta WHERE id = ?", {matriz::db::Value::of(pastaId)});
     return true;
+}
+
+static void garantirTabelaLixeira(matriz::db::Database& db) {
+    db.run(
+        "CREATE TABLE IF NOT EXISTS lixeira_item ("
+        "  item_id TEXT NOT NULL,"
+        "  mapa_id TEXT NOT NULL,"
+        "  pasta_origem_id TEXT,"
+        "  nome_pasta_origem TEXT,"
+        "  deletado_em TEXT NOT NULL,"
+        "  PRIMARY KEY (item_id, mapa_id)"
+        ")",
+        {}
+    );
+}
+
+std::string ProjetoAberto::obterOuCriarPastaTrash(const std::string& mapaId) {
+    if (!projeto_) return {};
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+    auto st = db.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ? AND nome = '_trash' LIMIT 1");
+    st.bind(1, matriz::db::Value::of(mapaId));
+    if (st.step()) return st.columnText(0);
+
+    std::string id = juce::Uuid().toString().toStdString();
+    db.run(
+        "INSERT INTO acervo_pasta (id, projeto_id, nome, pasta_pai_id, mapa_id, ativo, criado_em, atualizado_em) "
+        "VALUES (?, ?, '_trash', NULL, ?, 0, datetime('now'), datetime('now'))",
+        {matriz::db::Value::of(id), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(mapaId)}
+    );
+    return id;
+}
+
+bool ProjetoAberto::ehPastaTrash(const std::string& pastaId) const {
+    if (!projeto_ || pastaId.empty()) return false;
+    auto& db = projeto_->registro();
+    auto st = db.prepare("SELECT nome FROM acervo_pasta WHERE id = ?");
+    st.bind(1, matriz::db::Value::of(pastaId));
+    if (st.step()) return st.columnText(0) == "_trash";
+    return false;
+}
+
+void ProjetoAberto::moverItensParaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId, const std::string& nomePastaOrigem) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const std::string trashId = obterOuCriarPastaTrash(mapaId);
+    if (trashId.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        std::string agora = matriz::model::agoraIso8601();
+        for (const auto& itemId : itemIds) {
+            std::string pastaOrigId;
+            std::string nomeOrig = nomePastaOrigem;
+            if (nomeOrig.empty()) {
+                auto stP = db.prepare("SELECT ap.id, ap.nome FROM acervo_item_pasta aip "
+                                      "JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+                                      "WHERE aip.item_id = ? AND aip.mapa_id = ? LIMIT 1");
+                stP.bind(1, matriz::db::Value::of(itemId));
+                stP.bind(2, matriz::db::Value::of(mapaId));
+                if (stP.step()) {
+                    pastaOrigId = stP.columnText(0);
+                    nomeOrig = stP.columnText(1);
+                }
+            }
+            if (nomeOrig == "_trash") nomeOrig.clear();
+
+            db.run("INSERT OR REPLACE INTO lixeira_item (item_id, mapa_id, pasta_origem_id, nome_pasta_origem, deletado_em) "
+                   "VALUES (?, ?, ?, ?, ?)",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId),
+                    matriz::db::Value::of(pastaOrigId), matriz::db::Value::of(nomeOrig),
+                    matriz::db::Value::of(agora)});
+
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            inserirItemPastaInterno(itemId, trashId, agora);
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+void ProjetoAberto::extrairItensParaCanvas(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        for (const auto& itemId : itemIds) {
+            db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            db.run("DELETE FROM lixeira_item WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+void ProjetoAberto::restaurarItensDaTrash(const std::vector<std::string>& idsPedidos, const std::string& mapaId) {
+    if (somenteLeitura_ || !projeto_ || idsPedidos.empty()) return;
+    const auto itemIds = expandirMembrosDeNest(idsPedidos);
+    auto& db = projeto_->registro();
+    garantirTabelaLixeira(db);
+
+    db.run("BEGIN IMMEDIATE TRANSACTION", {});
+    try {
+        std::string agora = matriz::model::agoraIso8601();
+        for (const auto& itemId : itemIds) {
+            std::string pastaOrigId, nomePastaOrig;
+            auto st = db.prepare("SELECT pasta_origem_id, nome_pasta_origem FROM lixeira_item WHERE item_id = ? AND mapa_id = ?");
+            st.bind(1, matriz::db::Value::of(itemId));
+            st.bind(2, matriz::db::Value::of(mapaId));
+            if (st.step()) {
+                if (!st.columnIsNull(0)) pastaOrigId = st.columnText(0);
+                if (!st.columnIsNull(1)) nomePastaOrig = st.columnText(1);
+            }
+
+            std::string pastaDestinoId;
+            // Se a pasta original ainda existe no mapa e não é a lixeira
+            if (!pastaOrigId.empty()) {
+                auto stChk = db.prepare("SELECT id FROM acervo_pasta WHERE id = ? AND mapa_id = ? AND nome <> '_trash'");
+                stChk.bind(1, matriz::db::Value::of(pastaOrigId));
+                stChk.bind(2, matriz::db::Value::of(mapaId));
+                if (stChk.step()) pastaDestinoId = pastaOrigId;
+            }
+
+            // Se a pasta original foi deletada do canvas, recria pasta com o mesmo nome
+            if (pastaDestinoId.empty() && !nomePastaOrig.empty()) {
+                auto stNome = db.prepare("SELECT id FROM acervo_pasta WHERE mapa_id = ? AND lower(nome) = lower(?) AND nome <> '_trash' LIMIT 1");
+                stNome.bind(1, matriz::db::Value::of(mapaId));
+                stNome.bind(2, matriz::db::Value::of(nomePastaOrig));
+                if (stNome.step()) {
+                    pastaDestinoId = stNome.columnText(0);
+                } else {
+                    pastaDestinoId = juce::Uuid().toString().toStdString();
+                    db.run("INSERT INTO acervo_pasta (id, projeto_id, nome, pasta_pai_id, mapa_id, ativo, criado_em, atualizado_em) "
+                           "VALUES (?, ?, ?, NULL, ?, 1, ?, ?)",
+                           {matriz::db::Value::of(pastaDestinoId), matriz::db::Value::of(projeto_->projetoId()),
+                            matriz::db::Value::of(nomePastaOrig), matriz::db::Value::of(mapaId),
+                            matriz::db::Value::of(agora), matriz::db::Value::of(agora)});
+                }
+            }
+
+            if (!pastaDestinoId.empty()) {
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                       {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+                inserirItemPastaInterno(itemId, pastaDestinoId, agora);
+            } else {
+                db.run("DELETE FROM acervo_item_pasta WHERE item_id = ? AND mapa_id = ?",
+                       {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+            }
+
+            db.run("DELETE FROM lixeira_item WHERE item_id = ? AND mapa_id = ?",
+                   {matriz::db::Value::of(itemId), matriz::db::Value::of(mapaId)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        db.run("ROLLBACK", {});
+        throw;
+    }
+}
+
+std::vector<std::string> ProjetoAberto::itensNaPastaTrash(const std::string& mapaId) const {
+    std::vector<std::string> out;
+    if (!projeto_) return out;
+    auto& db = projeto_->registro();
+    auto st = db.prepare(
+        "SELECT aip.item_id FROM acervo_item_pasta aip "
+        "JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+        "WHERE aip.mapa_id = ? AND ap.nome = '_trash'");
+    st.bind(1, matriz::db::Value::of(mapaId));
+    while (st.step()) out.push_back(st.columnText(0));
+    return out;
 }
 
 bool ProjetoAberto::moverPastaAcervo(const std::string& pastaId, const std::optional<std::string>& novaPastaPaiId) {
@@ -3294,6 +4141,90 @@ void ProjetoAberto::adicionarItensAPasta(const std::vector<std::string>& idsPedi
     }
 }
 
+namespace {
+// Pasta onde o item está, na ordem de preferência dos mapas; vazio se o item não está em pasta nenhuma.
+std::string pastaDoItemNosMapas(matriz::db::Database& db, const std::string& itemId, const std::vector<std::string>& mapas) {
+    for (const auto& mapa : mapas) {
+        auto st = db.prepare(
+            "SELECT aip.pasta_id FROM acervo_item_pasta aip JOIN acervo_pasta ap ON ap.id = aip.pasta_id "
+            "WHERE aip.item_id = ? AND ap.mapa_id = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(itemId));
+        st.bind(2, matriz::db::Value::of(mapa));
+        if (st.step()) return st.columnText(0);
+    }
+    auto st = db.prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ? LIMIT 1");
+    st.bind(1, matriz::db::Value::of(itemId));
+    return st.step() ? st.columnText(0) : std::string();
+}
+
+std::vector<std::string> cadeiaDaPasta(matriz::db::Database& db, std::string pastaId) {
+    std::vector<std::string> cadeia;
+    for (int guarda = 0; !pastaId.empty() && guarda < 64; ++guarda) {
+        auto st = db.prepare("SELECT nome, pasta_pai_id FROM acervo_pasta WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(pastaId));
+        if (!st.step()) break;
+        cadeia.push_back(st.columnText(0));
+        pastaId = st.columnIsNull(1) ? std::string() : st.columnText(1);
+    }
+    return cadeia;
+}
+}  // namespace
+
+std::vector<std::string> ProjetoAberto::cadeiaDePastasDoItem(const std::string& itemId) const {
+    if (!projeto_ || itemId.empty()) return {};
+    try {
+        std::vector<std::string> mapas;
+        const std::string doMain = mapaDoMainId();
+        if (!doMain.empty()) mapas.push_back(doMain);
+        const std::string ativo = mapaAtivoPadrao();
+        if (!ativo.empty() && ativo != doMain) mapas.push_back(ativo);
+        return cadeiaDaPasta(leitura(), pastaDoItemNosMapas(leitura(), itemId, mapas));
+    } catch (...) {
+        return {};
+    }
+}
+
+ProjetoAberto::ListaPorPastaPrevia ProjetoAberto::previaListaPelasPastas(const std::vector<std::string>& itemIds, int nivel,
+                                                                         bool soVazios) const {
+    ListaPorPastaPrevia r;
+    if (!projeto_ || nivel < 0) return r;
+    std::vector<std::string> mapas;
+    try {
+        const std::string doMain = mapaDoMainId();
+        if (!doMain.empty()) mapas.push_back(doMain);
+        const std::string ativo = mapaAtivoPadrao();
+        if (!ativo.empty() && ativo != doMain) mapas.push_back(ativo);
+    } catch (...) {}
+    std::map<std::string, std::vector<std::string>> cachePorPasta;  // milhares de itens costumam dividir poucas pastas
+    for (const auto& id : itemIds) {
+        try {
+            const std::string pastaId = pastaDoItemNosMapas(leitura(), id, mapas);
+            if (pastaId.empty()) { ++r.semPasta; continue; }
+            auto it = cachePorPasta.find(pastaId);
+            if (it == cachePorPasta.end()) it = cachePorPasta.emplace(pastaId, cadeiaDaPasta(leitura(), pastaId)).first;
+            const auto& cadeia = it->second;
+            if (static_cast<size_t>(nivel) >= cadeia.size()) { ++r.semNivel; continue; }
+            const std::string& valor = cadeia[static_cast<size_t>(nivel)];
+            const std::string atual = lerMetadado(id, "lista").value_or("");
+            if (soVazios && !juce::String(atual).trim().isEmpty()) { ++r.jaPreenchidos; continue; }
+            if (atual == valor) { ++r.jaIguais; continue; }
+            r.itemEValor.emplace_back(id, valor);
+            r.valoresDistintos.insert(valor);
+        } catch (...) {}
+    }
+    return r;
+}
+
+void ProjetoAberto::aplicarListaPelasPastas(const std::vector<std::pair<std::string, std::string>>& itemEValor) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (itemEValor.empty()) return;
+    std::map<std::string, std::vector<std::string>> porValor;
+    for (const auto& [id, valor] : itemEValor) porValor[valor].push_back(id);
+    iniciarGrupoUndo("Edit LIST (from Folder Map)");
+    for (const auto& [valor, ids] : porValor) salvarMetadadoEmLote(ids, {{"lista", valor}});
+    finalizarGrupoUndo();
+}
+
 void ProjetoAberto::adicionarItemAPastaSemRemoverOutras(const std::string& itemId, const std::string& pastaId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || itemId.empty() || pastaId.empty()) return;
@@ -3422,6 +4353,11 @@ void guardarParaUndo(matriz::db::Database& db, const std::string& tokenUndo, con
 void ProjetoAberto::removerItensDoProjeto(const std::vector<std::string>& itemIds) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_) return;
+    {   // as linhas de intake_marca_r saem por ON DELETE CASCADE; espelha na memória
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds) marcadosR_.erase(id);
+        ++versaoMarcasR_;
+    }
     // Uma transação só pro lote inteiro (era um DELETE autocommit por item —
     // cada um pagando seu próprio overhead de WAL + cascade de FK sozinho,
     // igual o removerItensDoBackup já fazia certo logo acima).
@@ -3743,6 +4679,112 @@ void ProjetoAberto::desfazerNest(const std::vector<std::string>& itemIds) {
     EventBus::obterInstancia().dispararItemAlterado("", "nest");
 }
 
+void ProjetoAberto::registrarNoLog(const juce::String& titulo, const juce::StringArray& linhas) {
+    if (!projeto_) return;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        ++gravacoesMarcasPendentes_;
+    }
+    poolMarcas_.addJob([this, titulo, linhas]() {
+        try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry(titulo, linhas); } catch (...) {}
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+namespace {
+// Capa que o nest passa a ter quando `retirados` saem dele: a atual, se continua; senão o 1º por data.
+std::string capaAposRetirar(const EstadoNest& e, const std::set<std::string>& retirados,
+                            const std::vector<std::string>& restantesOrdenados) {
+    if (!e.capa.empty() && retirados.count(e.capa) == 0 &&
+        std::find(restantesOrdenados.begin(), restantesOrdenados.end(), e.capa) != restantesOrdenados.end())
+        return e.capa;
+    return restantesOrdenados.empty() ? std::string() : restantesOrdenados.front();
+}
+}  // namespace
+
+void ProjetoAberto::extrairDoNest(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    const std::set<std::string> pedidos(itemIds.begin(), itemIds.end());
+    const auto antes = capturarNests(db, pedidos);
+    if (antes.empty()) return;
+
+    std::set<std::string> tocados;  // todos os membros dos nests afetados
+    std::vector<EstadoNest> depois;
+    for (const auto& e : antes) {
+        tocados.insert(e.membros.begin(), e.membros.end());
+        std::vector<std::string> restantes;
+        for (const auto& m : e.membros) if (pedidos.count(m) == 0) restantes.push_back(m);
+        if (restantes.size() < 2) continue;  // sobrou 1 (ou nenhum): o nest se desfaz
+        restantes = ordenarPorDataDeCriacao(restantes);
+        EstadoNest n = e;
+        n.membros = restantes;
+        n.capa = capaAposRetirar(e, pedidos, restantes);
+        depois.push_back(std::move(n));
+    }
+
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        removerNestsDosItens(db, tocados);
+        restaurarNests(db, depois);
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    if (!desfazendo_) {
+        registrarUndo("Extract from Nest", [this, antes, tocados]() {
+            auto& d = projeto_->registro();
+            d.run("BEGIN TRANSACTION", {});
+            try {
+                removerNestsDosItens(d, tocados);
+                restaurarNests(d, antes);
+                d.run("COMMIT", {});
+            } catch (...) { try { d.run("ROLLBACK", {}); } catch (...) {} return; }
+            EventBus::obterInstancia().dispararItemAlterado("", "nest");
+        });
+    }
+    juce::StringArray linhas;
+    linhas.add("Files: " + juce::String(static_cast<int>(pedidos.size())));
+    registrarNoLog("Nest: files extracted", linhas);
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
+}
+
+void ProjetoAberto::apagarDoNest(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return; }
+    if (!projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    const std::set<std::string> pedidos(itemIds.begin(), itemIds.end());
+
+    // A marcação de EXPORT (H/K/P/W) segue a capa: se a capa vai embora, a nova capa herda as marcas.
+    const auto antes = capturarNests(db, pedidos);
+    std::vector<std::pair<std::string, std::string>> trocasDeCapa;
+    for (const auto& e : antes) {
+        if (e.capa.empty() || pedidos.count(e.capa) == 0) continue;
+        std::vector<std::string> restantes;
+        for (const auto& m : e.membros) if (pedidos.count(m) == 0) restantes.push_back(m);
+        if (restantes.size() < 2) continue;
+        const auto nova = capaAposRetirar(e, pedidos, ordenarPorDataDeCriacao(restantes));
+        if (!nova.empty()) trocasDeCapa.emplace_back(e.capa, nova);
+    }
+
+    iniciarGrupoUndo(pedidos.size() == 1 ? "Delete File from Nest" : "Delete " + std::to_string(pedidos.size()) + " Files from Nest");
+    try {
+        for (const auto& [velha, nova] : trocasDeCapa) transferirMarcacoes(velha, nova);
+        extrairDoNest(itemIds);                  // estrutura do nest (capa nova / dissolução)
+        removerItensDoProjeto(itemIds);          // sai do projeto; o arquivo em disco nunca é tocado
+    } catch (...) {
+        finalizarGrupoUndo();
+        throw;
+    }
+    finalizarGrupoUndo();
+    juce::StringArray linhas;
+    linhas.add("Files removed from the project (originals untouched): " + juce::String(static_cast<int>(pedidos.size())));
+    registrarNoLog("Nest: files deleted", linhas);
+}
+
 void ProjetoAberto::definirCapaDoNest(const std::string& nestId, const std::string& itemId) {
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
     if (!projeto_ || nestId.empty() || itemId.empty()) return;
@@ -3867,39 +4909,95 @@ std::vector<std::string> ProjetoAberto::expandirMembrosDeNest(const std::vector<
 }
 
 std::set<std::string> ProjetoAberto::idsMarcadosR() const {
-    std::set<std::string> out;
-    if (!projeto_) return out;
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    return marcadosR_;
+}
+
+void ProjetoAberto::carregarMarcasRDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcasR_;
+    }
+    std::set<std::string> doBanco;
     try {
+        // i.em_quarentena = 1 (a coluna é NOT NULL DEFAULT 0): usa idx_item_quarentena_criado.
         auto st = leitura().prepare(
-            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE COALESCE(i.em_quarentena, 0) = 1");
-        while (st.step()) out.insert(st.columnText(0));
-    } catch (...) {}
-    return out;
+            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1");
+        while (st.step()) doBanco.insert(st.columnText(0));
+    } catch (...) { return; }
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    // A memória manda enquanto há toque recente ou gravação pendente: o banco ainda está atrasado.
+    if (versaoMarcasR_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;
+    marcadosR_ = std::move(doBanco);
 }
 
 void ProjetoAberto::alternarMarcaR(const std::vector<std::string>& itemIds) {
     if (itemIds.empty() || !projeto_) return;
     if (somenteLeitura_) { avisarSomenteLeitura(); return; }
-    auto& db = projeto_->registro();
-    const auto marcados = idsMarcadosR();
-    bool todosMarcados = true;
-    for (const auto& id : itemIds)
-        if (marcados.count(id) == 0) { todosMarcados = false; break; }
-    const std::string agora = matriz::model::agoraIso8601();
-    db.run("BEGIN TRANSACTION", {});
-    try {
+    bool remover = true;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds)
+            if (marcadosR_.count(id) == 0) { remover = false; break; }
         for (const auto& id : itemIds) {
-            if (todosMarcados)
-                db.run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
-            else
-                db.run("INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
-                       {matriz::db::Value::of(id), matriz::db::Value::of(agora)});
+            if (remover) marcadosR_.erase(id);
+            else marcadosR_.insert(id);
         }
-        db.run("COMMIT", {});
-    } catch (...) {
-        try { db.run("ROLLBACK", {}); } catch (...) {}
-        throw;
+        ++versaoMarcasR_;
+        ++gravacoesMarcasPendentes_;
     }
+    const std::string agora = matriz::model::agoraIso8601();
+    std::weak_ptr<bool> vivo = vivo_;
+    poolMarcas_.addJob([this, itemIds, remover, agora, vivo]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");
+            try {
+                for (const auto& id : itemIds) {
+                    if (remover)
+                        db.run("DELETE FROM intake_marca_r WHERE item_id = ?", {matriz::db::Value::of(id)});
+                    else
+                        db.run("INSERT OR IGNORE INTO intake_marca_r (item_id, origem, marcado_em) VALUES (?, 'usuario', ?)",
+                               {matriz::db::Value::of(id), matriz::db::Value::of(agora)});
+                }
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        {
+            std::lock_guard<std::mutex> lock(marcacoesMutex_);
+            if (!ok) {  // volta ao estado anterior
+                for (const auto& id : itemIds) {
+                    if (remover) marcadosR_.insert(id);
+                    else marcadosR_.erase(id);
+                }
+                ++versaoMarcasR_;
+            }
+            --gravacoesMarcasPendentes_;
+        }
+        if (!ok) {
+            juce::MessageManager::callAsync([this, vivo, itemIds]() {
+                if (vivo.expired()) return;
+                for (const auto& id : itemIds)
+                    EventBus::obterInstancia().dispararItemAlterado(id, "marca_r");
+                if (aoMarcasRRevertidas) aoMarcasRRevertidas();
+                const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions()
+                        .withIconType(juce::MessageBoxIconType::WarningIcon)
+                        .withTitle("R")
+                        .withMessage(isPt ? juce::String::fromUTF8("N\xc3\xa3o foi poss\xc3\xadvel gravar a marca R; a altera\xc3\xa7\xc3\xa3o foi desfeita.")
+                                          : juce::String("Could not save the R mark; the change was reverted."))
+                        .withButton("OK"),
+                    nullptr);
+            });
+        }
+    });
 }
 
 int ProjetoAberto::rejeitarMarcadosR() {
@@ -4401,6 +5499,12 @@ int ProjetoAberto::replicarSubarvoreNoAcervo(const NoArvore& origem, const std::
             std::optional<std::string> pai =
                 atual.pastaPaiId.empty() ? std::nullopt : std::optional(atual.pastaPaiId);
             std::string novaPastaId = criarPastaAcervo(atual.no->nome.toStdString(), pai, mapaId);
+
+            // A cópia leva o esquema de cores (FOLDER COLOR) da pasta de origem.
+            if (atual.no->corCustomizadaHex.isNotEmpty())
+                projeto_->registro().run("UPDATE acervo_pasta SET cor_customizada = ? WHERE id = ?",
+                                         {matriz::db::Value::of(atual.no->corCustomizadaHex.toStdString()),
+                                          matriz::db::Value::of(novaPastaId)});
 
             if (!atual.no->itemIdsDiretos.empty()) {
                 std::string agoraItem = matriz::model::agoraIso8601();
@@ -5108,6 +6212,9 @@ std::optional<ItemResumo> ProjetoAberto::obterItemResumo(const std::string& item
     r.marcadoZip = contemMarcacao(TipoMarcacao::Zip, itemId);
     r.marcadoPrint = contemMarcacao(TipoMarcacao::Print, itemId);
     r.marcadoWatermark = contemMarcacao(TipoMarcacao::Watermark, itemId);
+    r.marcadoBounce = contemMarcacao(TipoMarcacao::Bounce, itemId);
+    r.marcadoRejeitado = contemMarcacao(TipoMarcacao::Rejeitado, itemId);
+    r.impresso = itemImpresso(itemId);
 
     return r;
 }
@@ -5260,6 +6367,7 @@ std::vector<ProjetoAberto::VaultResumo> ProjetoAberto::listarVaults() const {
 ProjetoAberto::SituacaoMain ProjetoAberto::normalizarPapelMain() {
     SituacaoMain sit;
     if (!projeto_) return sit;
+    if (editandoMain_) { sit.tipo = SituacaoMain::Tipo::Ok; return sit; }  // rebuild: sem MAIN de propósito
     auto& db = projeto_->registro();
     struct Linha { std::string id, destinationId, papel; juce::String rotulo, caminho; };
     std::vector<Linha> linhas;
@@ -6131,6 +7239,8 @@ std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao tipo) {
         case TipoMarcacao::Zip: return marcadosZip_;
         case TipoMarcacao::Print: return marcadosPrint_;
         case TipoMarcacao::Watermark: return marcadosWatermark_;
+        case TipoMarcacao::Bounce: return marcadosBounce_;
+        case TipoMarcacao::Rejeitado: return marcadosRejeitado_;
     }
     return marcadosHtml_;
 }
@@ -6141,6 +7251,8 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
         case TipoMarcacao::Zip: return marcadosZip_;
         case TipoMarcacao::Print: return marcadosPrint_;
         case TipoMarcacao::Watermark: return marcadosWatermark_;
+        case TipoMarcacao::Bounce: return marcadosBounce_;
+        case TipoMarcacao::Rejeitado: return marcadosRejeitado_;
     }
     return marcadosHtml_;
 }
@@ -6150,26 +7262,23 @@ const std::set<std::string>& ProjetoAberto::obterConjuntoMarcacao(TipoMarcacao t
 // só usada pelas funções abaixo, cada uma já tranca a sua parte.
 void ProjetoAberto::alternarMarcacao(TipoMarcacao tipo, const std::vector<std::string>& itemIds) {
     if (itemIds.empty()) return;
+    bool remover = true;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
         auto& s = obterConjuntoMarcacao(tipo);
-        bool todosMarcados = true;
         for (const auto& id : itemIds) {
             if (s.find(id) == s.end()) {
-                todosMarcados = false;
+                remover = false;
                 break;
             }
         }
-        if (todosMarcados) {
-            for (const auto& id : itemIds) {
-                s.erase(id);
-            }
-        } else {
-            for (const auto& id : itemIds) {
-                s.insert(id);
-            }
+        for (const auto& id : itemIds) {
+            if (remover) s.erase(id);
+            else s.insert(id);
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(remover ? OpMarcacao::Remover : OpMarcacao::Inserir, tipo, itemIds);
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
@@ -6182,7 +7291,9 @@ void ProjetoAberto::definirMarcacao(TipoMarcacao tipo, const std::vector<std::st
             if (marcado) s.insert(id);
             else s.erase(id);
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(marcado ? OpMarcacao::Inserir : OpMarcacao::Remover, tipo, itemIds);
     EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");
 }
 
@@ -6206,7 +7317,9 @@ void ProjetoAberto::limparMarcacoes(TipoMarcacao tipo) {
         if (s.empty()) return;
         afetados.assign(s.begin(), s.end());
         s.clear();
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::LimparTipo, tipo, {});
     EventBus::obterInstancia().dispararItensAlterados(afetados, "marcacao");
 }
 
@@ -6215,12 +7328,14 @@ void ProjetoAberto::limparTodasMarcacoes() {
     std::set<std::string> afetados;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
-        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce, TipoMarcacao::Rejeitado }) {
             auto& s = obterConjuntoMarcacao(tipo);
             afetados.insert(s.begin(), s.end());
             s.clear();
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::LimparTodas, TipoMarcacao::Html, {});
     EventBus::obterInstancia().dispararItensAlterados(std::vector<std::string>(afetados.begin(), afetados.end()), "marcacao");
 }
 
@@ -6234,14 +7349,233 @@ void ProjetoAberto::transferirMarcacoes(const std::string& oldItemId, const std:
     if (oldItemId.empty() || newItemId.empty() || oldItemId == newItemId) return;
     {
         std::lock_guard<std::mutex> lock(marcacoesMutex_);
-        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark }) {
+        for (auto tipo : { TipoMarcacao::Html, TipoMarcacao::Zip, TipoMarcacao::Print, TipoMarcacao::Watermark, TipoMarcacao::Bounce, TipoMarcacao::Rejeitado }) {
             auto& s = obterConjuntoMarcacao(tipo);
             if (s.erase(oldItemId) > 0) {
                 s.insert(newItemId);
             }
         }
+        ++versaoMarcacoes_;
     }
+    enfileirarGravacaoMarcacao(OpMarcacao::Transferir, TipoMarcacao::Html, {oldItemId}, newItemId);
     EventBus::obterInstancia().dispararItemAlterado(newItemId, "marcacao");
+}
+
+namespace {
+const char* nomeTipoMarcacao(int t) {
+    switch (t) {
+        case 0: return "html";
+        case 1: return "zip";
+        case 2: return "print";
+        case 3: return "watermark";
+        case 4: return "bounce";
+        case 5: return "reject";
+    }
+    return "html";
+}
+}  // namespace
+
+void ProjetoAberto::enfileirarGravacaoMarcacao(OpMarcacao op, TipoMarcacao tipo, std::vector<std::string> ids,
+                                               std::string novoId) {
+    if (!projeto_ || somenteLeitura_) return;  // clone somente-leitura: marcas valem só na sessão
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        ++gravacoesMarcasPendentes_;
+    }
+    const std::string nomeTipo = nomeTipoMarcacao(static_cast<int>(tipo));
+    poolMarcas_.addJob([this, op, nomeTipo, ids = std::move(ids), novoId = std::move(novoId)]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");  // uma transação por operação, nunca uma por item
+            try {
+                switch (op) {
+                    case OpMarcacao::Inserir:
+                        for (const auto& id : ids)
+                            db.run("INSERT OR IGNORE INTO item_marcacao (item_id, tipo) "
+                                   "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM item WHERE id = ?)",
+                                   {matriz::db::Value::of(id), matriz::db::Value::of(nomeTipo), matriz::db::Value::of(id)});
+                        break;
+                    case OpMarcacao::Remover:
+                        for (const auto& id : ids)
+                            db.run("DELETE FROM item_marcacao WHERE item_id = ? AND tipo = ?",
+                                   {matriz::db::Value::of(id), matriz::db::Value::of(nomeTipo)});
+                        break;
+                    case OpMarcacao::LimparTipo:
+                        db.run("DELETE FROM item_marcacao WHERE tipo = ?", {matriz::db::Value::of(nomeTipo)});
+                        break;
+                    case OpMarcacao::LimparTodas:
+                        db.run("DELETE FROM item_marcacao", {});
+                        break;
+                    case OpMarcacao::Transferir:
+                        for (const auto& id : ids)
+                            db.run("UPDATE OR IGNORE item_marcacao SET item_id = ? WHERE item_id = ?",
+                                   {matriz::db::Value::of(novoId), matriz::db::Value::of(id)});
+                        break;
+                }
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        if (!ok) matriz::diag::logarWatchdog("[Marcacao] falha ao gravar item_marcacao (" + juce::String(nomeTipo) + ")");
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+void ProjetoAberto::registrarSessaoPrint(const juce::String& nome, const std::vector<std::string>& itemIds) {
+    if (!projeto_ || itemIds.empty() || nome.trim().isEmpty()) return;
+    SessaoPrintRef ref;
+    ref.id = matriz::model::novoUuid();
+    ref.nome = nome.trim();
+    ref.criadoEm = juce::String(matriz::model::agoraIso8601());
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        for (const auto& id : itemIds) sessoesPrintPorItem_[id].push_back(ref);
+        ++versaoMarcacoes_;
+        if (!somenteLeitura_) ++gravacoesMarcasPendentes_;
+    }
+    EventBus::obterInstancia().dispararItensAlterados(itemIds, "marcacao");  // grade repinta o selo
+    if (somenteLeitura_) return;
+    poolMarcas_.addJob([this, ref, itemIds]() {
+        bool ok = true;
+        try {
+            auto& db = projeto_->registro();
+            db.exec("BEGIN IMMEDIATE");
+            try {
+                db.run("INSERT INTO print_sessao (id, nome, criado_em, quantidade) VALUES (?, ?, ?, ?)",
+                       {matriz::db::Value::of(ref.id), matriz::db::Value::of(ref.nome.toStdString()),
+                        matriz::db::Value::of(ref.criadoEm.toStdString()),
+                        matriz::db::Value::of(static_cast<long long>(itemIds.size()))});
+                for (const auto& id : itemIds)
+                    db.run("INSERT OR IGNORE INTO print_sessao_item (sessao_id, item_id) "
+                           "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM item WHERE id = ?)",
+                           {matriz::db::Value::of(ref.id), matriz::db::Value::of(id), matriz::db::Value::of(id)});
+                db.exec("COMMIT");
+            } catch (...) {
+                try { db.exec("ROLLBACK"); } catch (...) {}
+                ok = false;
+            }
+        } catch (...) { ok = false; }
+        if (ok) {
+            try {
+                juce::StringArray linhas;
+                linhas.add("Session: " + ref.nome);
+                linhas.add("Photos: " + juce::String(static_cast<int>(itemIds.size())));
+                matriz::model::ProjectLog(projeto_->pasta()).appendEntry("Print Session", linhas);
+            } catch (...) {}
+        } else {
+            matriz::diag::logarWatchdog("[Print] falha ao gravar a sessao de impressao");
+        }
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        --gravacoesMarcasPendentes_;
+    });
+}
+
+juce::String ProjetoAberto::descreverSessoesPrint(const std::vector<SessaoPrintRef>& sessoes) {
+    juce::StringArray partes;
+    for (const auto& s : sessoes) {
+        const auto t = juce::Time::fromISO8601(s.criadoEm);
+        partes.add(s.nome + " (" + t.formatted("%Y-%m-%d %H:%M") + ")");
+    }
+    return juce::String("Printed: ") + partes.joinIntoString("; ");
+}
+
+bool ProjetoAberto::itemImpresso(const std::string& itemId) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    return sessoesPrintPorItem_.count(itemId) > 0;
+}
+
+std::vector<ProjetoAberto::SessaoPrintRef> ProjetoAberto::sessoesPrintDoItem(const std::string& itemId) const {
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    auto it = sessoesPrintPorItem_.find(itemId);
+    return it == sessoesPrintPorItem_.end() ? std::vector<SessaoPrintRef>{} : it->second;
+}
+
+std::set<std::string> ProjetoAberto::idsImpressos() const {
+    std::set<std::string> out;
+    std::lock_guard<std::mutex> lock(marcacoesMutex_);
+    for (const auto& par : sessoesPrintPorItem_) out.insert(par.first);
+    return out;
+}
+
+void ProjetoAberto::carregarSessoesPrintDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcacoes_;
+    }
+    std::map<std::string, std::vector<SessaoPrintRef>> doBanco;
+    try {
+        auto st = leitura().prepare(
+            "SELECT pi.item_id, s.id, s.nome, s.criado_em FROM print_sessao_item pi "
+            "JOIN print_sessao s ON s.id = pi.sessao_id ORDER BY s.criado_em");
+        while (st.step()) {
+            SessaoPrintRef r;
+            r.id = st.columnText(1);
+            r.nome = juce::String::fromUTF8(st.columnText(2).c_str());
+            r.criadoEm = juce::String(st.columnText(3));
+            doBanco[st.columnText(0)].push_back(std::move(r));
+        }
+    } catch (...) { return; }
+    std::vector<std::string> ids;
+    for (const auto& par : doBanco) ids.push_back(par.first);
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        if (versaoMarcacoes_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;
+        sessoesPrintPorItem_ = std::move(doBanco);
+    }
+    if (ids.empty()) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    juce::MessageManager::callAsync([vivo, ids = std::move(ids)]() {
+        if (vivo.expired()) return;
+        EventBus::obterInstancia().dispararItensAlterados(ids, "marcacao");
+    });
+}
+
+void ProjetoAberto::carregarMarcacoesDoBanco() {
+    if (!projeto_) return;
+    std::uint64_t versaoAntes = 0;
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        versaoAntes = versaoMarcacoes_;
+    }
+    std::set<std::string> h, z, p, w, b, rj;
+    try {
+        auto st = leitura().prepare("SELECT item_id, tipo FROM item_marcacao");
+        while (st.step()) {
+            const std::string tipo = st.columnText(1);
+            if (tipo == "html") h.insert(st.columnText(0));
+            else if (tipo == "zip") z.insert(st.columnText(0));
+            else if (tipo == "print") p.insert(st.columnText(0));
+            else if (tipo == "watermark") w.insert(st.columnText(0));
+            else if (tipo == "bounce") b.insert(st.columnText(0));
+            else if (tipo == "reject") rj.insert(st.columnText(0));
+        }
+    } catch (...) { return; }
+    std::set<std::string> todos;
+    todos.insert(h.begin(), h.end()); todos.insert(z.begin(), z.end());
+    todos.insert(p.begin(), p.end()); todos.insert(w.begin(), w.end()); todos.insert(b.begin(), b.end());
+    todos.insert(rj.begin(), rj.end());
+    {
+        std::lock_guard<std::mutex> lock(marcacoesMutex_);
+        if (versaoMarcacoes_ != versaoAntes || gravacoesMarcasPendentes_ > 0) return;  // a memória manda
+        marcadosHtml_ = std::move(h);
+        marcadosZip_ = std::move(z);
+        marcadosPrint_ = std::move(p);
+        marcadosWatermark_ = std::move(w);
+        marcadosBounce_ = std::move(b);
+        marcadosRejeitado_ = std::move(rj);
+    }
+    if (todos.empty()) return;
+    std::weak_ptr<bool> vivo = vivo_;
+    juce::MessageManager::callAsync([vivo, ids = std::vector<std::string>(todos.begin(), todos.end())]() {
+        if (vivo.expired()) return;  // o grid já pintou antes da carga: avisa para repintar
+        EventBus::obterInstancia().dispararItensAlterados(ids, "marcacao");
+    });
 }
 
 void ProjetoAberto::salvarConfiguracaoWatermark(const ConfiguracaoWatermark& cfg) {
@@ -6308,31 +7642,136 @@ bool ProjetoAberto::nomeConfereComProjeto(const juce::String& digitado) const {
     return atual.isNotEmpty() && digitado.trim() == atual;
 }
 
+std::optional<ProjetoAberto::FonteRebuild> ProjetoAberto::fonteRebuild() const {
+    if (!projeto_) return std::nullopt;
+    try {
+        auto st = projeto_->registro().prepare(
+            "SELECT COALESCE(destination_id, id), destino_path FROM backup_destino WHERE papel = 'FONTE_REBUILD' LIMIT 1");
+        if (!st.step()) return std::nullopt;
+        FonteRebuild f;
+        f.destinoId = st.columnText(0);
+        f.raiz = juce::File(juce::String::fromUTF8(st.columnText(1).c_str()));
+        return f;
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+juce::File ProjetoAberto::rebuildDestino() const {
+    if (!projeto_) return {};
+    try {
+        auto st = projeto_->registro().prepare("SELECT COALESCE(rebuild_destino, '') FROM projeto LIMIT 1");
+        if (st.step() && !st.columnText(0).empty()) return juce::File(juce::String::fromUTF8(st.columnText(0).c_str()));
+    } catch (...) {}
+    return {};
+}
+
+void ProjetoAberto::definirRebuildDestino(const juce::File& raiz) {
+    if (!projeto_) return;
+    projeto_->registro().run("UPDATE projeto SET rebuild_destino = ?",
+                             {matriz::db::Value::of(raiz.getFullPathName().toStdString())});
+}
+
+// Entrar no modo = o MAIN atual vira fonte de leitura e o projeto fica sem MAIN. Só o banco muda;
+// a pasta do MAIN antigo não é tocada. Itens, IDs, metadados e histórico seguem os mesmos.
 bool ProjetoAberto::entrarModoEdicaoMain(const juce::String& nomeDigitado) {
     if (editandoMain_) return true;
     if (!podeEditarMain() || !nomeConfereComProjeto(nomeDigitado)) return false;
+    auto& db = projeto_->registro();
+    juce::String configAntiga;
+    try {
+        db.run("BEGIN IMMEDIATE", {});
+        std::string idMain;
+        {
+            auto st = db.prepare("SELECT id FROM backup_destino WHERE papel = 'ORIGINAL' AND ativo = 1 LIMIT 1");
+            if (st.step()) idMain = st.columnText(0);
+        }
+        if (!idMain.empty()) {
+            db.run("UPDATE backup_destino SET papel = 'FONTE_REBUILD', ativo = 1 WHERE id = ?", {matriz::db::Value::of(idMain)});
+        } else {
+            // MAIN na raiz do projeto, nunca registrado como destino: registra já como fonte.
+            const std::string agora = matriz::model::agoraIso8601();
+            const std::string novoId = matriz::model::novoUuid();
+            db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em) "
+                   "VALUES (?, ?, ?, ?, 'FONTE_REBUILD', 1, ?)",
+                   {matriz::db::Value::of(novoId), matriz::db::Value::of(projeto_->destinationId()),
+                    matriz::db::Value::of(projeto_->raiz().getFullPathName().toStdString()),
+                    matriz::db::Value::of(projeto_->raiz().getFileName().toStdString()), matriz::db::Value::of(agora)});
+        }
+        {
+            auto sc = db.prepare("SELECT COALESCE(backup_config_main, '') FROM projeto LIMIT 1");
+            if (sc.step()) configAntiga = juce::String::fromUTF8(sc.columnText(0).c_str());
+        }
+        // A estrutura do MAIN novo é decidida no Make Backup (como no primeiro backup).
+        db.run("UPDATE projeto SET backup_config_main = NULL, rebuild_destino = ''", {});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return false;
+    }
     editandoMain_ = true;
-    tocarAtividadeMain();
-    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: entered", {"The MAIN is now editable through Matriz."}); } catch (...) {}
+    try {
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+            "REBUILD DO MAIN: entered",
+            {"The old MAIN is now read-only (FONTE_REBUILD): " + projeto_->raiz().getFullPathName(),
+             "Old MAIN settings: " + configAntiga});
+    } catch (...) {}
     if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
     return true;
 }
 
-void ProjetoAberto::sairModoEdicaoMain(const juce::String& motivo) {
-    if (!editandoMain_) return;
+// Não há saída sem concluir o rebuild (o modo persiste até o Make Backup terminar sem falhas).
+void ProjetoAberto::sairModoEdicaoMain(const juce::String&) {}
+
+juce::String ProjetoAberto::concluirRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId) {
+    if (!projeto_ || !editandoMain_) return "rebuild is not active";
+    const auto fonte = fonteRebuild();
+    if (!fonte) return "old MAIN (FONTE_REBUILD) not found";
+    auto& db = projeto_->registro();
+    const std::string chaveNova = matriz::consolidacao::chaveDestino(novaRaiz.getChildFile("Media"));
+    const std::string agora = matriz::model::agoraIso8601();
+    try {
+        db.run("BEGIN IMMEDIATE", {});
+        // Os registros do MAIN antigo (destino_id dele, ou legados sem destino) saem; ficam só os do novo.
+        db.run("DELETE FROM consolidacao_registro WHERE COALESCE(destino_path, '') <> ? "
+               "AND (COALESCE(destino_id, '') IN ('', ?))",
+               {matriz::db::Value::of(chaveNova), matriz::db::Value::of(fonte->destinoId)});
+        db.run("DELETE FROM backup_destino WHERE papel = 'FONTE_REBUILD'", {});
+        auto st = db.prepare("SELECT id FROM backup_destino WHERE destino_path = ? LIMIT 1");
+        st.bind(1, matriz::db::Value::of(novaRaiz.getFullPathName().toStdString()));
+        if (st.step()) {
+            db.run("UPDATE backup_destino SET papel = 'ORIGINAL', ativo = 1, destination_id = ?, desatualizado_rebuild = 0 WHERE id = ?",
+                   {matriz::db::Value::of(novoDestinationId), matriz::db::Value::of(st.columnText(0))});
+        } else {
+            db.run("INSERT INTO backup_destino (id, destination_id, destino_path, rotulo, papel, ativo, criado_em, "
+                   "ultima_revisao_conhecida) VALUES (?, ?, ?, ?, 'ORIGINAL', 1, ?, ?)",
+                   {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(novoDestinationId),
+                    matriz::db::Value::of(novaRaiz.getFullPathName().toStdString()),
+                    matriz::db::Value::of(novaRaiz.getFileName().toStdString()), matriz::db::Value::of(agora),
+                    matriz::db::Value::of(static_cast<int64_t>(projeto_->revisao()))});
+        }
+        // Clones do MAIN antigo: desatualizados, sem sincronizar (criar clones novos do MAIN novo).
+        db.run("UPDATE backup_destino SET desatualizado_rebuild = 1 WHERE papel = 'CLONE'", {});
+        db.run("UPDATE projeto SET rebuild_destino = ''", {});
+        db.run("COMMIT", {});
+    } catch (const std::exception& e) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return juce::String::fromUTF8(e.what());
+    }
     editandoMain_ = false;
-    try { matriz::model::ProjectLog(projeto_->pasta()).appendEntry("MAIN EDIT MODE: left", {"Reason: " + motivo}); } catch (...) {}
+    try {
+        matriz::model::ProjectLog(projeto_->pasta()).appendEntry(
+            "REBUILD DO MAIN: completed",
+            {"New MAIN: " + novaRaiz.getFullPathName(), "Old MAIN (now unlinked): " + fonte->raiz.getFullPathName(),
+             "Clones of the old MAIN are stale: create new clones from the new MAIN."});
+    } catch (...) {}
     if (aoMudarModoEdicaoMain) aoMudarModoEdicaoMain();
+    return {};
 }
 
 void ProjetoAberto::tocarAtividadeMain() { ultimaAtividadeMainMs_ = juce::Time::currentTimeMillis(); }
 
-bool ProjetoAberto::verificarTimeoutEdicaoMain() {
-    if (!editandoMain_ || operacaoMainEmCurso_.load()) return false;
-    if (juce::Time::currentTimeMillis() - ultimaAtividadeMainMs_ < kTimeoutEdicaoMainMs) return false;
-    sairModoEdicaoMain("no operations for 15 minutes");
-    return true;
-}
+bool ProjetoAberto::verificarTimeoutEdicaoMain() { return false; }  // rebuild não expira: só termina concluído
 
 int ProjetoAberto::contarArquivosDaPastaNoMain(const std::string& pastaId) const {
     if (!projeto_) return 0;

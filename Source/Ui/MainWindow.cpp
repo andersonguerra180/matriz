@@ -9,6 +9,7 @@
 #include "AboutDialog.h"
 #include "HelpDialog.h"
 #include "BatchWatermarkDialog.h"
+#include "ImportarGeoFavoritosDialogo.h"
 #include "ConfiguracoesProjetoDialogo.h"
 #include "ConsolidacaoDialogo.h"
 #include "ProjectLogViewerDialog.h"
@@ -45,8 +46,11 @@ enum ComandoMenu {
     kCmdIngerirArquivos,
     kCmdBatchWatermark,
     kCmdBatchRename,
+    kCmdImportGeoFavoritos,
     kCmdProjectLog,
     kCmdRescanBackupSources,
+    kCmdVerifySourceDisks,
+    kCmdScanInbox,
     kCmdMainEditModo,
     kCmdMainEditor,
     kCmdLangPt,
@@ -236,16 +240,21 @@ juce::PopupMenu MainWindow::getMenuForIndex(int topLevelMenuIndex, const juce::S
         bool isCatalog = (conteudo_->projetoAberto() && conteudo_->projetoAberto()->projeto().modo() == matriz::model::Modo::Catalogo);
         bool temColecao = conteudo_->temProjetoAberto() && !isCatalog;
         menu.addItem(kCmdRescanBackupSources, isPt ? juce::String::fromUTF8("Rescanear Fontes de Backup...") : "Rescan Backup Sources...", temColecao);
+        menu.addItem(kCmdScanInbox, matriz::i18n::t("inbox.menu"), temColecao);
+        menu.addItem(kCmdVerifySourceDisks, matriz::i18n::t("verify.menu"), temColecao);
         menu.addSeparator();
         menu.addItem(kCmdBatchRename, isPt ? juce::String::fromUTF8("Renomear em Lote...") : "Batch Rename...", conteudo_->temProjetoAberto());
+        menu.addItem(kCmdImportGeoFavoritos,
+                     isPt ? juce::String::fromUTF8("Importar Favoritos de Geo de Outra Coleção...") : "Import Geo Favorites from Collection...",
+                     temColecao);
         menu.addSeparator();
         menu.addItem(kCmdProjectLog, isPt ? juce::String::fromUTF8("Registro de Alterações do Projeto (log.md)...") : "Project Log (log.md)...", conteudo_->temProjetoAberto());
         // MAIN EDIT MODE mora aqui (e não como botão no BACKUP) pra não ser acionado sem querer.
         menu.addSeparator();
-        const bool podeEditarMain = temColecao && conteudo_->podeEditarMain();
-        const bool editandoMain = podeEditarMain && conteudo_->editandoMain();
-        menu.addItem(kCmdMainEditModo, matriz::i18n::t(editandoMain ? "main_edit.botao_sair" : "main_edit.botao_entrar"),
-                     podeEditarMain, editandoMain);
+        const bool editandoMain = temColecao && conteudo_->editandoMain();
+        const bool podeEntrar = temColecao && conteudo_->podeEditarMain() && !editandoMain;
+        // Rebuild do MAIN: só entra (marcado enquanto ativo); não há "sair" — termina quando o Make Backup conclui.
+        menu.addItem(kCmdMainEditModo, matriz::i18n::t("main_edit.botao_entrar"), podeEntrar, editandoMain);
         menu.addItem(kCmdMainEditor, matriz::i18n::t("main_edit.botao_editor"), editandoMain);
     } else if (topLevelMenuIndex == kMenuPreferencias) {
         // Language Submenu
@@ -292,11 +301,21 @@ void MainWindow::menuItemSelected(int menuItemID, int) {
         case kCmdRescanBackupSources:
             if (conteudo_) conteudo_->iniciarRescanBackupSources();
             break;
+        case kCmdVerifySourceDisks:
+            if (conteudo_) conteudo_->abrirVerificarDiscosOrigem();
+            break;
+        case kCmdScanInbox:
+            if (conteudo_) conteudo_->escanearInbox();
+            break;
         case kCmdMainEditModo: if (conteudo_) conteudo_->alternarModoEdicaoMain(); break;
         case kCmdMainEditor: if (conteudo_) conteudo_->abrirEditorDoMain(); break;
         case kCmdBatchWatermark: mostrarBatchWatermarkDialogo(); break;
         case kCmdBatchRename:
             if (conteudo_) conteudo_->renomearEmLoteSelecionados();
+            break;
+        case kCmdImportGeoFavoritos:
+            if (conteudo_ && conteudo_->temProjetoAberto() && conteudo_->projetoAberto())
+                ImportarGeoFavoritosDialogo::iniciar(*conteudo_->projetoAberto(), this);
             break;
         case kCmdProjectLog:
             if (conteudo_->temProjetoAberto()) {
@@ -353,13 +372,14 @@ void MainWindow::conectarConteudo() {
     conteudo_->aoPedirIngerirArquivos = [this] { pedirIngerirArquivos(); };
     conteudo_->aoSalvarComo = [this] { pedirSalvarProjetoComo(); };
     conteudo_->aoMudouUndo = [this] { menuItemsChanged(); };
+    conteudo_->aoPedirAbrirPasta = [this](const juce::File& pasta) { abrirPasta(pasta); };
     conteudo_->aoPedirBackup = [this] { pedirConsolidar(); };
     conteudo_->aoMudarEstadoProjeto = [this] {
         menuItemsChanged();
         if (conteudo_->temProjetoAberto()) {
             auto appName = obterNomeAppUI();
             auto pNome = juce::String::fromUTF8(conteudo_->projetoAberto()->projeto().nome().c_str());
-            setName(pNome.isEmpty() ? appName : (pNome + " — " + appName));
+            setName(pNome.isEmpty() ? appName : (pNome + juce::String::fromUTF8(" — ") + appName));
         } else {
             setName(obterNomeAppUI());
         }
@@ -403,6 +423,12 @@ void MainWindow::pedirNovoProjeto(matriz::model::Modo modo) {
                                           static_cast<juce::ModalComponentManager::Callback*>(nullptr));
         }
     });
+}
+
+void MainWindow::abrirArquivoDoSistema(const juce::File& arquivo) {
+    toFront(true);
+    if (conteudo_->ingestEmAndamento()) return;
+    abrirPasta(arquivo);
 }
 
 void MainWindow::abrirPasta(const juce::File& pasta) {
@@ -503,6 +529,9 @@ void MainWindow::pedirRenomearProjeto() {
     alert->addButton(isPt ? "Cancelar" : "Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
 
     juce::Component::SafePointer<MainWindow> safeThis(this);
+    juce::MessageManager::callAsync([alert] {  // nome atual já selecionado
+        if (auto* ed = alert->getTextEditor("nome")) { ed->grabKeyboardFocus(); ed->selectAll(); }
+    });
     alert->enterModalState(true, juce::ModalCallbackFunction::create([safeThis, alert, &projeto, nomeAtual](int result) {
         if (!safeThis || result != 1) return;
         juce::String novoNome = alert->getTextEditorContents("nome").trim();

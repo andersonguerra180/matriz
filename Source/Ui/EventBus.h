@@ -1,6 +1,8 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -38,6 +40,12 @@ public:
     }
 
     void dispararItemAlterado(const std::string& itemId, const std::string& tipoAlteracao) {
+        // Modo lote: eventos por item ficam guardados e saem como UM evento de lote por tipo no
+        // finalizarLote(). Evento amplo (itemId vazio) continua imediato.
+        if (profundidadeLote_ > 0 && !itemId.empty()) {
+            idsAdiados_[tipoAlteracao].insert(itemId);
+            return;
+        }
         EventoItemAlterado e{itemId, tipoAlteracao};
         listeners_.call([&e](EventBusListener& listener) {
             listener.aoItemAlterado(e);
@@ -55,9 +63,24 @@ public:
         });
     }
 
+    // Modo lote (SÓ message thread): entre iniciarLote() e finalizarLote(), os disparos por item
+    // (dispararItemAlterado com itemId) são agrupados por tipo e saem no fim como eventos de lote.
+    // Aninhável; quem chama iniciarLote() tem de chamar finalizarLote() em todos os caminhos.
+    void iniciarLote() { ++profundidadeLote_; }
+    void finalizarLote() {
+        if (profundidadeLote_ <= 0) return;
+        if (--profundidadeLote_ > 0) return;
+        auto adiados = std::move(idsAdiados_);
+        idsAdiados_.clear();
+        for (const auto& [tipo, ids] : adiados)
+            dispararItensAlterados(std::vector<std::string>(ids.begin(), ids.end()), tipo);
+    }
+
 private:
     EventBus() = default;
     juce::ListenerList<EventBusListener> listeners_;
+    int profundidadeLote_ = 0;
+    std::map<std::string, std::set<std::string>> idsAdiados_;
 };
 
 } // namespace matriz::ui

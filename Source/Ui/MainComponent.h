@@ -22,6 +22,7 @@
 #include "IngestWizardComponent.h"
 #include "BarraNavegacaoComponent.h"
 #include "SubAbasEstruturaComponent.h"
+#include "CartoesAnalyticsComponent.h"
 #include "BackupWorkspaceComponent.h"
 #include "PreservationWorkspaceComponent.h"
 #include "CatalogWorkspaceComponent.h"
@@ -67,10 +68,10 @@ class MainComponent : public juce::Component,
                        private juce::Timer {
 public:
     friend int rodarLoteSelfTest();  // --selftest-lote (LoteSelfTest.cpp)
-    // Item 4 (nova lista): sub-abas da aba combinada "Structure" (ex-STORAGE
-    // + ex-TREEMAP). FolderMap = ArvoreBackupComponent, SpaceMap =
-    // EstatisticasComponent — ver mostrarStructure().
-    enum class SubTabEstrutura { FolderMap, SpaceMap };
+    // Item 4: sub-abas da aba combinada "Structure" (FOLDER MAP, SPACE MAP, DUPLICATES).
+    // FolderMap = ArvoreBackupComponent, SpaceMap = EstatisticasComponent,
+    // Duplicates = DuplicatesWorkspaceComponent — ver mostrarStructure().
+    enum class SubTabEstrutura { FolderMap, SpaceMap, Duplicates };
 
     MainComponent();
     ~MainComponent() override;
@@ -121,6 +122,7 @@ public:
     // "Structure", com a barra de sub-abas FOLDER MAP/SPACE MAP por cima do
     // workspace escolhido.
     void mostrarStructure(SubTabEstrutura subTab);
+    void garantirCartoesAnalytics();
 
     void abrirColecaoDoCatalogo(const juce::File& pastaColecao);
     void retornarAoCatalogo();
@@ -147,14 +149,35 @@ public:
     // background (nunca trava a UI). Ponte entre o motor de ingestão
     // (Etapa 2, headless) e a UI — chamada tanto pelo botão "Add material"
     // quanto por arrastar arquivos do Finder na janela inteira.
-    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas);
+    // `detectarWhatsapp=false`: a chamada recursiva sobre o que sobrou depois de enfileirar as conversas nao redetecta
+    // (a mesma pasta/zip voltaria a ser achada e o laco nunca terminaria).
+    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp = true);
+    void aoConversaRecebida(const juce::File& arquivo, juce::int64 tamanho);
+    // Tools > Scan INBOX: cataloga o que está na INBOX do MAIN (só quando o usuário pede; nunca sozinho).
+    void escanearInbox();
     void iniciarRescanBackupSources();
+    // Tools > Verify Source Disks: confere discos de origem com o MAIN (só leitura) e manda o que falta para o Intake.
+    void abrirVerificarDiscosOrigem();
     // MAIN EDIT MODE (menu Tools): entrar (barreira do nome do projeto) / sair e abrir o MAIN EDITOR.
     bool podeEditarMain() const;
     bool editandoMain() const;
     void alternarModoEdicaoMain();
     void abrirEditorDoMain();
     void importarCatalogoLightroom();
+    // Adobe Bridge: pasta catalogada no Bridge entra pelo INTAKE normal; o XMP (embutido ou sidecar) é lido ANTES
+    // da ingestão (só leitura) e aplicado nos itens criados por esse lote, quando ele termina.
+    void ingerirPastaDoBridge();
+    // WhatsApp: copia UMA mídia da conversa como item comum, na(s) mesma(s) pasta(s) do Folder Map da conversa. A mídia
+    // continua dentro da conversa. Entra pelo fluxo normal de ingestão (Intake).
+    // Janela flutuante da pasta (duplo clique no card em Structure).
+    void abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta);
+    std::unique_ptr<class JanelaPastaFlutuante> janelaPasta_;
+    void extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId);
+    // Consumido pelo próximo processarLoteEmBackground() sem aoConcluir próprio (ver ingerirPastaDoBridge).
+    std::function<void(const std::vector<std::string>&)> aoConcluirDoProximoLote_;
+    // Origem ("gallery"|"drive"|"bridge") do próximo lote: no fim dele, os itens criados viram um CONTAINER no Intake
+    // (nest com origem) que precisa ser aprovado como um todo. Consumido por processarLoteEmBackground().
+    std::string origemContainerProximoLote_;
 
     // Abre o navegador estilo Finder embutido (item 3) — segunda porta de
     // entrada, ao lado de arrastar do Finder. Público porque é uma ação de
@@ -513,6 +536,7 @@ private:
     std::unique_ptr<ArvoreBackupComponent> treeWorkspace_;        // STRUCTURE > FOLDER MAP (ex-TREE/Treemap)
     // Item 4 (nova lista): sub-abas FOLDER MAP/SPACE MAP da aba "Structure".
     std::unique_ptr<SubAbasEstruturaComponent> subAbasEstrutura_;
+    std::unique_ptr<CartoesAnalyticsComponent> cartoesAnalytics_;  // 6 cards acima das sub-abas FOLDER MAP / SPACE MAP
     std::unique_ptr<BackupWorkspaceComponent> backupWorkspace_;   // BACKUP
     // Faixa de aviso no topo: "EDITANDO O MAIN" (Fase 4) / clone somente leitura (Fase 5).
     std::unique_ptr<FaixaAvisoComponent> faixaAviso_;
@@ -540,6 +564,7 @@ public:
     // ingerirArquivos() por quem instancia a janela.
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void()> aoSalvarComo;
+    std::function<void(const juce::File& pasta)> aoPedirAbrirPasta;  // reabrir o projeto por outra raiz (fim do rebuild do MAIN)
     std::function<void()> aoMudouUndo;  // a pilha de Undo mudou: a barra de menus precisa reavaliar o "Undo"
 
     // "Fazer backup" da barra de ferramentas — mesma ação do menu

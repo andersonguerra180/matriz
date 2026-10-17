@@ -26,9 +26,9 @@ public:
     ~AutoCompleteTextEditor() override;
 
     void focusGained(juce::Component::FocusChangeType cause) override;
+    bool keyPressed(const juce::KeyPress& k) override;
 
 private:
-    class PopupRow;
     class Popup;
 
     void textEditorTextChanged(juce::TextEditor&) override;

@@ -21,6 +21,8 @@
 
 namespace matriz::ui {
 
+class EtapaProgressoComponent;
+
 // O dropdown do EXPORT fica no rodapé: o menu tem que abrir sempre pra cima.
 class ComboAbrePraCimaLookAndFeel : public MatrizLookAndFeel {
 public:
@@ -54,6 +56,8 @@ public:
     std::function<void()> aoVoltarHome;
     std::function<void(const juce::File&)> aoAbrirCatalogo;
     std::function<void()> aoPedirIrParaDuplicatas;
+    // Rebuild do MAIN concluído: o projeto vivo ainda está na pasta antiga; reabre pelo MAIN novo.
+    std::function<void(const juce::File& raizDoNovoMain)> aoPedirReabrirPasta;
     std::function<void(const std::set<std::string>&)> aoAbrirNoGrid;
     // Consulta a seleção atual do grid de metadados (item 4) — usada para
     // popular "Selected Files" sem depender do snapshot passado no construtor,
@@ -61,6 +65,7 @@ public:
     std::function<std::set<std::string>()> obterSelecaoAtualDoGrid;
 
     void paint(juce::Graphics&) override;
+    void paintOverChildren(juce::Graphics&) override;
     void resized() override;
     void lookAndFeelChanged() override;
     bool keyPressed(const juce::KeyPress& tecla) override;
@@ -121,6 +126,7 @@ private:
     // atrasada de um cálculo já superado é descartada. Atômico + compartilhado
     // porque o job também lê (cancela antes de começar se já foi superado).
     juce::ThreadPool poolPlano_{1};
+    juce::ThreadPool poolBackup_{1};  // cópia verificada do Make Backup, fora da message thread
     std::shared_ptr<std::atomic<int>> geracaoPlano_ = std::make_shared<std::atomic<int>>(0);
     // Prévia calculada UMA vez por visita: dentro de recarregar() (e do
     // construtor) as chamadas a atualizarResumo() só marcam pendente.
@@ -181,9 +187,17 @@ private:
     // Modelo SOURCE/MAIN/CLONE (etapa 4): backup só vai pro MAIN (a pasta do
     // projeto). Outros destinos só como CLONE ou EXPORT.
     bool destacadoEhMain() const {
+        if (projeto_.emRebuild()) return true;  // rebuild: o destino do MAIN novo é escolhido ao clicar em MAKE BACKUP
         return selectedDestinoIdx_ >= 0 && selectedDestinoIdx_ < static_cast<int>(destinosBackup_.size()) &&
                destinosBackup_[static_cast<size_t>(selectedDestinoIdx_)].papel == "ORIGINAL";
     }
+    // Rebuild do MAIN (ver ProjetoAberto::emRebuild): pasta nova escolhida/validada e fluxo de fim.
+    std::unique_ptr<juce::FileChooser> chooserRebuild_;
+    void pedirDestinoRebuild();
+    bool validarDestinoRebuild(const juce::File& novo, juce::String& motivo) const;
+    void finalizarRebuild(const juce::File& novaRaiz, const std::string& novoDestinationId, int copiados);
+    void perguntarApagarMainAntigo(const juce::File& raizAntiga, const juce::File& novaRaiz);
+    juce::String relatorioRebuild_;  // linhas extras do relatório final (copiados da SOURCE, mantidos do MAIN antigo...)
     bool mainSelado_ = false;  // o MAIN já recebeu o primeiro backup (FAZER BACKUP -> ADICIONAR AO MAIN)
     // Etapa 5: estrutura de pastas e nomes são escolhidos no primeiro backup
     // e ficam travados depois (projeto.backup_config_main). Projeto antigo já
@@ -216,7 +230,14 @@ private:
     // Sidecars XMP (etapa 8): no lugar do embed depois que o MAIN existe.
     std::unique_ptr<juce::TextButton> btnAtualizarSidecars_;
     void atualizarSidecars(bool sobrescreverEditados, std::vector<juce::String> importar = {});
-    void abrirExport();
+    void abrirExport(bool formatoBridge = false, bool bounce = false);  // bounce: a fonte são os arquivos com tag B
+    // Card BOUNCE LIST (Coleção): exporta os arquivos com tag B direto dos Assets, sem MAIN.
+    juce::Rectangle<int> cartaoBounce_, bounceTituloR_, bounceDescR_, bounceContagemR_;
+    std::unique_ptr<juce::TextButton> btnBounceAjustes_, btnBounceExport_;
+    int nBounce_ = 0;
+    std::unique_ptr<juce::FileChooser> chooserBounce_;
+    void abrirAjustesBounce();
+    void exportarBounceList();
     // Pacote de collection (EXPORT -> INTAKE de outra collection): seleção +
     // folder map + matriz-pacote.json, sempre do MAIN, em background.
     void abrirPacote();
@@ -224,7 +245,8 @@ private:
                        const juce::String& nomeMapa);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
-                       bool marcaDagua, const std::string& mapaId = {});
+                       bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false, bool bounce = false,
+                       matriz::consolidacao::OpcoesMetadadosSaida metaSaida = {});
     juce::File customDestFolder_;
     juce::File resolvedDestFolder_;
 
@@ -252,6 +274,22 @@ private:
     int verificadoCount_ = 0;
     int falhasCount_ = 0;
     std::vector<juce::String> falhasLista_;
+    juce::String relatorioErros_;     // texto agrupado por causa, com o que fazer em cada uma
+    juce::File arquivoRelatorioErros_;  // Project/relatorios/backup-erros-*.txt
+    std::vector<std::string> idsRemoviveis_;  // itens ausentes/alterados: o conserto é tirá-los do catálogo
+    std::vector<std::string> idsBloqueados_;  // todos os itens que ainda falham
+    juce::String tituloStatus_;
+    bool statusBloqueado_ = false;
+    bool statusPodeFinalizar_ = false;
+    std::unique_ptr<juce::TextButton> btnRebuildStatus_;  // abre a janela de status do Rebuild a qualquer momento
+    void prepararRelatorioErros(bool rebuild);
+    // Resultado de EXPORT / pacote: se houve qualquer coisa que o usuário precise entender (falhas, arquivos já
+    // existentes, duplicatas de fora, fora do MAIN...), abre a janela detalhada; senão, o aviso simples.
+    void mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam, int foraDoMain,
+                                int semPasta, const juce::String& semPastaKey, int duplicatas,
+                                const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
+                                const juce::String& extras, bool cancelado);
+    void mostrarErrosBackup();
 
     // UI elements — ALL visible at once in Config state
     std::unique_ptr<juce::Label> labelTitulo_;
@@ -339,7 +377,6 @@ private:
     // === OPTIONS section ===
     std::unique_ptr<juce::Label> labelOpcoes_;
     std::unique_ptr<juce::ToggleButton> toggleGerarCatalogo_;
-    std::unique_ptr<juce::ToggleButton> toggleEmbutirMetadados_;
     std::unique_ptr<juce::ToggleButton> toggleVerificarChecksum_;
     std::unique_ptr<juce::ToggleButton> toggleAutoResolverConflitos_;
     std::unique_ptr<juce::ToggleButton> toggleForcarRebackup_;
@@ -347,12 +384,15 @@ private:
     // === PREVIEW section ===
     class LegendaStatusComponent;
     std::unique_ptr<juce::Label> labelResumo_;
+    std::unique_ptr<juce::Label> labelAssets_;  // título do card ASSETS (prévia)
+    std::unique_ptr<juce::Label> labelAcao_, labelSaidas_;  // títulos dos cards (6) RUN e (7) OUTPUTS
     std::unique_ptr<LegendaStatusComponent> barraLegenda_;
     std::unique_ptr<juce::Viewport> listPreviaViewport_;
     std::unique_ptr<PreviaLista> listPrevia_;
 
     // === PROGRESS ===
     std::unique_ptr<juce::ProgressBar> barraProgresso_;
+    std::unique_ptr<EtapaProgressoComponent> etapaCopy_, etapaCatalog_;  // Make Backup de coleção: COPY e CATALOG
     std::unique_ptr<juce::Label> labelProgressoStatus_;
 
     // === BUTTONS ===
@@ -367,6 +407,7 @@ private:
     std::unique_ptr<juce::TextButton> btnLimparWatermark_;
     std::unique_ptr<juce::TextButton> btnCancelarExecucao_;
     std::unique_ptr<juce::TextButton> btnDone_;
+    std::unique_ptr<juce::TextButton> btnVerErros_;  // reabre o resultado detalhado quando o backup terminou com erros
     std::unique_ptr<juce::TextButton> btnOpenCatalog_;
     std::unique_ptr<juce::TextButton> btnExportXls_;
     std::unique_ptr<juce::TextButton> btnExportCsv_;
@@ -376,12 +417,13 @@ private:
     // EXPORT unificado (Fase 6): um botão + dropdown de origem no lugar dos 4 botões de saída.
     // Os botões antigos continuam existindo (escondidos): cada opção dispara o onClick do antigo,
     // então a ação e o diálogo são exatamente os de antes.
-    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote };
+    enum ExportOrigemId { kExpSelecionados = 1, kExpZip, kExpPrint, kExpWatermark, kExpPlanilha, kExpPacote, kExpBridge, kExpBounce };
     ComboAbrePraCimaLookAndFeel comboExportLf_;  // antes do combo: o combo o usa até ser destruído
     std::unique_ptr<juce::ComboBox> comboExportOrigem_;
     std::unique_ptr<juce::TextButton> btnExportUnificado_;
     int contagemSelecionados_ = 0;
     void atualizarExportUnificado();
+    void aplicarIconeBounceNoCombo();
     void executarExportUnificado();
     juce::File arquivoExportOrigem() const;
 
@@ -423,6 +465,10 @@ private:
     juce::Rectangle<int> cartaoCentral_;
     juce::Rectangle<int> faixaCabecalho_;
     juce::Rectangle<int> faixaRodape_;
+    // Layout em fluxo (Config): card inferior (EXPORT + botão principal) e os números 1 (ASSETS) e 6 (botão).
+    juce::Rectangle<int> cartaoRodape_;              // rodapé do resultado (Done): card único
+    juce::Rectangle<int> cartaoAcao_, cartaoSaidas_;  // rodapé da configuração: (6) RUN e (7) OUTPUTS
+    juce::Rectangle<int> numeroAssets_, numeroAcao_, numeroSaidas_;
 
     void mostrarPopupConflitoPreservacao();
     PainelOverlay overlay_;

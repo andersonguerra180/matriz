@@ -86,7 +86,10 @@ juce_add_binary_data(MatrizI18nAssets
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
     HEADER_NAME AssetsBinaryData.h
-    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/home.png Assets/geo.png
+    SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/bridgelogo.png Assets/home.png Assets/geo.png
+        Assets/gallery.png
+        Assets/whatsapp.png
+        Assets/whatsapp.jpg
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"
@@ -105,6 +108,9 @@ juce_add_binary_data(MatrizAssets
         "Assets/pro tools.png"
         "Assets/puredata.png"
         "Assets/reaper.png"
+        "Assets/vegas.jpeg"
+        "Assets/3d.jpg"
+        "Assets/zip.jpeg"
         "Assets/word.jpeg")
 
 # Fichas (fichas/*.yaml) embutidas no binário (Ui/FichasEmbutidas.cpp): o app não depende da pasta do
@@ -114,6 +120,11 @@ juce_add_binary_data(MatrizFichasAssets
     NAMESPACE FichasBinaryData
     HEADER_NAME FichasBinaryData.h
     SOURCES ${MATRIZ_FICHAS_YAML})
+# Página web que o celular recebe ao ler o QR code (HTML+CSS+JS num arquivo só, dentro do binário).
+juce_add_binary_data(MatrizCelularAssets
+    NAMESPACE CelularBinaryData
+    HEADER_NAME CelularBinaryData.h
+    SOURCES Source/Celular/pagina_celular.html)
 
 # ------------------------------------------------------------------------------
 # Etapa 1 — self-test headless
@@ -217,8 +228,11 @@ target_sources(matriz_ingest_selftest PRIVATE
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Ficha/FichaDefinition.cpp
@@ -237,12 +251,14 @@ target_sources(matriz_ingest_selftest PRIVATE
 if(APPLE)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_mac.mm
-        Source/Ingest/MiniaturaPsd.mm)
+        Source/Ingest/MiniaturaPsd.mm
+        Source/Ingest/MiniaturaDocumento_mac.mm)
 elseif(WIN32)
     target_sources(matriz_ingest_selftest PRIVATE
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
-        Source/Ui/PdfRenderer_win.cpp)
+        Source/Ui/PdfRenderer_win.cpp
+        Source/Ingest/MiniaturaDocumento_win.cpp)
 endif()
 
 target_include_directories(matriz_ingest_selftest PRIVATE Source)
@@ -269,6 +285,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
+    $<$<PLATFORM_ID:Darwin>:-framework\ QuickLook>
     $<$<PLATFORM_ID:Windows>:bcrypt>
     $<$<PLATFORM_ID:Windows>:dbghelp>
     $<$<PLATFORM_ID:Windows>:psapi>
@@ -312,7 +329,10 @@ target_sources(matriz_interop_selftest PRIVATE
     Source/Vault/AssetRelinkEngine.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Analytics/AssetGeolocation.cpp
     Source/Preservation/Preservation.cpp)
@@ -376,8 +396,49 @@ else()
     set(MATRIZ_TRIAL_DEF "MATRIZ_IS_TRIAL=0")
 endif()
 
+# .mtz (Coleção) e .bkm (Catálogo) com o ícone do Matriz no Finder; duplo clique abre no app
+# (MatrizApplication::anotherInstanceStarted). Não usa DOCUMENT_EXTENSIONS do JUCE: ele aponta o ícone para
+# "Icon", que não existe no bundle (o ícone é AppIcon.icns, copiado no POST_BUILD abaixo).
+set(MATRIZ_PLIST_DOCUMENTOS [=[<plist><dict>
+<key>CFBundleDocumentTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeName</key><string>BKR Matriz Collection</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Owner</string>
+    <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+    <key>LSItemContentTypes</key><array><string>com.bkr.matriz.collection</string></array>
+  </dict>
+  <dict>
+    <key>CFBundleTypeName</key><string>BKR Matriz Catalog</string>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>LSHandlerRank</key><string>Owner</string>
+    <key>CFBundleTypeIconFile</key><string>AppIcon</string>
+    <key>LSItemContentTypes</key><array><string>com.bkr.matriz.catalog</string></array>
+  </dict>
+</array>
+<key>UTExportedTypeDeclarations</key>
+<array>
+  <dict>
+    <key>UTTypeIdentifier</key><string>com.bkr.matriz.collection</string>
+    <key>UTTypeDescription</key><string>BKR Matriz Collection</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    <key>UTTypeIconFile</key><string>AppIcon</string>
+    <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>mtz</string></array></dict>
+  </dict>
+  <dict>
+    <key>UTTypeIdentifier</key><string>com.bkr.matriz.catalog</string>
+    <key>UTTypeDescription</key><string>BKR Matriz Catalog</string>
+    <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+    <key>UTTypeIconFile</key><string>AppIcon</string>
+    <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>bkm</string></array></dict>
+  </dict>
+</array>
+</dict></plist>]=])
+
 juce_add_gui_app(matriz
     PRODUCT_NAME "${MATRIZ_PRODUCT_NAME}"
+    PLIST_TO_MERGE "${MATRIZ_PLIST_DOCUMENTOS}"
     VERSION 1.5.0
     COMPANY_NAME "BKR"
     BUNDLE_ID "${MATRIZ_BUNDLE_ID}"
@@ -413,6 +474,7 @@ target_sources(matriz PRIVATE
     Source/Ui/ProjetoAberto.cpp
     Source/Ui/MainEditPanel.cpp
     Source/Ui/AcoesItem.cpp
+    Source/Ui/PastaPickerWindow.cpp
     Source/Ui/ArvoreComponent.cpp
     Source/Ui/BarraFerramentasComponent.cpp
     Source/Ui/BarraGuiaComponent.cpp
@@ -437,10 +499,14 @@ target_sources(matriz PRIVATE
     Source/Analytics/AnalyticsExport.cpp
     Source/Analytics/SavedAnalyses.cpp
     Source/Ui/ArvoreBackupComponent.cpp
+    Source/Ui/TrashWindow.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp
     Source/Ui/LoteSelfTest.cpp
+    Source/Ui/BounceSelfTest.cpp
+    Source/Ui/VerifySourceSelfTest.cpp
+    Source/Ui/RebuildSelfTest.cpp
     Source/Ui/ManifestoSelfTest.cpp
     Source/Ui/LogosTipoArquivo.cpp
     Source/Ui/FichasEmbutidas.cpp
@@ -455,6 +521,9 @@ target_sources(matriz PRIVATE
     Source/Ui/CatalogHubComponent.cpp
     Source/Ui/CatalogWorkspaceComponent.cpp
     Source/Ui/IntakeWorkspaceComponent.cpp
+    Source/Ui/PainelMetadadosArquivo.cpp
+    Source/Ui/CartoesAnalyticsComponent.cpp
+    Source/Ui/ImportarGeoFavoritosDialogo.cpp
     Source/Ui/StorageWorkspaceComponent.cpp
     Source/Ui/DuplicatesWorkspaceComponent.cpp
     Source/Ui/DuplicateResolutionDialog.cpp
@@ -519,12 +588,16 @@ target_sources(matriz PRIVATE
     Source/Vault/Reconciliacao.cpp
     Source/Vault/AssetRelinkEngine.cpp
     Source/Vault/RescanEngine.cpp
+    Source/Vault/VerifySource.cpp
     Source/Publicacao/Publicacao.cpp
     Source/Consolidacao/Mascara.cpp
     Source/Consolidacao/Consolidacao.cpp
+    Source/Consolidacao/LimpezaImagem.cpp
+    Source/Consolidacao/SaidaBounce.cpp
     Source/Consolidacao/MainEdit.cpp
     Source/Consolidacao/BackupScanEngine.cpp
     Source/Consolidacao/MetadadoEmbutido.cpp
+    Source/Consolidacao/BridgeXmp.cpp
     Source/Consolidacao/PacoteCollection.cpp
     Source/Catalogo/CatalogoProxies.cpp
     Source/Catalogo/CatalogSiteExport.cpp
@@ -541,26 +614,54 @@ target_sources(matriz PRIVATE
     Source/Ui/ProjectLoadingModalDialog.cpp
     Source/Ui/RescanBackupSourcesDialog.cpp
     Source/Ui/RescanProgressModalDialog.cpp
+    Source/Ui/VerifySourceDialog.cpp
     Source/Ui/BackupScanProgressDialog.cpp
     Source/Sync/SyncEngine.cpp
-    Source/Ui/SyncDestinationDialog.cpp)
+    Source/Ui/SyncDestinationDialog.cpp
+    Source/Celular/QrCodeImagem.cpp
+    Source/Celular/RecebimentoCelular.cpp
+    Source/Celular/ServidorCelular.cpp
+    Source/Celular/ExistentesProjeto.cpp
+    Source/Whatsapp/ServidorWhatsappApp.cpp
+    Source/Whatsapp/WhatsappConversa.cpp
+    Source/Whatsapp/WhatsappIngestao.cpp
+    Source/Ui/Tablet.cpp
+    Source/Ui/OverlayComponent.cpp
+    Source/Ui/PainelReceberCelular.cpp
+    Source/Ui/PainelImportarWhatsapp.cpp
+    Source/Ui/ConversaWhatsappComponent.cpp
+    Source/ProvaData/ExportadorTrecho.cpp
+    Source/ProvaData/OpenTimestamps.cpp
+    Source/ProvaData/PdfRaster.cpp
+    Source/ProvaData/ProvaData.cpp
+    Source/Model/VolumeLog.cpp
+    Source/Ingest/SobreMaterial.cpp
+    Source/Ingest/IngestaoStaging.cpp)
 
 if(APPLE)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard.mm
+        Source/App/SemSono_mac.mm
+        Source/App/AreaTransferenciaImagem_mac.mm
         Source/Vault/DiskIdentity_mac.mm
         Source/Ingest/MiniaturaPsd.mm
+        Source/Ingest/MiniaturaDocumento_mac.mm
         Source/Ui/VideoPlayerBridge.mm
-        Source/Ui/DocumentPreviewBridge.mm)
+        Source/Ui/DocumentPreviewBridge.mm
+        Source/Ui/PinturaImediata_mac.mm)
 elseif(WIN32)
     target_sources(matriz PRIVATE
         Source/Diag/NSExceptionGuard_win.cpp
+        Source/App/SemSono_win.cpp
+        Source/App/AreaTransferenciaImagem_win.cpp
         Source/Vault/DiskIdentity_win.cpp
         Source/Ingest/MiniaturaPsd_win.cpp
+        Source/Ingest/MiniaturaDocumento_win.cpp
         Source/Ui/VideoPlayerBridge_win.cpp
         Source/Ui/DocumentPreviewBridge_win.cpp
         Source/Ui/PdfRenderer_win.cpp
-        Source/Ui/PdfPageView_win.cpp)
+        Source/Ui/PdfPageView_win.cpp
+        Source/Ui/PinturaImediata_win.cpp)
 endif()
 
 target_include_directories(matriz PRIVATE Source)
@@ -581,6 +682,9 @@ target_link_libraries(matriz PRIVATE
     MatrizI18nAssets
     MatrizAssets
     MatrizFichasAssets
+    MatrizCelularAssets
+    matriz_httplib
+    matriz_qrcodegen
     matriz_sqlite3
     yaml-cpp::yaml-cpp
     Exiv2::exiv2lib
@@ -600,6 +704,7 @@ target_link_libraries(matriz PRIVATE
     $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ Quartz>
     $<$<PLATFORM_ID:Darwin>:-framework\ QuickLookUI>
+    $<$<PLATFORM_ID:Darwin>:-framework\ QuickLook>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
     $<$<PLATFORM_ID:Windows>:bcrypt>
     $<$<PLATFORM_ID:Windows>:dbghelp>

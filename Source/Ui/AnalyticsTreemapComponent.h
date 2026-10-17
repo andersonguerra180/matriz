@@ -37,7 +37,8 @@ public:
     AnalyticsTreemapComponent();
     ~AnalyticsTreemapComponent() override = default;
 
-    void recarregarDoBanco(matriz::db::Database& db);
+    void recarregarDoBanco(matriz::db::Database& db, const std::set<std::string>& itensFiltro = {});
+    void limpar();
     void resetarNavegacao();
 
     std::function<void(const std::string& assetId)> aoSelecionarItem;
@@ -132,7 +133,7 @@ private:
     };
     std::vector<BreadcrumbSegment> breadcrumbs_;
 
-    void construirArvoreDoBanco(matriz::db::Database& db);
+    void construirArvoreDoBanco(matriz::db::Database& db, const std::set<std::string>& itensFiltro = {});
     void recalcularLayout();
     void layoutNode(AnalyticsTreemapNode* parentNode, const juce::Rectangle<float>& area);
     void squarify(AnalyticsTreemapNode* parentNode, const juce::Rectangle<float>& area);

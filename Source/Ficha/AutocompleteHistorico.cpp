@@ -61,6 +61,7 @@ std::vector<std::string> AutocompleteRepository::listar(matriz::db::Database& db
     static const std::map<std::string, std::string> kFonteGravada = {
         {"dc_creator", "SELECT DISTINCT dc_creator FROM item"},
         {"dc_subject", "SELECT DISTINCT dc_subject FROM item"},
+        {"lista", "SELECT DISTINCT lista FROM item"},
         {"dc_publisher", "SELECT DISTINCT dc_publisher FROM item"},
         {"dc_contributor", "SELECT DISTINCT dc_contributor FROM item"},
         {"geo_address", "SELECT DISTINCT formatted_address FROM asset_geolocation"},

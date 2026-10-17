@@ -3,6 +3,7 @@
 #include <JuceHeader.h>
 
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -133,7 +134,9 @@ std::optional<AssetConhecido> buscarAssetPorMetadados(matriz::db::Database& regi
                                                        const std::string& caminhoRelativo = "",
                                                        const std::string& excludeItemId = "",
                                                        const juce::File& pastaProjeto = {},
-                                                       const std::string& exifDateOriginal = "");
+                                                       const std::string& exifDateOriginal = "",
+                                                       // Se não nulo, só estes itens podem ser o "original" encontrado (filtros do scan de DUPLICATES).
+                                                       const std::set<std::string>* somenteItens = nullptr);
 
 
 // Registra que o mesmo conteúdo de `arquivoId` também foi encontrado em

@@ -394,7 +394,7 @@ public:
         auto outStream = arquivoPart.createOutputStream();
         if (!outStream || outStream->failedToOpen()) {
             pastaTemp.deleteRecursively();
-            notificarFim(false, "Falha ao criar arquivo temporário: " + arquivoPart.getFullPathName(), juce::File(), 0, 0, {});
+            notificarFim(false, juce::String::fromUTF8("Falha ao criar arquivo temporário: ") + arquivoPart.getFullPathName(), juce::File(), 0, 0, {});
             return;
         }
 
@@ -442,7 +442,7 @@ public:
         // Renomeia de .part para final
         if (arquivoFinal.exists()) arquivoFinal.deleteFile();
         if (!arquivoPart.moveFileTo(arquivoFinal)) {
-            notificarFim(false, "Falha ao renomear arquivo temporário para destino final.", juce::File(), 0, 0, {});
+            notificarFim(false, juce::String::fromUTF8("Falha ao renomear arquivo temporário para destino final."), juce::File(), 0, 0, {});
             return;
         }
 
@@ -796,7 +796,7 @@ void ExportZipDialog::iniciarExportacao() {
                 juce::AlertWindow::showMessageBoxAsync(
                     juce::AlertWindow::WarningIcon,
                     matriz::i18n::t("zip.titulo"),
-                    erro.isNotEmpty() ? erro : "Falha na exportação ZIP.");
+                    erro.isNotEmpty() ? erro : juce::String::fromUTF8("Falha na exportação ZIP."));
                 return;
             }
 
@@ -810,7 +810,7 @@ void ExportZipDialog::iniciarExportacao() {
             if (!ignorados.isEmpty()) {
                 msg += "\n\n" + (matriz::i18n::localeAtivo().startsWith("pt") ? juce::String::fromUTF8("Itens ignorados/ausentes:\n") : "Ignored/missing assets:\n");
                 for (int i = 0; i < std::min(5, ignorados.size()); ++i) {
-                    msg += "• " + ignorados[i] + "\n";
+                    msg += juce::String::fromUTF8("• ") + ignorados[i] + "\n";
                 }
                 if (ignorados.size() > 5) {
                     msg += "... (+" + juce::String(ignorados.size() - 5) + ")\n";
