@@ -1,6 +1,7 @@
 #include "ExportZipDialog.h"
 #include "BatchWatermarkDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Resolucao.h"
 #include <unordered_set>
@@ -528,7 +529,7 @@ ExportZipDialog::ExportZipDialog(ProjetoAberto& projeto)
 
     pastaDestinoSelecionada_ = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
     lblCaminhoPasta_ = std::make_unique<juce::Label>("lblCaminho", pastaDestinoSelecionada_.getFullPathName());
-    lblCaminhoPasta_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblCaminhoPasta_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblCaminhoPasta_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblCaminhoPasta_);
 
@@ -854,7 +855,7 @@ void ExportZipDialog::exibirModal(ProjetoAberto& projeto) {
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = false;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

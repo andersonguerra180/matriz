@@ -1,5 +1,6 @@
 #include "VulnerabilidadesDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Reconciliacao.h"
 #include <map>
@@ -61,9 +62,9 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     try {
         auto stmt = db.prepare(
             "SELECT id FROM item "
-            "WHERE (ano IS NULL OR ano = 0) "
+            "WHERE COALESCE(estado, '') != 'duplicata' AND ((ano IS NULL OR ano = 0) "
             "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-            "   OR (collection_type IS NULL OR TRIM(collection_type) = '');");
+            "   OR (collection_type IS NULL OR TRIM(collection_type) = ''));");
         while (stmt.step()) {
             catMeta.itemIds.insert(stmt.columnText(0));
         }
@@ -116,7 +117,7 @@ void VulnerabilidadesDialog::carregarVulnerabilidades() {
     try {
         auto stmt = db.prepare(
             "SELECT i.id FROM item i "
-            "WHERE (SELECT COUNT(DISTINCT a.vault_id) FROM arquivo a WHERE a.item_id = i.id AND a.vault_id IS NOT NULL) <= 1;");
+            "WHERE COALESCE(i.estado, '') != 'duplicata' AND (SELECT COUNT(DISTINCT a.vault_id) FROM arquivo a WHERE a.item_id = i.id AND a.vault_id IS NOT NULL) <= 1;");
         while (stmt.step()) {
             catSingleCopy.itemIds.insert(stmt.columnText(0));
         }
@@ -185,7 +186,7 @@ void VulnerabilidadesDialog::paint(juce::Graphics& g) {
         auto topRow = inner.removeFromTop(24);
 
         g.setColour(cat.corAcento);
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(cat.titulo, topRow.removeFromLeft(topRow.getWidth() - 110), juce::Justification::centredLeft, true);
 
         // Big Count Badge on top right
@@ -195,7 +196,7 @@ void VulnerabilidadesDialog::paint(juce::Graphics& g) {
         g.setColour(cat.corAcento);
         g.drawRoundedRectangle(countBadge.toFloat(), 4.0f, 1.0f);
 
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         juce::String countText = i18n::t("vulnerabilidades.arquivos_contador").replace("{n}", juce::String(cat.itemIds.size()));
         g.drawText(countText, countBadge, juce::Justification::centred);
 
@@ -281,7 +282,7 @@ void VulnerabilidadesDialog::exibirModal(ProjetoAberto& projeto,
     opt.useNativeTitleBar = false;
     opt.resizable = false;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
 
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);

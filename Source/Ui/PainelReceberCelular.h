@@ -83,9 +83,10 @@ std::shared_ptr<PainelReceberCelular> mostrarReceberDoCelular(PainelOverlay& ove
 
 // Card "Importar do celular": dois ícones grandes (GALLERY e WHATSAPP). `aoConcluir` roda UMA vez com a escolha
 // (nullopt = cancelou). Vive dentro de um PainelOverlay.
+// `sistema` = true: segunda tela (depois de WHATSAPP), com os cards ANDROID e IPHONE no lugar de GALLERY/WHATSAPP.
 class EscolhaImportacaoCelular : public juce::Component {
 public:
-    EscolhaImportacaoCelular();
+    explicit EscolhaImportacaoCelular(bool sistema = false);
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseMove(const juce::MouseEvent&) override;
@@ -100,8 +101,14 @@ private:
     int tileEm(juce::Point<int> p) const;
     juce::Rectangle<int> tiles_[2];
     int sobre_ = -1;
-    juce::Image iconeGaleria_, iconeWhatsapp_;
+    juce::Image iconeGaleria_, iconeWhatsapp_, iconeAndroid_, iconeApple_;
+    bool sistema_ = false;
 };
+
+// Segunda tela do WHATSAPP: ANDROID segue o fluxo do WhatsApp de hoje; IPHONE abre o mesmo QR code da GALLERY
+// (o iPhone exporta o .zip da conversa e o envia pelo QR como se fosse uma foto).
+enum class SistemaCelular { Android, IPhone };
+void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir);
 
 void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(std::optional<ModoImportacaoCelular>)> aoConcluir,
                                      std::weak_ptr<EscolhaImportacaoCelular>* devolver = nullptr);

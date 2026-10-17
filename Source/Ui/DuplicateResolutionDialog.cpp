@@ -1,5 +1,6 @@
 #include "DuplicateResolutionDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -365,7 +366,7 @@ void DuplicateResolutionDialog::show(const juce::String& windowTitle,
     opt.useNativeTitleBar = true;
     opt.resizable = true;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);
     };

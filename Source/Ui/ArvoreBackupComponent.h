@@ -83,6 +83,9 @@ public:
     // mapa de verdade; posição e tamanho dos cards ali são só da sobreposição (não mexem no layout do mapa principal).
     // SAIR fecha e recarrega este mapa.
     void abrirSobreposicao(const std::string& pastaId, const juce::String& nomePasta);
+    // Duplo clique no card de uma pasta (mapa principal): quem hospeda abre a janela flutuante da pasta (miniaturas + filtros).
+    // Sem este gancho, cai na sobreposição do Folder Map de antes.
+    std::function<void(const std::string& pastaId, const juce::String& nomePasta)> aoAbrirPastaJanela;
     void fecharSobreposicao();
     // Chamado na instância DENTRO da sobreposição, logo depois de construída.
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);

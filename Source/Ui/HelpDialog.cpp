@@ -1,5 +1,6 @@
 #include "HelpDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -57,9 +58,9 @@ int HelpContentView::getCalculatedHeight(int availableWidth) const {
     if (availableWidth < 100) availableWidth = 500;
     int h = 70; // Header area (Category badge + Title)
 
-    juce::Font fontHeader(juce::FontOptions(14.0f, juce::Font::bold));
-    juce::Font fontFaqQ(juce::FontOptions(13.5f, juce::Font::bold));
-    juce::Font fontBody(juce::FontOptions(13.0f));
+    juce::Font fontHeader(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    juce::Font fontFaqQ(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    juce::Font fontBody(juce::FontOptions(tema().tamanhoFonteCorpo));
 
     int contentW = availableWidth - 32;
 
@@ -109,7 +110,7 @@ void HelpContentView::paint(juce::Graphics& g) {
 
     // 1. Category Tag / Badge
     if (!category_.isEmpty()) {
-        juce::Font catFont(juce::FontOptions(11.0f, juce::Font::bold));
+        juce::Font catFont(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
         g.setFont(catFont);
         int badgeW = juce::GlyphArrangement::getStringWidthInt(catFont, category_.toUpperCase()) + 16;
         int badgeH = 18;
@@ -137,9 +138,9 @@ void HelpContentView::paint(juce::Graphics& g) {
     y += 16;
 
     // 3. Render Blocks
-    juce::Font fontHeader(juce::FontOptions(13.5f, juce::Font::bold));
-    juce::Font fontFaqQ(juce::FontOptions(13.5f, juce::Font::bold));
-    juce::Font fontBody(juce::FontOptions(13.0f));
+    juce::Font fontHeader(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    juce::Font fontFaqQ(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    juce::Font fontBody(juce::FontOptions(tema().tamanhoFonteCorpo));
 
     for (const auto& blk : blocks_) {
         if (blk.isHeader) {
@@ -647,11 +648,11 @@ void HelpDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int width, i
     juce::String titulo = isPt ? topic.titlePt : topic.titleEn;
     juce::String cat = isPt ? topic.categoryPt : topic.categoryEn;
 
-    g.setFont(juce::Font(juce::FontOptions(13.0f, rowIsSelected ? juce::Font::bold : juce::Font::plain)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, rowIsSelected ? juce::Font::bold : juce::Font::plain)));
     g.setColour(rowIsSelected ? tk.acento : tk.textoPrimario);
     g.drawText(titulo, 12, 6, width - 24, 20, juce::Justification::left, true);
 
-    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     g.setColour(tk.textoTerciario);
     g.drawText(cat.toUpperCase(), 12, 24, width - 24, 16, juce::Justification::left, true);
 
@@ -778,7 +779,7 @@ void HelpDialog::exibirModal() {
     opt.useNativeTitleBar = false;
     opt.resizable = true;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);
     };

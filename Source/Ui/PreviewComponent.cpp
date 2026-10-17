@@ -515,7 +515,7 @@ void PreviewComponent::paint(juce::Graphics& g) {
     }
 
     g.setColour(tema().textoTerciario);
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     auto hint = getLocalBounds().removeFromBottom(18).reduced(tema().espacoGrande, 0);
     g.drawText("Press M to add marker", hint, juce::Justification::centredRight);
 }

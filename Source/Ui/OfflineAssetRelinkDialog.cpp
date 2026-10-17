@@ -1,5 +1,6 @@
 #include "OfflineAssetRelinkDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "InitialRelinkDialog.h"
 #include "../I18n/Strings.h"
 
@@ -28,45 +29,45 @@ OfflineAssetRelinkDialog::OfflineAssetRelinkDialog(matriz::db::Database& db,
     addAndMakeVisible(lblHeader_);
 
     lblStatusWarning_.setText(i18n::t("relink.offline_desc"), juce::dontSendNotification);
-    lblStatusWarning_.setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblStatusWarning_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblStatusWarning_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblStatusWarning_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblStatusWarning_);
 
     lblTitleHeader_.setText(i18n::t("relink.rotulo_titulo"), juce::dontSendNotification);
-    lblTitleHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lblTitleHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblTitleHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblTitleHeader_);
 
     lblTitleValue_.setText(itemTitle_.isEmpty() ? "Asset" : itemTitle_, juce::dontSendNotification);
-    lblTitleValue_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+    lblTitleValue_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     lblTitleValue_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblTitleValue_);
 
     lblExpectedHeader_.setText(i18n::t("relink.rotulo_localizacao_esperada"), juce::dontSendNotification);
-    lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblExpectedHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblExpectedHeader_);
 
     txtExpectedPath_.setText(expectedPath_);
     txtExpectedPath_.setReadOnly(true);
-    txtExpectedPath_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    txtExpectedPath_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     txtExpectedPath_.setColour(juce::TextEditor::backgroundColourId, tk.fundo);
     txtExpectedPath_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
     txtExpectedPath_.setColour(juce::TextEditor::outlineColourId, tk.borda);
     addAndMakeVisible(txtExpectedPath_);
 
     lblStorageHeader_.setText(i18n::t("relink.rotulo_armazenamento"), juce::dontSendNotification);
-    lblStorageHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lblStorageHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblStorageHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblStorageHeader_);
 
     lblStorageValue_.setText(storageName_.isEmpty() ? i18n::t("relink.armazenamento_local") : storageName_, juce::dontSendNotification);
-    lblStorageValue_.setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblStorageValue_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblStorageValue_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblStorageValue_);
 
-    lblError_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    lblError_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblError_.setColour(juce::Label::textColourId, juce::Colour(0xffef4444)); // red
     lblError_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblError_);
@@ -208,7 +209,7 @@ void OfflineAssetRelinkDialog::showModal(matriz::db::Database& db,
     opt.useNativeTitleBar = true;
     opt.resizable = false;
 
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

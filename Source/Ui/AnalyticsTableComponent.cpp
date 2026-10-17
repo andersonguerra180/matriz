@@ -129,7 +129,7 @@ void AnalyticsTableComponent::paint(juce::Graphics& g) {
 
         auto inner = statsBox.reduced(12, 8);
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText("DESCRIPTIVE STATISTICS (1D)", inner.removeFromTop(14), juce::Justification::centredLeft);
 
         auto row = inner;
@@ -138,10 +138,10 @@ void AnalyticsTableComponent::paint(juce::Graphics& g) {
         auto drawStat = [&](const std::string& label, const std::string& val) {
             auto b = row.removeFromLeft(statW);
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(10.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(label, b.removeFromTop(14), juce::Justification::centredLeft);
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(val, b, juce::Justification::centredLeft);
         };
 

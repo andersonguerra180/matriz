@@ -1609,7 +1609,11 @@ void MosaicoComponent::mouseDown(const juce::MouseEvent& e) {
     if (naCheckbox) {
         if (!selecionados_.insert(id).second) selecionados_.erase(id);
         indiceAncoraShift_ = indice;
-    } else if (e.mods.isShiftDown() && indiceAncoraShift_ >= 0) {
+    } else if (e.mods.isShiftDown() && indiceAncoraShift_ >= 0
+               && indiceAncoraShift_ < static_cast<int>(itensFiltrados_.size())) {
+        // A âncora pode estar velha (a lista encolheu após edição/filtro):
+        // sem a checagem acima, itensFiltrados_[i] lia fora do vetor e o
+        // insert() recebia uma std::string inválida (crash no std::set).
         int de = juce::jmin(indiceAncoraShift_, indice);
         int ate = juce::jmax(indiceAncoraShift_, indice);
         for (int i = de; i <= ate; ++i) selecionados_.insert(itensFiltrados_[static_cast<size_t>(i)].id);
@@ -2393,13 +2397,13 @@ void MosaicoComponent::paint(juce::Graphics& g) {
     const auto& tk = matriz::ui::tema();
     g.fillAll(tk.fundo);
 
-    static const juce::Font font14Bold(juce::FontOptions(14.0f, juce::Font::bold));
-    static const juce::Font font13Bold(juce::FontOptions(13.0f, juce::Font::bold));
-    static const juce::Font font11Bold(juce::FontOptions(11.0f, juce::Font::bold));
-    static const juce::Font font11Normal(juce::FontOptions(11.0f));
-    static const juce::Font font10Bold(juce::FontOptions(10.0f, juce::Font::bold));
-    static const juce::Font font95Normal(juce::FontOptions(9.5f));
-    static const juce::Font font9Bold(juce::FontOptions(9.0f, juce::Font::bold));
+    static const juce::Font font14Bold(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    static const juce::Font font13Bold(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
+    static const juce::Font font11Bold(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
+    static const juce::Font font11Normal(juce::FontOptions(tema().tamanhoFontePequena));
+    static const juce::Font font10Bold(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
+    static const juce::Font font95Normal(juce::FontOptions(tema().tamanhoFonteMicro));
+    static const juce::Font font9Bold(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
 
     static const juce::Path checkmarkPath = []() {
         juce::Path p;
@@ -2494,7 +2498,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                                        "intake.col_source_media", "intake.col_action"};
                 const auto cols = colunasDaLista(getWidth());
                 g.setColour(tk.textoPrimario);
-                g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 for (size_t c = 0; c < cols.size(); ++c) {
                     juce::Rectangle<int> r(cols[c].first, areaCols.getY(), cols[c].second, areaCols.getHeight());
                     juce::String rotulo = matriz::i18n::t(kRotulos[c]);
@@ -2605,7 +2609,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 const bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
                 auto semValor = [&](juce::Rectangle<int> r) {
                     g.setColour(tk.textoTerciario);
-                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::italic)));
                     g.drawText(isPt ? juce::String::fromUTF8("Nenhum") : juce::String("None"), r.reduced(6, 0),
                                juce::Justification::centredLeft, true);
                 };
@@ -2635,7 +2639,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(corCategoriaDaLista(categoria));
                     g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                     g.setColour(juce::Colours::white);
-                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                     g.drawText(tx.categoriaMaiuscula, badge, juce::Justification::centred, true);
                 }
 
@@ -2644,7 +2648,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     auto r = celulaCol(2);
                     juce::String nome = tx.nome;
                     g.setColour(tk.textoPrimario);
-                    g.setFont(juce::Font(juce::FontOptions(12.5f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                     if (item.nestTotal > 1) {  // NEST: o nome ganha o número de arquivos do grupo
                         const juce::String tag = "  [NEST " + juce::String(item.nestTotal) + "]";
                         nome += tag;
@@ -2655,7 +2659,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                         g.setColour(juce::Colour(0xffef4444));
                         g.fillRoundedRectangle(off.toFloat(), 3.0f);
                         g.setColour(juce::Colours::white);
-                        g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                         g.drawText("OFFLINE", off, juce::Justification::centred);
                     } else {
                         g.drawText(nome, r.reduced(6, 0), juce::Justification::centredLeft, true);
@@ -2664,14 +2668,14 @@ void MosaicoComponent::paint(juce::Graphics& g) {
 
                 // EXTENSION
                 g.setColour(tk.textoSecundario);
-                g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 g.drawText(tx.extensao.isEmpty() ? juce::String("-") : tx.extensao,
                            celulaCol(3).reduced(6, 0), juce::Justification::centredLeft, true);
 
                 // DATE CREATED (só o ano, como no INTAKE)
                 {
                     // Mesma regra do INTAKE: data do metadado; sem ela, a de entrada (calculada em calcularTextos).
-                    g.setFont(juce::Font(juce::FontOptions(12.0f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                     g.drawText(tx.ano.isNotEmpty() ? tx.ano : "-", celulaCol(4).reduced(6, 0), juce::Justification::centredLeft, true);
                 }
 
@@ -2691,7 +2695,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                     g.setColour(tk.acento);
                     g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                     g.setColour(tk.textoSobreAcento);
-                    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                     g.drawText(traduzirContent(juce::String::fromUTF8(item.collectionType->c_str()), isPt), badge,
                                juce::Justification::centred, true);
                 } else {
@@ -2708,7 +2712,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                         g.setColour(juce::Colour(0xff0d9488));
                         g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                         g.setColour(juce::Colours::white);
-                        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                         g.drawText(texto, badge.reduced(6, 0), juce::Justification::centredLeft, true);
                     }
                 }
@@ -2738,9 +2742,10 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             }
 
             juce::Colour corCat = corPorCategoria(item.tipoMidia);
+            constexpr float kRaioCardGrade = 12.0f;  // card creme canto 12
 
             g.setColour(tk.painel);
-            g.fillRoundedRectangle(bounds.toFloat(), tk.raioMedio);
+            g.fillRoundedRectangle(bounds.toFloat(), kRaioCardGrade);
 
             int textAreaH = juce::jmin(40, bounds.getHeight() / 4 + 10);
             juce::Rectangle<int> areaImagem = bounds.withHeight(bounds.getHeight() - textAreaH);
@@ -2801,7 +2806,12 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (ext.isNotEmpty()) {
                 int badgeW = juce::jmax(28, static_cast<int>(ext.length()) * 7 + 10);
                 juce::Rectangle<int> badge(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
-                g.setColour(juce::Colour(0xcc000000));
+                // Cor por categoria (áudio/vídeo/foto/doc) com variação de tom por extensão (mp4/avi/mov...: mesma cor, tons próximos).
+                int hashExt = 0;
+                for (auto ch : ext.toLowerCase()) hashExt = hashExt * 31 + static_cast<int>(ch);
+                const float passo = static_cast<float>(((hashExt % 5) + 5) % 5) - 2.0f;  // -2..+2
+                const auto corExt = corCat.withMultipliedBrightness(1.0f + passo * 0.10f).withMultipliedSaturation(1.0f - passo * 0.04f);
+                g.setColour(corExt.darker(0.35f).withAlpha(0.94f));
                 g.fillRoundedRectangle(badge.toFloat(), 8.0f);
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
@@ -2916,16 +2926,16 @@ void MosaicoComponent::paint(juce::Graphics& g) {
             if (selecionado) {
                 g.setColour(tk.acento);
                 auto selBounds = bounds.reduced(static_cast<int>(offsetRing));
-                float selR = juce::jmax(1.0f, tk.raioMedio - offsetRing);
-                g.drawRoundedRectangle(selBounds.toFloat(), selR, 3.5f);
+                float selR = juce::jmax(1.0f, kRaioCardGrade - offsetRing);
+                g.drawRoundedRectangle(selBounds.toFloat(), selR, 2.0f);
             } else if (!mostrarZebraRevisado) {
-                g.setColour(corCat.withAlpha(0.65f));
-                g.drawRoundedRectangle(bounds.toFloat(), tk.raioMedio, 1.8f);
+                g.setColour(tk.borda);
+                g.drawRoundedRectangle(bounds.toFloat().reduced(0.5f), kRaioCardGrade, 1.0f);
             }
 
             if (item.sincronizado) {
                 g.setColour(tk.haloSincronizado);
-                g.drawRoundedRectangle(bounds.reduced(3).toFloat(), tk.raioMedio, 1.5f);
+                g.drawRoundedRectangle(bounds.reduced(3).toFloat(), kRaioCardGrade, 1.5f);
             }
 
             // Checkmark on selected items (drawn at bottom-right in quarantine mode to avoid +, otherwise top-right)
@@ -2938,7 +2948,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                               static_cast<float>(kDiametroMarca),
                                               static_cast<float>(kDiametroMarca));
                 g.setColour(tk.acento);
-                g.fillRoundedRectangle(marca, 4.0f);
+                g.fillEllipse(marca);
                 g.setColour(tk.textoSobreAcento);
                 g.strokePath(checkmarkPath, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved,
                                                                    juce::PathStrokeType::rounded),
@@ -3023,7 +3033,7 @@ void MosaicoComponent::iniciarEdicaoInline(int indice) {
 
     editorInline_ = std::make_unique<juce::TextEditor>();
     editorInline_->setBounds(area);
-    editorInline_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    editorInline_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     editorInline_->setText(textoAtual, false);
     editorInline_->selectAll();
     editorInline_->setColour(juce::TextEditor::backgroundColourId, tema().painel);

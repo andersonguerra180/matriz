@@ -1,6 +1,7 @@
 #include "BarraProgressoGlobalComponent.h"
 #include "PinturaImediata.h"
 #include "Tokens.h"
+#include "Tablet.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -35,20 +36,20 @@ BarraProgressoGlobalComponent::BarraProgressoGlobalComponent() {
     const auto& tk = tema();
 
     lblTitulo_ = std::make_unique<juce::Label>("", "READY");
-    lblTitulo_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-    lblTitulo_->setColour(juce::Label::textColourId, tk.acento);
+    lblTitulo_->setFont(fonteUi(10.5f, juce::Font::bold).withExtraKerningFactor(0.06f));  // rótulo em caixa alta + espaçamento
+    lblTitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     lblTitulo_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblTitulo_);
 
     lblDetalhe_ = std::make_unique<juce::Label>("", "");
-    lblDetalhe_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblDetalhe_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblDetalhe_->setColour(juce::Label::textColourId, tk.textoSecundario);
     lblDetalhe_->setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(*lblDetalhe_);
 
     btnCancelar_ = std::make_unique<juce::TextButton>("Cancel");
     btnCancelar_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-    btnCancelar_->setColour(juce::TextButton::textColourOffId, tk.perigo);
+    btnCancelar_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnCancelar_->onClick = [this] {
         if (estado_.ativo && estado_.id.isNotEmpty()) {
             ProgressoGlobal::obterInstancia().cancelarTarefa(estado_.id);
@@ -195,7 +196,7 @@ void BarraProgressoGlobalComponent::paint(juce::Graphics& g) {
         g.fillEllipse(dotX - dotRadius - 1, dotY - dotRadius - 1, (dotRadius + 1) * 2, (dotRadius + 1) * 2);
     } else if (estado_.mensagemConclusao.isNotEmpty()) {
         // Green completed dot
-        g.setColour(juce::Colour(0xff22c55e));
+        g.setColour(tk.secaoExplorer);
         g.fillEllipse(dotX - dotRadius, dotY - dotRadius, dotRadius * 2, dotRadius * 2);
     } else {
         // Subtle idle dot
@@ -214,9 +215,9 @@ void BarraProgressoGlobalComponent::paint(juce::Graphics& g) {
 
         // Progress bar background track
         g.setColour(tk.painelAlt);
-        g.fillRoundedRectangle(barArea, 4.0f);
+        g.fillRoundedRectangle(barArea, barH * 0.5f);
         g.setColour(tk.borda);
-        g.drawRoundedRectangle(barArea, 4.0f, 1.0f);
+        g.drawRoundedRectangle(barArea, barH * 0.5f, 1.0f);
 
         if (estado_.fracao >= 0.0) {
             // Determinate progress bar
@@ -224,13 +225,13 @@ void BarraProgressoGlobalComponent::paint(juce::Graphics& g) {
             if (fillW > 0.5f) {
                 juce::Rectangle<float> fillArea(barArea.getX(), barArea.getY(), fillW, barArea.getHeight());
                 g.setColour(tk.acento);
-                g.fillRoundedRectangle(fillArea, 4.0f);
+                g.fillRoundedRectangle(fillArea, barH * 0.5f);
             }
 
             // Percentage Text
             int percent = static_cast<int>(std::round(progressoSuavizado_ * 100.0));
             juce::String pctStr = juce::String(percent) + "%";
-            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.setColour(tk.textoPrimario);
             g.drawText(pctStr, barArea, juce::Justification::centred, true);
         } else {
@@ -238,7 +239,7 @@ void BarraProgressoGlobalComponent::paint(juce::Graphics& g) {
             float shimmerPos = barArea.getX() + (barArea.getWidth() - 40.0f) * animOffset_;
             juce::Rectangle<float> shimmerArea(shimmerPos, barArea.getY(), 40.0f, barArea.getHeight());
             g.setColour(tk.acento.withAlpha(0.7f));
-            g.fillRoundedRectangle(shimmerArea, 4.0f);
+            g.fillRoundedRectangle(shimmerArea, barH * 0.5f);
         }
     }
 }

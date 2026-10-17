@@ -1,5 +1,6 @@
 #include "InitialRelinkDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -23,20 +24,20 @@ InitialRelinkDialog::InitialRelinkDialog(const juce::String& sampleMissingExpect
     addAndMakeVisible(lblHeader_);
 
     lblDescription_.setText(i18n::t("relink.inicial_desc"), juce::dontSendNotification);
-    lblDescription_.setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblDescription_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblDescription_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblDescription_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblDescription_);
 
     juce::String tituloAtivo = sampleTitle_.isEmpty() ? "Asset" : sampleTitle_;
     lblExpectedHeader_.setText(i18n::t("relink.arquivo_esperado_exemplo").replace("{t}", tituloAtivo), juce::dontSendNotification);
-    lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lblExpectedHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblExpectedHeader_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblExpectedHeader_);
 
     txtExpectedPath_.setText(sampleMissingPath_);
     txtExpectedPath_.setReadOnly(true);
-    txtExpectedPath_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    txtExpectedPath_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     txtExpectedPath_.setColour(juce::TextEditor::backgroundColourId, tk.fundo);
     txtExpectedPath_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
     txtExpectedPath_.setColour(juce::TextEditor::outlineColourId, tk.borda);
@@ -159,7 +160,7 @@ void InitialRelinkDialog::showModal(const juce::String& sampleExpectedPath,
     opt.useNativeTitleBar = true;
     opt.resizable = false;
 
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

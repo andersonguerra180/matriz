@@ -23,19 +23,19 @@ public:
         
         const auto& tk = tema();
         lblTitulo_ = std::make_unique<juce::Label>("", titulo);
-        lblTitulo_->setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+        lblTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitulo_);
 
         if (mensagem.isNotEmpty()) {
             lblMensagem_ = std::make_unique<juce::Label>("", mensagem);
-            lblMensagem_->setFont(juce::Font(juce::FontOptions(12.5f)));
+            lblMensagem_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             lblMensagem_->setColour(juce::Label::textColourId, tk.textoSecundario);
             addAndMakeVisible(*lblMensagem_);
         }
 
         editor_ = std::make_unique<juce::TextEditor>();
-        editor_->setFont(juce::Font(juce::FontOptions(13.5f)));
+        editor_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         editor_->setText(valorInicial);
         editor_->setColour(juce::TextEditor::backgroundColourId, tk.painelAlt);
         editor_->setColour(juce::TextEditor::textColourId, tk.textoPrimario);

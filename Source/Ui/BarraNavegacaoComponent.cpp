@@ -1,5 +1,7 @@
 #include "BarraNavegacaoComponent.h"
 #include "Tokens.h"
+#include "Moldura.h"
+#include "Tablet.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -10,9 +12,7 @@ BarraNavegacaoComponent::BarraNavegacaoComponent() {
     const auto& tk = tema();
 
     botaoAjuda_ = std::make_unique<juce::TextButton>("?");
-    botaoAjuda_->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-    botaoAjuda_->setColour(juce::TextButton::textColourOffId, tk.acento);
-    botaoAjuda_->setColour(juce::TextButton::textColourOnId, tk.acento);
+    moldura::estilizarBotao(*botaoAjuda_, false);
     botaoAjuda_->setTooltip(obterTextoAjuda(selectedTab_));
     addAndMakeVisible(*botaoAjuda_);
 
@@ -125,108 +125,57 @@ void BarraNavegacaoComponent::setSelectedTab(Tab tab) {
 
 void BarraNavegacaoComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
-    
-    // Header background fill - 20% brighter in both light and dark modes
-    g.fillAll(tk.painel.brighter(0.20f));
-    
-    // Bottom border separating header from content
-    g.setColour(tk.borda);
+    const auto pal = moldura::paleta();
+
+    // Faixa do topo: cartão creme com linha inferior.
+    g.fillAll(pal.janela);
+    g.setColour(pal.linha);
     g.fillRect(0, getHeight() - 1, getWidth(), 1);
-    
-    // Draw Tabs in Folder-Tab style with rounded top corners
+
+    // Barra de etapas: pílulas creme com número em círculo; a etapa ativa é uma pílula grafite com texto branco.
     for (const auto& tab : tabs_) {
-        bool ativo = (tab.tab == selectedTab_);
-        
-        auto tb = tab.bounds.toFloat();
-        float r = 5.0f;
-        float bx = tb.getX();
-        float by = tb.getY();
-        float bw = tb.getWidth();
-        float bh = tb.getHeight();
-        
-        // Build folder tab path (rounded top corners, straight vertical sides, flush bottom)
-        juce::Path tabPath;
-        tabPath.startNewSubPath(bx, by + bh);
-        tabPath.lineTo(bx, by + r);
-        tabPath.addArc(bx, by, r * 2.0f, r * 2.0f, juce::MathConstants<float>::pi, juce::MathConstants<float>::pi * 1.5f, false);
-        tabPath.lineTo(bx + bw - r, by);
-        tabPath.addArc(bx + bw - r * 2.0f, by, r * 2.0f, r * 2.0f, juce::MathConstants<float>::pi * 1.5f, juce::MathConstants<float>::twoPi, false);
-        tabPath.lineTo(bx + bw, by + bh);
-        
+        const bool ativo = (tab.tab == selectedTab_);
+        auto pilula = tab.bounds.toFloat().reduced(0.0f, 5.0f);
+        const float raio = pilula.getHeight() * 0.5f;
+
         if (ativo) {
-            // Active folder tab: interior inteiro em amarelo clarinho a 30%
-            // de opacidade; contorno preto sólido (como era antes das
-            // últimas duas tentativas — nem tk.acento, nem cor cheia sem
-            // opacidade, nem só uma tarja fina no topo).
-            static const juce::Colour corAmareloClaro(0xfffde047);
-            juce::Path fillPath(tabPath);
-            fillPath.closeSubPath();
-            g.setColour(corAmareloClaro.withAlpha(0.30f));
-            g.fillPath(fillPath);
-
-            // Contorno da aba pressionada
-            g.setColour(juce::Colours::black);
-            g.strokePath(tabPath, juce::PathStrokeType(1.5f));
-
-            g.setColour(tk.acento);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold)));
-        } else if (tab.hover) {
-            juce::Path fillPath(tabPath);
-            fillPath.closeSubPath();
-            g.setColour(tk.painelAlt.withAlpha(0.40f));
-            g.fillPath(fillPath);
-            
-            g.setColour(tk.borda.withAlpha(0.60f));
-            g.strokePath(tabPath, juce::PathStrokeType(1.0f));
-            
-            g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            g.setColour(pal.grafite);
+            g.fillRoundedRectangle(pilula, raio);
         } else {
-            juce::Path fillPath(tabPath);
-            fillPath.closeSubPath();
-            g.setColour(tk.painelAlt.withAlpha(0.15f));
-            g.fillPath(fillPath);
-            
-            g.setColour(tk.borda.withAlpha(0.40f));
-            g.strokePath(tabPath, juce::PathStrokeType(0.8f));
-            
-            g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo)));
+            g.setColour(tab.hover ? pal.poco.darker(0.03f) : pal.poco);
+            g.fillRoundedRectangle(pilula, raio);
+            g.setColour(pal.linha);
+            g.drawRoundedRectangle(pilula.reduced(0.5f), raio, 1.0f);
         }
-        
-        // Número da aba no mesmo selo da aba BACKUP (círculo escuro, número branco), seguido do nome;
-        // o conjunto fica centralizado na aba.
-        {
-            const float d = 18.0f, folga = 6.0f;
-            const auto fonteNome = juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, ativo ? juce::Font::bold : juce::Font::plain));
-            const float textW = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(fonteNome, tab.label));
-            const float x0 = tb.getCentreX() - (d + folga + textW) * 0.5f;
-            const juce::Rectangle<float> selo(x0, tb.getCentreY() - d * 0.5f, d, d);
-            g.setColour(tk.acento);
-            g.fillEllipse(selo);
-            g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-            g.drawText(juce::String(tab.numero), selo, juce::Justification::centred, false);
-            g.setColour(ativo ? tk.acento : (tab.hover ? tk.textoPrimario : tk.textoSecundario));
-            g.setFont(fonteNome);
-            g.drawText(tab.label, juce::Rectangle<float>(x0 + d + folga, tb.getY(), textW + 2.0f, tb.getHeight()),
-                       juce::Justification::centredLeft, false);
-        }
-        
-        // Draw chronological workflow arrow (──›) between sequential tabs with prominent accent contrast
+
+        // Número no círculo, seguido do nome; o conjunto fica centralizado na pílula.
+        const float d = 18.0f, folga = 6.0f;
+        const auto fonteNome = fonteUi(tk.tamanhoFonteCorpo, ativo ? juce::Font::bold : juce::Font::plain);
+        const float textW = static_cast<float>(juce::GlyphArrangement::getStringWidthInt(fonteNome, tab.label));
+        const float x0 = pilula.getCentreX() - (d + folga + textW) * 0.5f;
+        const juce::Rectangle<float> selo(x0, pilula.getCentreY() - d * 0.5f, d, d);
+        g.setColour(ativo ? pal.branco : pal.grafite);
+        g.fillEllipse(selo);
+        g.setColour(ativo ? pal.grafite : pal.branco);
+        g.setFont(fonteUi(11.0f, juce::Font::bold));
+        g.drawText(juce::String(tab.numero), selo, juce::Justification::centred, false);
+        g.setColour(ativo ? pal.branco : pal.tinta);
+        g.setFont(fonteNome);
+        g.drawText(tab.label, juce::Rectangle<float>(x0 + d + folga, pilula.getY(), textW + 2.0f, pilula.getHeight()),
+                   juce::Justification::centredLeft, false);
+
+        // Seta fina cinza entre etapas sequenciais.
         if (!tab.sepBounds.isEmpty()) {
-            auto cx = static_cast<float>(tab.sepBounds.getCentreX());
-            auto cy = static_cast<float>(tab.sepBounds.getCentreY());
-            juce::Path arrow;
-            // Horizontal arrow shaft
-            arrow.startNewSubPath(cx - 6.0f, cy);
-            arrow.lineTo(cx + 6.0f, cy);
-            // Arrowhead
-            arrow.startNewSubPath(cx + 1.5f, cy - 4.5f);
-            arrow.lineTo(cx + 6.5f, cy);
-            arrow.lineTo(cx + 1.5f, cy + 4.5f);
-            g.setColour(tk.acento);
-            g.strokePath(arrow, juce::PathStrokeType(2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const auto cx = static_cast<float>(tab.sepBounds.getCentreX());
+            const auto cy = static_cast<float>(tab.sepBounds.getCentreY());
+            juce::Path seta;
+            seta.startNewSubPath(cx - 5.0f, cy);
+            seta.lineTo(cx + 5.0f, cy);
+            seta.startNewSubPath(cx + 1.5f, cy - 3.5f);
+            seta.lineTo(cx + 5.5f, cy);
+            seta.lineTo(cx + 1.5f, cy + 3.5f);
+            g.setColour(tk.textoTerciario);
+            g.strokePath(seta, juce::PathStrokeType(1.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
     }
 }

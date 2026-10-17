@@ -113,7 +113,7 @@ std::vector<ProxyDeItem> levantarProxies(matriz::db::Database& registro, matriz:
         // o teste de NULL primeiro, o SQLite ordena esses itens ANTES de
         // todos os outros e o catálogo abre encabeçado por linhas que não têm
         // arquivo nenhum pra descrever.
-        " ORDER BY (i.codigo_acervo IS NULL), i.codigo_acervo");
+        " WHERE COALESCE(i.estado, '') != 'duplicata' ORDER BY (i.codigo_acervo IS NULL), i.codigo_acervo");
 
     while (stmt.step()) {
         ProxyDeItem p;

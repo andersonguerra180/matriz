@@ -1,5 +1,6 @@
 #include "TrialNagDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -115,7 +116,7 @@ void TrialNagDialog::paint(juce::Graphics& g) {
     g.fillRoundedRectangle(badgeRect, 4.0f);
     g.setColour(juce::Colour(0xffff9900));
     g.drawRoundedRectangle(badgeRect, 4.0f, 1.0f);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     g.drawText(i18n::t("trial.badge"), badgeRect, juce::Justification::centred, false);
 
     // App Main Title
@@ -125,7 +126,7 @@ void TrialNagDialog::paint(juce::Graphics& g) {
 
     // Subtitle / License notice
     auto subRow = inner.removeFromTop(20.0f);
-    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     g.setColour(juce::Colour(0xffffa826));
     g.drawText(i18n::t("trial.app_subtitulo"), subRow, juce::Justification::centredLeft, true);
 
@@ -141,7 +142,7 @@ void TrialNagDialog::paint(juce::Graphics& g) {
     auto cardInner = cardArea.reduced(18.0f, 16.0f);
 
     // Paragraph intro
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::plain)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::plain)));
     g.setColour(tk.textoPrimario);
     auto introText = i18n::t("trial.paragrafo_intro");
     g.drawFittedText(introText, cardInner.removeFromTop(60.0f).toNearestInt(), juce::Justification::topLeft, 4);
@@ -151,7 +152,7 @@ void TrialNagDialog::paint(juce::Graphics& g) {
     // Feature items (Checklist)
     auto drawItem = [&](const juce::String& text, juce::Colour col) {
         auto itemRow = cardInner.removeFromTop(26.0f);
-        g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::plain)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::plain)));
         g.setColour(col);
         g.drawText(text, itemRow, juce::Justification::centredLeft, true);
     };
@@ -163,7 +164,7 @@ void TrialNagDialog::paint(juce::Graphics& g) {
     cardInner.removeFromTop(12.0f);
 
     // Footer note inside card
-    g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::plain)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::plain)));
     g.setColour(tk.textoTerciario);
     g.drawFittedText(i18n::t("trial.rodape_apoio"), cardInner.toNearestInt(), juce::Justification::topLeft, 2);
 }
@@ -206,7 +207,7 @@ void TrialNagDialog::exibirModal(juce::Component* parent) {
         opt.componentToCentreAround = parent;
     }
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
 
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);

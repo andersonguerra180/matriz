@@ -50,7 +50,7 @@ public:
 
         auto totalInner = totalRect.reduced(16, 12);
         g.setColour(tk.acento);
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(i18n::t("analytics.cat_total"), totalInner.removeFromTop(18), juce::Justification::left);
 
         totalInner.removeFromTop(6);
@@ -60,14 +60,14 @@ public:
 
         // 2. Section Header for Collections
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         juce::String colTitle = juce::String(i18n::t("analytics.colecoes")).replace("{n}", juce::String(owner_.colecoesKpi_.size()));
         g.drawText(colTitle, 16, y, w, 22, juce::Justification::left);
         y += 30;
 
         if (owner_.colecoesKpi_.empty()) {
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(i18n::t("analytics.sem_colecoes"), 16, y, w, 30, juce::Justification::left);
             return;
         }
@@ -84,11 +84,11 @@ public:
             
             auto headerArea = inner.removeFromTop(18);
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
             g.drawText(juce::String(i18n::t("analytics.colecao_prefixo")) + kpi.name.toUpperCase(), headerArea.removeFromLeft(headerArea.getWidth() / 2), juce::Justification::left, true);
 
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(10.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(kpi.path, headerArea, juce::Justification::right, true);
 
             inner.removeFromTop(6);
@@ -112,7 +112,7 @@ public:
 
             auto inner = r.reduced(8, 4);
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(label, inner.removeFromTop(14), juce::Justification::left);
 
             g.setColour(color);
@@ -150,7 +150,7 @@ public:
     }
 
     static juce::Font fonte(bool negrito) {
-        return juce::Font(juce::FontOptions(11.5f, negrito ? juce::Font::bold : juce::Font::plain));
+        return juce::Font(juce::FontOptions(tema().tamanhoFontePequena, negrito ? juce::Font::bold : juce::Font::plain));
     }
 
     int getItemWidth() const override {
@@ -305,7 +305,8 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
                 auto stmt = colDb.prepare(
                     "SELECT i.id, IFNULL(a.caminho_relativo, IFNULL(a.caminho_absoluto_origem, '')), IFNULL(a.tamanho_bytes, 0) "
                     "FROM item i "
-                    "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1");
+                    "LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+                    "WHERE COALESCE(i.estado, '') != 'duplicata'");
 
                 while (stmt.step()) {
                     std::string pathStr = stmt.columnText(1);
@@ -338,9 +339,9 @@ void EstatisticasComponent::carregarMetricasCatalogo() {
 
                 auto stmtRev = colDb.prepare(
                     "SELECT COUNT(id) FROM item "
-                    "WHERE (ano IS NULL OR ano = 0) "
+                    "WHERE COALESCE(estado, '') != 'duplicata' AND ((ano IS NULL OR ano = 0) "
                     "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-                    "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
+                    "   OR (collection_type IS NULL OR TRIM(collection_type) = ''))");
                 if (stmtRev.step()) {
                     kpi.needsAttentionCount = static_cast<uint64_t>(stmtRev.columnInt(0));
                 }
@@ -396,7 +397,7 @@ void EstatisticasComponent::paint(juce::Graphics& g) {
         // Cabeçalho do Card FOLDERS
         auto headerExp = cardExplorerBounds_.reduced(12, 10).removeFromTop(22);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText("FOLDERS", headerExp, juce::Justification::centredLeft);
     }
 

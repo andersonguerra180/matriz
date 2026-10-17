@@ -8,6 +8,7 @@
 #include "../Model/ProjectLog.h"
 #include "../I18n/Strings.h"
 #include "Tokens.h"
+#include "Moldura.h"
 
 namespace matriz::ui {
 
@@ -940,7 +941,7 @@ void BackupSyncDialog::showSyncDialog(ProjetoAberto& projeto,
                     optReview.escapeKeyTriggersCloseButton = true;
                     optReview.useNativeTitleBar = true;
                     optReview.resizable = true;
-                    *reviewHolder = std::unique_ptr<juce::DialogWindow>(optReview.launchAsync());
+                    *reviewHolder = std::unique_ptr<juce::DialogWindow>(moldura::lancar(optReview));
                 });
             });
 
@@ -951,7 +952,7 @@ void BackupSyncDialog::showSyncDialog(ProjetoAberto& projeto,
         optScan.escapeKeyTriggersCloseButton = false;
         optScan.useNativeTitleBar = true;
         optScan.resizable = false;
-        *modalHolder = std::unique_ptr<juce::DialogWindow>(optScan.launchAsync());
+        *modalHolder = std::unique_ptr<juce::DialogWindow>(moldura::lancar(optScan));
     };
 
     auto selectComp = std::make_unique<SyncSelectComponent>(projeto, versoes, std::move(onComparar), std::move(onCancelar));
@@ -963,7 +964,7 @@ void BackupSyncDialog::showSyncDialog(ProjetoAberto& projeto,
     optSelect.escapeKeyTriggersCloseButton = true;
     optSelect.useNativeTitleBar = true;
     optSelect.resizable = false;
-    *janelaHolder = std::unique_ptr<juce::DialogWindow>(optSelect.launchAsync());
+    *janelaHolder = std::unique_ptr<juce::DialogWindow>(moldura::lancar(optSelect));
 }
 
 void BackupSyncDialog::showSyncWithDestinationDialog(ProjetoAberto& projeto,
@@ -1030,7 +1031,7 @@ void BackupSyncDialog::showSyncWithDestinationDialog(ProjetoAberto& projeto,
                 optReview.escapeKeyTriggersCloseButton = true;
                 optReview.useNativeTitleBar = true;
                 optReview.resizable = true;
-                *reviewHolder = std::unique_ptr<juce::DialogWindow>(optReview.launchAsync());
+                *reviewHolder = std::unique_ptr<juce::DialogWindow>(moldura::lancar(optReview));
             });
         });
 
@@ -1041,7 +1042,7 @@ void BackupSyncDialog::showSyncWithDestinationDialog(ProjetoAberto& projeto,
     optScan.escapeKeyTriggersCloseButton = false;
     optScan.useNativeTitleBar = true;
     optScan.resizable = false;
-    *modalHolder = std::unique_ptr<juce::DialogWindow>(optScan.launchAsync());
+    *modalHolder = std::unique_ptr<juce::DialogWindow>(moldura::lancar(optScan));
 }
 
 } // namespace matriz::ui

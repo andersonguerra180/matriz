@@ -3,6 +3,7 @@
 #include "ModalMitigacao.h"
 #include "PastaPickerWindow.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -48,7 +49,7 @@ public:
         const auto& tk = tema();
         if (isSelected()) g.fillAll(tk.acento.withAlpha(0.35f));
         g.setColour(no_ && no_->ehArquivo() ? tk.textoPrimario : tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.5f, no_ && no_->ehArquivo() ? juce::Font::plain : juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, no_ && no_->ehArquivo() ? juce::Font::plain : juce::Font::bold)));
         g.drawText(no_ ? no_->nome : juce::String(), 4, 0, w - 8, h, juce::Justification::centredLeft, true);
     }
 
@@ -98,7 +99,7 @@ MainEditPanel::MainEditPanel(ProjetoAberto& projeto) : projeto_(projeto) {
     addAndMakeVisible(*arvore_);
 
     infoArquivos_.setColour(juce::Label::textColourId, tk.textoSecundario);
-    infoArquivos_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    infoArquivos_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     addAndMakeVisible(infoArquivos_);
 
     btnRenomear_.setButtonText(texto("main_edit.renomear"));
@@ -472,7 +473,7 @@ void MainEditPanel::paintListBoxItem(int row, juce::Graphics& g, int w, int h, b
     const auto& i = quarentena_[static_cast<size_t>(row)];
     if (selecionada) g.fillAll(tk.acento.withAlpha(0.35f));
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(12.5f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     const juce::String motivo = matriz::i18n::t(i.motivo == "deletado" ? "main_edit.motivo_deletado" : "main_edit.motivo_substituido");
     g.drawText(i.caminhoOriginal, 6, 0, w - 330, h, juce::Justification::centredLeft, true);
     g.setColour(tk.textoSecundario);
@@ -492,7 +493,7 @@ void MainEditPanel::abrir(ProjetoAberto& projeto, std::function<void()> aoMudar)
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = true;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 void MainEditPanel::pedirNomeDoProjeto(ProjetoAberto& projeto, const juce::String& titulo, const juce::String& mensagem,

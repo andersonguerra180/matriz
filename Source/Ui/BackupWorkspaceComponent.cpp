@@ -15,6 +15,7 @@
 #include "../Sync/SyncEngine.h"
 #include <AssetsBinaryData.h>
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
 #include "../Catalogo/CatalogSiteExport.h"
@@ -126,7 +127,7 @@ public:
         opts.useNativeTitleBar = true;
         opts.resizable = true;
         opts.componentToCentreAround = centrarEm;
-        opts.launchAsync();
+        moldura::lancar(opts);
     }
 
 private:
@@ -192,8 +193,8 @@ public:
             resized();
         };
         btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
-        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
-        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);  // OPEN VISUAL EDITOR: secundário
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
         btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
         addChildComponent(btnEditorVisual_);
         addAndMakeVisible(comboEstrutura_);
@@ -420,8 +421,8 @@ public:
         comboMapa_.onChange = [this] { salvar(); };
         addChildComponent(comboMapa_);
         btnEditorVisual_.setButtonText(matriz::i18n::t("export.abrir_editor_visual"));
-        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.acento);
-        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditorVisual_.setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);  // OPEN VISUAL EDITOR: secundário
+        btnEditorVisual_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
         btnEditorVisual_.onClick = [this] { abrirEditorVisual(); };
         addChildComponent(btnEditorVisual_);
 
@@ -516,12 +517,12 @@ private:
     juce::TextButton btnFechar_;
 };
 
-// Pacote de collection: nome, folder map (só mapas do usuário) e pasta de destino.
+// Pacote de collection: nome, pasta de destino e embutir metadados. O folder map NÃO se escolhe aqui: é o do card C.
 class ConteudoPacote : public juce::Component {
 public:
-    using AoGerar = std::function<void(juce::File destino, juce::String nome, std::string mapaId, juce::String nomeMapa)>;
-    ConteudoPacote(const juce::String& nomePadrao, std::vector<std::pair<std::string, juce::String>> mapas, AoGerar aoGerar)
-        : aoGerar_(std::move(aoGerar)), mapas_(std::move(mapas)) {
+    using AoGerar = std::function<void(juce::File destino, juce::String nome, bool embutir)>;
+    ConteudoPacote(const juce::String& nomePadrao, const juce::String& nomeMapa, AoGerar aoGerar)
+        : aoGerar_(std::move(aoGerar)) {
         const auto& tk = tema();
         auto rotulo = [&](juce::Label& l, const juce::String& t) {
             l.setText(t, juce::dontSendNotification);
@@ -535,10 +536,9 @@ public:
         editNome_.setText(nomePadrao, juce::dontSendNotification);
         editNome_.onTextChange = [this] { atualizarBotao(); };
         addAndMakeVisible(editNome_);
-        rotulo(lblMapa_, matriz::i18n::t("export.pacote_mapa"));
-        for (size_t i = 0; i < mapas_.size(); ++i) comboMapa_.addItem(mapas_[i].second, static_cast<int>(i) + 1);
-        if (!mapas_.empty()) comboMapa_.setSelectedId(1, juce::dontSendNotification);
-        addAndMakeVisible(comboMapa_);
+        rotulo(lblMapa_, matriz::i18n::t("export.pacote_mapa_ativo").replace("{mapa}", nomeMapa));
+        toggleEmbutir_.setButtonText(matriz::i18n::t("export.pacote_embutir"));
+        addAndMakeVisible(toggleEmbutir_);
         rotulo(lblPasta_, matriz::i18n::t("export.pasta"));
         lblCaminho_.setColour(juce::Label::textColourId, tk.textoPrimario);
         lblCaminho_.setText(matriz::i18n::t("export.pasta_nenhuma"), juce::dontSendNotification);
@@ -566,7 +566,7 @@ public:
         editNome_.setBounds(r.removeFromTop(28));
         r.removeFromTop(10);
         lblMapa_.setBounds(r.removeFromTop(20));
-        comboMapa_.setBounds(r.removeFromTop(28));
+        toggleEmbutir_.setBounds(r.removeFromTop(28));
         r.removeFromTop(10);
         lblPasta_.setBounds(r.removeFromTop(20));
         auto linha = r.removeFromTop(28);
@@ -580,7 +580,7 @@ public:
 
 private:
     void atualizarBotao() {
-        btnGerar_.setEnabled(destino_ != juce::File() && editNome_.getText().trim().isNotEmpty() && !mapas_.empty());
+        btnGerar_.setEnabled(destino_ != juce::File() && editNome_.getText().trim().isNotEmpty());
     }
 
     void escolherPasta() {
@@ -596,14 +596,12 @@ private:
     }
 
     void confirmar() {
-        const int idx = comboMapa_.getSelectedId() - 1;
-        if (idx < 0 || idx >= static_cast<int>(mapas_.size())) return;
         auto cb = aoGerar_;
         auto destino = destino_;
         auto nome = editNome_.getText().trim();
-        auto mapa = mapas_[static_cast<size_t>(idx)];
+        const bool embutir = toggleEmbutir_.getToggleState();
         fechar();
-        if (cb) cb(destino, nome, mapa.first, mapa.second);
+        if (cb) cb(destino, nome, embutir);
     }
 
     void fechar() {
@@ -615,9 +613,8 @@ private:
     std::unique_ptr<juce::FileChooser> chooser_;
     juce::Label lblIntro_, lblNome_, lblMapa_, lblPasta_, lblCaminho_;
     juce::TextEditor editNome_;
-    juce::ComboBox comboMapa_;
+    juce::ToggleButton toggleEmbutir_;
     juce::TextButton btnEscolher_, btnGerar_, btnCancelar_;
-    std::vector<std::pair<std::string, juce::String>> mapas_;
 };
 
 class GoogleDriveIconButton : public juce::Button {
@@ -643,7 +640,7 @@ public:
                               juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
         } else {
             g.setColour(juce::Colour(0xff1a73e8));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText("GD", getLocalBounds(), juce::Justification::centred);
         }
     }
@@ -712,7 +709,7 @@ public:
 
         juce::Colour badgeCol = enabled ? letterColour_ : letterColour_.withAlpha(0.4f);
         g.setColour(badgeCol);
-        juce::Font letterFont(juce::FontOptions(11.0f, juce::Font::bold));
+        juce::Font letterFont(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
         g.setFont(letterFont);
         g.drawText(letter_, circleRect, juce::Justification::centred, false);
 
@@ -925,25 +922,25 @@ public:
                 g.setColour(c.valido ? tk.estadoQcOk : juce::Colour(0xfff97316));
                 g.fillRoundedRectangle(badge.toFloat(), 3.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                 g.drawText(c.valido ? "ONLINE" : "OFFLINE", badge, juce::Justification::centred);
                 r.removeFromLeft(64);
 
                 // Collection Name
                 g.setColour(tk.textoPrimario);
-                g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 g.drawText(c.nome, r.removeFromLeft(200), juce::Justification::centredLeft, true);
 
                 // Assets & Size
                 g.setColour(tk.textoSecundario);
-                g.setFont(juce::Font(juce::FontOptions(11.5f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 juce::String details = juce::String(c.totalAssets) + (isPt ? juce::String::fromUTF8(" itens  |  ") : " assets  |  ") +
                                        juce::File::descriptionOfSizeInBytes(c.totalBytes);
                 g.drawText(details, r.removeFromLeft(160), juce::Justification::centredLeft);
 
                 // Target Destination
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 juce::File raiz = matriz::model::normalizarParaRaizDestino(destFolder_);
                 juce::String target = "->  " + raiz.getChildFile("Media").getChildFile(c.nome).getFullPathName();
                 g.drawText(target, r, juce::Justification::centredLeft, true);
@@ -1175,15 +1172,18 @@ namespace {
 constexpr int kLarguraNumeroFluxo = 22;  // espaço reservado à esquerda do título de cada etapa
 
 // Estilo "contorno": cards e setas com o mesmo traço; a seta nasce do contorno do card (sem emenda) e é vazada.
-juce::Colour corContornoFluxo() { return tema().textoSecundario.withAlpha(0.6f); }
+juce::Colour corContornoFluxo() {
+    // Claro: contorno #BFB7AA (setas "embutidas" nos cards, preenchimento igual ao card); escuro: como antes.
+    return tema().fundo.getBrightness() > 0.5f ? juce::Colour(0xffbfb7aa) : tema().textoSecundario.withAlpha(0.6f);
+}
 constexpr float kTracoFluxo = 1.5f;
 
 void desenharCartaoFluxo(juce::Graphics& g, juce::Rectangle<int> cartao) {
     const auto& tk = tema();
     g.setColour(tk.painel);
-    g.fillRoundedRectangle(cartao.toFloat(), tk.raioMedio);
+    g.fillRoundedRectangle(cartao.toFloat(), tk.raioCartao);
     g.setColour(corContornoFluxo());
-    g.drawRoundedRectangle(cartao.toFloat().reduced(kTracoFluxo * 0.5f), tk.raioMedio, kTracoFluxo);
+    g.drawRoundedRectangle(cartao.toFloat().reduced(kTracoFluxo * 0.5f), tk.raioCartao, kTracoFluxo);
 }
 
 // Seta vazada horizontal saindo da borda direita de `cartao` (o contorno do card se abre na haste) até xPonta.
@@ -1256,8 +1256,8 @@ void desenharNumeroFluxo(juce::Graphics& g, juce::Rectangle<int> area, int numer
     const auto c = area.toFloat().withSizeKeepingCentre(18.0f, 18.0f);
     g.setColour(tema().acento);
     g.fillEllipse(c);
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setColour(tema().textoSobreAcento);
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     g.drawText(juce::String::charToString(static_cast<juce::juce_wchar>(L'A' + numero - 1)), c, juce::Justification::centred, false);
 }
 }  // namespace
@@ -1288,7 +1288,7 @@ public:
         auto area = getLocalBounds().reduced(12, 8);
         auto linha = area.removeFromTop(18);
         const bool concluido = estado_ == Estado::Concluido;
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.setColour(concluido ? juce::Colour(0xff22c55e) : (estado_ == Estado::Espera ? tk.textoTerciario : tk.acento));
         const int larguraTitulo = juce::GlyphArrangement::getStringWidthInt(g.getCurrentFont(), titulo_) + 12;
         g.drawText(titulo_, linha.removeFromLeft(larguraTitulo), juce::Justification::centredLeft);
@@ -1296,7 +1296,7 @@ public:
             g.setColour(tk.textoPrimario);
             g.drawText(juce::String(feito_) + " / " + juce::String(total_), linha.removeFromRight(110), juce::Justification::centredRight);
         }
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.setColour(tk.textoSecundario);
         g.drawText(concluido ? matriz::i18n::t("backup.etapa_concluida") : fase_, linha, juce::Justification::centredLeft, true);
 
@@ -1318,7 +1318,7 @@ public:
                 g.setColour(preenchimento);
                 g.fillRoundedRectangle(juce::Rectangle<float>(barra.getX(), barra.getY(), w, barra.getHeight()), 4.0f);
             }
-            g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.setColour(tk.textoPrimario);
             g.drawText(juce::String(static_cast<int>(std::round(juce::jlimit(0.0, 1.0, fracao_) * 100.0))) + "%", barra,
                        juce::Justification::centred, true);
@@ -1379,6 +1379,33 @@ public:
     void moved() override { owner_.repaint(); }
     const std::vector<juce::Rectangle<int>>& cartoes() const { return cartoes_; }
 
+    // Altura que a coluna precisa para mostrar TODOS os controles de todos os cards (nada é cortado: se a janela for
+    // menor, a coluna rola). Mesmas medidas do resized().
+    int alturaNecessaria() const {
+        const bool isCatalogMode = (owner_.projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
+        const int padCartaoY = 6, alturaControle = 32, alturaLinhaToggle = 24, alturaCabecalhoSecao = 22, alturaRotuloPrefixo = 20;
+        const int numCartoes = isCatalogMode ? 2 : 4;
+        const int gap = isCatalogMode ? 8 : 14;
+        int soma = 0;
+        if (isCatalogMode) {
+            soma += alturaCabecalhoSecao + 2 + 36 + 4 + alturaControle + 2 + 20 + padCartaoY * 2;
+            soma += alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + padCartaoY * 2;
+        } else {
+            const bool temColecoes = (owner_.comboColecoes_ && owner_.comboColecoes_->isVisible());
+            const bool temEditarSelecao = (owner_.btnEditarSelecao_ && owner_.btnEditarSelecao_->isVisible());
+            const bool temEditorHierarquia = (owner_.btnEditarHierarquia_ && owner_.btnEditarHierarquia_->isVisible());
+            const bool temEditCustomPrefixo = (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible());
+            const int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
+            soma += alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
+            soma += alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) +
+                    (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaRotuloPrefixo + alturaControle) +
+                    (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
+            soma += alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;  // OPTIONS: até 5 linhas (nenhuma é cortada)
+            soma += alturaCabecalhoSecao + 4 + 40 + padCartaoY * 2;                        // RUN
+        }
+        return soma + (numCartoes - 1) * gap;
+    }
+
     void resized() override {
         const auto& tk = tema();
         cartoes_.clear();
@@ -1390,14 +1417,15 @@ public:
         bool isCatalogMode = (owner_.projeto_.projeto().modo() == matriz::model::Modo::Catalogo);
 
         const int padCartaoX = 10;
-        const int padCartaoY = 8;
-        const int alturaControle = 26;
-        const int alturaLinhaToggle = 22;
-        const int alturaCabecalhoSecao = 20;
+        const int padCartaoY = 6;
+        const int alturaControle = 32;       // fonte 14 px: campos/combos/botões mais altos (antes 26)
+        const int alturaLinhaToggle = 24;    // (antes 22)
+        const int alturaCabecalhoSecao = 22;  // (antes 20)
+        const int alturaRotuloPrefixo = 20;   // "FILE NAMING / PREFIX": rótulo em linha própria, combo com a largura toda
         const int numCartoes = isCatalogMode ? 2 : 4;
         fluxo_ = !isCatalogMode;  // setas/números do fluxo só na Coleção (os 4 cards)
         numeros_.clear();
-        const int gapCartoes = fluxo_ ? 38 : 8;  // vão com espaço para a ponta de balão + seta entre os cards
+        const int gapCartoes = fluxo_ ? 14 : 8;  // vão curto: seta vazada encurtada (cabe os 4 cards sem rolar)
         const int espacosTotais = (numCartoes - 1) * gapCartoes;
         const int availableForCards = totalH - espacosTotais;
 
@@ -1427,7 +1455,7 @@ public:
             int extraH1 = (temColecoes || temEditarSelecao) ? (4 + alturaControle) : 0;
             // Coleção: SELECTION, FOLDER STRUCTURE, OPTIONS e RUN (o BACKUP VERSIONS fica no rodapé, card 6).
             int minH1 = alturaCabecalhoSecao + 2 + alturaControle + extraH1 + padCartaoY * 2;
-            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
+            int minH3 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 2) + 3 + alturaControle + (3 + alturaControle) + (temEditorHierarquia ? (3 + alturaControle) : 0) + (4 + alturaRotuloPrefixo + alturaControle) + (temEditCustomPrefixo ? (3 + alturaControle) : 0) + padCartaoY * 2;
             int minH4 = alturaCabecalhoSecao + 2 + (alturaLinhaToggle * 5) + padCartaoY * 2;
             const int hRun = alturaCabecalhoSecao + 4 + 40 + padCartaoY * 2;  // título + botão principal
             int minTotal = minH1 + minH3 + minH4 + hRun;
@@ -1440,7 +1468,7 @@ public:
             } else {
                 float ratio = static_cast<float>(std::max(1, availableForCards - hRun)) / static_cast<float>(std::max(1, minTotal - hRun));
                 card1H = std::max(46, static_cast<int>(minH1 * ratio));
-                card3H = std::max(80, static_cast<int>(minH3 * ratio));
+                card3H = minH3;  // nunca encolhe abaixo do conteúdo (antes o combo de prefixo era cortado)
                 card4H = std::max(60, availableForCards - hRun - card1H - card3H);
             }
         }
@@ -1494,12 +1522,8 @@ public:
             }
             if (owner_.comboModoPrefixo_) {
                 dentro.removeFromTop(4);
+                if (owner_.labelPrefixo_) owner_.labelPrefixo_->setBounds(dentro.removeFromTop(alturaRotuloPrefixo));
                 auto linhaPrefixo = dentro.removeFromTop(alturaControle);
-                if (owner_.labelPrefixo_) {
-                    int labelW = std::min(90, static_cast<int>(linhaPrefixo.getWidth() * 0.35f));
-                    owner_.labelPrefixo_->setBounds(linhaPrefixo.removeFromLeft(labelW));
-                    linhaPrefixo.removeFromLeft(4);
-                }
                 owner_.comboModoPrefixo_->setBounds(linhaPrefixo);
                 if (owner_.editPrefixo_ && owner_.editPrefixo_->isVisible()) {
                     dentro.removeFromTop(3);
@@ -1603,7 +1627,7 @@ public:
 
         // 1. Global Backup Summary (Top 4 KPI Cards)
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         g.drawText(isPt ? juce::String::fromUTF8("RESUMO GLOBAL DO BACKUP") : "GLOBAL BACKUP SUMMARY", 16, y, w, 22, juce::Justification::left);
         y += 28;
 
@@ -1623,7 +1647,7 @@ public:
 
             auto inner = r.reduced(10, 6);
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(title, inner.removeFromTop(14), juce::Justification::left);
 
             g.setColour(tk.textoPrimario);
@@ -1631,7 +1655,7 @@ public:
             g.drawText(val, inner.removeFromTop(20), juce::Justification::left);
 
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(9.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(sub, inner, juce::Justification::left);
 
             cx += cardW + 12;
@@ -1654,7 +1678,7 @@ public:
 
         // 2. Collections Overview Section Header
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         g.drawText(isPt ? juce::String::fromUTF8("STATUS DO BACKUP DAS COLEÇÕES") : "COLLECTIONS BACKUP STATUS", 16, y, w, 22, juce::Justification::left);
         y += 28;
 
@@ -1663,7 +1687,7 @@ public:
         g.setColour(tk.painelAlt);
         g.fillRoundedRectangle(headerRect.toFloat(), 4.0f);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
 
         int col1W = 260;
         int col2W = 120;
@@ -1681,7 +1705,7 @@ public:
 
         if (owner_.catalogBackupItems_.empty()) {
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(isPt ? juce::String::fromUTF8("Nenhuma coleção vinculada a este catálogo ainda.") : "No collections linked to this catalog yet.", 16, y, w, 30, juce::Justification::left);
             return;
         }
@@ -1698,17 +1722,17 @@ public:
             
             // Name
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText(item.name, rInner.removeFromLeft(col1W), juce::Justification::centredLeft, true);
 
             // Size
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(juce::File::descriptionOfSizeInBytes(item.sizeBytes), rInner.removeFromLeft(col2W), juce::Justification::centredLeft);
 
             // Assets
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             g.drawText(juce::String(item.totalAssets), rInner.removeFromLeft(col3W), juce::Justification::centredLeft);
 
             // Status Badge
@@ -1718,13 +1742,13 @@ public:
             g.setColour(badgeCol);
             g.fillRoundedRectangle(badge.toFloat(), 3.0f);
             g.setColour(tk.textoSobreAcento);
-            g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             juce::String statusTxt = (item.status == "READY") ? (isPt ? juce::String::fromUTF8("PRONTO") : "READY") : item.status;
             g.drawText(statusTxt, badge, juce::Justification::centred);
 
             // Path
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawText(item.path, rInner, juce::Justification::centredLeft, true);
 
             y += 40;
@@ -1740,11 +1764,11 @@ public:
 
         auto tInner = totalRow.reduced(12, 0);
         g.setColour(tk.acento);
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(isPt ? juce::String::fromUTF8("TOTAL DO CATÁLOGO") : "CATALOG TOTAL", tInner.removeFromLeft(col1W), juce::Justification::centredLeft);
 
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(juce::File::descriptionOfSizeInBytes(owner_.catalogBackupTotal_.sizeBytes), tInner.removeFromLeft(col2W), juce::Justification::centredLeft);
         g.drawText(juce::String(owner_.catalogBackupTotal_.totalAssets), tInner.removeFromLeft(col3W), juce::Justification::centredLeft);
 
@@ -1753,7 +1777,7 @@ public:
         g.setColour(tk.estadoQcOk);
         g.fillRoundedRectangle(badge.toFloat(), 3.0f);
         g.setColour(tk.textoSobreAcento);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(isPt ? juce::String::fromUTF8("PRONTO") : "READY", badge, juce::Justification::centred);
     }
 
@@ -1801,9 +1825,9 @@ void BackupWorkspaceComponent::carregarColecoesBackupCatalogo() {
                         matriz::db::Database colDb(dbFile.getFullPathName().toStdString());
                         auto stmtRev = colDb.prepare(
                             "SELECT COUNT(id) FROM item "
-                            "WHERE (ano IS NULL OR ano = 0) "
+                            "WHERE COALESCE(estado, '') != 'duplicata' AND ((ano IS NULL OR ano = 0) "
                             "   OR (source_media IS NULL OR TRIM(source_media) = '') "
-                            "   OR (collection_type IS NULL OR TRIM(collection_type) = '')");
+                            "   OR (collection_type IS NULL OR TRIM(collection_type) = ''))");
                         if (stmtRev.step()) {
                             item.needsAttention = static_cast<uint64_t>(stmtRev.columnInt(0));
                             if (item.needsAttention > 0 && item.status == "READY") {
@@ -1861,7 +1885,7 @@ void BackupWorkspaceComponent::carregarOpcoesContent() {
             "       (SELECT TRIM(valor) FROM item_campo WHERE item_id = i.id AND campo_id = 'collection_type' AND valor IS NOT NULL AND TRIM(valor) <> '' LIMIT 1), "
             "       '') AS ctype, COUNT(DISTINCT i.id) "
             "FROM item i "
-            "WHERE i.projeto_id = ? "
+            "WHERE i.projeto_id = ? AND COALESCE(i.estado, '') != 'duplicata' "
             "GROUP BY ctype");
         stmt.bind(1, matriz::db::Value::of(projeto_.projeto().projetoId()));
         while (stmt.step()) {
@@ -2184,8 +2208,8 @@ BackupWorkspaceComponent::BackupWorkspaceComponent(ProjetoAberto& projeto, const
 
     hierarquiaCustom_ = matriz::consolidacao::hierarquiaPadrao();
     btnEditarHierarquia_ = std::make_unique<juce::TextButton>(isPt ? juce::String::fromUTF8("ABRIR EDITOR VISUAL") : "OPEN VISUAL EDITOR");
-    btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
-    btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+    btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);  // OPEN VISUAL EDITOR: secundário
+    btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     btnEditarHierarquia_->setTooltip("Open visual interactive editor to design folder naming tree");
     btnEditarHierarquia_->onClick = [this] {
         new HierarquiaEditorWindow(hierarquiaCustom_, [this](const matriz::consolidacao::HierarquiaBackup& h) {
@@ -2707,8 +2731,8 @@ void BackupWorkspaceComponent::lookAndFeelChanged() {
     }
     if (btnEditarHierarquia_) {
         btnEditarHierarquia_->setButtonText(isPt ? juce::String::fromUTF8("ABRIR EDITOR VISUAL") : "OPEN VISUAL EDITOR");
-        btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.acento);
-        btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoSobreAcento);
+        btnEditarHierarquia_->setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);  // OPEN VISUAL EDITOR: secundário
+        btnEditarHierarquia_->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     }
     if (labelPrefixo_) {
         labelPrefixo_->setText(matriz::i18n::t("backup.prefixo_arquivos"), juce::dontSendNotification);
@@ -3106,7 +3130,7 @@ void BackupWorkspaceComponent::exportarCsv() {
         for (const auto& item : plano_.itens) ids.push_back(item.itemId);
         if (ids.empty()) {
             try {
-                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'");
                 while (stmt.step()) ids.push_back(stmt.columnText(0));
             } catch (...) {}
         }
@@ -3159,7 +3183,7 @@ void BackupWorkspaceComponent::exportarXls() {
         for (const auto& item : plano_.itens) ids.push_back(item.itemId);
         if (ids.empty()) {
             try {
-                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'");
                 while (stmt.step()) ids.push_back(stmt.columnText(0));
             } catch (...) {}
         }
@@ -3216,7 +3240,7 @@ std::vector<std::string> idsDoPlanoOuTodos(ProjetoAberto& projeto, const std::ve
     auto ids = idsDoPlano(itens);
     if (ids.empty()) {
         try {
-            auto stmt = projeto.projeto().registro().prepare("SELECT id FROM item");
+            auto stmt = projeto.projeto().registro().prepare("SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'");
             while (stmt.step()) ids.push_back(stmt.columnText(0));
         } catch (...) {}
     }
@@ -3281,7 +3305,7 @@ void BackupWorkspaceComponent::exportarDublinCore() {
         for (const auto& item : plano_.itens) ids.push_back(item.itemId);
         if (ids.empty()) {
             try {
-                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item");
+                auto stmt = projeto_.projeto().registro().prepare("SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'");
                 while (stmt.step()) ids.push_back(stmt.columnText(0));
             } catch (...) {}
         }
@@ -3389,18 +3413,28 @@ bool BackupWorkspaceComponent::exportarChecksumsPara(const juce::File& destFolde
 
 void BackupWorkspaceComponent::aplicarEstiloBotao(juce::TextButton& botao, bool primario) {
     const auto& tk = tema();
-    botao.setColour(juce::TextButton::buttonColourId, primario ? tk.acento : tk.painelAlt);
+    botao.setColour(juce::TextButton::buttonColourId, primario ? tk.acento : tk.botaoSecundario);
     botao.setColour(juce::TextButton::buttonOnColourId, tk.acento);
     botao.setColour(juce::TextButton::textColourOffId, primario ? tk.textoSobreAcento : tk.textoPrimario);
     botao.setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);
 }
 
+// Item 'duplicata' (já resolvido na aba Duplicates) nunca entra na seleção do backup/export: sai da contagem também.
 std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriterio() {
+    auto ids = obterItensSelecionadosPeloCriterioBruto();
+    try {
+        auto st = projeto_.projeto().registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
+        while (st.step()) ids.erase(st.columnText(0));
+    } catch (...) {}
+    return ids;
+}
+
+std::set<std::string> BackupWorkspaceComponent::obterItensSelecionadosPeloCriterioBruto() {
     std::set<std::string> out;
     auto& db = projeto_.projeto().registro();
 
     if (whatOption_ == WhatOption::Everything) {
-        auto stmt = db.prepare("SELECT id FROM item");
+        auto stmt = db.prepare("SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'");
         while (stmt.step()) out.insert(stmt.columnText(0));
     } else if (whatOption_ == WhatOption::Intake) {
         auto stmt = db.prepare("SELECT id FROM item WHERE criado_em >= datetime('now', '-24 hours')");
@@ -4929,7 +4963,7 @@ void BackupWorkspaceComponent::abrirAjustesBounce() {
     opts.useNativeTitleBar = true;
     opts.resizable = false;
     opts.componentToCentreAround = this;
-    opts.launchAsync();
+    moldura::lancar(opts);
 }
 
 // Bounce List: pergunta só a pasta de destino; estrutura e metadados vêm do que ficou salvo nos ajustes.
@@ -4973,7 +5007,7 @@ void BackupWorkspaceComponent::abrirExport(bool formatoBridge, bool bounce) {
     opts.useNativeTitleBar = true;
     opts.resizable = false;
     opts.componentToCentreAround = this;
-    opts.launchAsync();
+    moldura::lancar(opts);
 }
 
 void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
@@ -5022,7 +5056,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
                                                                     hierarquia, {}, modo, prefixo,
                                                                     /*autoResolver*/ true, false, false,
                                                                     /*paraExport*/ true, mapaId, false,
-                                                                    /*semPastaNaRaiz*/ bounce);
+                                                                    /*semPastaNaRaiz*/ true);
             for (const auto& id : plano.semPastaExcluidos) if (itens.count(id)) ++semPasta;
             std::vector<matriz::consolidacao::ItemPlanejado> doRecorte;
             for (auto& ip : plano.itens)
@@ -5088,7 +5122,7 @@ void BackupWorkspaceComponent::iniciarExport(const juce::File& destino,
 void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam,
                                                       int foraDoMain, int semPasta, const juce::String& semPastaKey, int duplicatas,
                                                       const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
-                                                      const juce::String& extras, bool cancelado) {
+                                                      const juce::String& extras, bool cancelado, const juce::String& nomeMapa) {
     const bool algoParaEntender = !falhas.empty() || !jaDiferentes.empty() || jaExistiam > 0 || duplicatas > 0 || foraDoMain > 0 ||
                                   semPasta > 0;
     if (!algoParaEntender) {
@@ -5147,7 +5181,7 @@ void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& titulo
     if (jaExistiam > 0) texto << "• " << matriz::i18n::t("export.res_ja").replace("{n}", juce::String(jaExistiam)) << "\n\n";
     if (duplicatas > 0) texto << "• " << matriz::i18n::t("export.res_dup").replace("{n}", juce::String(duplicatas)) << "\n\n";
     if (foraDoMain > 0) texto << "• " << matriz::i18n::t("export.fora_do_main").replace("{n}", juce::String(foraDoMain)) << "\n\n";
-    if (semPasta > 0) texto << "• " << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)) << "\n\n";
+    if (semPasta > 0) texto << "• " << matriz::i18n::t(semPastaKey).replace("{n}", juce::String(semPasta)).replace("{mapa}", nomeMapa) << "\n\n";
     if (extras.trim().isNotEmpty()) texto << "• " << extras.trim() << "\n\n";
 
     if (!jaDiferentes.empty()) {
@@ -5216,21 +5250,23 @@ void BackupWorkspaceComponent::mostrarResultadoExport(const juce::String& titulo
 void BackupWorkspaceComponent::abrirPacote() {
     if (saidaBloqueadaSemMain()) return;  // nada sai do projeto antes do MAIN
     if (exportando_) return;
-    std::vector<std::pair<std::string, juce::String>> mapas;
+    // O folder map do pacote é o do card C (FOLDER STRUCTURE) — nada de dropdown próprio.
+    const std::string mapaId = mapaParaBackup();
+    juce::String nomeMapa;
     for (auto& m : projeto_.listarFolderMaps())
-        if (!m.original) mapas.emplace_back(m.id, m.nome);
-    if (mapas.empty()) {
+        if (m.id == mapaId) nomeMapa = m.nome;
+    if (mapaId.empty() || nomeMapa.isEmpty()) {
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, matriz::i18n::t("export.pacote_titulo"),
-                                               matriz::i18n::t("export.pacote_sem_mapa"), {}, nullptr,
+                                               matriz::i18n::t("export.pacote_sem_mapa_c"), {}, nullptr,
                                                juce::ModalCallbackFunction::create([](int) {}));
         return;
     }
     const juce::String nomePadrao = juce::String::fromUTF8(projeto_.projeto().nome().c_str()) + " - " +
                                     juce::Time::getCurrentTime().formatted("%Y-%m-%d");
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
-    auto* conteudo = new ConteudoPacote(nomePadrao, std::move(mapas),
-                                        [safeThis](juce::File destino, juce::String nome, std::string mapaId, juce::String nomeMapa) {
-                                            if (safeThis != nullptr) safeThis->iniciarPacote(destino, nome, mapaId, nomeMapa);
+    auto* conteudo = new ConteudoPacote(nomePadrao, nomeMapa,
+                                        [safeThis, mapaId, nomeMapa](juce::File destino, juce::String nome, bool embutir) {
+                                            if (safeThis != nullptr) safeThis->iniciarPacote(destino, nome, mapaId, nomeMapa, embutir);
                                         });
     juce::DialogWindow::LaunchOptions opts;
     opts.content.setOwned(conteudo);
@@ -5240,11 +5276,11 @@ void BackupWorkspaceComponent::abrirPacote() {
     opts.useNativeTitleBar = true;
     opts.resizable = false;
     opts.componentToCentreAround = this;
-    opts.launchAsync();
+    moldura::lancar(opts);
 }
 
 void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const juce::String& nome, const std::string& mapaId,
-                                             const juce::String& nomeMapa) {
+                                             const juce::String& nomeMapa, bool embutir) {
     if (exportando_ || !destino.isDirectory() || mapaId.empty()) return;
     exportando_ = true;
     resized();
@@ -5257,7 +5293,7 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
     auto* projeto = &projeto_.projeto();
     juce::Component::SafePointer<BackupWorkspaceComponent> safeThis(this);
     // Tudo que toca banco/disco roda fora da message thread; o projeto só é lido.
-    poolExport_.addJob([safeThis, projeto, destino, nome, mapaId, nomeMapa, nomeColecao, itens, cancelado] {
+    poolExport_.addJob([safeThis, projeto, destino, nome, mapaId, nomeMapa, nomeColecao, itens, cancelado, embutir] {
         int duplicatas = 0;  // marcados que são duplicata: ficam de fora de propósito, o usuário precisa saber
         try {
             auto st = projeto->registro().prepare("SELECT id FROM item WHERE estado = 'duplicata'");
@@ -5274,11 +5310,11 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
                             juce::String(feito) + " / " + juce::String(total));
                     });
                     return !cancelado->load();
-                });
+                }, embutir);
         } catch (const std::exception& e) {
             r.falhas.push_back(e.what());
         }
-        juce::MessageManager::callAsync([safeThis, r, duplicatas] {
+        juce::MessageManager::callAsync([safeThis, r, duplicatas, nomeMapa] {
             ProgressoGlobal::obterInstancia().concluirTarefa("export");
             if (safeThis == nullptr) return;
             safeThis->exportando_ = false;
@@ -5288,8 +5324,8 @@ void BackupWorkspaceComponent::iniciarPacote(const juce::File& destino, const ju
                                                         : matriz::i18n::t("export.pacote_fim")
                                                               .replace("{n}", juce::String(r.copiados))
                                                               .replace("{pasta}", r.pasta.getFullPathName());
-            safeThis->mostrarResultadoExport("export.pacote_titulo", resumo, 0, r.foraDoMain, r.semPasta, "export.mapa_sem_pasta_aviso",
-                                             duplicatas, r.falhas, {}, juce::String(), false);
+            safeThis->mostrarResultadoExport("export.pacote_titulo", resumo, 0, r.foraDoMain, r.semPasta, "export.pacote_sem_pasta_aviso",
+                                             duplicatas, r.falhas, {}, juce::String(), false, nomeMapa);
         });
     });
 }
@@ -5950,7 +5986,7 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
         g.fillRoundedRectangle(papelArea.toFloat(), 4.0f);
         g.setColour(juce::Colours::white);
         g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.2f);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(matriz::i18n::t("backup.papel_main"), papelArea, juce::Justification::centred, true);
     } else {
         g.setColour(tk.painel.withAlpha(0.6f));
@@ -5958,7 +5994,7 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
         g.setColour(tk.borda);
         g.drawRoundedRectangle(papelArea.toFloat().reduced(0.5f), 4.0f, 1.0f);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(matriz::i18n::t("backup.papel_clone"), papelArea, juce::Justification::centred, true);
     }
     curX += tagW + 10;
@@ -5979,7 +6015,7 @@ void BackupWorkspaceComponent::paintListBoxItem(int rowNumber, juce::Graphics& g
     g.setColour(corStatus);
     g.fillRoundedRectangle(statusArea.toFloat(), 4.0f);
     g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     g.drawText(textoStatus, statusArea, juce::Justification::centred, true);
 
     // Cloud icon on right side before status area, if cloud destination
@@ -6491,17 +6527,25 @@ void BackupWorkspaceComponent::resized() {
         // ---- Rodapé em dois cards, nas mesmas colunas do corpo. À direita, na largura da coluna de configuração:
         // Coleção = (6) BACKUP VERSIONS (o RUN é o card 5, na coluna); Catálogo = RUN. À esquerda o (7) OUTPUTS,
         // na largura do ASSETS, com PUBLISH · dropdown [×] · EXPORT. Seta do lado esquerdo do (6) para o (7).
-        faixaRodape_ = area.removeFromBottom(fluxo ? 200 : 96);
+        faixaRodape_ = area.removeFromBottom(fluxo ? 188 : 96);
         auto linha = faixaRodape_.reduced(tk.espacoGrande, tk.espacoMedio);
         const int larguraConfigRodape = std::min(420, std::max(340, static_cast<int>(linha.getWidth() * 0.32f)));
         cartaoAcao_ = linha.removeFromRight(larguraConfigRodape);
         linha.removeFromRight(fluxo ? 52 : 28);
         cartaoBounce_ = {};
-        if (!isCatalogMode) {  // BOUNCE LIST: card próprio, à esquerda, abaixo do ASSETS
-            cartaoBounce_ = linha.removeFromLeft(juce::jlimit(250, 340, static_cast<int>(linha.getWidth() * 0.34f)));
-            linha.removeFromLeft(tk.espacoGrande);
+        if (!isCatalogMode) {
+            // OUTPUTS FROM THE MAIN ocupa só a largura dos seus controles (PUBLISH 175 · dropdown 230 · [×] 26 · EXPORT 100
+            // e os vãos); a sobra vai para o card BOUNCE LIST, à esquerda, abaixo do ASSETS.
+            const int larguraControlesSaidas = 175 + tk.espacoPainel + 230 + tk.espacoPequeno + 26 + tk.espacoPainel + 100;
+            const int larguraSaidas = larguraControlesSaidas + 2 * (tk.espacoPainel + 2);
+            const int minBounce = 250;
+            const int larguraFinal = std::min(larguraSaidas, std::max(0, linha.getWidth() - minBounce - tk.espacoGrande));
+            cartaoSaidas_ = linha.removeFromRight(larguraFinal);
+            linha.removeFromRight(tk.espacoGrande);
+            cartaoBounce_ = linha;
+        } else {
+            cartaoSaidas_ = linha;
         }
-        cartaoSaidas_ = linha;
 
         if (btnVerErros_) btnVerErros_->setVisible(false);
         if (btnOpenCatalog_) btnOpenCatalog_->setVisible(false);
@@ -6664,7 +6708,6 @@ void BackupWorkspaceComponent::resized() {
 
     // ---- Config: ASSETS (prévia) à esquerda ocupando o resto; coluna de configuração à direita, mesma largura ----
     auto corpo = area.reduced(tk.espacoGrande, tk.espacoGrande);
-    corpo.removeFromBottom(tk.espacoGrande + 8);  // vão até o card inferior (ponta de balão + seta até o botão)
 
     const int larguraConfig = std::min(420, std::max(340, static_cast<int>(corpo.getWidth() * 0.32f)));
     auto colunaConfig = corpo.removeFromRight(larguraConfig);
@@ -6673,6 +6716,7 @@ void BackupWorkspaceComponent::resized() {
 
     if (configViewport_ && configContainer_) {
         configViewport_->setBounds(colunaConfig);
+        // REGRA: a coluna NUNCA rola. Os vãos entre os cards (comprimento do corpo das setas) é que cedem espaço.
         configViewport_->setScrollBarsShown(false, false);
         configContainer_->setBounds(0, 0, colunaConfig.getWidth(), colunaConfig.getHeight());
         configContainer_->resized();

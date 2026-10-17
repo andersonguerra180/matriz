@@ -54,11 +54,11 @@ struct Tema {
     juce::Colour campoSugestaoIaFundo;
 
     // Tipografia (Padronização Estilo Adobe Pro UI)
-    float tamanhoFonteTitulo;      // 18.0f - Workspace Header (ex.: INTAKE, CATALOG, TREEMAP, BACKUP, DISK)
-    float tamanhoFonteSubtitulo;   // 14.0f - Section / Group header / Dialog Title
-    float tamanhoFonteCorpo;       // 12.5f - Standard body, buttons, table items, inputs, combos
-    float tamanhoFontePequena;     // 11.0f - Captions, secondary paths, metadata labels, timecodes
-    float tamanhoFonteMicro;       // 9.5f  - Status tags, pills (ONLINE/OFFLINE, QC OK, EXT)
+    float tamanhoFonteTitulo;      // 19.0f - Workspace Header (ex.: INTAKE, CATALOG, TREEMAP, BACKUP, DISK)
+    float tamanhoFonteSubtitulo;   // 15.0f - Section / Group header / Dialog Title
+    float tamanhoFonteCorpo;       // 14.0f - Standard body, buttons, table items, inputs, combos
+    float tamanhoFontePequena;     // 12.5f - Captions, secondary paths, metadata labels, timecodes
+    float tamanhoFonteMicro;       // 12.0f - Status tags, pills (ONLINE/OFFLINE, QC OK, EXT)
 
     // Espaçamento
     int espacoPequeno;
@@ -78,6 +78,8 @@ struct Tema {
     juce::Colour canvasMapa;        // fundo do Folder Map
     juce::Colour pontilhadoMapa;    // pontos do Folder Map
     juce::Colour campoFundo;        // fundo de campos de texto / combos
+    juce::Colour botaoSecundario;   // pílula secundária (claro: #E4DED4)
+    juce::Colour textoDesativado;   // texto de botão desativado (claro: #A39C92)
     juce::Colour campoTexto;        // texto dentro de campos
     juce::Colour campoSomenteLeitura; // campos automáticos (cinza)
     juce::Colour sombra;            // sombra de cartões
@@ -157,11 +159,11 @@ inline const Tema& temaBkrDark() {
         x.campoSugestaoIa = juce::Colour(0xfffbbf24);
         x.campoSugestaoIaFundo = juce::Colour(0x33fbbf24);
 
-        x.tamanhoFonteTitulo = 18.0f;
-        x.tamanhoFonteSubtitulo = 14.0f;
-        x.tamanhoFonteCorpo = 12.5f;
-        x.tamanhoFontePequena = 11.0f;
-        x.tamanhoFonteMicro = 9.5f;
+        x.tamanhoFonteTitulo = 19.0f;
+        x.tamanhoFonteSubtitulo = 15.0f;
+        x.tamanhoFonteCorpo = 14.0f;
+        x.tamanhoFontePequena = 12.5f;
+        x.tamanhoFonteMicro = 12.0f;
 
         x.espacoPequeno = 4;
         x.espacoMedio = 8;
@@ -178,6 +180,8 @@ inline const Tema& temaBkrDark() {
         x.canvasMapa = x.fundo.darker(0.25f);
         x.pontilhadoMapa = x.borda.withAlpha(0.35f);
         x.campoFundo = juce::Colour(0xff0f1218);
+        x.botaoSecundario = x.painelAlt;
+        x.textoDesativado = x.textoTerciario;
         x.campoTexto = juce::Colour(0xfff1f5f9);
         x.campoSomenteLeitura = x.painelAlt.darker(0.2f);
         x.sombra = juce::Colour(0x66000000);
@@ -210,10 +214,10 @@ inline const Tema& temaBkrDark() {
         x.larguraFiltros = 290;
         x.larguraMetadados = 320;
         x.fonteTituloTela = 26.0f;
-        x.fonteSubtituloTela = 13.0f;
-        x.fonteRotuloSecao = 11.0f;
+        x.fonteSubtituloTela = 14.0f;
+        x.fonteRotuloSecao = 12.0f;
         x.fonteTituloHome = 40.0f;
-        x.fonteKpi = 30.0f;
+        x.fonteKpi = 26.0f;
         x.fonteNomeNo = 18.0f;
         x.fonteCorpoGrande = 15.0f;
         return x;
@@ -228,25 +232,25 @@ inline const Tema& temaBkrDark() {
 inline const Tema& temaBkrLight() {
     static const Tema t = [] {
         Tema x;
-        x.fundo    = juce::Colour(0xffede8df);   // Creme base — tom exato da splash screen
-        x.painel   = juce::Colour(0xfff5f2ec);   // Creme levemente claro — cards/painéis
-        x.painelAlt = juce::Colour(0xffd8d2c7);  // Creme-cinza médio — inputs/controles/tags
-        x.borda    = juce::Colour(0xffb8b2a7);   // Cinza quente médio — bordas visíveis
+        x.fundo    = juce::Colour(0xffece7e0);   // Fundo da aplicação (#ECE7E0)
+        x.painel   = juce::Colour(0xfff6f2eb);   // Janela / cartão (#F6F2EB)
+        x.painelAlt = juce::Colour(0xffede8e0);  // Poço (#EDE8E0) — blocos internos, chips
+        x.borda    = juce::Colour(0xffc9c1b3);   // Linha / borda (base #D8D1C6, escurecida p/ não sumir)
         x.bordaFoco = juce::Colour(0xff5a5550);  // Cinza quente escuro — anel de foco
 
-        x.textoPrimario   = juce::Colour(0xff1a1815); // Preto quente (não azulado)
-        x.textoSecundario = juce::Colour(0xff3d3a35); // Cinza escuro quente
-        x.textoTerciario  = juce::Colour(0xff6b6560); // Cinza médio quente
+        x.textoPrimario   = juce::Colour(0xff1b1917); // Tinta (#1B1917)
+        x.textoSecundario = juce::Colour(0xff4f4a44); // Texto secundário (#4F4A44, contraste AA)
+        x.textoTerciario  = juce::Colour(0xff5a554e); // Texto terciário (legendas) — AA sobre creme/bege
         x.textoSobreAcento = juce::Colour(0xfff5f2ec); // Creme claro sobre botão escuro
 
-        x.acento      = juce::Colour(0xff4a4540); // Cinza quente muito escuro — ações primárias
-        x.acentoHover = juce::Colour(0xff2d2a26); // Quase-preto quente — hover
-        x.perigo      = juce::Colour(0xffdc2626); // Vermelho — mantido (semântico)
+        x.acento      = juce::Colour(0xff4a4440); // Grafite (#4A4440) — ação principal
+        x.acentoHover = juce::Colour(0xff35302c); // Grafite escuro — hover
+        x.perigo      = juce::Colour(0xffb8221a); // Vermelho (#B8221A) — só ações que apagam/rejeitam
         x.alerta      = juce::Colour(0xffd97706); // Âmbar — mantido (semântico)
 
         x.estadoNaoDigitalizado = juce::Colour(0xff6b6560); // Cinza quente médio
         x.estadoCapturado       = juce::Colour(0xff4a4540); // Cinza quente escuro (acento)
-        x.estadoQcOk            = juce::Colour(0xff16a34a); // Verde — mantido (semântico)
+        x.estadoQcOk            = juce::Colour(0xff2a6b45); // Verde — mantido (semântico)
         x.estadoAlerta          = juce::Colour(0xffd97706); // Âmbar — mantido (semântico)
         x.haloSincronizado      = juce::Colour(0xff0d9488); // Teal — mantido (semântico)
 
@@ -256,11 +260,11 @@ inline const Tema& temaBkrLight() {
         x.campoSugestaoIa      = juce::Colour(0xffb45309); // Âmbar — mantido
         x.campoSugestaoIaFundo = juce::Colour(0x22f59e0b); // Fundo âmbar tênue — mantido
 
-        x.tamanhoFonteTitulo    = 18.0f;
-        x.tamanhoFonteSubtitulo = 14.0f;
-        x.tamanhoFonteCorpo     = 12.5f;
-        x.tamanhoFontePequena   = 11.0f;
-        x.tamanhoFonteMicro     = 9.5f;
+        x.tamanhoFonteTitulo    = 19.0f;
+        x.tamanhoFonteSubtitulo = 15.0f;
+        x.tamanhoFonteCorpo     = 14.0f;
+        x.tamanhoFontePequena   = 12.5f;
+        x.tamanhoFonteMicro     = 12.0f;
 
         x.espacoPequeno = 4;
         x.espacoMedio   = 8;
@@ -273,18 +277,20 @@ inline const Tema& temaBkrLight() {
         // Redesenho tablet — BKR Light
         x.cartao = x.painel;
         x.cartaoDestaque = x.painel;
-        x.linhaSuave = x.borda.withAlpha(0.60f);
+        x.linhaSuave = x.borda;
         x.canvasMapa = juce::Colour(0xffe4dfd5);
         x.pontilhadoMapa = x.borda.withAlpha(0.55f);
-        x.campoFundo = juce::Colour(0xffffffff);
+        x.campoFundo = juce::Colour(0xfffaf8f4);   // Campo (#FAF8F4)
+        x.botaoSecundario = juce::Colour(0xffe4ded4);
+        x.textoDesativado = juce::Colour(0xff9c958b);
         x.campoTexto = x.textoPrimario;
         x.campoSomenteLeitura = juce::Colour(0xffe9e5dd);
         x.sombra = juce::Colour(0x14000000);
         x.scrim = juce::Colour(0x8c1a1815);
         x.perigoSuave = juce::Colour(0xfffbe4e1);
-        x.secaoBackup = juce::Colour(0xff38bdf8);
-        x.secaoExplorer = juce::Colour(0xff22c55e);
-        x.secaoStats = juce::Colour(0xfff59e0b);
+        x.secaoBackup = juce::Colour(0xff2b6cb0);
+        x.secaoExplorer = juce::Colour(0xff2e8b57);
+        x.secaoStats = juce::Colour(0xffc77a12);
         x.tipoAudio = juce::Colour(0xffd97706);
         x.tipoVideo = juce::Colour(0xff9333ea);
         x.tipoImagem = juce::Colour(0xff16a34a);
@@ -294,10 +300,10 @@ inline const Tema& temaBkrLight() {
         x.tipoConflito = juce::Colour(0xffdc2626);
         x.tipoZip = juce::Colour(0xff0284c7);
 
-        x.raioCartao = 20.0f;
-        x.raioFolha = 32.0f;
+        x.raioCartao = 14.0f;
+        x.raioFolha = 18.0f;
         x.raioCanvas = 28.0f;
-        x.raioCampo = 12.0f;
+        x.raioCampo = 10.0f;
         x.alturaBotao = 44;
         x.alturaBotaoPrimario = 48;
         x.alturaChip = 30;
@@ -309,10 +315,10 @@ inline const Tema& temaBkrLight() {
         x.larguraFiltros = 290;
         x.larguraMetadados = 320;
         x.fonteTituloTela = 26.0f;
-        x.fonteSubtituloTela = 13.0f;
-        x.fonteRotuloSecao = 11.0f;
+        x.fonteSubtituloTela = 14.0f;
+        x.fonteRotuloSecao = 12.0f;
         x.fonteTituloHome = 40.0f;
-        x.fonteKpi = 30.0f;
+        x.fonteKpi = 26.0f;
         x.fonteNomeNo = 18.0f;
         x.fonteCorpoGrande = 15.0f;
         return x;

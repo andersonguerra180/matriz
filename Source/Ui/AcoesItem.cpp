@@ -7,6 +7,7 @@
 #include "../I18n/Strings.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "ModalMitigacao.h"
 #include "EventBus.h"
 #include "ProgressoGlobal.h"
@@ -236,7 +237,7 @@ public:
         lista_.setRowHeight(22);
         addAndMakeVisible(lista_);
         lblContagem_.setColour(juce::Label::textColourId, tk.textoTerciario);
-        lblContagem_.setFont(juce::Font(juce::FontOptions(11.0f)));
+        lblContagem_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         addAndMakeVisible(lblContagem_);
         btnUsar_.setButtonText(matriz::i18n::t("acoes.capa_usar"));
         btnUsar_.setColour(juce::TextButton::buttonColourId, tk.acento);
@@ -259,7 +260,7 @@ public:
         opt.escapeKeyTriggersCloseButton = true;
         opt.useNativeTitleBar = true;
         opt.resizable = false;
-        opt.launchAsync();
+        moldura::lancar(opt);
     }
 
     void paint(juce::Graphics& g) override {
@@ -297,7 +298,7 @@ private:
         const auto& tk = tema();
         if (selecionada) g.fillAll(tk.acento.withAlpha(0.35f));
         const auto& r = resultados_[static_cast<size_t>(row)];
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.setColour(tk.textoTerciario);
         g.drawText(juce::String::fromUTF8(r.codigo.c_str()), 6, 0, 78, h, juce::Justification::centredLeft, true);
         g.setColour(tk.textoPrimario);

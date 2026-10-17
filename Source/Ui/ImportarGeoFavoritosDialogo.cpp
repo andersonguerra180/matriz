@@ -52,11 +52,11 @@ public:
         }
         auto texto = juce::Rectangle<int>(32, 0, w - 40, h);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         const auto nome = juce::String::fromUTF8(favs_[static_cast<size_t>(row)].nome.c_str());
         g.drawText(nome, texto.removeFromLeft(juce::jmax(120, (w - 40) / 2)), juce::Justification::centredLeft, true);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(coordenadas(favs_[static_cast<size_t>(row)]), texto, juce::Justification::centredLeft, true);
     }
     void listBoxItemClicked(int row, const juce::MouseEvent&) override {
@@ -86,7 +86,7 @@ public:
         const bool pt = ptBr();
         titulo_.setText((pt ? juce::String::fromUTF8("Favoritos de GEO LOCATION em: ") : juce::String("GEO LOCATION favorites in: ")) + origem,
                         juce::dontSendNotification);
-        titulo_.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        titulo_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         titulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
         addAndMakeVisible(titulo_);
         addAndMakeVisible(lista_);

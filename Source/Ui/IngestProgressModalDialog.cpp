@@ -1,5 +1,6 @@
 #include "IngestProgressModalDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -24,10 +25,10 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     lblHeader_.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblHeader_.setJustificationType(juce::Justification::centred);
-    addAndMakeVisible(lblHeader_);
+    // O título é pintado no cabeçalho da moldura (paint()); o rótulo só guarda o texto.
 
     lblFileName_.setText(isPt ? juce::String::fromUTF8("Preparando arquivos...") : "Preparing files...", juce::dontSendNotification);
-    lblFileName_.setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblFileName_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblFileName_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblFileName_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblFileName_);
@@ -43,14 +44,13 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
         lblEta_.setText(isPt ? (juce::String::fromUTF8("Processando ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos — calculando tempo estimado..."))
                              : ("Processing " + juce::String(totalFiles_) + juce::String::fromUTF8(" files — calculating estimated time...")), juce::dontSendNotification);
     }
-    lblEta_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+    lblEta_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     lblEta_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblEta_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblEta_);
 
     btnCancel_.setButtonText(isPt ? juce::String::fromUTF8("CANCELAR") : "CANCEL");
-    btnCancel_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffdc2626)); // Red
-    btnCancel_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    moldura::estilizarBotao(btnCancel_, false);  // secundário: cancelar um ingest não apaga nada
     btnCancel_.onClick = [this] {
         if (mode_ == Mode::Scanning) {
             if (!isCancelling_.exchange(true)) {
@@ -81,8 +81,7 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     // Ingesting normal, ao lado do Cancel. Some fora desse modo (não faz
     // sentido durante Scanning/Finalizing/confirmação de cancelamento).
     btnSkip_.setButtonText(isPt ? juce::String::fromUTF8("PULAR ESTE ARQUIVO") : "SKIP THIS FILE");
-    btnSkip_.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-    btnSkip_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    moldura::estilizarBotao(btnSkip_, false);
     btnSkip_.setTooltip(isPt ? juce::String::fromUTF8("Desiste do(s) arquivo(s) em andamento agora — o lote continua com o resto. O nome vai pro log do projeto.")
                               : juce::String::fromUTF8("Gives up on whichever file(s) are in flight right now — the batch continues with the rest. The name goes to the project log."));
     btnSkip_.onClick = [this] {
@@ -91,8 +90,7 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     addChildComponent(btnSkip_);
 
     // Confirmation buttons
-    btnKeep_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff16a34a)); // Green
-    btnKeep_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    moldura::estilizarBotao(btnKeep_, true);
     btnKeep_.onClick = [this] {
         confirmingCancel_ = false;
         if (!isCancelling_.exchange(true)) {
@@ -102,8 +100,7 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     };
     addChildComponent(btnKeep_);
 
-    btnDiscard_.setColour(juce::TextButton::buttonColourId, juce::Colour(0xffdc2626)); // Red
-    btnDiscard_.setColour(juce::TextButton::textColourOffId, juce::Colours::white);
+    moldura::estilizarBotao(btnDiscard_, true, true);  // vermelho: descarta o que já foi copiado
     btnDiscard_.onClick = [this] {
         confirmingCancel_ = false;
         if (!isCancelling_.exchange(true)) {
@@ -113,14 +110,13 @@ IngestProgressModalDialog::IngestProgressModalDialog(int totalFiles,
     };
     addChildComponent(btnDiscard_);
 
-    btnResume_.setColour(juce::TextButton::buttonColourId, tk.painel);
-    btnResume_.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+    moldura::estilizarBotao(btnResume_, false);
     btnResume_.onClick = [this] {
         hideCancelConfirmation();
     };
     addChildComponent(btnResume_);
 
-    setSize(600, 270);
+    setSize(moldura::tamanhoComMargem(600), moldura::tamanhoComMargem(moldura::kAlturaCabecalho + 150 + moldura::kAlturaRodape));
     setWantsKeyboardFocus(true);
     startTimer(100); // 10 Hz refresh
 }
@@ -135,17 +131,15 @@ IngestProgressModalDialog::~IngestProgressModalDialog() {
 }
 
 void IngestProgressModalDialog::paint(juce::Graphics& g) {
-    const auto& tk = tema();
-    g.fillAll(tk.painel);
-    g.setColour(tk.borda);
-    g.drawRect(getLocalBounds(), 2);
+    // Moldura do sistema de janelas (Moldura.h). Sem X: o cancelamento tem seu fluxo próprio no rodapé.
+    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), true);
+    moldura::desenhar(g, geo, moldura::Secao::Auto, matriz::i18n::t("moldura.trilha.ingest"), lblHeader_.getText(), true,
+                      -1.0f, {}, false);
 }
 
 void IngestProgressModalDialog::resized() {
-    auto r = getLocalBounds().reduced(24);
-
-    lblHeader_.setBounds(r.removeFromTop(28));
-    r.removeFromTop(8);
+    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), true);
+    auto r = geo.corpo.reduced(moldura::kMargemCorpo);
 
     lblFileName_.setBounds(r.removeFromTop(20));
     r.removeFromTop(16);
@@ -154,26 +148,22 @@ void IngestProgressModalDialog::resized() {
     r.removeFromTop(12);
 
     lblEta_.setBounds(r.removeFromTop(28));
-    r.removeFromTop(16);
 
-    auto bottom = r.removeFromBottom(36);
+    // Rodapé: botões à direita, secundário(s) antes, principal por último.
+    auto bottom = geo.rodape.reduced(moldura::kMargemCorpo, 0).withSizeKeepingCentre(geo.rodape.getWidth() - 2 * moldura::kMargemCorpo, 40);
+    const int gap = 10;
     if (confirmingCancel_) {
-        int gap = 10;
-        int btnW = (bottom.getWidth() - 2 * gap) / 3;
-        btnKeep_.setBounds(bottom.removeFromLeft(btnW));
-        bottom.removeFromLeft(gap);
-        btnDiscard_.setBounds(bottom.removeFromLeft(btnW));
-        bottom.removeFromLeft(gap);
-        btnResume_.setBounds(bottom);
+        btnKeep_.setBounds(bottom.removeFromRight(190));
+        bottom.removeFromRight(gap);
+        btnDiscard_.setBounds(bottom.removeFromRight(190));
+        bottom.removeFromRight(gap);
+        btnResume_.setBounds(bottom.removeFromRight(150));
     } else if (btnSkip_.isVisible()) {
-        int gap = 10;
-        int totalW = 160 + gap + 200;
-        auto area = bottom.withSizeKeepingCentre(totalW, 36);
-        btnCancel_.setBounds(area.removeFromLeft(160));
-        area.removeFromLeft(gap);
-        btnSkip_.setBounds(area);
+        btnCancel_.setBounds(bottom.removeFromRight(130));
+        bottom.removeFromRight(gap);
+        btnSkip_.setBounds(bottom.removeFromRight(200));
     } else {
-        btnCancel_.setBounds(bottom.withSizeKeepingCentre(160, 36));
+        btnCancel_.setBounds(bottom.removeFromRight(130));
     }
 }
 
@@ -219,6 +209,7 @@ void IngestProgressModalDialog::startIngestMode(int totalFilesToIngest, int skip
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     const auto& tk = tema();
     lblHeader_.setText(isPt ? juce::String::fromUTF8("INGERINDO ARQUIVOS") : "INGESTING FILES", juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
 
     if (totalSkipped_ > 0) {
@@ -249,6 +240,7 @@ void IngestProgressModalDialog::finishWithNotice(const juce::String& title, cons
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
     lblHeader_.setText(title, juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, tema().acento);
     lblFileName_.setText("", juce::dontSendNotification);
     lblEta_.setText(message, juce::dontSendNotification);
@@ -277,6 +269,7 @@ void IngestProgressModalDialog::showCancelConfirmation() {
     int done = completedFiles_.load();
 
     lblHeader_.setText(isPt ? juce::String::fromUTF8("CANCELAR INGESTÃO?") : "CANCEL INGESTION?", juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, juce::Colour(0xfff97316));
 
     lblEta_.setText(isPt ? (juce::String(done) + juce::String::fromUTF8(" arquivo(s) já foram carregados para o Intake.\nO que você deseja fazer?"))
@@ -308,6 +301,7 @@ void IngestProgressModalDialog::hideCancelConfirmation() {
     btnSkip_.setVisible(onSkipCurrent_ != nullptr);
 
     lblHeader_.setText(isPt ? juce::String::fromUTF8("INGERINDO ARQUIVOS") : "INGESTING FILES", juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, tema().textoPrimario);
 
     resized();
@@ -332,6 +326,7 @@ void IngestProgressModalDialog::setCancelling(bool mantendoArquivos) {
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     isCancelling_.store(true);
     lblHeader_.setText(isPt ? juce::String::fromUTF8("CANCELANDO INGESTÃO...") : "CANCELLING INGESTION...", juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, juce::Colour(0xfff97316));
 
     if (mantendoArquivos) {
@@ -378,6 +373,7 @@ void IngestProgressModalDialog::beginFinalizing(int totalPassos) {
 
     lblHeader_.setText(isPt ? juce::String::fromUTF8("FINALIZANDO LOTE...") : "FINISHING UP...",
                        juce::dontSendNotification);
+    repaint();
     lblHeader_.setColour(juce::Label::textColourId, tema().textoPrimario);
     lblFileName_.setText(isPt ? juce::String::fromUTF8("Arquivos processados — fechando o lote...")
                               : juce::String::fromUTF8("Files processed — closing the batch..."), juce::dontSendNotification);
@@ -500,6 +496,7 @@ void IngestProgressModalDialog::timerCallback() {
         if (!isComplete_) {
             isComplete_ = true;
             lblHeader_.setText(isPt ? juce::String::fromUTF8("INGESTÃO CONCLUÍDA") : "INGESTION COMPLETE", juce::dontSendNotification);
+            repaint();
             lblHeader_.setColour(juce::Label::textColourId, tema().acento);
 
             juce::String msg = isPt ? (juce::String::fromUTF8("Todos os ") + juce::String(totalFiles_) + juce::String::fromUTF8(" arquivos novos processados com sucesso!"))
@@ -570,7 +567,7 @@ IngestProgressModalDialog* IngestProgressModalDialog::showModal(int totalFiles,
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
     options.dialogTitle = isPt ? juce::String::fromUTF8("Ingerir Arquivos") : "Ingest Files";
-    options.dialogBackgroundColour = tema().painel;
+    options.dialogBackgroundColour = moldura::paleta().fundo;
     options.escapeKeyTriggersCloseButton = false;
     options.useNativeTitleBar = false;
     options.resizable = false;
@@ -580,7 +577,7 @@ IngestProgressModalDialog* IngestProgressModalDialog::showModal(int totalFiles,
         dialog->setCentrePosition(area.getCentreX(), area.getCentreY());
     }
 
-    options.launchAsync();
+    moldura::abrirSemBarra(options);
     return dialog;
 }
 
@@ -599,7 +596,7 @@ IngestProgressModalDialog* IngestProgressModalDialog::showScanModal(std::functio
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
     options.dialogTitle = isPt ? juce::String::fromUTF8("Verificando Arquivos") : "Checking Files";
-    options.dialogBackgroundColour = tema().painel;
+    options.dialogBackgroundColour = moldura::paleta().fundo;
     options.escapeKeyTriggersCloseButton = false;
     options.useNativeTitleBar = false;
     options.resizable = false;
@@ -609,7 +606,7 @@ IngestProgressModalDialog* IngestProgressModalDialog::showScanModal(std::functio
         dialog->setCentrePosition(area.getCentreX(), area.getCentreY());
     }
 
-    options.launchAsync();
+    moldura::abrirSemBarra(options);
     return dialog;
 }
 

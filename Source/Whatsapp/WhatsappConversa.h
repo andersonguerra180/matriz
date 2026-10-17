@@ -31,6 +31,9 @@ struct Mensagem {
     TipoMensagem tipo = TipoMensagem::Texto;
     juce::String anexo;    // só em Anexo
     juce::String legenda;  // só em Anexo: as linhas de continuação
+    int indiceOriginal = -1;  // posição no .txt como veio (preenchido pela tela da conversa; apagar mensagem usa este índice)
+    // Identifica a mensagem sem depender da posição (checagem de segurança ao aplicar "apagadas").
+    juce::String assinatura() const { return dataHoraTexto() + "|" + autor + "|" + anexo + "|" + texto.substring(0, 80); }
 
     // "AAAA-MM-DD HH:MM:SS"
     juce::String dataHoraTexto() const;

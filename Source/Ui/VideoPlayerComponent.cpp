@@ -66,7 +66,7 @@ void VideoPlayerComponent::paint(juce::Graphics& g) {
     if (!carregado_) {
         g.fillAll(tema().fundo);
         g.setColour(tema().textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText("No video loaded", getLocalBounds(), juce::Justification::centred);
     }
 }

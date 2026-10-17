@@ -74,6 +74,8 @@ public:
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
+    // Avisa de onde vem a PRÓXIMA ingestão (ex.: "gallery"): vira um container no Intake. Chamado antes de aoIngerirArquivosDireto.
+    std::function<void(const std::string& origem)> aoDefinirOrigemContainer;
     // Called with the Google Drive root folder when the GD button is clicked
     // and the mount point exists. Host should open a FileChooser at that path.
     std::function<void(const juce::File& gdFolder)> aoIngerirDeGoogleDrive;
@@ -118,7 +120,15 @@ private:
         bool offline = false;
         bool selecionado = false;
         RescanOrigem rescanOrigem = RescanOrigem::Nenhum;
+        // CONTAINER de importação: "gallery"|"drive"|"bridge"|"lightroom" (nest com origem) ou "whatsapp" (conversa).
+        // Vazio = item comum. containerTotal = quantos arquivos o container tem (0 no WhatsApp).
+        juce::String containerOrigem;
+        int containerTotal = 0;
+        std::string containerNestId;
     };
+    bool itemEhContainer(const ItemIntake& it) const { return it.containerNestId.size() > 0; }
+    void abrirGridDoContainer(const std::string& itemId);
+    std::unique_ptr<juce::Component> janelaContainer_;
 
     class ThumbnailsGridComponent;
     void pintarGridParaTeste();

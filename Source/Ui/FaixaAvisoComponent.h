@@ -34,7 +34,7 @@ public:
     void paint(juce::Graphics& g) override {
         g.fillAll(cor_);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         auto r = getLocalBounds().reduced(10, 0);
         if (botao_.isVisible()) r.removeFromRight(botao_.getWidth() + 8);
         g.drawText(texto_, r, juce::Justification::centredLeft, true);

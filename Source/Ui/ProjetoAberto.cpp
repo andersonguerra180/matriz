@@ -312,7 +312,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
     int totalLinhas = 0;
     if (aoProgredir) {
         try {
-            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+            auto st = registro.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
             if (st.step()) totalLinhas = static_cast<int>(st.columnInt(0));
         } catch (...) {}
         aoProgredir(-1, totalLinhas);
@@ -360,7 +360,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
         ") "
         "LEFT JOIN vault v ON v.id = a.vault_id "
-        "WHERE COALESCE(i.em_quarentena, 0) = 0 ORDER BY i.codigo_acervo");
+        "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata' ORDER BY i.codigo_acervo");
 
     const auto nests = mapaDeNests(registro);  // uma consulta: item -> nest
     auto minStmt = indice.prepare(
@@ -402,6 +402,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             r.nestCapaId = nit->second.capaId;
             r.nestTotal = nit->second.total;
             r.nestCapa = (r.id == nit->second.capaId);
+            r.nestOrigem = nit->second.origem;
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -493,7 +494,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
 int ProjetoAberto::contarItens() const {
     if (!projeto_) return 0;
     // Mesmo filtro de listarItensDeProjeto() (fora da quarentena).
-    auto st = leitura().prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    auto st = leitura().prepare("SELECT COUNT(*) FROM item WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
     return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
 }
 
@@ -955,6 +956,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
     for (int tentativa = 0; tentativa < 3; ++tentativa) {
         try {
             out.clear();
+            const auto nests = mapaDeNests(leitura());
             auto stmt = leitura().prepare(
                 "SELECT i.id, i.codigo_acervo, i.titulo, i.tipo_midia, i.estado, i.atualizado_em, "
                 "EXISTS(SELECT 1 FROM consolidacao_registro cr WHERE cr.item_id = i.id), "
@@ -979,7 +981,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                 "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
                 "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
                 "(SELECT a.caracteristicas_tecnicas_json FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1) "
-                "FROM item i WHERE i.em_quarentena = 1 ORDER BY i.criado_em DESC, i.id");
+                "FROM item i WHERE i.em_quarentena = 1 AND COALESCE(i.estado, '') != 'duplicata' ORDER BY i.criado_em DESC, i.id");
             while (stmt.step()) {
                 ItemResumo r;
                 r.id = stmt.columnText(0);
@@ -1070,6 +1072,13 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                     }
                 }
 
+                if (auto nit = nests.find(r.id); nit != nests.end()) {  // container de importação / nest
+                    r.nestId = nit->second.nestId;
+                    r.nestCapaId = nit->second.capaId;
+                    r.nestTotal = nit->second.total;
+                    r.nestCapa = (r.id == nit->second.capaId);
+                    r.nestOrigem = nit->second.origem;
+                }
                 out.push_back(std::move(r));
             }
             break; // Success!
@@ -1138,10 +1147,31 @@ void ProjetoAberto::confirmarItemGrid(const std::string& itemId) {
     EventBus::obterInstancia().dispararItemAlterado(itemId, "quarentena");
 }
 
-void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& todosOsIds) {
-    if (!projeto_ || todosOsIds.empty()) return;
+void ProjetoAberto::confirmarLoteGrid(const std::vector<std::string>& todosOsIdsPedidos) {
+    if (!projeto_ || todosOsIdsPedidos.empty()) return;
+    // CONTAINER de importação: aprovar a capa aprova todos os membros; o container se dissolve (no Grid são itens comuns).
+    std::vector<std::string> todosOsIds = todosOsIdsPedidos;
+    std::set<std::string> containersParaDissolver;
+    {
+        const auto nests = mapaDeNests(projeto_->registro());
+        std::set<std::string> ja(todosOsIds.begin(), todosOsIds.end());
+        for (const auto& id : todosOsIdsPedidos) {
+            auto it = nests.find(id);
+            if (it == nests.end() || it->second.origem.empty()) continue;
+            // O container (galeria/Drive/Bridge/Lightroom/conversa) CONTINUA sendo um nest no Grid/Metadata: só se separa quando
+            // o usuário escolhe UN-NEST no botão direito.
+            for (const auto& m : membrosDoNest(it->second.nestId))
+                if (ja.insert(m).second) todosOsIds.push_back(m);
+        }
+    }
     const auto itemIds = semMarcadosR(todosOsIds);  // marcado com R: não entra no grid de jeito nenhum
     if (itemIds.empty()) return;
+    for (const auto& nid : containersParaDissolver) {
+        try {
+            projeto_->registro().run("DELETE FROM nest_item WHERE nest_id = ?", {matriz::db::Value::of(nid)});
+            projeto_->registro().run("DELETE FROM nest WHERE id = ?", {matriz::db::Value::of(nid)});
+        } catch (...) {}
+    }
     registrarUndoEnvioAoGrid(itemIds);
     std::string agora = matriz::model::agoraIso8601();
     // Id da leva: ms desde a época (zero-padded, ordena como texto) + uuid
@@ -1981,7 +2011,7 @@ const std::vector<std::string>& ProjetoAberto::ultimosItensIngeridos() const {
         auto stmt = leitura().prepare(
             "SELECT id FROM item WHERE lote_grid_id = "
             "(SELECT MAX(lote_grid_id) FROM item WHERE lote_grid_id IS NOT NULL) "
-            "AND COALESCE(em_quarentena, 0) = 0");
+            "AND COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
         while (stmt.step()) ultimosItensIngeridos_.push_back(stmt.columnText(0));
         ultimosItensIngeridosValido_ = true;
     } catch (...) {}
@@ -2079,7 +2109,7 @@ std::vector<ProjetoAberto::ImagemCatalogo> ProjetoAberto::buscarImagensDoCatalog
         auto stmt = leitura().prepare(
             "SELECT i.id, i.codigo_acervo, COALESCE(NULLIF(i.titulo, ''), a.caminho_relativo) "
             "FROM item i JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
-            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(a.papel, '') != 'capa_frente' "
+            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata' AND COALESCE(a.papel, '') != 'capa_frente' "
             "AND (LOWER(a.caminho_relativo) LIKE '%.jpg' OR LOWER(a.caminho_relativo) LIKE '%.jpeg' OR "
             "     LOWER(a.caminho_relativo) LIKE '%.png' OR LOWER(a.caminho_relativo) LIKE '%.gif' OR "
             "     LOWER(a.caminho_relativo) LIKE '%.bmp' OR LOWER(a.caminho_relativo) LIKE '%.webp' OR "
@@ -2540,7 +2570,7 @@ std::set<std::string> ProjetoAberto::itensSemPasta(const std::string& mapaId) co
     std::set<std::string> out;
     if (!projeto_ || mapaId == kMapaOriginal) return out;
     auto stmt = leitura().prepare(
-        "SELECT id FROM item WHERE projeto_id = ? AND id NOT IN "
+        "SELECT id FROM item WHERE projeto_id = ? AND COALESCE(estado, '') != 'duplicata' AND id NOT IN "
         "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -2548,10 +2578,61 @@ std::set<std::string> ProjetoAberto::itensSemPasta(const std::string& mapaId) co
     return out;
 }
 
+std::vector<ProjetoAberto::DuplicataResolvida> ProjetoAberto::listarDuplicatasResolvidas() const {
+    std::vector<DuplicataResolvida> out;
+    if (!projeto_) return out;
+    try {
+        auto st = leitura().prepare(
+            "SELECT i.id, COALESCE(i.codigo_acervo, ''), COALESCE(i.titulo, ''), "
+            "COALESCE((SELECT COALESCE(NULLIF(a.caminho_absoluto_origem, ''), a.caminho_relativo) FROM arquivo a "
+            "          WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), '') "
+            "FROM item i WHERE i.estado = 'duplicata' ORDER BY i.codigo_acervo, i.id");
+        while (st.step()) out.push_back({st.columnText(0), st.columnText(1), st.columnText(2), st.columnText(3)});
+    } catch (...) {}
+    return out;
+}
+
+int ProjetoAberto::contarDuplicatasResolvidas() const {
+    if (!projeto_) return 0;
+    try {
+        auto st = leitura().prepare("SELECT COUNT(*) FROM item WHERE estado = 'duplicata'");
+        return st.step() ? static_cast<int>(st.columnInt(0)) : 0;
+    } catch (...) { return 0; }
+}
+
+int ProjetoAberto::restaurarDuplicatas(const std::vector<std::string>& itemIds) {
+    using matriz::db::Value;
+    if (somenteLeitura_) { avisarSomenteLeitura(); return 0; }
+    if (!projeto_ || itemIds.empty()) return 0;
+    auto& db = projeto_->registro();
+    const std::string agora = matriz::model::agoraIso8601();
+    const std::string bloco = "\n\n[RESTORED FROM RESOLVED DUPLICATES] " + agora +
+                              " - the user dismissed this duplicate; item returned to the grid. [USER_VERIFIED_NOT_DUPLICATE]";
+    int restaurados = 0;
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    try {
+        db.exec("BEGIN IMMEDIATE");  // N itens = uma transação
+        for (const auto& id : itemIds) {
+            db.run("UPDATE item SET estado = 'novo', notas_livres = COALESCE(notas_livres, '') || ?, atualizado_em = ? "
+                   "WHERE id = ? AND estado = 'duplicata'",
+                   {Value::of(bloco), Value::of(agora), Value::of(id)});
+            auto ch = db.prepare("SELECT changes()");
+            if (ch.step()) restaurados += static_cast<int>(ch.columnInt(0));
+        }
+        db.exec("COMMIT");
+    } catch (...) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        return 0;
+    }
+    escrita.unlock();
+    if (restaurados > 0) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+    return restaurados;
+}
+
 int ProjetoAberto::contarItensSemPasta(const std::string& mapaId) const {
     if (!projeto_ || mapaId == kMapaOriginal) return 0;
     auto stmt = leitura().prepare(
-        "SELECT COUNT(*) FROM item WHERE projeto_id = ? AND id NOT IN "
+        "SELECT COUNT(*) FROM item WHERE projeto_id = ? AND COALESCE(estado, '') != 'duplicata' AND id NOT IN "
         "(SELECT aip.item_id FROM acervo_item_pasta aip WHERE aip.mapa_id = ?)");
     stmt.bind(1, matriz::db::Value::of(projeto_->projetoId()));
     stmt.bind(2, matriz::db::Value::of(mapaId));
@@ -4576,22 +4657,126 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
         auto st = registro.prepare(
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
-            "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)) "
+            "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
+            "n.origem "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
+        std::map<std::string, std::string> origemDe;
         while (st.step()) {
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
+            if (!st.columnIsNull(3)) origemDe[st.columnText(1)] = st.columnText(3);
         }
         for (const auto& [nid, itens] : membros) {
             if (itens.size() < 2) continue;  // nest de um arquivo só não existe
             NestInfo info;
             info.nestId = nid;
             info.capaId = capaDe[nid];
+            if (auto oit = origemDe.find(nid); oit != origemDe.end()) info.origem = oit->second;
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
     } catch (...) {}
     return out;
+}
+
+bool ProjetoAberto::apagarMensagemDaConversa(const std::string& conversaItemId, int indiceOriginal, const juce::String& assinatura,
+                                             const std::string& midiaItemId) {
+    if (somenteLeitura_) { avisarSomenteLeitura(); return false; }
+    if (!projeto_ || conversaItemId.empty() || indiceOriginal < 0) return false;
+    auto& db = projeto_->registro();
+    db.exec("CREATE TABLE IF NOT EXISTS conversa_mensagem_apagada ("
+            "conversa_item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE, indice INTEGER NOT NULL, "
+            "assinatura TEXT NOT NULL, apagada_em TEXT NOT NULL, PRIMARY KEY (conversa_item_id, indice))");
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT OR REPLACE INTO conversa_mensagem_apagada (conversa_item_id, indice, assinatura, apagada_em) VALUES (?, ?, ?, ?)",
+               {matriz::db::Value::of(conversaItemId), matriz::db::Value::of(static_cast<int64_t>(indiceOriginal)),
+                matriz::db::Value::of(assinatura.toStdString()), matriz::db::Value::of(matriz::model::agoraIso8601())});
+        if (!midiaItemId.empty()) {
+            // a mídia sai do projeto de vez (sem Undo); o cascade leva conversa_midia, arquivo, nest_item…
+            db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(midiaItemId)});
+            db.run("DELETE FROM item WHERE id = ?", {matriz::db::Value::of(midiaItemId)});
+        }
+        db.run("UPDATE conversa_whatsapp SET n_mensagens = MAX(0, n_mensagens - 1) WHERE item_id = ?", {matriz::db::Value::of(conversaItemId)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        return false;
+    }
+    ultimosItensIngeridosValido_ = false;
+    EventBus::obterInstancia().dispararItemAlterado(conversaItemId, "metadado");
+    return true;
+}
+
+std::map<int, juce::String> ProjetoAberto::mensagensApagadasDaConversa(const std::string& conversaItemId) const {
+    std::map<int, juce::String> out;
+    if (!projeto_) return out;
+    try {
+        auto st = leitura().prepare("SELECT indice, assinatura FROM conversa_mensagem_apagada WHERE conversa_item_id = ?");
+        st.bind(1, matriz::db::Value::of(conversaItemId));
+        while (st.step()) out[static_cast<int>(st.columnInt(0))] = juce::String::fromUTF8(st.columnText(1).c_str());
+    } catch (...) {}  // tabela ainda não existe (nada apagado)
+    return out;
+}
+
+std::string ProjetoAberto::criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem) {
+    if (somenteLeitura_ || !projeto_ || itemIds.size() < 2 || origem.empty()) return {};
+    auto& db = projeto_->registro();
+    const std::set<std::string> jaEmNest = [&] {
+        std::set<std::string> out;
+        for (const auto& [id, info] : mapaDeNests(db)) { juce::ignoreUnused(info); out.insert(id); }
+        return out;
+    }();
+    std::vector<std::string> livres;
+    for (const auto& id : itemIds) if (jaEmNest.count(id) == 0) livres.push_back(id);
+    if (livres.size() < 2) return {};
+    const std::string nestId = matriz::model::novoUuid();
+    const std::string agora = matriz::model::agoraIso8601();
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem) VALUES (?, ?, ?, ?, ?)",
+               {matriz::db::Value::of(nestId), matriz::db::Value::of(projeto_->projetoId()), matriz::db::Value::of(livres.front()),
+                matriz::db::Value::of(agora), matriz::db::Value::of(origem)});
+        for (const auto& id : livres)
+            db.run("INSERT INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)",
+                   {matriz::db::Value::of(id), matriz::db::Value::of(nestId), matriz::db::Value::of(agora)});
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    return nestId;
+}
+
+void ProjetoAberto::removerDoContainer(const std::vector<std::string>& itemIds) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty()) return;
+    auto& db = projeto_->registro();
+    std::set<std::string> nests;
+    for (const auto& id : itemIds) {
+        auto st = db.prepare("SELECT nest_id FROM nest_item WHERE item_id = ?");
+        st.bind(1, matriz::db::Value::of(id));
+        if (st.step()) nests.insert(st.columnText(0));
+    }
+    db.run("BEGIN TRANSACTION", {});
+    try {
+        for (const auto& id : itemIds) db.run("DELETE FROM nest_item WHERE item_id = ?", {matriz::db::Value::of(id)});
+        for (const auto& nid : nests) {
+            auto st = db.prepare("SELECT item_id FROM nest_item WHERE nest_id = ? ORDER BY adicionado_em, item_id");
+            st.bind(1, matriz::db::Value::of(nid));
+            std::vector<std::string> restantes;
+            while (st.step()) restantes.push_back(st.columnText(0));
+            if (restantes.size() < 2) {
+                db.run("DELETE FROM nest_item WHERE nest_id = ?", {matriz::db::Value::of(nid)});
+                db.run("DELETE FROM nest WHERE id = ?", {matriz::db::Value::of(nid)});
+            }
+            else db.run("UPDATE nest SET capa_item_id = ? WHERE id = ?", {matriz::db::Value::of(restantes.front()), matriz::db::Value::of(nid)});
+        }
+        db.run("COMMIT", {});
+    } catch (...) {
+        try { db.run("ROLLBACK", {}); } catch (...) {}
+        throw;
+    }
+    EventBus::obterInstancia().dispararItemAlterado("", "nest");
 }
 
 std::string ProjetoAberto::criarNest(const std::vector<std::string>& itemIdsPedidos) {
@@ -4876,7 +5061,7 @@ std::optional<std::vector<std::string>> ProjetoAberto::idsDoCatalogoSemNaoCapas(
     const auto nests = mapaDeNests(leitura());
     if (nests.empty()) return std::nullopt;
     std::vector<std::string> out;
-    auto st = leitura().prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 0");
+    auto st = leitura().prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 0 AND COALESCE(estado, '') != 'duplicata'");
     while (st.step()) {
         const std::string id = st.columnText(0);
         auto it = nests.find(id);
@@ -4924,7 +5109,7 @@ void ProjetoAberto::carregarMarcasRDoBanco() {
     try {
         // i.em_quarentena = 1 (a coluna é NOT NULL DEFAULT 0): usa idx_item_quarentena_criado.
         auto st = leitura().prepare(
-            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1");
+            "SELECT m.item_id FROM intake_marca_r m JOIN item i ON i.id = m.item_id WHERE i.em_quarentena = 1 AND COALESCE(i.estado, '') != 'duplicata'");
         while (st.step()) doBanco.insert(st.columnText(0));
     } catch (...) { return; }
     std::lock_guard<std::mutex> lock(marcacoesMutex_);
@@ -6431,7 +6616,7 @@ int ProjetoAberto::arquivosQueDependemDoSource() {
         if (sm.step()) mainId = sm.columnText(0);
         auto st = db.prepare(
             "SELECT COUNT(*) FROM arquivo a JOIN item i ON i.id = a.item_id "
-            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND a.eh_master = 1 AND NOT EXISTS ("
+            "WHERE COALESCE(i.em_quarentena, 0) = 0 AND COALESCE(i.estado, '') != 'duplicata' AND a.eh_master = 1 AND NOT EXISTS ("
             "  SELECT 1 FROM consolidacao_registro c WHERE c.arquivo_id = a.id "
             "  AND (COALESCE(c.destino_id, '') = '' OR c.destino_id = ?))");
         st.bind(1, matriz::db::Value::of(mainId));

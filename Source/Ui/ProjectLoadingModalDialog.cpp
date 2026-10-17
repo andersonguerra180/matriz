@@ -1,5 +1,6 @@
 #include "ProjectLoadingModalDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Catalogo/CatalogoProxies.h"
 #include "../Diag/Watchdog.h"
@@ -58,23 +59,24 @@ ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta,
                                                     : i18n::t("loading.title_project"));
 
     lblHeader_.setText(titulo, juce::dontSendNotification);
-    lblHeader_.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    lblHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
-    addAndMakeVisible(lblHeader_);
+    // O título vai para o cabeçalho da moldura (pintado em paint()); o rótulo só guarda o texto.
 
     juce::String sub = pasta.getFileName();
     if (sub.isEmpty()) sub = pasta.getFullPathName();
     lblSubHeader_.setText(sub, juce::dontSendNotification);
-    lblSubHeader_.setFont(juce::Font(juce::FontOptions(12.5f)));
-    lblSubHeader_.setColour(juce::Label::textColourId, tk.acento);
+    lblSubHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+    lblSubHeader_.setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(lblSubHeader_);
 
     progressBar_.setColour(juce::ProgressBar::foregroundColourId, tk.acento);
+    progressBar_.setPercentageDisplay(false);
     progressBar_.setColour(juce::ProgressBar::backgroundColourId, tk.painelAlt);
     addAndMakeVisible(progressBar_);
 
     lblStatus_.setText(i18n::t("loading.step_db"), juce::dontSendNotification);
-    lblStatus_.setFont(juce::Font(juce::FontOptions(11.5f)));
+    lblStatus_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblStatus_.setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(lblStatus_);
 
@@ -82,8 +84,7 @@ ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta,
     btnContinuar_.setButtonText(isPt ? "CONTINUAR ESPERANDO" : "KEEP WAITING");
     btnCancelar_.setButtonText(isPt ? "CANCELAR" : "CANCEL");
     for (auto* b : {&btnContinuar_, &btnCancelar_}) {
-        b->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
-        b->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+        moldura::estilizarBotao(*b, false);
         addChildComponent(*b);
     }
     btnContinuar_.onClick = [this]() {
@@ -93,7 +94,7 @@ ProjectLoadingModalDialog::ProjectLoadingModalDialog(const juce::File& pasta,
     };
     btnCancelar_.onClick = [this]() { cliqueCancelar(); };
 
-    setSize(450, 152);
+    setSize(moldura::tamanhoComMargem(450), moldura::tamanhoComMargem(moldura::kAlturaCabecalho + 152));
     startTimer(25);
 }
 
@@ -102,20 +103,16 @@ ProjectLoadingModalDialog::~ProjectLoadingModalDialog() {
 }
 
 void ProjectLoadingModalDialog::paint(juce::Graphics& g) {
-    const auto& tk = tema();
-    auto bounds = getLocalBounds().toFloat();
-
-    g.setColour(tk.painel);
-    g.fillRoundedRectangle(bounds, 8.0f);
-
-    g.setColour(tk.borda);
-    g.drawRoundedRectangle(bounds.reduced(0.5f), 8.0f, 1.2f);
+    // Moldura do sistema de janelas (Moldura.h): cartão creme canto 18, sombra suave, cabeçalho com trilha + título.
+    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
+    moldura::desenhar(g, geo, moldura::Secao::Auto, matriz::i18n::t("moldura.trilha.abrir"), lblHeader_.getText(), false,
+                      static_cast<float>(currentProgress_), {}, false);
 }
 
 void ProjectLoadingModalDialog::resized() {
-    auto area = getLocalBounds().reduced(20, 16);
+    const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
+    auto area = geo.corpo.reduced(moldura::kMargemCorpo, 16);
 
-    lblHeader_.setBounds(area.removeFromTop(22));
     lblSubHeader_.setBounds(area.removeFromTop(18));
     area.removeFromTop(8);
 
@@ -214,7 +211,7 @@ void ProjectLoadingModalDialog::mostrarEsperaDaAnterior(juce::Component* parentC
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
     options.dialogTitle = "";
-    options.dialogBackgroundColour = juce::Colours::transparentBlack;
+    options.dialogBackgroundColour = moldura::paleta().fundo;
     options.useNativeTitleBar = false;
     options.resizable = false;
     options.escapeKeyTriggersCloseButton = false;
@@ -222,7 +219,7 @@ void ProjectLoadingModalDialog::mostrarEsperaDaAnterior(juce::Component* parentC
         auto c = parentComp->getScreenBounds().getCentre();
         dialog->setCentrePosition(c.x, c.y);
     }
-    options.launchAsync();
+    moldura::abrirSemBarra(options);
 }
 
 void ProjectLoadingModalDialog::launch(const juce::File& pasta,
@@ -260,7 +257,7 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
     juce::DialogWindow::LaunchOptions options;
     options.content.setOwned(dialog);
     options.dialogTitle = "";
-    options.dialogBackgroundColour = juce::Colours::transparentBlack;
+    options.dialogBackgroundColour = moldura::paleta().fundo;
     options.useNativeTitleBar = false;
     options.resizable = false;
     options.escapeKeyTriggersCloseButton = false;
@@ -273,7 +270,7 @@ void ProjectLoadingModalDialog::launch(const juce::File& pasta,
         dialog->setCentrePosition(area.getCentreX(), area.getCentreY());
     }
 
-    options.launchAsync();
+    moldura::abrirSemBarra(options);
 
     // Spawn background worker thread
     juce::Thread::launch([safeDialog, estado, pasta, onComplete = std::move(onComplete)]() mutable {

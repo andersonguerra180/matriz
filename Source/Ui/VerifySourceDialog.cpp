@@ -2,6 +2,7 @@
 
 #include "../I18n/Strings.h"
 #include "Tokens.h"
+#include "Moldura.h"
 
 namespace matriz::ui {
 
@@ -38,7 +39,7 @@ public:
         const auto& tk = tema();
         g.fillAll(tk.painelAlt);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         int xN, wN, xP, wP, xT;
         colunas(getWidth(), xN, wN, xP, wP, xT);
         g.drawText(tr("verify.col_status"), kColCheck, 0, kColStatus, getHeight(), juce::Justification::centredLeft);
@@ -54,7 +55,7 @@ VerifySourceDialog::VerifySourceDialog(Ganchos ganchos)
 
     lblInfo_.setJustificationType(juce::Justification::topLeft);
     lblInfo_.setMinimumHorizontalScale(1.0f);
-    lblInfo_.setFont(juce::Font(juce::FontOptions(14.0f)));
+    lblInfo_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblInfo_.setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(lblInfo_);
     addChildComponent(barra_);
@@ -400,11 +401,11 @@ void VerifySourceDialog::paintListBoxItem(int row, juce::Graphics& g, int w, int
 
     int xN, wN, xP, wP, xT;
     colunas(w, xN, wN, xP, wP, xT);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.setColour(l.f.rejeitadoAntes ? tk.textoSecundario : tk.acento);
     g.drawText(l.f.rejeitadoAntes ? tr("verify.status_rejeitado") : tr("verify.status_faltando"), kColCheck, 0, kColStatus, h,
                juce::Justification::centredLeft, true);
-    g.setFont(juce::Font(juce::FontOptions(13.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     g.setColour(tk.textoPrimario);
     g.drawText(l.f.arquivo.getFileName(), xN, 0, wN - 8, h, juce::Justification::centredLeft, true);
     g.setColour(tk.textoSecundario);
@@ -547,7 +548,7 @@ void VerifySourceDialog::exibirModal(Ganchos ganchos) {
     options.escapeKeyTriggersCloseButton = false;  // Esc no meio do scan/ingest fechava sem relatório; use Close/Cancel
     options.useNativeTitleBar = false;
     options.resizable = false;
-    options.launchAsync();
+    moldura::lancar(options);
 }
 
 } // namespace matriz::ui

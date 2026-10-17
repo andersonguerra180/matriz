@@ -3,6 +3,7 @@
 #include "../I18n/Strings.h"
 #include "../Model/ProjectLog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 
 namespace matriz::ui {
 
@@ -281,7 +282,7 @@ void abrirJanelaNavegador(ProjetoAberto& projeto, const BackupVersionRef& versao
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = true;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace
@@ -319,7 +320,7 @@ void BackupRecoveryDialog::showRecoveryDialog(ProjetoAberto& projeto,
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = false;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

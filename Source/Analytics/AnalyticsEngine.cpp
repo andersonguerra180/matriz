@@ -135,6 +135,7 @@ std::string AnalyticsEngine::buildMeasureExpression(const Measure& measure, cons
 
 std::string AnalyticsEngine::buildWhereClause(const AnalyticsFilter& filter, std::vector<matriz::db::Value>& params) {
     std::vector<std::string> clauses;
+    clauses.push_back("COALESCE(i.estado, '') != 'duplicata'");  // duplicata resolvida sai de todas as contagens
 
     if (filter.mediaType.has_value() && !filter.mediaType->empty()) {
         clauses.push_back("i.tipo_midia = ?");

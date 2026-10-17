@@ -1,5 +1,6 @@
 #include "TrashWindow.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "Tablet.h"
 #include "LogosTipoArquivo.h"
 #include "../I18n/Strings.h"
@@ -94,7 +95,7 @@ public:
         addChildComponent(*viewportCards_);
 
         // Bottom Bar
-        lblResumo_.setFont(juce::Font(juce::FontOptions(12.0f)));
+        lblResumo_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         lblResumo_.setColour(juce::Label::textColourId, tema().textoSecundario);
         addAndMakeVisible(lblResumo_);
 
@@ -452,12 +453,16 @@ private:
 
 TrashWindow::TrashWindow(ProjetoAberto& projeto, const std::string& mapaId, std::function<void()> aoRestaurar)
     : juce::DocumentWindow("🗑 _trash", tema().fundo, juce::DocumentWindow::closeButton) {
-    setUsingNativeTitleBar(true);
+    // Moldura do sistema de janelas: sem barra nativa; cabeçalho + X redondo desenhados pela JanelaMoldura.
+    setUsingNativeTitleBar(false);
+    setTitleBarHeight(0);
+    setBackgroundColour(moldura::paleta().fundo);
     setResizable(true, true);
-    setResizeLimits(500, 360, 1200, 900);
+    setResizeLimits(500 + 2 * moldura::kMargemJanelaNativa, 360 + moldura::kAlturaCabecalho + 2 * moldura::kMargemJanelaNativa,
+                    1200, 900);
     conteudo_ = std::make_unique<Conteudo>(projeto, mapaId, std::move(aoRestaurar));
-    setContentNonOwned(conteudo_.get(), true);
-    centreWithSize(640, 480);
+    setContentOwned(new moldura::JanelaMoldura(conteudo_.get(), moldura::Secao::Explorador, "Folder Map", "_trash", true, false), false);
+    centreWithSize(640 + 2 * moldura::kMargemJanelaNativa, 480 + moldura::kAlturaCabecalho + 2 * moldura::kMargemJanelaNativa);
     setVisible(true);
 }
 

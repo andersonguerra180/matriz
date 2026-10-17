@@ -78,7 +78,7 @@ void AnalyticsChartComponent::paint(juce::Graphics& g) {
 
         // Value text over bar
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         std::string formattedVal = matriz::analytics::AnalyticsFormatter::formatValue(val, result_.query.measure.field, result_.query.measure.aggregation);
         g.drawText("  " + formattedVal, rowArea.withTrimmedLeft(barW), juce::Justification::centredLeft, true);
     }

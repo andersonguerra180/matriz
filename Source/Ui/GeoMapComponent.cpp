@@ -1,4 +1,5 @@
 #include "GeoMapComponent.h"
+#include "Tokens.h"
 #include <cmath>
 #include <sstream>
 #include <iomanip>
@@ -188,7 +189,7 @@ void GeoMapComponent::paint(juce::Graphics& g) {
         g.setColour(juce::Colours::white);
         g.drawEllipse(pt.x - r, pt.y - r, r * 2, r * 2, isHovered ? 2.5f : 1.5f);
 
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(std::to_string(cluster.assetCount), pt.x - r, pt.y - r, r * 2, r * 2, juce::Justification::centred);
     }
 
@@ -230,16 +231,16 @@ void GeoMapComponent::paint(juce::Graphics& g) {
 
         auto inner = tooltipBox.reduced(12, 10);
         g.setColour(juce::Colour(0xffffffff));
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(marker.title, inner.removeFromTop(20), juce::Justification::centredLeft, true);
 
         auto drawRow = [&](const std::string& lbl, const std::string& val) {
             auto r = inner.removeFromTop(16);
             g.setColour(juce::Colour(0xfffacc15));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText(lbl, r.removeFromLeft(95), juce::Justification::centredLeft);
             g.setColour(juce::Colour(0xffffffff));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText(val, r, juce::Justification::centredLeft, true);
         };
 
@@ -259,7 +260,7 @@ void GeoMapComponent::paint(juce::Graphics& g) {
     g.drawRect(statusArea.removeFromTop(1.0f));
 
     g.setColour(juce::Colour(0xfff8fafc));
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena, juce::Font::bold)));
 
     std::ostringstream ss;
     ss << "Total Assets: " << dataset_.geoCoverage.totalAssets

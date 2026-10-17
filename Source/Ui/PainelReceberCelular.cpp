@@ -243,11 +243,13 @@ std::shared_ptr<PainelReceberCelular> mostrarReceberDoCelular(PainelOverlay& ove
 
 // ── Card "Importar do celular": GALLERY ou WHATSAPP ──────────────────────────────────────────────
 
-EscolhaImportacaoCelular::EscolhaImportacaoCelular() {
+EscolhaImportacaoCelular::EscolhaImportacaoCelular(bool sistema) : sistema_(sistema) {
     setComponentID("cel.escolha");
     setWantsKeyboardFocus(false);
     iconeGaleria_ = carregarLogoDeTipo("gallery.png");
     iconeWhatsapp_ = carregarLogoDeTipo("whatsapp.png");
+    iconeAndroid_ = carregarLogoDeTipo("android.png");
+    iconeApple_ = carregarLogoDeTipo("apple.png");
 }
 
 void EscolhaImportacaoCelular::resized() {
@@ -300,7 +302,8 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
     const auto p = moldura::paleta();
     g.setColour(p.tinta);
     g.setFont(fonteUi(14.0f));
-    g.drawText(t("light.cel.escolha.dica"), getLocalBounds().removeFromTop(36), juce::Justification::centredLeft, true);
+    g.drawText(t(sistema_ ? "light.cel.escolha.dicaSistema" : "light.cel.escolha.dica"), getLocalBounds().removeFromTop(36),
+               juce::Justification::centredLeft, true);
 
     for (int i = 0; i < 2; ++i) {
         auto r = tiles_[i].toFloat().reduced(2.0f);
@@ -317,8 +320,11 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
         g.setColour(p.poco);
         g.fillRoundedRectangle(azulejo, 20.0f);
         const auto area = azulejo.reduced(lado * 0.24f);
-        const auto& img = i == 0 ? iconeGaleria_ : iconeWhatsapp_;
-        if (img.isValid()) {
+        const auto& img = sistema_ ? (i == 0 ? iconeAndroid_ : iconeApple_) : (i == 0 ? iconeGaleria_ : iconeWhatsapp_);
+        if (sistema_) {  // ANDROID/IPHONE: símbolo isolado já em #1B1917 e transparente; 40x40 pt centralizado no quadrado de 80x80
+            if (img.isValid())
+                g.drawImage(img, azulejo.withSizeKeepingCentre(40.0f, 40.0f), juce::RectanglePlacement::centred);
+        } else if (img.isValid()) {
             if (i == 0) {  // o ícone da galeria é de um tom só: pinta com a cor de texto
                 g.setColour(p.tinta);
                 g.drawImage(img, area, juce::RectanglePlacement::centred, true);
@@ -328,11 +334,14 @@ void EscolhaImportacaoCelular::paint(juce::Graphics& g) {
             }
         }
         g.setColour(p.tinta);
-        g.setFont(fonteUi(15.0f, juce::Font::bold).withExtraKerningFactor(0.14f));
-        g.drawText(t(i == 0 ? "light.cel.gallery" : "light.cel.whatsapp"), rotulo.toNearestInt(), juce::Justification::centred, true);
+        g.setFont(fonteUi(15.0f, juce::Font::bold).withExtraKerningFactor(0.06f));
+        g.drawText(t(sistema_ ? (i == 0 ? "light.cel.android" : "light.cel.iphone") : (i == 0 ? "light.cel.gallery" : "light.cel.whatsapp")),
+                   rotulo.toNearestInt(), juce::Justification::centred, true);
         g.setColour(p.mudo);
         g.setFont(fonteUi(13.0f));
-        g.drawText(t(i == 0 ? "light.cel.escolha.subGaleria" : "light.cel.escolha.subWhatsapp"), sub.toNearestInt(), juce::Justification::centred, true);
+        g.drawText(t(sistema_ ? (i == 0 ? "light.cel.escolha.subAndroid" : "light.cel.escolha.subIphone")
+                              : (i == 0 ? "light.cel.escolha.subGaleria" : "light.cel.escolha.subWhatsapp")),
+                   sub.toNearestInt(), juce::Justification::centred, true);
     }
 }
 
@@ -350,10 +359,40 @@ void mostrarEscolhaImportacaoCelular(PainelOverlay& overlay, std::function<void(
     cfg.botoes = {{t("light.ui.common.cancel"), 0, false, true}};
     juce::Component::SafePointer<EscolhaImportacaoCelular> seguro(conteudo.get());
     cfg.aoTecla = [seguro](const juce::KeyPress& k) { return seguro != nullptr && seguro->tratarTecla(k); };
-    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
+    juce::Component::SafePointer<PainelOverlay> pOverlay(&overlay);
+    overlay.mostrar(cfg, [aoConcluir, pOverlay](PainelOverlay::Resultado r) {
         if (!aoConcluir) return;
         if (r.botaoId == 1) aoConcluir(ModoImportacaoCelular::Galeria);
-        else if (r.botaoId == 2) aoConcluir(ModoImportacaoCelular::WhatsApp);
+        else if (r.botaoId == 2) {
+            // WHATSAPP abre a segunda tela: ANDROID = fluxo do WhatsApp de hoje; IPHONE = QR code da GALLERY.
+            // Adiado: este callback roda de dentro do mouseUp do card que o overlay vai substituir.
+            juce::MessageManager::callAsync([aoConcluir, pOverlay] {
+                if (pOverlay == nullptr) { aoConcluir(std::nullopt); return; }
+                mostrarEscolhaSistemaCelular(*pOverlay, [aoConcluir](std::optional<SistemaCelular> s) {
+                    if (!s.has_value()) aoConcluir(std::nullopt);
+                    else aoConcluir(*s == SistemaCelular::Android ? ModoImportacaoCelular::WhatsApp : ModoImportacaoCelular::Galeria);
+                });
+            });
+        } else aoConcluir(std::nullopt);
+    });
+}
+
+void mostrarEscolhaSistemaCelular(PainelOverlay& overlay, std::function<void(std::optional<SistemaCelular>)> aoConcluir) {
+    auto conteudo = std::make_shared<EscolhaImportacaoCelular>(true);
+
+    PainelOverlay::Config cfg;
+    cfg.titulo = t("light.cel.escolha.titulo");
+    cfg.trilha = t("moldura.trilha.adicionar");
+    cfg.conteudo = conteudo;
+    cfg.larguraCartao = 620;
+    cfg.alturaConteudo = 300;
+    cfg.botoes = {{t("light.ui.common.cancel"), 0, false, true}};
+    juce::Component::SafePointer<EscolhaImportacaoCelular> seguro(conteudo.get());
+    cfg.aoTecla = [seguro](const juce::KeyPress& k) { return seguro != nullptr && seguro->tratarTecla(k); };
+    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
+        if (!aoConcluir) return;
+        if (r.botaoId == 1) aoConcluir(SistemaCelular::Android);
+        else if (r.botaoId == 2) aoConcluir(SistemaCelular::IPhone);
         else aoConcluir(std::nullopt);
     });
 }

@@ -119,18 +119,18 @@ inline void desenhar(juce::Graphics& g, const Geometria& geo, Secao secao, const
 
     auto texto = cab.withTrimmedLeft(kMargemCorpo + 40 + 16).withTrimmedRight(kMargemCorpo + (comFechar ? 52 : 0) + (contador.isNotEmpty() ? 90 : 0));
     g.setColour(p.mudo);
-    g.setFont(fonteUi(10.5f, juce::Font::bold).withExtraKerningFactor(0.2f));
+    g.setFont(fonteUi(tema().tamanhoFonteMicro, juce::Font::bold).withExtraKerningFactor(0.06f));
     const auto nome = nomeDaSecao(secao);
     const auto linhaTrilha = trilha.isNotEmpty() ? (nome.isNotEmpty() ? nome + " \xc2\xb7 " + trilha : trilha) : nome;
     g.drawText(caixaAlta(juce::String(linhaTrilha)), juce::Rectangle<int>(texto.getX(), cab.getCentreY() - 25, texto.getWidth(), 16),
                juce::Justification::centredLeft, true);
     g.setColour(p.tinta);
-    g.setFont(fonteUi(17.0f, juce::Font::bold).withExtraKerningFactor(0.08f));
+    g.setFont(juce::Font(juce::FontOptions("Jost", 17.0f, juce::Font::bold)).withExtraKerningFactor(0.06f));  // Jost: só títulos de janela
     g.drawText(caixaAlta(titulo), juce::Rectangle<int>(texto.getX(), cab.getCentreY() - 8, texto.getWidth(), 26), juce::Justification::centredLeft, true);
 
     if (contador.isNotEmpty()) {
         g.setColour(p.tinta);
-        g.setFont(fonteUi(13.0f, juce::Font::bold).withExtraKerningFactor(0.12f));
+        g.setFont(fonteUi(13.0f, juce::Font::bold).withExtraKerningFactor(0.06f));
         g.drawText(contador, juce::Rectangle<int>(geo.botaoFechar.getX() - 100, cab.getY(), 90, cab.getHeight()), juce::Justification::centredRight, false);
     }
     if (comFechar) {
@@ -176,11 +176,99 @@ inline juce::DialogWindow* abrirJanela(juce::Component* conteudoNovo, const juce
     return dw;
 }
 
+// Envolve o conteúdo de um diálogo existente na moldura (cabeçalho de 80 px com ícone da seção, trilha, título em caixa
+// alta e X redondo; cartão creme canto 18 com sombra). O conteúdo mantém o próprio tamanho e layout: só ganha o
+// cabeçalho acima. Usar com abrirSemBarra() — ou com LaunchOptions que já não usem barra nativa.
+class JanelaMoldura : public juce::Component {
+public:
+    // `possuir` = false quando o dono do conteúdo é outro (a moldura só o hospeda).
+    JanelaMoldura(juce::Component* conteudo, Secao secao, const juce::String& trilha, const juce::String& titulo,
+                  bool comFechar = true, bool possuir = true)
+        : conteudo_(conteudo), secao_(secao), trilha_(trilha), titulo_(titulo), comFechar_(comFechar) {
+        if (possuir) dono_.reset(conteudo);
+        addAndMakeVisible(*conteudo_);
+        setSize(tamanhoComMargem(conteudo_->getWidth()), tamanhoComMargem(kAlturaCabecalho + conteudo_->getHeight()));
+    }
+    void definirTitulo(const juce::String& titulo) { titulo_ = titulo; repaint(); }
+
+    void paint(juce::Graphics& g) override {
+        desenhar(g, geometria(areaDoCartaoNativo(getLocalBounds()), false), secao_, trilha_, titulo_, false, -1.0f, {}, comFechar_);
+    }
+    void paintOverChildren(juce::Graphics& g) override {
+        // O conteúdo pinta fundo retangular: repinta os cantos fora do cartão arredondado com o fundo da janela
+        // e refaz o contorno do cartão.
+        const auto cartao = areaDoCartaoNativo(getLocalBounds()).toFloat();
+        juce::Path fora;
+        fora.addRectangle(cartao);
+        fora.addRoundedRectangle(cartao, kRaio);
+        fora.setUsingNonZeroWinding(false);
+        g.setColour(paleta().fundo);
+        g.fillPath(fora);
+        g.setColour(paleta().linha);
+        g.drawRoundedRectangle(cartao.reduced(0.5f), kRaio, 1.0f);
+    }
+    void resized() override { conteudo_->setBounds(geometria(areaDoCartaoNativo(getLocalBounds()), false).corpo); }
+
+    void mouseDown(const juce::MouseEvent& e) override {
+        const auto geo = geometria(areaDoCartaoNativo(getLocalBounds()), false);
+        arrastando_ = false;
+        if (comFechar_ && geo.botaoFechar.contains(e.getPosition())) { fechar(); return; }
+        if (geo.cabecalho.contains(e.getPosition())) {
+            if (auto* topo = getTopLevelComponent()) { arrastando_ = true; dragger_.startDraggingComponent(topo, e.getEventRelativeTo(topo)); }
+        }
+    }
+    void mouseDrag(const juce::MouseEvent& e) override {
+        if (!arrastando_) return;
+        if (auto* topo = getTopLevelComponent()) dragger_.dragComponent(topo, e.getEventRelativeTo(topo), nullptr);
+    }
+    void mouseMove(const juce::MouseEvent& e) override {
+        const auto geo = geometria(areaDoCartaoNativo(getLocalBounds()), false);
+        setMouseCursor(comFechar_ && geo.botaoFechar.contains(e.getPosition()) ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    }
+
+private:
+    void fechar() {
+        if (auto* dw = findParentComponentOfClass<juce::DocumentWindow>()) dw->closeButtonPressed();
+    }
+    std::unique_ptr<juce::Component> dono_;
+    juce::Component* conteudo_ = nullptr;
+    Secao secao_;
+    juce::String trilha_, titulo_;
+    bool comFechar_ = true;
+    bool arrastando_ = false;
+    juce::ComponentDragger dragger_;
+};
+
+// Abre uma janela frameless no estilo da moldura a partir de LaunchOptions já preenchidas (o conteúdo já está em
+// `opt.content`, com o tamanho do cartão + margem de sombra). Mesmo comportamento do launchAsync() (modal, apaga ao fechar),
+// mas sem a barra de título do JUCE e com o fundo da aplicação ao redor do cartão.
+inline juce::DialogWindow* abrirSemBarra(juce::DialogWindow::LaunchOptions& opt) {
+    const int w = opt.content->getWidth(), h = opt.content->getHeight();
+    opt.useNativeTitleBar = false;
+    opt.dialogBackgroundColour = paleta().fundo;
+    auto* dw = opt.create();
+    dw->setTitleBarHeight(0);
+    dw->setContentComponentSize(w, h);
+    dw->centreWithSize(dw->getWidth(), dw->getHeight());
+    dw->setVisible(true);
+    dw->enterModalState(true, nullptr, true);
+    return dw;
+}
+
+// Envolve o conteúdo de `opt` na moldura e abre (substitui `opt.launchAsync()` nos diálogos existentes). O título do
+// cabeçalho é o `dialogTitle`; a seção/trilha são opcionais.
+inline juce::DialogWindow* lancar(juce::DialogWindow::LaunchOptions& opt, Secao secao = Secao::Auto, const juce::String& trilha = {}) {
+    auto* conteudo = opt.content.release();
+    opt.content.setOwned(new JanelaMoldura(conteudo, secao, trilha, opt.dialogTitle));
+    return abrirSemBarra(opt);
+}
+
 // Botões da moldura: principal (grafite, ou vermelho se apaga) e secundário (poço com contorno).
 inline void estilizarBotao(juce::TextButton& b, bool principal, bool apaga = false) {
     const auto p = paleta();
-    b.setColour(juce::TextButton::buttonColourId, principal ? (apaga ? p.vermelho : p.grafite) : p.poco);
-    b.setColour(juce::TextButton::buttonOnColourId, principal ? (apaga ? p.vermelho : p.grafite) : p.poco);
+    const auto secundario = tema().botaoSecundario;  // claro: #E4DED4
+    b.setColour(juce::TextButton::buttonColourId, principal ? (apaga ? p.vermelho : p.grafite) : secundario);
+    b.setColour(juce::TextButton::buttonOnColourId, principal ? (apaga ? p.vermelho : p.grafite) : secundario);
     b.setColour(juce::TextButton::textColourOffId, principal ? p.branco : p.tinta);
     b.setColour(juce::TextButton::textColourOnId, principal ? p.branco : p.tinta);
 }

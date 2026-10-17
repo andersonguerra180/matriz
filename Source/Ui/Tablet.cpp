@@ -68,7 +68,7 @@ void desenharCirculoNumero(juce::Graphics& g, juce::Rectangle<float> area, const
 void desenharRotuloSecao(juce::Graphics& g, const juce::String& texto, juce::Rectangle<int> area, juce::Colour cor,
                          juce::Justification just) {
     g.setColour(cor);
-    g.setFont(fonteUi(tema().fonteRotuloSecao, juce::Font::bold).withExtraKerningFactor(0.12f));
+    g.setFont(fonteUi(tema().fonteRotuloSecao, juce::Font::bold).withExtraKerningFactor(0.06f));
     // toUpperCase do JUCE não converte letras acentuadas (ú → Ú) no locale C do macOS: converte à mão (Latin-1).
     juce::String maiusculas;
     for (auto c : texto.toUpperCase()) maiusculas += (c >= 0xE0 && c <= 0xFE && c != 0xF7) ? static_cast<juce::juce_wchar>(c - 0x20) : c;

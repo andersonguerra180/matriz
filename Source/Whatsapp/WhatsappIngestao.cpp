@@ -621,10 +621,12 @@ ResultadoConversa ingerirConversa(matriz::model::Project& staging, const Convers
         try {
             const std::string nestId = matriz::model::novoUuid();
             const std::string agora = matriz::model::agoraIso8601();
-            db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em) VALUES (?, ?, ?, ?)",
+            // origem = "whatsapp": a conversa chega ao INTAKE (como a galeria do celular) e precisa ser aprovada antes de ir ao Grid.
+            db.run("INSERT INTO nest (id, projeto_id, capa_item_id, criado_em, origem) VALUES (?, ?, ?, ?, 'whatsapp')",
                    {Value::of(nestId), Value::of(staging.projetoId()), Value::of(res.conversaItemId), Value::of(agora)});
             const auto juntar = [&](const std::string& id) {
                 db.run("INSERT OR REPLACE INTO nest_item (item_id, nest_id, adicionado_em) VALUES (?, ?, ?)", {Value::of(id), Value::of(nestId), Value::of(agora)});
+                db.run("UPDATE item SET em_quarentena = 1 WHERE id = ?", {Value::of(id)});
             };
             juntar(res.conversaItemId);
             for (const auto& id : membros) juntar(id);

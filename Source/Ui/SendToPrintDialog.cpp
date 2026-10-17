@@ -4,6 +4,7 @@
 #include "BatchWatermarkDialog.h"
 #include "Strings.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include <algorithm>
 #include <cmath>
@@ -200,14 +201,14 @@ void PreviaPapelComponent::paint(juce::Graphics& g) {
 
     if (!itemAtivo_) {
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText(matriz::i18n::t("print.nenhuma_foto"), bounds, juce::Justification::centred);
         return;
     }
 
     if (!itemAtivo_->valido) {
         g.setColour(tk.perigo.withAlpha(0.9f));
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(itemAtivo_->motivoInvalido, papelRect.reduced(10.0f), juce::Justification::centred, true);
         return;
     }
@@ -217,7 +218,7 @@ void PreviaPapelComponent::paint(juce::Graphics& g) {
         : (itemAtivo_->imagemPreview.isValid() ? itemAtivo_->imagemPreview : itemAtivo_->miniatura);
     if (!img.isValid()) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(13.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText(matriz::i18n::t("print.carregando_previa"), papelRect, juce::Justification::centred);
         return;
     }
@@ -298,7 +299,7 @@ void PreviaPapelComponent::paint(juce::Graphics& g) {
         g.fillRoundedRectangle(tagRect, 4.0f);
         g.setColour(juce::Colour(0xffff8c00));
         g.drawRoundedRectangle(tagRect, 4.0f, 1.2f);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText("ORIGINAL (BYPASS)", tagRect, juce::Justification::centred);
     }
 }
@@ -649,7 +650,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     painelCentroContainer_->addAndMakeVisible(*previaPapel_);
 
     lblDicaArrastar_ = std::make_unique<juce::Label>("lblDicaArrastar", matriz::i18n::t("print.dica_arrastar"));
-    lblDicaArrastar_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+    lblDicaArrastar_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::italic)));
     lblDicaArrastar_->setColour(juce::Label::textColourId, tk.textoTerciario);
     lblDicaArrastar_->setJustificationType(juce::Justification::centred);
     painelCentroContainer_->addAndMakeVisible(*lblDicaArrastar_);
@@ -728,7 +729,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*radEncaixar_);
 
     lblResolucaoInfo_ = std::make_unique<juce::Label>("lblResolucaoInfo", matriz::i18n::t("print.resolucao_info"));
-    lblResolucaoInfo_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblResolucaoInfo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblResolucaoInfo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblResolucaoInfo_);
 
@@ -739,7 +740,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*grpDestino_);
 
     lblCaminhoDestino_ = std::make_unique<juce::Label>("lblCaminhoDestino", pastaDestinoSelecionada_.getFullPathName());
-    lblCaminhoDestino_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblCaminhoDestino_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblCaminhoDestino_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblCaminhoDestino_);
 
@@ -758,7 +759,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*grpAjustes_);
 
     lblBrilho_ = std::make_unique<juce::Label>("lblBrilho", matriz::i18n::t("print.brilho"));
-    lblBrilho_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblBrilho_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     addAndMakeVisible(*lblBrilho_);
 
     sldBrilho_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
@@ -774,7 +775,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*sldBrilho_);
 
     lblContraste_ = std::make_unique<juce::Label>("lblContraste", matriz::i18n::t("print.contraste"));
-    lblContraste_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblContraste_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     addAndMakeVisible(*lblContraste_);
 
     sldContraste_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
@@ -790,7 +791,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*sldContraste_);
 
     lblSaturacao_ = std::make_unique<juce::Label>("lblSaturacao", matriz::i18n::t("print.saturacao"));
-    lblSaturacao_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblSaturacao_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     addAndMakeVisible(*lblSaturacao_);
 
     sldSaturacao_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
@@ -806,7 +807,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*sldSaturacao_);
 
     lblNitidez_ = std::make_unique<juce::Label>("lblNitidez", matriz::i18n::t("print.nitidez"));
-    lblNitidez_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblNitidez_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     addAndMakeVisible(*lblNitidez_);
 
     sldNitidez_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
@@ -822,7 +823,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*sldNitidez_);
 
     lblTemperatura_ = std::make_unique<juce::Label>("lblTemperatura", isPt ? juce::String::fromUTF8("Temperatura") : "Temperature");
-    lblTemperatura_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblTemperatura_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     addAndMakeVisible(*lblTemperatura_);
 
     sldTemperatura_ = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::NoTextBox);
@@ -866,7 +867,7 @@ SendToPrintDialog::SendToPrintDialog(ProjetoAberto& projeto)
     addChildComponent(*barraProgresso_);
 
     lblStatusProgresso_ = std::make_unique<juce::Label>("lblStatusProgresso", "");
-    lblStatusProgresso_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblStatusProgresso_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblStatusProgresso_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addChildComponent(*lblStatusProgresso_);
 
@@ -1152,7 +1153,7 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
         g.setColour(tk.fundo);
         g.fillRoundedRectangle(thumbRect.toFloat(), 4.0f);
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(item.carregado ? "SEM" : "...", thumbRect, juce::Justification::centred);
     }
     g.setColour(tk.borda);
@@ -1169,13 +1170,13 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
 
     {
         auto xr = retanguloRemoverFila(width, height);
-        g.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         g.setColour(tk.textoTerciario);
         g.drawText(juce::String::charToString(0x00D7), xr, juce::Justification::centred);
         headerRow.removeFromRight(xr.getWidth() + 2);
     }
 
-    g.setFont(juce::Font(juce::FontOptions(11.5f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     g.setColour(tk.textoSecundario);
     g.drawText(papelTag, headerRow.removeFromRight(65), juce::Justification::centredRight);
 
@@ -1193,7 +1194,7 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
         g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);
     }
 
-    g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     g.setColour(rowIsSelected ? tk.acento : (item.valido ? tk.textoPrimario : tk.textoTerciario));
     g.drawText(juce::String(rowNumber + 1) + ". " + item.nomeArquivo, headerRow, juce::Justification::centredLeft, true);
 
@@ -1206,7 +1207,7 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
 
     // Linha 2: Dimensões originais
     auto dimRow = content.removeFromTop(16);
-    g.setFont(juce::Font(juce::FontOptions(11.5f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     g.setColour(tk.textoTerciario);
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
     g.drawText(isPt ? juce::String::fromUTF8("Dimensões: ") : "Dimensions: ", dimRow.removeFromLeft(68), juce::Justification::centredLeft);
@@ -1236,27 +1237,27 @@ void SendToPrintDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, int w
         if (dpiEfetivo >= 240) {
             g.setColour(juce::Colour(0xff22c55e)); // Verde limpo
             g.fillEllipse(dotRect);
-            g.setFont(juce::Font(juce::FontOptions(11.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.setColour(tk.textoSecundario);
             g.drawText(isPt ? juce::String::fromUTF8("300 DPI · Pronto para impressão") : "300 DPI · Print ready",
                        statusRow, juce::Justification::centredLeft);
         } else {
             g.setColour(juce::Colour(0xffb87a1a)); // Âmbar legível de alto contraste
             g.fillEllipse(dotRect);
-            g.setFont(juce::Font(juce::FontOptions(11.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.setColour(tk.textoPrimario);
             g.drawText(juce::String(dpiEfetivo) + (isPt ? juce::String::fromUTF8(" DPI · Resolução baixa") : " DPI · Low resolution"),
                        statusRow, juce::Justification::centredLeft);
         }
     } else if (!item.carregado) {
-        g.setFont(juce::Font(juce::FontOptions(11.5f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.setColour(tk.textoTerciario);
         g.drawText(isPt ? juce::String::fromUTF8("Aguardando leitura...") : "Waiting...", statusRow, juce::Justification::centredLeft);
     } else {
         auto dotRect = statusRow.removeFromLeft(12).toFloat().withSizeKeepingCentre(6.0f, 6.0f);
         g.setColour(tk.perigo);
         g.fillEllipse(dotRect);
-        g.setFont(juce::Font(juce::FontOptions(11.5f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.setColour(tk.perigo);
         g.drawText(item.motivoInvalido, statusRow, juce::Justification::centredLeft, true);
     }
@@ -1852,7 +1853,7 @@ void SendToPrintDialog::exibirModal(ProjetoAberto& projeto) {
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = true;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

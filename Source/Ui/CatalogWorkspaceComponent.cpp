@@ -116,7 +116,7 @@ public:
         auto r = getLocalBounds().toFloat();
         bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
 
-        juce::Font fontKey(juce::FontOptions(10.0f, juce::Font::bold));
+        juce::Font fontKey(juce::FontOptions(matriz::ui::tema().tamanhoFonteMicro, juce::Font::bold));
         juce::Font fontLabel(juce::FontOptions(tk.tamanhoFonteCorpo, juce::Font::bold));
         juce::Font fontInst(juce::FontOptions(tk.tamanhoFonteCorpo - 1.0f, juce::Font::bold));
 
@@ -492,7 +492,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     addAndMakeVisible(*sliderTamanho_);
 
     lblTamanho_ = std::make_unique<juce::Label>("", "SIZE");
-    lblTamanho_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    lblTamanho_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteMicro, juce::Font::bold)));
     lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblTamanho_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblTamanho_);
@@ -743,7 +743,7 @@ CatalogWorkspaceComponent::CatalogWorkspaceComponent(ProjetoAberto& projeto)
     sincronizarFiltroOpcoesDropdown();
 
     lblCaminhoNavegacao_ = std::make_unique<juce::Label>("", "");
-    lblCaminhoNavegacao_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblCaminhoNavegacao_->setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFontePequena)));
     lblCaminhoNavegacao_->setColour(juce::Label::textColourId, tema().textoSecundario);
     lblCaminhoNavegacao_->setColour(juce::Label::backgroundColourId, tema().painelAlt);
     addChildComponent(*lblCaminhoNavegacao_);
@@ -1242,7 +1242,8 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
         juce::String src(it.sourceMedia);
         juce::String path(it.caminhoAbsolutoOrigem);
         juce::String relPath(it.caminhoRelativoArquivo);
-        bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+        bool match = (it.collectionType.value_or("") == "WhatsApp Chat" || it.nestOrigem == "whatsapp" || it.nestOrigem == "gallery" ||
+                      src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
                       path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
                       relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
         if (!match) {
@@ -1254,7 +1255,7 @@ void CatalogWorkspaceComponent::aplicarFiltrosAdicionais() {
             }
         }
         if (match) {
-            return (itensExtraidos.count(it.id) == 0);
+            return true;  // todo item vindo do celular é Phone Dump (antes sumia ao ficar sem pasta)
         }
         return false;
     };
@@ -1592,7 +1593,8 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                 juce::String src(it.sourceMedia);
                 juce::String path(it.caminhoAbsolutoOrigem);
                 juce::String relPath(it.caminhoRelativoArquivo);
-                bool match = (src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
+                bool match = (it.collectionType.value_or("") == "WhatsApp Chat" || it.nestOrigem == "whatsapp" || it.nestOrigem == "gallery" ||
+                      src.containsIgnoreCase("Smartphone") || src.containsIgnoreCase("Celular") ||
                               path.containsIgnoreCase("Received from phone") || path.containsIgnoreCase("extraidos_whatsapp") || path.containsIgnoreCase("whatsapp") ||
                               relPath.containsIgnoreCase("Received from phone") || relPath.containsIgnoreCase("extraidos_whatsapp") || relPath.containsIgnoreCase("whatsapp"));
                 if (!match) {
@@ -1604,7 +1606,7 @@ void CatalogWorkspaceComponent::atualizarContagens() {
                     }
                 }
                 if (match) {
-                    return (itensExtraidos.count(it.id) == 0);
+                    return true;  // todo item vindo do celular é Phone Dump (antes sumia ao ficar sem pasta)
                 }
                 return false;
             };
@@ -2445,7 +2447,7 @@ void CatalogWorkspaceComponent::paint(juce::Graphics& g) {
 
     for (auto& [titulo, bounds] : secaoHeaderBounds_) {
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(matriz::ui::tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(titulo, bounds, juce::Justification::centredLeft);
     }
 

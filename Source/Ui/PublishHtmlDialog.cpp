@@ -1,5 +1,6 @@
 #include "PublishHtmlDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -12,7 +13,7 @@ public:
         auto b = getLocalBounds().toFloat().reduced(0.5f);
         g.setColour(juce::Colour(0xff22c55e)); // Emerald green
         g.drawRoundedRectangle(b, 3.0f, 1.5f);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText("H", getLocalBounds(), juce::Justification::centred);
     }
 
@@ -50,7 +51,7 @@ PublishHtmlDialog::PublishHtmlDialog(ProjetoAberto& projeto)
         "lblDica",
         isPt ? juce::String::fromUTF8("Nota: Apenas os arquivos com status ativo de publicação serão incluídos na opção de itens marcados.")
              : "Note: Only assets with active publication status are included in the marked assets option.");
-    lblDicaPublicacao_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblDicaPublicacao_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblDicaPublicacao_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblDicaPublicacao_);
 
@@ -93,7 +94,7 @@ PublishHtmlDialog::PublishHtmlDialog(ProjetoAberto& projeto)
         "lblEstruturaInfo",
         isPt ? juce::String::fromUTF8("Escolha como os arquivos serão agrupados nas coleções do portal:")
              : "Choose how assets will be grouped into catalog collections:");
-    lblEstruturaInfo_->setFont(juce::Font(juce::FontOptions(11.5f)));
+    lblEstruturaInfo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblEstruturaInfo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblEstruturaInfo_);
 
@@ -116,7 +117,7 @@ PublishHtmlDialog::PublishHtmlDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*btnEscolherFundo_);
 
     lblCaminhoFundo_ = std::make_unique<juce::Label>("lblCaminhoFundo", isPt ? juce::String::fromUTF8("Nenhuma imagem selecionada") : "No image selected");
-    lblCaminhoFundo_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblCaminhoFundo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblCaminhoFundo_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblCaminhoFundo_);
 
@@ -134,7 +135,7 @@ PublishHtmlDialog::PublishHtmlDialog(ProjetoAberto& projeto)
     addAndMakeVisible(*btnEscolherLogo_);
 
     lblCaminhoLogo_ = std::make_unique<juce::Label>("lblCaminhoLogo", isPt ? juce::String::fromUTF8("Nenhuma logo selecionada") : "No logo selected");
-    lblCaminhoLogo_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblCaminhoLogo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblCaminhoLogo_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblCaminhoLogo_);
 
@@ -431,7 +432,7 @@ void PublishHtmlDialog::exibirModal(ProjetoAberto& projeto) {
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = false;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

@@ -1,5 +1,6 @@
 #include "RescanProgressModalDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -62,13 +63,13 @@ RescanProgressModalDialog::RescanProgressModalDialog(
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
     lblHeader_.setText(isPt ? juce::String::fromUTF8("Rescan de Fontes de Backup") : "Rescan Backup Sources", juce::dontSendNotification);
-    lblHeader_.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    lblHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblHeader_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblHeader_);
 
     lblFileName_.setText(isPt ? juce::String::fromUTF8("Calculando arquivos...") : "Calculating files to scan...", juce::dontSendNotification);
-    lblFileName_.setFont(juce::Font(juce::FontOptions(12.5f)));
+    lblFileName_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblFileName_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblFileName_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblFileName_);
@@ -78,7 +79,7 @@ RescanProgressModalDialog::RescanProgressModalDialog(
     addAndMakeVisible(progressBar_);
 
     lblEta_.setText(isPt ? juce::String::fromUTF8("Iniciando varredura...") : "Starting scan...", juce::dontSendNotification);
-    lblEta_.setFont(juce::Font(juce::FontOptions(11.5f)));
+    lblEta_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblEta_.setColour(juce::Label::textColourId, tk.textoTerciario);
     lblEta_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblEta_);
@@ -280,7 +281,7 @@ RescanProgressModalDialog* RescanProgressModalDialog::showModal(
         dialog->setCentrePosition(area.getCentreX(), area.getCentreY());
     }
 
-    options.launchAsync();
+    moldura::lancar(options);
     return dialog;
 }
 
