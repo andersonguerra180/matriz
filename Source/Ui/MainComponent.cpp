@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include "JanelaPastaFlutuante.h"
 #include "../Model/Inbox.h"
 #include "../Consolidacao/BridgeXmp.h"
 #include "MainEditPanel.h"
@@ -1271,9 +1272,9 @@ void MainComponent::reconstruirLayoutProjeto() {
         }
         
         std::set<std::string> ids;
-        juce::String sql = "SELECT id FROM item";
+        juce::String sql = "SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata'";
         if (!tipos.empty()) {
-            sql += " WHERE tipo_midia IN (";
+            sql += " AND tipo_midia IN (";
             for (size_t i = 0; i < tipos.size(); ++i) {
                 sql += "'" + juce::String(tipos[i]) + "'";
                 if (i + 1 < tipos.size()) sql += ",";
@@ -1574,6 +1575,12 @@ void MainComponent::abrirProjeto(std::unique_ptr<matriz::model::Project> projeto
     faixaAviso_.reset();
     projetoAberto_ = std::make_unique<ProjetoAberto>(std::move(projeto));
     {
+        juce::Component::SafePointer<MainComponent> seguroExtrair(this);
+        projetoAberto_->aoPedirExtrairMidiaWhatsapp = [seguroExtrair](const std::string& midiaId, const std::string& conversaId) {
+            if (seguroExtrair) seguroExtrair->extrairMidiaWhatsapp(midiaId, conversaId);
+        };
+    }
+    {
         // MAIN EDIT MODE (Fase 4): a faixa/borda seguem o estado do modo; abrir o
         // projeto retoma ou desfaz qualquer operação interrompida por queda.
         juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -1768,6 +1775,7 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
             ingerirArquivos(arqs);
         };
+        intakeWorkspace_->aoDefinirOrigemContainer = [this](const std::string& origem) { origemContainerProximoLote_ = origem; };
         intakeWorkspace_->aoIngerirDeGoogleDrive = [this](const juce::File& gdFolder) {
             // Open a FileChooser rooted at the Google Drive local folder
             auto chooser = std::make_shared<juce::FileChooser>(
@@ -1780,6 +1788,7 @@ void MainComponent::mostrarIntake() {
                     if (!results.isEmpty()) {
                         juce::Array<juce::File> files;
                         for (auto& f : results) files.add(f);
+                        origemContainerProximoLote_ = "drive";  // Google Drive = container no Intake
                         ingerirArquivos(files);
                     }
                 });
@@ -1952,6 +1961,9 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
                     mosaico_->definirFiltroItens(itemIds);
                     mosaico_->definirSelecao(itemIds);
                 }
+            };
+            treeWorkspace_->aoAbrirPastaJanela = [this](const std::string& pastaId, const juce::String& nome) {
+                abrirJanelaDaPasta(pastaId, nome);
             };
             treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
             treeWorkspace_->aoIngerirArquivos = [this](const juce::Array<juce::File>& files, const std::string& /*pastaId*/) {
@@ -3389,11 +3401,73 @@ void MainComponent::ingerirPastaDoBridge() {
                                 });
                             };
                         }
+                        safeThis->origemContainerProximoLote_ = "bridge";  // Adobe Bridge = container no Intake
                         safeThis->resolverDuplicatasIntakeEEnfileirar(std::move(*arquivos));
                     });
                 });
             });
         });
+}
+
+void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta) {
+    if (!projetoAberto_) return;
+    janelaPasta_.reset();
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    janelaPasta_ = std::make_unique<JanelaPastaFlutuante>(
+        *projetoAberto_, pastaId, nomePasta,
+        [seguro] {
+            if (!seguro) return;
+            seguro->janelaPasta_.reset();
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+        },
+        [seguro] {
+            if (!seguro) return;
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+            if (seguro->mosaico_) seguro->mosaico_->recarregar();
+            if (seguro->filtros_) seguro->filtros_->recarregar();
+            if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+        });
+}
+
+void MainComponent::extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId) {
+    if (!projetoAberto_ || midiaItemId.empty()) return;
+    if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }
+    const auto arq = projetoAberto_->arquivoPrincipal(midiaItemId);
+    juce::File origem = arq ? juce::File(arq->caminhoAbsoluto) : juce::File();
+    if (!origem.existsAsFile()) {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, i18n::t("wa.extrair.titulo_erro"),
+                                               i18n::t("wa.extrair.sem_arquivo"));
+        return;
+    }
+    // Cópia independente (a mídia original continua dentro da conversa) numa pasta própria; o ingest parte dela.
+    const juce::File pasta = projetoAberto_->projeto().pasta().getChildFile("extraidos_whatsapp")
+                                 .getChildFile("extracao-" + juce::String(matriz::model::novoUuid()));
+    pasta.createDirectory();
+    const juce::File copia = pasta.getChildFile(origem.getFileName());
+    if (!origem.copyFileTo(copia)) {
+        juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, i18n::t("wa.extrair.titulo_erro"),
+                                               i18n::t("wa.extrair.sem_arquivo"));
+        return;
+    }
+
+    // Pastas do Folder Map onde a conversa está: o item extraído entra nelas (sem tirar de outras).
+    std::vector<std::string> pastas;
+    try {
+        auto st = projetoAberto_->projeto().registroLeitura().prepare("SELECT pasta_id FROM acervo_item_pasta WHERE item_id = ?");
+        st.bind(1, matriz::db::Value::of(conversaItemId));
+        while (st.step()) pastas.push_back(st.columnText(0));
+    } catch (...) {}
+
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    ProjetoAberto* proj = projetoAberto_.get();
+    processarLoteEmBackground({copia}, "", "", [seguro, proj, pastas](const std::vector<std::string>& novos) {
+        if (!seguro || seguro->projetoAberto_.get() != proj) return;
+        for (const auto& id : novos)
+            for (const auto& pasta : pastas) proj->adicionarItemAPastaSemRemoverOutras(id, pasta);
+        if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+        if (seguro->intakeWorkspace_) seguro->intakeWorkspace_->recarregar();
+        if (seguro->mosaico_) seguro->mosaico_->recarregar();
+    });
 }
 
 void MainComponent::importarCatalogoLightroom() {
@@ -3453,7 +3527,8 @@ void MainComponent::importarCatalogoLightroom() {
             }
             if (prefixoAcervo.isEmpty()) prefixoAcervo = "ACV";
 
-            ingestPool_.addJob([safeThis, lrcat, registro, indice, pastaProjeto, projetoId, prefixoAcervo, cancelamento]() mutable {
+            ProjetoAberto* projLr = projetoAberto_.get();
+            ingestPool_.addJob([safeThis, projLr, lrcat, registro, indice, pastaProjeto, projetoId, prefixoAcervo, cancelamento]() mutable {
                 auto onProg = [cancelamento](int atual, int total, const juce::String& status) {
                     if (total > 0) {
                         double pct = (static_cast<double>(atual) / static_cast<double>(total)) * 100.0;
@@ -3466,10 +3541,24 @@ void MainComponent::importarCatalogoLightroom() {
                     return escolhida;
                 };
 
+                // Itens do Intake antes da importação: o que aparecer depois forma o container "lightroom".
+                std::set<std::string> antes;
+                try {
+                    auto st = registro->prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 1");
+                    while (st.step()) antes.insert(st.columnText(0));
+                } catch (...) {}
                 auto res = matriz::ingest::LightroomImporter::importarCatalogo(
                     lrcat, *registro, *indice, pastaProjeto, projetoId, prefixoAcervo,
                     cancelamento, onProg, onPedirNovaRaiz);
 
+                if (projLr != nullptr) {
+                    std::vector<std::string> novos;
+                    try {
+                        auto st = registro->prepare("SELECT id FROM item WHERE COALESCE(em_quarentena, 0) = 1 ORDER BY criado_em, id");
+                        while (st.step()) if (antes.count(st.columnText(0)) == 0) novos.push_back(st.columnText(0));
+                        if (novos.size() >= 2) projLr->criarContainerImportacao(novos, "lightroom");
+                    } catch (...) {}
+                }
                 juce::MessageManager::callAsync([safeThis, res]() mutable {
                     if (!safeThis) return;
                     ProgressoGlobal::obterInstancia().concluirTarefa("lightroom_import");
@@ -4041,6 +4130,28 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
             for (const auto& id : processados)
                 if (meus.count(id)) doChamador.push_back(id);
             aoConcluir(doChamador);
+        });
+    }
+    if (!origemContainerProximoLote_.empty()) {
+        // CONTAINER de importação: no fim do lote, os itens criados por esta chamada viram um nest com origem.
+        const std::set<std::string> meus(itemIds.begin(), itemIds.end());
+        const std::string origem = std::move(origemContainerProximoLote_);
+        origemContainerProximoLote_.clear();
+        juce::Component::SafePointer<MainComponent> seguroContainer(this);
+        const juce::ScopedLock sl(estadoLote->lock);
+        estadoLote->aoConcluir.push_back([seguroContainer, meus, origem](const std::vector<std::string>& processados) {
+            if (!seguroContainer || !seguroContainer->projetoAberto_) return;
+            std::vector<std::string> doContainer;
+            for (const auto& id : processados) if (meus.count(id)) doContainer.push_back(id);
+            if (doContainer.size() < 2) return;
+            ProjetoAberto* proj = seguroContainer->projetoAberto_.get();
+            seguroContainer->poolVaults_.addJob([seguroContainer, proj, doContainer, origem] {
+                try { proj->criarContainerImportacao(doContainer, origem); } catch (...) {}
+                juce::MessageManager::callAsync([seguroContainer, proj] {
+                    if (!seguroContainer || seguroContainer->projetoAberto_.get() != proj) return;
+                    if (seguroContainer->intakeWorkspace_) seguroContainer->intakeWorkspace_->recarregar();
+                });
+            });
         });
     }
     estadoLoteAtual_ = estadoLote;

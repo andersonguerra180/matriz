@@ -165,8 +165,17 @@ public:
     // Adobe Bridge: pasta catalogada no Bridge entra pelo INTAKE normal; o XMP (embutido ou sidecar) é lido ANTES
     // da ingestão (só leitura) e aplicado nos itens criados por esse lote, quando ele termina.
     void ingerirPastaDoBridge();
+    // WhatsApp: copia UMA mídia da conversa como item comum, na(s) mesma(s) pasta(s) do Folder Map da conversa. A mídia
+    // continua dentro da conversa. Entra pelo fluxo normal de ingestão (Intake).
+    // Janela flutuante da pasta (duplo clique no card em Structure).
+    void abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta);
+    std::unique_ptr<class JanelaPastaFlutuante> janelaPasta_;
+    void extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId);
     // Consumido pelo próximo processarLoteEmBackground() sem aoConcluir próprio (ver ingerirPastaDoBridge).
     std::function<void(const std::vector<std::string>&)> aoConcluirDoProximoLote_;
+    // Origem ("gallery"|"drive"|"bridge") do próximo lote: no fim dele, os itens criados viram um CONTAINER no Intake
+    // (nest com origem) que precisa ser aprovado como um todo. Consumido por processarLoteEmBackground().
+    std::string origemContainerProximoLote_;
 
     // Abre o navegador estilo Finder embutido (item 3) — segunda porta de
     // entrada, ao lado de arrastar do Finder. Público porque é uma ação de
