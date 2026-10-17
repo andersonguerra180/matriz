@@ -101,8 +101,9 @@ std::vector<No> montarArvore() {
     auto photos = grupo("photos", IconeUi::Photography, "ci_foto_camera_memory_card_sd_cf_png",
                         { folha("photos.folder", IconeUi::Pasta, "ci_foto_computer_folder_png"),
                           folha("photos.camera_card", IconeUi::Photography, "ci_foto_camera_memory_card_sd_cf_png"),
-                          folha("photos.lightroom", IconeUi::Photography, "ci_foto_adobe_lightroom_catalog_png"),
-                          folha("photos.bridge", IconeUi::Photography, "ci_foto_adobe_bridge_png") });
+                          // Logos originais da Adobe (Assets/Icons), com cantos arredondados no desenho do card.
+                          folha("photos.lightroom", IconeUi::Photography, "lrlogo_original_png"),
+                          folha("photos.bridge", IconeUi::Photography, "bridgelogo_png") });
     colorir(photos, tk.tipoImagem);
     raiz.push_back(std::move(photos));
 
@@ -110,7 +111,7 @@ std::vector<No> montarArvore() {
     // material pode ter vindo de uma fita e estar hoje num arquivo digital ou num link.
     auto videos = grupo("videos", IconeUi::Videos, "ci_vid_native_digital_png",
                         { folha("videos.digital", IconeUi::Videos, "ci_vid_native_digital_png"),
-                          folha("videos.link", IconeUi::Link, "", true),
+                          folha("videos.link", IconeUi::Link, "youtube_png", true),
                           folha("videos.dvd_rip", IconeUi::Disco, "ci_vid_dvd_blu_ray_png", true),
                           folha("videos.other", IconeUi::Other, "ci_vid_other_png") });
     colorir(videos, tk.tipoVideo);
@@ -121,7 +122,7 @@ std::vector<No> montarArvore() {
                 { folha("audio.production.project", IconeUi::Sound, "ci_aud_music_production_png"),
                   folha("audio.production.samples", IconeUi::Sound, "ci_aud_sample_pack_png"),
                   folha("audio.production.midi", IconeUi::Sound, "ci_aud_midi_png"),
-                  folha("audio.production.assets", IconeUi::Sound) }),
+                  folha("audio.production.tools", IconeUi::Sound, "Tools2x_png") }),
           grupo("audio.preservation", IconeUi::Disco, "ci_aud_vinyl_rip_png",
                 { folha("audio.preservation.cd_rip", IconeUi::Disco, "ci_aud_cd_rip_png", true),
                   folha("audio.preservation.ddp", IconeUi::Disco, "ci_aud_ddp_master_png"),

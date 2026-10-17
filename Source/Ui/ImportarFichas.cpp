@@ -52,8 +52,8 @@ int indiceDe(const std::vector<juce::String>& opcoes, const juce::String& valor)
 
 // ── Áudio: tipos que o Mini já tinha (FichasSomDados.h) + os que o menu novo acrescenta ─────────────────────
 
-const fs::Tipo& tipoAssets() {
-    static const fs::Tipo tipo{ "assets", "Production assets", "Assets de produção", {
+const fs::Tipo& tipoFerramentas() {
+    static const fs::Tipo tipo{ "tools", "Production tools", "Ferramentas de produção", {
         { "asset_kind", "Kind", "Tipo", "", "", 1, false,
           { { "instrument", "Virtual instrument", "Instrumento virtual" }, { "preset", "Preset", "Preset" },
             { "ir", "Impulse response (IR)", "Resposta ao impulso (IR)" }, { "plugin", "Plugin", "Plugin" }, { "other", "Other", "Outro" } } },
@@ -100,7 +100,7 @@ const fs::Tipo* tipoDaFolha(const std::string& folha) {
     if (folha == "audio.production.project") return achaTipoDoMini("music_production");
     if (folha == "audio.production.samples") return achaTipoDoMini("sample_pack");
     if (folha == "audio.production.midi") return achaTipoDoMini("midi");
-    if (folha == "audio.production.assets") return &tipoAssets();
+    if (folha == "audio.production.tools") return &tipoFerramentas();
     if (folha == "audio.preservation.ddp") return achaTipoDoMini("ddp_master");
     if (folha == "audio.preservation.vinyl") return achaTipoDoMini("vinyl_rip");
     if (folha == "audio.preservation.tape") return &tipoFita();
@@ -114,7 +114,46 @@ const fs::Tipo* tipoDaFolha(const std::string& folha) {
     return nullptr;
 }
 
-void mostrarFichaVideo(PainelOverlay& overlay, std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
+// "Outro" e "Personalizado": o usuário diz do que se trata (vira o SUBJECT dos arquivos e entra nas notas).
+bool ehOutro(const std::string& id) {
+    return id == "other.custom" || (id.size() > 6 && id.compare(id.size() - 6, 6, ".other") == 0);
+}
+
+PainelOverlay::CampoTexto campoOutro() {
+    return { "outro", t("imp.ficha.outro"), "", t("imp.ficha.outro.dica"), {} };
+}
+
+void aplicarOutro(matriz::ingest::SobreMaterial& sobre, const std::string& oQue) {
+    if (oQue.empty()) return;
+    sobre.subject = sobre.subject.empty() ? oQue : oQue + ", " + sobre.subject;
+    sobre.descricao = (sobre.descricao.empty() ? std::string() : sobre.descricao + "\n") + "What it is: " + oQue;
+}
+
+void mostrarFichaOutro(PainelOverlay& overlay, std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
+    PainelOverlay::Config cfg;
+    cfg.titulo = t("imp.ficha.outro.titulo");
+    cfg.mensagem = t("imp.ficha.outro.msg");
+    cfg.trilha = t("moldura.trilha.adicionar");
+    cfg.larguraCartao = 620;
+    cfg.campos = { campoOutro(), { "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} } };
+    cfg.botoes = {
+        { t("light.ui.common.cancel"), 0, false, true },
+        { t("imp.ficha.pular"), 2, false, false },
+        { t("imp.ficha.continuar"), 1, true, false },
+    };
+    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
+        if (!aoConcluir) return;
+        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
+        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }
+        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
+        sobre->descricao = valorDe(r, "notas");
+        aplicarOutro(*sobre, valorDe(r, "outro"));
+        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
+    });
+}
+
+void mostrarFichaVideo(PainelOverlay& overlay, bool comOutro,
+                       std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
     // O formato de origem é pergunta da ficha (e vira SOURCE MEDIUM de cada arquivo), não um card: o mesmo material
     // pode ter começado numa fita e estar hoje num arquivo digital ou num link.
     const auto opcoes = opcoesFormato({ "VIDEO", "OPTICAL", "FILM" });
@@ -123,10 +162,9 @@ void mostrarFichaVideo(PainelOverlay& overlay, std::function<void(bool, std::sha
     cfg.mensagem = t("imp.ficha.videos.msg");
     cfg.trilha = t("moldura.trilha.adicionar");
     cfg.larguraCartao = 620;
-    cfg.campos = {
-        { "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica"), opcoes },
-        { "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} },
-    };
+    if (comOutro) cfg.campos.push_back(campoOutro());
+    cfg.campos.push_back({ "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica"), opcoes });
+    cfg.campos.push_back({ "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} });
     cfg.botoes = {
         { t("light.ui.common.cancel"), 0, false, true },
         { t("imp.ficha.pular"), 2, false, false },
@@ -139,6 +177,7 @@ void mostrarFichaVideo(PainelOverlay& overlay, std::function<void(bool, std::sha
         auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
         gravarFormato(*sobre, juce::String(valorDe(r, "formato")));
         sobre->descricao = valorDe(r, "notas");
+        aplicarOutro(*sobre, valorDe(r, "outro"));
         aoConcluir(true, sobre->vazio() ? nullptr : sobre);
     });
 }
@@ -169,6 +208,8 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
     cfg.mensagem = t("imp.ficha.audio.msg");
     cfg.trilha = t("moldura.trilha.adicionar");
     cfg.larguraCartao = 620;
+    const bool comOutro = ehOutro(folha);
+    if (comOutro) cfg.campos.push_back(campoOutro());
     if (producao) cfg.campos.push_back({ "daw", t("imp.ficha.daw"), "", "", dawsLista });
     std::vector<std::vector<juce::String>> opcoesPorCampo;
     for (const auto* c : campos) {
@@ -180,7 +221,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
     }
     // Posição do formato: depois dos campos do tipo, antes de identificação/contexto.
     {
-        size_t depoisDoTipo = producao ? 1 : 0;
+        size_t depoisDoTipo = (producao ? 1 : 0) + (comOutro ? 1 : 0);
         for (const auto* c : campos) {
             if (c == &comuns[1] || c == &comuns[2]) break;
             ++depoisDoTipo;
@@ -194,7 +235,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
         { t("imp.ficha.continuar"), 1, true, false },
     };
 
-    overlay.mostrar(cfg, [aoConcluir, tipo, campos, opcoesPorCampo, producao, dawsLista](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, tipo, campos, opcoesPorCampo, producao, dawsLista, comOutro](PainelOverlay::Resultado r) {
         if (!aoConcluir) return;
         if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
         if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue só com o que o card já implica
@@ -238,6 +279,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
         sobre->subject = assunto;
         sobre->descricao = desc == ("Audio: " + tipoEn) ? std::string() : desc;  // só o rótulo do tipo não é informação nova
         sobre->tags = tags;
+        if (comOutro) aplicarOutro(*sobre, valorDe(r, "outro"));
         aoConcluir(true, sobre->vazio() ? nullptr : sobre);
     });
 }
@@ -256,7 +298,7 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(con
         { "audio.production.project", "", "", { "Music Production" } },
         { "audio.production.samples", "Sample Pack", "", {} },
         { "audio.production.midi", "MIDI", "", {} },
-        { "audio.production.assets", "", "", { "Production assets" } },
+        { "audio.production.tools", "", "", { "Production tools" } },
         { "audio.preservation.ddp", "Master", "", { "DDP master" } },
         { "audio.preservation.vinyl", "", "", { "Vinyl rip" } },
         { "audio.preservation.tape", "", "", { "Tape rip" } },
@@ -318,6 +360,7 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
 
 bool folhaImportarTemFicha(const std::string& id) {
     if (id == "videos.digital" || id == "videos.other") return true;
+    if (ehOutro(id)) return true;
     return id.rfind("audio.", 0) == 0 && tipoDaFolha(id) != nullptr;
 }
 
@@ -325,7 +368,8 @@ void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
                           std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
     if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
     if (id.rfind("audio.", 0) == 0) mostrarFichaAudio(overlay, id, std::move(aoConcluir));
-    else mostrarFichaVideo(overlay, std::move(aoConcluir));
+    else if (id.rfind("videos.", 0) == 0) mostrarFichaVideo(overlay, id == "videos.other", std::move(aoConcluir));
+    else mostrarFichaOutro(overlay, std::move(aoConcluir));  // files.other, other.social.other, other.custom
 }
 
 } // namespace matriz::ui

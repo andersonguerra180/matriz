@@ -1165,6 +1165,11 @@ int rodarTestImportarVisual() {
     girar(100);
     salvar(overlay, "imp_01_raiz");
 
+    overlay.concluirExterno(103);  // Photos
+    girar(150);
+    salvar(overlay, "imp_01b_photos");
+    overlay.concluirExterno(1);
+    girar(150);
     overlay.concluirExterno(105);  // Audio
     girar(150);
     salvar(overlay, "imp_02_audio");
@@ -1207,6 +1212,11 @@ int rodarTestImportarVisual() {
         mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
         girar(100);
         salvar(overlayVinil, "imp_10_ficha_audio_vinil");
+        PainelOverlay overlayCustom;
+        overlayCustom.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayCustom, "other.custom", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayCustom, "imp_11_ficha_outro");
     }
 
     PainelOverlay overlayFicha;
