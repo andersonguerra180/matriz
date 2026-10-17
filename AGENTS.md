@@ -7,6 +7,23 @@ regras e decisões que não mudam de sessão pra sessão.
 
 ## Regras do projeto
 
+- **INEGOCIÁVEL — Exports nunca deixam arquivo de fora por falta de
+  pasta.** Todo arquivo selecionado é exportado; o que não tem pasta no
+  folder map sai numa pasta chamada `_NO FOLDER` (`kPastaNoFolderExport`,
+  Consolidacao.h). Vale para Collection Package, EXPORT e Bounce List.
+  O MAIN continua gravando `_SEM_PASTA` fisicamente (renomear exige
+  migrar arquivos já gravados — decisão pendente do usuário).
+  Cuidado com a ordem dos parâmetros de `planejarConsolidacao`:
+  `..., paraExport, mapaId, estritoAoDestino, semPastaNaRaiz`.
+
+- **INEGOCIÁVEL — Aba Backup: sem rolagem e sem remover setas.** A coluna
+  de cards (B SELECTION, C FOLDER STRUCTURE, D OPTIONS, E RUN) nunca
+  rola, e TODO card que tem seta continua tendo (A→B, B→C, C→D, D→E,
+  E→F, F→G). Falta de altura se resolve encurtando o comprimento do
+  corpo de cada seta, um pouco e proporcionalmente (mesmo desenho,
+  mesma ponta) — jamais removendo seta/card/controle, inventando seta
+  nova ou adicionando scroll. Os cards mantêm a mesma largura (alinhados).
+
 - **Um commit por defeito**, mensagem descrevendo causa → arquivo:linha
   → fix. Nunca misturar um fix com WIP pré-existente no mesmo commit —
   se um arquivo já tinha mudanças não commitadas antes da tarefa, separar
