@@ -1255,6 +1255,8 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"duplicatas.nenhuma", "Nenhuma duplicata encontrada"},
         {"duplicatas.encontradas", "{n} pares de duplicatas encontrados"},
         {"duplicatas.achadas_ate_agora", "{n} pares até agora, até {size}"},
+        {"duplicatas.pasta_inteira", "Pasta inteira duplicada: os {n} arquivos de \"{a}\" também estão em \"{b}\"."},
+        {"duplicatas.pasta_mesmo_conteudo", "Mesmo conteúdo: \"{a}\" e \"{b}\" têm os mesmos {n} arquivos."},
         {"duplicatas.offline", "Arquivo offline ou não encontrado"},
         {"duplicatas.imagem_invalida", "Arquivo de imagem inválido"},
         {"arvore_backup.titulo", "MAPA DE PASTAS"},

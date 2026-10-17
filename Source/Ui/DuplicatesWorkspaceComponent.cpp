@@ -901,7 +901,14 @@ private:
                     g.drawText(juce::String::fromUTF8("\u2713 IDENTICAL FILES"), in.removeFromTop(14), juce::Justification::centredLeft, true);
                     g.setColour(tk.textoSecundario);
                     g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
-                    g.drawFittedText("Same SHA-256: safe to validate.", in, juce::Justification::topLeft, 3, 1.0f);
+                    juce::String textoNota("Same SHA-256: safe to validate.");
+                    if (grupo_.pastaArquivos > 0)
+                        textoNota << "\n" << matriz::i18n::t(grupo_.pastaMesmoConteudo ? "duplicatas.pasta_mesmo_conteudo"
+                                                                                       : "duplicatas.pasta_inteira")
+                                                 .replace("{n}", juce::String(grupo_.pastaArquivos))
+                                                 .replace("{a}", juce::String::fromUTF8(grupo_.pastaNome.c_str()))
+                                                 .replace("{b}", juce::String::fromUTF8(grupo_.pastaEmNome.c_str()));
+                    g.drawFittedText(textoNota, in, juce::Justification::topLeft, grupo_.pastaArquivos > 0 ? 6 : 3, 1.0f);
                 }
             }
 
@@ -2074,6 +2081,66 @@ void DuplicatesWorkspaceComponent::run() {
                     grupoExistente[chave] = gruposDetectados_.size();
                     contarAchado(grupo);
                     gruposDetectados_.push_back(std::move(grupo));
+                }
+            }
+
+            // ---- B2b: selo "pasta inteira duplicada". Pasta X está inteira em Y quando TODO arquivo master de X
+            // (conferido contra o banco, não só contra os itens deste scan) tem cópia idêntica em Y. Conservador: filtro
+            // ativo, item já resolvido ou arquivo sem checksum fazem a conta não fechar, e aí não há selo.
+            {
+                auto pastaDe = [](const std::string& fullPath) {
+                    return fullPath.empty() ? std::string()
+                                            : juce::File(juce::String::fromUTF8(fullPath.c_str())).getParentDirectory().getFullPathName().toStdString();
+                };
+                std::unordered_map<std::string, int> totalPorPasta;  // masters do projeto por pasta, sem filtro nenhum
+                try {
+                    const auto pastaProj = projeto_.projeto().pasta();
+                    auto st = db.prepare("SELECT caminho_relativo, caminho_absoluto_origem FROM arquivo WHERE eh_master = 1");
+                    while (st.step()) {
+                        if (threadShouldExit()) return;
+                        const std::string abs = st.columnText(1);
+                        const std::string caminho = !abs.empty() ? abs
+                            : pastaProj.getChildFile(juce::String::fromUTF8(st.columnText(0).c_str())).getFullPathName().toStdString();
+                        const auto pasta = pastaDe(caminho);
+                        if (!pasta.empty()) ++totalPorPasta[pasta];
+                    }
+                } catch (...) { totalPorPasta.clear(); }
+
+                std::unordered_map<std::string, int> comCopiaEm;  // "X\nY" -> arquivos de X com cópia idêntica em Y
+                for (const auto& [sha, idxs] : porSha) {
+                    if (idxs.size() < 2) continue;
+                    std::vector<std::string> pastas;
+                    pastas.reserve(idxs.size());
+                    for (auto i : idxs) pastas.push_back(pastaDe(items[i].fullPath));
+                    std::vector<std::string> distintas;
+                    for (const auto& p : pastas) if (!p.empty()) distintas.push_back(p);
+                    std::sort(distintas.begin(), distintas.end());
+                    distintas.erase(std::unique(distintas.begin(), distintas.end()), distintas.end());
+                    if (distintas.size() < 2 || distintas.size() > 20) continue;  // cópia espalhada demais: sem selo
+                    for (size_t k = 0; k < idxs.size(); ++k)
+                        if (!pastas[k].empty())
+                            for (const auto& y : distintas)
+                                if (y != pastas[k]) ++comCopiaEm[pastas[k] + "\n" + y];
+                }
+
+                auto estaInteiraEm = [&](const std::string& x, const std::string& y) {
+                    const auto t = totalPorPasta.find(x);
+                    const auto c = comCopiaEm.find(x + "\n" + y);
+                    return t != totalPorPasta.end() && c != comCopiaEm.end() && t->second >= 2 && c->second == t->second;
+                };
+                for (auto& g : gruposDetectados_) {
+                    if (g.criterio != "IDENTICAL") continue;
+                    const auto pastaOrig = pastaDe(g.original.fullPath), pastaDup = pastaDe(g.duplicata.fullPath);
+                    if (pastaOrig.empty() || pastaDup.empty() || pastaOrig == pastaDup) continue;
+                    const bool dupEmOrig = estaInteiraEm(pastaDup, pastaOrig);
+                    const bool origEmDup = estaInteiraEm(pastaOrig, pastaDup);
+                    if (!dupEmOrig && !origEmDup) continue;
+                    const auto& coberta = dupEmOrig ? pastaDup : pastaOrig;
+                    const auto& em = dupEmOrig ? pastaOrig : pastaDup;
+                    g.pastaArquivos = totalPorPasta[coberta];
+                    g.pastaNome = juce::File(juce::String::fromUTF8(coberta.c_str())).getFileName().toStdString();
+                    g.pastaEmNome = juce::File(juce::String::fromUTF8(em.c_str())).getFileName().toStdString();
+                    g.pastaMesmoConteudo = dupEmOrig && origEmDup && totalPorPasta[pastaOrig] == totalPorPasta[pastaDup];
                 }
             }
         }

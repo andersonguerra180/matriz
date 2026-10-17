@@ -76,6 +76,11 @@ private:
         // — PROBABLE e SIMILAR são SEMPRE decisão do usuário, nunca resolvidos em lote — ou "" (critérios de sempre).
         std::string criterio;
         int distanciaPHash = -1;  // só PROBABLE
+        // Selo "pasta inteira duplicada" (só IDENTICAL): TODOS os arquivos da pasta pastaNome também existem em
+        // pastaEmNome. pastaArquivos == 0 = sem selo. pastaMesmoConteudo = vale nos dois sentidos.
+        int pastaArquivos = 0;
+        std::string pastaNome, pastaEmNome;
+        bool pastaMesmoConteudo = false;
     };
 
     void resolverDuplicata(int grupoIdx, bool ehDuplicataReal);

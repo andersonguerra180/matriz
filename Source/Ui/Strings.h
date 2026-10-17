@@ -1242,6 +1242,8 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.nenhuma", "No duplicates found"},
         {"duplicatas.encontradas", "Found {n} potential duplicate pairs"},
         {"duplicatas.achadas_ate_agora", "{n} pairs found so far, up to {size}"},
+        {"duplicatas.pasta_inteira", "Whole folder duplicated: all {n} files of \"{a}\" are also in \"{b}\"."},
+        {"duplicatas.pasta_mesmo_conteudo", "Same contents: \"{a}\" and \"{b}\" hold the same {n} files."},
         {"duplicatas.offline", "File offline or not found"},
         {"duplicatas.imagem_invalida", "Invalid Image File"},
         {"arvore_backup.titulo", "TREEMAP"},
