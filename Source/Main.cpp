@@ -255,6 +255,11 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-importar-visual")) {
+            setApplicationReturnValue(matriz::ui::rodarTestImportarVisual());
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-lightroom")) {
             monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
             setApplicationReturnValue(matriz::ui::rodarTestLightroom());

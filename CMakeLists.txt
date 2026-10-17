@@ -82,6 +82,10 @@ juce_add_binary_data(MatrizI18nAssets
     HEADER_NAME I18nBinaryData.h
     SOURCES i18n/en.yaml i18n/pt_BR.yaml)
 
+# Ícones do menu IMPORT (Assets/Icons/container_icons/ci_<categoria>_<nome>.png): um recurso embutido por arquivo
+# (ci_aud_midi.png -> AssetsBinaryData::ci_aud_midi_png). Trocar um PNG exige recompilar; arquivo novo, reconfigurar.
+file(GLOB MATRIZ_ICONES_IMPORTAR CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Assets/Icons/container_icons/*.png")
+
 # Assets embutidos no binário
 juce_add_binary_data(MatrizAssets
     NAMESPACE AssetsBinaryData
@@ -92,6 +96,12 @@ juce_add_binary_data(MatrizAssets
         Assets/android.png
         Assets/apple.png
         Assets/whatsapp.jpg
+        ${MATRIZ_ICONES_IMPORTAR}
+        # Logos das redes sociais do menu IMPORT
+        Assets/Icons/instagram.jpeg
+        Assets/Icons/meta.png
+        Assets/Icons/tiktok.jpeg
+        Assets/Icons/x.png
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"

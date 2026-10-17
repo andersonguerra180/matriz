@@ -4259,18 +4259,47 @@ void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id) {
         });
         return;
     }
+    if (id.rfind("drive.", 0) == 0) {
+        // Conta escolhida na sub-janela do card Google Drive.
+        const auto contas = contasGoogleDrive();
+        const size_t n = static_cast<size_t>(juce::String(id.substr(6)).getIntValue());
+        if (n < contas.size()) {
+            matriz::app::gravarUltimaContaGoogleDrive(contas[n].rotulo);
+            if (aoIngerirDeGoogleDrive) aoIngerirDeGoogleDrive(contas[n].pasta);
+            else if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+        }
+        return;
+    }
     if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
     if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
+    if (folhaImportarTemFicha(id)) { abrirFichaDeImportacao(id); return; }
     abrirSeletorDeImportacao(id);
 }
 
+// Ficha de contexto da folha (ex.: formato de origem do vídeo) antes do seletor de arquivos.
+void IntakeWorkspaceComponent::abrirFichaDeImportacao(const std::string& id) {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarFichaImportar(*overlayAtual_, id, [seguro, id](bool continuar, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+        juce::MessageManager::callAsync([seguro, id, continuar, daFicha] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (continuar) seguro->abrirSeletorDeImportacao(id, daFicha);
+        });
+    });
+    resized();
+}
+
 // Seletor de arquivos e pastas do card escolhido; o que o card implica (ver contextoDaFolhaImportar) vai junto.
-void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id) {
+void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
     if (!aoIngerirComContexto && !aoIngerirArquivosDireto) {
         if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
         return;
     }
-    const auto contexto = contextoDaFolhaImportar(id);
+    const auto contexto = mesclarContextosImportar(contextoDaFolhaImportar(id), std::move(daFicha));
     auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.titulo") + " - " + i18n::t("imp.node." + id));
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
     seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |

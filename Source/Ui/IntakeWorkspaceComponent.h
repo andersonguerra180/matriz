@@ -258,7 +258,8 @@ private:
     std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
     void abrirMenuImportar();
     void tratarEscolhaImportar(const std::string& id);
-    void abrirSeletorDeImportacao(const std::string& id);
+    void abrirSeletorDeImportacao(const std::string& id, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha = nullptr);
+    void abrirFichaDeImportacao(const std::string& id);
     void abrirReceberDoCelular();
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;

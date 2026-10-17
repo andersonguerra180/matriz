@@ -7,6 +7,7 @@
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
+#include "OriginalSourceMedium.h"
 #include "../Ingest/LightroomImporter.h"
 
 #include <JuceHeader.h>
@@ -1040,11 +1041,18 @@ int rodarTestImportarComContexto() {
             return st.step() && !st.columnIsNull(0) ? st.columnText(0) : std::string();
         };
 
-        ingerir(samples, contextoDaFolhaImportar("audio.samples"));
-        checar(coluna("samples", "collection_type") == "Sample Pack", "audio.samples grava CONTENT = Sample Pack");
+        ingerir(samples, contextoDaFolhaImportar("audio.production.samples"));
+        checar(coluna("samples", "collection_type") == "Sample Pack", "audio.production.samples grava CONTENT = Sample Pack");
 
-        ingerir(fita, contextoDaFolhaImportar("videos.vhs"));
-        checar(coluna("fita", "source_media").find("VHS") != std::string::npos, "videos.vhs grava SOURCE MEDIUM = VHS (JSON em item.source_media)");
+        // Vídeo: o formato de origem vem da ficha (campo "source_media"), somado ao que o card já implica.
+        {
+            auto daFicha = std::make_shared<matriz::ingest::SobreMaterial>();
+            OriginalSourceMediumInfo info;
+            info.medium = "VHS";
+            daFicha->campos.push_back({ "source_media", info.serialize() });
+            ingerir(fita, mesclarContextosImportar(contextoDaFolhaImportar("videos.digital"), daFicha));
+            checar(coluna("fita", "source_media").find("VHS") != std::string::npos, "ficha de video grava SOURCE MEDIUM = VHS (JSON em item.source_media)");
+        }
 
         ingerir(rede, contextoDaFolhaImportar("other.social.instagram"));
         {
@@ -1072,7 +1080,7 @@ int rodarTestImportarComContexto() {
                              pasta.getChildFile("lado_a.wav").getFullPathName()});
             gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=550:duration=1",
                              pasta.getChildFile("lado_b.wav").getFullPathName()});
-            mainComponent.ingerirArquivos({pasta}, true, contextoDaFolhaImportar("audio.vinyl_rip"));
+            mainComponent.ingerirArquivos({pasta}, true, contextoDaFolhaImportar("audio.preservation.vinyl"));
             const auto t0 = juce::Time::getMillisecondCounter();
             int comTag = 0;
             while (juce::Time::getMillisecondCounter() - t0 < 30000) {
@@ -1095,6 +1103,81 @@ int rodarTestImportarComContexto() {
         checar(false, juce::String("teste importar contexto: ") + e.what());
     }
     tmpRoot.deleteRecursively();
+
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+// Renderiza a janela IMPORT (raiz, sub-janelas) e a ficha de vídeo em PNG (./test-output) para conferir o visual.
+int rodarTestImportarVisual() {
+    std::cout << "== IMPORT window snapshots ==\n";
+    int falhas = 0;
+    juce::File saida = juce::File::getCurrentWorkingDirectory().getChildFile("test-output");
+    saida.createDirectory();
+    const auto salvar = [&](juce::Component& c, const juce::String& nome) {
+        juce::Image img = c.createComponentSnapshot(c.getLocalBounds());
+        juce::File arquivo = saida.getChildFile(nome + ".png");
+        arquivo.deleteFile();
+        if (auto stream = std::unique_ptr<juce::FileOutputStream>(arquivo.createOutputStream())) {
+            juce::PNGImageFormat png;
+            png.writeImageToStream(img, *stream);
+        }
+        const bool ok = img.isValid() && img.getWidth() > 0;
+        std::cout << (ok ? "  OK   " : "  FAIL ") << nome << " -> " << arquivo.getFullPathName() << "\n";
+        if (!ok) ++falhas;
+    };
+    const auto girar = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+
+    matriz::i18n::carregar("en");
+    PainelOverlay overlay;
+    overlay.setBounds(0, 0, 1100, 760);
+    std::optional<std::string> escolha;
+    bool terminou = false;
+    mostrarMenuImportar(overlay, [&](std::optional<std::string> id) { escolha = id; terminou = true; });
+    girar(100);
+    salvar(overlay, "imp_01_raiz");
+
+    overlay.concluirExterno(105);  // Audio
+    girar(150);
+    salvar(overlay, "imp_02_audio");
+    overlay.concluirExterno(100);  // Production
+    girar(150);
+    salvar(overlay, "imp_03_audio_production");
+    overlay.concluirExterno(1);    // VOLTAR
+    girar(150);
+    overlay.concluirExterno(1);    // VOLTAR (raiz)
+    girar(150);
+    overlay.concluirExterno(104);  // Videos
+    girar(150);
+    salvar(overlay, "imp_04_videos");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(107);  // Other
+    girar(150);
+    salvar(overlay, "imp_05_other");
+    overlay.concluirExterno(102);  // Social Media
+    girar(150);
+    salvar(overlay, "imp_06_social");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(101);  // Multimedia
+    girar(150);
+    salvar(overlay, "imp_07_multimedia");
+    overlay.concluirExterno(0);
+    girar(100);
+    std::cout << (terminou && !escolha.has_value() ? "  OK   " : "  FAIL ") << "cancelar encerra sem escolha\n";
+    if (!(terminou && !escolha.has_value())) ++falhas;
+
+    PainelOverlay overlayFicha;
+    overlayFicha.setBounds(0, 0, 1100, 760);
+    bool fichaRespondeu = false;
+    mostrarFichaImportar(overlayFicha, "videos.digital", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) { fichaRespondeu = true; });
+    girar(100);
+    salvar(overlayFicha, "imp_08_ficha_video");
+    overlayFicha.concluirExterno(2);
+    girar(50);
+    std::cout << (fichaRespondeu ? "  OK   " : "  FAIL ") << "PULAR conclui a ficha\n";
+    if (!fichaRespondeu) ++falhas;
 
     std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
     return falhas == 0 ? 0 : 1;
