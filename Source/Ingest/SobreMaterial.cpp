@@ -148,6 +148,22 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
             }
         }
 
+        // Localização padrão: só entra se o item ainda não tem geolocalização (a do arquivo e a do usuário prevalecem;
+        // quem grava depois usa upsert e substitui esta).
+        if (!sm.geoPadrao.vazio()) {
+            auto st = db.prepare("SELECT 1 FROM asset_geolocation WHERE asset_id = ?");
+            st.bind(1, Value::of(itemId));
+            if (!st.step()) {
+                const bool temCoord = sm.geoPadrao.lat.has_value() && sm.geoPadrao.lng.has_value();
+                const auto texto = [](const std::string& v) { return v.empty() ? Value::null() : Value::of(v); };
+                db.run("INSERT OR IGNORE INTO asset_geolocation (asset_id, latitude, longitude, country, state_province, city, source) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       {Value::of(itemId), temCoord ? Value::of(*sm.geoPadrao.lat) : Value::null(), temCoord ? Value::of(*sm.geoPadrao.lng) : Value::null(),
+                        texto(sm.geoPadrao.pais), texto(sm.geoPadrao.estado), texto(sm.geoPadrao.cidade),
+                        Value::of(std::string(temCoord ? "USER_COORDINATES" : sm.geoPadrao.cidade.empty() ? (sm.geoPadrao.estado.empty() ? "USER_COUNTRY" : "USER_STATE") : "USER_CITY"))});
+            }
+        }
+
         if (!im.subjectsNovos.empty()) {
             // O assunto que o arquivo já traz (item.dc_subject ou leitura técnica) fica; o novo soma.
             std::string atual = lerColuna(db, itemId, "dc_subject");

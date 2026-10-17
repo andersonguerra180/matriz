@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,13 +30,21 @@ struct SobreMaterial {
     // "Single file" da ficha de importação: sufixo somado ao título de cada arquivo.
     std::string sufixoTitulo;
 
+    // Localização padrão da importação: só vale para arquivos que não trazem geolocalização própria (as coordenadas
+    // do arquivo e o que o usuário preencher à mão prevalecem).
+    struct GeoPadrao {
+        std::string cidade, estado, pais;
+        std::optional<double> lat, lng;
+        bool vazio() const { return cidade.empty() && estado.empty() && pais.empty() && !lat.has_value(); }
+    } geoPadrao;
+
     // Conjunto que entra junto e realiza uma ação (ex.: "ddp", "production"): no fim do lote os itens viram um CONTAINER
     // no Intake com esta origem. Não é metadado do arquivo (não entra em vazio()).
     std::string containerOrigem;
 
     bool vazio() const {
         return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty() &&
-               campos.empty() && sufixoTitulo.empty();
+               campos.empty() && sufixoTitulo.empty() && geoPadrao.vazio();
     }
 };
 

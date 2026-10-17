@@ -1018,7 +1018,7 @@ int rodarTestImportarComContexto() {
             return f;
         };
         const juce::File samples = gerarTom("samples.wav"), fita = gerarTom("fita.wav"), rede = gerarTom("rede.wav"),
-                         sufixo = gerarTom("sufixo.wav"), neutro = gerarTom("neutro.wav");
+                         sufixo = gerarTom("sufixo.wav"), neutro = gerarTom("neutro.wav"), local = gerarTom("local.wav");
 
         matriz::model::NovoProjetoParams params;
         params.nome = "Teste IMPORT contexto";
@@ -1094,6 +1094,18 @@ int rodarTestImportarComContexto() {
             }
             esperarIngestTerminar(mainComponent);
             checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl transcription' do card (" + juce::String(comTag) + ")");
+        }
+
+        // Localização padrão da ficha de fotos: entra como USER_CITY quando o arquivo não tem geolocalização própria.
+        {
+            auto comGeo = std::make_shared<matriz::ingest::SobreMaterial>();
+            comGeo->geoPadrao.cidade = "Rio de Janeiro";
+            comGeo->geoPadrao.pais = "Brazil";
+            ingerir(local, comGeo);
+            auto st = registro.prepare("SELECT g.city, g.country, g.source FROM asset_geolocation g JOIN item i ON i.id = g.asset_id WHERE i.titulo = 'local'");
+            const bool achou = st.step();
+            checar(achou && st.columnText(0) == "Rio de Janeiro" && st.columnText(1) == "Brazil" && st.columnText(2) == "USER_CITY",
+                   "localizacao padrao da ficha entra em asset_geolocation (USER_CITY)");
         }
 
         // DDP master: conjunto que entra junto vira CONTAINER ("ddp") no Intake e o contexto marca cada arquivo.
@@ -1222,6 +1234,16 @@ int rodarTestImportarVisual() {
         mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
         girar(100);
         salvar(overlayVinil, "imp_10_ficha_audio_vinil");
+        const char* fichasVisuais[][2] = { { "photos.folder", "imp_13_ficha_fotos" }, { "files.optical", "imp_14_ficha_arquivos_optico" },
+                                           { "documents.web", "imp_15_ficha_docs_web" }, { "other.multimedia.interactive", "imp_16_ficha_interativo" },
+                                           { "other.social.other", "imp_17_ficha_rede_outra" } };
+        for (const auto& fv : fichasVisuais) {
+            PainelOverlay o;
+            o.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(o, fv[0], [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+            girar(100);
+            salvar(o, fv[1]);
+        }
         PainelOverlay overlayDdp;
         overlayDdp.setBounds(0, 0, 1100, 760);
         mostrarFichaImportar(overlayDdp, "audio.preservation.ddp", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
