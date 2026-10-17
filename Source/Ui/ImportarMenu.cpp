@@ -7,7 +7,6 @@
 #include "../I18n/Strings.h"
 #include "GoogleDriveContas.h"
 #include "Moldura.h"
-#include "OriginalSourceMedium.h"
 #include "Tablet.h"
 #include "Tokens.h"
 
@@ -385,136 +384,10 @@ void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titu
     });
 }
 
-// Opções do campo "formato de origem" da ficha de vídeo: digital nativo, fitas, discos óticos e filme.
-// O texto exibido é o traduzido; canonicalMedium() devolve o nome em inglês que o catálogo guarda.
-std::vector<juce::String> opcoesFormatoDeVideo() {
-    const bool pt = matriz::i18n::localeAtivo().startsWith("pt");
-    std::vector<juce::String> opcoes;
-    opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium("Native Digital", pt));
-    for (const auto& grupoMedio : OriginalSourceMediumVocabulary::getMediumCategories()) {
-        const auto nome = grupoMedio.groupName;
-        if (!(nome.startsWith("VIDEO") || nome.startsWith("OPTICAL") || nome.startsWith("FILM"))) continue;
-        for (const auto& medio : grupoMedio.mediums) opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium(medio, pt));
-    }
-    opcoes.push_back(OriginalSourceMediumVocabulary::translateMedium("Other", pt));
-    return opcoes;
-}
-
 } // namespace
 
 void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir) {
     mostrarNivel(overlay, montarArvore(), t("imp.titulo"), "", nullptr, std::move(aoConcluir));
-}
-
-std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(const std::string& id) {
-    // Valores no vocabulário canônico (em inglês) do CONTENT e do SOURCE MEDIUM do Matriz. Só entra o que o card
-    // afirma com certeza; o resto (tamanho do vinil, formato do vídeo...) vem das fichas de cada categoria.
-    struct Linha { const char* id; const char* content; const char* medium; std::vector<const char*> tags; };
-    static const std::vector<Linha> tabela = {
-        { "files.external_drive", "", "External Hard Drive (HDD)", {} },
-        { "files.optical", "", "", { "Optical media" } },
-        { "photos.folder", "Photo", "", {} },
-        { "photos.camera_card", "Photo", "", { "Camera card" } },
-        { "audio.production.project", "", "", { "Music Production" } },
-        { "audio.production.samples", "Sample Pack", "", {} },
-        { "audio.production.midi", "MIDI", "", {} },
-        { "audio.production.assets", "", "", { "Production assets" } },
-        { "audio.preservation.ddp", "Master", "", { "DDP master" } },
-        { "audio.preservation.vinyl", "", "", { "Vinyl rip" } },
-        { "audio.preservation.tape", "", "", { "Tape rip" } },
-        { "audio.general.soundtrack", "Soundtrack", "", {} },
-        { "audio.general.film_sound", "", "", { "Film sound" } },
-        { "audio.general.audiobook", "", "", { "Audiobook" } },
-        { "audio.general.field", "Field Recording", "", {} },
-        { "audio.general.voice_over", "Voiceover", "", {} },
-        { "audio.general.voice_notes", "", "", { "Voice notes" } },
-        { "documents.native", "", "Native Digital", {} },
-        { "documents.scanned", "", "", { "Scanned" } },
-        { "documents.web", "", "", { "Web" } },
-        { "other.multimedia.apps", "", "", { "App / software" } },
-        { "other.multimedia.interactive", "", "", { "Interactive multimedia" } },
-        { "other.social.instagram", "", "", { "Social media", "Instagram" } },
-        { "other.social.facebook", "", "", { "Social media", "Facebook" } },
-        { "other.social.tiktok", "", "", { "Social media", "TikTok" } },
-        { "other.social.x", "", "", { "Social media", "Twitter / X" } },
-        { "other.social.other", "", "", { "Social media" } },
-    };
-    for (const auto& l : tabela) {
-        if (id != l.id) continue;
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        sobre->collectionType = l.content;
-        for (const char* tag : l.tags) sobre->tags.push_back(tag);
-        if (std::string(l.medium).size() > 0) {
-            OriginalSourceMediumInfo info;
-            info.medium = l.medium;
-            sobre->campos.push_back({ "source_media", info.serialize() });
-        }
-        return sobre;
-    }
-    return nullptr;
-}
-
-std::shared_ptr<const matriz::ingest::SobreMaterial> mesclarContextosImportar(
-    std::shared_ptr<const matriz::ingest::SobreMaterial> base, std::shared_ptr<const matriz::ingest::SobreMaterial> extra) {
-    if (extra == nullptr) return base;
-    if (base == nullptr) return extra;
-    auto r = std::make_shared<matriz::ingest::SobreMaterial>(*base);
-    if (!extra->collectionType.empty()) r->collectionType = extra->collectionType;
-    if (!extra->subject.empty()) r->subject = r->subject.empty() ? extra->subject : r->subject + ", " + extra->subject;
-    if (!extra->descricao.empty()) r->descricao = r->descricao.empty() ? extra->descricao : r->descricao + "\n\n" + extra->descricao;
-    for (const auto& p : extra->pessoas) r->pessoas.push_back(p);
-    for (const auto& tag : extra->tags) r->tags.push_back(tag);
-    for (const auto& c : extra->campos) {
-        bool achou = false;
-        for (auto& existente : r->campos)
-            if (existente.first == c.first) { existente.second = c.second; achou = true; break; }
-        if (!achou) r->campos.push_back(c);
-    }
-    if (!extra->sufixoTitulo.empty()) r->sufixoTitulo = extra->sufixoTitulo;
-    return r;
-}
-
-bool folhaImportarTemFicha(const std::string& id) {
-    return id == "videos.digital" || id == "videos.other";
-}
-
-void mostrarFichaImportar(PainelOverlay& overlay, const std::string& id,
-                          std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
-    if (!folhaImportarTemFicha(id)) { if (aoConcluir) aoConcluir(true, nullptr); return; }
-
-    // Ficha de VÍDEO: o formato de origem é pergunta da ficha (e vira SOURCE MEDIUM de cada arquivo), não um card.
-    const auto opcoes = opcoesFormatoDeVideo();
-    PainelOverlay::Config cfg;
-    cfg.titulo = t("imp.ficha.videos.titulo");
-    cfg.mensagem = t("imp.ficha.videos.msg");
-    cfg.trilha = t("moldura.trilha.adicionar");
-    cfg.larguraCartao = 620;
-    cfg.campos = {
-        { "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica"), opcoes },
-        { "notas", t("imp.ficha.notas"), "", t("imp.ficha.notas.dica"), {} },
-    };
-    cfg.botoes = {
-        { t("light.ui.common.cancel"), 0, false, true },
-        { t("imp.ficha.pular"), 2, false, false },
-        { t("imp.ficha.continuar"), 1, true, false },
-    };
-    overlay.mostrar(cfg, [aoConcluir](PainelOverlay::Resultado r) {
-        if (!aoConcluir) return;
-        if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
-        if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue sem o que a ficha perguntaria
-        const auto valor = [&r](const char* campo) {
-            const auto it = r.valores.find(campo);
-            return it == r.valores.end() ? juce::String() : it->second.trim();
-        };
-        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
-        if (valor("formato").isNotEmpty()) {
-            OriginalSourceMediumInfo info;
-            info.medium = OriginalSourceMediumVocabulary::canonicalMedium(valor("formato").toStdString());
-            sobre->campos.push_back({ "source_media", info.serialize() });
-        }
-        sobre->descricao = valor("notas").toStdString();
-        aoConcluir(true, sobre->vazio() ? nullptr : sobre);
-    });
 }
 
 std::vector<std::string> idsDasFolhasDoMenuImportar() {

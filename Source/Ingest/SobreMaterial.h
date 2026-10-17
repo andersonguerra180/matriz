@@ -29,6 +29,10 @@ struct SobreMaterial {
     // "Single file" da ficha de importação: sufixo somado ao título de cada arquivo.
     std::string sufixoTitulo;
 
+    // Conjunto que entra junto e realiza uma ação (ex.: "ddp", "production"): no fim do lote os itens viram um CONTAINER
+    // no Intake com esta origem. Não é metadado do arquivo (não entra em vazio()).
+    std::string containerOrigem;
+
     bool vazio() const {
         return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty() &&
                campos.empty() && sufixoTitulo.empty();

@@ -1096,6 +1096,34 @@ int rodarTestImportarComContexto() {
             checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl rip' do card (" + juce::String(comTag) + ")");
         }
 
+        // DDP master: conjunto que entra junto vira CONTAINER ("ddp") no Intake e o contexto marca cada arquivo.
+        {
+            const auto ctxDdp = contextoDaFolhaImportar("audio.preservation.ddp");
+            checar(ctxDdp != nullptr && ctxDdp->containerOrigem == "ddp", "audio.preservation.ddp pede container 'ddp'");
+            juce::File pasta = tmpRoot.getChildFile("master_ddp");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=220:duration=1",
+                             pasta.getChildFile("faixa_um.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=260:duration=1",
+                             pasta.getChildFile("faixa_dois.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, ctxDdp);
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int containers = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM nest WHERE origem = 'ddp'");
+                st.step();
+                containers = static_cast<int>(st.columnInt(0));
+                if (containers == 1) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(containers == 1, "pasta DDP vira 1 container 'ddp' no Intake (" + juce::String(containers) + ")");
+            auto membros = registro.prepare("SELECT COUNT(*) FROM nest_item ni JOIN nest n ON n.id = ni.nest_id WHERE n.origem = 'ddp'");
+            membros.step();
+            checar(membros.columnInt(0) == 2, "o container 'ddp' tem os 2 arquivos");
+        }
+
         ingerir(neutro, nullptr);
         checar(coluna("neutro", "collection_type").empty() && coluna("neutro", "source_media").empty(),
                "sem contexto (card neutro / arrastar) o item entra como antes: sem CONTENT nem SOURCE MEDIUM");
@@ -1167,6 +1195,19 @@ int rodarTestImportarVisual() {
     girar(100);
     std::cout << (terminou && !escolha.has_value() ? "  OK   " : "  FAIL ") << "cancelar encerra sem escolha\n";
     if (!(terminou && !escolha.has_value())) ++falhas;
+
+    {
+        PainelOverlay overlayAudio;
+        overlayAudio.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayAudio, "audio.production.project", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayAudio, "imp_09_ficha_audio_producao");
+        PainelOverlay overlayVinil;
+        overlayVinil.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayVinil, "imp_10_ficha_audio_vinil");
+    }
 
     PainelOverlay overlayFicha;
     overlayFicha.setBounds(0, 0, 1100, 760);

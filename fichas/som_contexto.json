@@ -1,0 +1,265 @@
+{
+  "version": 2,
+  "description": "Fichas de contextualizacao por tipo de som - BKR Matriz (EN/PT)",
+  "common": {
+    "sourceMedia": {
+      "id": "source_media",
+      "label": { "en": "Source media", "pt": "Origem" },
+      "input": "select",
+      "options": [
+        { "id": "native_digital_file", "en": "Native digital file", "pt": "Arquivo digital original" },
+        { "id": "memory_card", "en": "Memory card", "pt": "Cartão de memória" },
+        { "id": "cd", "en": "CD", "pt": "CD" },
+        { "id": "tape", "en": "Tape", "pt": "Fita" },
+        { "id": "vinyl", "en": "Vinyl", "pt": "Vinil" },
+        { "id": "phone", "en": "Phone", "pt": "Celular" },
+        { "id": "other", "en": "Other", "pt": "Outro" }
+      ]
+    },
+    "mediaId": {
+      "id": "media_id",
+      "label": { "en": "Card, CD or tape ID", "pt": "ID do cartão, CD ou fita" },
+      "placeholder": { "en": "Label, number or name written on it", "pt": "Etiqueta, número ou nome escrito nele" },
+      "input": "text"
+    },
+    "context": {
+      "id": "context",
+      "label": { "en": "Context / Additional Details", "pt": "Contexto / Detalhes adicionais" },
+      "input": "text"
+    }
+  },
+  "types": [
+    {
+      "id": "none",
+      "label": { "en": "(none)", "pt": "(nenhum)" },
+      "fields": []
+    },
+    {
+      "id": "voice_memo",
+      "label": { "en": "Voice memo", "pt": "Nota de voz" },
+      "fields": [
+        { "id": "subject", "label": { "en": "Subject", "pt": "Assunto" }, "input": "text" },
+        { "id": "date_place", "label": { "en": "Date and place", "pt": "Data e local" }, "input": "text", "optional": true }
+      ]
+    },
+    {
+      "id": "voice_over",
+      "label": { "en": "Voice over", "pt": "Locução" },
+      "fields": [
+        { "id": "project", "label": { "en": "Project", "pt": "Projeto" }, "input": "text" },
+        { "id": "voice_talent", "label": { "en": "Voice talent", "pt": "Locutor(a)" }, "input": "text" },
+        { "id": "language", "label": { "en": "Language", "pt": "Idioma" }, "input": "text" },
+        {
+          "id": "version",
+          "label": { "en": "Version", "pt": "Versão" },
+          "input": "select",
+          "options": [
+            { "id": "draft", "en": "Draft", "pt": "Rascunho" },
+            { "id": "final", "en": "Final", "pt": "Final" }
+          ]
+        },
+        { "id": "recording_location", "label": { "en": "Recording location", "pt": "Local da gravação" }, "input": "text" }
+      ]
+    },
+    {
+      "id": "audiobook",
+      "label": { "en": "Audiobook", "pt": "Audiolivro" },
+      "fields": [
+        { "id": "book_title", "label": { "en": "Book title", "pt": "Título do livro" }, "input": "text" },
+        { "id": "author_narrator", "label": { "en": "Author and narrator", "pt": "Autor(a) e narrador(a)" }, "input": "text" },
+        { "id": "chapter", "label": { "en": "Chapter or part", "pt": "Capítulo ou parte" }, "input": "text" }
+      ]
+    },
+    {
+      "id": "sample_pack",
+      "label": { "en": "Sample pack", "pt": "Pacote de sons" },
+      "fields": [
+        { "id": "pack_name", "label": { "en": "Pack name", "pt": "Nome do pacote" }, "input": "text" },
+        {
+          "id": "source",
+          "label": { "en": "Source", "pt": "Fonte" },
+          "input": "select",
+          "options": [
+            { "id": "bought", "en": "Bought", "pt": "Comprado" },
+            { "id": "free", "en": "Free", "pt": "Gratuito" },
+            { "id": "mine", "en": "Made by me", "pt": "Feito por mim" }
+          ]
+        },
+        { "id": "sound_type", "label": { "en": "Sound type", "pt": "Tipo de som" }, "input": "text" }
+      ]
+    },
+    {
+      "id": "midi",
+      "label": { "en": "MIDI", "pt": "MIDI" },
+      "fields": [
+        { "id": "song_name", "label": { "en": "Song or idea name", "pt": "Nome da música ou ideia" }, "input": "text" },
+        { "id": "instrument", "label": { "en": "Instrument or part", "pt": "Instrumento ou parte" }, "input": "text" },
+        { "id": "tempo_key", "label": { "en": "Tempo and key", "pt": "Andamento e tom" }, "input": "text", "optional": true }
+      ]
+    },
+    {
+      "id": "soundtrack",
+      "label": { "en": "Soundtrack", "pt": "Trilha sonora" },
+      "fields": [
+        {
+          "id": "soundtrack_type",
+          "label": { "en": "Soundtrack type", "pt": "Tipo de trilha" },
+          "input": "select",
+          "options": [
+            { "id": "film", "en": "Film", "pt": "Filme" },
+            { "id": "game", "en": "Game", "pt": "Jogo" },
+            { "id": "web", "en": "Web", "pt": "Web" },
+            { "id": "radio", "en": "Radio", "pt": "Rádio" },
+            { "id": "tv", "en": "TV", "pt": "TV" },
+            { "id": "other", "en": "Other", "pt": "Outro" }
+          ]
+        },
+        { "id": "project", "label": { "en": "Title or project", "pt": "Título ou projeto" }, "input": "text" },
+        { "id": "scene", "label": { "en": "Scene or moment", "pt": "Cena ou momento" }, "input": "text" },
+        { "id": "composer", "label": { "en": "Composer", "pt": "Compositor(a)" }, "input": "text" }
+      ]
+    },
+    {
+      "id": "field_recording",
+      "label": { "en": "Field recording", "pt": "Gravação de campo" },
+      "fields": [
+        { "id": "place", "label": { "en": "Place", "pt": "Local" }, "input": "text" },
+        { "id": "date_time", "label": { "en": "Date and time", "pt": "Data e hora" }, "input": "text" },
+        { "id": "what_recorded", "label": { "en": "What was recorded", "pt": "O que foi gravado" }, "input": "text" },
+        { "id": "gear", "label": { "en": "Gear used", "pt": "Equipamento usado" }, "input": "text", "optional": true },
+        { "id": "log_notes", "label": { "en": "Log Notes", "pt": "Notas de registro" }, "input": "longtext", "optional": true }
+      ]
+    },
+    {
+      "id": "music",
+      "label": { "en": "Music", "pt": "Música" },
+      "fields": [
+        { "id": "artist", "label": { "en": "Artist or band", "pt": "Artista ou banda" }, "input": "text" },
+        { "id": "title", "label": { "en": "Song or album title", "pt": "Título da música ou álbum" }, "input": "text" },
+        { "id": "year", "label": { "en": "Year", "pt": "Ano" }, "input": "text" },
+        {
+          "id": "kind",
+          "label": { "en": "Kind", "pt": "Tipo" },
+          "input": "select",
+          "options": [
+            { "id": "album", "en": "Album", "pt": "Disco" },
+            { "id": "single", "en": "Single", "pt": "Single" },
+            { "id": "ep", "en": "EP", "pt": "EP" },
+            { "id": "demo", "en": "Demo", "pt": "Demo" },
+            { "id": "live", "en": "Live", "pt": "Ao vivo" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cd_rip",
+      "label": { "en": "CD rip", "pt": "Cópia de CD" },
+      "fields": [
+        { "id": "cd_label", "label": { "en": "Number or name on the CD", "pt": "Número ou nome escrito no CD" }, "input": "text" },
+        { "id": "artist_album", "label": { "en": "Artist and album", "pt": "Artista e álbum" }, "input": "text" },
+        {
+          "id": "condition",
+          "label": { "en": "Disc condition", "pt": "Estado do CD" },
+          "input": "select",
+          "options": [
+            { "id": "good", "en": "Good", "pt": "Bom" },
+            { "id": "scratched", "en": "Scratched", "pt": "Riscado" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ddp_master",
+      "label": { "en": "DDP master (CD)", "pt": "Master DDP (CD)" },
+      "fields": [
+        { "id": "artist_album", "label": { "en": "Artist and album", "pt": "Artista e álbum" }, "input": "text" }
+      ]
+    },
+    {
+      "id": "vinyl_rip",
+      "label": { "en": "Vinyl rip", "pt": "Cópia de vinil" },
+      "fields": [
+        { "id": "artist_album", "label": { "en": "Artist and album", "pt": "Artista e álbum" }, "input": "text" },
+        {
+          "id": "side",
+          "label": { "en": "Side", "pt": "Lado" },
+          "input": "select",
+          "options": [
+            { "id": "both", "en": "Both", "pt": "Ambos" },
+            { "id": "a", "en": "Side A", "pt": "Lado A" },
+            { "id": "b", "en": "Side B", "pt": "Lado B" }
+          ]
+        },
+        {
+          "id": "speed",
+          "label": { "en": "Speed (RPM)", "pt": "Rotação (RPM)" },
+          "input": "select",
+          "options": [
+            { "id": "33", "en": "33", "pt": "33" },
+            { "id": "45", "en": "45", "pt": "45" }
+          ]
+        },
+        {
+          "id": "condition",
+          "label": { "en": "Record condition", "pt": "Estado do disco" },
+          "input": "select",
+          "options": [
+            { "id": "good", "en": "Good", "pt": "Bom" },
+            { "id": "noisy", "en": "Noisy", "pt": "Chiado" },
+            { "id": "scratched", "en": "Scratched", "pt": "Riscado" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "music_production",
+      "label": { "en": "Music Production", "pt": "Produção musical" },
+      "fields": [
+        { "id": "artist", "label": { "en": "Artist or band", "pt": "Artista ou banda" }, "input": "text" },
+        { "id": "project", "label": { "en": "Project or song name", "pt": "Nome do projeto ou música" }, "input": "text" },
+        {
+          "id": "release_type",
+          "label": { "en": "Release type", "pt": "Tipo de lançamento" },
+          "input": "select",
+          "options": [
+            { "id": "single", "en": "Single", "pt": "Single" },
+            { "id": "ep", "en": "EP", "pt": "EP" },
+            { "id": "album", "en": "Album", "pt": "Álbum" },
+            { "id": "demo", "en": "Demo", "pt": "Demo" },
+            { "id": "live", "en": "Live", "pt": "Ao vivo" }
+          ]
+        },
+        {
+          "id": "stage",
+          "label": { "en": "Stage", "pt": "Etapa" },
+          "input": "select",
+          "options": [
+            { "id": "recording", "en": "Recording", "pt": "Gravação" },
+            { "id": "mixing", "en": "Mixing", "pt": "Mixagem" },
+            { "id": "mastering", "en": "Mastering", "pt": "Masterização" },
+            { "id": "final", "en": "Final", "pt": "Final" }
+          ]
+        },
+        {
+          "id": "recording_medium",
+          "label": { "en": "Recording medium", "pt": "Mídia de gravação" },
+          "input": "select",
+          "options": [
+            { "id": "daw", "en": "DAW", "pt": "DAW" },
+            { "id": "tape_quarter", "en": "1/4\" Tape", "pt": "Fita 1/4\"" },
+            { "id": "tape_half", "en": "1/2\" Tape", "pt": "Fita 1/2\"" },
+            { "id": "tape_1in", "en": "1\" Tape", "pt": "Fita 1\"" },
+            { "id": "tape_2in", "en": "2\" Tape", "pt": "Fita 2\"" },
+            { "id": "cassette", "en": "Cassette Tape", "pt": "Fita Cassete" },
+            { "id": "dat", "en": "DAT", "pt": "DAT (Fita de Áudio Digital)" },
+            { "id": "adat", "en": "ADAT", "pt": "ADAT" },
+            { "id": "dtrs", "en": "DTRS / Hi8 Digital Audio Tape", "pt": "Fita DTRS / Hi8 Digital Audio" },
+            { "id": "minidisc", "en": "MiniDisc (MD)", "pt": "MiniDisc (MD)" },
+            { "id": "audio_cd", "en": "Audio CD / CD-R", "pt": "CD de Áudio / CD-R" }
+          ]
+        },
+        { "id": "description", "label": { "en": "Description", "pt": "Descrição" }, "input": "longtext", "optional": true }
+      ]
+    }
+  ]
+}

@@ -4163,11 +4163,19 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
             aoConcluir(doChamador);
         });
     }
-    if (!origemContainerProximoLote_.empty()) {
+    // A origem do container vem do contexto do card IMPORT (preferida: viaja com os arquivos) ou do aviso avulso
+    // origemContainerProximoLote_ (Drive, Bridge, galeria).
+    std::string origemDoLote;
+    if (sobre != nullptr && !sobre->containerOrigem.empty()) {
+        origemDoLote = sobre->containerOrigem;
+    } else if (!origemContainerProximoLote_.empty()) {
+        origemDoLote = std::move(origemContainerProximoLote_);
+        origemContainerProximoLote_.clear();
+    }
+    if (!origemDoLote.empty()) {
         // CONTAINER de importação: no fim do lote, os itens criados por esta chamada viram um nest com origem.
         const std::set<std::string> meus(itemIds.begin(), itemIds.end());
-        const std::string origem = std::move(origemContainerProximoLote_);
-        origemContainerProximoLote_.clear();
+        const std::string origem = origemDoLote;
         juce::Component::SafePointer<MainComponent> seguroContainer(this);
         const juce::ScopedLock sl(estadoLote->lock);
         estadoLote->aoConcluir.push_back([seguroContainer, meus, origem](const std::vector<std::string>& processados) {

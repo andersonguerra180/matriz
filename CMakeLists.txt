@@ -641,6 +641,10 @@ target_sources(matriz PRIVATE
     Source/Ui/PainelReceberCelular.cpp
     Source/Ui/PainelImportarWhatsapp.cpp
     Source/Ui/ImportarMenu.cpp
+    Source/Ui/ImportarFichas.cpp
+    Source/Ui/JanelaPlayerDdp.cpp
+    Source/Ddp/DdpModel.cpp
+    Source/Ddp/DdpPlayback.cpp
     Source/Ui/ConversaWhatsappComponent.cpp
     Source/ProvaData/ExportadorTrecho.cpp
     Source/ProvaData/OpenTimestamps.cpp

@@ -24,6 +24,7 @@
 #include "LogosTipoArquivo.h"
 #include "PainelImportarWhatsapp.h"
 #include "ImportarMenu.h"
+#include "JanelaPlayerDdp.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
@@ -71,7 +72,11 @@ const juce::Image& logoDaOrigem(const juce::String& origem) {
     static const juce::Image bridge = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
     static const juce::Image lightroom = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
     static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
+    static const juce::Image ddp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_ddp_master_png, AssetsBinaryData::ci_aud_ddp_master_pngSize);
+    static const juce::Image producao = juce::ImageFileFormat::loadFrom(AssetsBinaryData::ci_aud_music_production_png, AssetsBinaryData::ci_aud_music_production_pngSize);
     static const juce::Image vazio;
+    if (origem == "ddp") return ddp;
+    if (origem == "production") return producao;
     if (origem == "gallery") return galeria;
     if (origem == "drive") return drive;
     if (origem == "bridge") return bridge;
@@ -3337,6 +3342,19 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
     if (nestId.empty()) return;
     auto membros = projeto_.membrosDoNest(nestId);
     if (membros.empty()) return;
+    for (const auto& it : todosItens_) {
+        if (it.id != itemId || it.containerOrigem != "ddp") continue;
+        // Master DDP: o duplo clique abre o player de CD (disco, faixas e reprodução), não a grade de miniaturas.
+        std::vector<juce::File> origens;
+        for (const auto& id : membros)
+            if (auto c = projeto_.caminhoDeOrigem(id)) origens.emplace_back(*c);
+        juce::String erro;
+        const auto pastaDdp = JanelaPlayerDdp::acharPastaDdp(origens);
+        if (pastaDdp == juce::File() || !JanelaPlayerDdp::abrir(pastaDdp, erro))
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, i18n::t("ddp.title"),
+                                                   erro.isNotEmpty() ? erro : i18n::t("ddp.err.notFound"));
+        return;
+    }
     juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
     auto* conteudo = new ContainerGridComponent(
         projeto_, std::move(membros),
