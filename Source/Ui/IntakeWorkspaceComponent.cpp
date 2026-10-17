@@ -23,6 +23,7 @@
 #include "../Ingest/LeituraTecnica.h"
 #include "LogosTipoArquivo.h"
 #include "PainelImportarWhatsapp.h"
+#include "ImportarMenu.h"
 #include "../Celular/ExistentesProjeto.h"
 #include "../Diag/Watchdog.h"
 #include "../I18n/Strings.h"
@@ -263,97 +264,31 @@ private:
     juce::ThreadPool pool_{2};
 };
 
-class GoogleDriveIconButton : public juce::Button {
+// Botão do card IMPORT: pasta com "+" bem visível. Abre a janela de cards de importação.
+class ImportarIconButton : public juce::Button {
 public:
-    GoogleDriveIconButton() : juce::Button("GoogleDrive") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
+    explicit ImportarIconButton(const juce::String& texto) : juce::Button("Import") {
+        setButtonText(texto);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
+    void paintButton(juce::Graphics& g, bool destacado, bool pressionado) override {
         const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff1a73e8) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
+        auto r = getLocalBounds().toFloat().reduced(0.5f);
+        juce::Colour fundo = tk.acento;
+        if (pressionado) fundo = fundo.darker(0.15f);
+        else if (destacado) fundo = fundo.brighter(0.12f);
+        g.setColour(fundo);
+        g.fillRoundedRectangle(r, 12.0f);
 
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff1a73e8));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("GD", getLocalBounds(), juce::Justification::centred);
-        }
+        auto interno = r.reduced(6.0f);
+        auto texto = interno.removeFromBottom(16.0f);
+        const float lado = juce::jmin(interno.getHeight(), 36.0f);
+        desenharIcone(g, IconeUi::PastaMais, interno.withSizeKeepingCentre(lado, lado), tk.textoSobreAcento);
+        g.setColour(tk.textoSobreAcento);
+        g.setFont(fonteUi(11.5f, juce::Font::bold).withExtraKerningFactor(0.1f));
+        g.drawText(getButtonText(), texto, juce::Justification::centred, false);
     }
-private:
-    juce::Image img_;
-};
-
-class LightroomIconButton : public juce::Button {
-public:
-    LightroomIconButton() : juce::Button("Lightroom") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
-    }
-
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
-        const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff31a8ff) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
-
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff31a8ff));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("Lr", getLocalBounds(), juce::Justification::centred);
-        }
-    }
-private:
-    juce::Image img_;
-};
-
-class BridgeIconButton : public juce::Button {
-public:
-    BridgeIconButton() : juce::Button("AdobeBridge") {
-        img_ = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
-    }
-
-    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
-        const auto& tk = tema();
-        auto r = getLocalBounds().toFloat();
-        
-        g.setColour(shouldDrawButtonAsDown ? tk.painelAlt.darker(0.1f)
-                    : (shouldDrawButtonAsHighlighted ? tk.painelAlt.brighter(0.15f) : tk.painelAlt));
-        g.fillRoundedRectangle(r, 6.0f);
-        g.setColour(shouldDrawButtonAsHighlighted ? juce::Colour(0xff4d9fff) : tk.borda);
-        g.drawRoundedRectangle(r.reduced(0.5f), 6.0f, 1.0f);
-
-        if (img_.isValid()) {
-            auto iconArea = r.reduced(4.0f);
-            g.drawImageWithin(img_, (int)iconArea.getX(), (int)iconArea.getY(),
-                              (int)iconArea.getWidth(), (int)iconArea.getHeight(),
-                              juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
-        } else {
-            g.setColour(juce::Colour(0xff4d9fff));
-            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
-            g.drawText("Br", getLocalBounds(), juce::Justification::centred);
-        }
-    }
-private:
-    juce::Image img_;
 };
 
 // Cell component for Selection Checkbox
@@ -1996,11 +1931,7 @@ public:
 
     void mouseUp(const juce::MouseEvent& e) override {
         if (!e.mouseWasDraggedSinceMouseDown()) {
-            if (owner_.aoPedirIngerirArquivos) {
-                owner_.aoPedirIngerirArquivos();
-            } else if (owner_.btnIngerir_ && owner_.btnIngerir_->onClick) {
-                owner_.btnIngerir_->onClick();
-            }
+            owner_.abrirMenuImportar();
         }
     }
 
@@ -2166,56 +2097,12 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     lblTamanho_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblTamanho_);
 
-    auto btnIngerirPill = std::make_unique<PillButton>(i18n::t("intake.btn_ingerir"));
-    btnIngerirPill->tamanhoFonte = 13.0f;
-    btnIngerirPill->onClick = [this] { if (aoPedirIngerirArquivos) aoPedirIngerirArquivos(); };
-    btnIngerirPill->setTooltip(i18n::t("intake.tooltip_ingerir"));
-    btnIngerir_ = std::move(btnIngerirPill);
+    // IMPORT: um botão só. Arquivos/pastas, Google Drive, celular, Lightroom, Bridge e o resto vivem na janela de cards.
+    auto btnImportar = std::make_unique<ImportarIconButton>(i18n::t("imp.botao"));
+    btnImportar->setTooltip(i18n::t("imp.botao.dica"));
+    btnImportar->onClick = [this] { abrirMenuImportar(); };
+    btnIngerir_ = std::move(btnImportar);
     addAndMakeVisible(*btnIngerir_);
-
-    auto btnCel = std::make_unique<PillButton>(i18n::t("light.cel.importar"));
-    btnCel->tamanhoFonte = 12.0f;
-    btnCel->desenharCelular = true;
-    btnCel->corFundoCustom = tk.painelAlt;
-    btnCel->corTextoCustom = tk.textoPrimario;
-    btnCel->corBordaCustom = tk.borda;
-    btnCel->setTooltip(i18n::t("light.cel.botaoDica"));
-    btnCel->onClick = [this] { abrirReceberDoCelular(); };
-    btnReceberCelular_ = std::move(btnCel);
-    addAndMakeVisible(*btnReceberCelular_);
-
-    // Botão Google Drive — com logo googledrive.png
-    auto btnGD = std::make_unique<GoogleDriveIconButton>();
-    btnGD->onClick = [this] {
-        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
-        juce::Component::SafePointer<IntakeWorkspaceComponent> safeThis(this);
-        escolherContaGoogleDrive(btnGoogleDrive_.get(), [safeThis](const juce::File& gdFolder) {
-            if (!safeThis) return;
-            if (safeThis->aoIngerirDeGoogleDrive) safeThis->aoIngerirDeGoogleDrive(gdFolder);
-            else if (safeThis->aoPedirIngerirArquivos) safeThis->aoPedirIngerirArquivos();
-        });
-    };
-    btnGoogleDrive_ = std::move(btnGD);
-    addAndMakeVisible(*btnGoogleDrive_);
-
-    auto btnLR = std::make_unique<LightroomIconButton>();
-    btnLR->setTooltip(i18n::t("intake.importar_lightroom"));
-    btnLR->onClick = [this] {
-        if (aoIngerirDeLightroom) {
-            aoIngerirDeLightroom();
-        }
-    };
-    btnLightroom_ = std::move(btnLR);
-    addAndMakeVisible(*btnLightroom_);
-
-    // Adobe Bridge: pasta catalogada no Bridge entra no INTAKE normal, com o XMP já aplicado nos itens.
-    auto btnBR = std::make_unique<BridgeIconButton>();
-    btnBR->setTooltip(i18n::t("intake.importar_bridge"));
-    btnBR->onClick = [this] {
-        if (aoIngerirDeBridge) aoIngerirDeBridge();
-    };
-    btnBridge_ = std::move(btnBR);
-    addAndMakeVisible(*btnBridge_);
 
     bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
     // CLOSE PROJECT / RETURN TO CATALOG saíram da barra desta aba (e de todas
@@ -4212,33 +4099,13 @@ void IntakeWorkspaceComponent::resized() {
                                                           sidebar.getWidth() + 8, sidebar.getY() - cardTop + kCardPad));
     };
 
-    // 0. IMPORT — comandos de entrada de arquivo
-    if (btnIngerir_ && btnGoogleDrive_ && btnLightroom_ && btnBridge_) {
-        for (juce::Component* c : {static_cast<juce::Component*>(btnIngerir_.get()),
-                                   static_cast<juce::Component*>(btnReceberCelular_.get()),
-                                   static_cast<juce::Component*>(btnGoogleDrive_.get()),
-                                   static_cast<juce::Component*>(btnLightroom_.get()),
-                                   static_cast<juce::Component*>(btnBridge_.get())}) {
-            if (c && c->getParentComponent() != this) addAndMakeVisible(*c);
-        }
+    // 0. IMPORT — um único botão que abre a janela de importação
+    if (btnIngerir_) {
+        if (btnIngerir_->getParentComponent() != this) addAndMakeVisible(*btnIngerir_);
         iniciarCard();
         secaoHeaderBounds_.push_back({i18n::t("intake.secao_import"), sidebar.removeFromTop(kHeaderH)});
         sidebar.removeFromTop(4);
-        btnIngerir_->setBounds(sidebar.removeFromTop(28));
-        sidebar.removeFromTop(4);
-        if (btnReceberCelular_) {
-            btnReceberCelular_->setBounds(sidebar.removeFromTop(28));
-            sidebar.removeFromTop(4);
-        }
-        {
-            auto importRow = sidebar.removeFromTop(28);
-            int terco = (importRow.getWidth() - 12) / 3;
-            btnGoogleDrive_->setBounds(importRow.removeFromLeft(terco));
-            importRow.removeFromLeft(6);
-            btnLightroom_->setBounds(importRow.removeFromLeft(terco));
-            importRow.removeFromLeft(6);
-            btnBridge_->setBounds(importRow);
-        }
+        btnIngerir_->setBounds(sidebar.removeFromTop(64));
         finalizarCard();
         sidebar.removeFromTop(8);
     }
@@ -4362,6 +4229,41 @@ void IntakeWorkspaceComponent::resized() {
     }
 }
 
+void IntakeWorkspaceComponent::abrirMenuImportar() {
+    if (overlayAtual_ != nullptr) return;
+    overlayAtual_ = std::make_unique<PainelOverlay>();
+    addAndMakeVisible(*overlayAtual_);
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    mostrarMenuImportar(*overlayAtual_, [seguro](std::optional<std::string> id) {
+        juce::MessageManager::callAsync([seguro, id] {
+            if (seguro == nullptr) return;
+            seguro->overlayAtual_.reset();
+            seguro->resized();
+            if (id.has_value()) seguro->tratarEscolhaImportar(*id);
+        });
+    });
+    resized();
+}
+
+// O que cada card da janela IMPORT faz. Os fluxos que já existiam (celular, Drive, Lightroom, Bridge) seguem iguais;
+// as demais folhas ainda usam o seletor de arquivos e pastas de sempre (as fichas de contexto entram por categoria).
+void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id) {
+    if (id == "phone") { abrirReceberDoCelular(); return; }
+    if (id == "drive") {
+        // Várias contas do Drive neste Mac: pergunta qual (antes abria a primeira).
+        juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+        escolherContaGoogleDrive(btnIngerir_.get(), [seguro](const juce::File& gdFolder) {
+            if (!seguro) return;
+            if (seguro->aoIngerirDeGoogleDrive) seguro->aoIngerirDeGoogleDrive(gdFolder);
+            else if (seguro->aoPedirIngerirArquivos) seguro->aoPedirIngerirArquivos();
+        });
+        return;
+    }
+    if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
+    if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
+    if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+}
+
 void IntakeWorkspaceComponent::abrirReceberDoCelular() {
     if (overlayAtual_ != nullptr) return;
     overlayAtual_ = std::make_unique<PainelOverlay>();
@@ -4441,8 +4343,9 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         btnVisaoIcones_->setTooltip(i18n::t("intake.tooltip_icones"));
     }
     if (btnIngerir_) {
-        btnIngerir_->setButtonText(i18n::t("intake.btn_ingerir"));
-        btnIngerir_->setTooltip(i18n::t("intake.tooltip_ingerir"));
+        btnIngerir_->setButtonText(i18n::t("imp.botao"));
+        btnIngerir_->setTooltip(i18n::t("imp.botao.dica"));
+        btnIngerir_->repaint();
     }
     if (chkSelectAllHeader_) {
         chkSelectAllHeader_->setTooltip(matriz::i18n::localeAtivo().startsWith("pt") ? juce::String::fromUTF8("Selecionar / Desmarcar Todos") : "Select / Deselect All");
@@ -4469,10 +4372,6 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
     // por updatePill, que zeraria essa cor a cada mudança de tema/locale.
     if (btnGeolocationLote_) {
         btnGeolocationLote_->setButtonText("GEO LOCATION");
-    }
-    if (btnReceberCelular_) {
-        btnReceberCelular_->setButtonText(i18n::t("light.cel.importar"));
-        btnReceberCelular_->setTooltip(i18n::t("light.cel.botaoDica"));
     }
     if (btnConfirmarSelecao_) {
         btnConfirmarSelecao_->setButtonText(i18n::t("intake.btn_enviar_selecionados"));

@@ -248,14 +248,13 @@ private:
     std::unique_ptr<juce::Label> lblContadorTotal_;
     std::unique_ptr<ViewModeIconButton> btnVisaoLista_;
     std::unique_ptr<ViewModeIconButton> btnVisaoIcones_;
-    std::unique_ptr<juce::TextButton> btnIngerir_;
-    std::unique_ptr<juce::Button> btnGoogleDrive_;
-    std::unique_ptr<juce::Button> btnLightroom_;
-    std::unique_ptr<juce::Button> btnBridge_;
-    std::unique_ptr<juce::Button> btnReceberCelular_;
+    // Único botão do card IMPORT (pasta com "+"): abre a janela de cards (ImportarMenu).
+    std::unique_ptr<juce::Button> btnIngerir_;
     std::unique_ptr<PainelOverlay> overlayAtual_;
     std::weak_ptr<PainelReceberCelular> painelCelularAtual_;
     std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
+    void abrirMenuImportar();
+    void tratarEscolhaImportar(const std::string& id);
     void abrirReceberDoCelular();
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;

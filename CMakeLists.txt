@@ -630,6 +630,7 @@ target_sources(matriz PRIVATE
     Source/Ui/OverlayComponent.cpp
     Source/Ui/PainelReceberCelular.cpp
     Source/Ui/PainelImportarWhatsapp.cpp
+    Source/Ui/ImportarMenu.cpp
     Source/Ui/ConversaWhatsappComponent.cpp
     Source/ProvaData/ExportadorTrecho.cpp
     Source/ProvaData/OpenTimestamps.cpp
