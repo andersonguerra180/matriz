@@ -2899,7 +2899,7 @@ void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 ta
     }
 }
 
-void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas) {
+void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp) {
     if (!projetoAberto_) return;
     if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
 
@@ -2912,6 +2912,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     // WhatsApp: se for uma conversa, ingere como NEST (capa + conversa.txt + mídias)
     bool talvezConversa = false;
     for (const auto& f : arquivosOuPastas) {
+        if (!detectarWhatsapp) break;
         if (f.isDirectory() || f.hasFileExtension("zip") || f.hasFileExtension("txt")) {
             talvezConversa = true;
             break;
@@ -2922,6 +2923,8 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
         if (!conversas.empty()) {
             std::set<juce::String> excluir;
             for (const auto& c : conversas) {
+                // A entrada original (pasta/zip/txt arrastado) tambem sai: `abrangidos` de uma pasta traz so os arquivos de dentro.
+                excluir.insert(c->zip.getFullPathName());
                 for (const auto& a : c->abrangidos)
                     excluir.insert(a.getFullPathName());
             }
@@ -2954,7 +2957,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
                 }
             }
             if (restantes.isEmpty()) return;
-            ingerirArquivos(restantes);
+            ingerirArquivos(restantes, false);  // sem redetectar: o que sobrou segue como arquivo comum
             return;
         }
     }

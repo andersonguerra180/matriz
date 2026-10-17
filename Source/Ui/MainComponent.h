@@ -149,7 +149,9 @@ public:
     // background (nunca trava a UI). Ponte entre o motor de ingestão
     // (Etapa 2, headless) e a UI — chamada tanto pelo botão "Add material"
     // quanto por arrastar arquivos do Finder na janela inteira.
-    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas);
+    // `detectarWhatsapp=false`: a chamada recursiva sobre o que sobrou depois de enfileirar as conversas nao redetecta
+    // (a mesma pasta/zip voltaria a ser achada e o laco nunca terminaria).
+    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp = true);
     void aoConversaRecebida(const juce::File& arquivo, juce::int64 tamanho);
     // Tools > Scan INBOX: cataloga o que está na INBOX do MAIN (só quando o usuário pede; nunca sozinho).
     void escanearInbox();
