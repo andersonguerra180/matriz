@@ -1087,13 +1087,13 @@ int rodarTestImportarComContexto() {
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
                 if (mainComponent.ingestEmAndamento()) continue;
                 auto st = registro.prepare("SELECT COUNT(*) FROM item_tag t JOIN item i ON i.id = t.item_id "
-                                           "WHERE i.titulo LIKE 'lado_%' AND t.tag = 'Vinyl rip'");
+                                           "WHERE i.titulo LIKE 'lado_%' AND t.tag = 'Vinyl transcription'");
                 st.step();
                 comTag = static_cast<int>(st.columnInt(0));
                 if (comTag == 2) break;
             }
             esperarIngestTerminar(mainComponent);
-            checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl rip' do card (" + juce::String(comTag) + ")");
+            checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl transcription' do card (" + juce::String(comTag) + ")");
         }
 
         // DDP master: conjunto que entra junto vira CONTAINER ("ddp") no Intake e o contexto marca cada arquivo.
@@ -1178,6 +1178,16 @@ int rodarTestImportarVisual() {
     salvar(overlay, "imp_03_audio_production");
     overlay.concluirExterno(1);    // VOLTAR
     girar(150);
+    overlay.concluirExterno(101);  // Preservation
+    girar(150);
+    salvar(overlay, "imp_03b_audio_preservation");
+    overlay.concluirExterno(1);
+    girar(150);
+    overlay.concluirExterno(102);  // General
+    girar(150);
+    salvar(overlay, "imp_03c_audio_general");
+    overlay.concluirExterno(1);
+    girar(150);
     overlay.concluirExterno(1);    // VOLTAR (raiz)
     girar(150);
     overlay.concluirExterno(104);  // Videos
@@ -1212,6 +1222,11 @@ int rodarTestImportarVisual() {
         mostrarFichaImportar(overlayVinil, "audio.preservation.vinyl", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
         girar(100);
         salvar(overlayVinil, "imp_10_ficha_audio_vinil");
+        PainelOverlay overlayDdp;
+        overlayDdp.setBounds(0, 0, 1100, 760);
+        mostrarFichaImportar(overlayDdp, "audio.preservation.ddp", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});
+        girar(100);
+        salvar(overlayDdp, "imp_12_ficha_ddp");
         PainelOverlay overlayCustom;
         overlayCustom.setBounds(0, 0, 1100, 760);
         mostrarFichaImportar(overlayCustom, "other.custom", [](bool, std::shared_ptr<const matriz::ingest::SobreMaterial>) {});

@@ -122,20 +122,20 @@ std::vector<No> montarArvore() {
                 { folha("audio.production.project", IconeUi::Sound, "ci_aud_music_production_png"),
                   folha("audio.production.samples", IconeUi::Sound, "ci_aud_sample_pack_png"),
                   folha("audio.production.midi", IconeUi::Sound, "ci_aud_midi_png"),
-                  folha("audio.production.tools", IconeUi::Sound, "Tools2x_png") }),
+                  folha("audio.production.tools", IconeUi::Sound, "Tools_png") }),
           grupo("audio.preservation", IconeUi::Disco, "ci_aud_vinyl_rip_png",
                 { folha("audio.preservation.cd_rip", IconeUi::Disco, "ci_aud_cd_rip_png", true),
                   folha("audio.preservation.ddp", IconeUi::Disco, "ci_aud_ddp_master_png"),
                   folha("audio.preservation.vinyl", IconeUi::Disco, "ci_aud_vinyl_rip_png"),
-                  folha("audio.preservation.tape", IconeUi::Cassete) }),
+                  folha("audio.preservation.tape", IconeUi::Cassete, "Tape_Cassette_Rip_png") }),
           grupo("audio.general", IconeUi::Sound, "ci_aud_field_recording_png",
                 { folha("audio.general.soundtrack", IconeUi::Videos, "ci_aud_soundtrack_png"),
-                  folha("audio.general.film_sound", IconeUi::Videos),
+                  folha("audio.general.film_sound", IconeUi::Videos, "Film_Sound_png"),
                   folha("audio.general.audiobook", IconeUi::Documents, "ci_aud_audiobook_png"),
                   folha("audio.general.field", IconeUi::Sound, "ci_aud_field_recording_png"),
                   folha("audio.general.voice_over", IconeUi::Sound, "ci_aud_voice_over_png"),
                   folha("audio.general.voice_notes", IconeUi::Sound, "ci_aud_voice_memo_png"),
-                  folha("audio.general.other", IconeUi::Other) }) });
+                  folha("audio.general.other", IconeUi::Other, "Other_png") }) });
     colorir(audio, tk.tipoAudio);
     raiz.push_back(std::move(audio));
 
@@ -174,6 +174,37 @@ void coletarFolhas(const std::vector<No>& nos, std::vector<std::string>& saida) 
     }
 }
 
+// Alguns ícones de Assets/Icons vêm com fundo branco opaco (os demais são transparentes): o branco ligado às bordas
+// vira transparente (preenchimento a partir das bordas, então o branco de dentro do desenho fica como está).
+juce::Image tirarFundoBrancoDasBordas(const juce::Image& original) {
+    juce::Image img = original.convertedToFormat(juce::Image::ARGB);
+    const int w = img.getWidth(), h = img.getHeight();
+    juce::Image::BitmapData px(img, juce::Image::BitmapData::readWrite);
+    const auto brancoOpaco = [&](int x, int y) {
+        const auto c = px.getPixelColour(x, y);
+        return c.getAlpha() > 250 && c.getRed() >= 240 && c.getGreen() >= 240 && c.getBlue() >= 240;
+    };
+    if (!brancoOpaco(0, 0)) return original;  // já transparente (ou sem fundo branco): nada a fazer
+    std::vector<juce::Point<int>> pilha;
+    std::vector<char> visto(static_cast<size_t>(w) * static_cast<size_t>(h), 0);
+    const auto empurrar = [&](int x, int y) {
+        if (x < 0 || y < 0 || x >= w || y >= h) return;
+        const size_t i = static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
+        if (visto[i] || !brancoOpaco(x, y)) return;
+        visto[i] = 1;
+        pilha.push_back({ x, y });
+    };
+    for (int x = 0; x < w; ++x) { empurrar(x, 0); empurrar(x, h - 1); }
+    for (int y = 0; y < h; ++y) { empurrar(0, y); empurrar(w - 1, y); }
+    while (!pilha.empty()) {
+        const auto p = pilha.back();
+        pilha.pop_back();
+        px.setPixelColour(p.x, p.y, juce::Colours::transparentBlack);
+        empurrar(p.x + 1, p.y); empurrar(p.x - 1, p.y); empurrar(p.x, p.y + 1); empurrar(p.x, p.y - 1);
+    }
+    return img;
+}
+
 // Ícone embutido (Assets/Icons): vazio se o recurso não existe.
 const juce::Image& imagemDoIcone(const std::string& recurso) {
     static std::map<std::string, juce::Image> cache;
@@ -183,7 +214,9 @@ const juce::Image& imagemDoIcone(const std::string& recurso) {
     if (it == cache.end()) {
         int tamanho = 0;
         const char* dados = AssetsBinaryData::getNamedResource(recurso.c_str(), tamanho);
-        it = cache.emplace(recurso, dados != nullptr ? juce::ImageFileFormat::loadFrom(dados, static_cast<size_t>(tamanho)) : juce::Image()).first;
+        juce::Image img = dados != nullptr ? juce::ImageFileFormat::loadFrom(dados, static_cast<size_t>(tamanho)) : juce::Image();
+        if (img.isValid()) img = tirarFundoBrancoDasBordas(img);
+        it = cache.emplace(recurso, img).first;
     }
     return it->second;
 }
@@ -262,6 +295,7 @@ public:
                     recorte.addRoundedRectangle(alvo, 15.0f);
                     g.reduceClipRegion(recorte);
                 }
+                g.setImageResamplingQuality(juce::Graphics::highResamplingQuality);
                 g.drawImage(img, alvo, juce::RectanglePlacement::centred);
             } else {
                 auto azulejo = areaIcone.withSizeKeepingCentre(56.0f, 56.0f);

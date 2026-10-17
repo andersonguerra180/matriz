@@ -105,7 +105,10 @@ juce_add_binary_data(MatrizAssets
         # Logos originais Adobe, YouTube e o ícone Tools do menu IMPORT
         Assets/Icons/lrlogo_original.png
         Assets/Icons/youtube.png
-        "Assets/Icons/Tools@2x.png"
+        Assets/Icons/Tools.png
+        "Assets/Icons/Film Sound.png"
+        "Assets/Icons/Tape Cassette Rip.png"
+        Assets/Icons/Other.png
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
         "Assets/adobeaftereffects.png"

@@ -63,7 +63,7 @@ const fs::Tipo& tipoFerramentas() {
 }
 
 const fs::Tipo& tipoFita() {
-    static const fs::Tipo tipo{ "tape_rip", "Tape / Cassette rip", "Rip de fita / cassete", {
+    static const fs::Tipo tipo{ "tape_rip", "Tape / Cassette transcription", "Transcrição de fita / cassete", {
         { "artist_title", "Artist and title", "Artista e título", "", "", 0, false, {} },
         { "condition", "Tape condition", "Estado da fita", "", "", 1, false,
           { { "good", "Good", "Boa" }, { "worn", "Worn", "Desgastada" }, { "damaged", "Damaged", "Danificada" } } },
@@ -186,7 +186,9 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
                        std::function<void(bool, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoConcluir) {
     const fs::Tipo* tipoPtr = tipoDaFolha(folha);
     if (tipoPtr == nullptr) { if (aoConcluir) aoConcluir(true, nullptr); return; }
-    const fs::Tipo tipo = *tipoPtr;
+    fs::Tipo tipo = *tipoPtr;
+    // "Rip" só vale para CD e DVD: vinil e fita são transcrições.
+    if (std::string(tipo.id) == "vinyl_rip") { tipo.en = "Vinyl transcription"; tipo.pt = "Transcrição de vinil"; }
     const bool pt = matriz::i18n::localeAtivo() == "pt_BR";
     const auto rotulo = [pt](const char* en, const char* ptb) { return juce::String::fromUTF8(pt ? ptb : en); };
     const bool producao = std::string(tipo.id) == "music_production";
@@ -205,7 +207,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
 
     PainelOverlay::Config cfg;
     cfg.titulo = t("imp.ficha.audio.titulo") + juce::String::fromUTF8(" \xe2\x80\xba ") + rotulo(tipo.en, tipo.pt);
-    cfg.mensagem = t("imp.ficha.audio.msg");
+    cfg.mensagem = t(ddp ? "imp.ficha.ddp.msg" : "imp.ficha.audio.msg");
     cfg.trilha = t("moldura.trilha.adicionar");
     cfg.larguraCartao = 620;
     const bool comOutro = ehOutro(folha);
@@ -226,8 +228,10 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
             if (c == &comuns[1] || c == &comuns[2]) break;
             ++depoisDoTipo;
         }
-        cfg.campos.insert(cfg.campos.begin() + static_cast<std::ptrdiff_t>(depoisDoTipo),
-                          PainelOverlay::CampoTexto{ "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica.audio"), opcoesDoFormato });
+        // DDP é a master que fabrica o CD industrial: a origem é sempre essa, então não se pergunta o formato.
+        if (!ddp)
+            cfg.campos.insert(cfg.campos.begin() + static_cast<std::ptrdiff_t>(depoisDoTipo),
+                              PainelOverlay::CampoTexto{ "formato", t("imp.ficha.formato"), "", t("imp.ficha.formato.dica.audio"), opcoesDoFormato });
     }
     cfg.botoes = {
         { t("light.ui.common.cancel"), 0, false, true },
@@ -235,7 +239,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
         { t("imp.ficha.continuar"), 1, true, false },
     };
 
-    overlay.mostrar(cfg, [aoConcluir, tipo, campos, opcoesPorCampo, producao, dawsLista, comOutro](PainelOverlay::Resultado r) {
+    overlay.mostrar(cfg, [aoConcluir, tipo, campos, opcoesPorCampo, producao, dawsLista, comOutro, ddp](PainelOverlay::Resultado r) {
         if (!aoConcluir) return;
         if (r.botaoId == 0) { aoConcluir(false, nullptr); return; }
         if (r.botaoId == 2) { aoConcluir(true, nullptr); return; }  // PULAR: segue só com o que o card já implica
@@ -275,7 +279,7 @@ void mostrarFichaAudio(PainelOverlay& overlay, const std::string& folha,
                 desc += "\nDAW: " + dawsLista[static_cast<size_t>(d)].toStdString();
             }
         }
-        gravarFormato(*sobre, juce::String(valorDe(r, "formato")));
+        if (!ddp) gravarFormato(*sobre, juce::String(valorDe(r, "formato")));
         sobre->subject = assunto;
         sobre->descricao = desc == ("Audio: " + tipoEn) ? std::string() : desc;  // só o rótulo do tipo não é informação nova
         sobre->tags = tags;
@@ -300,8 +304,8 @@ std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(con
         { "audio.production.midi", "MIDI", "", {} },
         { "audio.production.tools", "", "", { "Production tools" } },
         { "audio.preservation.ddp", "Master", "", { "DDP master" } },
-        { "audio.preservation.vinyl", "", "", { "Vinyl rip" } },
-        { "audio.preservation.tape", "", "", { "Tape rip" } },
+        { "audio.preservation.vinyl", "", "", { "Vinyl transcription" } },
+        { "audio.preservation.tape", "", "", { "Tape transcription" } },
         { "audio.general.soundtrack", "Soundtrack", "", {} },
         { "audio.general.film_sound", "", "", { "Film sound" } },
         { "audio.general.audiobook", "", "", { "Audiobook" } },
