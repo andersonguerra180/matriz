@@ -2254,6 +2254,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"light.cel.err.servidor", "Could not open the local server (no free port)."},
         {"light.cel.importar", "IMPORT FROM PHONE"},
         {"light.cel.importarSub", "Gallery or WhatsApp"},
+        {"light.ui.imp.none", "(none)"},
         {"imp.titulo", "IMPORT"},
         {"imp.dica.raiz", "What are you importing?"},
         {"imp.dica.sub", "Choose the closest match"},

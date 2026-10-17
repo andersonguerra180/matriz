@@ -44,6 +44,22 @@ public:
         juce::String valorInicial;
         juce::String dica;
         std::vector<juce::String> opcoes;
+        bool interruptor = false;  // liga/desliga (valor "1" quando ligado); `logoInterruptor` = arquivo de logo ao lado
+        juce::String logoInterruptor;
+        // Campo condicional: só aparece quando o campo `visivelQuandoId` (um dropdown) está com o texto `visivelQuandoValor`.
+        juce::String visivelQuandoId;
+        juce::String visivelQuandoValor;
+        // Interruptor que, ligado, desabilita o campo de texto com este id (ex.: "Single file" desliga o Nome).
+        juce::String desabilitaCampoId;
+        // Campos com o mesmo `grupo` formam um cartão próprio (título = grupo), com dois campos por linha.
+        juce::String grupo;
+    };
+
+    // Botão no cabeçalho do cartão de um grupo (ex.: "Get location" no cartão de geolocalização).
+    struct BotaoGrupo {
+        juce::String grupo;
+        juce::String rotulo;
+        std::function<void(PainelOverlay&)> aoClicar;
     };
 
     // Tom do aviso: cor do destaque, ícone ao lado do título e cor do botão principal.
@@ -61,6 +77,7 @@ public:
         juce::String textoInicial;
         juce::String dicaCampoTexto;
         std::vector<CampoTexto> campos;
+        std::vector<BotaoGrupo> botoesGrupo;
         // Conteúdo próprio (ex.: questionário "Sobre este material", painel "Receber do celular"),
         // posicionado entre a mensagem e os botões. O overlay assume a posse (shared_ptr mantém a
         // Config copiável). Sem botões, o rodapé some e o conteúdo comanda a conclusão
@@ -111,6 +128,8 @@ public:
 
     // Introspecção pra teste — o harness aciona sem mouse.
     int totalBotoesParaTeste() const { return static_cast<int>(botoes_.size()); }
+    // Preenche um campo da ficha pelo id (ex.: o botão do cartão de geolocalização).
+    void definirValorCampo(const juce::String& id, const juce::String& valor);
     void acionarBotaoParaTeste(int indice);
     void selecionarOpcaoParaTeste(int indice);
     void definirTextoParaTeste(const juce::String& texto);
@@ -127,6 +146,11 @@ private:
     int larguraDoCartao() const { return config_.larguraCartao > 0 ? config_.larguraCartao : kLarguraCartao; }
     void soltarConteudo();
     bool temRodape() const { return !config_.botoes.empty(); }
+    struct PlanoCampos;
+    PlanoCampos planejarCampos(int largura) const;
+    bool campoVisivel(size_t indice) const;
+    int alturaCampos() const;
+    void aoMudarCampo();
 
     bool aberto_ = false;
     Config config_;
@@ -139,10 +163,14 @@ private:
         juce::String id;
         std::unique_ptr<juce::TextEditor> editor;
         std::unique_ptr<juce::ComboBox> combo;
+        std::unique_ptr<juce::Button> chave;
         juce::String valor() const;
     };
     std::vector<CampoWidget> camposExtras_;
     std::vector<std::unique_ptr<juce::Label>> rotulosCampos_;
+    std::vector<std::unique_ptr<juce::TextButton>> botoesGrupo_;
+    std::unique_ptr<juce::Viewport> viewportCampos_;
+    std::unique_ptr<juce::Component> containerCampos_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PainelOverlay)
 };

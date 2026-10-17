@@ -2277,6 +2277,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"light.cel.err.servidor", "Não foi possível abrir o servidor local (nenhuma porta livre)."},
         {"light.cel.importar", "IMPORTAR DO CELULAR"},
         {"light.cel.importarSub", "Galeria ou WhatsApp"},
+        {"light.ui.imp.none", "(nenhum)"},
         {"imp.titulo", "IMPORTAR"},
         {"imp.dica.raiz", "O que você vai importar?"},
         {"imp.dica.sub", "Escolha a opção mais próxima"},
