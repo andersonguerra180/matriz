@@ -295,6 +295,7 @@ target_link_libraries(matriz_ingest_selftest PRIVATE
     juce::juce_audio_formats
     $<$<PLATFORM_ID:Darwin>:-framework\ DiskArbitration>
     $<$<PLATFORM_ID:Darwin>:-framework\ IOKit>
+    $<$<PLATFORM_ID:Darwin>:-framework\ PDFKit>
     $<$<PLATFORM_ID:Darwin>:-framework\ ImageIO>
     $<$<PLATFORM_ID:Darwin>:-framework\ QuickLook>
     $<$<PLATFORM_ID:Windows>:bcrypt>
