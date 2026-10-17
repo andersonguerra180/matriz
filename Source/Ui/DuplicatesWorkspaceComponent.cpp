@@ -1,6 +1,7 @@
 #include "DuplicatesWorkspaceComponent.h"
 #include "ProjetoAberto.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/IngestArquivo.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -81,7 +82,7 @@ namespace {
             opt.escapeKeyTriggersCloseButton = true;
             opt.useNativeTitleBar = true;
             opt.resizable = false;
-            opt.launchAsync();
+            moldura::lancar(opt);
         }
 
     private:
@@ -745,7 +746,7 @@ private:
 
                 // Badge / Header text
                 g.setColour(isDup ? tk.alerta : tk.acento);
-                g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 juce::String headerTag = isDup ? matriz::i18n::t("duplicatas.possible_duplicate") : matriz::i18n::t("duplicatas.existing_original");
                 if (!m.collectionNome.empty()) {
                     headerTag << " \u00B7 " << juce::String(m.collectionNome).toUpperCase();
@@ -761,7 +762,7 @@ private:
                     if (areaM != areaO) {
                         const bool menor = areaM < areaO;
                         const juce::String rotulo = menor ? "LOWER RESOLUTION" : "HIGHER RESOLUTION";
-                        const juce::Font fonteSelo(juce::FontOptions(9.5f, juce::Font::bold));
+                        const juce::Font fonteSelo(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
                         larguraSelo = juce::GlyphArrangement::getStringWidthInt(fonteSelo, rotulo) + 14;
                         juce::Rectangle<int> selo(x + subWidth - larguraSelo - 6, y + 4, larguraSelo, 16);
                         g.setColour(menor ? juce::Colour(0xffef4444) : juce::Colour(0xff22c55e));
@@ -769,7 +770,7 @@ private:
                         g.setColour(juce::Colours::white);
                         g.setFont(fonteSelo);
                         g.drawText(rotulo, selo, juce::Justification::centred);
-                        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                         g.setColour(isDup ? tk.alerta : tk.acento);
                         larguraSelo += 6;
                     }
@@ -799,7 +800,7 @@ private:
                                           thumbRect.getHeight() - 8, juce::RectanglePlacement::centred, false);
                     } else {
                         g.setColour(tk.textoTerciario);
-                        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
                         g.drawText(juce::String(m.ext).toUpperCase(), thumbRect, juce::Justification::centred);
                     }
                 }
@@ -862,7 +863,7 @@ private:
                 g.setColour(tk.borda.withAlpha(0.35f));
                 g.drawHorizontalLine(rodapeY - 3, static_cast<float>(metaX), static_cast<float>(x + subWidth - 8));
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(10.5f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                 juce::String displayPath = m.fullPath.empty() ? m.caminhoRelativo : m.fullPath;
                 g.drawFittedText(displayPath, metaX, rodapeY, metaW, 30, juce::Justification::topLeft, 2, 1.0f);
             };
@@ -882,10 +883,10 @@ private:
                     g.setColour(corAmbar);
                     g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
                     auto in = nota.reduced(7, 5);
-                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                     g.drawText(juce::String::fromUTF8("\u26A0 NOT BYTE-IDENTICAL"), in.removeFromTop(14), juce::Justification::centredLeft, true);
                     g.setColour(tk.textoSecundario);
-                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                     g.drawFittedText(grupo_.criterio == "SIMILAR"
                                          ? "Looks alike but may be a different shot. Compare both before choosing."
                                          : "Looks alike but may be an edit or a different file. Compare both before choosing.",
@@ -896,10 +897,10 @@ private:
                     g.setColour(corSeguro);
                     g.drawRoundedRectangle(nota.toFloat().reduced(0.5f), 5.0f, 1.0f);
                     auto in = nota.reduced(7, 5);
-                    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                     g.drawText(juce::String::fromUTF8("\u2713 IDENTICAL FILES"), in.removeFromTop(14), juce::Justification::centredLeft, true);
                     g.setColour(tk.textoSecundario);
-                    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                     g.drawFittedText("Same SHA-256: safe to validate.", in, juce::Justification::topLeft, 3, 1.0f);
                 }
             }
@@ -1127,6 +1128,13 @@ DuplicatesWorkspaceComponent::DuplicatesWorkspaceComponent(ProjetoAberto& projet
     btnReset_->onClick = [this] { resetarAba(); };
     addChildComponent(*btnReset_);
 
+    btnResolvidas_ = std::make_unique<juce::TextButton>();
+    btnResolvidas_->setColour(juce::TextButton::buttonColourId, tema().painelAlt);
+    btnResolvidas_->setColour(juce::TextButton::textColourOffId, tema().textoPrimario);
+    btnResolvidas_->onClick = [this] { abrirResolvidas(); };
+    addAndMakeVisible(*btnResolvidas_);
+    atualizarContagemResolvidas();
+
     viewport_ = std::make_unique<juce::Viewport>();
     // Item 6 (lista nova de hoje): 10px cortava o knob redondo do
     // MatrizLookAndFeel (pensado pra a espessura default de 16px) — sem
@@ -1150,14 +1158,157 @@ DuplicatesWorkspaceComponent::~DuplicatesWorkspaceComponent() {
     viewport_.reset();
 }
 
+namespace {
+
+// Lista das duplicatas já resolvidas (escondidas do app) com RESTAURAR. Vive numa janela própria.
+class DuplicatasResolvidasDialogo : public juce::Component, private juce::ListBoxModel {
+public:
+    using Item = ProjetoAberto::DuplicataResolvida;
+    DuplicatasResolvidasDialogo(std::vector<Item> itens, std::function<int(const std::vector<std::string>&)> aoRestaurar,
+                                std::function<std::vector<Item>()> recarregar)
+        : itens_(std::move(itens)), aoRestaurar_(std::move(aoRestaurar)), recarregar_(std::move(recarregar)) {
+        const auto& tk = tema();
+        lblIntro_.setText(matriz::i18n::t("duplicatas.resolvidas_intro"), juce::dontSendNotification);
+        lblIntro_.setColour(juce::Label::textColourId, tk.textoSecundario);
+        lblIntro_.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        addAndMakeVisible(lblIntro_);
+        lista_.setModel(this);
+        lista_.setMultipleSelectionEnabled(true);
+        lista_.setRowHeight(26);
+        addAndMakeVisible(lista_);
+        lblVazio_.setText(matriz::i18n::t("duplicatas.resolvidas_vazio"), juce::dontSendNotification);
+        lblVazio_.setColour(juce::Label::textColourId, tk.textoTerciario);
+        lblVazio_.setJustificationType(juce::Justification::centred);
+        addChildComponent(lblVazio_);
+        for (auto* b : {&btnSel_, &btnTudo_, &btnFechar_}) {
+            b->setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+            b->setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
+            addAndMakeVisible(*b);
+        }
+        btnSel_.setButtonText(matriz::i18n::t("duplicatas.btn_restaurar_sel"));
+        btnTudo_.setButtonText(matriz::i18n::t("duplicatas.btn_restaurar_tudo"));
+        btnFechar_.setButtonText(matriz::i18n::t("duplicatas.btn_fechar"));
+        btnSel_.onClick = [this] {
+            std::vector<std::string> ids;
+            const auto sel = lista_.getSelectedRows();
+            for (int i = 0; i < sel.size(); ++i) {
+                const int r = sel[i];
+                if (r >= 0 && r < static_cast<int>(itens_.size())) ids.push_back(itens_[static_cast<size_t>(r)].id);
+            }
+            restaurar(ids);
+        };
+        btnTudo_.onClick = [this] {
+            juce::Component::SafePointer<DuplicatasResolvidasDialogo> seguro(this);
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions()
+                    .withIconType(juce::MessageBoxIconType::QuestionIcon)
+                    .withTitle(matriz::i18n::t("duplicatas.resolvidas_titulo"))
+                    .withMessage(matriz::i18n::t("duplicatas.restaurar_tudo_confirma").replace("{n}", juce::String((int) itens_.size())))
+                    .withButton(matriz::i18n::t("duplicatas.btn_restaurar_tudo"))
+                    .withButton(matriz::i18n::t("dialogo.cancelar")),
+                juce::ModalCallbackFunction::create([seguro](int r) {
+                    if (r != 1 || seguro == nullptr) return;
+                    std::vector<std::string> ids;
+                    for (const auto& it : seguro->itens_) ids.push_back(it.id);
+                    seguro->restaurar(ids);
+                }));
+        };
+        btnFechar_.onClick = [this] {
+            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>()) dw->exitModalState(0);
+        };
+        atualizarEstado();
+        setSize(780, 480);
+    }
+
+    void paint(juce::Graphics& g) override { g.fillAll(tema().painel); }
+
+    void resized() override {
+        auto r = getLocalBounds().reduced(16);
+        lblIntro_.setBounds(r.removeFromTop(48));
+        r.removeFromTop(6);
+        auto botoes = r.removeFromBottom(32);
+        btnFechar_.setBounds(botoes.removeFromRight(110));
+        botoes.removeFromRight(8);
+        btnTudo_.setBounds(botoes.removeFromRight(170));
+        botoes.removeFromRight(8);
+        btnSel_.setBounds(botoes.removeFromRight(210));
+        r.removeFromBottom(8);
+        lista_.setBounds(r);
+        lblVazio_.setBounds(r);
+    }
+
+private:
+    int getNumRows() override { return static_cast<int>(itens_.size()); }
+    void paintListBoxItem(int row, juce::Graphics& g, int w, int h, bool selecionada) override {
+        if (row < 0 || row >= static_cast<int>(itens_.size())) return;
+        const auto& tk = tema();
+        if (selecionada) { g.setColour(tk.acento.withAlpha(0.18f)); g.fillRect(0, 0, w, h); }
+        const auto& it = itens_[static_cast<size_t>(row)];
+        g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
+        g.setColour(tk.textoPrimario);
+        g.drawText(juce::String::fromUTF8(it.codigo.c_str()), 8, 0, 110, h, juce::Justification::centredLeft, true);
+        g.drawText(juce::String::fromUTF8(it.titulo.c_str()), 124, 0, 220, h, juce::Justification::centredLeft, true);
+        g.setColour(tk.textoSecundario);
+        g.drawText(juce::String::fromUTF8(it.caminho.c_str()), 352, 0, w - 360, h, juce::Justification::centredLeft, true);
+    }
+
+    void restaurar(const std::vector<std::string>& ids) {
+        if (ids.empty() || !aoRestaurar_) return;
+        aoRestaurar_(ids);
+        if (recarregar_) itens_ = recarregar_();
+        lista_.deselectAllRows();
+        lista_.updateContent();
+        atualizarEstado();
+    }
+    void atualizarEstado() {
+        lista_.updateContent();
+        lista_.repaint();
+        lblVazio_.setVisible(itens_.empty());
+        btnSel_.setEnabled(!itens_.empty());
+        btnTudo_.setEnabled(!itens_.empty());
+    }
+
+    std::vector<Item> itens_;
+    std::function<int(const std::vector<std::string>&)> aoRestaurar_;
+    std::function<std::vector<Item>()> recarregar_;
+    juce::Label lblIntro_, lblVazio_;
+    juce::ListBox lista_;
+    juce::TextButton btnSel_, btnTudo_, btnFechar_;
+};
+
+}  // namespace
+
+void DuplicatesWorkspaceComponent::abrirResolvidas() {
+    juce::Component::SafePointer<DuplicatesWorkspaceComponent> seguro(this);
+    auto* conteudo = new DuplicatasResolvidasDialogo(
+        projeto_.listarDuplicatasResolvidas(),
+        [seguro](const std::vector<std::string>& ids) {
+            if (seguro == nullptr) return 0;
+            const int n = seguro->projeto_.restaurarDuplicatas(ids);  // message thread (EventBus)
+            seguro->atualizarContagemResolvidas();
+            return n;
+        },
+        [seguro] { return seguro != nullptr ? seguro->projeto_.listarDuplicatasResolvidas()
+                                            : std::vector<ProjetoAberto::DuplicataResolvida>{}; });
+    juce::DialogWindow::LaunchOptions opts;
+    opts.content.setOwned(conteudo);
+    opts.dialogTitle = matriz::i18n::t("duplicatas.resolvidas_titulo");
+    opts.dialogBackgroundColour = tema().painel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar = true;
+    opts.resizable = false;
+    opts.componentToCentreAround = this;
+    moldura::lancar(opts);
+}
+
 void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (lblStatus_) {
         lblStatus_->setColour(juce::Label::textColourId, tk.textoSecundario);
-        lblStatus_->setFont(juce::Font(juce::FontOptions(11.0f)));
+        lblStatus_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     }
     if (lblScope_) {
-        lblScope_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblScope_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblScope_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblScope_->setText(matriz::i18n::t("duplicatas.lbl_scope"), juce::dontSendNotification);
     }
@@ -1173,7 +1324,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbScope_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileType_) {
-        lblFileType_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileType_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblFileType_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileType_->setText(matriz::i18n::t("duplicatas.lbl_type"), juce::dontSendNotification);
     }
@@ -1194,7 +1345,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbFileType_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblFileSize_) {
-        lblFileSize_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblFileSize_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblFileSize_->setColour(juce::Label::textColourId, tk.textoSecundario);
         lblFileSize_->setText(matriz::i18n::t("duplicatas.lbl_size"), juce::dontSendNotification);
     }
@@ -1223,7 +1374,7 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
         cbSizeUnit_->setColour(juce::ComboBox::arrowColourId, juce::Colours::black);
     }
     if (lblAno_) {
-        lblAno_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        lblAno_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         lblAno_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (lblAnoAte_) {
@@ -1296,7 +1447,14 @@ void DuplicatesWorkspaceComponent::lookAndFeelChanged() {
     repaint();
 }
 
+void DuplicatesWorkspaceComponent::atualizarContagemResolvidas() {
+    if (!btnResolvidas_) return;
+    btnResolvidas_->setButtonText(matriz::i18n::t("duplicatas.btn_resolvidas")
+                                      .replace("{n}", juce::String(projeto_.contarDuplicatasResolvidas())));
+}
+
 void DuplicatesWorkspaceComponent::recarregar() {
+    atualizarContagemResolvidas();
     if (isThreadRunning() || estado_ == State::Results) {
         return; // Don't interrupt active scan or clear results on view reload
     }
@@ -2618,7 +2776,7 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
         g.drawRoundedRectangle(card.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
         auto interno = card.reduced(20, 16);
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(titulo, interno.removeFromTop(24), juce::Justification::centred, true);
         interno.removeFromTop(6);
         if (progresso >= 0.0f) {
@@ -2629,11 +2787,11 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             g.fillRoundedRectangle(barra.withWidth(barra.getWidth() * juce::jlimit(0.0f, 1.0f, progresso)), 4.0f);
             interno.removeFromTop(6);
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawText(juce::String(static_cast<int>(progresso * 100)) + "%", interno, juce::Justification::centred);
         } else {
             g.setColour(tk.textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawFittedText(dica, interno, juce::Justification::centredTop, 3);
         }
     };
@@ -2650,7 +2808,7 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
             break;
         case State::Results:
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(matriz::i18n::t("duplicatas.resumo").replace("{n}", juce::String(gruposDetectados_.size())),
                        direita.removeFromTop(kAlturaResumo), juce::Justification::centredLeft, true);
             if (const int previstos = contarPrevistos(gruposDetectados_); previstos > 0) {
@@ -2661,12 +2819,12 @@ void DuplicatesWorkspaceComponent::paint(juce::Graphics& g) {
                 g.setColour(ambar);
                 g.drawRoundedRectangle(banner.toFloat().reduced(1.0f), 6.0f, 2.0f);
                 auto in = banner.reduced(12, 6);
-                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                 g.drawText(juce::String::fromUTF8("\u26A0  ") +
                                matriz::i18n::t("duplicatas.aviso_titulo").replace("{n}", juce::String(previstos)),
                            in.removeFromTop(16), juce::Justification::centredLeft, true);
                 g.setColour(tk.textoPrimario);
-                g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 g.drawFittedText(matriz::i18n::t("duplicatas.aviso_corpo"), in, juce::Justification::topLeft, 2, 1.0f);
             }
             break;
@@ -2752,6 +2910,12 @@ void DuplicatesWorkspaceComponent::resized() {
         corpo.removeFromTop(4);
         coluna_.finalizarCard();
     }
+
+    // DUPLICATAS RESOLVIDAS — sempre visível: a lista dos escondidos e o RESTAURAR.
+    coluna_.iniciarCard(matriz::i18n::t("duplicatas.card_resolvidas"));
+    btnResolvidas_->setBounds(corpo.removeFromTop(28));
+    corpo.removeFromTop(4);
+    coluna_.finalizarCard();
 
     // Área da direita.
     auto direita = area.reduced(20);

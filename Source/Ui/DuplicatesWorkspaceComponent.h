@@ -147,6 +147,10 @@ private:
     std::unique_ptr<juce::TextButton> btnValidateSelected_;
     std::unique_ptr<juce::TextButton> btnDismissSelected_;
     std::unique_ptr<juce::TextButton> btnReset_;
+    // Duplicatas já resolvidas ficam escondidas do app inteiro; este botão abre a lista com RESTAURAR.
+    std::unique_ptr<juce::TextButton> btnResolvidas_;
+    void atualizarContagemResolvidas();
+    void abrirResolvidas();
 
     // Filter Bar UI Elements
     std::unique_ptr<juce::Label> lblScope_;
