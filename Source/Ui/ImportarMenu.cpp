@@ -4,6 +4,7 @@
 
 #include "../I18n/Strings.h"
 #include "Moldura.h"
+#include "OriginalSourceMedium.h"
 #include "Tablet.h"
 #include "Tokens.h"
 
@@ -347,6 +348,60 @@ void mostrarNivel(PainelOverlay& overlay, std::vector<No> nos, juce::String titu
 
 void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir) {
     mostrarNivel(overlay, montarArvore(), t("imp.titulo"), false, nullptr, std::move(aoConcluir));
+}
+
+std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(const std::string& id) {
+    // Valores no vocabulário canônico (em inglês) do CONTENT e do SOURCE MEDIUM do Matriz. Só entra o que o card
+    // afirma com certeza; o resto (tamanho do vinil, bitola do filme...) fica para as fichas de cada categoria.
+    struct Linha { const char* id; const char* content; const char* medium; std::vector<const char*> tags; };
+    static const std::vector<Linha> tabela = {
+        { "files.external_hdd", "", "External Hard Drive (HDD)", {} },
+        { "files.sd_card", "", "SD Card", {} },
+        { "files.usb", "", "Flash Drive / USB Drive", {} },
+        { "files.cd", "", "", { "CD" } },
+        { "files.dvd", "", "", { "DVD" } },
+        { "photos.folder", "Photo", "", {} },
+        { "photos.camera_card", "Photo", "", { "Camera card" } },
+        { "videos.native", "", "Native Digital", {} },
+        { "videos.vhs", "", "VHS", {} },
+        { "videos.minidv", "", "MiniDV", {} },
+        { "videos.betacam", "", "Betacam / Betacam SP", {} },
+        { "videos.film", "", "", { "Film 16/8 mm" } },
+        { "audio.production", "", "", { "Music Production" } },
+        { "audio.samples", "Sample Pack", "", {} },
+        { "audio.field", "Field Recording", "", {} },
+        { "audio.voice_memo", "", "", { "Voice memo" } },
+        { "audio.voice_over", "Voiceover", "", {} },
+        { "audio.audiobook", "", "", { "Audiobook" } },
+        { "audio.soundtrack", "Soundtrack", "", {} },
+        { "audio.midi", "MIDI", "", {} },
+        { "audio.vinyl_rip", "", "", { "Vinyl rip" } },
+        { "audio.tape_rip", "", "", { "Tape rip" } },
+        { "audio.ddp", "Master", "", { "DDP master" } },
+        { "documents.digital", "", "Native Digital", {} },
+        { "documents.scanned", "", "", { "Scanned" } },
+        { "documents.photocopy", "", "", { "Photocopy" } },
+        { "other.multimedia.apps", "", "", { "App / software" } },
+        { "other.multimedia.interactive", "", "", { "Interactive multimedia" } },
+        { "other.social.instagram", "", "", { "Social media", "Instagram" } },
+        { "other.social.facebook", "", "", { "Social media", "Facebook" } },
+        { "other.social.tiktok", "", "", { "Social media", "TikTok" } },
+        { "other.social.x", "", "", { "Social media", "Twitter / X" } },
+        { "other.social.other", "", "", { "Social media" } },
+    };
+    for (const auto& l : tabela) {
+        if (id != l.id) continue;
+        auto sobre = std::make_shared<matriz::ingest::SobreMaterial>();
+        sobre->collectionType = l.content;
+        for (const char* tag : l.tags) sobre->tags.push_back(tag);
+        if (std::string(l.medium).size() > 0) {
+            OriginalSourceMediumInfo info;
+            info.medium = l.medium;
+            sobre->campos.push_back({ "source_media", info.serialize() });
+        }
+        return sobre;
+    }
+    return nullptr;
 }
 
 std::vector<std::string> idsDasFolhasDoMenuImportar() {

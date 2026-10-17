@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "../Db/Database.h"
@@ -21,8 +22,16 @@ struct SobreMaterial {
     std::vector<std::string> pessoas;
     std::vector<std::string> tags;
 
+    // Campos de ficha extras: "source_media" (JSON de OriginalSourceMediumInfo, vai na coluna item.source_media),
+    // "ano" (só preenche se o arquivo não trouxe data) e qualquer outro campo_id (item_campo, fonte 'humano').
+    std::vector<std::pair<std::string, std::string>> campos;
+
+    // "Single file" da ficha de importação: sufixo somado ao título de cada arquivo.
+    std::string sufixoTitulo;
+
     bool vazio() const {
-        return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty();
+        return collectionType.empty() && subject.empty() && descricao.empty() && pessoas.empty() && tags.empty() &&
+               campos.empty() && sufixoTitulo.empty();
     }
 };
 

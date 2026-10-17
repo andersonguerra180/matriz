@@ -16,6 +16,7 @@
 #include <utility>
 #include <vector>
 #include "ProjetoAberto.h"
+#include "../Ingest/SobreMaterial.h"
 
 namespace matriz::ui {
 
@@ -74,6 +75,8 @@ public:
 
     std::function<void()> aoPedirIngerirArquivos;
     std::function<void(const juce::Array<juce::File>&)> aoIngerirArquivosDireto;
+    // Importação escolhida na janela IMPORT: os arquivos entram com o contexto do card (CONTENT, source medium, tags).
+    std::function<void(const juce::Array<juce::File>&, std::shared_ptr<const matriz::ingest::SobreMaterial>)> aoIngerirComContexto;
     // Avisa de onde vem a PRÓXIMA ingestão (ex.: "gallery"): vira um container no Intake. Chamado antes de aoIngerirArquivosDireto.
     std::function<void(const std::string& origem)> aoDefinirOrigemContainer;
     // Called with the Google Drive root folder when the GD button is clicked
@@ -255,6 +258,7 @@ private:
     std::weak_ptr<EscolhaImportacaoCelular> escolhaImportacaoAtual_;
     void abrirMenuImportar();
     void tratarEscolhaImportar(const std::string& id);
+    void abrirSeletorDeImportacao(const std::string& id);
     void abrirReceberDoCelular();
     void iniciarReceberDoCelular(ModoImportacaoCelular modo);
     std::unique_ptr<juce::TextButton> btnAjuda_;

@@ -4261,7 +4261,26 @@ void IntakeWorkspaceComponent::tratarEscolhaImportar(const std::string& id) {
     }
     if (id == "photos.lightroom") { if (aoIngerirDeLightroom) aoIngerirDeLightroom(); return; }
     if (id == "photos.bridge") { if (aoIngerirDeBridge) aoIngerirDeBridge(); return; }
-    if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+    abrirSeletorDeImportacao(id);
+}
+
+// Seletor de arquivos e pastas do card escolhido; o que o card implica (ver contextoDaFolhaImportar) vai junto.
+void IntakeWorkspaceComponent::abrirSeletorDeImportacao(const std::string& id) {
+    if (!aoIngerirComContexto && !aoIngerirArquivosDireto) {
+        if (aoPedirIngerirArquivos) aoPedirIngerirArquivos();
+        return;
+    }
+    const auto contexto = contextoDaFolhaImportar(id);
+    auto seletor = std::make_shared<juce::FileChooser>(i18n::t("imp.titulo") + " - " + i18n::t("imp.node." + id));
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    seletor->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles |
+                             juce::FileBrowserComponent::canSelectDirectories | juce::FileBrowserComponent::canSelectMultipleItems,
+                         [seguro, seletor, contexto](const juce::FileChooser& fc) {
+                             const auto escolhidos = fc.getResults();
+                             if (seguro == nullptr || escolhidos.isEmpty()) return;
+                             if (seguro->aoIngerirComContexto) seguro->aoIngerirComContexto(escolhidos, contexto);
+                             else if (seguro->aoIngerirArquivosDireto) seguro->aoIngerirArquivosDireto(escolhidos);
+                         });
 }
 
 void IntakeWorkspaceComponent::abrirReceberDoCelular() {

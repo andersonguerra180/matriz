@@ -6,6 +6,7 @@
 #include "PainelInconsistenciasComponent.h"
 #include "ProjetoAberto.h"
 #include "SelecionarTipoMidiaDialogo.h"
+#include "ImportarMenu.h"
 #include "../Ingest/LightroomImporter.h"
 
 #include <JuceHeader.h>
@@ -989,6 +990,109 @@ int rodarTestLightroom() {
         testarImportacaoLightroom(tmpRoot, checar);
     } catch (const std::exception& e) {
         checar(false, juce::String("teste lightroom: ") + e.what());
+    }
+    tmpRoot.deleteRecursively();
+
+    std::cout << "\n" << (falhas == 0 ? "ALL TESTS PASSED" : juce::String(falhas) + " FAILURE(S)") << "\n";
+    return falhas == 0 ? 0 : 1;
+}
+
+// Janela IMPORT: o contexto do card chega aos itens (CONTENT, source medium, tags, sufixo) sem tocar no resto.
+int rodarTestImportarComContexto() {
+    std::cout << "== IMPORT window context (ingerirArquivos com SobreMaterial) ==\n";
+    int falhas = 0;
+    auto checar = [&](bool condicao, const juce::String& descricao) {
+        std::cout << (condicao ? "  OK   " : "  FAIL ") << descricao << "\n";
+        if (!condicao) ++falhas;
+    };
+
+    juce::File tmpRoot = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                              .getChildFile("matriz_importar_ctx_test_" + juce::Uuid().toDashedString());
+    try {
+        tmpRoot.createDirectory();
+        const auto gerarTom = [&](const char* nome) {
+            juce::File f = tmpRoot.getChildFile(nome);
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
+                             "sine=frequency=440:duration=1", f.getFullPathName()});
+            return f;
+        };
+        const juce::File samples = gerarTom("samples.wav"), fita = gerarTom("fita.wav"), rede = gerarTom("rede.wav"),
+                         sufixo = gerarTom("sufixo.wav"), neutro = gerarTom("neutro.wav");
+
+        matriz::model::NovoProjetoParams params;
+        params.nome = "Teste IMPORT contexto";
+        params.prefixoNomenclatura = "CTXTST";
+        auto projeto = matriz::model::Project::criar(tmpRoot.getChildFile("projeto"), params);
+        matriz::db::Database& registro = projeto->registro();
+
+        MainComponent mainComponent;
+        mainComponent.aoConcluirLoteIngestParaTeste = [](int, const juce::StringArray&) {};
+        mainComponent.abrirProjeto(std::move(projeto));
+        checar(mainComponent.temProjetoAberto(), "MainComponent abriu o projeto de teste");
+
+        const auto ingerir = [&](const juce::File& f, std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
+            mainComponent.ingerirArquivos({f}, true, std::move(sobre));
+            esperarIngestTerminar(mainComponent);
+        };
+        const auto coluna = [&](const char* titulo, const char* col) -> std::string {
+            auto st = registro.prepare(std::string("SELECT ") + col + " FROM item WHERE titulo LIKE ?");
+            st.bind(1, matriz::db::Value::of(std::string(titulo) + "%"));
+            return st.step() && !st.columnIsNull(0) ? st.columnText(0) : std::string();
+        };
+
+        ingerir(samples, contextoDaFolhaImportar("audio.samples"));
+        checar(coluna("samples", "collection_type") == "Sample Pack", "audio.samples grava CONTENT = Sample Pack");
+
+        ingerir(fita, contextoDaFolhaImportar("videos.vhs"));
+        checar(coluna("fita", "source_media").find("VHS") != std::string::npos, "videos.vhs grava SOURCE MEDIUM = VHS (JSON em item.source_media)");
+
+        ingerir(rede, contextoDaFolhaImportar("other.social.instagram"));
+        {
+            auto st = registro.prepare("SELECT COUNT(*) FROM item_tag t JOIN item i ON i.id = t.item_id WHERE i.titulo = 'rede' "
+                                       "AND t.tag IN ('Social media', 'Instagram')");
+            st.step();
+            checar(st.columnInt(0) == 2, "other.social.instagram soma as tags 'Social media' e 'Instagram'");
+            auto fts = registro.prepare("SELECT COUNT(*) FROM busca_fts f JOIN item i ON i.id = f.item_id WHERE i.titulo = 'rede' AND f.conteudo = 'Instagram'");
+            fts.step();
+            auto mapa = registro.prepare("SELECT COUNT(*) FROM busca_fts_map m JOIN item i ON i.id = m.item_id WHERE i.titulo = 'rede' AND m.conteudo = 'Instagram'");
+            mapa.step();
+            checar(fts.columnInt(0) == 1 && mapa.columnInt(0) == 1, "a tag entra UMA vez em busca_fts, com a linha correspondente em busca_fts_map");
+        }
+
+        auto comSufixo = std::make_shared<matriz::ingest::SobreMaterial>();
+        comSufixo->sufixoTitulo = "2026";
+        ingerir(sufixo, comSufixo);
+        checar(coluna("sufixo", "titulo") == "sufixo - 2026", "sufixo do titulo e somado uma vez");
+
+        // Pasta inteira (expansão assíncrona + checagem de duplicatas antes do lote): o contexto tem que sobreviver à cadeia toda.
+        {
+            juce::File pasta = tmpRoot.getChildFile("caixa_de_discos");
+            pasta.createDirectory();
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=330:duration=1",
+                             pasta.getChildFile("lado_a.wav").getFullPathName()});
+            gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=550:duration=1",
+                             pasta.getChildFile("lado_b.wav").getFullPathName()});
+            mainComponent.ingerirArquivos({pasta}, true, contextoDaFolhaImportar("audio.vinyl_rip"));
+            const auto t0 = juce::Time::getMillisecondCounter();
+            int comTag = 0;
+            while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                if (mainComponent.ingestEmAndamento()) continue;
+                auto st = registro.prepare("SELECT COUNT(*) FROM item_tag t JOIN item i ON i.id = t.item_id "
+                                           "WHERE i.titulo LIKE 'lado_%' AND t.tag = 'Vinyl rip'");
+                st.step();
+                comTag = static_cast<int>(st.columnInt(0));
+                if (comTag == 2) break;
+            }
+            esperarIngestTerminar(mainComponent);
+            checar(comTag == 2, "pasta inteira: os 2 arquivos de dentro recebem a tag 'Vinyl rip' do card (" + juce::String(comTag) + ")");
+        }
+
+        ingerir(neutro, nullptr);
+        checar(coluna("neutro", "collection_type").empty() && coluna("neutro", "source_media").empty(),
+               "sem contexto (card neutro / arrastar) o item entra como antes: sem CONTENT nem SOURCE MEDIUM");
+    } catch (const std::exception& e) {
+        checar(false, juce::String("teste importar contexto: ") + e.what());
     }
     tmpRoot.deleteRecursively();
 

@@ -2,11 +2,13 @@
 
 #include <JuceHeader.h>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 #include "OverlayComponent.h"
+#include "../Ingest/SobreMaterial.h"
 
 // Janela IMPORT do Intake: cards quadrados de borda arredondada (mesmo desenho da escolha GALLERY/WHATSAPP),
 // com sub-janelas por categoria. Um clique em card com filhos abre o nível seguinte (botão VOLTAR); um clique
@@ -20,6 +22,10 @@ namespace matriz::ui {
 
 // `aoConcluir` roda UMA vez: id da folha escolhida, ou nullopt se o usuário cancelou.
 void mostrarMenuImportar(PainelOverlay& overlay, std::function<void(std::optional<std::string>)> aoConcluir);
+
+// Contexto que a escolha do card já implica (CONTENT, source medium, tags), aplicado a cada arquivo importado por ele.
+// Nulo = o card não implica nada (ex.: "Pasta do computador", "Outro").
+std::shared_ptr<const matriz::ingest::SobreMaterial> contextoDaFolhaImportar(const std::string& id);
 
 // Para o self-test: todos os ids de folha (inclui as "em breve") na ordem da árvore.
 std::vector<std::string> idsDasFolhasDoMenuImportar();

@@ -114,11 +114,38 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
     using namespace matriz::model::nomes;
     const std::string agora = matriz::model::agoraIso8601();
 
+    // Um SAVEPOINT por item: todas as escritas deste item entram ou saem juntas (e funciona dentro de uma
+    // transação já aberta pelo chamador).
+    bool savepointAberto = false;
     try {
+        db.run("SAVEPOINT sobre_material", {});
+        savepointAberto = true;
+
+        if (!sm.sufixoTitulo.empty()) {
+            const std::string titulo = lerColuna(db, itemId, "titulo");
+            const std::string fim = " - " + sm.sufixoTitulo;
+            if (titulo.size() < fim.size() || titulo.compare(titulo.size() - fim.size(), fim.size(), fim) != 0)
+                db.run("UPDATE item SET titulo = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                       {Value::of(titulo.empty() ? sm.sufixoTitulo : titulo + fim), Value::of(agora), Value::of(itemId)});
+        }
+
         if (!sm.collectionType.empty()) {
             db.run("UPDATE item SET collection_type = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
                    {Value::of(sm.collectionType), Value::of(agora), Value::of(itemId)});
             upsertCampoHumano(db, itemId, "collection_type", sm.collectionType, true);
+        }
+
+        for (const auto& [campo, valor] : sm.campos) {
+            if (campo.empty() || valor.empty()) continue;
+            if (campo == "source_media") {  // mídia de origem: coluna do próprio item (JSON)
+                db.run("UPDATE item SET source_media = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ?",
+                       {Value::of(valor), Value::of(agora), Value::of(itemId)});
+            } else if (campo == "ano") {    // ano: só preenche se o arquivo ainda não tem (a data do arquivo prevalece)
+                db.run("UPDATE item SET ano = ?, metadados_editados = 1, atualizado_em = ? WHERE id = ? AND (ano IS NULL OR ano = 0)",
+                       {Value::of(juce::String(valor).getIntValue()), Value::of(agora), Value::of(itemId)});
+            } else {
+                upsertCampoHumano(db, itemId, campo, valor, true);
+            }
         }
 
         if (!im.subjectsNovos.empty()) {
@@ -166,8 +193,16 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
         }
         if (mudouTags)
             db.run("UPDATE item SET metadados_editados = 1, atualizado_em = ? WHERE id = ?", {Value::of(agora), Value::of(itemId)});
+        db.run("RELEASE sobre_material", {});
+        savepointAberto = false;
     } catch (const std::exception& e) {
         juce::Logger::writeToLog("SobreMaterial: falha ao aplicar em " + juce::String(itemId) + " — " + juce::String(e.what()));
+        if (savepointAberto) {
+            try {
+                db.run("ROLLBACK TO sobre_material", {});
+                db.run("RELEASE sobre_material", {});
+            } catch (...) {}
+        }
     }
 }
 

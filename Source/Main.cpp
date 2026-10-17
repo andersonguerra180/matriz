@@ -248,6 +248,13 @@ public:
             quit();
             return;
         }
+        if (commandLine.contains("--selftest-importar-contexto")) {
+            monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
+            setApplicationReturnValue(matriz::ui::rodarTestImportarComContexto());
+            monitorLoop_.reset();
+            quit();
+            return;
+        }
         if (commandLine.contains("--selftest-lightroom")) {
             monitorLoop_ = std::make_unique<matriz::diag::MessageLoopMonitor>();
             setApplicationReturnValue(matriz::ui::rodarTestLightroom());

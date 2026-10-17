@@ -16,6 +16,7 @@
 #include "ProjetoAberto.h"
 #include "../Model/NomesCanonicos.h"
 #include "../Consolidacao/PacoteCollection.h"
+#include "../Ingest/SobreMaterial.h"
 
 // Workflow layer (Phase 1+2)
 #include "HomePanelComponent.h"
@@ -151,7 +152,10 @@ public:
     // quanto por arrastar arquivos do Finder na janela inteira.
     // `detectarWhatsapp=false`: a chamada recursiva sobre o que sobrou depois de enfileirar as conversas nao redetecta
     // (a mesma pasta/zip voltaria a ser achada e o laco nunca terminaria).
-    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp = true);
+    // `sobre` (opcional): contexto da janela IMPORT (CONTENT, source medium, tags...) aplicado a cada item deste
+    // chamado, na thread que ingere. Nulo = comportamento de sempre.
+    void ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp = true,
+                         std::shared_ptr<const matriz::ingest::SobreMaterial> sobre = nullptr);
     void aoConversaRecebida(const juce::File& arquivo, juce::int64 tamanho);
     // Tools > Scan INBOX: cataloga o que está na INBOX do MAIN (só quando o usuário pede; nunca sozinho).
     void escanearInbox();
@@ -252,7 +256,8 @@ private:
     void processarLoteEmBackground(std::vector<juce::File> arquivos,
                                     const std::string& sourceMedia = {},
                                     const std::string& collection = {},
-                                    std::function<void(const std::vector<std::string>&)> aoConcluir = nullptr);
+                                    std::function<void(const std::vector<std::string>&)> aoConcluir = nullptr,
+                                    std::shared_ptr<const matriz::ingest::SobreMaterial> sobre = nullptr);
     // Pacote de collection (Fase 3): pasta com matriz-pacote.json.
     void ingerirPacote(const juce::File& pasta);
     void aplicarPacoteIngerido(std::shared_ptr<matriz::consolidacao::pacote::Pacote> pacote,
@@ -260,7 +265,8 @@ private:
     // Checagem de duplicata exata na entrada do INTAKE (nome + data do arquivo + tamanho + formato
     // contra os itens já cadastrados no projeto). Único ponto de entrada de arquivos soltos/pastas
     // (ingerirArquivos), antes de processarLoteEmBackground criar os itens.
-    void resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos);
+    void resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos,
+                                             std::shared_ptr<const matriz::ingest::SobreMaterial> sobre = nullptr);
     void atualizarLabelProgresso();
     void garantirLabelProgressoIngest();
     // Resumo discreto de fim de lote (item 9, §5 — "HD reconectado... X

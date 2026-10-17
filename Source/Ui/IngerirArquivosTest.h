@@ -10,5 +10,6 @@ namespace matriz::ui {
 
 int rodarTestIngerirArquivos();
 int rodarTestLightroom();
+int rodarTestImportarComContexto();  // --selftest-importar-contexto
 
 } // namespace matriz::ui

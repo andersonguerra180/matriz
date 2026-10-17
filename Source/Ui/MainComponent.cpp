@@ -528,6 +528,22 @@ auto executarComPrazoOuSkip(Trabalho trabalho, int prazoSegundos,
                               " (slow or unresponsive storage)");
 }
 
+
+// Contexto da janela IMPORT aplicado item a item pelos jobs de ingestão do lote. O AplicadorSobreMaterial só é
+// construído quando o primeiro item chega (lê vocabulário e pessoas do registro); chamar sempre sob o lock de escrita.
+class AplicadorDoLote {
+public:
+    explicit AplicadorDoLote(std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) : sobre_(std::move(sobre)) {}
+    void aplicar(matriz::db::Database& registro, const std::string& itemId) {
+        std::call_once(montado_, [&] { aplicador_ = std::make_unique<matriz::ingest::AplicadorSobreMaterial>(registro, *sobre_); });
+        aplicador_->aplicar(itemId);
+    }
+private:
+    std::shared_ptr<const matriz::ingest::SobreMaterial> sobre_;
+    std::once_flag montado_;
+    std::unique_ptr<matriz::ingest::AplicadorSobreMaterial> aplicador_;
+};
+
 } // namespace
 
 MainComponent::MainComponent() {
@@ -1775,6 +1791,10 @@ void MainComponent::mostrarIntake() {
         intakeWorkspace_->aoIngerirArquivosDireto = [this](const juce::Array<juce::File>& arqs) {
             ingerirArquivos(arqs);
         };
+        intakeWorkspace_->aoIngerirComContexto = [this](const juce::Array<juce::File>& arqs,
+                                                          std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
+            ingerirArquivos(arqs, true, std::move(sobre));
+        };
         intakeWorkspace_->aoDefinirOrigemContainer = [this](const std::string& origem) { origemContainerProximoLote_ = origem; };
         intakeWorkspace_->aoIngerirDeGoogleDrive = [this](const juce::File& gdFolder) {
             // Open a FileChooser rooted at the Google Drive local folder
@@ -2899,7 +2919,8 @@ void MainComponent::aoConversaRecebida(const juce::File& arquivo, juce::int64 ta
     }
 }
 
-void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp) {
+void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPastas, bool detectarWhatsapp,
+                                    std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_) return;
     if (projetoAberto_->somenteLeitura()) { ProjetoAberto::avisarSomenteLeitura(); return; }  // clone: só leitura
 
@@ -2957,7 +2978,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
                 }
             }
             if (restantes.isEmpty()) return;
-            ingerirArquivos(restantes, false);  // sem redetectar: o que sobrou segue como arquivo comum
+            ingerirArquivos(restantes, false, sobre);  // sem redetectar: o que sobrou segue como arquivo comum
             return;
         }
     }
@@ -2976,9 +2997,9 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
         for (const auto& entrada : arquivosOuPastas)
             if (entrada.isDirectory()) pastasRaiz.push_back(entrada.getFullPathName().toStdString());
         projetoAberto_->registrarPastasIngeridas(pastasRaiz);
-        expandirArquivosAsync(arquivosOuPastas, [this](std::vector<juce::File> novosArquivos, int) {
+        expandirArquivosAsync(arquivosOuPastas, [this, sobre](std::vector<juce::File> novosArquivos, int) {
             if (novosArquivos.empty()) return;
-            resolverDuplicatasIntakeEEnfileirar(std::move(novosArquivos));
+            resolverDuplicatasIntakeEEnfileirar(std::move(novosArquivos), sobre);
         });
         return;
     }
@@ -2986,7 +3007,7 @@ void MainComponent::ingerirArquivos(const juce::Array<juce::File>& arquivosOuPas
     // Loose files only
     auto arquivos = expandirArquivos(arquivosOuPastas);
     if (arquivos.empty()) return;
-    resolverDuplicatasIntakeEEnfileirar(std::move(arquivos));
+    resolverDuplicatasIntakeEEnfileirar(std::move(arquivos), sobre);
 }
 
 void MainComponent::escanearInbox() {
@@ -3172,7 +3193,8 @@ juce::File criarInstanciaComSufixo(const juce::File& original) {
 
 } // namespace
 
-void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos) {
+void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> arquivos,
+                                                        std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_ || arquivos.empty()) return;
 
     auto& registro = projetoAberto_->projeto().registro();
@@ -3207,7 +3229,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
     // dialog, bem depois desta função já ter retornado.
     juce::Component::SafePointer<MainComponent> safeThis(this);
     if (resolvendoDuplicatas_++ == 0) descartarLotesEmResolucao_ = false;
-    ingestPool_.addJob([safeThis, arquivos, existentes = std::move(existentes), pastaProjeto]() mutable {
+    ingestPool_.addJob([safeThis, arquivos, sobre, existentes = std::move(existentes), pastaProjeto]() mutable {
         matriz::diag::LogOperacao logOp("resolverDuplicatas:" + std::to_string(arquivos.size()) + " arquivos");
         // Índice por título+extensão+tamanho: troca o scan linear de
         // `existentes` por arquivo novo (O(n×m) no lote inteiro) por uma
@@ -3244,13 +3266,13 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
             }
         }
 
-        juce::MessageManager::callAsync([safeThis, arquivos, coincidencias, pastaProjeto]() mutable {
+        juce::MessageManager::callAsync([safeThis, arquivos, sobre, coincidencias, pastaProjeto]() mutable {
             if (!safeThis) return;
             --safeThis->resolvendoDuplicatas_;
             if (safeThis->descartarLotesEmResolucao_) return;  // cancelado antes de virar lote
 
             if (coincidencias.empty()) {
-                safeThis->processarLoteEmBackground(std::move(arquivos), "", "");
+                safeThis->processarLoteEmBackground(std::move(arquivos), "", "", nullptr, sobre);
                 return;
             }
 
@@ -3284,7 +3306,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                 matriz::i18n::t("intake.duplicate_dialog_titulo"),
                 matriz::i18n::t("intake.duplicate_dialog_intro"),
                 entries, actionLabels,
-                [safeThis, arquivos, coincidencias, pastaProjeto](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) mutable {
+                [safeThis, arquivos, sobre, coincidencias, pastaProjeto](bool confirmado, std::vector<DuplicateResolutionDialog::Entry> resultado) mutable {
                     if (!safeThis) return;
                     // O modal do scan de pasta já está em "INGESTING 0/N" esperando este lote: sem lote nenhum
                     // ele ficava em 0% para sempre. Só mexe nele se nenhum lote de fato está rodando nele.
@@ -3327,7 +3349,7 @@ void MainComponent::resolverDuplicatasIntakeEEnfileirar(std::vector<juce::File> 
                         if (!pular[i]) arquivosFinais.push_back(arquivos[i]);
                     }
                     if (!arquivosFinais.empty()) {
-                        safeThis->processarLoteEmBackground(std::move(arquivosFinais), "", "");
+                        safeThis->processarLoteEmBackground(std::move(arquivosFinais), "", "", nullptr, sobre);
                     } else if (modalSemLote) {
                         safeThis->ingestModalDialog_->finishWithNotice(
                             matriz::i18n::t("intake.duplicate_nada_titulo"),
@@ -3975,8 +3997,14 @@ void MainComponent::expandirArquivosAsync(
 void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                                 const std::string& sourceMedia,
                                                 const std::string& collection,
-                                                std::function<void(const std::vector<std::string>&)> aoConcluir) {
+                                                std::function<void(const std::vector<std::string>&)> aoConcluir,
+                                                std::shared_ptr<const matriz::ingest::SobreMaterial> sobre) {
     if (!projetoAberto_) return;
+
+    // Contexto da janela IMPORT: o aplicador é montado pelo primeiro job (na thread que ingere, sob o lock do
+    // registro) e reaproveitado pelos demais — vocabulário e lista de pessoas são lidos uma vez por lote.
+    std::shared_ptr<AplicadorDoLote> aplicadorLote;
+    if (sobre != nullptr && !sobre->vazio()) aplicadorLote = std::make_shared<AplicadorDoLote>(sobre);
 
     // Ponteiro, não referência: a referência local morreria ao sair desta
     // função, mas os jobs do ThreadPool rodam depois disso — precisam de
@@ -4204,7 +4232,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
         // rodava direto na thread de mensagens antes — era exatamente o
         // travamento reportado. Agora cada arquivo é um job no ThreadPool
         // (1 thread — sequencial, sem concorrência de escrita no registro).
-        ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis,
+        ingestPool_.addJob([registro, indice, pastaProjeto, itemId, arquivo, estadoLote, safeThis, aplicadorLote,
                              contadorParaAtualizar, cancelamento, prefixo, escritaRegistro,
                              proximoNumeroAcervo,
                              pendentes = pendentes_, skipToken = skipTokenLote_,
@@ -4332,6 +4360,7 @@ void MainComponent::processarLoteEmBackground(std::vector<juce::File> arquivos,
                                    matriz::db::Value::of(itemId)});
 
                     matriz::ingest::gravarCache(*registro, arquivoIdGravado, cache);
+                    if (aplicadorLote) aplicadorLote->aplicar(*registro, itemId);  // contexto da janela IMPORT
                     sucesso = true;
                 }
 
