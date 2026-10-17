@@ -1241,6 +1241,7 @@ inline const std::unordered_map<std::string, std::string>& getEnglishStrings() {
         {"duplicatas.scanning", "Scanning candidates..."},
         {"duplicatas.nenhuma", "No duplicates found"},
         {"duplicatas.encontradas", "Found {n} potential duplicate pairs"},
+        {"duplicatas.achadas_ate_agora", "{n} pairs found so far, up to {size}"},
         {"duplicatas.offline", "File offline or not found"},
         {"duplicatas.imagem_invalida", "Invalid Image File"},
         {"arvore_backup.titulo", "TREEMAP"},

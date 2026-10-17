@@ -1510,6 +1510,8 @@ void DuplicatesWorkspaceComponent::iniciarScan() {
 
     estado_ = State::Scanning;
     progressoScan_ = 0.0;
+    achadosScan_ = 0;
+    bytesScan_ = 0;
     gruposDetectados_.clear();
     btnScan_->setEnabled(false);
     btnScan_->setButtonText(matriz::i18n::t("duplicatas.scanning"));
@@ -1943,6 +1945,17 @@ void DuplicatesWorkspaceComponent::run() {
     //    ingest, e fica em phash_imagem (indice.sqlite): os próximos scans só calculam o que falta.
     // ---------------------------------------------------------------------------------------------
     if (!isCatalogMode) {
+        // Contador ao vivo: parte do que a fase A já achou e soma cada par novo (B2, B3, B4).
+        achadosScan_ = static_cast<int>(gruposDetectados_.size());
+        {
+            juce::int64 bytesIniciais = 0;
+            for (const auto& g : gruposDetectados_) bytesIniciais += g.duplicata.tamanhoBytes;
+            bytesScan_ = bytesIniciais;
+        }
+        auto contarAchado = [this](const DuplicateGroup& g) {
+            ++achadosScan_;
+            bytesScan_ += g.duplicata.tamanhoBytes;
+        };
         auto gruposParaPar = [&](const ItemInfo& a, const ItemInfo& b) {
             DuplicateGroup group;
             auto preencher = [](DuplicateMatch& m, const ItemInfo& it) {
@@ -2059,6 +2072,7 @@ void DuplicatesWorkspaceComponent::run() {
                     auto grupo = gruposParaPar(*o, *d);
                     grupo.criterio = "IDENTICAL";
                     grupoExistente[chave] = gruposDetectados_.size();
+                    contarAchado(grupo);
                     gruposDetectados_.push_back(std::move(grupo));
                 }
             }
@@ -2182,6 +2196,7 @@ void DuplicatesWorkspaceComponent::run() {
                         auto grupo = gruposParaPar(*o, *d);
                         grupo.criterio = similar ? "SIMILAR" : "PROBABLE";
                         grupo.distanciaPHash = dist;
+                        contarAchado(grupo);
                         gruposDetectados_.push_back(std::move(grupo));
                     }
                 }
@@ -2225,6 +2240,7 @@ void DuplicatesWorkspaceComponent::run() {
                         auto grupo = gruposParaPar(*o, *d);
                         grupo.criterio = "NAME_MATCH";
                         grupoExistente[chave] = gruposDetectados_.size();
+                        contarAchado(grupo);
                         gruposDetectados_.push_back(std::move(grupo));
                     }
                 }
@@ -2260,7 +2276,13 @@ void DuplicatesWorkspaceComponent::timerCallback() {
         } else {
             static const char* kFases[] = {"Scanning", "Matching files", "Computing checksums", "Computing image fingerprints (pHash)", "Comparing images"};
             const juce::String fase = kFases[juce::jlimit(0, 4, faseScan_.load())];
-            lblStatus_->setText(fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed...", juce::dontSendNotification);
+            juce::String achados;
+            if (achadosScan_.load() > 0)
+                achados = " · " + matriz::i18n::t("duplicatas.achadas_ate_agora")
+                                           .replace("{n}", juce::String(achadosScan_.load()))
+                                           .replace("{size}", juce::File::descriptionOfSizeInBytes(bytesScan_.load()));
+            lblStatus_->setText(fase + ": " + juce::String(static_cast<int>(progressoScan_ * 100)) + "% completed..." + achados,
+                                juce::dontSendNotification);
             repaint();  // barra de progresso da área direita
             ProgressoGlobal::obterInstancia().atualizarFracao(
                 "duplicates_scan", progressoScan_,
