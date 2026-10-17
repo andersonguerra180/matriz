@@ -1,5 +1,6 @@
 #include "HierarquiaEditorComponent.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -270,6 +271,21 @@ void HierarquiaEditorComponent::paint(juce::Graphics& g) {
             g.fillRoundedRectangle(b.bounds.translated(shadowOffset, shadowOffset), kRaio);
         }
 
+        if (tema().fundo.getBrightness() > 0.5f) {
+            // Claro: pílula neutra (nível = quadradinho colorido à esquerda do texto).
+            const auto& tk = tema();
+            const float raioPilula = b.bounds.getHeight() * 0.5f;
+            g.setColour((b.ativo ? tk.botaoSecundario : tk.painelAlt).withAlpha(alpha));
+            g.fillRoundedRectangle(b.bounds, raioPilula);
+            g.setColour(tk.borda.withAlpha(alpha));
+            g.drawRoundedRectangle(b.bounds.reduced(0.5f), raioPilula, 1.0f);
+            const float d = 10.0f;
+            g.setColour(b.cor.withAlpha(alpha));
+            g.fillRoundedRectangle(b.bounds.getX() + raioPilula * 0.7f, b.bounds.getCentreY() - d * 0.5f, d, d, 2.5f);
+            g.setColour(tk.textoPrimario.withAlpha(alpha));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
+            g.drawText(b.rotulo, b.bounds.reduced(raioPilula * 0.7f + d + 10.0f, 4.0f), juce::Justification::centredLeft);
+        } else {
         // Block body
         g.setColour(b.cor.withAlpha(alpha));
         g.fillRoundedRectangle(b.bounds, kRaio);
@@ -287,13 +303,14 @@ void HierarquiaEditorComponent::paint(juce::Graphics& g) {
 
         // Text
         g.setColour(juce::Colours::white.withAlpha(alpha));
-        g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(b.rotulo, b.bounds.reduced(14.0f, 4.0f), juce::Justification::centredLeft);
+        }
 
         // Drag handle dots
         float dotX = b.bounds.getRight() - 20.0f;
         float dotY = b.bounds.getCentreY() - 8.0f;
-        g.setColour(juce::Colours::white.withAlpha(0.4f * alpha));
+        g.setColour((tema().fundo.getBrightness() > 0.5f ? tema().textoTerciario : juce::Colours::white).withAlpha(0.6f * alpha));
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 2; ++col) {
                 g.fillEllipse(dotX + col * 5.0f, dotY + row * 6.0f, 3.0f, 3.0f);
@@ -302,7 +319,7 @@ void HierarquiaEditorComponent::paint(juce::Graphics& g) {
 
         // Inactive: "+" icon hint
         if (!b.ativo && !isDragging) {
-            g.setColour(juce::Colours::white.withAlpha(0.6f));
+            g.setColour((tema().fundo.getBrightness() > 0.5f ? tema().textoSecundario : juce::Colours::white).withAlpha(0.6f));
             g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
             g.drawText("+", b.bounds.withLeft(b.bounds.getX() + kBlocoLargura - 32.0f).withWidth(24.0f),
                         juce::Justification::centred);
@@ -452,7 +469,7 @@ void HierarquiaEditorWindow::abrirComoDialogo(const matriz::consolidacao::Hierar
     opts.useNativeTitleBar = true;
     opts.resizable = false;
     opts.componentToCentreAround = centrarEm;
-    opts.launchAsync();
+    moldura::lancar(opts);
 }
 
 } // namespace matriz::ui

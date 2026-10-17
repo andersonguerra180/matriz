@@ -1,5 +1,6 @@
 #include "AboutDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include <AssetsBinaryData.h>
 
@@ -77,7 +78,7 @@ void AboutDialog::paint(juce::Graphics& g) {
 
     // Subtitle / Version tag
     auto versionRow = infoBounds.removeFromTop(20.0f);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.setColour(tk.acento);
     juce::String versionLabel = i18n::t("sobre.versao");
     if (auto* app = juce::JUCEApplication::getInstance()) {
@@ -92,19 +93,19 @@ void AboutDialog::paint(juce::Graphics& g) {
 
     // Developed by A. Guerra
     auto devRow = infoBounds.removeFromTop(20.0f);
-    g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::plain)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::plain)));
     g.setColour(tk.textoSecundario);
     g.drawText(i18n::t("sobre.desenvolvido_por"), devRow, juce::Justification::centredLeft, true);
 
     // BKR Systems
     auto brandRow = infoBounds.removeFromTop(18.0f);
-    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     g.setColour(tk.textoTerciario);
     g.drawText("BKR Systems", brandRow, juce::Justification::centredLeft, true);
 
     // Copyright
     auto copyRow = infoBounds.removeFromTop(16.0f);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::plain)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::plain)));
     g.setColour(tk.textoTerciario.withAlpha(0.7f));
     g.drawText(i18n::t("sobre.direitos_reservados"), copyRow, juce::Justification::centredLeft, true);
 
@@ -137,7 +138,7 @@ void AboutDialog::exibirModal() {
     opt.useNativeTitleBar = false;
     opt.resizable = false;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
 
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);

@@ -182,7 +182,7 @@ public:
         for (const auto& c : cards_) {
             auto t = std::make_unique<juce::Label>();
             t->setText(c.titulo, juce::dontSendNotification);
-            t->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            t->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             t->setColour(juce::Label::textColourId, tk.acento);
             addAndMakeVisible(*t);
             titulos_.push_back(std::move(t));
@@ -190,7 +190,7 @@ public:
                 Par par;
                 par.rotulo = std::make_unique<juce::Label>();
                 par.rotulo->setText(l.rotulo, juce::dontSendNotification);
-                par.rotulo->setFont(juce::Font(juce::FontOptions(10.5f)));
+                par.rotulo->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                 par.rotulo->setColour(juce::Label::textColourId, tk.textoTerciario);
                 addAndMakeVisible(*par.rotulo);
                 par.valor = std::make_unique<juce::TextEditor>();
@@ -199,7 +199,7 @@ public:
                 par.valor->setCaretVisible(false);
                 par.valor->setScrollbarsShown(false);
                 par.valor->setBorder({});
-                par.valor->setFont(juce::Font(juce::FontOptions(12.0f)));
+                par.valor->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                 par.valor->setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
                 par.valor->setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
                 par.valor->setColour(juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
@@ -274,7 +274,7 @@ PainelMetadadosArquivo::PainelMetadadosArquivo(ProjetoAberto& projeto) : projeto
                            : juce::String("Select a file to see its metadata."),
                       juce::dontSendNotification);
     lblVazio_.setJustificationType(juce::Justification::centred);
-    lblVazio_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    lblVazio_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblVazio_.setColour(juce::Label::textColourId, tema().textoTerciario);
     addAndMakeVisible(lblVazio_);
 

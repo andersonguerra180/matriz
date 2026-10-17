@@ -71,6 +71,9 @@ bool codigoDeSourceValido(const juce::String& codigo);
 // mapa do MAIN. Nome reservado: nenhuma pasta comum do mapa pode usá-lo
 // (ArvoreBackupComponent rejeita "SEM PASTA"/"NO FOLDER", que cobre este).
 inline const char* const kPastaSemPasta = "_SEM_PASTA";
+// REGRA GLOBAL dos EXPORTS (Collection Package, EXPORT, Bounce List): item sem pasta no mapa NUNCA fica de fora;
+// sai nesta pasta. (O MAIN mantém "_SEM_PASTA" fisicamente — renomear exigiria migrar os arquivos já gravados.)
+inline const char* const kPastaNoFolderExport = "_NO FOLDER";
 
 // Fase 4 — registra um move feito no MAIN (arquivo ou pasta, caminhos relativos a
 // Media/) na fila de CADA clone ativo (clone_move_pendente): o próximo sync do

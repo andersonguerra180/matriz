@@ -3,6 +3,8 @@
 
 #include "ProjetoAberto.h"
 #include "Tokens.h"
+#include "Moldura.h"
+#include "Tablet.h"
 #include "VulnerabilidadesDialog.h"
 #include "../I18n/Strings.h"
 
@@ -73,7 +75,8 @@ CartoesAnalyticsComponent::Dados CartoesAnalyticsComponent::calcular(ProjetoAber
     try {
         auto stmt = db.prepare(
             "SELECT IFNULL(a.caminho_relativo, IFNULL(a.caminho_absoluto_origem, '')), IFNULL(a.tamanho_bytes, 0) "
-            "FROM item i LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1");
+            "FROM item i LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+            "WHERE COALESCE(i.estado, '') != 'duplicata'");
         while (stmt.step()) {
             const std::string caminho = stmt.columnText(0);
             juce::String ext;
@@ -94,9 +97,9 @@ CartoesAnalyticsComponent::Dados CartoesAnalyticsComponent::calcular(ProjetoAber
 
     try {
         auto st = db.prepare(
-            "SELECT id FROM item WHERE (ano IS NULL OR ano = 0) "
+            "SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata' AND ((ano IS NULL OR ano = 0) "
             "OR (source_media IS NULL OR TRIM(source_media) = '') "
-            "OR (collection_type IS NULL OR TRIM(collection_type) = '')");
+            "OR (collection_type IS NULL OR TRIM(collection_type) = ''))");
         while (st.step()) d.idsPrecisaAtencao.insert(st.columnText(0));
         d.precisaAtencao = d.idsPrecisaAtencao.size();
     } catch (...) {}
@@ -161,12 +164,12 @@ void CartoesAnalyticsComponent::paint(juce::Graphics& g) {
 
     // Card coletivo: mais escuro que o fundo da tela, nos dois temas.
     const bool claro = tk.fundo.getBrightness() > 0.5f;
-    const juce::Colour fundoColetivo = claro ? tk.fundo.darker(0.22f) : tk.fundo.darker(0.55f);
+    const juce::Colour fundoColetivo = claro ? tk.painelAlt : tk.fundo.darker(0.55f);
     const auto container = getLocalBounds().reduced(8, 6).toFloat();
     g.setColour(fundoColetivo);
-    g.fillRoundedRectangle(container, 12.0f);
+    g.fillRoundedRectangle(container, tk.raioCartao);
     g.setColour(tk.borda.withAlpha(0.6f));
-    g.drawRoundedRectangle(container.reduced(0.5f), 12.0f, 1.0f);
+    g.drawRoundedRectangle(container.reduced(0.5f), tk.raioCartao, 1.0f);
 
     const juce::String semPastaValor = dados_.semPastaOriginal
         ? juce::String::fromUTF8("\xe2\x80\x94")
@@ -175,10 +178,10 @@ void CartoesAnalyticsComponent::paint(juce::Graphics& g) {
 
     struct Card { juce::String titulo, valor, sub; juce::Colour cor; bool clicavel; };
     const Card cards[kNumCards] = {
-        {i18n::t("analytics.total_assets"), juce::String(dados_.totalAssets), i18n::t("analytics.total_assets_sub"), juce::Colour(0xff3b82f6), false},
-        {i18n::t("analytics.storage_size"), tamanhoHumano(dados_.totalBytes), i18n::t("analytics.storage_size_sub"), juce::Colour(0xff10b981), false},
+        {i18n::t("analytics.total_assets"), juce::String(dados_.totalAssets), i18n::t("analytics.total_assets_sub"), tk.secaoBackup, false},
+        {i18n::t("analytics.storage_size"), tamanhoHumano(dados_.totalBytes), i18n::t("analytics.storage_size_sub"), tk.secaoExplorer, false},
         {i18n::t("analytics.primary_format"), juce::String(dados_.formatoPrincipal),
-         juce::String(dados_.formatoPrincipalQtd) + " " + i18n::t("analytics.ativos"), juce::Colour(0xfff59e0b), false},
+         juce::String(dados_.formatoPrincipalQtd) + " " + i18n::t("analytics.ativos"), tk.secaoStats, false},
         {i18n::t("analytics.needs_attention"), juce::String(dados_.precisaAtencao), i18n::t("analytics.needs_attention_sub"), juce::Colour(0xfff97316), true},
         {i18n::t("analytics.backup_health"), juce::String(dados_.saudeBackupPct, 0) + "%",
          juce::String(dados_.vulneraveis) + " " + i18n::t("analytics.vulneraveis_clique"), juce::Colour(0xffef4444), true},
@@ -190,22 +193,24 @@ void CartoesAnalyticsComponent::paint(juce::Graphics& g) {
         const auto r = retanguloCard(i, getWidth());
         const auto& c = cards[i];
         g.setColour(i == hover_ && c.clicavel ? tk.painelAlt : tk.painel);
-        g.fillRoundedRectangle(r.toFloat(), 7.0f);
+        g.fillRoundedRectangle(r.toFloat(), tk.raioCartao);
         g.setColour(tk.borda);
-        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), 7.0f, 1.0f);
-        auto strip = r.withWidth(4);
-        g.setColour(c.cor);
-        g.fillRoundedRectangle(strip.toFloat(), 2.0f);
+        g.drawRoundedRectangle(r.toFloat().reduced(0.5f), tk.raioCartao, 1.0f);
 
-        auto inner = r.reduced(12, 6).withTrimmedLeft(2);
+        // Sem barra lateral colorida: a cor vira um ponto de 8 px antes do rótulo.
+        auto inner = r.reduced(14, 6);
+        auto linhaRotulo = inner.removeFromTop(13);
+        g.setColour(c.cor);
+        g.fillEllipse(static_cast<float>(linhaRotulo.getX()), static_cast<float>(linhaRotulo.getCentreY()) - 4.0f, 8.0f, 8.0f);
+        linhaRotulo.removeFromLeft(14);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
-        g.drawFittedText(c.titulo, inner.removeFromTop(13), juce::Justification::centredLeft, 1, 0.7f);
+        g.setFont(fonteUi(10.0f, juce::Font::bold).withExtraKerningFactor(0.06f));
+        g.drawFittedText(moldura::caixaAlta(c.titulo), linhaRotulo, juce::Justification::centredLeft, 1, 0.7f);
         g.setColour(tk.textoPrimario);
         g.setFont(juce::Font(juce::FontOptions(16.0f, juce::Font::bold)));
         g.drawFittedText(c.valor, inner.removeFromTop(22), juce::Justification::centredLeft, 1, 0.6f);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawFittedText(c.sub, inner, juce::Justification::centredLeft, 2, 0.8f);  // até 2 linhas, encolhe se preciso
     }
 }

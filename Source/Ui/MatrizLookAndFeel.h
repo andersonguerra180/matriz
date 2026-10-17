@@ -27,6 +27,24 @@ public:
                         bool isMouseOver, bool isMouseDown) override;
 
     juce::Typeface::Ptr getTypefaceForFont(const juce::Font& font) override;
+
+    // Redesenho tablet: botões pílula (raio = metade da altura), campos e combos
+    // com raio 12, slider em pílula. Cores sempre vindas de tema().
+    void drawButtonBackground(juce::Graphics&, juce::Button&, const juce::Colour& backgroundColour,
+                              bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+    void drawButtonText(juce::Graphics&, juce::TextButton&, bool, bool) override;
+    juce::Font getTextButtonFont(juce::TextButton&, int buttonHeight) override;
+    void fillTextEditorBackground(juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    void drawTextEditorOutline(juce::Graphics&, int width, int height, juce::TextEditor&) override;
+    void drawComboBox(juce::Graphics&, int width, int height, bool isButtonDown, int buttonX, int buttonY,
+                      int buttonW, int buttonH, juce::ComboBox&) override;
+    // AlertWindow no estilo tablet: cartão, faixa colorida do tom, ícone redondo e títulos em negrito.
+    void drawAlertBox(juce::Graphics&, juce::AlertWindow&, const juce::Rectangle<int>& textArea, juce::TextLayout&) override;
+    juce::Font getAlertWindowTitleFont() override;
+    juce::Font getAlertWindowMessageFont() override;
+    juce::Font getAlertWindowFont() override;
+    void drawLinearSlider(juce::Graphics&, int x, int y, int width, int height, float sliderPos, float minSliderPos,
+                          float maxSliderPos, juce::Slider::SliderStyle, juce::Slider&) override;
 };
 
 } // namespace matriz::ui

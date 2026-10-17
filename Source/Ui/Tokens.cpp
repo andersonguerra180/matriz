@@ -81,7 +81,7 @@ void configurarLookAndFeel(juce::LookAndFeel_V4& lf) {
     lf.setColour(juce::Label::textColourId, tk.textoPrimario);
 
     // TextButton
-    lf.setColour(juce::TextButton::buttonColourId, tk.painelAlt);
+    lf.setColour(juce::TextButton::buttonColourId, tk.botaoSecundario);
     lf.setColour(juce::TextButton::buttonOnColourId, tk.acento);
     lf.setColour(juce::TextButton::textColourOffId, tk.textoPrimario);
     lf.setColour(juce::TextButton::textColourOnId, tk.textoSobreAcento);

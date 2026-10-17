@@ -81,7 +81,7 @@ public:
         g.setColour(corPapel);
         g.fillRoundedRectangle(selo.toFloat(), 4.0f);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(papelTxt, selo, juce::Justification::centred, true);
 
         // 2. Rótulo (linha de cima) e caminho (linha de baixo)

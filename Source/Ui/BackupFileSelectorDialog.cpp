@@ -2,6 +2,7 @@
 #include "MosaicoComponent.h"
 #include "ProjetoAberto.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
 
@@ -569,7 +570,7 @@ void BackupFileSelectorDialog::exibirModal(ProjetoAberto& projeto,
     opt.useNativeTitleBar = false;
     opt.resizable = true;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
     if (win) {
         win->setResizeLimits(850, 520, 1920, 1200);
     }

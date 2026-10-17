@@ -1,5 +1,6 @@
 #include "ProjectLogViewerDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -15,21 +16,21 @@ ProjectLogViewerDialog::ProjectLogViewerDialog(matriz::model::ProjectLog log)
     addAndMakeVisible(lblTitle_);
 
     lblSubtitle_.setText((isPt ? juce::String::fromUTF8("Local: ") : "Location: ") + log_.getLogFile().getFullPathName(), juce::dontSendNotification);
-    lblSubtitle_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    lblSubtitle_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblSubtitle_.setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(lblSubtitle_);
 
     txtEditor_.setMultiLine(true);
     txtEditor_.setReturnKeyStartsNewLine(true);
     txtEditor_.setScrollbarsShown(true);
-    txtEditor_.setFont(juce::Font(juce::FontOptions(13.0f)));
+    txtEditor_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     txtEditor_.setColour(juce::TextEditor::backgroundColourId, tk.fundo);
     txtEditor_.setColour(juce::TextEditor::textColourId, tk.textoPrimario);
     txtEditor_.setColour(juce::TextEditor::outlineColourId, tk.borda);
     txtEditor_.setText(log_.readContent(), false);
     addAndMakeVisible(txtEditor_);
 
-    lblStatus_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    lblStatus_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblStatus_.setColour(juce::Label::textColourId, juce::Colour(0xff22c55e)); // Green
     addAndMakeVisible(lblStatus_);
 
@@ -93,7 +94,7 @@ void ProjectLogViewerDialog::showModal(matriz::model::ProjectLog log) {
     options.escapeKeyTriggersCloseButton = true;
     options.useNativeTitleBar = false;
     options.resizable = true;
-    options.launchAsync();
+    moldura::lancar(options);
 }
 
 } // namespace matriz::ui

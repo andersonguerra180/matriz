@@ -1,5 +1,6 @@
 #include "TarefaGlobalModalDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -14,13 +15,13 @@ TarefaGlobalModalDialog::TarefaGlobalModalDialog() {
     addAndMakeVisible(*lblTitulo_);
 
     lblDetalhe_ = std::make_unique<juce::Label>();
-    lblDetalhe_->setFont(juce::Font(juce::FontOptions(14.0f)));
+    lblDetalhe_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblDetalhe_->setJustificationType(juce::Justification::centred);
     lblDetalhe_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblDetalhe_);
 
     lblPorcentagem_ = std::make_unique<juce::Label>();
-    lblPorcentagem_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    lblPorcentagem_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     lblPorcentagem_->setJustificationType(juce::Justification::centred);
     lblPorcentagem_->setColour(juce::Label::textColourId, tk.acento);
     addAndMakeVisible(*lblPorcentagem_);
@@ -174,7 +175,7 @@ void TarefaGlobalModalWatcher::abrirModal(const EstadoProgresso& estado) {
     options.useNativeTitleBar = false;
     options.resizable = false;
 
-    auto* dw = options.launchAsync();
+    auto* dw = moldura::lancar(options);
     janela_ = dw;
     if (dw) {
         if (auto* tela = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) {

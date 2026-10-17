@@ -25,18 +25,19 @@ public:
     void paint(juce::Graphics& g) override {
         auto area = getLocalBounds().toFloat();
         g.setColour(emHover_ ? tema().painelAlt : tema().painel);
-        g.fillRoundedRectangle(area, tema().raioMedio);
+        g.fillRoundedRectangle(area, tema().raioCartao);
         g.setColour(tema().borda);
-        g.drawRoundedRectangle(area.reduced(0.5f), tema().raioMedio, 1.0f);
+        g.drawRoundedRectangle(area.reduced(0.5f), tema().raioCartao, 1.0f);
 
+        auto conteudo = getLocalBounds().reduced(tema().espacoPainel + 2);
+        auto linhaTitulo = conteudo.removeFromTop(24);
+        // Sem barra colorida no topo: a cor vira um ponto de 8 px antes do título.
         g.setColour(corBarra_);
-        g.fillRoundedRectangle(area.getX(), area.getY(), area.getWidth(), 4.0f,
-                               tema().raioMedio);
-
-        auto conteudo = getLocalBounds().reduced(tema().espacoPainel).withTrimmedTop(8);
+        g.fillEllipse(static_cast<float>(linhaTitulo.getX()), static_cast<float>(linhaTitulo.getCentreY()) - 4.0f, 8.0f, 8.0f);
+        linhaTitulo.removeFromLeft(16);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
         g.setColour(tema().textoPrimario);
-        g.drawText(titulo_, conteudo.removeFromTop(24), juce::Justification::centredLeft, true);
+        g.drawText(titulo_, linhaTitulo, juce::Justification::centredLeft, true);
 
         conteudo.removeFromTop(tema().espacoPequeno);
         g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
@@ -109,7 +110,7 @@ HomePanelComponent::HomePanelComponent(ProjetoAberto& projeto)
     titulo_ = std::make_unique<juce::Label>();
     titulo_->setText(matriz::i18n::t("home.titulo"), juce::dontSendNotification);
     titulo_->setJustificationType(juce::Justification::centred);
-    titulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteTitulo, juce::Font::bold)));
+    titulo_->setFont(juce::Font(juce::FontOptions("Jost", tema().tamanhoFonteTitulo, juce::Font::bold)));  // Jost: título da tela inicial
     titulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
     addAndMakeVisible(*titulo_);
 
@@ -169,7 +170,7 @@ void HomePanelComponent::lookAndFeelChanged() {
     const auto& tk = tema();
     if (titulo_) {
         titulo_->setText(matriz::i18n::t("home.titulo"), juce::dontSendNotification);
-        titulo_->setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteTitulo, juce::Font::bold)));
+        titulo_->setFont(juce::Font(juce::FontOptions("Jost", tk.tamanhoFonteTitulo, juce::Font::bold)));
         titulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     }
     if (subtitulo_) {
@@ -197,7 +198,7 @@ void HomePanelComponent::lookAndFeelChanged() {
 void HomePanelComponent::recarregar() {
     int total = 0;
     try {
-        auto stmt = projeto_.projeto().registro().prepare("SELECT COUNT(*) FROM item WHERE em_quarentena = 0");
+        auto stmt = projeto_.projeto().registro().prepare("SELECT COUNT(*) FROM item WHERE em_quarentena = 0 AND COALESCE(estado, '') != 'duplicata'");
         if (stmt.step()) total = stmt.columnInt(0);
     } catch (...) {}
 

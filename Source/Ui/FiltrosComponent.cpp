@@ -6,6 +6,8 @@
 #include "../I18n/Strings.h"
 #include "../Diag/Watchdog.h"
 #include "Tokens.h"
+#include "Moldura.h"
+#include "Tablet.h"
 
 #include <algorithm>
 #include "ModalMitigacao.h"
@@ -255,9 +257,9 @@ void FiltrosComponent::paint(juce::Graphics& g) {
         if (linha.tipo == TipoLinha::CabecalhoSecao) {
             g.setColour(tk.painelAlt);
             g.fillRect(bounds);
-            g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena, juce::Font::bold)));
-            g.drawText(linha.rotulo.toUpperCase(), bounds.reduced(tk.espacoMedio, 0), juce::Justification::centredLeft);
+            g.setColour(tk.textoSecundario);
+            g.setFont(fonteUi(10.5f, juce::Font::bold).withExtraKerningFactor(0.06f));
+            g.drawText(moldura::caixaAlta(linha.rotulo), bounds.reduced(tk.espacoMedio, 0), juce::Justification::centredLeft);
             continue;
         }
 
@@ -271,12 +273,21 @@ void FiltrosComponent::paint(juce::Graphics& g) {
         // Em linha de Vault, `ativo` quer dizer ONLINE (a bolinha), não
         // "filtro ligado" — pintar o fundo de selecionado aqui faria todo
         // disco conectado parecer um filtro aplicado.
-        if (linha.ativo && linha.tipo != TipoLinha::Vault) {
+        const bool ehChip = linha.tipo == TipoLinha::ChipTipoMidia || linha.tipo == TipoLinha::ChipEstado ||
+                            linha.tipo == TipoLinha::ChipExtensao || linha.tipo == TipoLinha::ChipOrigem ||
+                            linha.tipo == TipoLinha::ChipContentType || linha.tipo == TipoLinha::ChipCollectionType ||
+                            linha.tipo == TipoLinha::ChipAgrupamento;
+        if (ehChip) {
+            // Filtro = pílula bege; ativo = pílula grafite.
+            auto pilula = bounds.toFloat().reduced(static_cast<float>(tk.espacoPequeno), 2.0f);
+            g.setColour(linha.ativo ? tk.acento : tk.painelAlt);
+            g.fillRoundedRectangle(pilula, pilula.getHeight() * 0.5f);
+        } else if (linha.ativo && linha.tipo != TipoLinha::Vault) {
             g.setColour(tk.acento.withAlpha(0.18f));
             g.fillRect(bounds);
         }
 
-        auto miolo = bounds.reduced(tk.espacoMedio, 0);
+        auto miolo = bounds.reduced(tk.espacoMedio + (ehChip ? tk.espacoMedio : 0), 0);
 
         if (linha.tipo == TipoLinha::Vault) {
             auto areaPonto = miolo.removeFromLeft(14);
@@ -317,14 +328,16 @@ void FiltrosComponent::paint(juce::Graphics& g) {
 
         if (linha.contagem >= 0) {
             auto areaContagem = miolo.removeFromRight(36);
-            g.setColour(tk.textoTerciario);
+            const bool contagemEmChipAtivo = linha.ativo && ehChip;
+            g.setColour(contagemEmChipAtivo ? tk.textoSobreAcento.withAlpha(0.8f) : tk.textoTerciario);
             g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFontePequena)));
             g.drawText(juce::String(linha.contagem), areaContagem, juce::Justification::centredRight);
         }
 
         bool acao = linha.tipo == TipoLinha::Limpar || linha.tipo == TipoLinha::SalvarColecao;
         bool destacado = linha.ativo && linha.tipo != TipoLinha::Vault;
-        g.setColour(destacado ? tk.acento : (acao ? tk.textoSecundario : tk.textoPrimario));
+        const bool chipAtivo = destacado && ehChip;
+        g.setColour(chipAtivo ? tk.textoSobreAcento : (destacado ? tk.acento : (acao ? tk.textoSecundario : tk.textoPrimario)));
         g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteCorpo, acao ? juce::Font::italic : juce::Font::plain)));
         g.drawText(linha.rotulo, miolo, juce::Justification::centredLeft, true);
     }

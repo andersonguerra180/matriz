@@ -132,7 +132,7 @@ void AnalyticsTreemapComponent::construirArvoreDoBanco(matriz::db::Database& db,
             "          FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), ''), "
             "COALESCE((SELECT a.tamanho_bytes "
             "          FROM arquivo a WHERE a.item_id = i.id ORDER BY a.eh_master DESC, a.id LIMIT 1), 0) "
-            "FROM item i ORDER BY i.id");
+            "FROM item i WHERE COALESCE(i.estado, '') != 'duplicata' ORDER BY i.id");
 
         while (stmt.step()) {
             std::string itemId = stmt.columnText(0);
@@ -429,7 +429,7 @@ void AnalyticsTreemapComponent::paint(juce::Graphics& g) {
 
     if (!noAtual_ || noAtual_->children.empty()) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText(i18n::t("analytics.vazio"), area, juce::Justification::centred);
         return;
     }
@@ -470,7 +470,7 @@ void AnalyticsTreemapComponent::desenharTopBar(juce::Graphics& g, juce::Rectangl
         .replace("{vs}", formatarTamanho(currentSize));
 
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     g.drawText(statsText, inner, juce::Justification::right);
 }
 
@@ -498,7 +498,7 @@ void AnalyticsTreemapComponent::desenharBreadcrumbs(juce::Graphics& g, juce::Rec
     int y = bcArea.getY() + 4;
     int h = bcArea.getHeight() - 8;
 
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
 
     for (size_t i = 0; i < pathStack.size(); ++i) {
         auto* node = pathStack[i];
@@ -557,7 +557,7 @@ void AnalyticsTreemapComponent::desenharNo(juce::Graphics& g, AnalyticsTreemapNo
             g.fillRect(headerR);
 
             g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(juce::String(node->name) + " (" + formatarTamanho(node->aggregateSize) + ")", headerR.reduced(4, 0), juce::Justification::left, true);
         }
 
@@ -588,13 +588,13 @@ void AnalyticsTreemapComponent::desenharNo(juce::Graphics& g, AnalyticsTreemapNo
         // Asset Name and Size label if box is large enough
         if (node->bounds.getWidth() > 36.0f && node->bounds.getHeight() > 18.0f) {
             g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
 
             auto textR = node->bounds.reduced(3.0f);
             juce::String label = juce::String(node->name);
             if (node->bounds.getHeight() > 32.0f) {
                 g.drawText(label, textR.removeFromTop(14.0f), juce::Justification::left, true);
-                g.setFont(juce::Font(juce::FontOptions(9.0f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                 g.setColour(juce::Colours::white.withAlpha(0.8f));
                 g.drawText(formatarTamanho(node->aggregateSize), textR, juce::Justification::left, true);
             } else {
@@ -644,7 +644,7 @@ void AnalyticsTreemapComponent::desenharTooltip(juce::Graphics& g) {
     g.drawRoundedRectangle(boxR.toFloat(), 4.0f, 1.5f);
 
     auto inner = boxR.reduced(8, 8);
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
 
     for (int i = 0; i < lines.size(); ++i) {
         g.setColour(i == 0 ? tk.textoPrimario : tk.textoSecundario);

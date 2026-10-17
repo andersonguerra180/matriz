@@ -1,5 +1,6 @@
 #include "BatchWatermarkDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Resolucao.h"
 #include "../Imagem/ProcessamentoImagem.h"
@@ -76,7 +77,7 @@ void BatchWatermarkDialog::PreviewCanvas::paint(juce::Graphics& g) {
     } else {
         // Subtle hint when no logo is selected yet
         g.setColour(juce::Colours::white.withAlpha(0.5f));
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::italic)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::italic)));
         bool isPt = (matriz::i18n::localeAtivo() == "pt_BR");
         g.drawText(isPt ? juce::String::fromUTF8("Selecione um arquivo de logo (PNG ou JPG) para visualizar a marca d'água.")
                         : "Select a logo file (PNG or JPG) to preview the watermark overlay.",
@@ -320,7 +321,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
 
     // Section 1: Logo
     lblSecaoLogo_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("ARQUIVO DE LOGO") : "LOGO FILE");
-    lblSecaoLogo_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lblSecaoLogo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     lblSecaoLogo_->setColour(juce::Label::textColourId, tk.acento);
     addAndMakeVisible(*lblSecaoLogo_);
 
@@ -345,13 +346,13 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     addAndMakeVisible(*btnEscolherLogo_);
 
     lblLogoInfo_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("(Nenhum logo selecionado)") : "(No logo selected)");
-    lblLogoInfo_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblLogoInfo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblLogoInfo_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblLogoInfo_);
 
     // Section 2: Watermark Settings
     lblSecaoAjustes_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("AJUSTES DE MARCA D'ÁGUA") : "WATERMARK SETTINGS");
-    lblSecaoAjustes_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lblSecaoAjustes_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     lblSecaoAjustes_->setColour(juce::Label::textColourId, tk.acento);
     addAndMakeVisible(*lblSecaoAjustes_);
 
@@ -440,18 +441,18 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     lblDicaArrastar_ = std::make_unique<juce::Label>(
         "", isPt ? juce::String::fromUTF8("💡 Arraste o logo diretamente na foto para posicionar.")
                  : juce::String::fromUTF8("💡 Drag the logo directly on the photo to position freely."));
-    lblDicaArrastar_->setFont(juce::Font(juce::FontOptions(11.0f)));
+    lblDicaArrastar_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblDicaArrastar_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblDicaArrastar_);
 
     // Section 3: Destination & Options
     lblSecaoDestino_ = std::make_unique<juce::Label>("", isPt ? juce::String::fromUTF8("DESTINO E PACOTE") : "DESTINATION & PACKAGE");
-    lblSecaoDestino_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lblSecaoDestino_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     lblSecaoDestino_->setColour(juce::Label::textColourId, tk.acento);
     addAndMakeVisible(*lblSecaoDestino_);
 
     lblCaminhoDestino_ = std::make_unique<juce::Label>("", pastaDestinoSelecionada_.getFullPathName());
-    lblCaminhoDestino_->setFont(juce::Font(juce::FontOptions(11.5f)));
+    lblCaminhoDestino_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblCaminhoDestino_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*lblCaminhoDestino_);
 
@@ -466,7 +467,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     addAndMakeVisible(*chkExportarZip_);
 
     lblItensMarcados_ = std::make_unique<juce::Label>();
-    lblItensMarcados_->setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lblItensMarcados_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblItensMarcados_->setColour(juce::Label::textColourId, juce::Colour(0xffffcc00));
     auto idsMarcados = projeto_ ? projeto_->semMembrosNaoCapaDeNest(projeto_->idsMarcados(ProjetoAberto::TipoMarcacao::Watermark)) : std::vector<std::string>();
     lblItensMarcados_->setText(isPt ? (juce::String((int)idsMarcados.size()) + " foto(s) marcada(s) com 'W'")
@@ -484,7 +485,7 @@ BatchWatermarkDialog::BatchWatermarkDialog(ProjetoAberto* projeto)
     addAndMakeVisible(*barraProgresso_);
 
     lblStatusProgresso_ = std::make_unique<juce::Label>();
-    lblStatusProgresso_->setFont(juce::Font(juce::FontOptions(11.5f)));
+    lblStatusProgresso_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblStatusProgresso_->setColour(juce::Label::textColourId, tk.textoPrimario);
     lblStatusProgresso_->setVisible(false);
     addAndMakeVisible(*lblStatusProgresso_);
@@ -1176,7 +1177,7 @@ void BatchWatermarkDialog::exibirModal(ProjetoAberto* projeto) {
     opt.useNativeTitleBar = true;
     opt.resizable = true;
 
-    auto* win = opt.launchAsync();
+    auto* win = moldura::lancar(opt);
     rawDlg->aoFechar = [win] {
         if (win) win->exitModalState(0);
     };

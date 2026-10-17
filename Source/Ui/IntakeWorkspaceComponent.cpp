@@ -16,6 +16,8 @@
 #include "ProjetoAberto.h"
 #include "ProgressoGlobal.h"
 #include "Tokens.h"
+#include "Moldura.h"
+#include "Tablet.h"
 #include "HierarquiaEditorComponent.h"
 #include "../Analytics/AssetGeolocation.h"
 #include "../Ingest/LeituraTecnica.h"
@@ -61,6 +63,206 @@ juce::Colour corParaCategoria(const juce::String& cat) {
     return juce::Colour(0xff94a3b8); // Slate gray
 }
 
+// Logo da origem do container (galeria do celular, Drive, Bridge, Lightroom, WhatsApp).
+const juce::Image& logoDaOrigem(const juce::String& origem) {
+    static const juce::Image galeria = juce::ImageFileFormat::loadFrom(AssetsBinaryData::gallery_png, AssetsBinaryData::gallery_pngSize);
+    static const juce::Image drive = juce::ImageFileFormat::loadFrom(AssetsBinaryData::googledrive_png, AssetsBinaryData::googledrive_pngSize);
+    static const juce::Image bridge = juce::ImageFileFormat::loadFrom(AssetsBinaryData::bridgelogo_png, AssetsBinaryData::bridgelogo_pngSize);
+    static const juce::Image lightroom = juce::ImageFileFormat::loadFrom(AssetsBinaryData::lrlogo_png, AssetsBinaryData::lrlogo_pngSize);
+    static const juce::Image whatsapp = juce::ImageFileFormat::loadFrom(AssetsBinaryData::whatsapp_png, AssetsBinaryData::whatsapp_pngSize);
+    static const juce::Image vazio;
+    if (origem == "gallery") return galeria;
+    if (origem == "drive") return drive;
+    if (origem == "bridge") return bridge;
+    if (origem == "lightroom") return lightroom;
+    if (origem == "whatsapp") return whatsapp;
+    return vazio;
+}
+
+juce::String rotuloDaOrigem(const juce::String& origem) {
+    return i18n::t("intake.container_" + origem);
+}
+
+// Ladrilho com o logo (e, se `total` > 0, a contagem de arquivos) — selo do container.
+void desenharSeloContainer(juce::Graphics& g, juce::Rectangle<int> area, const juce::String& origem, int total) {
+    const auto& tk = tema();
+    g.setColour(tk.painel);
+    g.fillRoundedRectangle(area.toFloat(), 5.0f);
+    g.setColour(tk.borda);
+    g.drawRoundedRectangle(area.toFloat().reduced(0.5f), 5.0f, 1.0f);
+    const auto& img = logoDaOrigem(origem);
+    auto interno = area.reduced(3);
+    if (total > 0) interno = interno.withTrimmedRight(0);
+    if (img.isValid()) g.drawImageWithin(img, interno.getX(), interno.getY(), interno.getWidth(), interno.getHeight(), juce::RectanglePlacement::centred, false);
+}
+
+// Grid de miniaturas de um container de importação: o usuário desmarca o que NÃO quer aprovar. "Aplicar" tira os
+// desmarcados do container (continuam no Intake como arquivos individuais).
+class ContainerGridComponent : public juce::Component {
+public:
+    ContainerGridComponent(ProjetoAberto& projeto, std::vector<std::string> ids, std::function<void(std::vector<std::string>)> aoAplicar,
+                           std::function<void()> aoFechar)
+        : projeto_(projeto), ids_(std::move(ids)), aoAplicar_(std::move(aoAplicar)), aoFechar_(std::move(aoFechar)) {
+        marcado_.assign(ids_.size(), true);
+        miniaturas_.resize(ids_.size());
+        nomes_.resize(ids_.size());
+        for (size_t i = 0; i < ids_.size(); ++i)
+            if (auto r = projeto_.obterItemResumo(ids_[i]))
+                nomes_[i] = juce::String::fromUTF8(r->titulo.c_str());
+        hint_.setText(i18n::t("intake.container_grid_dica"), juce::dontSendNotification);
+        hint_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
+        hint_.setColour(juce::Label::textColourId, tema().textoSecundario);
+        addAndMakeVisible(hint_);
+        contagem_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
+        contagem_.setColour(juce::Label::textColourId, tema().textoPrimario);
+        addAndMakeVisible(contagem_);
+        grade_ = std::make_unique<Grade>(*this);
+        viewport_.setViewedComponent(grade_.get(), false);
+        viewport_.setScrollBarsShown(true, false);
+        addAndMakeVisible(viewport_);
+        moldura::estilizarBotao(btnAplicar_, true);
+        moldura::estilizarBotao(btnCancelar_, false);
+        btnAplicar_.setButtonText(i18n::t("intake.container_grid_aplicar"));
+        btnCancelar_.setButtonText(i18n::t("intake.container_grid_cancelar"));
+        btnAplicar_.onClick = [this] {
+            std::vector<std::string> desmarcados;
+            for (size_t i = 0; i < ids_.size(); ++i) if (!marcado_[i]) desmarcados.push_back(ids_[i]);
+            if (aoAplicar_) aoAplicar_(std::move(desmarcados));
+            if (aoFechar_) aoFechar_();
+        };
+        btnCancelar_.onClick = [this] { if (aoFechar_) aoFechar_(); };
+        addAndMakeVisible(btnAplicar_);
+        addAndMakeVisible(btnCancelar_);
+        setSize(840, 600);
+        atualizarContagem();
+        carregarMiniaturas();
+    }
+    ~ContainerGridComponent() override { pool_.removeAllJobs(true, 2000); }
+
+    void paint(juce::Graphics& g) override {
+        const auto rodape = getLocalBounds().removeFromBottom(moldura::kAlturaRodape);
+        g.setColour(moldura::paleta().poco);
+        g.fillRect(rodape);
+        g.setColour(moldura::paleta().linha);
+        g.fillRect(rodape.withHeight(1));
+    }
+    void resized() override {
+        auto area = getLocalBounds();
+        auto rodape = area.removeFromBottom(moldura::kAlturaRodape).reduced(moldura::kMargemCorpo, 0);
+        auto linhaBotoes = rodape.withSizeKeepingCentre(rodape.getWidth(), 40);
+        btnAplicar_.setBounds(linhaBotoes.removeFromRight(130));
+        linhaBotoes.removeFromRight(10);
+        btnCancelar_.setBounds(linhaBotoes.removeFromRight(130));
+        contagem_.setBounds(linhaBotoes);
+        auto corpo = area.reduced(moldura::kMargemCorpo, 12);
+        hint_.setBounds(corpo.removeFromTop(24));
+        corpo.removeFromTop(6);
+        viewport_.setBounds(corpo);
+        grade_->ajustar(viewport_.getMaximumVisibleWidth());
+    }
+
+private:
+    class Grade : public juce::Component {
+    public:
+        explicit Grade(ContainerGridComponent& dono) : dono_(dono) {}
+        void ajustar(int largura) {
+            colunas_ = juce::jmax(1, largura / (kCelula + kGap));
+            const int linhas = (static_cast<int>(dono_.ids_.size()) + colunas_ - 1) / colunas_;
+            setSize(largura, juce::jmax(10, linhas * (kCelula + kGap + kTexto)));
+        }
+        juce::Rectangle<int> celula(int i) const {
+            return { (i % colunas_) * (kCelula + kGap), (i / colunas_) * (kCelula + kGap + kTexto), kCelula, kCelula + kTexto };
+        }
+        void paint(juce::Graphics& g) override {
+            const auto& tk = tema();
+            const auto clip = g.getClipBounds();
+            for (int i = 0; i < static_cast<int>(dono_.ids_.size()); ++i) {
+                const auto c = celula(i);
+                if (!c.intersects(clip)) continue;
+                const auto thumb = c.withHeight(kCelula);
+                g.setColour(tk.painel);
+                g.fillRoundedRectangle(thumb.toFloat(), 10.0f);
+                const auto& img = dono_.miniaturas_[static_cast<size_t>(i)];
+                if (img.isValid()) {
+                    juce::Graphics::ScopedSaveState ss(g);
+                    juce::Path recorte; recorte.addRoundedRectangle(thumb.toFloat(), 10.0f);
+                    g.reduceClipRegion(recorte);
+                    g.drawImageWithin(img, thumb.getX(), thumb.getY(), thumb.getWidth(), thumb.getHeight(),
+                                      juce::RectanglePlacement::centred | juce::RectanglePlacement::fillDestination, false);
+                }
+                const bool on = dono_.marcado_[static_cast<size_t>(i)];
+                if (!on) { g.setColour(tk.fundo.withAlpha(0.65f)); g.fillRoundedRectangle(thumb.toFloat(), 10.0f); }
+                g.setColour(on ? tk.acento : tk.borda);
+                g.drawRoundedRectangle(thumb.toFloat().reduced(1.0f), 10.0f, on ? 2.0f : 1.0f);
+                const juce::Rectangle<float> caixa(static_cast<float>(thumb.getX() + 8), static_cast<float>(thumb.getY() + 8), 20.0f, 20.0f);
+                g.setColour(on ? tk.acento : tk.painel);
+                g.fillEllipse(caixa);
+                g.setColour(tk.borda);
+                if (!on) g.drawEllipse(caixa.reduced(0.5f), 1.0f);
+                if (on) {
+                    g.setColour(tk.textoSobreAcento);
+                    juce::Path v; v.startNewSubPath(caixa.getX() + 5, caixa.getCentreY()); v.lineTo(caixa.getX() + 9, caixa.getBottom() - 6); v.lineTo(caixa.getRight() - 5, caixa.getY() + 6);
+                    g.strokePath(v, juce::PathStrokeType(2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                }
+                g.setColour(on ? tk.textoPrimario : tk.textoSecundario);
+                g.setFont(juce::Font(juce::FontOptions(tk.tamanhoFonteMicro)));
+                g.drawText(dono_.nomes_[static_cast<size_t>(i)], c.withTrimmedTop(kCelula + 2), juce::Justification::centredLeft, true);
+            }
+        }
+        void mouseDown(const juce::MouseEvent& e) override {
+            for (int i = 0; i < static_cast<int>(dono_.ids_.size()); ++i)
+                if (celula(i).withHeight(kCelula).contains(e.getPosition())) {
+                    dono_.marcado_[static_cast<size_t>(i)] = !dono_.marcado_[static_cast<size_t>(i)];
+                    dono_.atualizarContagem();
+                    repaint(celula(i));
+                    return;
+                }
+        }
+        static constexpr int kCelula = 130, kGap = 12, kTexto = 20;
+    private:
+        ContainerGridComponent& dono_;
+        int colunas_ = 1;
+    };
+
+    void atualizarContagem() {
+        int on = 0;
+        for (bool b : marcado_) on += b ? 1 : 0;
+        contagem_.setText(i18n::t("intake.container_grid_contagem").replace("{a}", juce::String(on)).replace("{n}", juce::String(static_cast<int>(ids_.size()))),
+                          juce::dontSendNotification);
+    }
+    void carregarMiniaturas() {
+        juce::Component::SafePointer<ContainerGridComponent> seguro(this);
+        ProjetoAberto* proj = &projeto_;
+        for (size_t i = 0; i < ids_.size(); ++i) {
+            const std::string id = ids_[i];
+            pool_.addJob([seguro, proj, id, i] {
+                if (seguro == nullptr) return;
+                juce::Image img;
+                if (auto caminho = proj->caminhoMiniaturaPrincipal(id)) img = juce::ImageFileFormat::loadFrom(juce::File(*caminho));
+                if (!img.isValid()) return;
+                juce::MessageManager::callAsync([seguro, i, img] {
+                    if (seguro == nullptr || i >= seguro->miniaturas_.size()) return;
+                    seguro->miniaturas_[i] = img;
+                    if (seguro->grade_) seguro->grade_->repaint(seguro->grade_->celula(static_cast<int>(i)));
+                });
+            });
+        }
+    }
+
+    ProjetoAberto& projeto_;
+    std::vector<std::string> ids_;
+    std::vector<bool> marcado_;
+    std::vector<juce::Image> miniaturas_;
+    std::vector<juce::String> nomes_;
+    std::function<void(std::vector<std::string>)> aoAplicar_;
+    std::function<void()> aoFechar_;
+    juce::Label hint_, contagem_;
+    juce::Viewport viewport_;
+    std::unique_ptr<Grade> grade_;
+    juce::TextButton btnAplicar_, btnCancelar_;
+    juce::ThreadPool pool_{2};
+};
+
 class GoogleDriveIconButton : public juce::Button {
 public:
     GoogleDriveIconButton() : juce::Button("GoogleDrive") {
@@ -84,7 +286,7 @@ public:
                               juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
         } else {
             g.setColour(juce::Colour(0xff1a73e8));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText("GD", getLocalBounds(), juce::Justification::centred);
         }
     }
@@ -115,7 +317,7 @@ public:
                               juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
         } else {
             g.setColour(juce::Colour(0xff31a8ff));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText("Lr", getLocalBounds(), juce::Justification::centred);
         }
     }
@@ -146,7 +348,7 @@ public:
                               juce::RectanglePlacement::centred | juce::RectanglePlacement::onlyReduceInSize, false);
         } else {
             g.setColour(juce::Colour(0xff4d9fff));
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText("Br", getLocalBounds(), juce::Justification::centred);
         }
     }
@@ -210,10 +412,80 @@ public:
     bool desenharPin = false;
     bool desenharCelular = false;
 
+    bool principal = false;  // ação principal do painel: pílula grafite, texto branco (no tema claro)
+
     PillButton(const juce::String& text = {}) : juce::TextButton(text) {}
+
+    // Tema claro (estilo Mini): pílula neutra; a cor do botão antigo vira um quadradinho antes do texto.
+    // Grafite só para a ação principal e para o filtro ativo; vermelho só para quem rejeita/apaga.
+    void paintClaro(juce::Graphics& g, bool destacado, bool pressionado) {
+        const auto& tk = tema();
+        auto bounds = getLocalBounds().toFloat().reduced(0.5f);
+        const float raio = bounds.getHeight() * 0.5f;
+        const bool temCor = corFundoCustom.isOpaque();
+        const bool vermelho = temCor && corFundoCustom.getSaturation() > 0.5f && (corFundoCustom.getHue() < 0.04f || corFundoCustom.getHue() > 0.96f);
+        const bool grafite = principal || ativo;
+
+        juce::Colour fundo = vermelho ? tk.perigo : (grafite ? tk.acento : tk.botaoSecundario);
+        juce::Colour texto = (vermelho || grafite) ? tk.textoSobreAcento : tk.textoPrimario;
+        if (pressionado) fundo = fundo.darker(0.12f);
+        else if (destacado) fundo = fundo.brighter(0.06f);
+
+        if (!isEnabled()) {
+            g.setColour(tk.linhaSuave);
+            g.drawRoundedRectangle(bounds, raio, 1.0f);
+            texto = tk.textoDesativado;
+        } else {
+            g.setColour(fundo);
+            g.fillRoundedRectangle(bounds, raio);
+            g.setColour(tk.linhaSuave);
+            g.drawRoundedRectangle(bounds, raio, 1.0f);
+        }
+
+        auto conteudo = getLocalBounds().reduced(10, 0);
+        const bool quadradinho = temCor && !vermelho && !grafite;
+        if (desenharPin) {
+            const float pSize = 12.0f;
+            const float px = static_cast<float>(conteudo.getX() + 2);
+            const float py = static_cast<float>(conteudo.getCentreY()) - pSize * 0.6f;
+            juce::Path p;
+            p.addEllipse(px, py, pSize, pSize * 0.85f);
+            p.startNewSubPath(px + 1.0f, py + pSize * 0.45f);
+            p.lineTo(px + pSize * 0.5f, py + pSize + 2.5f);
+            p.lineTo(px + pSize - 1.0f, py + pSize * 0.45f);
+            p.closeSubPath();
+            g.setColour(isEnabled() ? corFundoCustom : tk.textoDesativado);
+            g.fillPath(p);
+            g.setColour(tk.botaoSecundario);
+            g.fillEllipse(px + pSize * 0.32f, py + pSize * 0.20f, pSize * 0.36f, pSize * 0.36f);
+            conteudo.removeFromLeft(static_cast<int>(pSize + 8.0f));
+        } else if (desenharCelular) {
+            auto rCel = conteudo.removeFromLeft(18).toFloat().withSizeKeepingCentre(12.0f, 16.0f);
+            desenharIcone(g, IconeUi::Celular, rCel, texto);
+            conteudo.removeFromLeft(4);
+        } else if (quadradinho) {
+            const float d = 8.0f;
+            g.setColour(isEnabled() ? corFundoCustom : corFundoCustom.withAlpha(0.4f));
+            g.fillRoundedRectangle(static_cast<float>(conteudo.getX()), static_cast<float>(conteudo.getCentreY()) - d * 0.5f, d, d, 2.0f);
+            conteudo.removeFromLeft(static_cast<int>(d + 6.0f));
+        } else if (!corPonto.isTransparent()) {
+            const float d = 7.0f;
+            g.setColour(isEnabled() ? (ativo ? tk.textoSobreAcento : corPonto) : corPonto.withAlpha(0.40f));
+            g.fillEllipse(static_cast<float>(conteudo.getX()), static_cast<float>(conteudo.getCentreY()) - d * 0.5f, d, d);
+            conteudo.removeFromLeft(static_cast<int>(d + 6.0f));
+        }
+
+        g.setColour(texto);
+        g.setFont(fonteUi(tamanhoFonte, juce::Font::bold));
+        g.drawText(getButtonText(), conteudo, juce::Justification::centred, true);
+    }
 
     void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override {
         const auto& tk = tema();
+        if (tk.fundo.getBrightness() > 0.5f) {
+            paintClaro(g, shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
+            return;
+        }
         auto bounds = getLocalBounds().toFloat().reduced(0.5f);
         float cornerRadius = 4.0f;
 
@@ -306,7 +578,7 @@ public:
         g.drawRoundedRectangle(bounds, radius, 1.0f);
 
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(getButtonText(), bounds, juce::Justification::centred, true);
     }
 };
@@ -375,7 +647,7 @@ public:
         const auto& tk = tema();
 
         lblTitle_ = std::make_unique<juce::Label>("", isBatch ? i18n::t("intake.popup_osm_batch") : i18n::t("intake.popup_osm"));
-        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
 
@@ -686,7 +958,7 @@ public:
         const auto& tk = tema();
 
         lblTitle_ = std::make_unique<juce::Label>("", isBatch ? i18n::t("intake.popup_geo_batch") : i18n::t("intake.popup_geo"));
-        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
 
@@ -968,7 +1240,7 @@ public:
         const auto& tk = tema();
 
         lblTitle_ = std::make_unique<juce::Label>("", title);
-        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
 
@@ -1013,7 +1285,7 @@ public:
         const auto& tk = tema();
 
         lblTitle_ = std::make_unique<juce::Label>("", "Set CONTENT for Selected");
-        lblTitle_->setFont(juce::Font(juce::FontOptions(13.5f, juce::Font::bold)));
+        lblTitle_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         lblTitle_->setColour(juce::Label::textColourId, tk.textoPrimario);
         addAndMakeVisible(*lblTitle_);
 
@@ -1104,7 +1376,7 @@ public:
         g.setColour(tk.perigo);
         g.fillRoundedRectangle(badge, 4.0f);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText("R", badge, juce::Justification::centred, false);
         x += 26.0f;
 
@@ -1118,7 +1390,7 @@ public:
         juce::Rectangle<float> ajuda(x, cy - 8.0f, 16.0f, 16.0f);
         g.setColour(tk.textoSecundario.withAlpha(0.6f));
         g.drawEllipse(ajuda.reduced(1.0f), 1.0f);
-        g.setFont(juce::Font(juce::FontOptions(10.4f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText("?", ajuda, juce::Justification::centred, false);
     }
 };
@@ -1248,15 +1520,15 @@ public:
         int total = static_cast<int>(owner_.indicesFiltrados_.size());
         if (total == 0) {
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(14.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
             g.drawText(i18n::t("intake.sem_itens_filtro"), getLocalBounds(), juce::Justification::centred);
             return;
         }
 
-        static const juce::Font font12Bold(juce::FontOptions(12.0f, juce::Font::bold));
-        static const juce::Font font11Normal(juce::FontOptions(11.0f));
-        static const juce::Font font10Bold(juce::FontOptions(10.0f, juce::Font::bold));
-        static const juce::Font font9Bold(juce::FontOptions(9.0f, juce::Font::bold));
+        static const juce::Font font12Bold(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
+        static const juce::Font font11Normal(juce::FontOptions(tema().tamanhoFontePequena));
+        static const juce::Font font10Bold(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
+        static const juce::Font font9Bold(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
 
         static const juce::Path checkmarkPath = []() {
             juce::Path p;
@@ -1338,6 +1610,22 @@ public:
             g.setFont(font9Bold);
             g.drawText(catBadgeText, catBadgeRect, juce::Justification::centred);
 
+            // Container de importação / conversa de WhatsApp: logo da origem (+ contagem) no canto inferior direito.
+            if (item.containerOrigem.isNotEmpty()) {
+                juce::Rectangle<int> selo(thumbArea.getRight() - 32, thumbArea.getBottom() - 32, 28, 28);
+                desenharSeloContainer(g, selo, item.containerOrigem, 0);
+                if (item.containerTotal > 0) {
+                    const juce::String n(item.containerTotal);
+                    const int w = juce::jmax(22, juce::GlyphArrangement::getStringWidthInt(font10Bold, n) + 10);
+                    juce::Rectangle<int> contagem(selo.getRight() - w, selo.getY() - 20, w, 18);
+                    g.setColour(tk.acento);
+                    g.fillRoundedRectangle(contagem.toFloat(), 9.0f);
+                    g.setColour(tk.textoSobreAcento);
+                    g.setFont(font10Bold);
+                    g.drawText(n, contagem, juce::Justification::centred);
+                }
+            }
+
             // Top-Right Rescan Origin Badge (Section 5.2)
             if (item.rescanOrigem == RescanOrigem::Novo) {
                 int rescanBadgeW = 46;
@@ -1392,7 +1680,7 @@ public:
                 g.setColour(tk.perigo);
                 g.fillRoundedRectangle(rBadge.toFloat(), 4.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                 g.drawText("R", rBadge, juce::Justification::centred);
                 g.setColour(tk.perigo);
                 g.drawRoundedRectangle(bounds.toFloat().reduced(1.0f), tk.raioMedio, 2.0f);
@@ -1800,7 +2088,7 @@ public:
 
         contentArea.removeFromTop(6);
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(13.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         juce::String subtitulo = isPt ? juce::String::fromUTF8("Suporta áudio, vídeo, imagens, documentos e sessões multitrack\nou clique em qualquer lugar desta área para selecionar")
                                       : "Supports audio, video, images, documents and multitrack sessions\nor click anywhere in this area to browse";
         g.drawFittedText(subtitulo, contentArea.removeFromTop(36), juce::Justification::centred, 2);
@@ -1833,12 +2121,12 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     // 1. LINHA 1 (BatchHeaderBar)
     lblTitulo_ = std::make_unique<juce::Label>("", i18n::t("intake.titulo"));
-    lblTitulo_->setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    lblTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     lblTitulo_->setColour(juce::Label::textColourId, tk.textoPrimario);
     addAndMakeVisible(*lblTitulo_);
 
     lblContadorTotal_ = std::make_unique<juce::Label>("", "");
-    lblContadorTotal_->setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblContadorTotal_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblContadorTotal_->setColour(juce::Label::textColourId, tk.textoTerciario);
     addAndMakeVisible(*lblContadorTotal_);
 
@@ -1873,7 +2161,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     sliderTamanho_->setEnabled(false);  // habilita ao entrar na visão em miniaturas
     addAndMakeVisible(*sliderTamanho_);
     lblTamanho_ = std::make_unique<juce::Label>("", "SIZE");
-    lblTamanho_->setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    lblTamanho_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     lblTamanho_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblTamanho_->setJustificationType(juce::Justification::centred);
     addAndMakeVisible(*lblTamanho_);
@@ -1988,13 +2276,13 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     setupPill(btnFiltroVideo_, "Video (0)", "Video", juce::Colour(0xff9d4edd));
     setupPill(btnFiltroImage_, "Images (0)", "Image", juce::Colour(0xfff4a261));
     setupPill(btnFiltroDoc_, "Documents (0)", "Document", juce::Colour(0xff2b9348));
-    setupPill(btnFiltroOther_, "Other (0)", "Other", juce::Colour(0xff888888));
+    setupPill(btnFiltroOther_, "Other (0)", "Other", juce::Colour(0xff7d766c));
     setupPill(btnFiltroPhoneDump_, "Phone Dump (0)", "PhoneDump", juce::Colour(0xff06b6d4));
 
     // 3. LINHA 3 (SelectionActionBar)
     // Cluster A (Left)
     lblSubtitulo_ = std::make_unique<juce::Label>("", "");
-    lblSubtitulo_->setFont(juce::Font(juce::FontOptions(13.0f)));
+    lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
     lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     addAndMakeVisible(*lblSubtitulo_);
 
@@ -2089,6 +2377,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
 
     auto btnConfTodos = std::make_unique<PillButton>(i18n::t("intake.btn_enviar_todos"));
     btnConfTodos->tamanhoFonte = 12.0f;
+    btnConfTodos->principal = true;  // "Approve all": a ação principal do painel (grafite)
     btnConfTodos->corFundoCustom = juce::Colour(0xff16a34a);
     btnConfTodos->corTextoCustom = juce::Colours::white;
     btnConfTodos->corBordaCustom = juce::Colour(0xff15803d);
@@ -2118,7 +2407,7 @@ IntakeWorkspaceComponent::IntakeWorkspaceComponent(ProjetoAberto& projeto)
     legendaAtalhos_ = std::make_unique<LegendaAtalhosIntake>();
     addAndMakeVisible(*legendaAtalhos_);
     lblNotaReject_ = std::make_unique<juce::Label>("", i18n::t("intake.nota_reject"));
-    lblNotaReject_->setFont(juce::Font(juce::FontOptions(10.5f)));
+    lblNotaReject_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     lblNotaReject_->setColour(juce::Label::textColourId, tk.textoSecundario);
     lblNotaReject_->setMinimumHorizontalScale(1.0f);  // quebra em 2 linhas, nunca "..."
     lblNotaReject_->setInterceptsMouseClicks(false, false);
@@ -2225,8 +2514,28 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
 
     std::vector<ItemIntake> novosItens;
     novosItens.reserve(quarentena.size());
+    std::vector<std::string> idsCelularSemMedium;
+    auto ehOrigemCelular = [](const juce::String& caminho) {
+        return caminho.containsIgnoreCase("Received from phone") || caminho.containsIgnoreCase("extraidos_whatsapp") ||
+               caminho.containsIgnoreCase("whatsapp");
+    };
+    auto jsonSmartphone = [] {
+        OriginalSourceMediumInfo info;
+        info.medium = "Internal Storage / Smartphone";
+        return info.serialize();
+    };
 
     for (const auto& item : quarentena) {
+        // CONTAINER: só a capa aparece no Intake (representa a importação inteira); os demais membros ficam escondidos.
+        if (!item.nestOrigem.empty() && !item.nestCapa) {
+            // Os membros escondidos também são "do celular": recebem o Original Source Medium (a cover é tratada abaixo).
+            const juce::String camMembro = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str()) : juce::String();
+            const bool origemCelular = item.nestOrigem == "gallery" || item.nestOrigem == "whatsapp" || ehOrigemCelular(camMembro);
+            if (origemCelular && (item.sourceMedia.empty() ||
+                                  OriginalSourceMediumInfo::deserialize(item.sourceMedia).isNoneOrUnknown()))
+                idsCelularSemMedium.push_back(item.id);
+            continue;
+        }
         ItemIntake it;
         it.id = item.id;
         it.titulo = juce::String::fromUTF8(item.titulo.c_str());
@@ -2247,6 +2556,16 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         }
 
         it.collection = item.collectionType.has_value() ? juce::String::fromUTF8(item.collectionType->c_str()) : juce::String();
+        if (!item.nestOrigem.empty()) {
+            it.containerOrigem = juce::String::fromUTF8(item.nestOrigem.c_str());
+            it.containerTotal = item.nestTotal;
+            it.containerNestId = item.nestId;
+            if (item.nestOrigem != "whatsapp") it.nomeArquivo = rotuloDaOrigem(it.containerOrigem) + juce::String::fromUTF8(" \xe2\x80\x94 ") +
+                             i18n::t("intake.container_arquivos").replace("{n}", juce::String(item.nestTotal));
+            it.titulo = it.nomeArquivo;
+        } else if (it.collection == "WhatsApp Chat") {
+            it.containerOrigem = "whatsapp";
+        }
         it.sourceMedia = juce::String::fromUTF8(item.sourceMedia.c_str());
         it.offline = item.offline;
 
@@ -2269,7 +2588,22 @@ void IntakeWorkspaceComponent::aplicarItensQuarentena(std::vector<ItemResumo> qu
         it.caminhoOrigem = !item.caminhoAbsolutoOrigem.empty() ? juce::String::fromUTF8(item.caminhoAbsolutoOrigem.c_str())
                                                               : juce::String::fromUTF8(item.caminhoRelativoArquivo.c_str());
 
+        // IMPORT FROM PHONE (galeria/WhatsApp): chega com Original Source Medium = Internal Storage / Smartphone,
+        // o que também o faz passar pelo filtro PHONE DUMP. Só preenche quando ainda não há medium definido.
+        if (ehOrigemCelular(it.caminhoOrigem) && (it.sourceMedia.isEmpty() || OriginalSourceMediumInfo::deserialize(it.sourceMedia.toStdString()).isNoneOrUnknown())) {
+            it.sourceMedia = juce::String::fromUTF8(jsonSmartphone().c_str());
+            idsCelularSemMedium.push_back(it.id);
+        }
+
         novosItens.push_back(std::move(it));
+    }
+
+    if (!idsCelularSemMedium.empty()) {
+        ProjetoAberto* projeto = &projeto_;
+        const std::string json = jsonSmartphone();
+        poolMetadadoLote_.addJob([projeto, ids = std::move(idsCelularSemMedium), json] {
+            projeto->salvarMetadadoEmLote(ids, {{"source_media", json}});  // uma transação só
+        });
     }
 
     todosItens_ = std::move(novosItens);
@@ -2368,9 +2702,11 @@ void IntakeWorkspaceComponent::atualizarFiltragem() {
     } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
-        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+        // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
+        if (it.collection == "WhatsApp Chat" || it.containerOrigem == "whatsapp" || it.containerOrigem == "gallery" ||
+            it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
             it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
-            return (itensExtraidos.count(it.id) == 0);
+            return true;  // sai do Phone Dump só se o filtro mudar (antes sumia ao ficar sem pasta no Folder Map)
         }
         return false;
     };
@@ -2437,9 +2773,11 @@ void IntakeWorkspaceComponent::atualizarContagens() {
     } catch (...) {}
 
     auto ehDump = [&](const ItemIntake& it) -> bool {
-        if (it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
+        // Tudo que veio do celular é Phone Dump: galeria (container), conversas de WhatsApp, origem Smartphone/Celular.
+        if (it.collection == "WhatsApp Chat" || it.containerOrigem == "whatsapp" || it.containerOrigem == "gallery" ||
+            it.categoria == "PhoneDump" || it.sourceMedia.containsIgnoreCase("Smartphone") || it.sourceMedia.containsIgnoreCase("Celular") ||
             it.caminhoOrigem.containsIgnoreCase("Received from phone") || it.caminhoOrigem.containsIgnoreCase("extraidos_whatsapp") || it.caminhoOrigem.containsIgnoreCase("whatsapp")) {
-            return (itensExtraidos.count(it.id) == 0);
+            return true;  // sai do Phone Dump só se o filtro mudar (antes sumia ao ficar sem pasta no Folder Map)
         }
         return false;
     };
@@ -2555,7 +2893,11 @@ std::set<std::string> IntakeWorkspaceComponent::itensSelecionados() const {
     for (int idx : indicesFiltrados_) {
         if (idx < 0 || idx >= static_cast<int>(todosItens_.size())) continue;
         const auto& item = todosItens_[static_cast<size_t>(idx)];
-        if (item.selecionado) ids.insert(item.id);
+        if (!item.selecionado) continue;
+        ids.insert(item.id);
+        // Container de importação: agir sobre ele = agir sobre todos os arquivos dele (metadado em lote, R, aprovar).
+        if (itemEhContainer(item))
+            for (const auto& m : projeto_.membrosDoNest(item.containerNestId)) ids.insert(m);
     }
     return ids;
 }
@@ -3102,8 +3444,39 @@ void IntakeWorkspaceComponent::alternarPreviewDoFoco() {
     abrirPreviewDoItem(todosItens_[static_cast<size_t>(real)].id);
 }
 
+void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
+    std::string nestId;
+    for (const auto& it : todosItens_) if (it.id == itemId) { nestId = it.containerNestId; break; }
+    if (nestId.empty()) return;
+    auto membros = projeto_.membrosDoNest(nestId);
+    if (membros.empty()) return;
+    juce::Component::SafePointer<IntakeWorkspaceComponent> seguro(this);
+    auto* conteudo = new ContainerGridComponent(
+        projeto_, std::move(membros),
+        [seguro](std::vector<std::string> desmarcados) {
+            if (seguro == nullptr || desmarcados.empty()) return;
+            seguro->projeto_.removerDoContainer(desmarcados);
+            seguro->recarregar();
+        },
+        [] {
+            juce::MessageManager::callAsync([] {
+                for (int i = juce::Desktop::getInstance().getNumComponents(); --i >= 0;)
+                    if (auto* dw = dynamic_cast<juce::DialogWindow*>(juce::Desktop::getInstance().getComponent(i)))
+                        if (dw->getName() == "container-grid") { dw->exitModalState(0); dw->setVisible(false); return; }
+            });
+        });
+    juce::DialogWindow::LaunchOptions opt;
+    opt.content.setOwned(conteudo);
+    opt.dialogTitle = "container-grid";
+    opt.escapeKeyTriggersCloseButton = true;
+    opt.resizable = false;
+    moldura::lancar(opt, moldura::Secao::Explorador, i18n::t("moldura.trilha.ingest"));
+}
+
 void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
     if (itemId.empty()) return;
+    for (const auto& it : todosItens_)  // container de importação: duplo clique abre o grid de miniaturas (não o preview)
+        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp") { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa
     janelaPreview_.reset();  // duplo clique em outro arquivo troca o preview
     juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
     auto aoFechar = [safe] {
@@ -3259,21 +3632,27 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
         g.setColour(corCat);
         g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(item.categoria.toUpperCase(), badgeArea, juce::Justification::centred, true);
     } else if (columnId == kColName) {
+        if (item.containerOrigem.isNotEmpty()) {  // logo da origem antes do nome; o resto desenha como sempre, deslocado
+            const int lado = juce::jmin(height - 6, 24);
+            desenharSeloContainer(g, juce::Rectangle<int>(4, (height - lado) / 2, lado, lado), item.containerOrigem, 0);
+            g.setOrigin(lado + 8, 0);
+            width -= lado + 8;
+        }
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.5f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         int recuoR = 0;
         if (itemMarcadoR(item.id)) {  // selo R (Reject) antes do nome
             juce::Rectangle<int> rBadge(4, (height - 16) / 2, 16, 16);
             g.setColour(tk.perigo);
             g.fillRoundedRectangle(rBadge.toFloat(), 3.0f);
             g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText("R", rBadge, juce::Justification::centred);
             g.setColour(tk.textoPrimario);
-            g.setFont(juce::Font(juce::FontOptions(12.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             recuoR = 20;
         }
         if (recuoR > 0) {
@@ -3283,7 +3662,7 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
                 g.setColour(juce::Colour(0xffef4444));
                 g.fillRoundedRectangle(offBadge.toFloat(), 3.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                 g.drawText("OFFLINE", offBadge, juce::Justification::centred);
             }
         } else if (item.offline) {
@@ -3293,19 +3672,19 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
             g.setColour(juce::Colour(0xffef4444));
             g.fillRoundedRectangle(offBadge.toFloat(), 3.0f);
             g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText("OFFLINE", offBadge, juce::Justification::centred);
         } else {
             g.drawText(item.nomeArquivo, 6, 0, width - 12, height, juce::Justification::centredLeft, true);
         }
     } else if (columnId == kColOrigin) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         juce::String extStr = item.extensao.isNotEmpty() ? item.extensao.toUpperCase() : "-";
         g.drawText(extStr, 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColDateCreated) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         // Item 3 (nova lista): a coluna mostra só o ano (AAAA) — a data
         // completa continua guiando a ordenação por esta coluna (ver
         // compareElements, kColDateCreated), só a exibição encolheu.
@@ -3313,11 +3692,11 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
         g.drawText(ano.isNotEmpty() ? ano : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColSize) {
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(formatarBytes(item.tamanhoBytes), 4, 0, width - 8, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColPath) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(item.caminhoOrigem.isNotEmpty() ? item.caminhoOrigem : "-", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColCollection) {
         if (!item.collection.isEmpty()) {
@@ -3326,12 +3705,12 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
             g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
             g.setColour(tk.textoSobreAcento);
             bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
             g.drawText(traduzirContent(item.collection, isPt), badgeArea, juce::Justification::centred, true);
         } else {
             bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::italic)));
             g.drawText(isPt ? juce::String::fromUTF8("Nenhum") : "None", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
         }
     } else if (columnId == kColSourceMedia) {
@@ -3341,19 +3720,19 @@ void IntakeWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int c
             juce::String text = juce::String::fromUTF8(info.toDisplaySummary().c_str());
             if (text.isEmpty() || text == "None / Unknown") {
                 g.setColour(tk.textoTerciario);
-                g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::italic)));
                 g.drawText(isPt ? juce::String::fromUTF8("Nenhum") : "None", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
             } else {
                 auto badgeArea = juce::Rectangle<int>(4, 5, width - 8, height - 10);
                 g.setColour(juce::Colour(0xff0d9488));
                 g.fillRoundedRectangle(badgeArea.toFloat(), 3.0f);
                 g.setColour(juce::Colours::white);
-                g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
                 g.drawText(text, badgeArea.reduced(6, 0), juce::Justification::centredLeft, true);
             }
         } else {
             g.setColour(tk.textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::italic)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::italic)));
             g.drawText(isPt ? juce::String::fromUTF8("Nenhum") : "None", 6, 0, width - 12, height, juce::Justification::centredLeft, true);
         }
     }
@@ -3764,7 +4143,7 @@ void IntakeWorkspaceComponent::paint(juce::Graphics& g) {
         g.drawRoundedRectangle(cardBounds.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
     }
 
-    g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     for (const auto& [titulo, bounds] : secaoHeaderBounds_) {
         auto textoBounds = bounds;
         if (titulo == "GEO LOCATION" && iconeGeo_.isValid()) {
@@ -4035,6 +4414,7 @@ void IntakeWorkspaceComponent::iniciarReceberDoCelular(ModoImportacaoCelular mod
             seguro->resized();
             if (r.concluiu && r.recebidos > 0 && r.pastaSessao.isDirectory()) {
                 if (seguro->aoIngerirArquivosDireto) {
+                    if (seguro->aoDefinirOrigemContainer) seguro->aoDefinirOrigemContainer("gallery");  // galeria do celular = container
                     seguro->aoIngerirArquivosDireto({r.pastaSessao});
                 }
             }
@@ -4049,7 +4429,7 @@ void IntakeWorkspaceComponent::lookAndFeelChanged() {
         lblTitulo_->setText(i18n::t("intake.titulo"), juce::dontSendNotification);
     }
     if (lblSubtitulo_) {
-        lblSubtitulo_->setFont(juce::Font(juce::FontOptions(13.0f)));
+        lblSubtitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         lblSubtitulo_->setColour(juce::Label::textColourId, tk.textoSecundario);
     }
     if (btnVisaoLista_) {

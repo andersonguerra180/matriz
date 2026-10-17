@@ -606,6 +606,18 @@ void ConversaWhatsappComponent::iniciarCarga() {
                 erro = t("light.wa.erroLeitura");
             } else {
                 auto parseada = std::make_shared<ConversaParseada>(lerConversa(txt));
+                // Mensagens que o usuário apagou: somem daqui (a assinatura confere para não apagar a errada).
+                for (size_t i = 0; i < parseada->mensagens.size(); ++i) parseada->mensagens[i].indiceOriginal = static_cast<int>(i);
+                if (const auto apagadas = projeto->mensagensApagadasDaConversa(id); !apagadas.empty()) {
+                    std::vector<Mensagem> restantes;
+                    restantes.reserve(parseada->mensagens.size());
+                    for (auto& m : parseada->mensagens) {
+                        const auto a = apagadas.find(m.indiceOriginal);
+                        if (a != apagadas.end() && a->second == m.assinatura()) continue;
+                        restantes.push_back(std::move(m));
+                    }
+                    parseada->mensagens = std::move(restantes);
+                }
                 conversa = parseada;
                 if (parseada->mensagens.empty()) erro = t("light.wa.erroLeitura");
                 const auto mapa = mapaMidiasPorNomeOriginal(*infoConversa);
@@ -1589,6 +1601,7 @@ void ConversaWhatsappComponent::mouseMove(const juce::MouseEvent& e) {
 void ConversaWhatsappComponent::mouseDown(const juce::MouseEvent& e) {
     grabKeyboardFocus();
     if (perguntarVoce_) return;  // primeiro responde "Quem é você?"
+    if (e.mods.isPopupMenu() && !modoSelecao_) { mostrarMenuDeContexto(e); return; }  // botão direito: Extract / Delete
     if (modoSelecao_) {  // exportar trecho: o clique escolhe mensagens, não abre mídia nem toca áudio
         clicarSelecao(e);
         return;
@@ -1612,6 +1625,66 @@ void ConversaWhatsappComponent::mouseDown(const juce::MouseEvent& e) {
         }
         return;
     }
+}
+
+// Botão direito numa mídia: EXTRACT (copia a mídia como item comum, na pasta da conversa) e DELETE; numa mensagem: DELETE.
+void ConversaWhatsappComponent::mostrarMenuDeContexto(const juce::MouseEvent& e) {
+    int iMsg = -1;
+    for (const auto& a : impl_->acertos) {
+        if (!a.r.contains(e.getPosition())) continue;
+        if (a.tipo == Acerto::Tipo::Album) {
+            const int li = a.iMsg >= 0 && a.iMsg < static_cast<int>(mensagemParaLinha_.size()) ? mensagemParaLinha_[static_cast<size_t>(a.iMsg)] : -1;
+            if (li >= 0) iMsg = linhas_[static_cast<size_t>(li)].iMsg + a.sub;
+        } else {
+            iMsg = a.iMsg;
+        }
+        break;
+    }
+    if (iMsg < 0 && areaLista_.contains(e.getPosition()) && !ys_.empty()) {
+        const int li = linhaEm(static_cast<float>(e.y - areaLista_.getY()) + rolagem_);
+        if (li >= 0 && li < static_cast<int>(linhas_.size()) && linhas_[static_cast<size_t>(li)].tipo != Tipo::Dia)
+            iMsg = linhas_[static_cast<size_t>(li)].iMsg;
+    }
+    if (conversa_ == nullptr || iMsg < 0 || iMsg >= static_cast<int>(conversa_->mensagens.size())) return;
+    const std::string midiaId = idDaMidia(iMsg);
+
+    juce::PopupMenu m;
+    if (!midiaId.empty()) m.addItem(1, t("wa.menu.extrair"));
+    m.addItem(2, t(midiaId.empty() ? "wa.menu.apagar_mensagem" : "wa.menu.apagar_midia"));
+    juce::Component::SafePointer<ConversaWhatsappComponent> seguro(this);
+    m.showMenuAsync(juce::PopupMenu::Options(), [seguro, iMsg, midiaId](int r) {
+        if (seguro == nullptr) return;
+        if (r == 1) {
+            if (seguro->projeto_.aoPedirExtrairMidiaWhatsapp) {
+                seguro->projeto_.aoPedirExtrairMidiaWhatsapp(midiaId, seguro->conversaItemId_);
+                seguro->avisar(t("wa.extrair.iniciado"));
+            }
+        } else if (r == 2) {
+            seguro->confirmarEApagar(iMsg, midiaId);
+        }
+    });
+}
+
+void ConversaWhatsappComponent::confirmarEApagar(int iMsg, const std::string& midiaId) {
+    if (conversa_ == nullptr || iMsg < 0 || iMsg >= static_cast<int>(conversa_->mensagens.size())) return;
+    const auto& msg = conversa_->mensagens[static_cast<size_t>(iMsg)];
+    const int indiceOriginal = msg.indiceOriginal;
+    const juce::String assinatura = msg.assinatura();
+    juce::Component::SafePointer<ConversaWhatsappComponent> seguro(this);
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions()
+            .withIconType(juce::MessageBoxIconType::WarningIcon)
+            .withTitle(t(midiaId.empty() ? "wa.apagar.titulo_mensagem" : "wa.apagar.titulo_midia"))
+            .withMessage(t("wa.apagar.mensagem"))
+            .withButton(t("wa.apagar.confirmar"))
+            .withButton(t("wa.apagar.cancelar")),
+        [seguro, indiceOriginal, assinatura, midiaId](int r) {
+            if (seguro == nullptr || r != 1) return;
+            if (!seguro->projeto_.apagarMensagemDaConversa(seguro->conversaItemId_, indiceOriginal, assinatura, midiaId)) return;
+            seguro->impl_->cacheMedidas.clear();
+            seguro->impl_->acertos.clear();
+            seguro->iniciarCarga();  // relê a conversa já sem a mensagem
+        });
 }
 
 // ── Pintura ──────────────────────────────────────────────────────────────────────────────────

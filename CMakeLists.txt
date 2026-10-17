@@ -89,6 +89,8 @@ juce_add_binary_data(MatrizAssets
     SOURCES Assets/splash.png Assets/icon.jpeg Assets/googledrive.png Assets/lrlogo.png Assets/bridgelogo.png Assets/home.png Assets/geo.png
         Assets/gallery.png
         Assets/whatsapp.png
+        Assets/android.png
+        Assets/apple.png
         Assets/whatsapp.jpg
         # Logos por tipo de arquivo (LogosTipoArquivo.cpp): embutidos pra funcionar em qualquer Mac
         "Assets/ableton live.png"
@@ -111,7 +113,16 @@ juce_add_binary_data(MatrizAssets
         "Assets/vegas.jpeg"
         "Assets/3d.jpg"
         "Assets/zip.jpeg"
-        "Assets/word.jpeg")
+        "Assets/word.jpeg"
+        # Jost (OFL): fonte única da interface, embutida para ser igual em macOS/Windows/Linux
+        Assets/fonts/Jost-Regular.ttf
+        Assets/fonts/Jost-Medium.ttf
+        Assets/fonts/Jost-Bold.ttf
+        # IBM Plex (OFL): fonte padrão da interface (Sans) e caminhos/hashes/timecodes (Mono)
+        Assets/fonts/IBMPlexSans-Regular.ttf
+        Assets/fonts/IBMPlexSans-Medium.ttf
+        Assets/fonts/IBMPlexSans-SemiBold.ttf
+        Assets/fonts/IBMPlexMono-Regular.ttf)
 
 # Página web que o celular recebe ao ler o QR code (HTML+CSS+JS num arquivo só, dentro do binário).
 juce_add_binary_data(MatrizCelularAssets
@@ -490,6 +501,7 @@ target_sources(matriz PRIVATE
     Source/Analytics/SavedAnalyses.cpp
     Source/Ui/ArvoreBackupComponent.cpp
     Source/Ui/TrashWindow.cpp
+    Source/Ui/JanelaPastaFlutuante.cpp
     Source/Ui/MosaicoStressTest.cpp
     Source/Ui/IngerirArquivosTest.cpp
     Source/Ui/UiSelfTest.cpp

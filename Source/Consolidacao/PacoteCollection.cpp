@@ -4,6 +4,8 @@
 #include <map>
 
 #include "../Ingest/Checksum.h"
+#include "MetadadoEmbutido.h"
+#include "SaidaBounce.h"
 #include "../Model/NomesCanonicos.h"
 #include "../Model/Project.h"
 #include "../Model/ProjectLog.h"
@@ -185,7 +187,7 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
                             const juce::File& destinoPai, const juce::String& nomePacote,
                             const std::string& mapaId, const juce::String& nomeMapa,
                             const juce::String& nomeColecao, const std::set<std::string>& itens,
-                            const AoProgredir& aoProgredir) {
+                            const AoProgredir& aoProgredir, bool embutirMetadados) {
     ResultadoPacote r;
     juce::String nomeSeguro = juce::File::createLegalFileName(nomePacote.trim());
     if (nomeSeguro.isEmpty()) nomeSeguro = "Matriz package";
@@ -195,10 +197,12 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
     const juce::File media = r.pasta.getChildFile("Media");
 
     // Mesmo planner do EXPORT por folder map: estrutura = pastas do mapa, sem
-    // prefixo (nomes como no MAIN), sem _SEM_PASTA — sem pasta fica de fora.
+    // prefixo (nomes como no MAIN). Item selecionado sem pasta no mapa NÃO fica de
+    // fora: vai para _SEM_PASTA dentro do pacote (o usuário exporta tudo que selecionou).
     auto plano = planejarConsolidacao(registro, pastaProjeto, media, {NivelHierarquia::PastaManual}, {},
                                       ModoPrefixoArquivo::Nenhum, {}, /*autoResolver*/ true, false, false,
-                                      /*paraExport*/ true, mapaId);
+                                      /*paraExport*/ true, mapaId, /*estritoAoDestino*/ false,
+                                      /*semPastaNaRaiz*/ true);
     for (const auto& id : plano.semPastaExcluidos)
         if (itens.count(id)) ++r.semPasta;
     std::vector<ItemPlanejado> doRecorte;
@@ -267,8 +271,22 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
             if (sha.empty() || sha != esperado)
                 throw std::runtime_error("checksum mismatch after copy: " + destino.getFullPathName().toStdString());
 
+            // Embutir metadados (opcional): só a CÓPIA recebe a ficha — o MAIN não é tocado. O SHA-256 do JSON
+            // passa a ser o do arquivo já com os metadados, que é o que de fato é entregue.
+            std::string shaEntregue = sha;
+            if (embutirMetadados) {
+                if (destino.hasFileExtension("wav")) {
+                    auto marcadores = marcadoresDoItem(registro, ip.itemId);
+                    if (!marcadores.empty()) embutirMarcadoresEmWav(destino, marcadores);
+                }
+                std::string erroMeta;
+                if (embutirFichaMatrizNaCopia(registro, ip.itemId, destino, erroMeta) == StatusEmbedFicha::Falhou)
+                    throw std::runtime_error("could not embed metadata: " + erroMeta);
+                shaEntregue = juce::String(matriz::ingest::calcularChecksums(destino).sha256).toLowerCase().toStdString();
+            }
+
             auto* reg = new juce::DynamicObject();
-            reg->setProperty("sha256", juce::String(sha));
+            reg->setProperty("sha256", juce::String(shaEntregue));
             reg->setProperty("caminho", juce::String(ip.caminhoRelativoDestino).replaceCharacter('\\', '/'));
             const auto nomesPasta = caminhoDaPasta(ip.pastaId);
             if (!nomesPasta.isEmpty()) {

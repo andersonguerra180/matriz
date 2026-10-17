@@ -230,27 +230,27 @@ void CatalogHubComponent::paintCell(juce::Graphics& g, int rowNumber, int column
         g.setColour(c.valido ? tk.estadoQcOk : juce::Colour(0xfff97316));
         g.fillRoundedRectangle(badge.toFloat(), 3.0f);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(c.valido ? "ONLINE" : "OFFLINE", badge, juce::Justification::centred, true);
     } else if (columnId == kColNome) {
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         g.drawText(c.nome, 8, 0, width - 16, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColGrupo) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(c.grupo.isEmpty() ? "-" : c.grupo, 8, 0, width - 16, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColAssets) {
         g.setColour(tk.textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(c.valido ? juce::String(c.totalAssets) : "-", 8, 0, width - 16, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColTamanho) {
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.drawText(c.valido ? juce::File::descriptionOfSizeInBytes(c.totalBytes) : "-", 8, 0, width - 16, height, juce::Justification::centredLeft, true);
     } else if (columnId == kColCaminho) {
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.drawText(c.caminhoProjeto, 8, 0, width - 16, height, juce::Justification::centredLeft, true);
     }
 }

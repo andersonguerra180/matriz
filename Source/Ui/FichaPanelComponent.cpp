@@ -213,7 +213,7 @@ public:
 
         lblTempo_ = std::make_unique<juce::Label>();
         lblTempo_->setText("00:00:00 / --:--:--", juce::dontSendNotification);
-        lblTempo_->setFont(juce::Font(juce::FontOptions(10.0f)));
+        lblTempo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         lblTempo_->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.8f));
         addAndMakeVisible(*lblTempo_);
     }
@@ -229,7 +229,7 @@ public:
 
         // Frame header label PRÉVIA
         g.setColour(juce::Colours::white.withAlpha(0.6f));
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText("PREVIEW", bounds.reduced(8, 4), juce::Justification::topRight);
 
         // Simulated media preview screen
@@ -1534,7 +1534,7 @@ public:
             // usuário em texto preto.
             geolocalizacao_.statusBadge->setColour(juce::Label::textColourId, juce::Colours::black);
         }
-        geolocalizacao_.statusBadge->setFont(juce::Font(juce::FontOptions(9.0f)));
+        geolocalizacao_.statusBadge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         geolocalizacao_.statusBadge->setJustificationType(juce::Justification::centredRight);
         addAndMakeVisible(*geolocalizacao_.statusBadge);
 
@@ -1555,7 +1555,7 @@ public:
             ss << std::fixed << std::setprecision(6) << *geoOpt->latitude << ", " << *geoOpt->longitude;
             geolocalizacao_.editorCoords->setText(ss.str());
         } else {
-            geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", juce::Colour(0xff888888));
+            geolocalizacao_.editorCoords->setTextToShowWhenEmpty("e.g. -16.4435, -39.0643", juce::Colour(0xff7d766c));
         }
         geolocalizacao_.editorCoords->onFocusLost = commitGeo;
         geolocalizacao_.editorCoords->onReturnKey = commitGeo;
@@ -1582,7 +1582,7 @@ public:
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorAddress->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorAddress->setText(geoOpt && geoOpt->formattedAddress ? *geoOpt->formattedAddress : "");
-        geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", juce::Colour(0xff888888));
+        geolocalizacao_.editorAddress->setTextToShowWhenEmpty("e.g. Av. Paulista, 1000", juce::Colour(0xff7d766c));
         geolocalizacao_.editorAddress->onFocusLost = commitGeo;
         geolocalizacao_.editorAddress->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorAddress);
@@ -1608,7 +1608,7 @@ public:
         geolocalizacao_.editorCity->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCity->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCity->setText(geoOpt && geoOpt->city ? *geoOpt->city : "");
-        geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", juce::Colour(0xff888888));
+        geolocalizacao_.editorCity->setTextToShowWhenEmpty("e.g. Porto Seguro", juce::Colour(0xff7d766c));
         geolocalizacao_.editorCity->onFocusLost = commitGeo;
         geolocalizacao_.editorCity->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorCity);
@@ -1634,7 +1634,7 @@ public:
         geolocalizacao_.editorState->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorState->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorState->setText(geoOpt && geoOpt->stateProvince ? *geoOpt->stateProvince : "");
-        geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", juce::Colour(0xff888888));
+        geolocalizacao_.editorState->setTextToShowWhenEmpty("e.g. Bahia", juce::Colour(0xff7d766c));
         geolocalizacao_.editorState->onFocusLost = commitGeo;
         geolocalizacao_.editorState->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorState);
@@ -1660,7 +1660,7 @@ public:
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::backgroundColourId, juce::Colours::white);
         geolocalizacao_.editorCountry->setColour(juce::TextEditor::outlineColourId, tk.borda);
         geolocalizacao_.editorCountry->setText(geoOpt && geoOpt->country ? *geoOpt->country : "");
-        geolocalizacao_.editorCountry->setTextToShowWhenEmpty(isPt ? "Ex: Brasil" : "e.g. Brazil", juce::Colour(0xff888888));
+        geolocalizacao_.editorCountry->setTextToShowWhenEmpty(isPt ? "Ex: Brasil" : "e.g. Brazil", juce::Colour(0xff7d766c));
         geolocalizacao_.editorCountry->onFocusLost = commitGeo;
         geolocalizacao_.editorCountry->onReturnKey = commitGeo;
         addAndMakeVisible(*geolocalizacao_.editorCountry);
@@ -2397,7 +2397,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? "[AUTO + FIXO]" : "[AUTO + FIXED]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             linha->badge->setColour(juce::Label::textColourId, tk.campoLeituraTecnica);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2428,7 +2428,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2604,7 +2604,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2663,7 +2663,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? "[USER]" : "[USER]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2775,7 +2775,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2837,7 +2837,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2882,7 +2882,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? "[TAGS]" : "[TAGS]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -2925,7 +2925,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4375,7 +4375,7 @@ private:
                                 else if (v != comum) { iguais = false; break; }
                             }
                             ed->setText(iguais ? juce::String::fromUTF8(comum.c_str()) : juce::String(), false);
-                            ed->setTextToShowWhenEmpty(iguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
+                            ed->setTextToShowWhenEmpty(iguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff7d766c));
                             linhaPtr->valorSeed = ed->getText();
                             piscarBordaSalvo(ed);
                         }
@@ -4593,7 +4593,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText("[EDITABLE]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4619,7 +4619,7 @@ private:
             if (ehNotes) {
                 ed->setMultiLine(true);
                 ed->setReturnKeyStartsNewLine(true);
-                ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", juce::Colour(0xff888888));
+                ed->setTextToShowWhenEmpty("Type notes to add/append to all selected items...", juce::Colour(0xff7d766c));
             } else {
                 std::string valorComum;
                 bool todosIguais = true;
@@ -4632,7 +4632,7 @@ private:
                 if (todosIguais && !valorComum.empty()) {
                     ed->setText(valorComum, false);
                 } else {
-                    ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff888888));
+                    ed->setTextToShowWhenEmpty(todosIguais ? "" : matriz::i18n::t("ficha.lote_valores_multiplos"), juce::Colour(0xff7d766c));
                 }
             }
             linha->valorSeed = ed->getText();
@@ -4668,7 +4668,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText("[DROPDOWN]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4727,7 +4727,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(loteIsPt ? "[PESSOAS / TAGS]" : "[PEOPLE / TAGS]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4764,7 +4764,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText("[TAGS]", juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4854,7 +4854,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(notesIsPt ? juce::String::fromUTF8("[EDITÁVEL]") : juce::String("[EDITABLE]"), juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4917,7 +4917,7 @@ private:
 
             linha->badge = std::make_unique<juce::Label>();
             linha->badge->setText(isPt ? juce::String::fromUTF8("[SUBSTITUIÇÃO EM LOTE]") : juce::String("[BATCH OVERRIDE]"), juce::dontSendNotification);
-            linha->badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            linha->badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             linha->badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             linha->badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*linha->badge);
@@ -4950,7 +4950,7 @@ private:
 
             geoLote_.badge = std::make_unique<juce::Label>();
             geoLote_.badge->setText(isPt ? juce::String::fromUTF8("[SUBSTITUIÇÃO EM LOTE]") : juce::String("[BATCH OVERRIDE]"), juce::dontSendNotification);
-            geoLote_.badge->setFont(juce::Font(juce::FontOptions(9.0f)));
+            geoLote_.badge->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
             geoLote_.badge->setColour(juce::Label::textColourId, tk.textoTerciario);
             geoLote_.badge->setJustificationType(juce::Justification::centredRight);
             addAndMakeVisible(*geoLote_.badge);

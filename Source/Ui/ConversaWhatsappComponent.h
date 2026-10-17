@@ -39,6 +39,7 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseDown(const juce::MouseEvent&) override;
+    void mostrarMenuDeContexto(const juce::MouseEvent& e);
     void mouseMove(const juce::MouseEvent&) override;
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool keyPressed(const juce::KeyPress&) override;
@@ -116,6 +117,7 @@ private:
     void pedirOnda(const std::string& midiaId);
     void alternarAudio(const std::string& midiaId);
     std::string idDaMidia(int iMsg) const;
+    void confirmarEApagar(int iMsg, const std::string& midiaId);
     void abrirMidia(const std::string& inicial, std::vector<std::string> sequencia);
 
     // ── Print (B6) ──────────────────────────────────────────────────────────────────────────

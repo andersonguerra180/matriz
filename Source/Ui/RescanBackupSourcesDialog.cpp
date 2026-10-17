@@ -1,5 +1,6 @@
 #include "RescanBackupSourcesDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -183,7 +184,7 @@ void RescanBackupSourcesDialog::showDialog(
         dlg->setCentrePosition(area.getCentreX(), area.getCentreY());
     }
 
-    options.launchAsync();
+    moldura::lancar(options);
 }
 
 } // namespace matriz::ui

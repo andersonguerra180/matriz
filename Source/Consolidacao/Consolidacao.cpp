@@ -603,7 +603,7 @@ PlanoConsolidacao planejarConsolidacao(matriz::db::Database& registro, const juc
                 case NivelHierarquia::PastaManual:
                     // A subárvore que o operador montou à mão na árvore BACKUP
                     for (auto& [id, nome] : cadeia) segmentosPasta.add(segmentoSeguro(nome, "Folder"));
-                    if (cadeia.empty() && semPastaNoCaminho) segmentosPasta.add(kPastaSemPasta);
+                    if (cadeia.empty() && semPastaNoCaminho) segmentosPasta.add(semPastaFisica ? kPastaSemPasta : kPastaNoFolderExport);
                     break;
                 case NivelHierarquia::EstruturaOriginal: {
                     juce::String dirStr = caminhoRelativoOrigem.upToLastOccurrenceOf("/", false, false);

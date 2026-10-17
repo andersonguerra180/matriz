@@ -458,7 +458,7 @@ void ArvoreComponent::pintarModoIcones(juce::Graphics& g) {
             desenharIconePasta(g, areaIconeInner, tk.acento.withAlpha(0.7f));
             // Item count inside folder
             g.setColour(tk.textoSobreAcento);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(juce::String(static_cast<int>(item.noPasta->itemIds.size())),
                        areaIconeInner, juce::Justification::centred);
         } else {
@@ -476,7 +476,7 @@ void ArvoreComponent::pintarModoIcones(juce::Graphics& g) {
         // Name below icon
         auto areaNome = celula.withTop(areaIcone.getBottom()).reduced(4, 0);
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.drawText(item.nome, areaNome, juce::Justification::centredTop, true);
     }
 

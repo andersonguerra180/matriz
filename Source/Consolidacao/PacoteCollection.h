@@ -86,7 +86,7 @@ ResultadoPacote gerarPacote(matriz::db::Database& registro, const juce::File& pa
                             const juce::File& destinoPai, const juce::String& nomePacote,
                             const std::string& mapaId, const juce::String& nomeMapa,
                             const juce::String& nomeColecao, const std::set<std::string>& itens,
-                            const AoProgredir& aoProgredir);
+                            const AoProgredir& aoProgredir, bool embutirMetadados = false);
 
 // --- INTAKE (Fase 3) ---------------------------------------------------------
 

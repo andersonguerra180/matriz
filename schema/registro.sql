@@ -1074,7 +1074,8 @@ CREATE TABLE IF NOT EXISTS nest (
     id            TEXT PRIMARY KEY,
     projeto_id    TEXT NOT NULL,
     capa_item_id  TEXT REFERENCES item(id) ON DELETE SET NULL,
-    criado_em     TEXT NOT NULL
+    criado_em     TEXT NOT NULL,
+    origem        TEXT          -- NULL = nest comum (rajada/takes); gallery|drive|bridge|lightroom = CONTAINER de importação no Intake
 );
 
 CREATE TABLE IF NOT EXISTS nest_item (
@@ -1119,6 +1120,15 @@ CREATE TABLE IF NOT EXISTS conversa_midia (
     data_hora        TEXT,
     legenda          TEXT,
     PRIMARY KEY (conversa_item_id, midia_item_id)
+);
+
+-- Mensagens que o usuário apagou da conversa (para sempre, na tela e nos trechos exportados). O .zip original nunca é tocado.
+CREATE TABLE IF NOT EXISTS conversa_mensagem_apagada (
+    conversa_item_id TEXT NOT NULL REFERENCES item(id) ON DELETE CASCADE,
+    indice           INTEGER NOT NULL,
+    assinatura       TEXT NOT NULL,
+    apagada_em       TEXT NOT NULL,
+    PRIMARY KEY (conversa_item_id, indice)
 );
 
 CREATE INDEX IF NOT EXISTS idx_conversa_midia_conversa ON conversa_midia(conversa_item_id, ordem);

@@ -165,7 +165,7 @@ BarraFerramentasComponent::BarraFerramentasComponent() {
     // Status filter buttons (ALL, ONLINE, OFFLINE)
     lblStatusFilter_ = std::make_unique<juce::Label>();
     lblStatusFilter_->setText(matriz::i18n::t("barra.status_rotulo"), juce::dontSendNotification);
-    lblStatusFilter_->setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lblStatusFilter_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     lblStatusFilter_->setColour(juce::Label::textColourId, tema().textoTerciario);
     lblStatusFilter_->setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(*lblStatusFilter_);

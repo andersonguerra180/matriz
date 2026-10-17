@@ -16,6 +16,7 @@
 #include "PreviewComponent.h"
 #include "AudioWorkspace.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
 
@@ -73,7 +74,9 @@ public:
           aoNavegarCallback_(std::move(aoNavegarCallback)),
           aoItemMudouCallback_(std::move(aoItemMudouCallback))
     {
-        setUsingNativeTitleBar(true);
+        // Moldura do sistema de janelas: sem barra nativa; o cabeçalho (título + X) é desenhado pela JanelaMoldura.
+        setUsingNativeTitleBar(false);
+        setTitleBarHeight(0);
         setResizable(true, true);
 
         auto display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay();
@@ -94,7 +97,8 @@ public:
             [this] { closeButtonPressed(); },
             somenteLeitura
         );
-        setContentOwned(contentComp_, true);
+        moldura_ = new moldura::JanelaMoldura(contentComp_, moldura::Secao::Explorador, "Preview", {});
+        setContentOwned(moldura_, false);
         // NEST: escolher outro arquivo na coluna do grupo troca o que o preview mostra (e a capa).
         contentComp_->aoMudouDeArquivo = [this](const std::string& novoId) {
             atualizarTituloJanela(novoId);
@@ -123,6 +127,7 @@ public:
             }
         }
         setName(windowTitle.isEmpty() ? "Preview" : windowTitle);
+        if (moldura_ != nullptr) moldura_->definirTitulo(getName());
     }
 
     void navegarItem(int direcao) {
@@ -215,7 +220,7 @@ private:
         void paint(juce::Graphics& g) override {
             const auto& tk = tema();
             g.fillAll(tk.painel);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             for (int i = 0; i < static_cast<int>(linhas_.size()); ++i) {
                 const auto& l = linhas_[static_cast<size_t>(i)];
                 juce::Rectangle<int> r(0, i * kAlturaLinha, getWidth(), kAlturaLinha);
@@ -242,9 +247,9 @@ private:
                     g.setColour(juce::Colour(0xff38bdf8));
                     g.drawRoundedRectangle(selo.toFloat(), 7.0f, 1.0f);
                     g.setColour(juce::Colours::white);
-                    g.setFont(juce::Font(juce::FontOptions(9.0f, juce::Font::bold)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                     g.drawText("COVER", selo, juce::Justification::centred);
-                    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 }
                 g.setColour(tk.textoPrimario);
                 g.drawText(l.nome, r.withTop(r.getBottom() - 22).reduced(6, 0), juce::Justification::centredLeft, true);
@@ -319,7 +324,7 @@ private:
             addAndMakeVisible(*btnProximo_);
 
             lblTitulo_ = std::make_unique<juce::Label>("", "");
-            lblTitulo_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+            lblTitulo_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
             lblTitulo_->setColour(juce::Label::textColourId, tema().textoPrimario);
             addAndMakeVisible(*lblTitulo_);
 
@@ -665,7 +670,7 @@ private:
                 g.setColour(fundo);
                 g.fillRoundedRectangle(selo.toFloat(), 4.0f);
                 g.setColour(texto);
-                g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
                 g.drawText(letra, selo, juce::Justification::centred);
                 stampRight -= 24;
             };
@@ -806,6 +811,7 @@ private:
 
     ProjetoAberto& projeto_;
     ContentComponent* contentComp_ = nullptr;
+    moldura::JanelaMoldura* moldura_ = nullptr;  // dono do contentComp_ (cabeçalho + X da moldura)
     std::function<void()> aoFecharCallback_;
     CallbackNavegar aoNavegarCallback_;
     CallbackItemMudou aoItemMudouCallback_;

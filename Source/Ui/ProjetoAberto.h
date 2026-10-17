@@ -44,6 +44,7 @@ struct ItemResumo {
     std::string nestCapaId;
     int nestTotal = 0;
     bool nestCapa = false;
+    std::string nestOrigem;  // não vazio = nest é um CONTAINER de importação (gallery|drive|bridge|lightroom)
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -587,6 +588,13 @@ public:
     std::set<std::string> itensSemPasta(const std::string& mapaId) const;
     int contarItensSemPasta(const std::string& mapaId) const;
 
+    // Duplicatas já resolvidas (estado 'duplicata'): somem do grid, das contagens, da seleção e do backup. Ficam
+    // escondidas; a aba Duplicates lista e restaura (o restaurado volta ao grid como 'novo'). Nada é apagado.
+    struct DuplicataResolvida { std::string id, codigo, titulo, caminho; };
+    std::vector<DuplicataResolvida> listarDuplicatasResolvidas() const;
+    int contarDuplicatasResolvidas() const;
+    int restaurarDuplicatas(const std::vector<std::string>& itemIds);  // uma transação; devolve quantos voltaram
+
     std::string criarPastaAcervo(const std::string& nome, const std::optional<std::string>& pastaPaiId,
                                   const std::string& mapaId);
     // Compat (pré Fase 1) — ver arvoreAcervo() sem mapaId acima.
@@ -871,6 +879,7 @@ public:
     // membros seguem sendo itens normais no banco. Tudo aqui tem Undo e nunca toca em arquivo.
     struct NestInfo {
         std::string nestId, capaId;
+        std::string origem;  // container de importação do Intake; vazio = nest comum
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.
@@ -878,6 +887,12 @@ public:
     // Cria um nest com os itens (junta num só os nests que eles já integram). Capa: a do nest mais antigo,
     // se estiver entre eles; senão o primeiro por data. Devolve o id ("" se nada a fazer).
     std::string criarNest(const std::vector<std::string>& itemIds);
+    // CONTAINER de importação (Intake): agrupa os itens recém-ingeridos de uma importação (galeria do celular, Drive,
+    // Bridge, Lightroom) num nest com `origem`. Sem Undo (é estado de triagem, não edição). Itens já em nest ficam de fora.
+    std::string criarContainerImportacao(const std::vector<std::string>& itemIds, const std::string& origem);
+    // Tira os itens do container (continuam no Intake como itens comuns, sem aprovação). Um container que fica com
+    // 1 membro (ou nenhum) é dissolvido.
+    void removerDoContainer(const std::vector<std::string>& itemIds);
     // Un-nest: desfaz os nests que os itens integram (todos os arquivos voltam ao grid como itens normais).
     void desfazerNest(const std::vector<std::string>& itemIds);
     // Linha no log do projeto (log.md), escrita em background na fila serial (nada de disco na message thread).
@@ -915,6 +930,17 @@ public:
     void alternarMarcaR(const std::vector<std::string>& itemIds);
     // Chamado na message thread quando uma gravação de marca R falhou e a memória foi revertida.
     std::function<void()> aoMarcasRRevertidas;
+
+    // ── Conversa do WhatsApp: extrair / apagar uma mídia ou mensagem ─────────────────────────────
+    // Quem hospeda o MainComponent liga isto: copia a mídia da conversa como item comum, na mesma pasta do Folder Map
+    // onde a conversa está (a mídia continua dentro da conversa).
+    std::function<void(const std::string& midiaItemId, const std::string& conversaItemId)> aoPedirExtrairMidiaWhatsapp;
+    // Apaga PARA SEMPRE uma mensagem da conversa (e, se for anexo, o item da mídia, sem Undo). O .zip original não é tocado.
+    // `indiceOriginal` = posição da mensagem no .txt. Devolve false se falhou.
+    bool apagarMensagemDaConversa(const std::string& conversaItemId, int indiceOriginal, const juce::String& assinatura,
+                                  const std::string& midiaItemId);
+    // indice original -> assinatura, das mensagens apagadas (leitura; pode rodar em background).
+    std::map<int, juce::String> mensagensApagadasDaConversa(const std::string& conversaItemId) const;
     // Rejeita os itens com R: guarda o SHA-256 de cada um na lista de rejeitados e os tira do projeto
     // (removerItensDoProjeto, com Undo). Devolve quantos saíram.
     int rejeitarMarcadosR();

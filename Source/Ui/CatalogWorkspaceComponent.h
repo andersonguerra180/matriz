@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MatrizLookAndFeel.h"
+#include "Tokens.h"
 #include <JuceHeader.h>
 #include <functional>
 #include <memory>
@@ -250,30 +252,30 @@ private:
     // Cards da coluna esquerda: um retângulo por seção (VIEW, FILTERS), pintado com borda própria em paint().
     std::vector<juce::Rectangle<int>> secaoCardBounds_;
 
-    struct SidebarButtonLookAndFeel : public juce::LookAndFeel_V4 {
+    struct SidebarButtonLookAndFeel : public MatrizLookAndFeel {
         juce::Font getTextButtonFont(juce::TextButton&, int) override {
-            return juce::Font(juce::FontOptions(11.0f));
+            return juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
         }
     };
     SidebarButtonLookAndFeel sidebarButtonLf_;
 
-    struct ResetButtonLookAndFeel : public juce::LookAndFeel_V4 {
+    // RESET FILTERS: a ação principal da barra lateral (pílula grafite, texto branco).
+    struct ResetButtonLookAndFeel : public MatrizLookAndFeel {
         juce::Font getTextButtonFont(juce::TextButton&, int) override {
-            return juce::Font(juce::FontOptions(12.0f, juce::Font::bold));
+            return juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold));
         }
         void drawButtonBackground(juce::Graphics& g, juce::Button& b, const juce::Colour&, bool sobre, bool apertado) override {
+            const auto& tk = tema();
             auto bounds = b.getLocalBounds().toFloat().reduced(0.5f);
-            juce::Colour bg(0xff16a34a);
+            juce::Colour bg = tk.acento;
             if (apertado) bg = bg.darker(0.15f);
             else if (sobre) bg = bg.brighter(0.12f);
             g.setColour(bg);
-            g.fillRoundedRectangle(bounds, 4.0f);
-            g.setColour(juce::Colour(0xff15803d));
-            g.drawRoundedRectangle(bounds, 4.0f, 1.0f);
+            g.fillRoundedRectangle(bounds, bounds.getHeight() * 0.5f);
         }
         void drawButtonText(juce::Graphics& g, juce::TextButton& b, bool, bool) override {
-            g.setColour(juce::Colours::white);
-            g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+            g.setColour(tema().textoSobreAcento);
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, true);
         }
     };

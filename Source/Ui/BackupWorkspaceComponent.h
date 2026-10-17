@@ -242,7 +242,7 @@ private:
     // folder map + matriz-pacote.json, sempre do MAIN, em background.
     void abrirPacote();
     void iniciarPacote(const juce::File& destino, const juce::String& nome, const std::string& mapaId,
-                       const juce::String& nomeMapa);
+                       const juce::String& nomeMapa, bool embutir);
     void iniciarExport(const juce::File& destino, const matriz::consolidacao::HierarquiaBackup& hierarquia,
                        matriz::consolidacao::ModoPrefixoArquivo modo, const juce::String& prefixo, bool embutir,
                        bool marcaDagua, const std::string& mapaId = {}, bool formatoBridge = false, bool bounce = false,
@@ -288,7 +288,7 @@ private:
     void mostrarResultadoExport(const juce::String& tituloKey, const juce::String& linhaResumo, int jaExistiam, int foraDoMain,
                                 int semPasta, const juce::String& semPastaKey, int duplicatas,
                                 const std::vector<std::string>& falhas, const std::vector<std::string>& jaDiferentes,
-                                const juce::String& extras, bool cancelado);
+                                const juce::String& extras, bool cancelado, const juce::String& nomeMapa = {});
     void mostrarErrosBackup();
 
     // UI elements — ALL visible at once in Config state
@@ -451,6 +451,7 @@ private:
 
     // Helpers
     std::set<std::string> obterItensSelecionadosPeloCriterio();
+    std::set<std::string> obterItensSelecionadosPeloCriterioBruto();
     void aplicarEstiloBotao(juce::TextButton& botao, bool primario);
 
     // Config e progresso são telas diferentes no mesmo Component. Sem esconder

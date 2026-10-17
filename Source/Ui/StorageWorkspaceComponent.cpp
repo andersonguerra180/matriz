@@ -13,24 +13,11 @@ namespace matriz::ui {
 
 namespace {
 
-// Borda "zebrada" amarelo-preto (faixa de risco) pro card de disco
-// selecionado — substitui o preenchimento de fundo diferenciado, que
-// competia visualmente com o resto do card (item 4 da correção de UI).
+// Card de disco selecionado: borda grafite de 2 px (no lugar da antiga faixa de risco amarela/preta).
 void desenharBordaZebra(juce::Graphics& g, const juce::Rectangle<float>& bounds, float corner, float espessura) {
-    juce::Path contorno;
-    contorno.addRoundedRectangle(bounds, corner);
-
-    juce::PathStrokeType traco(espessura);
-    juce::Path contornoPreenchido;
-    traco.createStrokedPath(contornoPreenchido, contorno);
-    g.setColour(juce::Colours::black);
-    g.fillPath(contornoPreenchido);
-
-    const float tracejado[] = {9.0f, 9.0f};
-    juce::Path faixasAmarelas;
-    traco.createDashedStroke(faixasAmarelas, contorno, tracejado, 2);
-    g.setColour(juce::Colours::yellow);
-    g.fillPath(faixasAmarelas);
+    juce::ignoreUnused(espessura);
+    g.setColour(tema().acento);
+    g.drawRoundedRectangle(bounds.reduced(1.0f), corner, 2.0f);
 }
 
 // Cores dos papéis (as mesmas da lista de Versões do BACKUP).
@@ -38,12 +25,12 @@ const juce::Colour kCorSeloMain(0xff2563eb);
 const juce::Colour kCorSeloClone(0xff0d9488);
 const juce::Colour kCorSeloSource(0xff9a6b1f);
 
-// Quadradinho colorido com a inicial do papel (M / C / S).
+// Quadradinho com a inicial do papel (M / C / S): fundo da cor a 15%, letra na cor cheia.
 void desenharSeloPapel(juce::Graphics& g, juce::Rectangle<int> r, const juce::String& inicial, juce::Colour cor) {
+    g.setColour(cor.withAlpha(0.15f));
+    g.fillRoundedRectangle(r.toFloat(), 4.0f);
     g.setColour(cor);
-    g.fillRoundedRectangle(r.toFloat(), 3.0f);
-    g.setColour(juce::Colours::white);
-    g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
     g.drawText(inicial, r, juce::Justification::centred);
 }
 
@@ -179,7 +166,7 @@ public:
 
     void atualizarRotuloMes() {
         const auto& tk = tema();
-        lblMesAno_->setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        lblMesAno_->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         lblMesAno_->setColour(juce::Label::textColourId, tk.textoPrimario);
 
         btnMesAnterior_->setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
@@ -219,9 +206,9 @@ public:
 
         // Card Container for Calendar
         g.setColour(tk.painel);
-        g.fillRoundedRectangle(area.toFloat(), 6.0f);
-        g.setColour(tk.borda.withAlpha(0.6f));
-        g.drawRoundedRectangle(area.toFloat(), 6.0f, 1.0f);
+        g.fillRoundedRectangle(area.toFloat(), tk.raioCartao);
+        g.setColour(tk.borda);
+        g.drawRoundedRectangle(area.toFloat().reduced(0.5f), tk.raioCartao, 1.0f);
 
         auto inner = area.reduced(8, 6);
 
@@ -233,7 +220,7 @@ public:
         const char** diaSemana = isPtSemana ? diaSemanaPt : diaSemanaEn;
         int colW = daysHeader.getWidth() / 7;
 
-        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.setColour(tk.textoTerciario);
         for (int i = 0; i < 7; ++i) {
             juce::Rectangle<int> col(daysHeader.getX() + i * colW, daysHeader.getY(), colW, daysHeader.getHeight());
@@ -282,15 +269,16 @@ public:
                 bool isToday = (dataStr == hojeStr);
                 bool isHovered = (hoveredCellIdx_ == static_cast<int>(cellDates_.size() - 1));
 
-                juce::Colour pillColor = (tk.fundo.getBrightness() > 0.5f) ? juce::Colour(0xffb87a1a) : tk.acento;
+                juce::Colour pillColor = tk.acento;  // dia atual/selecionado: círculo grafite
 
                 if (isSelected || (owner_.selectedDate_.isEmpty() && isToday)) {
                     auto pillRect = cell.reduced(2, 1);
+                    const float diametro = static_cast<float>(juce::jmin(pillRect.getWidth(), pillRect.getHeight()));
                     g.setColour(pillColor);
-                    g.fillRoundedRectangle(pillRect.toFloat(), 4.0f);
+                    g.fillEllipse(pillRect.toFloat().withSizeKeepingCentre(diametro, diametro));
 
-                    g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-                    g.setColour(juce::Colours::white);
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
+                    g.setColour(tk.textoSobreAcento);
                     g.drawText(juce::String(diaCont), pillRect, juce::Justification::centred);
                 } else {
                     if (isHovered) {
@@ -298,7 +286,7 @@ public:
                         g.fillRoundedRectangle(cell.reduced(1).toFloat(), 3.0f);
                     }
 
-                    g.setFont(juce::Font(juce::FontOptions(12.0f)));
+                    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
                     g.setColour(isToday ? pillColor : tk.textoPrimario);
                     g.drawText(juce::String(diaCont), cell, juce::Justification::centred);
                 }
@@ -442,14 +430,14 @@ public:
             } else {
                 g.setColour(tk.painel);
             }
-            g.fillRoundedRectangle(cardBounds.toFloat(), 6.3f);
+            g.fillRoundedRectangle(cardBounds.toFloat(), tk.raioCartao);
 
             // Card Border
             if (isSelected) {
-                desenharBordaZebra(g, cardBounds.toFloat(), 6.3f, 4.0f);
+                desenharBordaZebra(g, cardBounds.toFloat(), tk.raioCartao, 4.0f);
             } else {
                 g.setColour(isHovered ? tk.borda.brighter(0.25f) : tk.borda);
-                g.drawRoundedRectangle(cardBounds.toFloat(), 6.3f, 1.0f);
+                g.drawRoundedRectangle(cardBounds.toFloat(), tk.raioCartao, 1.0f);
             }
 
             auto content = cardBounds.reduced(13, 11);
@@ -464,7 +452,7 @@ public:
             // Total capacity on the right
             juce::int64 capTotal = d.espacoTotalBytes > 0 ? d.espacoTotalBytes : d.capacidadeBytes;
             juce::String capStr = formatBytes(capTotal);
-            g.setFont(juce::Font(juce::FontOptions(13.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
             g.setColour(tk.textoSecundario);
             g.drawText(capStr, headerRow.removeFromRight(68), juce::Justification::centredRight);
 
@@ -496,7 +484,7 @@ public:
             if (displayTitle.isEmpty()) displayTitle = juce::String(d.modelo);
             if (displayTitle.isEmpty()) displayTitle = i18n::t("storage.storage_device");
 
-            auto titleFont = juce::Font(juce::FontOptions(13.5f, juce::Font::bold));
+            auto titleFont = juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold));
             g.setFont(titleFont);
             g.setColour(isSelected ? tk.acento : tk.textoPrimario);
 
@@ -505,12 +493,12 @@ public:
             g.drawText(displayTitle, headerRow.removeFromLeft(titleW), juce::Justification::centredLeft, true);
 
             headerRow.removeFromLeft(3);
-            g.setFont(juce::Font(juce::FontOptions(12.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.setColour(tk.textoTerciario);
             g.drawText("\u00B7", headerRow.removeFromLeft(6), juce::Justification::centred);
 
             headerRow.removeFromLeft(3);
-            g.setFont(juce::Font(juce::FontOptions(12.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             juce::Colour statusColor = d.online ? juce::Colour(0xff22c55e) : tk.perigo;
             g.setColour(statusColor);
             g.drawText(d.online ? "Online" : "Offline", headerRow, juce::Justification::centredLeft);
@@ -526,11 +514,11 @@ public:
             // 2. HARDWARE SPECIFICATIONS (4 Rows: Model, Serial, Mount, Format)
             // =================================================================
             auto drawRow = [&](juce::Rectangle<int> rowRect, const juce::String& label, const juce::String& value) {
-                g.setFont(juce::Font(juce::FontOptions(12.5f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 g.setColour(tk.textoTerciario);
                 g.drawText(label, rowRect.removeFromLeft(58), juce::Justification::centredLeft);
 
-                g.setFont(juce::Font(juce::FontOptions(12.5f)));
+                g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
                 g.setColour(tk.textoPrimario);
                 g.drawText(value, rowRect, juce::Justification::centredRight, true);
             };
@@ -580,7 +568,7 @@ public:
             juce::Colour hColor = (hTitle == i18n::t("storage.healthy") || hTitle == "Healthy") ? juce::Colour(0xff22c55e)
                                 : ((hTitle == i18n::t("storage.attention") || hTitle == "Attention") ? tk.alerta
                                 : ((hTitle == i18n::t("storage.critical") || hTitle == "Critical") ? tk.perigo : tk.textoSecundario));
-            g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
             g.setColour(hColor);
             g.drawText(hTitle, hTitleRow, juce::Justification::centredLeft);
 
@@ -610,7 +598,7 @@ public:
                 fillW = juce::jlimit(0.0f, static_cast<float>(barRect.getWidth()), fillW);
                 juce::Rectangle<float> fillRect(static_cast<float>(barRect.getX()), static_cast<float>(barRect.getY()), fillW, static_cast<float>(barRect.getHeight()));
 
-                juce::Colour barColor = (tk.fundo.getBrightness() > 0.5f) ? juce::Colour(0xffb87a1a) : tk.acento;
+                juce::Colour barColor = tk.acento;
                 if (d.pctUsado >= 92.0) barColor = tk.perigo;
                 else if (d.pctUsado >= 80.0) barColor = tk.alerta;
 
@@ -620,7 +608,7 @@ public:
 
             content.removeFromTop(5);
             auto summaryRow = content.removeFromTop(15);
-            g.setFont(juce::Font(juce::FontOptions(11.5f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.setColour(tk.textoSecundario);
 
             juce::String summaryText;
@@ -1383,7 +1371,7 @@ void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int 
     juce::Rectangle<int> cellBounds(6, 0, width - 12, height);
 
     if (columnId == kColDate) {
-        g.setFont(juce::Font(juce::FontOptions(12.5f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
         g.setColour(tk.textoPrimario);
         g.drawText(formatLogDateTime(item.criadoEm), cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColAction) {
@@ -1398,7 +1386,7 @@ void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int 
             actionText = actionText.substring(0, 1).toUpperCase() + actionText.substring(1);
         }
 
-        auto badgeFont = juce::Font(juce::FontOptions(11.5f));
+        auto badgeFont = juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
         int textW = (int)juce::GlyphArrangement::getStringWidth(badgeFont, actionText);
         auto badgeRect = cellBounds.reduced(0, 4).withWidth(juce::jmin(cellBounds.getWidth() - 4, textW + 20));
 
@@ -1415,7 +1403,7 @@ void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int 
         if (hostInfo.isEmpty()) hostInfo = "user";
         if (!item.computador.empty()) hostInfo << "@" << juce::String(item.computador);
         else hostInfo << "@Mac-mini";
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.setColour(tk.textoPrimario);
         g.drawText(hostInfo, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColVolume) {
@@ -1431,7 +1419,7 @@ void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int 
         } else {
             volText = "-";
         }
-        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         g.setColour(tk.textoPrimario);
         g.drawText(volText, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColHealth) {
@@ -1453,11 +1441,11 @@ void StorageWorkspaceComponent::paintCell(juce::Graphics& g, int rowNumber, int 
             hLabel = hLabel.substring(0, 1).toUpperCase() + hLabel.substring(1);
         }
 
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.setColour(hColor);
         g.drawText(hLabel, cellBounds, juce::Justification::centredLeft, true);
     } else if (columnId == kColReport) {
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::underlined)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::underlined)));
         g.setColour(tk.textoSecundario);
         g.drawText(".txt", cellBounds, juce::Justification::centredLeft, true);
     }
@@ -1579,7 +1567,7 @@ void StorageWorkspaceComponent::paint(juce::Graphics& g) {
         auto r = legendaSelosBounds_;
         const std::pair<const char*, juce::Colour> itens[] = {
             {"source", kCorSeloSource}, {"clone", kCorSeloClone}, {"main", kCorSeloMain}};
-        const auto fonte = juce::Font(juce::FontOptions(11.5f, juce::Font::bold));
+        const auto fonte = juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold));
         for (const auto& [papel, cor] : itens) {  // da direita pra esquerda
             const juce::String nome = i18n::t(juce::String("backup.papel_") + papel);
             const int wNome = static_cast<int>(juce::GlyphArrangement::getStringWidth(fonte, nome)) + 2;
@@ -1613,7 +1601,10 @@ void StorageWorkspaceComponent::resized() {
     int totalAvailH = area.getHeight();
 
     // Bottom Section: Interactive Log Calendar + Sessions Table (+20% size)
-    int bottomH = juce::jlimit(210, 275, static_cast<int>(totalAvailH * 0.35f));
+    // O MEDIA LOG cede altura: as DUAS linhas de cards de discos (2 x 248 + vãos + título da coluna) têm que caber sem corte.
+    // Só nas janelas muito baixas o log fica no mínimo (150) e os cards rolam.
+    constexpr int kAlturaDuasLinhasDeCards = 2 * (248 + 14) + 16 + 26;
+    int bottomH = juce::jlimit(150, 275, totalAvailH - kAlturaDuasLinhasDeCards - 8);
     int topH = totalAvailH - bottomH - 8;
 
     // Top Section (HD Cards occupy upper area)

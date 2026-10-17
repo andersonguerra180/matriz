@@ -1,5 +1,6 @@
 #include "BackupScanProgressDialog.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -70,14 +71,14 @@ BackupScanProgressDialog::BackupScanProgressDialog(
     bool isPt = matriz::i18n::localeAtivo().startsWith("pt");
 
     lblHeader_.setText(isPt ? juce::String::fromUTF8("Verificação de Integridade do Backup") : "Backup Destination Integrity Scan", juce::dontSendNotification);
-    lblHeader_.setFont(juce::Font(juce::FontOptions(15.0f, juce::Font::bold)));
+    lblHeader_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteSubtitulo, juce::Font::bold)));
     lblHeader_.setColour(juce::Label::textColourId, tk.textoPrimario);
     lblHeader_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblHeader_);
 
     currentStageText_ = isPt ? juce::String::fromUTF8("Iniciando varredura...") : "Starting scan...";
     lblStage_.setText(currentStageText_, juce::dontSendNotification);
-    lblStage_.setFont(juce::Font(juce::FontOptions(12.5f)));
+    lblStage_.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     lblStage_.setColour(juce::Label::textColourId, tk.textoSecundario);
     lblStage_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(lblStage_);
@@ -238,7 +239,7 @@ void BackupScanProgressDialog::showModal(
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = false;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

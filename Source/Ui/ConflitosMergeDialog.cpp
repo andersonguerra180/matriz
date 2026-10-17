@@ -1,6 +1,7 @@
 #include "ConflitosMergeDialog.h"
 
 #include "Tokens.h"
+#include "Moldura.h"
 #include "../I18n/Strings.h"
 
 namespace matriz::ui {
@@ -146,7 +147,7 @@ void ConflitosMergeDialog::mostrar(const juce::String& tituloJanela, const juce:
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = true;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 }  // namespace matriz::ui

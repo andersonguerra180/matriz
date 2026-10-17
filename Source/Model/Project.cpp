@@ -807,6 +807,8 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "acervo_item_pasta", "mapa_id", "TEXT");
     // Pasta ingerida inteira vira uma "proposta" (árvore nova, separada) no Folder Map editado:
     // proposta_id = id da pasta raiz da proposta (em todas as pastas dela); origem_caminho = pasta de origem.
+    // Container de importação no Intake (galeria do celular, Drive, Bridge, Lightroom): nest com origem.
+    garantirColuna(registro, "nest", "origem", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(

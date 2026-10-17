@@ -21,17 +21,19 @@ void CollectionStatsDashboardComponent::recarregarDoBanco(matriz::db::Database& 
     CollectionStatsData d;
 
     // 1. Total assets count
-    auto stmtTotal = db.prepare("SELECT COUNT(*) FROM item");
+    auto stmtTotal = db.prepare("SELECT COUNT(*) FROM item WHERE COALESCE(estado, '') != 'duplicata'");
     if (stmtTotal.step()) d.totalAssets = static_cast<uint64_t>(stmtTotal.columnInt(0));
 
     // 2. Storage size
-    auto stmtSize = db.prepare("SELECT COALESCE(SUM(tamanho_bytes), 0) FROM arquivo WHERE eh_master = 1");
+    auto stmtSize = db.prepare("SELECT COALESCE(SUM(tamanho_bytes), 0) FROM arquivo WHERE eh_master = 1 "
+                                "AND item_id IN (SELECT id FROM item WHERE COALESCE(estado, '') != 'duplicata')");
     if (stmtSize.step()) d.totalSizeBytes = static_cast<juce::int64>(stmtSize.columnInt(0));
 
     // 3. Format category distribution
     std::map<std::string, std::pair<uint64_t, juce::int64>> catMap;
     auto stmtCat = db.prepare("SELECT COALESCE(i.tipo_midia, 'other'), COUNT(DISTINCT i.id), COALESCE(SUM(a.tamanho_bytes), 0) "
                               "FROM item i LEFT JOIN arquivo a ON a.item_id = i.id AND a.eh_master = 1 "
+                              "WHERE COALESCE(i.estado, '') != 'duplicata' "
                               "GROUP BY i.tipo_midia");
 
     while (stmtCat.step()) {
@@ -134,7 +136,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
 
         auto inner = r.reduced(10, 8);
         g.setColour(tk.textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(label, inner.removeFromTop(14), juce::Justification::centredLeft);
 
         g.setColour(tk.textoPrimario);
@@ -142,7 +144,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         g.drawText(value, inner.removeFromTop(24), juce::Justification::centredLeft, true);
 
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::plain)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::plain)));
         g.drawText(subtitle, inner, juce::Justification::centredLeft, true);
     };
 
@@ -173,7 +175,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
 
     // LEFT COLUMN: Format Category Distribution & Top File Extensions
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.drawText("Format Category Distribution", leftCol.removeFromTop(20), juce::Justification::centredLeft);
     leftCol.removeFromTop(8);
 
@@ -188,7 +190,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
                                juce::File::descriptionOfSizeInBytes(cat.sizeBytes).toStdString() + ")";
 
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(labelStr, row.removeFromTop(14), juce::Justification::centredLeft, true);
 
         // Bar container
@@ -207,7 +209,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
 
     // Top File Extensions
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.drawText("Top File Extensions", leftCol.removeFromTop(20), juce::Justification::centredLeft);
     leftCol.removeFromTop(6);
 
@@ -219,13 +221,13 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
                               juce::File::descriptionOfSizeInBytes(ext.sizeBytes).toStdString();
 
         g.setColour(tk.acento);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(extLine, row, juce::Justification::centredLeft, true);
     }
 
     // RIGHT COLUMN: Timeline & Year Distribution & Storage Status
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.drawText("Timeline & Year Distribution", rightCol.removeFromTop(20), juce::Justification::centredLeft);
     rightCol.removeFromTop(8);
 
@@ -237,7 +239,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         rightCol.removeFromTop(6);
 
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(dec.first, row.removeFromLeft(50), juce::Justification::centredLeft);
 
         g.setColour(tk.painelAlt);
@@ -255,7 +257,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
 
     // Storage & Protection Status
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
     g.drawText("Storage & Protection Status", rightCol.removeFromTop(20), juce::Justification::centredLeft);
     rightCol.removeFromTop(8);
 
@@ -268,7 +270,7 @@ void CollectionStatsDashboardComponent::paint(juce::Graphics& g) {
         r.removeFromLeft(6);
 
         g.setColour(tk.textoSecundario);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(text, r, juce::Justification::centredLeft, true);
     };
 

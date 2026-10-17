@@ -1,4 +1,5 @@
 #include "SyncDestinationDialog.h"
+#include "Moldura.h"
 #include "ModalMitigacao.h"
 #include "../I18n/Strings.h"
 #include "../Vault/Volume.h"
@@ -441,7 +442,7 @@ void SyncDestinationDialog::paintListBoxItem(int rowNumber, juce::Graphics& g, i
         g.setColour(statusCor);
         g.fillRoundedRectangle(badgeArea.toFloat(), 4.0f);
         g.setColour(juce::Colours::white);
-        g.setFont(juce::Font(juce::FontOptions(9.5f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         g.drawText(statusTexto, badgeArea, juce::Justification::centred, true);
         linha.removeFromLeft(badgeW + 6);
     }
@@ -954,7 +955,7 @@ void SyncDestinationDialog::abrirModal(matriz::model::Project& projeto, std::fun
     opt.escapeKeyTriggersCloseButton = true;
     opt.useNativeTitleBar = true;
     opt.resizable = false;
-    opt.launchAsync();
+    moldura::lancar(opt);
 }
 
 } // namespace matriz::ui

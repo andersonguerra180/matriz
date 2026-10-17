@@ -76,7 +76,7 @@ public:
                 g.drawRoundedRectangle(c.toFloat().reduced(0.5f), tk.raioPequeno, 1.0f);
             }
         }
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         for (size_t i = 0; i < titulos_.size(); ++i) {
             const bool destaque = i < destaques_.size() && destaques_[i].getAlpha() > 0;
             g.setColour(destaque ? destaques_[i] : tk.textoPrimario);

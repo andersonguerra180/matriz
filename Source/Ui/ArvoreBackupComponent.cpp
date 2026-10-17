@@ -8,6 +8,7 @@
 #include "ModalMitigacao.h"
 #include "ProgressoGlobal.h"
 #include "Tokens.h"
+#include "Moldura.h"
 #include "OverlayComponent.h"
 #include "PainelReceberCelular.h"
 #include "PainelImportarWhatsapp.h"
@@ -239,7 +240,7 @@ public:
         auto area = getLocalBounds().reduced(12, 8);
 
         g.setColour(isTrash ? tema().perigo : tema().textoPrimario);
-        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo, juce::Font::bold)));
         juce::String tituloHeader = folderName;
         if (isTrash) tituloHeader += " " + i18n::t("arvore_backup.trash_sub");
         g.drawText(tituloHeader, area.removeFromTop(24), juce::Justification::centredLeft, true);
@@ -252,10 +253,10 @@ public:
 
         if (!subfolders.empty()) {
             g.setColour(tema().textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(i18n::t("arvore_backup.subpastas"), area.removeFromTop(20), juce::Justification::centredLeft);
 
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             for (const auto& sf : subfolders) {
                 auto row = area.removeFromTop(24);
                 g.setColour(tema().textoPrimario);
@@ -271,10 +272,10 @@ public:
 
         if (!files.empty()) {
             g.setColour(tema().textoSecundario);
-            g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
             g.drawText(i18n::t("arvore_backup.arquivos"), area.removeFromTop(20), juce::Justification::centredLeft);
 
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             for (const auto& f : files) {
                 auto row = area.removeFromTop(24);
                 g.setColour(tema().textoPrimario);
@@ -288,7 +289,7 @@ public:
 
         if (subfolders.empty() && files.empty()) {
             g.setColour(tema().textoTerciario);
-            g.setFont(juce::Font(juce::FontOptions(11.0f)));
+            g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
             g.drawText(i18n::t("arvore_backup.pasta_vazia"), area, juce::Justification::centredLeft);
         }
     }
@@ -353,7 +354,7 @@ public:
         g.setColour(tk.alerta);
         g.drawRoundedRectangle(r.reduced(1.0f), tk.raioMedio, 2.5f);
         auto cab = getLocalBounds().removeFromTop(kAlturaCabecalho).reduced(10, 0);
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
         g.drawText(recolhido_ ? juce::String::fromUTF8("\xe2\x96\xb8") : juce::String::fromUTF8("\xe2\x96\xbe"),
                    cab.removeFromRight(14), juce::Justification::centred);
         g.drawText(titulo_, cab, juce::Justification::centredLeft, true);
@@ -402,7 +403,7 @@ public:
     juce::String texto() const {
         return juce::String::fromUTF8("\xf0\x9f\x93\x81 ") + nome_ + (itens_ > 0 ? "   " + juce::String(itens_) : juce::String());
     }
-    static juce::Font fonte(bool negrito) { return juce::Font(juce::FontOptions(11.0f, negrito ? juce::Font::bold : juce::Font::plain)); }
+    static juce::Font fonte(bool negrito) { return juce::Font(juce::FontOptions(tema().tamanhoFontePequena, negrito ? juce::Font::bold : juce::Font::plain)); }
     int getItemWidth() const override { return juce::GlyphArrangement::getStringWidthInt(fonte(true), texto()) + 12; }
     void itemOpennessChanged(bool aberto) override { if (aberto && aoAbrir_) aoAbrir_(*this); }
 
@@ -535,7 +536,7 @@ ArvoreBackupComponent::ArvoreBackupComponent(ProjetoAberto& projeto)
     auto criarSpread = [this](std::unique_ptr<juce::Label>& rotulo, std::unique_ptr<juce::Slider>& slider, const char* chaveRotulo,
                               const char* chaveDica, float& fator) {
         rotulo = std::make_unique<juce::Label>(juce::String(), i18n::t(chaveRotulo));
-        rotulo->setFont(juce::Font(juce::FontOptions(10.0f)));
+        rotulo->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
         rotulo->setMinimumHorizontalScale(1.0f);
         addAndMakeVisible(*rotulo);
         slider = std::make_unique<juce::Slider>(juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight);
@@ -628,6 +629,13 @@ ArvoreBackupComponent::~ArvoreBackupComponent() {
 
 // ---- Folder Map SOBREPOSTO (duplo clique num folder-card) --------------------------------------------------------
 namespace {
+// Zona de clique invisível sobre o X redondo da moldura (o desenho é do moldura::desenhar): mesma ação do antigo EXIT.
+class AreaFecharMoldura : public juce::Button {
+public:
+    AreaFecharMoldura() : juce::Button("fechar") { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paintButton(juce::Graphics&, bool, bool) override {}
+};
+
 // Camada sobre o content da janela: fundo escurecido (bloqueia cliques no resto do app), painel de 90% com o título
 // e o botão SAIR no canto superior direito, e um ArvoreBackupComponent em modo sobreposto.
 class SobreposicaoFolderMap : public juce::Component, private juce::ComponentListener {
@@ -638,12 +646,8 @@ public:
         mapa_ = std::make_unique<ArvoreBackupComponent>(projeto);
         addAndMakeVisible(*mapa_);
         titulo_.setText(i18n::t("arvore_backup.sobreposto_titulo").replace("{nome}", nome), juce::dontSendNotification);
-        titulo_.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-        titulo_.setColour(juce::Label::textColourId, tema().textoPrimario);
-        addAndMakeVisible(titulo_);
-        btnSair_.setButtonText(i18n::t("arvore_backup.sobreposto_sair"));
-        btnSair_.setColour(juce::TextButton::buttonColourId, tema().acento);
-        btnSair_.setColour(juce::TextButton::textColourOffId, tema().textoSobreAcento);
+        // O título vai para o cabeçalho da moldura (pintado em paint()); o EXIT vira o X redondo (mesma ação).
+        btnSair_.setTooltip(i18n::t("arvore_backup.sobreposto_sair"));
         btnSair_.onClick = [this] { if (aoSair_) aoSair_(); };
         addAndMakeVisible(btnSair_);
         host.addComponentListener(this);
@@ -656,18 +660,13 @@ public:
     void paint(juce::Graphics& g) override {
         g.fillAll(juce::Colours::black.withAlpha(0.55f));
         const auto& tk = tema();
-        g.setColour(tk.fundo);
-        g.fillRoundedRectangle(painel().toFloat(), tk.raioMedio);
-        g.setColour(tk.borda);
-        g.drawRoundedRectangle(painel().toFloat(), tk.raioMedio, 1.0f);
+        juce::ignoreUnused(tk);
+        moldura::desenhar(g, moldura::geometria(painel(), false), moldura::Secao::Explorador, "Folder Map", titulo_.getText(), false);
     }
     void resized() override {
-        auto p = painel().reduced(8);
-        auto topo = p.removeFromTop(32);
-        btnSair_.setBounds(topo.removeFromRight(110).reduced(0, 2));
-        titulo_.setBounds(topo);
-        p.removeFromTop(6);
-        mapa_->setBounds(p);
+        const auto geo = moldura::geometria(painel(), false);
+        btnSair_.setBounds(geo.botaoFechar);
+        mapa_->setBounds(geo.corpo.reduced(12));
     }
 
 private:
@@ -681,7 +680,7 @@ private:
     std::function<void()> aoSair_;
     std::unique_ptr<ArvoreBackupComponent> mapa_;
     juce::Label titulo_;
-    juce::TextButton btnSair_;
+    AreaFecharMoldura btnSair_;
 };
 }  // namespace
 
@@ -825,7 +824,7 @@ public:
         opt.escapeKeyTriggersCloseButton = true;
         opt.useNativeTitleBar = true;
         opt.resizable = false;
-        opt.launchAsync();
+        moldura::lancar(opt);
     }
 
     void resized() override {
@@ -955,7 +954,7 @@ void ArvoreBackupComponent::reconstruirPropostas() {
         cor(*l.usar, juce::Colour(0xff22c55e));
         cor(*l.mesclar, tema().acento);
         cor(*l.descartar, tema().perigo);
-        l.rotulo->setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+        l.rotulo->setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro, juce::Font::bold)));
         const std::string id = p.raizId;
         const juce::String nome = p.nome;
         const int arquivos = p.arquivos;
@@ -1002,11 +1001,14 @@ void ArvoreBackupComponent::posicionarPainelPropostas() {
     const auto canvas = areaCanvas();
     const int largura = std::min(kLarguraMax, std::max(220, canvas.getWidth() - 2 * kMargem));
     const int alturaConteudo = static_cast<int>(propostas_.size()) * kLinha + 4;
-    const int alturaMax = std::max(PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 60, canvas.getHeight() - 2 * kMargem);
+    // Containers importados (celular/ingest de pasta) aparecem DEBAIXO do card _trash, que fica no topo.
+    const auto trash = boundsPastaTrash();
+    const int yPainel = trash.isEmpty() ? canvas.getY() + kMargem : trash.getBottom() + 12;
+    const int alturaMax = std::max(PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 60, canvas.getBottom() - kMargem - yPainel);
     const int altura = painelPropostasRecolhido_
                            ? PainelPropostas::kAlturaCabecalho
                            : std::min(alturaMax, PainelPropostas::kAlturaCabecalho + PainelPropostas::kAlturaRodape + 8 + alturaConteudo);
-    painelPropostas_->setBounds(canvas.getX() + kMargem, canvas.getY() + kMargem, largura, altura);
+    painelPropostas_->setBounds(canvas.getX() + kMargem, yPainel, largura, altura);
     painelPropostas_->definir(juce::String::fromUTF8("\xe2\x9a\xa0 ") + i18n::t("arvore_backup.card_novas_acao") + " (" +
                                   juce::String(propostas_.size()) + ")",
                               painelPropostasRecolhido_);
@@ -1461,6 +1463,7 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             "SELECT i.id, i.titulo, i.tipo_midia, a.caminho_relativo, a.tamanho_bytes "
             "FROM item i "
             "LEFT JOIN arquivo a ON i.id = a.item_id AND a.id = (SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1) "
+            "WHERE COALESCE(i.estado, '') != 'duplicata' "
             "ORDER BY i.criado_em"
         );
 
@@ -1493,6 +1496,10 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));
 
             try { lf.ehConversaWhatsapp = matriz::whatsapp::itemEhConversa(projeto_.projeto().registroLeitura(), lf.id); } catch (...) {}
+            // Órfãos NÃO vão para o canvas por conta própria (milhares de arquivos soltos por erro de operador):
+            // ficam guardados no card fixo _NO FOLDER. Só aparece solto o que o usuário posicionou de propósito
+            // (posição salva) ou uma conversa de WhatsApp.
+            if (layoutSalvo_.find(chaveLayout(lf.id)) == layoutSalvo_.end() && !lf.ehConversaWhatsapp) continue;
             lf.bounds = juce::Rectangle<int>(looseX, looseY, 126, 138);
             looseY += 148;
             if (looseY > looseStartY + 420) {
@@ -1625,7 +1632,7 @@ juce::Rectangle<int> ArvoreBackupComponent::areaCanvas() const {
 juce::Rectangle<int> ArvoreBackupComponent::boundsDaAba(int indice) const {
     if (indice < 0 || indice >= static_cast<int>(abas_.size())) return {};
     auto area = areaBarraAbas();
-    auto font = juce::Font(juce::FontOptions(11.0f));
+    auto font = juce::Font(juce::FontOptions(tema().tamanhoFontePequena));
     int x = area.getX() + 8;
     for (int i = 0; i < indice; ++i) {
         int textW = juce::GlyphArrangement::getStringWidthInt(font, abas_[static_cast<size_t>(i)].titulo);
@@ -1700,7 +1707,7 @@ void ArvoreBackupComponent::desenharBarraDeAbas(juce::Graphics& g) {
     g.setColour(tk.borda);
     g.fillRect(area.getX(), area.getBottom() - 1, area.getWidth(), 1);
 
-    g.setFont(juce::Font(juce::FontOptions(11.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena)));
     for (int i = 0; i < static_cast<int>(abas_.size()); ++i) {
         auto b = boundsDaAba(i);
         bool ativa = (i == abaAtiva_);
@@ -2252,8 +2259,11 @@ void ArvoreBackupComponent::desenharLinhaConexaoN8n(juce::Graphics& g, juce::Poi
         stroke.createDashedStroke(p, p, dashLengths, 2);
         g.strokePath(p, stroke);
     } else {
-        g.setColour(ativo ? tema().acento.withAlpha(0.40f) : tema().textoTerciario.withAlpha(0.15f));
-        g.strokePath(p, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        if (tema().fundo.getBrightness() > 0.5f)  // claro: conectores cinza #8C857B
+            g.setColour(juce::Colour(0xff8c857b).withAlpha(ativo ? 1.0f : 0.55f));  // conectores #8C857B
+        else
+            g.setColour(ativo ? tema().acento.withAlpha(0.40f) : tema().textoTerciario.withAlpha(0.15f));
+        g.strokePath(p, juce::PathStrokeType(ativo && tema().fundo.getBrightness() > 0.5f ? 2.0f : 2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 
@@ -2305,7 +2315,7 @@ void ArvoreBackupComponent::desenharSemPasta(juce::Graphics& g) const {
     }
     const int n = contagemSemPasta_;
     g.setColour(tk.textoSecundario);
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     g.drawText(juce::String(n) + " " + i18n::t("arvore_backup.items"), semPastaBounds_, juce::Justification::centredLeft, true);
 }
 
@@ -2316,10 +2326,7 @@ juce::Rectangle<int> ArvoreBackupComponent::boundsPastaTrash() const {
     const auto canvas = areaCanvas();
     int x = canvas.getX() + 16;
     int y = canvas.getY() + 16;
-    if (painelPropostas_ && painelPropostas_->isVisible() && !painelPropostas_->getBounds().isEmpty()) {
-        y = painelPropostas_->getBottom() + 12;
-    }
-    return juce::Rectangle<int>(x, y, 160, 56);
+    return juce::Rectangle<int>(x, y, 160, 56);  // _trash no topo; o painel de containers vem logo abaixo
 }
 
 void ArvoreBackupComponent::desenharPastaTrash(juce::Graphics& g) const {
@@ -2347,16 +2354,16 @@ void ArvoreBackupComponent::desenharPastaTrash(juce::Graphics& g) const {
     g.fillRect(header.withTrimmedTop(14.0f));
 
     g.setColour(tk.perigo);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     g.drawText(juce::String::fromUTF8("🗑 _trash"), header.reduced(8.0f, 0.0f), juce::Justification::centredLeft, true);
 
     g.setColour(tk.textoTerciario);
-    g.setFont(juce::Font(juce::FontOptions(8.5f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     g.drawText(i18n::t("arvore_backup.trash_sub"), header.reduced(8.0f, 0.0f), juce::Justification::centredRight, true);
 
     auto content = bf.reduced(8.0f, 4.0f);
     g.setColour(tk.textoPrimario);
-    g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFontePequena, juce::Font::bold)));
     juce::String contStr = juce::String(trashContagem_) + " " + i18n::t("arvore_backup.items");
     g.drawText(contStr, content.removeFromTop(16.0f), juce::Justification::centredLeft, true);
 }
@@ -2533,7 +2540,8 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
     const auto& tk = tema();
     const auto canvas = areaCanvas();
     bool isLight = (tk.fundo.getBrightness() > 0.5f);
-    juce::Colour bg = (isLight ? tk.fundo.darker(0.30f) : tk.fundo.brighter(0.30f)).brighter(0.30f);
+    // Claro: fundo pontilhado bege (poço #EDE8E0); escuro: como antes.
+    juce::Colour bg = isLight ? tk.painelAlt : (tk.fundo.brighter(0.30f)).brighter(0.30f);
     g.fillAll(bg);
 
     g.saveState();
@@ -2541,7 +2549,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     // Canvas background grid pattern (n8n style dots) — in screen space
     // Zoom afastado: os pontos ficam mais espaçados (nunca milhares); todos numa chamada só.
-    g.setColour(tema().painelAlt.withAlpha(0.4f));
+    g.setColour(isLight ? tk.borda : tema().painelAlt.withAlpha(0.4f));
     {
         float dotStep = 24.0f * zoom_;
         while (dotStep < 12.0f) dotStep *= 2.0f;
@@ -2558,7 +2566,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
 
     if (nodes_.empty() && looseFiles_.empty()) {
         g.setColour(tema().textoTerciario);
-        g.setFont(juce::Font(juce::FontOptions(14.0f)));
+        g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteCorpo)));
         g.drawText(i18n::t("arvore_backup.vazio"), canvas, juce::Justification::centred, true);
         g.restoreState();
         coluna_.paint(g);
@@ -2609,8 +2617,9 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         if (!node.bounds.toFloat().intersects(visivel)) continue;
         auto b = node.bounds.toFloat();
 
+        const float kRaioNo = isLight ? 12.0f : 8.0f;  // claro: card creme canto 12
         g.setColour(node.ativo ? tema().painel : tema().painelAlt);
-        g.fillRoundedRectangle(b, 8.0f);
+        g.fillRoundedRectangle(b, kRaioNo);
 
         // FOLDER COLOR (item 12): camada translúcida de identificação, nunca
         // preenchimento sólido — baixa opacidade, por cima do fundo do card
@@ -2618,21 +2627,25 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         // cálculo nenhum do Treemap nem tapar leitura de nome/contagem.
         if (node.hasCorCustomizada) {
             g.setColour(node.corCustomizada.withAlpha(0.22f));
-            g.fillRoundedRectangle(b, 8.0f);
+            g.fillRoundedRectangle(b, kRaioNo);
         }
 
-        if (node.selecionado && arrastando) {
+        if (node.selecionado && isLight) {
+            // Claro: seleção = borda grafite 2 px (sem zebra).
+            g.setColour(tema().acento);
+            g.drawRoundedRectangle(b.reduced(1.0f), kRaioNo, 2.0f);
+        } else if (node.selecionado && arrastando) {
             // Durante o arrasto/pan: traço sólido simples (o tracejado custa caro a cada frame).
             g.setColour(juce::Colours::white);
-            g.drawRoundedRectangle(b, 8.0f, 2.5f);
+            g.drawRoundedRectangle(b, kRaioNo, 2.5f);
         } else if (node.selecionado) {
             // Zebra (marching-ants) selection border: solid white base stroke
             // with a dashed black stroke on top, instead of tinting the fill.
             g.setColour(juce::Colours::white);
-            g.drawRoundedRectangle(b, 8.0f, 2.5f);
+            g.drawRoundedRectangle(b, kRaioNo, 2.5f);
 
             juce::Path outline;
-            outline.addRoundedRectangle(b, 8.0f);
+            outline.addRoundedRectangle(b, kRaioNo);
             juce::PathStrokeType stroke(2.5f, juce::PathStrokeType::mitered, juce::PathStrokeType::butt);
             float dashLengths[] = { 4.0f, 4.0f };
             stroke.createDashedStroke(outline, outline, dashLengths, 2);
@@ -2640,7 +2653,7 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.strokePath(outline, stroke);
         } else {
             g.setColour(node.ativo ? tema().borda : tema().textoTerciario);
-            g.drawRoundedRectangle(b, 8.0f, 1.2f);
+            g.drawRoundedRectangle(b, kRaioNo, 1.2f);
         }
 
         // A fonte acompanha o tamanho do folder (slider, escala por pasta, nível): 190x84 = 100%.
@@ -2648,8 +2661,8 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
         // Texto que sairia com menos de 5 px na tela: nem desenha (só retângulo, borda e portas).
         if (12.0f * fs * zoom_ >= 5.0f) {
             auto header = b.removeFromTop(24.0f * fs);
-            g.setColour(node.ativo ? tema().painelAlt : tema().fundo);
-            g.fillRoundedRectangle(header, 8.0f);
+            g.setColour(node.ativo ? (isLight ? tema().painelAlt : tema().painelAlt) : tema().fundo);
+            g.fillRoundedRectangle(header, kRaioNo);
             g.fillRect(header.withTrimmedTop(16.0f * fs));
 
             desenharCabecalhoNo(g, node, header);
@@ -2784,7 +2797,7 @@ void ArvoreBackupComponent::desenharIndicadorZoom(juce::Graphics& g) const {
         g.drawRoundedRectangle(detalheBounds_.toFloat().reduced(0.5f), tema().raioPequeno, 1.0f);
     }
     g.setColour(tema().textoTerciario);
-    g.setFont(juce::Font(juce::FontOptions(10.0f)));
+    g.setFont(juce::Font(juce::FontOptions(tema().tamanhoFonteMicro)));
     g.drawText("Zoom " + juce::String(static_cast<int>(zoom_ * 100)) + "%", zoomIndicadorBounds_, juce::Justification::centredLeft);
 }
 
@@ -3616,6 +3629,7 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
         if (nodes_[static_cast<size_t>(i)].bounds.toFloat().contains(canvasClick)) {
             // Mapa principal: abre a pasta num Folder Map sobreposto. Dentro da sobreposição: renomeia, como antes.
             if (sobreposto_) iniciarEdicaoInline(i);
+            else if (aoAbrirPastaJanela) aoAbrirPastaJanela(nodes_[static_cast<size_t>(i)].id, nodes_[static_cast<size_t>(i)].nome);
             else abrirSobreposicao(nodes_[static_cast<size_t>(i)].id, nodes_[static_cast<size_t>(i)].nome);
             return;
         }

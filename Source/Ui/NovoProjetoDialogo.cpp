@@ -3,6 +3,7 @@
 #include "../I18n/Strings.h"
 #include "Tokens.h"
 #include "ModalMitigacao.h"
+#include "Moldura.h"
 
 namespace matriz::ui {
 
@@ -131,8 +132,11 @@ std::shared_ptr<juce::AlertWindow> mostrarDialogoNovoProjeto(
     for (auto* linha : {linhaNome.get(), linhaPasta.get(), linhaInstituicao.get(), linhaResponsavel.get()})
         if (linha) janela->addCustomComponent(linha);
 
-    janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_criar"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    // Rodapé: Cancel | Create project (secundário antes, principal por último, à direita).
     janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_cancelar"), 0, juce::KeyPress(juce::KeyPress::escapeKey));
+    janela->addButton(matriz::i18n::t("dialogo_novo_projeto.botao_criar"), 1, juce::KeyPress(juce::KeyPress::returnKey));
+    if (auto* b = dynamic_cast<juce::TextButton*>(janela->getButton(matriz::i18n::t("dialogo_novo_projeto.botao_cancelar")))) moldura::estilizarBotao(*b, false);
+    if (auto* b = dynamic_cast<juce::TextButton*>(janela->getButton(matriz::i18n::t("dialogo_novo_projeto.botao_criar")))) moldura::estilizarBotao(*b, true);
 
     // As LinhaFormulario precisam sobreviver até o callback rodar — o
     // AlertWindow não assume posse dos componentes que recebe.
