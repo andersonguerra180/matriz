@@ -158,12 +158,10 @@ void AplicadorSobreMaterial::aplicar(const std::string& itemId, const std::strin
             st.bind(1, Value::of(itemId));
             st.bind(2, Value::of(tag));
             if (st.step()) continue;  // o arquivo já tinha: nada a fazer
+            // O índice de busca (busca_fts + busca_fts_map) é mantido pelo trigger trg_item_tag_busca_insert:
+            // inserir em busca_fts aqui duplicava as linhas e deixava as cópias fora do mapa.
             db.run("INSERT OR IGNORE INTO item_tag (id, item_id, tag) VALUES (?, ?, ?)",
                    {Value::of(matriz::model::novoUuid()), Value::of(itemId), Value::of(tag)});
-            try {
-                db.run("INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)", {Value::of(itemId), Value::of(tag)});
-                db.run("INSERT INTO busca_fts(item_id, conteudo) VALUES (?, ?)", {Value::of(itemId), Value::of("#" + tag)});
-            } catch (...) {}
             mudouTags = true;
         }
         if (mudouTags)
