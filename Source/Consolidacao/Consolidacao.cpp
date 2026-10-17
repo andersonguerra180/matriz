@@ -1163,6 +1163,10 @@ CopiaVerificada copiarVerificado(const juce::File& origem, const juce::File& des
     }
     if (hashCopia.empty() || hashCopia != r.sha256) return falhar("hash da cópia não confere");
 
+    // MAIN fiel à SOURCE também nas datas: a cópia em blocos cria o arquivo "agora"; o copyFileTo antigo preservava.
+    tmp.setLastModificationTime(origem.getLastModificationTime());
+    tmp.setCreationTime(origem.getCreationTime());
+
     std::error_code ec;
     std::filesystem::rename(tmp.getFullPathName().toStdString(), destinoFinal.getFullPathName().toStdString(), ec);
     if (ec) {
