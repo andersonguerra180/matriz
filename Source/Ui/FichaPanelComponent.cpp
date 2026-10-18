@@ -3766,11 +3766,9 @@ public:
         bool algumNulo = false;
         projeto_.obterTiposMidiaDosItens(itemIds_, tiposPresentes, algumNulo);
 
-        if (tiposPresentes.empty() && algumNulo) {
-            construirSeletorTipoMidia();
-            relayoutEExibir();
-            return;
-        }
+        // Itens sem tipo (formato que o app não reconhece: .bin, .exe, .dat, .sys...) NÃO pedem mais uma categoria no chute:
+        // seguem como "Other", e o usuário preenche na entrada (questionário) ou na ficha de metadados.
+        juce::ignoreUnused(algumNulo);
 
         // Determine general category across items
         MediaCategory cat = MediaCategory::Mixed;

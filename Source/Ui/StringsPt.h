@@ -643,7 +643,7 @@ inline const std::unordered_map<std::string, std::string>& getPortugueseStrings(
         {"grade.agrupar_por_ano", "Agrupar: ano"},
         {"grade.modo_grade", "Grade"},
         {"grade.modo_lista", "Lista"},
-        {"grade.nao_classificado", "Não classificado"},
+        {"grade.nao_classificado", "Outros"},
         {"grade.sem_ano", "Sem ano"},
         {"grade.todos_ordenados", "Todos os arquivos"},
         {"grade.tamanho_grande", "G"},
