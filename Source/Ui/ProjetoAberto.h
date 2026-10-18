@@ -893,6 +893,7 @@ public:
         std::string capaImagem;  // caminho relativo da capa (nest.capa_imagem); vazio = sem capa própria
         std::string icone;       // nest.icone; vazio = ícone da origem
         std::string nome;        // nest.nome (ficha); vazio = sem nome próprio
+        std::string tipo;        // nest.tipo_container (ex.: "audio.album"); vazio = container do IMPORT antigo ou nest comum
         int total = 0;
     };
     // item -> nest (só nests com 2+ membros). Uma consulta, usada ao montar a lista da grade.
@@ -946,7 +947,8 @@ public:
     std::vector<std::string> membrosDoNest(const std::string& nestId) const;  // por data (o mais antigo primeiro)
     std::vector<std::string> ordenarPorDataDeCriacao(const std::vector<std::string>& itemIds) const;
     std::optional<NestInfo> nestDoItem(const std::string& itemId) const;
-    // EXPORT / ZIP / HTML / Print / Watermark: de cada nest sai só a capa. Tira dos ids os membros que não são capa.
+    // EXPORT / ZIP / HTML / Print / Watermark: de cada NEST comum sai só a capa (tira dos ids os membros que não são capa).
+    // De cada CONTAINER (nest com origem) saem TODOS os membros: se algum está nos ids, os demais entram.
     std::vector<std::string> semMembrosNaoCapaDeNest(const std::vector<std::string>& itemIds) const;
     // Todos os itens do catálogo (fora do INTAKE) sem os membros não-capa; nullopt = não há nests (usar "todos").
     std::optional<std::vector<std::string>> idsDoCatalogoSemNaoCapas() const;

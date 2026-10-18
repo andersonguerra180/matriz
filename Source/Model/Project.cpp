@@ -817,6 +817,9 @@ void aplicarSchemas(matriz::db::Database& registro, matriz::db::Database& indice
     garantirColuna(registro, "nest", "questionario", "TEXT");
     // Nome do container (álbum / projeto / vídeo, vindo da ficha): é o que o container mostra no lugar do nome do arquivo-capa.
     garantirColuna(registro, "nest", "nome", "TEXT");
+    // Tipo escolhido em "Group as Project Container" (ex.: "audio.album", "videos.youtube"). NULL = container do IMPORT de antes
+    // desta coluna (vale o que `origem` diz) ou nest comum. Projetos antigos abrem iguais.
+    garantirColuna(registro, "nest", "tipo_container", "TEXT");
     garantirColuna(registro, "acervo_pasta", "proposta_id", "TEXT");
     garantirColuna(registro, "acervo_pasta", "origem_caminho", "TEXT");
     registro.exec(

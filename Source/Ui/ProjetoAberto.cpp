@@ -4583,9 +4583,9 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             "SELECT ni.item_id, ni.nest_id, "
             "COALESCE(n.capa_item_id, (SELECT x.item_id FROM nest_item x JOIN item i2 ON i2.id = x.item_id "
             "                          WHERE x.nest_id = ni.nest_id ORDER BY i2.criado_em, i2.codigo_acervo LIMIT 1)), "
-            "n.origem, n.capa_imagem, n.icone, n.nome "
+            "n.origem, n.capa_imagem, n.icone, n.nome, n.tipo_container "
             "FROM nest_item ni JOIN nest n ON n.id = ni.nest_id");
-        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe;
+        std::map<std::string, std::string> origemDe, capaImagemDe, iconeDe, nomeDe, tipoDe;
         while (st.step()) {
             membros[st.columnText(1)].push_back(st.columnText(0));
             capaDe[st.columnText(1)] = st.columnIsNull(2) ? std::string() : st.columnText(2);
@@ -4593,6 +4593,7 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             if (!st.columnIsNull(4)) capaImagemDe[st.columnText(1)] = st.columnText(4);
             if (!st.columnIsNull(5)) iconeDe[st.columnText(1)] = st.columnText(5);
             if (!st.columnIsNull(6)) nomeDe[st.columnText(1)] = st.columnText(6);
+            if (!st.columnIsNull(7)) tipoDe[st.columnText(1)] = st.columnText(7);
         }
         for (const auto& [nid, itens] : membros) {
             if (itens.size() < 2) continue;  // nest de um arquivo só não existe
@@ -4603,6 +4604,7 @@ std::map<std::string, ProjetoAberto::NestInfo> ProjetoAberto::mapaDeNests(matriz
             if (auto cit = capaImagemDe.find(nid); cit != capaImagemDe.end()) info.capaImagem = cit->second;
             if (auto iit = iconeDe.find(nid); iit != iconeDe.end()) info.icone = iit->second;
             if (auto nmit = nomeDe.find(nid); nmit != nomeDe.end()) info.nome = nmit->second;
+            if (auto tit = tipoDe.find(nid); tit != tipoDe.end()) info.tipo = tit->second;
             info.total = static_cast<int>(itens.size());
             for (const auto& id : itens) out[id] = info;
         }
@@ -5193,9 +5195,17 @@ std::vector<std::string> ProjetoAberto::semMembrosNaoCapaDeNest(const std::vecto
     if (nests.empty()) return itemIds;
     std::vector<std::string> out;
     out.reserve(itemIds.size());
+    std::set<std::string> ja(itemIds.begin(), itemIds.end());
+    std::set<std::string> containersAcrescentados;
     for (const auto& id : itemIds) {
         auto it = nests.find(id);
-        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+        const bool container = it != nests.end() && !it->second.origem.empty();
+        if (it == nests.end() || it->second.capaId == id || container) out.push_back(id);  // só NEST comum perde os não-capa
+        // CONTAINER (nest com origem): sai o conjunto inteiro, não só a capa. Os membros que faltam entram aqui.
+        if (container && containersAcrescentados.insert(it->second.nestId).second) {
+            for (const auto& m : membrosDoNest(it->second.nestId))
+                if (ja.insert(m).second) out.push_back(m);
+        }
     }
     return out;
 }
@@ -5209,7 +5219,7 @@ std::optional<std::vector<std::string>> ProjetoAberto::idsDoCatalogoSemNaoCapas(
     while (st.step()) {
         const std::string id = st.columnText(0);
         auto it = nests.find(id);
-        if (it == nests.end() || it->second.capaId == id) out.push_back(id);
+        if (it == nests.end() || it->second.capaId == id || !it->second.origem.empty()) out.push_back(id);  // container: todos os membros
     }
     return out;
 }

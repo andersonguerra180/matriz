@@ -31,7 +31,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"MIDI", "Arquivo MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo de Artista")},
         {"Artist Backup", "Backup do Artista"},
-        {"Demo Tape", "Fita Demo"},
+        {"Demo", "Demo"},
+        {"Demo Tape", "Demo"},  // valor antigo: lido como Demo
+        {"Raw Audio", juce::String::fromUTF8("Áudio Bruto")},
         {"Live Concert", "Concerto ao Vivo"},
         {"VS", "VS"},
         {"Impulse Response", "Resposta ao Impulso (IR)"},
@@ -53,6 +55,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"YouTube Video", juce::String::fromUTF8("Vídeo do YouTube")},
         {"360 Video", juce::String::fromUTF8("Vídeo 360°")},
         {"Making Of", juce::String::fromUTF8("Making Of")},
+        {"Tutorial", "Tutorial"},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -64,6 +67,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
         {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
+        {"Exhibition", juce::String::fromUTF8("Exposição")},
+        {"Raw Photos", "Fotos RAW"},
+        {"Technical Photography", juce::String::fromUTF8("Fotografia Técnica")},
         // Docs
         {"Documentation", juce::String::fromUTF8("Documentação")},
         {"Book", "Livro"},
@@ -73,6 +79,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Text", "Texto"},
         {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
+        {"Personal Document", "Documento Pessoal"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
@@ -97,6 +104,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
     if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
+    if (!paraPt && val.equalsIgnoreCase("Demo Tape")) return "Demo";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;

@@ -331,7 +331,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"MIDI", "MIDI"},
         {"Artist Catalog", juce::String::fromUTF8("Catálogo do Artista")},
         {"Artist Backup", "Backup do Artista"},
-        {"Demo Tape", "Fita Demo"},
+        {"Demo", "Demo"},
+        {"Demo Tape", "Demo"},  // valor antigo: lido como Demo
+        {"Raw Audio", juce::String::fromUTF8("Áudio Bruto")},
         {"Live Concert", "Concerto ao Vivo"},
         {"VS", "VS"},
         {"Impulse Response", "Resposta ao Impulso (IR)"},
@@ -353,6 +355,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"YouTube Video", juce::String::fromUTF8("Vídeo do YouTube")},
         {"360 Video", juce::String::fromUTF8("Vídeo 360°")},
         {"Making Of", juce::String::fromUTF8("Making Of")},
+        {"Tutorial", "Tutorial"},
         // Image
         {"Photo", "Foto"},
         {"Artwork", juce::String::fromUTF8("Arte / Ilustração")},
@@ -364,6 +367,9 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Logo", "Logotipo"},
         {"3D", juce::String::fromUTF8("Modelagem 3D")},
         {"YouTube Thumbnail", juce::String::fromUTF8("Miniatura do YouTube")},
+        {"Exhibition", juce::String::fromUTF8("Exposição")},
+        {"Raw Photos", "Fotos RAW"},
+        {"Technical Photography", juce::String::fromUTF8("Fotografia Técnica")},
         // Item "CONTENT — imagens também podem ser documentos": uma imagem
         // (JPG/PNG/TIFF/etc.) pode ser um documento digitalizado — isso é
         // classificação semântica de CONTENT, não altera o tipo técnico
@@ -378,6 +384,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
         {"Text", "Texto"},
         {"Journal", juce::String::fromUTF8("Diário")},
         {"Contract", "Contrato"},
+        {"Personal Document", "Documento Pessoal"},
         {"Manual", "Manual"},
         {"Report", juce::String::fromUTF8("Relatório")},
         {"Reference", juce::String::fromUTF8("Referência / Pesquisa")},
@@ -403,6 +410,7 @@ inline const std::vector<std::pair<juce::String, juce::String>>& mapaTraducoesCo
 inline juce::String traduzirContent(const juce::String& val, bool paraPt) {
     if (val.isEmpty()) return {};
     if (!paraPt && val.equalsIgnoreCase("Spreadsheet")) return "Sheet";  // nome antigo
+    if (!paraPt && val.equalsIgnoreCase("Demo Tape")) return "Demo";  // nome antigo
     for (const auto& par : mapaTraducoesContent()) {
         if (paraPt) {
             if (val.equalsIgnoreCase(par.first)) return par.second;
@@ -418,16 +426,16 @@ inline std::vector<juce::String> opcoesContentPorCategoria(MediaCategory cat, bo
     if (cat == MediaCategory::Audio) {
         keys = {"Album", "EP", "Single", "Compilation", "Soundtrack", "Stems", "Multitracks",
                 "Sample Pack", "Sample", "Preset", "DAW Session", "Field Recording", "Ambience Recording", "Voiceover", "Speech", "Sound FX", "MIDI",
-                "Artist Catalog", "Artist Backup", "Demo Tape", "Live Concert", "VS", "Impulse Response", "Mix", "Master"};
+                "Artist Catalog", "Artist Backup", "Demo", "Live Concert", "VS", "Impulse Response", "Mix", "Master", "Raw Audio"};
     } else if (cat == MediaCategory::Video) {
         keys = {"Raw Footage", "Home Video", "Music Video", "Film", "Documentary",
                 "Corporate Video", "Commercial", "Live Performance", "NLE Project", "Social Media Video",
-                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of"};
+                "WhatsApp Video", "TV Video", "YouTube Video", "360 Video", "Making Of", "Tutorial"};
     } else if (cat == MediaCategory::Image) {
         keys = {"Photo", "Artwork", "Album Cover", "Poster", "Press / Promotional", "Image Edit Project",
-                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Document"};
+                "Graphics", "Logo", "3D", "YouTube Thumbnail", "Exhibition", "Raw Photos", "Technical Photography", "Document"};
     } else if (cat == MediaCategory::Docs) {
-        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Manual", "Report", "Reference",
+        keys = {"Documentation", "Release", "Article", "Press", "Book", "Text", "Journal", "Contract", "Personal Document", "Manual", "Report", "Reference",
                 "Technical Documentation", "Sheet", "Zip", "Rar", "PDF", "Doc/Docx", "Markdown",
                 "Website", "DAW", "NLE", "CSV", "MTZ Collection", "BKM Catalog"};
     } else {
