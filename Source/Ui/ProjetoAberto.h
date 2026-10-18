@@ -49,6 +49,10 @@ struct ItemResumo {
     std::string nestCapaImagem;  // caminho absoluto da capa do container (vinil/fita), vazio se não tem
     std::string nestIcone;       // recurso do ícone escolhido na ficha (ex.: ci_daw_pro_tools_png), vazio = ícone da origem
     std::string nestNome;        // nome do container (ficha); a capa do container mostra este nome em `titulo`
+    // Produção musical: etapa do arquivo (REC | MIX | MSTR | FINAL, campo etapa_producao) e se é a melhor versão / BEST TAKE
+    // (campo versao_escolhida). Vazio / false = sem etapa / não escolhida. Também vale para vídeos de um container.
+    std::string etapaProducao;
+    bool versaoEscolhida = false;
     bool sincronizado = false; // halo (§11.2) — pelo menos um arquivo do item com estado_sincronizacao='sincronizado'
 
     // Só preenchido pra tipo_midia="release" (campos release.artista_principal
@@ -287,6 +291,8 @@ public:
 
     // Valor atual de um campo (nível raiz, nivel_indice=0) do item, ou
     // nullopt se nunca foi preenchido.
+    // Campo da ficha no nível raiz (item_campo, fonte 'humano'): etapa_producao, versao_escolhida...
+    void definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor);
     std::optional<std::string> valorCampo(const std::string& itemId, const std::string& nivel, int nivelIndice,
                                            const std::string& campoId) const;
 

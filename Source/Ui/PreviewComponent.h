@@ -58,6 +58,9 @@ private:
 
     std::unique_ptr<juce::TextButton> btnAnterior_;
     std::unique_ptr<juce::TextButton> btnProximo_;
+    std::unique_ptr<juce::TextButton> tglVersao_;  // BEST TAKE: marca a melhor versão (mix/master de música, vídeo de container)
+    std::vector<std::unique_ptr<juce::TextButton>> btnsEtapa_;  // REC / MIX / MSTR: etapa do arquivo num container de music production
+    void atualizarToggleVersao();
     std::unique_ptr<juce::Label> cabecalhoTitulo_;
 
     juce::Image imagemPrincipal_;

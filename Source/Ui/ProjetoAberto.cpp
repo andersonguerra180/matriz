@@ -353,7 +353,9 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
         "i.dc_subject, "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'dc_created'), "
         "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'data_criacao'), "
-        "i.lista "
+        "i.lista, "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'etapa_producao'), "
+        "(SELECT valor FROM item_campo c WHERE c.item_id = i.id AND c.nivel = 'raiz' AND c.nivel_indice = 0 AND c.campo_id = 'versao_escolhida') "
         "FROM item i "
         "LEFT JOIN arquivo a ON a.item_id = i.id AND a.id = ("
         "  SELECT a2.id FROM arquivo a2 WHERE a2.item_id = i.id ORDER BY a2.eh_master DESC, a2.id LIMIT 1"
@@ -432,6 +434,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
             std::string lst = stmt.columnText(30);
             if (!lst.empty()) r.lista = lst;
         }
+        if (!stmt.columnIsNull(31)) r.etapaProducao = stmt.columnText(31);
+        if (!stmt.columnIsNull(32)) r.versaoEscolhida = stmt.columnText(32) == "true";
         if (!stmt.columnIsNull(28)) r.dataCriacao = stmt.columnText(28);
         else if (!stmt.columnIsNull(29)) r.dataCriacao = stmt.columnText(29);
 
@@ -1277,6 +1281,17 @@ std::optional<std::string> ProjetoAberto::valorCampo(const std::string& itemId, 
     stmt.bind(4, matriz::db::Value::of(campoId));
     if (stmt.step() && !stmt.columnIsNull(0)) return stmt.columnText(0);
     return std::nullopt;
+}
+
+void ProjetoAberto::definirCampoRaiz(const std::string& itemId, const std::string& campoId, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || itemId.empty()) return;
+    projeto_->registro().run(
+        "INSERT INTO item_campo (id, item_id, nivel, nivel_indice, campo_id, valor, fonte, atualizado_em) "
+        "VALUES (?, ?, 'raiz', 0, ?, ?, 'humano', ?) "
+        "ON CONFLICT(item_id, nivel, nivel_indice, campo_id) DO UPDATE SET valor = excluded.valor, fonte = 'humano', atualizado_em = excluded.atualizado_em",
+        {matriz::db::Value::of(matriz::model::novoUuid()), matriz::db::Value::of(itemId), matriz::db::Value::of(campoId),
+         matriz::db::Value::of(valor), matriz::db::Value::of(matriz::model::agoraIso8601())});
+    EventBus::obterInstancia().dispararItemAlterado(itemId, "campo");
 }
 
 std::vector<std::string> ProjetoAberto::papeisArquivoPresentes(const std::string& itemId) const {

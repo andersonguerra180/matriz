@@ -431,7 +431,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (it == nullptr) return;
 
     auto tit = projeto_.lerMetadado(itemId, "titulo");
-    if (tit.has_value()) {
+    if (tit.has_value() && !(it->nestCapa && !it->nestNome.empty())) {  // a capa do container mostra o nome do container
         it->titulo = *tit;
         if (!tit->empty()) it->nomeOriginalArquivo = *tit;
     }
@@ -445,6 +445,8 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     it->subject = subj.has_value() && !subj->empty() ? subj : std::nullopt;
     it->marcadoPublicacao = projeto_.itemMarcadoPublicacao(itemId);
     it->tags = projeto_.lerTags(itemId);
+    it->etapaProducao = projeto_.valorCampo(itemId, "raiz", 0, "etapa_producao").value_or("");
+    it->versaoEscolhida = projeto_.valorCampo(itemId, "raiz", 0, "versao_escolhida").value_or("") == "true";
     it->metadadosEditados = true;
     // D3/item 7: marcado_revisado (atalho E) e watermark (W) não tinham
     // sync ao vivo entre a janela de Preview e a grade — H/K/P já eram
@@ -2840,6 +2842,30 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.setColour(juce::Colours::white);
                 g.setFont(font9Bold);
                 g.drawText(ext, badge, juce::Justification::centred);
+            }
+
+            // Produção musical: selo da etapa (REC / MIX / MSTR / FINAL) sob o selo do tipo; a melhor versão (BEST TAKE) ganha
+            // borda azul e estrela. Vale também para vídeos de um container.
+            if (!item.etapaProducao.empty() && !modoQuarentena_) {
+                juce::Colour corEtapa = item.etapaProducao == "REC" ? juce::Colour(0xffe5484d) : item.etapaProducao == "MIX" ? juce::Colour(0xff3b82f6)
+                                        : item.etapaProducao == "MSTR" ? juce::Colour(0xff8b5cf6) : juce::Colour(0xff22a06b);
+                const juce::String rotuloEtapa = juce::String(item.etapaProducao);
+                const int w = juce::jmax(34, static_cast<int>(rotuloEtapa.length()) * 8 + 12);
+                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + (ext.isNotEmpty() ? 30 : 8), w, 18);
+                g.setColour(corEtapa);
+                g.fillRoundedRectangle(selo.toFloat(), 9.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText(rotuloEtapa, selo, juce::Justification::centred);
+            }
+            if (item.versaoEscolhida && !modoQuarentena_) {
+                g.setColour(juce::Colour(0xff2f7df6));
+                g.drawRoundedRectangle(areaImagem.toFloat().reduced(1.5f), tk.raioPequeno, 3.5f);
+                const juce::Rectangle<float> estrela(static_cast<float>(areaImagem.getX() + 8), static_cast<float>(areaImagem.getBottom() - 30), 22.0f, 22.0f);
+                g.fillEllipse(estrela);
+                g.setColour(juce::Colours::white);
+                g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
+                g.drawText(juce::String::fromUTF8("\xe2\x98\x85"), estrela.toNearestInt(), juce::Justification::centred);
             }
 
             // Duration badge (bottom-right of thumbnail, or bottom-left if in quarantine mode)
