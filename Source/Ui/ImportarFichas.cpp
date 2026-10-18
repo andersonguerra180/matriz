@@ -1,4 +1,6 @@
 #include "ImportarMenu.h"
+#include "ContainerVisual.h"
+#include "EventBus.h"
 #include "GeoAcoes.h"
 #include "ProjetoAberto.h"
 
@@ -1056,7 +1058,23 @@ void editarQuestionarioDoContainer(PainelOverlay& overlay, ProjetoAberto& projet
                                      tirar.tags.end());
             }
             const bool ok = proj->reaplicarQuestionarioDoContainer(nestId, tirar, *novo, questionarioParaJson(*novo));
-            if (aoFechar) aoFechar(ok);
+            // A capa nao e metadado dos membros: a ficha so a guardava nas respostas. Capa trocada/removida
+            // la dentro tem que chegar no container (canvas, mosaico, Folder Map). Imagem em background.
+            const std::string capaAntiga = antigo != nullptr ? antigo->capaContainer : std::string();
+            const std::string capaNova = novo->capaContainer;
+            if (!ok || capaNova == capaAntiga) { if (aoFechar) aoFechar(ok); return; }
+            const juce::File capaPasta = proj->projeto().pasta();
+            juce::Thread::launch([proj, nestId, capaNova, capaPasta, aoFechar] {
+                const bool trocou = capaNova.empty() ? proj->removerCapaDoContainer(nestId)
+                                                     : proj->definirCapaDoContainer(nestId, juce::File(juce::String::fromUTF8(capaNova.c_str())));
+                juce::MessageManager::callAsync([nestId, capaPasta, trocou, aoFechar] {
+                    if (trocou) {
+                        esquecerImagemDaCapa(capaPasta.getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg").getFullPathName());
+                        EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+                    }
+                    if (aoFechar) aoFechar(true);
+                });
+            });
         },
         nullptr, &respostas);
 }
