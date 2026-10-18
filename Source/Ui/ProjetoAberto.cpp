@@ -4732,6 +4732,37 @@ bool ProjetoAberto::trocarTipoDoContainer(const std::string& nestId, const std::
     return true;
 }
 
+int ProjetoAberto::aplicarContextoDeImportacao(const std::vector<std::string>& itemIds, const matriz::ingest::SobreMaterial& sobre,
+                                               const std::string& videoPrincipalId) {
+    if (somenteLeitura_ || !projeto_ || itemIds.empty()) return 0;
+    auto& db = projeto_->registro();
+    matriz::ingest::SobreMaterial base = sobre;
+    base.collectionType.clear();  // CONTENT segue a regra propria (so onde vazio)
+    matriz::ingest::SobreMaterial semVideo = base;
+    semVideo.camposDoVideo.clear();
+    std::unique_lock<std::recursive_mutex> escrita(projeto_->writeMutex());
+    int tocados = 0;
+    try {
+        db.exec("BEGIN IMMEDIATE");
+        {
+            matriz::ingest::AplicadorSobreMaterial comVideo(db, base);
+            matriz::ingest::AplicadorSobreMaterial sem(db, semVideo);
+            for (const auto& id : itemIds) {
+                if (id == videoPrincipalId) comVideo.aplicar(id); else sem.aplicar(id);
+                ++tocados;
+            }
+        }
+        db.exec("COMMIT");
+    } catch (const std::exception& e) {
+        try { db.exec("ROLLBACK"); } catch (...) {}
+        juce::Logger::writeToLog("aplicarContextoDeImportacao: " + juce::String(e.what()));
+        return 0;
+    }
+    escrita.unlock();
+    juce::MessageManager::callAsync([itemIds] { EventBus::obterInstancia().dispararItensAlterados(itemIds, "metadado"); });
+    return tocados;
+}
+
 int ProjetoAberto::definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor) {
     if (somenteLeitura_ || !projeto_ || itemIds.empty() || valor.empty()) return 0;
     auto& db = projeto_->registro();

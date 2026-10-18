@@ -2,7 +2,10 @@
 
 #include "../I18n/Strings.h"
 #include "../Ingest/LeituraTecnica.h"
+#include "../Ingest/SobreMaterial.h"
 #include "EventBus.h"
+#include "ImportarMenu.h"
+#include "JanelaPlayerDdp.h"
 #include "ProjetoAberto.h"
 
 #include <map>
@@ -202,6 +205,47 @@ void mostrarEscolherTipo(PainelOverlay& overlay, CategoriaContainer dominante, i
     });
 }
 
+// O que os membros oferecem aos tipos com player: o video principal (o maior), uma imagem (vira a thumbnail/capa), um roteiro em
+// texto simples e se ha uma pasta DDP.
+struct AnaliseMembros {
+    std::string videoId;
+    juce::File imagem, roteiro;
+    bool temDdp = false;
+};
+
+AnaliseMembros analisarMembros(ProjetoAberto& projeto, const std::vector<std::string>& ids) {
+    AnaliseMembros a;
+    std::vector<juce::File> arquivos;
+    juce::int64 maior = -1;
+    for (const auto& id : ids) {
+        const auto info = projeto.arquivoPrincipal(id);
+        if (!info) continue;
+        const juce::File f(info->caminhoAbsoluto);
+        arquivos.push_back(f);
+        switch (categoriaDoArquivo(f)) {
+            case CategoriaConteudo::Video:
+                if (f.getSize() > maior) { maior = f.getSize(); a.videoId = id; }
+                break;
+            case CategoriaConteudo::Image:
+                if (a.imagem == juce::File() && f.existsAsFile()) a.imagem = f;
+                break;
+            default:
+                if (a.roteiro == juce::File() && f.existsAsFile() && (f.hasFileExtension("txt") || f.hasFileExtension("md"))) a.roteiro = f;
+                break;
+        }
+    }
+    a.temDdp = JanelaPlayerDdp::acharPastaDdp(arquivos) != juce::File();
+    return a;
+}
+
+// O que o tipo exige e a selecao nao tem: a mesma mensagem que o IMPORT mostra (YouTube sem video, DDP sem a pasta DDP).
+juce::String avisoDoTipo(const TipoContainer& t, const AnaliseMembros& a) {
+    const std::string origem = t.origemPlayer;
+    if (origem == "youtube" && a.videoId.empty()) return matriz::i18n::t("imp.ficha.youtube.sem_video");
+    if (origem == "ddp" && !a.temDdp) return matriz::i18n::t("ddp.err.notFound");
+    return {};
+}
+
 void aoTerminarFluxo(const HospedeOverlay& h, bool mudou) {
     if (h.fechar) h.fechar();
     if (mudou && h.aoMudarDados) h.aoMudarDados();
@@ -227,6 +271,90 @@ void criarEGravar(ProjetoAberto& projeto, std::vector<std::string> ids, const Ti
     });
 }
 
+// Tipo com player: grava o container EXATAMENTE como o IMPORT (CONTENT da ficha, tags, ícone, capa, nome, questionário guardado).
+// `nestExistente` vazio = cria o container; senão troca o tipo do que já existe.
+void gravarComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::string nestExistente, const TipoContainer& tipo, juce::String nomeDigitado,
+                     std::shared_ptr<const matriz::ingest::SobreMaterial> contexto, AnaliseMembros analise, HospedeOverlay h) {
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    const std::string tipoId = tipo.id;
+    juce::Thread::launch([proj, vivo, ids, nestExistente, tipoId, nomeDigitado, contexto, analise, h] {
+        if (vivo.expired()) return;
+        const TipoContainer* t = tipoDeContainer(tipoId);
+        if (t == nullptr) return;
+        const matriz::ingest::SobreMaterial ctx = contexto != nullptr ? *contexto : matriz::ingest::SobreMaterial{};
+        std::string nestId;
+        if (nestExistente.empty()) {
+            const juce::String nome = ctx.nomeContainer.empty() ? (nomeDigitado.isNotEmpty() ? nomeDigitado : nomePadraoDoContainer(*proj, ids, rotuloDoTipoContainer(*t)))
+                                                               : juce::String::fromUTF8(ctx.nomeContainer.c_str());
+            nestId = proj->criarContainerDeTipo(ids, t->id, origemDoTipoContainer(*t), nome.toStdString());
+        } else if (proj->trocarTipoDoContainer(nestExistente, t->id, origemDoTipoContainer(*t))) {
+            nestId = nestExistente;
+            if (!ctx.nomeContainer.empty()) proj->definirNomeDoContainer(nestId, ctx.nomeContainer);
+        }
+        if (!nestId.empty()) {
+            try {
+                matriz::ingest::SobreMaterial aplicar = ctx;
+                // YouTube: um roteiro em texto simples preenche a descrição do vídeo quando ela não foi digitada (igual ao IMPORT).
+                if (std::string(t->origemPlayer) == "youtube" && analise.roteiro != juce::File()) {
+                    bool temDescricao = false;
+                    for (const auto& c : aplicar.camposDoVideo) if (c.first == "dc_description" && !c.second.empty()) temDescricao = true;
+                    const juce::String texto = analise.roteiro.loadFileAsString().trim().substring(0, 4000);
+                    if (!temDescricao && texto.isNotEmpty()) aplicar.camposDoVideo.push_back({ "dc_description", texto.toStdString() });
+                }
+                proj->aplicarContextoDeImportacao(ids, aplicar, analise.videoId);
+                aplicarContentDoTipo(*proj, ids, *t, ctx.collectionType);
+                if (!ctx.iconeContainer.empty()) proj->definirIconeDoContainer(nestId, ctx.iconeContainer);
+                if (!ctx.folhaId.empty()) proj->definirQuestionarioDoContainer(nestId, questionarioParaJson(ctx));  // para o Edit Project Info
+                std::string capa = ctx.capaContainer;
+                const bool automatica = nestExistente.empty() && std::string(t->origemPlayer) == "youtube";  // trocar o tipo não troca a capa que já existe
+                if (capa.empty() && automatica && analise.imagem != juce::File())
+                    capa = analise.imagem.getFullPathName().toStdString();  // a thumbnail da seleção é a capa
+                if (!capa.empty()) proj->definirCapaDoContainer(nestId, juce::File(juce::String::fromUTF8(capa.c_str())));
+                else if (automatica) proj->definirCapaDoContainerComFrameDeVideo(nestId, true);
+            } catch (...) {}
+        }
+        const bool ok = !nestId.empty();
+        juce::MessageManager::callAsync([vivo, h, ok] {
+            if (vivo.expired()) return;
+            if (ok) EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
+            aoTerminarFluxo(h, ok);
+        });
+    });
+}
+
+// Tipo com player: confere o que a seleção tem, mostra a ficha do card do IMPORT (sem a etapa de escolher arquivos) e grava.
+void fluxoComPlayer(ProjetoAberto& projeto, std::vector<std::string> ids, std::string nestExistente, const TipoContainer& tipo, juce::String nome,
+                    juce::Component::SafePointer<PainelOverlay> overlay, HospedeOverlay h) {
+    ProjetoAberto* proj = &projeto;
+    const auto vivo = projeto.tokenVida();
+    const std::string tipoId = tipo.id;
+    juce::Thread::launch([proj, vivo, ids, nestExistente, tipoId, nome, overlay, h] {
+        if (vivo.expired()) return;
+        const auto analise = analisarMembros(*proj, ids);
+        juce::MessageManager::callAsync([proj, vivo, ids, nestExistente, tipoId, nome, overlay, h, analise] {
+            if (vivo.expired()) return;
+            const TipoContainer* t = tipoDeContainer(tipoId);
+            if (t == nullptr || overlay == nullptr) { aoTerminarFluxo(h, false); return; }
+            if (const auto aviso = avisoDoTipo(*t, analise); aviso.isNotEmpty()) {
+                aoTerminarFluxo(h, false);
+                juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon, rotuloDoTipoContainer(*t), aviso);
+                return;
+            }
+            mostrarFichaImportar(*overlay, t->id, [proj, vivo, ids, nestExistente, tipoId, nome, h, analise](bool continuar, std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha) {
+                juce::MessageManager::callAsync([proj, vivo, ids, nestExistente, tipoId, nome, h, analise, continuar, daFicha] {
+                    if (vivo.expired()) return;
+                    const TipoContainer* t2 = tipoDeContainer(tipoId);
+                    if (!continuar || t2 == nullptr) { aoTerminarFluxo(h, false); return; }
+                    if (h.fechar) h.fechar();
+                    const auto contexto = mesclarContextosImportar(contextoDaFolhaImportar(t2->id), daFicha);
+                    gravarComPlayer(*proj, ids, nestExistente, *t2, nome, contexto, analise, h);
+                });
+            });
+        });
+    });
+}
+
 }  // namespace
 
 void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string> itemIds, HospedeOverlay h) {
@@ -243,11 +371,13 @@ void agruparComoProjectContainer(ProjetoAberto& projeto, std::vector<std::string
             if (vivo.expired()) return;
             PainelOverlay* overlay = h.abrir();
             if (overlay == nullptr) return;
+            const juce::Component::SafePointer<PainelOverlay> ov(overlay);
             mostrarEscolherTipo(*overlay, dominante, static_cast<int>(itemIds.size()), pasta, nullptr, false,
-                [proj, vivo, itemIds, h](const TipoContainer* tipo, juce::String nome) {
-                    juce::MessageManager::callAsync([proj, vivo, itemIds, h, tipo, nome] {
+                [proj, vivo, itemIds, h, ov](const TipoContainer* tipo, juce::String nome) {
+                    juce::MessageManager::callAsync([proj, vivo, itemIds, h, tipo, nome, ov] {
                         if (vivo.expired()) return;
                         if (tipo == nullptr) { aoTerminarFluxo(h, false); return; }
+                        if (tipo->temPlayer()) { fluxoComPlayer(*proj, itemIds, {}, *tipo, nome, ov, h); return; }  // a ficha reusa o mesmo overlay
                         if (h.fechar) h.fechar();
                         criarEGravar(*proj, itemIds, *tipo, nome, h);
                     });
@@ -264,11 +394,13 @@ void mudarTipoDoContainer(ProjetoAberto& projeto, const std::string& nestId, Hos
     const TipoContainer* atual = tipoDeContainerDaOrigem(projeto.tipoDoContainer(nestId), projeto.origemDoContainer(nestId));
     ProjetoAberto* proj = &projeto;
     const auto vivo = projeto.tokenVida();
+    const juce::Component::SafePointer<PainelOverlay> ov(overlay);
     mostrarEscolherTipo(*overlay, atual != nullptr ? atual->categoria : CategoriaContainer::Outro, static_cast<int>(membros.size()), {}, atual, true,
-        [proj, vivo, nestId, membros, h](const TipoContainer* tipo, juce::String) {
-            juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo] {
+        [proj, vivo, nestId, membros, h, ov](const TipoContainer* tipo, juce::String) {
+            juce::MessageManager::callAsync([proj, vivo, nestId, membros, h, tipo, ov] {
                 if (vivo.expired()) return;
                 if (tipo == nullptr) { aoTerminarFluxo(h, false); return; }
+                if (tipo->temPlayer()) { fluxoComPlayer(*proj, membros, nestId, *tipo, {}, ov, h); return; }
                 if (h.fechar) h.fechar();
                 const std::string tipoId = tipo->id;
                 juce::Thread::launch([proj, vivo, nestId, membros, h, tipoId] {

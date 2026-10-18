@@ -915,6 +915,11 @@ public:
     // CONTENT (collection_type) só onde está vazio, numa transação só. Devolve quantos itens receberam. O evento "metadado"
     // sai pela message thread.
     int definirContentSeVazio(const std::vector<std::string>& itemIds, const std::string& valor);
+    // O contexto da ficha do IMPORT (tags, source medium, SUBJECT, notas, geo, campos...) aplicado a arquivos que ja estao no projeto,
+    // numa transacao. CONTENT fica de fora (ver definirContentSeVazio); os campos so do video (camposDoVideo) vao so para
+    // `videoPrincipalId`. Fora da message thread. Devolve quantos itens foram tocados.
+    int aplicarContextoDeImportacao(const std::vector<std::string>& itemIds, const matriz::ingest::SobreMaterial& sobre,
+                                    const std::string& videoPrincipalId);
     // Capa do container (vinil, fita): reduz a imagem, grava em .miniaturas e guarda o caminho no nest. Roda fora da message thread.
     bool definirCapaDoContainer(const std::string& nestId, const juce::File& imagem);
     // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
