@@ -656,6 +656,7 @@ target_sources(matriz PRIVATE
     Source/Ui/ImportarFichas.cpp
     Source/Ui/ContainerVisual.cpp
     Source/Ui/GeoAcoes.cpp
+    Source/Ui/CapaProjeto.cpp
     Source/Ui/JanelaContainerDdp.cpp
     Source/Ui/JanelaPlayerDdp.cpp
     Source/Ddp/DdpModel.cpp

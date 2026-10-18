@@ -908,8 +908,13 @@ public:
     // Ícone do container escolhido na ficha (nome do recurso embutido). Fora da message thread.
     bool definirIconeDoContainer(const std::string& nestId, const std::string& nomeDoRecurso);
     bool definirNomeDoContainer(const std::string& nestId, const std::string& nome);
+    // Tira a capa própria do container (volta ao ícone do tipo). Também limpa a resposta "capa" do questionário guardado.
+    bool removerCapaDoContainer(const std::string& nestId);
+    // Atualiza UMA resposta do questionário guardado (valor vazio = remove). Mantém Edit Project Info coerente com a capa trocada fora dele.
+    void definirRespostaDoQuestionario(const std::string& nestId, const std::string& chave, const std::string& valor);
     // Questionário inicial do container (JSON {"folha": ..., "respostas": {...}}), guardado para ser editado depois.
     std::string questionarioDoContainer(const std::string& nestId) const;
+    std::string origemDoContainer(const std::string& nestId) const;  // nest.origem ("" = não é container)
     void definirQuestionarioDoContainer(const std::string& nestId, const std::string& json);
     // Editar o questionário: tira dos arquivos do container o que o contexto ANTIGO tinha posto, aplica o NOVO e guarda o JSON.
     // Uma transação só (container pequeno); message thread.

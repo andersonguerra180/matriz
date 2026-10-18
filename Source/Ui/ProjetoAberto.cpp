@@ -408,7 +408,8 @@ std::vector<ItemResumo> ProjetoAberto::listarItensDeProjeto(matriz::db::Database
                 r.nestCapaImagem = pastaProjeto.getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
             r.nestIcone = nit->second.icone;
             r.nestNome = nit->second.nome;
-            if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;  // a capa do container mostra o nome do container
+            // A capa do container mostra o NOME DO CONTAINER (da ficha) ou, sem nome, o rótulo do tipo — nunca o nome de um arquivo.
+            if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
         }
 
         std::string masterArqId = stmt.columnIsNull(18) ? "" : stmt.columnText(18);
@@ -1090,7 +1091,7 @@ std::vector<ItemResumo> ProjetoAberto::listarItensEmQuarentena() const {
                         r.nestCapaImagem = projeto_->pasta().getChildFile(juce::String(nit->second.capaImagem)).getFullPathName().toStdString();
                     r.nestIcone = nit->second.icone;
                     r.nestNome = nit->second.nome;
-                    if (r.nestCapa && !r.nestNome.empty()) r.titulo = r.nestNome;
+                    if (r.nestCapa && !r.nestOrigem.empty()) r.titulo = !r.nestNome.empty() ? r.nestNome : i18n::t("intake.container_" + juce::String(r.nestOrigem)).toStdString();
                 }
                 out.push_back(std::move(r));
             }
@@ -4724,6 +4725,16 @@ std::string ProjetoAberto::questionarioDoContainer(const std::string& nestId) co
     return {};
 }
 
+std::string ProjetoAberto::origemDoContainer(const std::string& nestId) const {
+    if (!projeto_ || nestId.empty()) return {};
+    try {
+        auto st = leitura().prepare("SELECT origem FROM nest WHERE id = ?");
+        st.bind(1, matriz::db::Value::of(nestId));
+        if (st.step() && !st.columnIsNull(0)) return st.columnText(0);
+    } catch (...) {}
+    return {};
+}
+
 void ProjetoAberto::definirQuestionarioDoContainer(const std::string& nestId, const std::string& json) {
     if (somenteLeitura_ || !projeto_ || nestId.empty() || json.empty()) return;
     try {
@@ -4747,7 +4758,8 @@ bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, 
             for (const auto& id : membros) { tirar.desfazer(id); por.aplicar(id); }
         }
         db.run("UPDATE nest SET questionario = ? WHERE id = ?", {matriz::db::Value::of(json), matriz::db::Value::of(nestId)});
-        if (!novo.nomeContainer.empty()) db.run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(novo.nomeContainer), matriz::db::Value::of(nestId)});
+        // O nome vem do questionário: apagado lá, o container volta a mostrar o rótulo do tipo.
+        db.run("UPDATE nest SET nome = ? WHERE id = ?", {novo.nomeContainer.empty() ? matriz::db::Value::null() : matriz::db::Value::of(novo.nomeContainer), matriz::db::Value::of(nestId)});
         db.exec("COMMIT");
     } catch (const std::exception& e) {
         try { db.exec("ROLLBACK"); } catch (...) {}
@@ -4756,6 +4768,8 @@ bool ProjetoAberto::reaplicarQuestionarioDoContainer(const std::string& nestId, 
     }
     writeLock.unlock();
     EventBus::obterInstancia().dispararItensAlterados(membros, "metadado");
+    // Nome, capa e SUBJECT do container mudam em várias telas ao mesmo tempo: recarga ampla (Grid, METADATA, Folder Map, ficha).
+    EventBus::obterInstancia().dispararItemAlterado({}, "recarregar_tudo");
     return true;
 }
 
@@ -4765,6 +4779,30 @@ bool ProjetoAberto::definirNomeDoContainer(const std::string& nestId, const std:
         projeto_->registro().run("UPDATE nest SET nome = ? WHERE id = ?", {matriz::db::Value::of(nome), matriz::db::Value::of(nestId)});
     } catch (...) { return false; }
     return true;
+}
+
+bool ProjetoAberto::removerCapaDoContainer(const std::string& nestId) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return false;
+    try {
+        projeto_->registro().run("UPDATE nest SET capa_imagem = NULL WHERE id = ?", {matriz::db::Value::of(nestId)});
+    } catch (...) { return false; }
+    projeto_->pasta().getChildFile(".miniaturas/capa_container_" + juce::String(nestId) + ".jpg").deleteFile();
+    definirRespostaDoQuestionario(nestId, "capa", {});
+    return true;
+}
+
+void ProjetoAberto::definirRespostaDoQuestionario(const std::string& nestId, const std::string& chave, const std::string& valor) {
+    if (somenteLeitura_ || !projeto_ || nestId.empty()) return;
+    const auto atual = questionarioDoContainer(nestId);
+    if (atual.empty()) return;  // container sem questionário guardado: nada a manter coerente
+    auto v = juce::JSON::parse(juce::String::fromUTF8(atual.c_str()));
+    auto* raiz = v.getDynamicObject();
+    if (raiz == nullptr) return;
+    auto* respostas = raiz->getProperty("respostas").getDynamicObject();
+    if (respostas == nullptr) return;
+    if (valor.empty()) respostas->removeProperty(juce::Identifier(chave.c_str()));
+    else respostas->setProperty(juce::Identifier(chave.c_str()), juce::String::fromUTF8(valor.c_str()));
+    definirQuestionarioDoContainer(nestId, juce::JSON::toString(v, true).toStdString());
 }
 
 bool ProjetoAberto::definirCapaDoContainerComFrameDeVideo(const std::string& nestId, bool gerarFrame) {

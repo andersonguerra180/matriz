@@ -1570,10 +1570,12 @@ public:
             }
 
             // Top-Left Type / Category Badge (adjacent to checkbox)
-            juce::String catBadgeText = item.categoria.toUpperCase();
+            // Container PROJECT: a tag PROJECT ocupa o lugar do selo de categoria.
+            const bool ehProjeto = ehOrigemProject(item.containerOrigem);
+            juce::String catBadgeText = ehProjeto ? i18n::t("projeto.tag") : item.categoria.toUpperCase();
             int catBadgeW = juce::jmax(36, static_cast<int>(catBadgeText.length()) * 7 + 8);
             juce::Rectangle<int> catBadgeRect(thumbArea.getX() + 28, thumbArea.getY() + 6, catBadgeW, 18);
-            g.setColour(corCat.withAlpha(0.85f));
+            g.setColour((ehProjeto ? juce::Colour(0xffb8860b) : corCat).withAlpha(0.85f));
             g.fillRoundedRectangle(catBadgeRect.toFloat(), 4.0f);
             g.setColour(juce::Colours::white);
             g.setFont(font9Bold);
@@ -3411,7 +3413,8 @@ void IntakeWorkspaceComponent::abrirGridDoContainer(const std::string& itemId) {
 void IntakeWorkspaceComponent::abrirPreviewDoItem(const std::string& itemId) {
     if (itemId.empty()) return;
     for (const auto& it : todosItens_)  // container de importação: duplo clique abre o grid de miniaturas (não o preview)
-        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp" && it.containerOrigem != "youtube") { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa; YouTube abre o preview do vídeo
+        if (it.id == itemId && itemEhContainer(it) && it.containerOrigem != "whatsapp" && it.containerOrigem != "youtube" &&
+            (!ehOrigemProject(it.containerOrigem) || it.containerOrigem == "ddp")) { abrirGridDoContainer(itemId); return; }  // WhatsApp abre a conversa; YouTube, vinil, fita e produção abrem a janela do projeto (preview com a capa); DDP, o player de CD
     janelaPreview_.reset();  // duplo clique em outro arquivo troca o preview
     juce::Component::SafePointer<IntakeWorkspaceComponent> safe(this);
     auto aoFechar = [safe] {
@@ -3867,7 +3870,7 @@ void IntakeWorkspaceComponent::mostrarMenuContexto(int itemIndex, juce::Point<in
     m.addSeparator();
     m.addItem(3, isPt ? juce::String::fromUTF8("Obter Informações...") : "Get Info...");
     const auto& itemClicado = todosItens_[static_cast<size_t>(itemIndex)];
-    const bool ehContainer = itemEhContainer(itemClicado) && itemClicado.containerOrigem != "whatsapp";
+    const bool ehContainer = itemEhContainer(itemClicado) && ehOrigemProject(itemClicado.containerOrigem);
     if (ehContainer) {
         m.addSeparator();
         m.addItem(4, i18n::t("imp.editar_questionario"));

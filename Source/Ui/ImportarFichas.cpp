@@ -257,11 +257,11 @@ Campos cGeo() {
 }
 
 PainelOverlay::BotaoGrupo botaoGet() {
-    return { t("imp.ficha.geo"), t("imp.ficha.geo.get"), [](PainelOverlay& o) { obterLocalizacao(o); } };
+    return { t("imp.ficha.geo"), t("imp.ficha.geo.get"), [](PainelOverlay& o) { obterLocalizacao(o); }, "geo_pais" };
 }
 
 PainelOverlay::BotaoGrupo botaoOpen() {
-    return { t("imp.ficha.geo"), t("imp.ficha.geo.open"), [](PainelOverlay& o) { abrirLocalizacao(o); } };
+    return { t("imp.ficha.geo"), t("imp.ficha.geo.open"), [](PainelOverlay& o) { abrirLocalizacao(o); }, "geo_pais" };
 }
 
 void juntarGeo(Ficha& f) {
@@ -304,9 +304,15 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
         if (iniciais != nullptr) {  // editar o questionário: as respostas guardadas voltam preenchidas
             const auto it = iniciais->find(c.def.id.toStdString());
             if (it != iniciais->end()) cfg.campos.back().valorInicial = juce::String::fromUTF8(it->second.c_str());
+            const auto ii = iniciais->find(c.def.id.toStdString() + "#i");  // escolha: a posição vale em qualquer idioma
+            if (ii != iniciais->end() && !c.def.opcoes.empty()) {
+                const int i = std::atoi(ii->second.c_str());
+                if (i >= 0 && i < static_cast<int>(c.def.opcoes.size())) cfg.campos.back().valorInicial = c.def.opcoes[static_cast<size_t>(i)];
+            }
         }
     }
     cfg.botoesGrupo = ficha.botoesGrupo;
+    cfg.gruposDestacados.push_back(t("imp.ficha.geo"));  // o cartão GEO LOCATION se destaca dos demais
     if (aoVoltar) cfg.botoes.push_back({ t("imp.voltar"), 3, false, false });
     cfg.botoes.push_back({ t("light.ui.common.cancel"), 0, false, true });
     cfg.botoes.push_back({ t("imp.ficha.pular"), 2, false, false });
@@ -324,6 +330,14 @@ void mostrarFicha(PainelOverlay& overlay, const juce::String& titulo, const juce
         if (dono->depois) dono->depois(r, *sobre);
         sobre->folhaId = folhaId;
         for (const auto& [k, v] : r.valores) if (v.trim().isNotEmpty()) sobre->respostas[k.toStdString()] = v.trim().toStdString();
+        // Escolhas: além do rótulo (que muda com o idioma) guarda a POSIÇÃO na lista, para reabrir em qualquer idioma.
+        for (const auto& c : dono->campos) {
+            if (c.def.opcoes.empty()) continue;
+            const auto it = r.valores.find(c.def.id);
+            if (it == r.valores.end() || it->second.trim().isEmpty()) continue;
+            const int i = indiceDe(c.def.opcoes, it->second);
+            if (i >= 0) sobre->respostas[c.def.id.toStdString() + "#i"] = std::to_string(i);
+        }
         aoConcluir(true, sobre->vazio() && sobre->capaContainer.empty() && sobre->iconeContainer.empty() ? nullptr : sobre);
     });
 }
@@ -970,6 +984,12 @@ std::shared_ptr<const SobreMaterial> contextoDeRespostasImportar(const std::stri
     const Ficha ficha = montarFichaDaFolha(folha, titulo, mensagem);
     Resultado r;
     for (const auto& [k, v] : respostas) r.valores[juce::String(k)] = juce::String::fromUTF8(v.c_str());
+    for (const auto& c : ficha.campos) {  // escolhas pelo índice guardado: o rótulo pode ser de outro idioma
+        const auto ii = respostas.find(c.def.id.toStdString() + "#i");
+        if (ii == respostas.end() || c.def.opcoes.empty()) continue;
+        const int i = std::atoi(ii->second.c_str());
+        if (i >= 0 && i < static_cast<int>(c.def.opcoes.size())) r.valores[c.def.id] = c.def.opcoes[static_cast<size_t>(i)];
+    }
     auto sobre = std::make_shared<SobreMaterial>();
     for (const auto& c : ficha.campos)
         if (c.aplica) c.aplica(r, *sobre);

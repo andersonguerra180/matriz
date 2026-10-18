@@ -1,5 +1,6 @@
 #include "ConflitosMergeDialog.h"
 #include "AcoesItem.h"
+#include "ContainerVisual.h"
 #include "PastaPickerWindow.h"
 #include "../Diag/Watchdog.h"
 
@@ -536,7 +537,7 @@ juce::PopupMenu construirMenu(ProjetoAberto& projeto, const std::vector<std::str
 
     // Container de importação: o questionário inicial pode ser editado depois (as respostas voltam preenchidas).
     if (comEditarQuestionario && umSo) {
-        if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && !nest->origem.empty()) {
+        if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && ehOrigemProject(juce::String(nest->origem))) {
             menu.addItem(kEditarQuestionario, matriz::i18n::t("imp.editar_questionario"));
             menu.addSeparator();
         }
@@ -616,7 +617,7 @@ void executar(int resultado, ProjetoAberto& projeto, std::vector<std::string> it
 
         case kEditarQuestionario:
             if (ganchos.aoEditarQuestionario)
-                if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && !nest->origem.empty())
+                if (const auto nest = projeto.nestDoItem(itemIds.front()); nest && ehOrigemProject(juce::String(nest->origem)))
                     ganchos.aoEditarQuestionario(nest->nestId, nest->origem);
             break;
 

@@ -1,6 +1,7 @@
 #include "JanelaContainerDdp.h"
 
 #include "../I18n/Strings.h"
+#include "ContainerVisual.h"
 #include "Moldura.h"
 #include "ProjetoAberto.h"
 
@@ -12,7 +13,7 @@ namespace {
 constexpr int kLarguraLista = 220, kLarguraPlayer = 700, kLarguraMetadados = 320, kEspaco = 12, kAlturaCorpo = 560;
 }
 
-JanelaContainerDdp::JanelaContainerDdp(ProjetoAberto& projeto, const std::string& nestId, const juce::File& pastaDdp) : projeto_(projeto) {
+JanelaContainerDdp::JanelaContainerDdp(ProjetoAberto& projeto, const std::string& nestId, const juce::File& pastaDdp) : projeto_(projeto), nestId_(nestId) {
     for (const auto& id : projeto_.membrosDoNest(nestId)) {
         Arquivo a;
         a.itemId = id;
@@ -28,6 +29,11 @@ JanelaContainerDdp::JanelaContainerDdp(ProjetoAberto& projeto, const std::string
 
     metadados_ = std::make_unique<PainelMetadadosArquivo>(projeto_);
     addAndMakeVisible(*metadados_);
+
+    // Capa do CD (a mesma da ficha do IMPORT) e o nome do container no título da janela.
+    capa_ = std::make_unique<CapaProjetoComponent>(projeto_, nestId_, CapaProjetoComponent::Modo::Compacto);
+    addAndMakeVisible(*capa_);
+    titulo_ = capa_->nomeParaTeste().isNotEmpty() ? capa_->nomeParaTeste() : t("ddp.title");
 
     lista_.setModel(this);
     lista_.setRowHeight(30);
@@ -59,11 +65,12 @@ void JanelaContainerDdp::paint(juce::Graphics& g) {
     const auto pal = moldura::paleta();
     g.fillAll(pal.fundo);
     const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
-    moldura::desenhar(g, geo, moldura::Secao::Auto, t("ddp.trail"), t("ddp.title"), false);
+    moldura::desenhar(g, geo, moldura::Secao::Auto, t("ddp.trail"), titulo_, false, -1.0f, {}, true, rotuloDoProject("ddp"));  // tipo do PROJECT em destaque
     if (areaLista_.isEmpty()) return;
     // Títulos discretos das colunas laterais.
     g.setColour(pal.mudo);
     g.setFont(fonteUi(10.0f, juce::Font::bold).withExtraKerningFactor(0.12f));
+    g.drawText(moldura::caixaAlta(t("projeto.cd.capa")), areaCapa_.getX(), areaCapa_.getY() - 18, areaCapa_.getWidth(), 16, juce::Justification::centredLeft, false);
     g.drawText(moldura::caixaAlta(t("ddp.container.arquivos")), areaLista_.getX(), areaLista_.getY() - 18, areaLista_.getWidth(), 16, juce::Justification::centredLeft, false);
     g.drawText(moldura::caixaAlta(t("ddp.container.metadados")), areaMetadados_.getX(), areaMetadados_.getY() - 18, areaMetadados_.getWidth(), 16, juce::Justification::centredLeft, false);
 }
@@ -72,11 +79,15 @@ void JanelaContainerDdp::resized() {
     const auto geo = moldura::geometria(moldura::areaDoCartaoNativo(getLocalBounds()), false);
     auto corpo = geo.corpo.reduced(moldura::kMargemCorpo);
     corpo.removeFromTop(18);  // espaço dos títulos das colunas
-    areaLista_ = corpo.removeFromLeft(kLarguraLista);
+    auto coluna = corpo.removeFromLeft(kLarguraLista);
+    areaCapa_ = coluna.removeFromTop(kLarguraLista - 40);  // capa do CD (quadrada)
+    coluna.removeFromTop(18 + 12);                           // título "FILES IN THE CONTAINER"
+    areaLista_ = coluna;
     corpo.removeFromLeft(kEspaco);
     areaMetadados_ = corpo.removeFromRight(kLarguraMetadados);
     corpo.removeFromRight(kEspaco);
     areaPlayer_ = corpo;
+    if (capa_) capa_->setBounds(areaCapa_);
     lista_.setBounds(areaLista_);
     if (player_) player_->setBounds(areaPlayer_.withTrimmedTop(-18));
     if (metadados_) metadados_->setBounds(areaMetadados_);

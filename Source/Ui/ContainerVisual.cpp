@@ -64,8 +64,17 @@ const juce::Image& iconeDoContainer(const juce::String& origem, const juce::Stri
     return logoDaOrigem(origem);
 }
 
-const juce::Image& imagemDaCapaDoContainer(const juce::String& caminho) {
+namespace {
+std::map<std::string, juce::Image>& cacheDeCapas() {
     static std::map<std::string, juce::Image> cache;
+    return cache;
+}
+}  // namespace
+
+void esquecerImagemDaCapa(const juce::String& caminho) { cacheDeCapas().erase(caminho.toStdString()); }
+
+const juce::Image& imagemDaCapaDoContainer(const juce::String& caminho) {
+    auto& cache = cacheDeCapas();
     static const juce::Image vazio;
     if (caminho.isEmpty()) return vazio;
     const std::string chave = caminho.toStdString();

@@ -62,6 +62,9 @@ public:
         juce::String grupo;
         juce::String rotulo;
         std::function<void(PainelOverlay&)> aoClicar;
+        // Vazio = botão no cabeçalho do cartão. Com um id de campo do mesmo grupo: os botões com o mesmo id formam uma linha
+        // (mesma largura, lado a lado) logo abaixo desse campo, dentro do cartão.
+        juce::String depoisDoCampo;
     };
 
     // Tom do aviso: cor do destaque, ícone ao lado do título e cor do botão principal.
@@ -80,6 +83,8 @@ public:
         juce::String dicaCampoTexto;
         std::vector<CampoTexto> campos;
         std::vector<BotaoGrupo> botoesGrupo;
+        // Cartões (pelo título do grupo) desenhados num tom um pouco diferente, para se destacarem.
+        std::vector<juce::String> gruposDestacados;
         // Conteúdo próprio (ex.: questionário "Sobre este material", painel "Receber do celular"),
         // posicionado entre a mensagem e os botões. O overlay assume a posse (shared_ptr mantém a
         // Config copiável). Sem botões, o rodapé some e o conteúdo comanda a conclusão
@@ -134,6 +139,10 @@ public:
     void definirValorCampo(const juce::String& id, const juce::String& valor);
     // Texto atual de um campo da ficha pelo id ("" se não existe) — ex.: o botão OPEN do cartão de geolocalização.
     juce::String valorDoCampo(const juce::String& id) const;
+    void selecionarOpcaoDoCampoParaTeste(const juce::String& id, int indice) {
+        for (auto& cw : camposExtras_)
+            if (cw.id == id && cw.combo) cw.combo->setSelectedItemIndex(indice, juce::dontSendNotification);
+    }
     void acionarBotaoParaTeste(int indice);
     void selecionarOpcaoParaTeste(int indice);
     void definirTextoParaTeste(const juce::String& texto);

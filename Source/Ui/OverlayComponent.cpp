@@ -40,12 +40,12 @@ private:
 // Contêiner dos campos: desenha o cartão de cada grupo (ex.: GEO LOCATION) atrás dos campos.
 class ContainerCampos : public juce::Component {
 public:
-    struct Cartao { juce::Rectangle<int> area; juce::String titulo; };
+    struct Cartao { juce::Rectangle<int> area; juce::String titulo; bool destaque = false; };
     std::vector<Cartao> cartoes;
     void paint(juce::Graphics& g) override {
         const auto p = moldura::paleta();
         for (const auto& c : cartoes) {
-            g.setColour(p.janela);
+            g.setColour(c.destaque ? p.janelaDestaque : p.janela);
             g.fillRoundedRectangle(c.area.toFloat(), 12.0f);
             g.setColour(p.linha);
             g.drawRoundedRectangle(c.area.toFloat().reduced(0.5f), 12.0f, 1.0f);
@@ -113,6 +113,8 @@ struct PainelOverlay::PlanoCampos {
     std::vector<Pos> campos;
     struct Cartao { juce::Rectangle<int> area; juce::String titulo; juce::Rectangle<int> botao; };
     std::vector<Cartao> cartoes;
+    struct BotaoNaLinha { size_t indice = 0; juce::Rectangle<int> area; };  // indice = posição em config_.botoesGrupo
+    std::vector<BotaoNaLinha> botoes;
 };
 
 // Posição de cada campo: soltos ocupam a largura toda; campos de um mesmo grupo ficam num cartão, dois por linha.
@@ -141,6 +143,19 @@ PainelOverlay::PlanoCampos PainelOverlay::planejarCampos(int largura) const {
                 const int x = pad + coluna * (colW + 10);
                 plano.campos.push_back({ i, { x, y, colW, 18 }, { x, y + 18, colW, kAlturaLinha } });
                 if (++coluna == 2) { coluna = 0; y += 18 + kAlturaLinha + 8; }
+                // Botões do grupo que ficam numa linha logo abaixo deste campo (ex.: GET e OPEN abaixo de COUNTRY).
+                std::vector<size_t> daLinha;
+                for (size_t j = 0; j < config_.botoesGrupo.size(); ++j)
+                    if (config_.botoesGrupo[j].grupo == grupo && config_.botoesGrupo[j].depoisDoCampo.isNotEmpty() &&
+                        config_.botoesGrupo[j].depoisDoCampo == config_.campos[i].id)
+                        daLinha.push_back(j);
+                if (!daLinha.empty()) {
+                    if (coluna != 0) { coluna = 0; y += 18 + kAlturaLinha + 8; }
+                    const int n = static_cast<int>(daLinha.size());
+                    const int larg = (largura - 2 * pad - (n - 1) * 10) / n;
+                    for (int k = 0; k < n; ++k) plano.botoes.push_back({ daLinha[static_cast<size_t>(k)], { pad + k * (larg + 10), y, larg, 28 } });
+                    y += 28 + 8;
+                }
             }
             ++i;
         }
@@ -422,9 +437,21 @@ void PainelOverlay::resized() {
         cont->cartoes.clear();
         for (auto& b : botoesGrupo_) b->setVisible(false);
         for (const auto& c : plano.cartoes) {
-            cont->cartoes.push_back({ c.area, c.titulo });
-            for (auto& b : botoesGrupo_)
-                if (b->getComponentID() == "grupo." + c.titulo) { b->setBounds(c.botao); b->setVisible(true); }
+            const bool destaque = std::find(config_.gruposDestacados.begin(), config_.gruposDestacados.end(), c.titulo) != config_.gruposDestacados.end();
+            cont->cartoes.push_back({ c.area, c.titulo, destaque });
+            // Botões do cabeçalho (sem campo de referência): lado a lado, encostados à direita do cartão.
+            int xDireita = c.botao.getRight();
+            for (size_t j = botoesGrupo_.size(); j-- > 0;) {
+                if (config_.botoesGrupo[j].grupo != c.titulo || config_.botoesGrupo[j].depoisDoCampo.isNotEmpty()) continue;
+                botoesGrupo_[j]->setBounds(xDireita - c.botao.getWidth(), c.botao.getY(), c.botao.getWidth(), c.botao.getHeight());
+                botoesGrupo_[j]->setVisible(true);
+                xDireita -= c.botao.getWidth() + 8;
+            }
+        }
+        for (const auto& pb : plano.botoes) {
+            if (pb.indice >= botoesGrupo_.size()) continue;
+            botoesGrupo_[pb.indice]->setBounds(pb.area);
+            botoesGrupo_[pb.indice]->setVisible(true);
         }
         cont->repaint();
         viewportCampos_->setBounds(corpo);
@@ -494,13 +521,21 @@ bool PainelOverlay::keyPressed(const juce::KeyPress& tecla) {
 }
 
 void PainelOverlay::definirValorCampo(const juce::String& id, const juce::String& valor) {
-    for (auto& cw : camposExtras_)
-        if (cw.id == id && cw.editor) cw.editor->setText(valor, juce::dontSendNotification);
+    for (auto& cw : camposExtras_) {
+        if (cw.id != id) continue;
+        if (cw.editor) cw.editor->setText(valor, juce::dontSendNotification);
+        else if (cw.combo) {
+            for (int i = 0; i < cw.combo->getNumItems(); ++i)
+                if (cw.combo->getItemText(i) == valor) { cw.combo->setSelectedItemIndex(i, juce::dontSendNotification); break; }
+        } else if (cw.chave) {
+            cw.chave->setToggleState(valor == "1", juce::dontSendNotification);
+        }
+    }
 }
 
 juce::String PainelOverlay::valorDoCampo(const juce::String& id) const {
     for (const auto& cw : camposExtras_)
-        if (cw.id == id && cw.editor) return cw.editor->getText();
+        if (cw.id == id) return cw.valor();
     return {};
 }
 

@@ -30,6 +30,9 @@ juce::String rotuloDoProject(const juce::String& origem);
 // Capa em arquivo (DDP, vinil, fita, produção, YouTube), decodificada uma vez e guardada. Só na message thread. Vazio se o arquivo não abre.
 const juce::Image& imagemDaCapaDoContainer(const juce::String& caminho);
 
+// Esquece a imagem em cache dessa capa (depois de trocar/remover: o arquivo da capa tem sempre o mesmo caminho).
+void esquecerImagemDaCapa(const juce::String& caminho);
+
 // Desenha o container dentro de `area`: a capa quando há, senão o ícone.
 void desenharContainerGrafico(juce::Graphics& g, juce::Rectangle<float> area, const juce::String& origem,
                               const juce::String& nomeDoRecurso, const juce::String& caminhoDaCapa);

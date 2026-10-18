@@ -756,6 +756,11 @@ void ArvoreBackupComponent::definirModoSobreposto(const std::string& mapaId, con
 }
 
 void ArvoreBackupComponent::aoItemAlterado(const EventoItemAlterado& e) {
+    if (e.tipoAlteracao == "recarregar_tudo") {  // ex.: Edit Project Info mudou nome/capa de um container
+        juce::Component::SafePointer<ArvoreBackupComponent> seguro(this);
+        juce::MessageManager::callAsync([seguro] { if (seguro && seguro->isShowing()) seguro->recarregar(); });  // escondido: recarrega ao voltar à aba
+        return;
+    }
     if (e.tipoAlteracao != "titulo") return;
     juce::Component::SafePointer<ArvoreBackupComponent> safeThis(this);
     std::string itemId = e.itemId;
@@ -1532,7 +1537,8 @@ void ArvoreBackupComponent::recalcularNodesInterno() {
             }
             lf.id = idItem;
             lf.titulo = juce::String::fromUTF8(stmt.columnText(1).c_str());
-            if (infoContainer != nullptr && !infoContainer->nome.empty()) lf.titulo = juce::String::fromUTF8(infoContainer->nome.c_str());  // o container mostra o nome da ficha
+            if (infoContainer != nullptr)  // o container mostra o nome da ficha ou, sem nome, o rótulo do tipo — nunca o de um arquivo
+                lf.titulo = !infoContainer->nome.empty() ? juce::String::fromUTF8(infoContainer->nome.c_str()) : i18n::t("intake.container_" + juce::String(infoContainer->origem));
             lf.tipoMidia = stmt.columnText(2);
             lf.extensao = stmt.columnIsNull(3) ? juce::String() : juce::File(juce::String::fromUTF8(stmt.columnText(3).c_str())).getFileExtension().trimCharactersAtStart(".");
             lf.tamanhoBytes = stmt.columnIsNull(4) ? 0 : static_cast<juce::int64>(stmt.columnInt(4));
@@ -2900,6 +2906,15 @@ void ArvoreBackupComponent::paint(juce::Graphics& g) {
             g.fillEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f);
             g.setColour(tk.textoPrimario);
             g.drawEllipse(entrada.x - 6.0f, entrada.y - 6.0f, 12.0f, 12.0f, 1.2f);
+            if (matriz::ui::ehOrigemProject(juce::String(lf.containerOrigem))) {  // tag PROJECT no canto superior esquerdo
+                const juce::String rotulo = i18n::t("projeto.tag");
+                const juce::Rectangle<float> tag(b.getX() + 14.0f, b.getY() + 2.0f, 52.0f, 15.0f);
+                g.setColour(juce::Colour(0xffb8860b).withAlpha(0.95f));
+                g.fillRoundedRectangle(tag, 7.5f);
+                g.setColour(juce::Colours::white);
+                g.setFont(fonteUi(tk.tamanhoFonteMicro, juce::Font::bold));
+                g.drawText(rotulo, tag.toNearestInt(), juce::Justification::centred, false);
+            }
             g.setFont(fonteUi(11.5f, juce::Font::bold));
             g.drawFittedText(lf.titulo, b.withTrimmedTop(100.0f).reduced(4.0f, 0.0f).toNearestInt(), juce::Justification::centredTop, 2, 0.85f);
             continue;
@@ -3430,6 +3445,10 @@ void ArvoreBackupComponent::mouseDown(const juce::MouseEvent& e) {
                 menu.addItem(i18n::t("arvore_backup.abrir_em_aba"), [this, pId, nomeNo = hitNodeRef.nome] {
                     abrirAbaParaPasta(pId, nomeNo);
                 });
+                // O Folder Map sobreposto da pasta (antes aberto pelo duplo clique, que agora abre a grade).
+                menu.addItem(i18n::t("arvore_backup.abrir_como_foldermap"), [this, pId, nomeNo = hitNodeRef.nome] {
+                    abrirSobreposicao(pId, nomeNo);
+                });
             }
             menu.addSeparator();
 
@@ -3829,7 +3848,7 @@ void ArvoreBackupComponent::mouseDoubleClick(const juce::MouseEvent& e) {
             if (lf.ehConversaWhatsapp) {
                 abrirConversaWhatsapp(lf.id);
             } else if (lf.ehContainer) {
-                matriz::ui::abrirContainerPorTipo(projeto_, lf.nestId, lf.containerOrigem);
+                if (aoAbrirContainerJanela) aoAbrirContainerJanela(lf.nestId, lf.titulo);
             }
             return;
         }
@@ -5036,7 +5055,10 @@ void ArvoreBackupComponent::mostrarMenuDeArquivosSoltos() {
         for (const auto& lf : looseFiles_) {
             if (lf.id != ids.front() || !lf.ehContainer) continue;
             const std::string nestId = lf.nestId, origem = lf.containerOrigem;
-            menu.addItem(i18n::t("imp.editar_questionario"), true, false, [seguro, nestId, origem] { if (seguro) seguro->editarQuestionarioDoContainerSolto(nestId, origem); });
+            if (matriz::ui::ehOrigemProject(juce::String(origem)))
+                menu.addItem(i18n::t("projeto.abrir"), true, false, [seguro, nestId, origem] { if (seguro && seguro->aoAbrirProject) seguro->aoAbrirProject(nestId, origem); });
+            if (matriz::ui::ehOrigemProject(juce::String(origem)))
+                menu.addItem(i18n::t("imp.editar_questionario"), true, false, [seguro, nestId, origem] { if (seguro) seguro->editarQuestionarioDoContainerSolto(nestId, origem); });
             menu.addSeparator();
             break;
         }

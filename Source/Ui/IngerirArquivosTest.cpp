@@ -8,6 +8,7 @@
 #include "SelecionarTipoMidiaDialogo.h"
 #include "ImportarMenu.h"
 #include "GeoAcoes.h"
+#include "CapaProjeto.h"
 #include "DocumentPreviewComponent.h"
 #include "JanelaContainerDdp.h"
 #include "MosaicoComponent.h"
@@ -1208,10 +1209,81 @@ int rodarTestImportarComContexto() {
                     const auto itens = proj->membrosDoNest(nestId);
                     checar(!itens.empty() && proj->lerMetadado(itens.front(), "lista").value_or("") == "Disco Novo", "LIST dos arquivos = álbum");
                 }
+                // Janela do projeto: o bloco da capa mostra o nome do container e o artista; trocar e remover a capa funcionam.
+                {
+                    CapaProjetoComponent cp(*proj, nestId, CapaProjetoComponent::Modo::Detalhado);
+                    cp.setSize(900, 330);
+                    checar(cp.nomeParaTeste() == "Disco Novo" && cp.artistaParaTeste() == "Banda Nova" && cp.temCapaParaTeste(),
+                           "PROJECT cover block shows the container name, the artist and the cover");
+                    cp.removerCapaParaTeste();
+                    auto semCapa = registro.prepare("SELECT capa_imagem FROM nest WHERE id = ?");
+                    semCapa.bind(1, matriz::db::Value::of(nestId));
+                    checar(semCapa.step() && semCapa.columnIsNull(0) && !cp.temCapaParaTeste(), "Remove clears the container cover");
+                    cp.trocarCapaParaTeste(capa);
+                    const auto t0 = juce::Time::getMillisecondCounter();
+                    while (!cp.temCapaParaTeste() && juce::Time::getMillisecondCounter() - t0 < 10000)
+                        juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    checar(cp.temCapaParaTeste(), "Change cover sets a new cover on the container");
+                    std::string folhaC;
+                    std::map<std::string, std::string> respC;
+                    checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folhaC, respC) && respC["capa"] == capa.getFullPathName().toStdString(),
+                           "Edit Project Info opens with the cover that was changed outside it");
+                }
                 std::string folha2;
                 std::map<std::string, std::string> guardadas2;
                 checar(questionarioDeJson(proj->questionarioDoContainer(nestId), folha2, guardadas2) && guardadas2["artist"] == "Banda Nova",
                        "o questionário guardado passa a ser o novo");
+            }
+        }
+
+        // Edit Project Info de ponta a ponta, pelo caminho real: ficha preenchida na tela -> importação -> container -> reabrir a ficha.
+        {
+            juce::File pasta2 = tmpRoot.getChildFile("lado_b_vinil");
+            pasta2.createDirectory();
+            for (int i = 1; i <= 2; ++i)
+                gerarComFfmpeg({"ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=" + std::to_string(200 + i * 40) + ":duration=1",
+                                 pasta2.getChildFile("b_" + juce::String(i) + ".wav").getFullPathName()});
+            const auto girar = [](int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil(ms); };
+            std::shared_ptr<const matriz::ingest::SobreMaterial> daFicha;
+            PainelOverlay ficha;
+            ficha.setBounds(0, 0, 1100, 760);
+            mostrarFichaImportar(ficha, "audio.preservation.vinyl", [&](bool, std::shared_ptr<const matriz::ingest::SobreMaterial> sm) { daFicha = sm; });
+            girar(50);
+            const juce::String ladoEscolhido = ficha.valorDoCampo("side").isEmpty() ? juce::String() : juce::String();
+            juce::ignoreUnused(ladoEscolhido);
+            ficha.definirValorCampo("artist", "Artista Real");
+            ficha.definirValorCampo("album", "Album Real");
+            ficha.definirValorCampo("context", "Notas do disco");
+            // Escolha: o 2º rótulo da lista de Lado (qualquer idioma) tem que voltar igual ao reabrir.
+            ficha.selecionarOpcaoDoCampoParaTeste("side", 2);
+            const juce::String ladoFicha = ficha.valorDoCampo("side");
+            ficha.concluirExterno(1);
+            girar(50);
+            checar(daFicha != nullptr && daFicha->folhaId == "audio.preservation.vinyl" && daFicha->respostas.count("album") && daFicha->respostas.at("album") == "Album Real",
+                   "the ficha result carries the card id and the answers (for Edit Project Info)");
+            if (daFicha != nullptr) {
+                auto contexto = mesclarContextosImportar(contextoDaFolhaImportar("audio.preservation.vinyl"), daFicha);
+                mainComponent.ingerirArquivos({pasta2}, true, contexto);
+                const auto t0 = juce::Time::getMillisecondCounter();
+                std::string nestReal;
+                while (juce::Time::getMillisecondCounter() - t0 < 30000) {
+                    juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                    if (mainComponent.ingestEmAndamento()) continue;
+                    auto st = registro.prepare("SELECT id FROM nest WHERE origem = 'vinyl' AND nome = 'Album Real' LIMIT 1");
+                    if (st.step()) { nestReal = st.columnText(0); break; }
+                }
+                esperarIngestTerminar(mainComponent);
+                checar(!nestReal.empty(), "a container made from the real ficha path is named after the album");
+                if (!nestReal.empty()) {
+                    PainelOverlay reaberta;
+                    reaberta.setBounds(0, 0, 1100, 760);
+                    editarQuestionarioDoContainer(reaberta, *mainComponent.projetoAberto(), nestReal, "vinyl", [](bool) {});
+                    girar(80);
+                    checar(reaberta.valorDoCampo("artist") == "Artista Real" && reaberta.valorDoCampo("album") == "Album Real" &&
+                               reaberta.valorDoCampo("context") == "Notas do disco",
+                           "Edit Project Info opens with the text answers filled in");
+                    checar(ladoFicha.isNotEmpty() && reaberta.valorDoCampo("side") == ladoFicha, "...and with the choice answers filled in (" + reaberta.valorDoCampo("side") + ")");
+                }
             }
         }
 

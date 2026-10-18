@@ -86,6 +86,10 @@ public:
     // Duplo clique no card de uma pasta (mapa principal): quem hospeda abre a janela flutuante da pasta (miniaturas + filtros).
     // Sem este gancho, cai na sobreposição do Folder Map de antes.
     std::function<void(const std::string& pastaId, const juce::String& nomePasta)> aoAbrirPastaJanela;
+    // Duplo clique num CONTAINER: abre a grade só com o conteúdo dele (nestId, nome mostrado).
+    std::function<void(const std::string& nestId, const juce::String& nome)> aoAbrirContainerJanela;
+    // Botão direito num PROJECT > Open Project: a janela própria do projeto (player de CD no DDP; preview com a capa nos demais).
+    std::function<void(const std::string& nestId, const std::string& origem)> aoAbrirProject;
     void fecharSobreposicao();
     // Chamado na instância DENTRO da sobreposição, logo depois de construída.
     void definirModoSobreposto(const std::string& mapaId, const std::string& pastaRaizId, const juce::String& nomePasta);

@@ -1345,6 +1345,16 @@ void MainComponent::reconstruirLayoutProjeto() {
     repaint();
 }
 
+// Edit Project Info: a ficha do IMPORT reabre preenchida; ao salvar todas as telas se atualizam.
+void MainComponent::editarProjetoDoContainer(const std::string& nestId, const std::string& origem) {
+    if (!projetoAberto_) return;
+    editarQuestionarioDoContainer(overlay_, *projetoAberto_, nestId, origem, [this](bool aplicou) {
+        if (!aplicou) return;
+        ganchosDeAcao().aoMudarDados();  // grade, árvores, filtros, Folder Map, BACKUP e faixa de apoio
+        if (intakeWorkspace_) intakeWorkspace_->recarregar();
+    });
+}
+
 matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     matriz::ui::acoes::Ganchos ganchos;
     // Qualquer ação que mexe no banco pode mudar contagem, agrupamento,
@@ -1369,14 +1379,7 @@ matriz::ui::acoes::Ganchos MainComponent::ganchosDeAcao() {
     ganchos.itemEmMemoria = [this](const std::string& id) -> const ItemResumo* {
         return mosaico_ ? mosaico_->itemEmMemoria(id) : nullptr;
     };
-    ganchos.aoEditarQuestionario = [this](const std::string& nestId, const std::string& origem) {
-        if (!projetoAberto_) return;
-        editarQuestionarioDoContainer(overlay_, *projetoAberto_, nestId, origem, [this](bool aplicou) {
-            if (!aplicou) return;
-            if (mosaico_) mosaico_->recarregar();
-            if (intakeWorkspace_) intakeWorkspace_->recarregar();
-        });
-    };
+    ganchos.aoEditarQuestionario = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
     return ganchos;
 }
 
@@ -1870,6 +1873,7 @@ void MainComponent::mostrarGrid() {
 
     if (!catalogWorkspace_) {
         catalogWorkspace_ = std::make_unique<CatalogWorkspaceComponent>(*projetoAberto_);
+        catalogWorkspace_->aoEditarProjeto = [this](const std::string& nestId, const std::string& origem) { editarProjetoDoContainer(nestId, origem); };
         catalogWorkspace_->aoAgruparEIrParaTree = [this](std::string folderId) {
             mostrarTree();
             if (treeWorkspace_) {
@@ -1994,6 +1998,10 @@ void MainComponent::mostrarStructure(SubTabEstrutura subTab) {
             };
             treeWorkspace_->aoAbrirPastaJanela = [this](const std::string& pastaId, const juce::String& nome) {
                 abrirJanelaDaPasta(pastaId, nome);
+            };
+            treeWorkspace_->aoAbrirProject = [this](const std::string& nestId, const std::string& origem) { abrirProjectDoContainer(nestId, origem); };
+            treeWorkspace_->aoAbrirContainerJanela = [this](const std::string& nestId, const juce::String& nome) {
+                abrirJanelaDoContainer(nestId, nome);
             };
             treeWorkspace_->aoPerguntarIngestEmProcessamento = [this] { return pendentes_->load() > 0 || escaneandoEmAndamento_.load(); };
             treeWorkspace_->aoIngerirArquivos = [this](const juce::Array<juce::File>& files, const std::string& /*pastaId*/) {
@@ -3464,6 +3472,39 @@ void MainComponent::abrirJanelaDaPasta(const std::string& pastaId, const juce::S
             if (seguro->filtros_) seguro->filtros_->recarregar();
             if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
         });
+}
+
+// Open Project: o player de CD no DDP; nos demais PROJECTS o preview do arquivo-capa, com a capa do projeto e a coluna dos arquivos.
+void MainComponent::abrirProjectDoContainer(const std::string& nestId, const std::string& origem) {
+    if (!projetoAberto_ || nestId.empty()) return;
+    if (matriz::ui::abrirContainerPorTipo(*projetoAberto_, nestId, origem)) return;  // DDP
+    const auto membros = projetoAberto_->membrosDoNest(nestId);
+    if (membros.empty()) return;
+    std::string capa = membros.front();
+    if (const auto info = projetoAberto_->nestDoItem(membros.front())) if (!info->capaId.empty()) capa = info->capaId;
+    abrirPreview(capa);
+}
+
+// Duplo clique num container no Folder Map: a janela de grade só com o conteúdo dele (filtros, thumbs/lista, metadados somente leitura).
+void MainComponent::abrirJanelaDoContainer(const std::string& nestId, const juce::String& nome) {
+    if (!projetoAberto_ || nestId.empty()) return;
+    janelaPasta_.reset();
+    juce::Component::SafePointer<MainComponent> seguro(this);
+    janelaPasta_ = std::make_unique<JanelaPastaFlutuante>(
+        *projetoAberto_, std::string(), nome,
+        [seguro] {
+            if (!seguro) return;
+            seguro->janelaPasta_.reset();
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+        },
+        [seguro] {
+            if (!seguro) return;
+            if (seguro->treeWorkspace_) seguro->treeWorkspace_->recarregar();
+            if (seguro->mosaico_) seguro->mosaico_->recarregar();
+            if (seguro->filtros_) seguro->filtros_->recarregar();
+            if (seguro->catalogWorkspace_) seguro->catalogWorkspace_->recarregar();
+        },
+        nestId);
 }
 
 void MainComponent::extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId) {

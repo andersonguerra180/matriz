@@ -15,6 +15,8 @@
 #include "PainelMetadadosArquivo.h"
 #include "PreviewComponent.h"
 #include "AudioWorkspace.h"
+#include "CapaProjeto.h"
+#include "ContainerVisual.h"
 #include "Tokens.h"
 #include "Moldura.h"
 #include "../I18n/Strings.h"
@@ -127,7 +129,12 @@ public:
             }
         }
         setName(windowTitle.isEmpty() ? "Preview" : windowTitle);
-        if (moldura_ != nullptr) moldura_->definirTitulo(getName());
+        if (moldura_ != nullptr) {
+            moldura_->definirTitulo(getName());
+            // PROJECT: o tipo (DDP MASTER, VINYL TRANSCRIPTION...) em destaque no topo da janela.
+            const auto nest = projeto_.nestDoItem(itemId);
+            moldura_->definirEtiqueta(nest ? rotuloDoProject(juce::String(nest->origem)) : juce::String());
+        }
     }
 
     void navegarItem(int direcao) {
@@ -526,6 +533,26 @@ private:
             }
             if (nestViewport_) nestViewport_->setVisible(mostrar);
             if (!mostrar) nestId_.clear();
+            atualizarCapaDoProjeto();
+        }
+
+        // PROJECT (vinil, fita, produção; o DDP tem a janela própria e o YouTube segue com o preview do vídeo): bloco da capa do projeto
+        // (capa 1:1, nome, artista, trocar/remover) acima do player.
+        void atualizarCapaDoProjeto() {
+            const std::string origem = nestId_.empty() ? std::string() : projeto_.origemDoContainer(nestId_);
+            const bool mostrarCapa = !nestId_.empty() && ehOrigemProject(juce::String(origem)) && origem != "youtube";
+            if (mostrarCapa) {
+                if (!capaProjeto_) {
+                    capaProjeto_ = std::make_unique<CapaProjetoComponent>(projeto_, nestId_, CapaProjetoComponent::Modo::Detalhado);
+                    addAndMakeVisible(*capaProjeto_);
+                } else {
+                    capaProjeto_->definirContainer(nestId_);
+                }
+                capaProjeto_->setVisible(true);
+            } else if (capaProjeto_) {
+                capaProjeto_->setVisible(false);
+            }
+            resized();
         }
 
         const std::string& itemIdAtual() const { return itemId_; }
@@ -752,6 +779,9 @@ private:
                 if (resizerBar_) resizerBar_->setVisible(false);
             }
 
+            if (capaProjeto_ && capaProjeto_->isVisible() && area.getHeight() > 420) {
+                capaProjeto_->setBounds(area.removeFromTop(juce::jmin(330, area.getHeight() * 2 / 5)).reduced(12, 10));
+            }
             if (preview_) preview_->setBounds(area);
             if (escuta_) escuta_->setBounds(area);
             previewArea_ = area;
@@ -803,6 +833,7 @@ private:
         std::unique_ptr<PreviewComponent> preview_;
         std::unique_ptr<AudioWorkspace> escuta_;
         std::unique_ptr<FichaPanelComponent> fichaPanel_;
+        std::unique_ptr<CapaProjetoComponent> capaProjeto_;
         std::unique_ptr<PainelMetadadosArquivo> painelLeitura_;  // só no preview do INTAKE
         bool somenteLeitura_ = false;
 

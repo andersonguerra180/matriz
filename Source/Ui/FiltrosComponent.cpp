@@ -41,11 +41,11 @@ juce::String rotuloEstado(const std::string& estado) { return matriz::i18n::t("m
 
 } // namespace
 
-FiltrosComponent::FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico)
+FiltrosComponent::FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico, bool primeiraCargaSincrona)
     : projeto_(projeto), mosaico_(mosaico) {
     // Primeira carga síncrona: o painel precisa nascer com conteúdo, e
     // neste ponto o projeto acabou de abrir (nada concorrendo pelo banco).
-    recarregarSincrono();
+    if (primeiraCargaSincrona) recarregarSincrono();
 }
 
 FiltrosComponent::~FiltrosComponent() {

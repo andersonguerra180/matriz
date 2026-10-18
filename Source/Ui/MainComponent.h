@@ -175,6 +175,9 @@ public:
     // continua dentro da conversa. Entra pelo fluxo normal de ingestão (Intake).
     // Janela flutuante da pasta (duplo clique no card em Structure).
     void abrirJanelaDaPasta(const std::string& pastaId, const juce::String& nomePasta);
+    void abrirJanelaDoContainer(const std::string& nestId, const juce::String& nome);
+    void editarProjetoDoContainer(const std::string& nestId, const std::string& origem);
+    void abrirProjectDoContainer(const std::string& nestId, const std::string& origem);
     std::unique_ptr<class JanelaPastaFlutuante> janelaPasta_;
     void extrairMidiaWhatsapp(const std::string& midiaItemId, const std::string& conversaItemId);
     // Consumido pelo próximo processarLoteEmBackground() sem aoConcluir próprio (ver ingerirPastaDoBridge).

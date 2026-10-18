@@ -431,7 +431,7 @@ void MosaicoComponent::atualizarItemEmMemoria(const std::string& itemId) {
     if (it == nullptr) return;
 
     auto tit = projeto_.lerMetadado(itemId, "titulo");
-    if (tit.has_value() && !(it->nestCapa && !it->nestNome.empty())) {  // a capa do container mostra o nome do container
+    if (tit.has_value() && !(it->nestCapa && !it->nestOrigem.empty())) {  // a capa do container mostra o nome do container
         it->titulo = *tit;
         if (!tit->empty()) it->nomeOriginalArquivo = *tit;
     }
@@ -2827,9 +2827,18 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                 g.fillRect(c.getX() + 2.0f, c.getBottom() - 3.5f, c.getWidth() - 4.0f, 2.5f);               // papel saindo (vazado)
             }
 
-            // Extension badge (top-left)
+            // Extension badge (top-left). Num container PROJECT a extensão não serve para nada: no lugar dela vai a tag PROJECT.
             const juce::String& ext = tx.extensao;
-            if (ext.isNotEmpty()) {
+            if (containerGrafico && ehOrigemProject(origemContainer)) {
+                const juce::String rotulo = i18n::t("projeto.tag");
+                const int badgeW = juce::jmax(52, static_cast<int>(rotulo.length()) * 7 + 12);
+                const juce::Rectangle<int> tag(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
+                g.setColour(juce::Colour(0xffb8860b).withAlpha(0.95f));
+                g.fillRoundedRectangle(tag.toFloat(), 8.0f);
+                g.setColour(juce::Colours::white);
+                g.setFont(font9Bold);
+                g.drawText(rotulo, tag, juce::Justification::centred);
+            } else if (ext.isNotEmpty()) {
                 int badgeW = juce::jmax(28, static_cast<int>(ext.length()) * 7 + 10);
                 juce::Rectangle<int> badge(areaImagem.getX() + 4, areaImagem.getY() + 4, badgeW, 16);
                 // Cor por categoria (áudio/vídeo/foto/doc) com variação de tom por extensão (mp4/avi/mov...: mesma cor, tons próximos).
@@ -2851,7 +2860,7 @@ void MosaicoComponent::paint(juce::Graphics& g) {
                                         : item.etapaProducao == "MSTR" ? juce::Colour(0xff8b5cf6) : juce::Colour(0xff22a06b);
                 const juce::String rotuloEtapa = juce::String(item.etapaProducao);
                 const int w = juce::jmax(34, static_cast<int>(rotuloEtapa.length()) * 8 + 12);
-                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + (ext.isNotEmpty() ? 30 : 8), w, 18);
+                juce::Rectangle<int> selo(areaImagem.getX() + 8, areaImagem.getY() + ((ext.isNotEmpty() || (containerGrafico && ehOrigemProject(origemContainer))) ? 30 : 8), w, 18);
                 g.setColour(corEtapa);
                 g.fillRoundedRectangle(selo.toFloat(), 9.0f);
                 g.setColour(juce::Colours::white);

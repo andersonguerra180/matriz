@@ -24,7 +24,9 @@ namespace matriz::ui {
 
 class FiltrosComponent : public juce::Component, public juce::DragAndDropTarget {
 public:
-    FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico);
+    // primeiraCargaSincrona=false: a janela de uma pasta/container não paga a agregação do projeto inteiro na message thread ao abrir
+    // (as contagens vêm depois, em background, já só do escopo — ver definirEscopo).
+    FiltrosComponent(ProjetoAberto& projeto, MosaicoComponent& mosaico, bool primeiraCargaSincrona = true);
     ~FiltrosComponent() override;
 
     // Reconsulta contagens e coleções salvas, e redesenha.

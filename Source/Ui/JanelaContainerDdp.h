@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "CapaProjeto.h"
 #include "JanelaPlayerDdp.h"
 #include "PainelMetadadosArquivo.h"
 
@@ -44,10 +45,13 @@ private:
     ProjetoAberto& projeto_;
     std::vector<Arquivo> arquivos_;
     juce::ListBox lista_;
+    std::string nestId_;
+    juce::String titulo_;  // nome do container (da ficha); sem nome, o rótulo do tipo
+    std::unique_ptr<CapaProjetoComponent> capa_;
     std::unique_ptr<JanelaPlayerDdp> player_;
     std::unique_ptr<PainelMetadadosArquivo> metadados_;
     juce::String erro_;
-    juce::Rectangle<int> areaLista_, areaPlayer_, areaMetadados_;
+    juce::Rectangle<int> areaCapa_, areaLista_, areaPlayer_, areaMetadados_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JanelaContainerDdp)
 };
